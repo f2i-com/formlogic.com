@@ -6,7 +6,8 @@ import { flowNodeRegistry } from './FlowNodeRegistry';
 import { adaptInstalledDefinition } from './installedNodeProvider';
 
 // ADR-010 / FLOW-201 + FLOW-204: installed contributed definitions adapt into internal
-// NodeSpecs (host icon allowlist, NOT executable until the compiler lands) and resolve
+// NodeSpecs (host icon allowlist; both v1 handler kinds are executable — core-preset via
+// the server-compiled IR, service-action once its SRV-405 slot is bound) and resolve
 // through the registry; removing them falls back to the missing-definition placeholder
 // while graph data survives. Importing installedNodeProvider registered the provider on
 // the module-singleton registry (vitest isolates modules per test file).
@@ -75,10 +76,12 @@ describe('adaptInstalledDefinition (FLOW-201)', () => {
     expect(byKey.style.options).toEqual([{ value: 'photo', label: 'photo' }, { value: 'sketch', label: 'sketch' }]);
     expect(byKey.metadata.type).toBe('code');
     expect(byKey.metadata.language).toBe('json');
-    // Provenance is surfaced; a service-action contribution stays display-only until
-    // service bindings exist.
+    // Provenance is surfaced. SRV-405: a service-action contribution IS insertable now —
+    // it lowers to the canonical service_action once its slot is bound, and the doc says
+    // exactly what the author must do rather than calling the node unrunnable.
     expect(spec.doc).toContain('Acme Media Tools');
-    expect(spec.executable).toBe(false);
+    expect(spec.executable).toBe(true);
+    expect(spec.doc).toContain('service slot is bound');
   });
 
   it('RUN-301: core-preset contributions are executable (runs ride the server-compiled IR)', () => {

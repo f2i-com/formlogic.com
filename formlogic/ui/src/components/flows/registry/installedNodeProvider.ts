@@ -99,14 +99,16 @@ export function adaptInstalledDefinition(def: FlowNodeDefinitionV1, packageName?
   }
 
   const provenance = packageName ? `Contributed by "${packageName}".` : 'Contributed by an installed package.';
-  // RUN-301: core-preset contributions are RUNNABLE — every run path executes the
+  // RUN-301 + SRV-405: both v1 handler kinds are RUNNABLE — every run path executes the
   // server-compiled canonical IR (cloud at version mint; browser via /compile before
-  // execution), so inserting one produces a node that genuinely runs. service-action
-  // contributions stay display-only until service bindings (SRV-405) exist.
-  const runnable = def.handler?.kind === 'core-preset';
-  const runNote = runnable
-    ? 'Runs wherever flows run — lowered to a built-in node by the server compiler (FormLogic Desktop needs an up-to-date build).'
-    : 'Not yet runnable — service bindings for extension nodes arrive in a later update.';
+  // execution), so inserting one produces a node that genuinely runs. A service-action
+  // node additionally needs its service slot bound, and says so: unbound, the compiler
+  // refuses it by name rather than producing a run that could only fail.
+  const kind = def.handler?.kind;
+  const runnable = kind === 'core-preset' || kind === 'service-action';
+  const runNote = kind === 'service-action'
+    ? 'Runs on FormLogic Desktop (or a paired browser) once this extension’s service slot is bound — bind it under Details on the installed extension.'
+    : 'Runs wherever flows run — lowered to a built-in node by the server compiler (FormLogic Desktop needs an up-to-date build).';
   return {
     type: def.type,
     label: def.display?.label || def.type,

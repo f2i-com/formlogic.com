@@ -858,6 +858,154 @@ class PackageV2InstallTest extends TestCase
         }
     }
 
+    // ── SRV-405: service binding slots — the package declares a slot, the owner fills it ────
+
+    private function bindingService(): \FormLogic\Services\Packages\ServiceBindingService
+    {
+        return new \FormLogic\Services\Packages\ServiceBindingService(self::$mysql);
+    }
+
+    public function testSlotsComeFromTheReceiptAndOnlyDeclaredSlotsCanBind(): void
+    {
+        // nodeOnlyAggregate() declares requirements.services[] slot "imageGenerator".
+        $installed = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        $bindings = $this->bindingService();
+
+        $slots = $bindings->listSlots($installed['installationId'], $this->userId);
+        $this->assertSame([[
+            'slot' => 'imageGenerator',
+            'required' => true,
+            'requiredActions' => ['generate-image'],
+            'binding' => null,
+        ]], $slots, 'declared slots come from the immutable receipt, unbound by default');
+
+        // A slot the package never declared cannot be bound — that would grant reach the
+        // install review never showed.
+        try {
+            $bindings->bind($installed['installationId'], $this->userId, 'somethingElse', 'openai-api', 'conn-1');
+            $this->fail('binding an undeclared slot must refuse');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('unknown_slot', $e->getMessage());
+        }
+        // Nor can a malformed binding be stored.
+        foreach ([['', 'conn-1'], ['bad id!', 'conn-1'], ['openai-api', '']] as [$definitionId, $connection]) {
+            try {
+                $bindings->bind($installed['installationId'], $this->userId, 'imageGenerator', $definitionId, $connection);
+                $this->fail('a malformed binding must refuse');
+            } catch (\RuntimeException $e) {
+                $this->assertStringContainsString('invalid_binding', $e->getMessage());
+            }
+        }
+
+        // Bind, re-bind (idempotent per slot), then unbind.
+        $bindings->bind($installed['installationId'], $this->userId, 'imageGenerator', 'openai-api', 'conn-1');
+        $bindings->bind($installed['installationId'], $this->userId, 'imageGenerator', 'openai-api', 'conn-2');
+        $slots = $bindings->listSlots($installed['installationId'], $this->userId);
+        $this->assertSame('conn-2', $slots[0]['binding']['connection'], 're-binding replaces, never duplicates');
+        $count = self::$pdo->prepare('SELECT COUNT(*) FROM package_service_bindings WHERE installation_id = ?');
+        $count->execute([$installed['installationId']]);
+        $this->assertSame(1, (int) $count->fetchColumn());
+
+        $this->assertTrue($bindings->unbind($installed['installationId'], $this->userId, 'imageGenerator'));
+        $this->assertFalse($bindings->unbind($installed['installationId'], $this->userId, 'imageGenerator'));
+        $this->assertNull($bindings->listSlots($installed['installationId'], 'someone-else'), 'foreign installations are invisible');
+
+        // Uninstalling takes the bindings with it (FK cascade) — no orphan grants survive.
+        $bindings->bind($installed['installationId'], $this->userId, 'imageGenerator', 'openai-api', 'conn-1');
+        self::$pkgV2->uninstall($installed['installationId'], $this->userId);
+        $count->execute([$installed['installationId']]);
+        $this->assertSame(0, (int) $count->fetchColumn());
+    }
+
+    public function testServiceActionNodeCompilesOnlyOnceItsSlotIsBound(): void
+    {
+        $installed = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        $bindings = $this->bindingService();
+        $flowService = new \FormLogic\Services\FlowService(self::$mysql);
+        $flow = $flowService->createWorkspaceFlow($this->userId, [
+            'name' => 'Service action flow',
+            'flowJson' => [
+                'nodes' => [
+                    ['id' => 'in', 'type' => 'input', 'data' => [], 'position' => ['x' => 0, 'y' => 0]],
+                    ['id' => 'gen', 'type' => 'com.acme.mediatools.generate-image', 'data' => ['prompt' => 'a cat'], 'position' => ['x' => 200, 'y' => 0]],
+                ],
+                'edges' => [['id' => 'e1', 'source' => 'in', 'target' => 'gen']],
+            ],
+        ]);
+        $controller = new \FormLogic\Controllers\FlowCompileController($flowService, self::$pkgV2, $bindings);
+        $compile = function () use ($controller, $flow): array {
+            $req = $this->createMock(ServerRequestInterface::class);
+            $req->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
+            $out = $controller->compile($req, new SlimResponse(), ['flowId' => (string) $flow['id']]);
+            return json_decode((string) $out->getBody(), true);
+        };
+
+        // Unbound: fail closed at COMPILE, naming the slot — never a run that must fail.
+        $before = $compile();
+        $this->assertFalse($before['ok']);
+        $this->assertSame('binding_unresolved', $before['diagnostics'][0]['code']);
+        $this->assertStringContainsString('imageGenerator', $before['diagnostics'][0]['message']);
+        $this->assertNull($before['ir']);
+
+        // Bound: lowers to the canonical service_action the runtimes already execute.
+        $bindings->bind($installed['installationId'], $this->userId, 'imageGenerator', 'openai-api', 'provider-profile-7');
+        $after = $compile();
+        $this->assertTrue($after['ok'], json_encode($after['diagnostics']));
+        $node = $after['ir']['nodes'][1];
+        $this->assertSame('service_action', $node['type']);
+        $this->assertSame('openai-api', $node['data']['definitionId']);
+        $this->assertSame('generate-image', $node['data']['actionId'], 'actionId comes from the definition, not the binding');
+        $this->assertSame('provider-profile-7', $node['data']['connection']);
+        $this->assertSame(['prompt' => 'a cat'], $node['data']['input'], "the node's own configuration is the action input");
+
+        // The lock pins what it was compiled against — a later re-bind is a DIFFERENT lock,
+        // never a silent swap under an already-published revision.
+        $lock = $after['locks'][0];
+        $this->assertSame('service-action', $lock['handlerKind']);
+        $this->assertSame('service_action', $lock['loweredTo']);
+        $this->assertSame('imageGenerator', $lock['bindingSlot']);
+        $this->assertSame('openai-api', $lock['boundDefinitionId']);
+        $this->assertSame('generate-image', $lock['boundActionId']);
+
+        // Removing the binding refuses again (no stale capability).
+        $bindings->unbind($installed['installationId'], $this->userId, 'imageGenerator');
+        $this->assertFalse($compile()['ok']);
+
+        self::$pdo->prepare('DELETE FROM flow_definitions WHERE id = ?')->execute([(string) $flow['id']]);
+    }
+
+    public function testServiceBindingHttpLaneGatesSlotsAndOwnership(): void
+    {
+        $installed = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        $controller = new PackController(self::$packs, null, null, self::$signing, null, self::$pkgV2, $this->bindingService());
+        $call = function (string $method, array $args, array $body = []) use ($controller) {
+            $req = $this->createMock(ServerRequestInterface::class);
+            $req->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
+            $req->method('getParsedBody')->willReturn($body);
+            $out = $controller->$method($req, new SlimResponse(), $args);
+            return ['status' => $out->getStatusCode(), 'body' => json_decode((string) $out->getBody(), true) ?: []];
+        };
+
+        $list = $call('listServiceBindings', ['id' => $installed['installationId']]);
+        $this->assertSame(200, $list['status']);
+        $this->assertSame('imageGenerator', $list['body']['slots'][0]['slot']);
+        $this->assertNull($list['body']['slots'][0]['binding']);
+
+        $bad = $call('putServiceBinding', ['id' => $installed['installationId'], 'slot' => 'nope'], ['definitionId' => 'openai-api', 'connection' => 'c1']);
+        $this->assertSame(400, $bad['status']);
+        $this->assertSame('unknown_slot', $bad['body']['code']);
+
+        $ok = $call('putServiceBinding', ['id' => $installed['installationId'], 'slot' => 'imageGenerator'], ['definitionId' => 'openai-api', 'connection' => 'c1']);
+        $this->assertSame(200, $ok['status']);
+        $this->assertSame('c1', $call('listServiceBindings', ['id' => $installed['installationId']])['body']['slots'][0]['binding']['connection']);
+
+        $this->assertSame(200, $call('deleteServiceBinding', ['id' => $installed['installationId'], 'slot' => 'imageGenerator'])['status']);
+        $this->assertSame(404, $call('deleteServiceBinding', ['id' => $installed['installationId'], 'slot' => 'imageGenerator'])['status']);
+        // Foreign/missing installation ids are identical 404s on every verb.
+        $this->assertSame(404, $call('listServiceBindings', ['id' => 'nope'])['status']);
+        $this->assertSame(404, $call('putServiceBinding', ['id' => 'nope', 'slot' => 'imageGenerator'], ['definitionId' => 'openai-api', 'connection' => 'c1'])['status']);
+    }
+
     public function testFlatImportLaneRedirectsV2Aggregates(): void
     {
         $req = $this->createMock(ServerRequestInterface::class);

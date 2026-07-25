@@ -8,6 +8,7 @@ use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Services\FlowService;
 use FormLogic\Services\Flows\FlowCompiler;
 use FormLogic\Services\Packages\PackageV2InstallService;
+use FormLogic\Services\Packages\ServiceBindingService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -24,6 +25,7 @@ class FlowCompileController
     public function __construct(
         private FlowService $flowService,
         private ?PackageV2InstallService $packageV2 = null,
+        private ?ServiceBindingService $serviceBindings = null,
     ) {
     }
 
@@ -52,13 +54,15 @@ class FlowCompileController
                         'digest' => $entry['digest'],
                         'version' => $entry['version'],
                         'packageId' => $entry['packageId'],
+                        'installationId' => $entry['installationId'],
                     ];
                 }
             }
         }
+        $bindings = $this->serviceBindings?->resolvedForOwner($userId) ?? [];
 
         $graph = is_array($flow['flowJson'] ?? null) ? $flow['flowJson'] : ['nodes' => [], 'edges' => []];
-        $result = FlowCompiler::compile($graph, $installedByType);
+        $result = FlowCompiler::compile($graph, $installedByType, $bindings);
         return $this->jsonResponse($response, [
             'ok' => $result['ok'],
             'irVersion' => FlowCompiler::IR_VERSION,

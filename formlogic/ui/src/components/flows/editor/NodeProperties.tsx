@@ -33,10 +33,9 @@ import { defaultSourceLabel, getAiPreferences } from '../../../client-runtime/fl
 import { buildAiProviderOptions } from './aiProviderOptions';
 import {
   desktopClient,
-  type DesktopServiceCatalog,
-  type DesktopServiceDefinitionAction,
   type DesktopServiceSnapshot,
 } from '../../../client-runtime/desktop/desktopClient';
+import { catalogAction, useServiceCatalog } from '../../../hooks/useServiceCatalog';
 import { mergeKnownConnectorCommands } from '../flowEventCatalog';
 import { useAuthStore } from '../../../stores/authStore';
 
@@ -725,46 +724,8 @@ function DesktopServicePickerField({
 
 // ── service_action pickers (§6.4 consumer #2: the catalog's typed action schemas) ─────
 
-/** One session-cached Desktop v3 catalog fetch shared by every service_action field. */
-let serviceCatalogPromise: Promise<DesktopServiceCatalog | null> | null = null;
-function fetchServiceCatalogOnce(): Promise<DesktopServiceCatalog | null> {
-  if (!serviceCatalogPromise) {
-    serviceCatalogPromise = desktopClient.servicePlatform.catalog().then(
-      (res) => (res.ok ? res.data : null),
-      () => null,
-    );
-    // A transient failure (Desktop not paired yet) must not poison the session.
-    void serviceCatalogPromise.then((catalog) => {
-      if (catalog === null) serviceCatalogPromise = null;
-    });
-  }
-  return serviceCatalogPromise;
-}
-
-/** undefined = loading, null = no paired Desktop / catalog unavailable. */
-function useServiceCatalog(): DesktopServiceCatalog | null | undefined {
-  const [catalog, setCatalog] = useState<DesktopServiceCatalog | null | undefined>(undefined);
-  useEffect(() => {
-    let cancelled = false;
-    void fetchServiceCatalogOnce().then((next) => {
-      if (!cancelled) setCatalog(next);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  return catalog;
-}
-
-function catalogAction(
-  catalog: DesktopServiceCatalog | null | undefined,
-  definitionId: unknown,
-  actionId: unknown,
-): DesktopServiceDefinitionAction | null {
-  if (!catalog || typeof definitionId !== 'string' || typeof actionId !== 'string') return null;
-  const definition = catalog.definitions.find((d) => d.id === definitionId);
-  return definition?.actions.find((a) => a.id === actionId) ?? null;
-}
+// The catalog fetch/hook live in hooks/useServiceCatalog.ts — the SRV-405 binding UI on an
+// installed extension needs exactly the same session-cached catalog.
 
 /** ServiceDefinition picker over the paired Desktop's v3 catalog; free text otherwise. */
 function ServiceDefinitionPickerField({

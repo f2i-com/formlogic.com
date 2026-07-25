@@ -1440,6 +1440,29 @@ CREATE TABLE `package_install_plans` (
   CONSTRAINT `package_install_plans_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `package_service_bindings`
+--
+
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `package_service_bindings` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `installation_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `slot` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `definition_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `connection` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_psb_slot` (`installation_id`,`slot`),
+  KEY `idx_psb_user` (`user_id`),
+  CONSTRAINT `package_service_bindings_ibfk_1` FOREIGN KEY (`installation_id`) REFERENCES `package_installations` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `package_service_bindings_ibfk_2` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `package_dependency_edges` (

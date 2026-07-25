@@ -178,6 +178,45 @@ move to. This is a **management** surface: it stays readable even when the
 
 The Packs UI renders this under **Details** on each installed extension.
 
+## Service slots and bindings
+
+A `service-action` node never names a concrete service. It names a **slot** plus the action
+it needs:
+
+```jsonc
+"handler": { "kind": "service-action", "bindingSlot": "imageGenerator", "requiredAction": "generate-image" }
+```
+
+and the package declares that slot in `requirements.services[]`. The slot is your portable
+request; the **binding** is the installing owner's answer — which service definition fills
+it, on which connection:
+
+```
+GET    /api/package-installations/{id}/service-bindings          → { slots: [{ slot, required, requiredActions, binding }] }
+PUT    /api/package-installations/{id}/service-bindings/{slot}   { definitionId, connection }
+DELETE /api/package-installations/{id}/service-bindings/{slot}
+```
+
+Rules:
+
+- Only a **declared** slot can be bound (`unknown_slot`) — a binding can never grant reach
+  the install review did not show.
+- `connection` is an opaque Desktop provider-profile id. **Packages never carry credentials**,
+  and this API never sees one.
+- While a slot is unbound, every node using it fails compilation with `binding_unresolved`
+  naming the slot. Fail-closed by design: a run that could only fail is never produced.
+- Once bound, the compiler lowers the node to the canonical `service_action` — `definitionId`
+  and `connection` from the binding, `actionId` from the definition's `requiredAction`, and
+  the node's own configuration as the action input. **Author `configurationSchema` to match
+  the action's `inputSchema`**; the host re-validates against the action's declared schema at
+  invocation, so a mismatch fails typed (`input_invalid`) rather than sending a wrong shape.
+- The binding is pinned into the revision's definition lock, so re-binding later is visible
+  as a different lock rather than a silent swap under an already-published flow.
+- Uninstalling removes the bindings with the installation — no orphaned grants survive.
+
+The Packs UI renders slots under **Details** on the installed extension, offering only
+services whose actions satisfy the slot.
+
 ## Uninstalling
 
 - Removes the package's contributed node definitions. Flows already using them keep
@@ -197,10 +236,10 @@ digest, lowering target) to each immutable flow revision:
 
 | Surface | core-preset nodes | service-action nodes |
 |---|---|---|
-| Flow editor | Full: palette (Installed extensions), insert, configure, lint | Visible, disabled ("not yet runnable") |
-| FormLogic Cloud runs | ✅ execute the revision's compiled IR | Typed refusal (`binding_unresolved` at compile; `cloud_unsupported_node` at preflight) |
-| Browser runs (live, test, flow_call children) | ✅ fetch + execute the compiled IR (`POST /api/flows/{id}/compile`) | Typed refusal |
-| FormLogic Desktop runs | ✅ the flow snapshot delivers the compiled IR (requires an up-to-date Desktop build; older builds fail the node typed as unknown) | Not yet |
+| Flow editor | Full: palette (Installed extensions), insert, configure, lint | Full — the palette entry notes that its slot must be bound |
+| FormLogic Cloud runs | ✅ execute the revision's compiled IR | Compiles once bound, but Cloud cannot execute `service_action` (`cloud_unsupported_node` at preflight) |
+| Browser runs (live, test, flow_call children) | ✅ fetch + execute the compiled IR (`POST /api/flows/{id}/compile`) | ✅ once the slot is bound — via the paired same-machine Desktop |
+| FormLogic Desktop runs | ✅ the flow snapshot delivers the compiled IR (requires an up-to-date Desktop build; older builds fail the node typed as unknown) | ✅ once the slot is bound — the Desktop's ServiceActionHost executes it |
 
 Operational note: the whole v2 plane sits behind the `APPLICATION_PACKAGES_V2` kill switch
 (default on). Setting it to `false` disables installs and definition serving — installed

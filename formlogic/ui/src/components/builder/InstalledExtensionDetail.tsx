@@ -3,6 +3,7 @@ import { AlertTriangle, Loader2, PackageCheck, ArrowDownToLine, ArrowUpFromLine,
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { api, type PackageInstallationDetail } from '../../lib/api';
+import { ServiceSlotBindings } from './ServiceSlotBindings';
 
 /**
  * ADR-010 §13.1 / MKT-605: the management detail of ONE installed Application Package v2.
@@ -104,6 +105,9 @@ export function InstalledExtensionDetail({ installationId }: { installationId: s
           </ul>
         )}
       </section>
+
+      {/* SRV-405: the slots this package declares, and which service fills each. */}
+      <ServiceSlotBindings installationId={detail.id} />
 
       {detail.dependencies.length > 0 && (
         <section>

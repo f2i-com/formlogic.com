@@ -16,9 +16,13 @@ namespace FormLogic\Services\Flows;
  *
  * v1 lowering table (the install-time handler allowlist):
  *   core-preset    → the referenced core type, defaults merged UNDER the node's own data.
- *   service-action → BLOCKING binding_unresolved diagnostic — service bindings (SRV-405)
- *                    are not available yet, and pretending otherwise would fabricate a run
- *                    that must fail. Fail closed at compile, not at run.
+ *   service-action → the canonical `service_action` core node, using the owner's BINDING for
+ *                    the definition's declared slot (SRV-405): the binding supplies
+ *                    definitionId + connection, the definition supplies actionId
+ *                    (handler.requiredAction), and the node's own configuration becomes the
+ *                    action input. An UNBOUND slot stays a blocking binding_unresolved
+ *                    diagnostic — refusing at compile is honest; fabricating a run that must
+ *                    fail is not.
  *
  * This slice is READ-ONLY scaffolding: nothing executes the produced IR yet (runners still
  * execute stored graphs, where contributed types fail as unknown). Wiring compiled IR into
@@ -35,8 +39,10 @@ class FlowCompiler
 
     /**
      * @param array<string,mixed> $graph Stored WorkflowGraph ({ nodes: [], edges: [] }).
-     * @param array<string,array{definition:array<string,mixed>,digest:string,version:string,packageId:string}> $installedByType
+     * @param array<string,array{definition:array<string,mixed>,digest:string,version:string,packageId:string,installationId?:string}> $installedByType
      *        The owner's ENABLED installed definitions, keyed by contributed type.
+     * @param array<string,array{definitionId:string,connection:string}> $bindings
+     *        SRV-405 service bindings keyed "<installationId>|<slot>" (ServiceBindingService).
      * @return array{
      *   ok: bool,
      *   ir: array<string,mixed>|null,
@@ -45,7 +51,7 @@ class FlowCompiler
      *   diagnostics: list<array{severity:string,code:string,nodeId:string|null,message:string}>
      * }
      */
-    public static function compile(array $graph, array $installedByType): array
+    public static function compile(array $graph, array $installedByType, array $bindings = []): array
     {
         $diagnostics = [];
         $locks = [];
@@ -110,14 +116,53 @@ class FlowCompiler
             }
 
             if ($kind === 'service-action') {
-                // Fail closed AT COMPILE: no ServiceBinding subsystem exists yet, so a run
-                // could never succeed — refusing here is honest and actionable.
-                $diagnostics[] = self::diag(
-                    'error',
-                    'binding_unresolved',
-                    $nodeId,
-                    "node type \"$type\" invokes a service action, and service bindings are not available yet — this node cannot run in this FormLogic version"
-                );
+                $slot = is_string($handler['bindingSlot'] ?? null) ? $handler['bindingSlot'] : '';
+                $requiredAction = is_string($handler['requiredAction'] ?? null) ? $handler['requiredAction'] : '';
+                $installationId = is_string($entry['installationId'] ?? null) ? $entry['installationId'] : '';
+                if ($slot === '' || $requiredAction === '') {
+                    $diagnostics[] = self::diag('error', 'handler_not_supported', $nodeId, "definition \"$type\" carries an incomplete service-action handler");
+                    continue;
+                }
+                $binding = $installationId !== '' ? ($bindings[$installationId . '|' . $slot] ?? null) : null;
+                if ($binding === null) {
+                    // Fail closed AT COMPILE: without a binding there is no service to call,
+                    // so a run could only fail — refusing here is honest and actionable.
+                    $diagnostics[] = self::diag(
+                        'error',
+                        'binding_unresolved',
+                        $nodeId,
+                        "node type \"$type\" needs the \"$slot\" service slot bound — choose a service for it on the extension's Details panel"
+                    );
+                    continue;
+                }
+                if (!self::requiredConfigPresent($config, $data, $missing)) {
+                    $diagnostics[] = self::diag('error', 'missing_config', $nodeId, "required configuration missing: " . implode(', ', $missing));
+                    continue;
+                }
+                // The contributed node's own configuration IS the action input (authors write
+                // configurationSchema to match the action's inputSchema); the host re-validates
+                // it against the action's declared schema at invocation, so a mismatch fails
+                // typed (input_invalid) rather than silently sending the wrong shape.
+                $lowered = $node;
+                $lowered['type'] = 'service_action';
+                $loweredData = [
+                    'definitionId' => $binding['definitionId'],
+                    'actionId' => $requiredAction,
+                    'connection' => $binding['connection'],
+                    'input' => $data,
+                ];
+                if (isset($data['timeoutMs']) && is_int($data['timeoutMs'])) {
+                    $loweredData['timeoutMs'] = $data['timeoutMs'];
+                }
+                $lowered['data'] = $loweredData;
+                $loweredNodes[] = $lowered;
+                $lock = self::lock($nodeId, $type, $entry, 'service-action', 'service_action');
+                // The binding is part of what this revision was compiled against: pinning it
+                // makes a later re-binding visible as a different lock, never a silent swap.
+                $lock['bindingSlot'] = $slot;
+                $lock['boundDefinitionId'] = $binding['definitionId'];
+                $lock['boundActionId'] = $requiredAction;
+                $locks[] = $lock;
                 continue;
             }
 

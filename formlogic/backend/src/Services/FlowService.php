@@ -60,6 +60,7 @@ class FlowService
     private ?FormEncryptionService $formEncryption = null;
     /** Lazily built for compile-at-mint (RUN-301); same connection, stateless. */
     private ?\FormLogic\Services\Packages\PackageV2InstallService $packageV2 = null;
+    private ?\FormLogic\Services\Packages\ServiceBindingService $serviceBindings = null;
 
     public function __construct(MySQLConnection $mysql)
     {
@@ -951,6 +952,7 @@ class FlowService
                 break;
             }
         }
+        $bindings = [];
         if ($hasContributed) {
             try {
                 $this->packageV2 ??= new \FormLogic\Services\Packages\PackageV2InstallService($this->mysqlConnection);
@@ -961,14 +963,20 @@ class FlowService
                             'digest' => $entry['digest'],
                             'version' => $entry['version'],
                             'packageId' => $entry['packageId'],
+                            'installationId' => $entry['installationId'],
                         ];
                     }
                 }
+                // SRV-405: the owner's slot bindings decide whether service-action nodes lower
+                // or stay refused. Pinned into the revision's locks, so a later re-binding is
+                // visible as a different lock rather than a silent swap under a live flow.
+                $this->serviceBindings ??= new \FormLogic\Services\Packages\ServiceBindingService($this->mysqlConnection);
+                $bindings = $this->serviceBindings->resolvedForOwner($ownerUserId);
             } catch (\Throwable $e) {
                 return [null, null, null];
             }
         }
-        $result = \FormLogic\Services\Flows\FlowCompiler::compile($decodedGraph, $installedByType);
+        $result = \FormLogic\Services\Flows\FlowCompiler::compile($decodedGraph, $installedByType, $bindings);
         if (!$result['ok']) {
             return [null, null, null];
         }

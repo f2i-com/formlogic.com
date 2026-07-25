@@ -575,6 +575,28 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // Service binding slots (ADR-010 / SRV-405): a contributed service-action node names a
+        // SLOT, never a concrete service. This is the owner's answer to which service + which
+        // connection fills that slot; the compiler reads it to lower the node to a canonical
+        // service_action and refuses (binding_unresolved) while the slot is unbound. Secrets
+        // stay external — `connection` is an opaque Desktop provider-profile id.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS package_service_bindings (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                installation_id VARCHAR(36) NOT NULL,
+                slot VARCHAR(64) NOT NULL,
+                definition_id VARCHAR(128) NOT NULL,
+                `connection` VARCHAR(190) NOT NULL,
+                created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uniq_psb_slot (installation_id, slot),
+                INDEX idx_psb_user (user_id),
+                FOREIGN KEY (installation_id) REFERENCES package_installations(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Pack catalog — marketplace registry
         // item_type / trust_level (spec §30) model a multi-artifact marketplace: for now every listing is
         // an 'application_package' with server-derived trust; the other item types are reserved (no runtime

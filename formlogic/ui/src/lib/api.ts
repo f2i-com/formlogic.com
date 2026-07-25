@@ -3774,6 +3774,31 @@ class ApiClient {
     return this.request(`/package-installations/${installationId}`);
   }
 
+  /**
+   * SRV-405: the service slots an installed package DECLARES, each with its current binding.
+   * A contributed service-action node stays refused at compile until its slot is bound.
+   */
+  async getPackageServiceBindings(installationId: string): Promise<ApiResponse<{ slots: PackageServiceSlot[] }>> {
+    return this.request(`/package-installations/${installationId}/service-bindings`);
+  }
+
+  /** SRV-405: fill a declared slot with a service definition on a connection. */
+  async bindPackageServiceSlot(
+    installationId: string,
+    slot: string,
+    binding: { definitionId: string; connection: string },
+  ): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/package-installations/${installationId}/service-bindings/${encodeURIComponent(slot)}`, {
+      method: 'PUT',
+      body: JSON.stringify(binding),
+    });
+  }
+
+  /** SRV-405: clear a slot's binding (its nodes go back to refusing at compile). */
+  async unbindPackageServiceSlot(installationId: string, slot: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/package-installations/${installationId}/service-bindings/${encodeURIComponent(slot)}`, { method: 'DELETE' });
+  }
+
   /** Export a whole app (forms + screens + scripts + roles) as a self-contained pack. */
   async exportApp(appId: string): Promise<ApiResponse<{ pack: PackData }>> {
     return this.request(`/apps/${appId}/export`);
@@ -4771,6 +4796,14 @@ export interface PackageInstallationDetail {
   dependencies: Array<{ packageId: string; range: string; resolvedVersion: string; required: boolean }>;
   /** What requires this package (inbound edges) — required ones block uninstall. */
   dependents: Array<{ packageId: string; displayName: string; version: string; range: string; required: boolean }>;
+}
+
+/** SRV-405: one service slot an installed package declares, plus the owner's binding. */
+export interface PackageServiceSlot {
+  slot: string;
+  required: boolean;
+  requiredActions: string[];
+  binding: { definitionId: string; connection: string; boundAt: string } | null;
 }
 
 /** ADR-010: one installed contributed flow-node definition, with its provenance. */

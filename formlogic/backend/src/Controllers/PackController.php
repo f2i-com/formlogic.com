@@ -24,7 +24,7 @@ class PackController
     private ?SigningService $signingService;
     private IpResolver $ipResolver;
 
-    public function __construct(PackService $packService, ?AuditService $auditService = null, ?PlanService $planService = null, ?SigningService $signingService = null, private ?\FormLogic\Services\TrashService $trashService = null, private ?\FormLogic\Services\Packages\PackageV2InstallService $packageV2 = null)
+    public function __construct(PackService $packService, ?AuditService $auditService = null, ?PlanService $planService = null, ?SigningService $signingService = null, private ?\FormLogic\Services\TrashService $trashService = null, private ?\FormLogic\Services\Packages\PackageV2InstallService $packageV2 = null, private ?\FormLogic\Services\Packages\ServiceBindingService $serviceBindings = null)
     {
         $this->packService = $packService;
         $this->auditService = $auditService;
@@ -844,6 +844,68 @@ class PackController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Installation not found'], 404);
         }
         return $this->jsonResponse($response, ['installation' => $installation]);
+    }
+
+    /**
+     * GET /api/package-installations/{id}/service-bindings — SRV-405.
+     * The slots this package DECLARES, each with its current binding (null = unbound).
+     */
+    public function listServiceBindings(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        $slots = $this->serviceBindings?->listSlots((string) ($args['id'] ?? ''), (string) $userId);
+        if ($slots === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Installation not found'], 404);
+        }
+        return $this->jsonResponse($response, ['slots' => $slots]);
+    }
+
+    /**
+     * PUT /api/package-installations/{id}/service-bindings/{slot} — SRV-405.
+     * Bind a DECLARED slot to a service definition on a connection. Binding an undeclared slot
+     * is refused: it would grant reach the install review never showed.
+     */
+    public function putServiceBinding(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        if ($this->serviceBindings === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Installation not found'], 404);
+        }
+        $body = $request->getParsedBody();
+        $body = is_array($body) ? $body : [];
+        $definitionId = is_string($body['definitionId'] ?? null) ? $body['definitionId'] : '';
+        $connection = is_string($body['connection'] ?? null) ? $body['connection'] : '';
+        try {
+            $this->serviceBindings->bind((string) ($args['id'] ?? ''), (string) $userId, (string) ($args['slot'] ?? ''), $definitionId, $connection);
+        } catch (\RuntimeException $e) {
+            $message = $e->getMessage();
+            if (str_starts_with($message, 'not_installed')) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Installation not found'], 404);
+            }
+            $code = str_starts_with($message, 'unknown_slot') ? 'unknown_slot' : 'invalid_binding';
+            return $this->jsonResponse($response, ['error' => true, 'code' => $code, 'message' => $message], 400);
+        }
+        return $this->jsonResponse($response, ['success' => true]);
+    }
+
+    /** DELETE /api/package-installations/{id}/service-bindings/{slot} — SRV-405. */
+    public function deleteServiceBinding(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        $removed = $this->serviceBindings?->unbind((string) ($args['id'] ?? ''), (string) $userId, (string) ($args['slot'] ?? '')) ?? false;
+        if (!$removed) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Binding not found'], 404);
+        }
+        return $this->jsonResponse($response, ['success' => true]);
     }
 
     /**

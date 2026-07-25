@@ -493,6 +493,13 @@ $container->set(\FormLogic\Services\Packages\PackageV2InstallService::class, fun
     return new \FormLogic\Services\Packages\PackageV2InstallService($c->get(MySQLConnection::class));
 });
 
+// Service binding slots (ADR-010 / SRV-405): the owner's answer to "which service, on which
+// connection, fills this package's declared slot" — the compiler's input for lowering
+// contributed service-action nodes.
+$container->set(\FormLogic\Services\Packages\ServiceBindingService::class, function (Container $c) {
+    return new \FormLogic\Services\Packages\ServiceBindingService($c->get(MySQLConnection::class));
+});
+
 // Package install plans (ADR-010 / PKG-106): owner-bound, expiring, single-use, digest-bound
 // review units for the v2 lane — propose stores the exact reviewed bytes; confirm installs them.
 $container->set(\FormLogic\Services\Packages\InstallPlanService::class, function (Container $c) {
@@ -517,7 +524,9 @@ $container->set(PackController::class, function (Container $c) {
         // Uninstall pre-captures record-bearing pack forms into the recycle bin.
         $c->get(\FormLogic\Services\TrashService::class),
         // Application Package v2 (ADR-010): node-only aggregate install lane.
-        $c->get(\FormLogic\Services\Packages\PackageV2InstallService::class)
+        $c->get(\FormLogic\Services\Packages\PackageV2InstallService::class),
+        // SRV-405: service binding slots (which service fills a package's declared slot).
+        $c->get(\FormLogic\Services\Packages\ServiceBindingService::class)
     );
 });
 
@@ -878,7 +887,8 @@ $container->set(\FormLogic\Controllers\FlowRunController::class, function (Conta
 $container->set(\FormLogic\Controllers\FlowCompileController::class, function (Container $c) {
     return new \FormLogic\Controllers\FlowCompileController(
         $c->get(\FormLogic\Services\FlowService::class),
-        $c->get(\FormLogic\Services\Packages\PackageV2InstallService::class)
+        $c->get(\FormLogic\Services\Packages\PackageV2InstallService::class),
+        $c->get(\FormLogic\Services\Packages\ServiceBindingService::class)
     );
 });
 // Per-user AI preferences (plan Phase 2): AI source + desktop provider/model + tool mode.
@@ -2058,6 +2068,19 @@ $app->post('/api/packages/install-plans/{id}/cancel', function ($request, $respo
 // Management surface — stays available while the REL-705 kill switch is off.
 $app->get('/api/package-installations/{id}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(PackController::class)->getPackageInstallation($request, $response, $getArgs($request));
+})->add($authRequired);
+
+// Service binding slots (SRV-405): a contributed service-action node names a SLOT; these
+// routes are the owner's answer to which service + connection fills it. The compiler refuses
+// (binding_unresolved) while a slot is unbound, so nothing runs on a guess.
+$app->get('/api/package-installations/{id}/service-bindings', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(PackController::class)->listServiceBindings($request, $response, $getArgs($request));
+})->add($authRequired);
+$app->put('/api/package-installations/{id}/service-bindings/{slot}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(PackController::class)->putServiceBinding($request, $response, $getArgs($request));
+})->add($authRequired);
+$app->delete('/api/package-installations/{id}/service-bindings/{slot}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(PackController::class)->deleteServiceBinding($request, $response, $getArgs($request));
 })->add($authRequired);
 
 // Bundled sample apps ("Try a sample app")
