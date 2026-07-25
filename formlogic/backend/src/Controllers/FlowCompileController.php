@@ -70,6 +70,8 @@ class FlowCompileController
             'ir' => $result['ir'],
             'locks' => $result['locks'],
             'diagnostics' => $result['diagnostics'],
+            // RUN-304: host-derived — which surfaces can run this flow, and what stops the rest.
+            'availability' => $result['availability'] ?? ['surfaces' => [], 'unsupported' => []],
         ]);
     }
 }

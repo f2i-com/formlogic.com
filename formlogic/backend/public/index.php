@@ -513,7 +513,9 @@ $container->set(\FormLogic\Controllers\PackageInstallPlanController::class, func
         $c->get(\FormLogic\Services\Packages\InstallPlanService::class),
         $c->get(\FormLogic\Services\SigningService::class),
         // ADR-010 archive lane: propose accepts a multipart .formlogic upload too.
-        $c->get(PackService::class)
+        $c->get(PackService::class),
+        // OBS-702: the v2 install/update lane joins the audit trail.
+        $c->get(AuditService::class)
     );
 });
 
@@ -2169,12 +2171,14 @@ $app->post('/api/packs/catalog/upload', function ($request, $response) use ($con
 })->add($authRequired);
 
 $app->post('/api/packs/catalog/seed', function ($request, $response) use ($container) {
-    // Any authenticated user may trigger the one-time bootstrap so a brand-new
+    // Any authenticated user may TRIGGER the one-time bootstrap so a brand-new
     // tenant whose first user happens to be a non-owner doesn't get a
     // permanently empty marketplace. The controller is idempotent (it only seeds
     // when the catalog is empty), and the official packs are attributed to the
     // platform owner (first registered user) regardless of who triggers it, so
     // a non-owner can't end up owning/editing the seeded packs.
+    // MKT-602: the CONTENT comes from the server's own resources/marketplace-packs —
+    // the request body is ignored, so triggering a bootstrap cannot define one.
     $userId = $request->getAttribute('userId');
     if (!$userId) {
         $response->getBody()->write(json_encode(['error' => true, 'message' => 'Authentication required']));

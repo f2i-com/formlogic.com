@@ -48,7 +48,8 @@ class FlowCompiler
      *   ir: array<string,mixed>|null,
      *   irDigest: string|null,
      *   locks: list<array<string,mixed>>,
-     *   diagnostics: list<array{severity:string,code:string,nodeId:string|null,message:string}>
+     *   diagnostics: list<array{severity:string,code:string,nodeId:string|null,message:string}>,
+     *   availability: array{surfaces:list<string>,unsupported:array<string,list<string>>}
      * }
      */
     public static function compile(array $graph, array $installedByType, array $bindings = []): array
@@ -171,7 +172,21 @@ class FlowCompiler
 
         $ok = !self::hasErrors($diagnostics);
         if (!$ok) {
-            return ['ok' => false, 'ir' => null, 'irDigest' => null, 'locks' => $locks, 'diagnostics' => $diagnostics];
+            // OBS-702: a compile refusal is the most common way an extension "does not work",
+            // and the user only sees it in one editor. Record the FIRST blocking diagnostic —
+            // typed code and node identity, never graph contents.
+            foreach ($diagnostics as $d) {
+                if ($d['severity'] === 'error') {
+                    \FormLogic\Support\PackageTelemetry::emit('flow.compile', [
+                        'outcome' => 'refused',
+                        'code' => $d['code'],
+                        'nodeId' => $d['nodeId'],
+                        'count' => count($diagnostics),
+                    ]);
+                    break;
+                }
+            }
+            return ['ok' => false, 'ir' => null, 'irDigest' => null, 'locks' => $locks, 'diagnostics' => $diagnostics, 'availability' => ['surfaces' => [], 'unsupported' => []]];
         }
 
         $ir = [
@@ -180,13 +195,58 @@ class FlowCompiler
             'nodes' => array_values($loweredNodes),
             'edges' => array_values($edges),
         ];
+        // RUN-304: availability is HOST-DERIVED from what each node actually lowers to — a
+        // package cannot declare its way onto a surface with no handler. Surfaces missing a
+        // handler are reported as INFO, not errors: the flow is valid, it simply cannot run
+        // everywhere, and the author deserves to know that while building rather than from a
+        // failed run. (Cloud still refuses such a flow at preflight, before any credit spend.)
+        $availability = self::deriveAvailability($loweredNodes);
+        foreach ($availability['unsupported'] as $surface => $nodeIds) {
+            $diagnostics[] = self::diag(
+                'info',
+                'surface_unsupported',
+                $nodeIds[0] ?? null,
+                sprintf(
+                    '%d node(s) have no %s handler — this flow cannot run on %s',
+                    count($nodeIds),
+                    $surface,
+                    $surface
+                )
+            );
+        }
         return [
             'ok' => true,
             'ir' => $ir,
             'irDigest' => hash('sha256', (string) json_encode($ir, JSON_UNESCAPED_SLASHES)),
             'locks' => $locks,
             'diagnostics' => $diagnostics,
+            'availability' => $availability,
         ];
+    }
+
+    /**
+     * RUN-304: which surfaces can run this whole graph, and which nodes stop the others.
+     *
+     * @param list<array<string,mixed>> $loweredNodes
+     * @return array{surfaces:list<string>,unsupported:array<string,list<string>>}
+     */
+    private static function deriveAvailability(array $loweredNodes): array
+    {
+        $all = [RuntimeSupport::SURFACE_CLOUD, RuntimeSupport::SURFACE_BROWSER, RuntimeSupport::SURFACE_DESKTOP];
+        $unsupported = [];
+        foreach ($loweredNodes as $node) {
+            $type = is_string($node['type'] ?? null) ? $node['type'] : '';
+            $nodeId = is_string($node['id'] ?? null) ? $node['id'] : '';
+            foreach ($all as $surface) {
+                if (!RuntimeSupport::supports($surface, $type)) {
+                    $unsupported[$surface][] = $nodeId;
+                }
+            }
+        }
+        // A surface survives only if EVERY node in the graph has a handler there.
+        $surfaces = array_values(array_filter($all, static fn (string $s): bool => !isset($unsupported[$s])));
+        ksort($unsupported);
+        return ['surfaces' => $surfaces, 'unsupported' => $unsupported];
     }
 
     /**

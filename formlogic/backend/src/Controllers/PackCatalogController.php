@@ -413,6 +413,32 @@ class PackCatalogController
      * POST /api/packs/catalog/seed
      * Seed official packs (admin only).
      */
+    /**
+     * The deployment's own official packs, read from `resources/marketplace-packs/*.json`
+     * (emitted from the authored TypeScript catalog). Malformed or non-pack files are skipped
+     * rather than failing the bootstrap; ordering is stable so seeding is deterministic.
+     *
+     * @return list<array<string,mixed>>
+     */
+    private function loadOfficialPacks(): array
+    {
+        $dir = dirname(__DIR__, 2) . '/resources/marketplace-packs';
+        if (!is_dir($dir)) {
+            return [];
+        }
+        $files = glob($dir . '/*.json') ?: [];
+        sort($files, SORT_STRING);
+        $packs = [];
+        foreach ($files as $file) {
+            $decoded = json_decode((string) file_get_contents($file), true);
+            if (!is_array($decoded) || !is_string($decoded['name'] ?? null) || !is_array($decoded['pack'] ?? null)) {
+                continue;
+            }
+            $packs[] = $decoded;
+        }
+        return $packs;
+    }
+
     public function seed(Request $request, Response $response): Response
     {
         $userId = $request->getAttribute('userId');
@@ -426,11 +452,19 @@ class PackCatalogController
             return $this->jsonResponse($response, ['success' => true, 'seeded' => 0, 'message' => 'Catalog already has packs']);
         }
 
-        $body = $request->getParsedBody();
-        $packsData = $body['packs'] ?? [];
-
-        if (empty($packsData)) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Packs data is required'], 400);
+        // MKT-602: the catalog is seeded from the SERVER'S OWN copy of the official packs
+        // (resources/marketplace-packs, emitted from src/data/packs at build time). The client
+        // used to POST the pack payloads it had bundled, which meant any authenticated user
+        // could define what "official" means on a fresh tenant — content attributed to the
+        // platform owner, chosen by whoever loaded the page first. Request bodies are now
+        // ignored entirely: this endpoint TRIGGERS a bootstrap, it does not supply one.
+        $packsData = $this->loadOfficialPacks();
+        if ($packsData === []) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'no_official_packs',
+                'message' => 'This deployment ships no marketplace packs to seed.',
+            ], 404);
         }
 
         try {

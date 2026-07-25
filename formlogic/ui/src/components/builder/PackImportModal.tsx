@@ -166,38 +166,23 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
       if (result.data?.packs) {
         setCatalogPacks(result.data.packs);
 
-        // Auto-seed official packs when catalog is empty (one-time)
+        // MKT-602: an empty catalog TRIGGERS a server-side bootstrap (once per session). The
+        // client no longer supplies the packs — it used to bundle every pack payload and POST
+        // it, which let whoever opened this modal first decide what "official" meant on a new
+        // deployment. The server seeds from its own copy; we just ask and re-read.
         if (result.data.packs.length === 0 && !searchQuery && !seedAttemptedRef.current) {
           seedAttemptedRef.current = true;
           setSeeding(true);
           try {
-            // Pack payloads are lazy per-pack chunks now — load them all only for this
-            // one-time empty-catalog seeding path.
-            const { loadAllPacks } = await import('../../data/packs');
-            const packCatalog = await loadAllPacks();
-            const seedData = packCatalog.map((entry) => ({
-              name: entry.name,
-              description: entry.description,
-              icon: entry.icon,
-              tags: entry.tags,
-              category: entry.tags[0] === 'finance' ? 'Finance & Compliance'
-                : entry.tags[0] === 'safety' ? 'Safety & Quality'
-                : entry.tags[0] === 'hr' ? 'Human Resources'
-                : entry.tags[0] === 'events' ? 'Event Management'
-                : entry.tags[0] === 'customer-service' ? 'Customer Service'
-                : 'Operations',
-              pack: entry.pack,
-            }));
-            const seedResult = await api.seedPacks(seedData);
+            const seedResult = await api.seedOfficialPacks();
             if (seedResult.data?.success) {
-              // Reload the catalog with seeded packs
               const refreshed = await api.browsePacks({ sort: sortBy, limit: 50 });
               if (refreshed.data?.packs) {
                 setCatalogPacks(refreshed.data.packs);
               }
             }
           } catch {
-            // Seed failed — user just sees empty catalog
+            // Seed failed — the user just sees an empty catalog, which is honest.
           } finally {
             setSeeding(false);
           }

@@ -157,6 +157,22 @@ class PackageV2InstallService
             throw $e;
         }
 
+        // OBS-702: one durable line per install — which package, at what version, from where,
+        // with how much contributed surface. Identifiers and counts only.
+        \FormLogic\Support\PackageTelemetry::emit('package.install', [
+            'packageId' => $packageId,
+            'publisherId' => (string) $meta['publisherId'],
+            'version' => (string) $meta['version'],
+            'installationId' => $installationId,
+            'kind' => (string) $meta['kind'],
+            'source' => $source,
+            'trust' => $trust,
+            'nodeCount' => count($definitionRows),
+            'grantCount' => count($approvedConnectorGrants),
+            'dependencyCount' => count($resolvedDeps),
+            'outcome' => 'installed',
+        ]);
+
         return [
             'installationId' => $installationId,
             'packageId' => $packageId,
@@ -335,6 +351,19 @@ class PackageV2InstallService
             throw $e;
         }
 
+        \FormLogic\Support\PackageTelemetry::emit('package.update', [
+            'packageId' => $packageId,
+            'publisherId' => (string) $meta['publisherId'],
+            'version' => $newVersion,
+            'previousVersion' => $previousVersion,
+            'installationId' => $installationId,
+            'source' => $source,
+            'trust' => $trust,
+            'nodeCount' => count($definitionRows),
+            'grantCount' => count($approvedConnectorGrants),
+            'outcome' => 'updated',
+        ]);
+
         return [
             'installationId' => $installationId,
             'packageId' => $packageId,
@@ -447,6 +476,13 @@ class PackageV2InstallService
 
         $del = $this->mysql->prepare('DELETE FROM package_installations WHERE id = ? AND user_id = ?');
         $del->execute([$installationId, $userId]);
+
+        \FormLogic\Support\PackageTelemetry::emit('package.uninstall', [
+            'packageId' => (string) $row['package_id'],
+            'installationId' => $installationId,
+            'nodeCount' => $nodes,
+            'outcome' => 'uninstalled',
+        ]);
 
         return [
             'packageId' => (string) $row['package_id'],

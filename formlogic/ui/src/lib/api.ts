@@ -3906,11 +3906,12 @@ class ApiClient {
     }
   }
 
-  async seedPacks(packs: Array<{ name: string; description?: string; icon?: string; tags?: string[]; category?: string; pack: PackData }>): Promise<ApiResponse<{ success: boolean; seeded: number }>> {
-    return this.request('/packs/catalog/seed', {
-      method: 'POST',
-      body: JSON.stringify({ packs }),
-    });
+  /**
+   * MKT-602: ask the server to bootstrap an EMPTY marketplace catalog from its own official
+   * packs. Takes no payload by design — the client does not get to say what "official" is.
+   */
+  async seedOfficialPacks(): Promise<ApiResponse<{ success: boolean; seeded: number }>> {
+    return this.request('/packs/catalog/seed', { method: 'POST' });
   }
 
   // Pack Ratings
@@ -4757,6 +4758,15 @@ export interface FlowCompileResult {
   ir: { irVersion: number; compiler: string; nodes: unknown[]; edges: unknown[] } | null;
   locks: Array<Record<string, unknown>>;
   diagnostics: FlowCompileDiagnostic[];
+  /**
+   * RUN-304: host-derived from what each node lowers to — which surfaces can run this flow,
+   * and per unsupported surface, the node ids that stop it. A package's own availability
+   * declaration never appears here; only what the host has handlers for.
+   */
+  availability?: {
+    surfaces: Array<'cloud' | 'browser' | 'desktop'>;
+    unsupported: Record<string, string[]>;
+  };
 }
 
 /** PKG-106: a proposed package install plan — the owner-bound, expiring, digest-bound review. */

@@ -31,6 +31,7 @@ class PackageInstallPlanController
         private InstallPlanService $plans,
         private ?SigningService $signingService = null,
         private ?PackService $packService = null,
+        private ?\FormLogic\Services\AuditService $auditService = null,
     ) {
     }
 
@@ -246,6 +247,26 @@ class PackageInstallPlanController
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to confirm the install plan'], 500);
         }
+
+        // OBS-702: the v2 lane is where packages actually arrive, and it was emitting no audit
+        // record at all while the v1 import lane did. Grants are recorded as the approved LIST
+        // (capability names, not secrets) so a later "who approved this reach?" is answerable.
+        $this->auditService?->log(
+            isset($result['previousVersion']) ? 'package.update' : 'package.install',
+            'package',
+            (string) $result['packageId'],
+            (string) $userId,
+            null,
+            [
+                'installationId' => $result['installationId'],
+                'version' => $result['version'] ?? null,
+                'previousVersion' => $result['previousVersion'] ?? null,
+                'trust' => $plan['trust'],
+                'planId' => $planId,
+                'nodeTypes' => $result['nodeTypes'] ?? [],
+                'approvedConnectorGrants' => $approved,
+            ]
+        );
 
         $payload = [
             'success' => true,

@@ -913,6 +913,20 @@ class PackController
             $code = str_starts_with($message, 'unknown_slot') ? 'unknown_slot' : 'invalid_binding';
             return $this->jsonResponse($response, ['error' => true, 'code' => $code, 'message' => $message], 400);
         }
+        // OBS-702: binding a slot is what makes an extension able to CALL something, so it
+        // belongs in the audit trail beside install. The connection is an opaque profile id.
+        $this->auditService?->log('package.service_binding.set', 'package', (string) ($args['id'] ?? ''), (string) $userId, $this->ipResolver->getClientIp($request), [
+            'slot' => (string) ($args['slot'] ?? ''),
+            'definitionId' => $definitionId,
+            'connection' => $connection,
+        ]);
+        \FormLogic\Support\PackageTelemetry::emit('package.service_binding', [
+            'installationId' => (string) ($args['id'] ?? ''),
+            'slot' => (string) ($args['slot'] ?? ''),
+            'definitionId' => $definitionId,
+            'connection' => $connection,
+            'outcome' => 'bound',
+        ]);
         return $this->jsonResponse($response, ['success' => true]);
     }
 
@@ -927,6 +941,9 @@ class PackController
         if (!$removed) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Binding not found'], 404);
         }
+        $this->auditService?->log('package.service_binding.cleared', 'package', (string) ($args['id'] ?? ''), (string) $userId, $this->ipResolver->getClientIp($request), [
+            'slot' => (string) ($args['slot'] ?? ''),
+        ]);
         return $this->jsonResponse($response, ['success' => true]);
     }
 
