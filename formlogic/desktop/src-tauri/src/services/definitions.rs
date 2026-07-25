@@ -60,6 +60,10 @@ fn is_builtin(id: &str) -> bool {
         .any(|d| d["id"].as_str() == Some(id))
 }
 
+/// A contributed definition is served to the paired website on every catalog fetch, so an
+/// oversized one is a cost paid by every consumer. Definitions are metadata, not payloads.
+const MAX_DEFINITION_BYTES: usize = 64 * 1024;
+
 /// Validate one contributed definition, returning its id.
 ///
 /// This is a STRUCTURAL gate, not the §6.5 value validator: it establishes that the entry is
@@ -69,6 +73,12 @@ fn is_builtin(id: &str) -> bool {
 fn validate(definition: &Value, plugin_id: &str) -> Result<String, String> {
     if definition["schemaVersion"].as_u64() != Some(3) {
         return Err("definition must declare schemaVersion 3".into());
+    }
+    let size = serde_json::to_string(definition).map(|s| s.len()).unwrap_or(usize::MAX);
+    if size > MAX_DEFINITION_BYTES {
+        return Err(format!(
+            "definition is {size} bytes, over the {MAX_DEFINITION_BYTES}-byte limit for a catalog entry"
+        ));
     }
     let id = definition["id"]
         .as_str()
@@ -164,10 +174,26 @@ pub fn remove_plugin(plugin_id: &str) -> usize {
 
 /// The composed catalog: built-ins first (stable order), then contributed ids sorted so the
 /// listing is deterministic for a caller diffing it.
+///
+/// Each contributed entry is stamped with `provider` — the plugin that supplies it. Without
+/// that, a picker offering "Mock Images" alongside "OpenAI API" gives the user no way to tell
+/// a host service from one a plugin installed, which is exactly the sort of thing someone
+/// should know before pointing a flow at it. Built-ins carry no `provider` (the host is the
+/// provider), and the field is stamped by the HOST, never read from the plugin's file — a
+/// definition cannot claim a provenance it does not have.
 pub fn catalog() -> super::platform::ServiceDefinitionCatalog {
     let mut catalog = super::platform::builtin_catalog();
-    let mut contributed: Vec<(String, Value)> =
-        with_read(|map| map.iter().map(|(id, c)| (id.clone(), c.definition.clone())).collect());
+    let mut contributed: Vec<(String, Value)> = with_read(|map| {
+        map.iter()
+            .map(|(id, c)| {
+                let mut definition = c.definition.clone();
+                if let Some(object) = definition.as_object_mut() {
+                    object.insert("provider".into(), Value::String(c.plugin_id.clone()));
+                }
+                (id.clone(), definition)
+            })
+            .collect()
+    });
     contributed.sort_by(|a, b| a.0.cmp(&b.0));
     catalog
         .definitions
@@ -229,7 +255,15 @@ mod tests {
 
         let catalog = catalog();
         assert!(catalog.definitions.iter().any(|d| d["id"] == "openai-api"), "built-ins survive");
-        assert!(catalog.definitions.iter().any(|d| d["id"] == "acme.images"));
+        let contributed = catalog
+            .definitions
+            .iter()
+            .find(|d| d["id"] == "acme.images")
+            .expect("contributed entry is listed");
+        // Provenance is stamped by the HOST so a picker can say where a service came from.
+        assert_eq!(contributed["provider"], "acme");
+        let builtin = catalog.definitions.iter().find(|d| d["id"] == "openai-api").unwrap();
+        assert!(builtin.get("provider").is_none(), "built-ins have no plugin provider");
         assert_eq!(find("acme.images").expect("resolves")["id"], "acme.images");
         assert_eq!(provider_of("acme.images").as_deref(), Some("acme"));
         assert_eq!(provider_of("openai-api"), None, "built-ins have no plugin owner");
@@ -254,6 +288,43 @@ mod tests {
         assert_eq!(refusals.len(), 1);
         assert!(refusals[0].contains("own namespace"), "{refusals:?}");
         assert_eq!(provider_of("acme.images").as_deref(), Some("acme"), "ownership is unchanged");
+
+        reset_for_tests();
+    }
+
+    #[test]
+    fn a_definition_cannot_claim_a_provenance_it_does_not_have() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_for_tests();
+
+        // The file says it comes from a trusted-sounding plugin; the host stamps the truth.
+        let mut liar = definition("acme.images", &["generate-image"]);
+        liar["provider"] = json!("formlogic-official");
+        assert!(register_plugin("acme", vec![liar]).is_empty());
+
+        let listed = catalog()
+            .definitions
+            .into_iter()
+            .find(|d| d["id"] == "acme.images")
+            .expect("listed");
+        assert_eq!(listed["provider"], "acme", "the host's stamp wins over the file's claim");
+
+        reset_for_tests();
+    }
+
+    #[test]
+    fn an_oversized_definition_is_refused() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_for_tests();
+
+        // Every catalog fetch would carry this; definitions are metadata, not payloads.
+        let mut bloated = definition("acme.bloat", &["generate-image"]);
+        bloated["description"] = json!("x".repeat(MAX_DEFINITION_BYTES));
+        let refusals = register_plugin("acme", vec![bloated, definition("acme.ok", &["generate-image"])]);
+        assert_eq!(refusals.len(), 1);
+        assert!(refusals[0].contains("over the"), "{refusals:?}");
+        assert!(find("acme.bloat").is_none());
+        assert!(find("acme.ok").is_some(), "its valid sibling still registers");
 
         reset_for_tests();
     }

@@ -333,6 +333,11 @@ export interface DesktopServiceDefinition {
   settingsSchema?: Record<string, unknown>;
   ui?: Record<string, unknown>;
   actions: DesktopServiceDefinitionAction[];
+  /**
+   * SRV-401: the plugin supplying this definition; absent for the Desktop's own built-ins.
+   * Stamped by the Desktop from its registry — a definition file cannot claim it.
+   */
+  provider?: string;
 }
 
 export interface DesktopServiceCatalog {
@@ -526,6 +531,7 @@ function safeServiceDefinition(value: unknown): DesktopServiceDefinition | null 
     capabilities: stringArray(definition.capabilities),
     ...(settingsSchema ? { settingsSchema } : {}),
     ...(ui ? { ui } : {}),
+    ...(typeof definition.provider === 'string' ? { provider: definition.provider } : {}),
     actions,
   };
 }

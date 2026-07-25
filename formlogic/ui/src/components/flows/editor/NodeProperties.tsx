@@ -764,7 +764,8 @@ function ServiceDefinitionPickerField({
         <option value="">Pick a service…</option>
         {raw !== '' && !known && <option value={raw}>{raw} (not in the catalog)</option>}
         {catalog.definitions.map((d) => (
-          <option key={d.id} value={d.id}>{d.name || d.id}</option>
+          // A plugin-supplied service must be distinguishable from a built-in here too.
+          <option key={d.id} value={d.id}>{d.name || d.id}{d.provider ? ` — from ${d.provider}` : ''}</option>
         ))}
       </select>
       {spec.help && <p className={HELP_CLS}>{spec.help}</p>}

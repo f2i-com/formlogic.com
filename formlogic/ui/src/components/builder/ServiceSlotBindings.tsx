@@ -135,7 +135,12 @@ export function ServiceSlotBindings({ installationId }: { installationId: string
                     >
                       <option value="">Choose a service…</option>
                       {usable.map((definition) => (
-                        <option key={definition.id} value={definition.id}>{definition.name || definition.id}</option>
+                        <option key={definition.id} value={definition.id}>
+                          {/* Say where a service came from: a plugin-supplied service and a
+                              built-in should not look identical when you are choosing one. */}
+                          {definition.name || definition.id}
+                          {definition.provider ? ` — from ${definition.provider}` : ''}
+                        </option>
                       ))}
                     </select>
                   ) : (

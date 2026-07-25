@@ -196,7 +196,11 @@ Contribution rules (the registry enforces all of them):
 - A definition id is **namespaced to its plugin** (`<plugin-id>` or `<plugin-id>.<name>`), so
   provenance is readable from the id and two plugins cannot race for a generic name.
 - **One plugin owns an id.** A second plugin claiming it is refused, not first-wins.
-- One malformed definition is refused **without costing its valid siblings**.
+- One malformed definition is refused **without costing its valid siblings**, and a
+  definition over 64 KiB is refused outright — every catalog fetch would carry it.
+- The catalog stamps each contributed entry with `provider` (the plugin id), so a
+  plugin-supplied service is never indistinguishable from a built-in in a picker. The **host**
+  stamps it from its registry: a definition file claiming a `provider` cannot fake provenance.
 - Contributions **live and die with their plugin**: disabling or uninstalling removes them
   immediately, and re-enabling restores them. Re-registering replaces a plugin's previous set,
   so a definition it stops shipping disappears rather than lingering.

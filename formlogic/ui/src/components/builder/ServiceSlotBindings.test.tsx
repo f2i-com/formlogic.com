@@ -30,6 +30,8 @@ const catalog = {
     { id: 'openai-api', name: 'OpenAI API', actions: [{ id: 'generate-image' }, { id: 'chat-complete' }] },
     // Missing the required action → must never be offered for this slot.
     { id: 'chat-only', name: 'Chat Only', actions: [{ id: 'chat-complete' }] },
+    // Plugin-supplied (SRV-401 provenance stamp).
+    { id: 'mock.images', name: 'Mock Images', provider: 'mock', actions: [{ id: 'generate-image' }] },
   ],
 } as unknown as ReturnType<typeof catalogHook.useServiceCatalog>;
 
@@ -75,6 +77,11 @@ describe('ServiceSlotBindings', () => {
     const options = Array.from(host!.querySelectorAll('option')).map((o) => o.value);
     expect(options).toContain('openai-api');
     expect(options).not.toContain('chat-only');
+
+    // SRV-401: a plugin-supplied service says so; a built-in carries no provider suffix.
+    const labels = Array.from(host!.querySelectorAll('option')).map((o) => o.textContent ?? '');
+    expect(labels).toContain('Mock Images — from mock');
+    expect(labels).toContain('OpenAI API');
   });
 
   it('shows an existing binding with change/unbind rather than a picker', async () => {
