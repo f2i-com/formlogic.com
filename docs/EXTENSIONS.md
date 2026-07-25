@@ -417,6 +417,22 @@ Notes for authors:
 - Required configuration keys missing after that merge block compilation
   (`missing_config`).
 
+## Performance budgets
+
+The paths every install and every flow save go through are budgeted, and the budgets are
+enforced by tests (`PackagePerformanceTest`):
+
+| Path | Size | Budget |
+|---|---|---|
+| Validate a package | 64 contributed definitions (the schema maximum) | 1500 ms |
+| Compile a flow | 500 nodes, half of them contributed | 1500 ms |
+| Resolve dependencies | 200 declared dependencies | 500 ms |
+
+The budgets are deliberately loose — several times the observed cost — because they exist to
+catch a change in *complexity*, not normal variance on a busy machine. A separate test pins
+that compilation stays **linear** in graph size, which is the thing a wall-clock budget cannot
+express: quadratic work hides comfortably inside a generous budget until graphs get large.
+
 ## Troubleshooting (error codes)
 
 | Code | Meaning / fix |
