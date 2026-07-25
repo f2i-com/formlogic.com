@@ -19,6 +19,7 @@ pub mod formlogic_client;
 pub mod http;
 pub mod journal_crypto;
 pub mod oauth;
+pub mod packages;
 pub mod pairing;
 pub mod plugins;
 pub mod proc;

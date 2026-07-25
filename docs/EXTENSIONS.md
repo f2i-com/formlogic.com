@@ -512,6 +512,43 @@ immediately** rather than letting them run out their TTL. Unauthorized, unknown,
 malformed definition ids all get the identical refusal, so the response cannot be used to
 probe which is which.
 
+## Installing on a Desktop
+
+A package that ships a signed **distribution** — a service binary, a plugin — has work to do on a
+device, and the device is the only thing that can say whether that work succeeded. Three records
+are involved, and keeping them separate is what makes the awkward cases legible:
+
+| Record | Owns | Lives |
+|---|---|---|
+| Install job | who may do the work, progress, outcome | backend |
+| Ledger | what this machine has, wants, and is waiting on | device |
+| Audit | every step that was attempted, including refusals | device |
+
+What an author (and an operator) should expect:
+
+- **Local confirmation is required by default.** A native install is not something a device does
+  because a server said so. Nothing is even downloaded until someone on that machine answers —
+  asking after a half-gigabyte transfer wastes bandwidth on something they may decline. A package
+  cannot waive this; only the operator can.
+- **Verification precedes trust.** Declared size is checked before the download, the digest
+  before anything is unpacked. A digest mismatch is a **tamper**: it is never retried and never
+  staged "pending investigation".
+- **A partial install is never healthy.** Staging is its own recorded state and reports as
+  unusable. A component becomes usable only after it installs *and* passes health. A pipeline
+  interrupted anywhere leaves `Staged` or `Failed`, never a half-thing that reads as working.
+- **A failed update keeps the previous version.** Rollback restores what was there and the report
+  says which version the device is actually running — the most useful fact in a failure.
+- **Shared components are protected.** Removing a package does not remove a component another
+  installation still consumes; the refusal names who still needs it. A user **pin** outranks the
+  reconciler entirely, even at zero consumers.
+- **Offline removals wait as tombstones.** A removal requested while a device was offline stays
+  queued (idempotent by job id, surviving restarts) until that device does it and reports back.
+  Readiness is per-device by definition: the same package can be live on a desktop and still
+  staging on a laptop.
+- **Native privileges are not action grants.** A package's connector grants say what its *flows*
+  may reach. They say nothing about whether a machine will run an installer — different question,
+  different blast radius.
+
 ## Uninstalling
 
 - Removes the package's contributed node definitions. Flows already using them keep
