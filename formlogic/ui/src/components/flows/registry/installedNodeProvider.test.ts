@@ -136,4 +136,73 @@ describe('installed-package provider through the registry (FLOW-204)', () => {
     const b = flowNodeRegistry.resolveNodeSpec(DEF.type);
     expect(a).toBe(b);
   });
+  it('a packaged node that lowers to a core type supersedes it in the palette', () => {
+    // Otherwise installing a pack that provides "LLM Chat" leaves the built-in sitting beside
+    // it: two entries that insert different types and do the same thing.
+    const before = flowNodeRegistry.listNodeSpecs();
+    expect(before.some((s) => s.type === 'llm_chat')).toBe(true);
+
+    seedStore([{
+      type: 'com.formlogic.ai.chat',
+      definition: {
+        schemaVersion: 1,
+        type: 'com.formlogic.ai.chat',
+        version: '1.1.0',
+        display: { label: 'LLM Chat', category: 'AI' },
+        handler: { kind: 'core-preset', coreType: 'llm_chat', defaults: {} },
+        sideEffects: 'external-write',
+      } as unknown as FlowNodeDefinitionV1,
+    }]);
+
+    const after = flowNodeRegistry.listNodeSpecs();
+    expect(after.some((s) => s.type === 'com.formlogic.ai.chat')).toBe(true);
+    expect(after.some((s) => s.type === 'llm_chat')).toBe(false);
+    // The packaged node asks for the AI section and gets it, so it lands where the built-in was.
+    expect(after.find((s) => s.type === 'com.formlogic.ai.chat')!.category).toBe('ai');
+  });
+
+  it('superseding is palette-only — a stored core node keeps its own spec', () => {
+    // Installing a pack must never invalidate a flow that already uses the built-in.
+    seedStore([{
+      type: 'com.formlogic.ai.chat',
+      definition: {
+        schemaVersion: 1,
+        type: 'com.formlogic.ai.chat',
+        version: '1.1.0',
+        display: { label: 'LLM Chat', category: 'AI' },
+        handler: { kind: 'core-preset', coreType: 'llm_chat', defaults: {} },
+        sideEffects: 'external-write',
+      } as unknown as FlowNodeDefinitionV1,
+    }]);
+
+    const stored = flowNodeRegistry.resolveNodeSpec('llm_chat');
+    expect(stored.missing).toBeUndefined();
+    expect(stored.label).toBe('LLM chat');
+    expect(stored.executable).toBe(true);
+  });
+
+  it('uninstalling the pack brings the built-in entry back', () => {
+    seedStore([{
+      type: 'com.formlogic.ai.chat',
+      definition: {
+        schemaVersion: 1,
+        type: 'com.formlogic.ai.chat',
+        version: '1.1.0',
+        display: { label: 'LLM Chat', category: 'AI' },
+        handler: { kind: 'core-preset', coreType: 'llm_chat', defaults: {} },
+        sideEffects: 'external-write',
+      } as unknown as FlowNodeDefinitionV1,
+    }]);
+    expect(flowNodeRegistry.listNodeSpecs().some((s) => s.type === 'llm_chat')).toBe(false);
+
+    seedStore([]);
+    expect(flowNodeRegistry.listNodeSpecs().some((s) => s.type === 'llm_chat')).toBe(true);
+  });
+
+  it('a service-action node supersedes nothing (it lowers to no built-in)', () => {
+    seedStore([{ type: DEF.type, definition: { ...DEF, handler: { kind: 'service-action', bindingSlot: 'x', requiredAction: 'y' } } as unknown as FlowNodeDefinitionV1 }]);
+    const specs = flowNodeRegistry.listNodeSpecs();
+    expect(specs.find((s) => s.type === DEF.type)!.supersedesCoreType).toBeUndefined();
+    expect(specs.some((s) => s.type === 'llm_chat')).toBe(true);
+  });
 });

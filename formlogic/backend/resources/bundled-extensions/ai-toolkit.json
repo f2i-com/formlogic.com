@@ -3,10 +3,10 @@
   "package": {
     "id": "com.formlogic.ai-toolkit",
     "kind": "extension",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "publisherId": "com.formlogic",
     "displayName": "AI Toolkit",
-    "description": "Chat with a language model, transcribe speech, and synthesize speech — as three flow nodes you point at whichever AI service you have.",
+    "description": "The LLM Chat, Speech to Text and Text to Speech flow nodes, delivered as a package so they can be updated without a release of the app.",
     "keywords": ["ai", "llm", "chat", "speech", "transcription", "text-to-speech", "audio"]
   },
   "contributions": {
@@ -14,162 +14,103 @@
       {
         "schemaVersion": 1,
         "type": "com.formlogic.ai.chat",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "display": {
           "label": "LLM Chat",
-          "description": "Send messages to a language model and get its reply.",
+          "description": "Call an OpenAI-compatible chat model and get its reply.",
           "category": "AI",
-          "iconId": "message-square"
+          "iconId": "sparkles"
         },
         "configurationSchema": {
           "type": "object",
           "properties": {
-            "messages": {
-              "type": "array",
-              "title": "Messages",
-              "description": "The conversation so far, oldest first. Each entry is { role, content }.",
-              "items": { "type": "object" }
-            },
-            "model": {
-              "type": "string",
-              "title": "Model",
-              "description": "Leave empty to use the service's default."
-            },
-            "temperature": {
-              "type": "number",
-              "title": "Temperature",
-              "minimum": 0,
-              "maximum": 2
-            }
+            "system": { "type": "string", "title": "System prompt", "description": "Sets the model's role. Supports {{...}} templating against the run scope." },
+            "prompt": { "type": "string", "title": "Prompt", "description": "Supports {{...}} templating against the run scope." },
+            "provider": { "type": "string", "title": "AI service", "description": "Leave on Auto to use the paired Desktop model or the app's configured provider." },
+            "model": { "type": "string", "title": "Model", "description": "Optional." },
+            "endpoint": { "type": "string", "title": "Endpoint", "description": "Optional OpenAI-compatible URL; blank uses the resolved service." },
+            "temperature": { "type": "number", "title": "Temperature", "minimum": 0, "maximum": 2 },
+            "maxTokens": { "type": "integer", "title": "Max tokens", "minimum": 1 }
           },
-          "required": ["messages"]
+          "required": ["prompt"]
+        },
+        "uiHints": {
+          "system": { "control": "textarea" },
+          "prompt": { "control": "textarea" },
+          "provider": { "control": "aiProvider" }
         },
         "handler": {
-          "kind": "service-action",
-          "bindingSlot": "languageModel",
-          "requiredAction": "chat.complete"
+          "kind": "core-preset",
+          "coreType": "llm_chat",
+          "defaults": {}
         },
         "sideEffects": "external-write"
       },
       {
         "schemaVersion": 1,
         "type": "com.formlogic.ai.transcribe",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "display": {
           "label": "Speech to Text",
-          "description": "Turn a recording into text.",
+          "description": "Transcribe audio to text.",
           "category": "AI",
           "iconId": "mic"
         },
         "configurationSchema": {
           "type": "object",
           "properties": {
-            "file": {
-              "type": "string",
-              "title": "Audio",
-              "description": "The recording to transcribe."
-            },
-            "model": {
-              "type": "string",
-              "title": "Model",
-              "description": "Leave empty to use the service's default."
-            },
-            "language": {
-              "type": "string",
-              "title": "Language",
-              "description": "An ISO code such as 'en'. Leave empty to detect it."
-            },
-            "prompt": {
-              "type": "string",
-              "title": "Vocabulary hint",
-              "description": "Names or terms the audio is likely to contain, to help the model spell them."
-            }
+            "audio": { "type": "string", "title": "Audio", "description": "A data URL, URL or base64 audio string — e.g. $inputs.recording." },
+            "provider": { "type": "string", "title": "AI service", "description": "Leave on Auto to use the default Desktop speech service." },
+            "model": { "type": "string", "title": "Model", "description": "Optional." },
+            "endpoint": { "type": "string", "title": "Endpoint", "description": "Optional; blank uses the resolved speech service." },
+            "service": { "type": "string", "title": "Service id", "description": "Optional Desktop service to resolve the endpoint from." }
           },
-          "required": ["file"]
+          "required": ["audio"]
+        },
+        "uiHints": {
+          "provider": { "control": "aiProvider" },
+          "service": { "control": "desktopService" }
         },
         "handler": {
-          "kind": "service-action",
-          "bindingSlot": "transcriber",
-          "requiredAction": "audio.transcribe"
+          "kind": "core-preset",
+          "coreType": "stt_transcribe",
+          "defaults": {}
         },
         "sideEffects": "external-write"
       },
       {
         "schemaVersion": 1,
         "type": "com.formlogic.ai.speak",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "display": {
           "label": "Text to Speech",
-          "description": "Turn text into spoken audio. Produces an audio file you can attach or play.",
+          "description": "Turn text into spoken audio.",
           "category": "AI",
           "iconId": "volume-2"
         },
-        "ports": [
-          {
-            "id": "audio",
-            "direction": "output",
-            "kind": "data",
-            "schema": { "$ref": "formlogic://schemas/artifact-ref.json", "x-artifactKinds": ["audio"] }
-          }
-        ],
         "configurationSchema": {
           "type": "object",
           "properties": {
-            "input": {
-              "type": "string",
-              "title": "Text",
-              "description": "What to say."
-            },
-            "voice": {
-              "type": "string",
-              "title": "Voice",
-              "description": "Leave empty to use the service's default voice."
-            },
-            "model": {
-              "type": "string",
-              "title": "Model",
-              "description": "Leave empty to use the service's default."
-            },
-            "responseFormat": {
-              "type": "string",
-              "title": "Format",
-              "enum": ["mp3", "opus", "aac", "flac", "wav", "pcm"],
-              "default": "mp3"
-            },
-            "speed": {
-              "type": "number",
-              "title": "Speed",
-              "minimum": 0.25,
-              "maximum": 4
-            }
+            "text": { "type": "string", "title": "Text", "description": "What to say. Supports {{...}} templating against the run scope." },
+            "provider": { "type": "string", "title": "AI service", "description": "Leave on Auto to use the default Desktop speech service." },
+            "voice": { "type": "string", "title": "Voice", "description": "Optional." },
+            "model": { "type": "string", "title": "Model", "description": "Optional." },
+            "endpoint": { "type": "string", "title": "Endpoint", "description": "Optional; blank uses the resolved speech service." },
+            "service": { "type": "string", "title": "Service id", "description": "Optional Desktop service to resolve the endpoint from." }
           },
-          "required": ["input"]
+          "required": ["text"]
+        },
+        "uiHints": {
+          "text": { "control": "textarea" },
+          "provider": { "control": "aiProvider" },
+          "service": { "control": "desktopService" }
         },
         "handler": {
-          "kind": "service-action",
-          "bindingSlot": "speechSynthesizer",
-          "requiredAction": "audio.speech"
+          "kind": "core-preset",
+          "coreType": "tts_speak",
+          "defaults": {}
         },
         "sideEffects": "external-write"
-      }
-    ]
-  },
-  "requirements": {
-    "services": [
-      {
-        "slot": "languageModel",
-        "required": false,
-        "requiredActions": ["chat.complete"]
-      },
-      {
-        "slot": "transcriber",
-        "required": false,
-        "requiredActions": ["audio.transcribe"]
-      },
-      {
-        "slot": "speechSynthesizer",
-        "required": false,
-        "requiredActions": ["audio.speech"]
       }
     ]
   }

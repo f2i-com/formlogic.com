@@ -314,6 +314,15 @@ export interface NodeSpec {
    * of guessing (extensible-flows plan §4.5).
    */
   missing?: true;
+  /**
+   * The CORE node type this spec replaces in the palette. Set by the installed-package provider
+   * when a contributed node lowers to a built-in: the packaged entry is shown and the built-in
+   * one is not, so the palette never offers two entries that do the same thing.
+   *
+   * Palette-only — a stored graph still resolves the core type to its own spec, so installing a
+   * pack never invalidates a flow that already uses the built-in.
+   */
+  supersedesCoreType?: string;
 }
 
 /** Info about a connector available to the current flow context (drives palette + connector pickers). */

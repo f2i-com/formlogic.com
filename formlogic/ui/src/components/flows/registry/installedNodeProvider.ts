@@ -47,6 +47,15 @@ function fieldTypeFor(schema: Record<string, unknown>, hint?: { control?: string
     case 'select': return 'select';
     case 'json': return 'code';
     case 'text': return 'text';
+    // Host-owned pickers. A definition may REQUEST one; the host decides what it renders and
+    // where the choices come from — the same allowlist rule as icons. Without these a packaged
+    // node that supersedes a core one would be a downgrade in the editor: a free-text box where
+    // the built-in offered a list of the AI services and Desktop services you actually have.
+    case 'aiProvider': return 'aiProvider';
+    case 'desktopService': return 'desktopService';
+    case 'providerConnection': return 'providerConnection';
+    case 'serviceDefinition': return 'serviceDefinition';
+    case 'serviceActionId': return 'serviceActionId';
     default: break;
   }
   if (Array.isArray(schema.enum)) return 'select';
@@ -118,10 +127,17 @@ export function adaptInstalledDefinition(def: FlowNodeDefinitionV1, packageName?
   const runNote = kind === 'service-action'
     ? 'Runs on FormLogic Desktop (or a paired browser) once this extension’s service slot is bound — bind it under Details on the installed extension.'
     : 'Runs wherever flows run — lowered to a built-in node by the server compiler (FormLogic Desktop needs an up-to-date build).';
+  // A core-preset node lowers to a built-in, so it can stand in for it: same executor, same
+  // behaviour, just delivered by a package that can be updated independently.
+  const supersedes = kind === 'core-preset' && typeof def.handler?.coreType === 'string'
+    ? def.handler.coreType
+    : undefined;
+
   return {
     type: def.type,
     label: def.display?.label || def.type,
     category: hostCategoryFor(def.display?.category),
+    ...(supersedes ? { supersedesCoreType: supersedes } : {}),
     description: def.display?.description || def.display?.label || def.type,
     doc: `${def.display?.description || def.display?.label || def.type}\n\n${provenance} ${runNote}`,
     icon: (def.display?.iconId && ICON_BY_ID[def.display.iconId]) || Puzzle,

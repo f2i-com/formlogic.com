@@ -145,7 +145,23 @@ class FlowNodeRegistry {
       }
     }
     this.collisions = collisions;
-    return out;
+
+    // A packaged node that LOWERS to a core type supersedes that core type in the palette.
+    //
+    // Without this, installing a pack that provides "LLM Chat" leaves the built-in "LLM chat"
+    // sitting beside it: two entries that insert different node types and do the same thing.
+    // The packaged one wins because it is the one the owner chose to install, and because it
+    // can be updated without a release of this app.
+    //
+    // Only the PALETTE is affected. `resolveNodeSpec` is untouched, so a flow that already
+    // contains the core type keeps its editor and its properties exactly as before — nothing
+    // stored is invalidated by installing a pack.
+    const superseded = new Set<string>();
+    for (const spec of out) {
+      if (spec.supersedesCoreType) superseded.add(spec.supersedesCoreType);
+    }
+    if (superseded.size === 0) return out;
+    return out.filter((spec) => !superseded.has(spec.type));
   }
 }
 
