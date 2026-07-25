@@ -92,7 +92,13 @@ const SEMVER_RANGE = /^(\^|~|>=)?\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 const NAMESPACED_ID = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+$/;
 const NODE_TYPE = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*){2,}$/;
 const SLOT = /^[a-zA-Z][a-zA-Z0-9]{0,63}$/;
-const ACTION_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+/**
+ * A service ACTION id, as service definitions actually name them. Dots are part of the
+ * vocabulary — every built-in uses them (`chat.complete`, `audio.transcribe`), so a dot-free
+ * pattern meant no package could ever require a built-in action. Must still begin with an
+ * alphanumeric, so a leading dot or empty segment is refused.
+ */
+const ACTION_ID = /^[a-z0-9][a-z0-9.-]{0,63}$/;
 const PORT_ID = /^[a-zA-Z][a-zA-Z0-9_]{0,47}$/;
 const CORE_TYPE = /^[a-z][a-z0-9_]{0,47}$/;
 const ICON_ID = /^[a-z0-9-]{1,48}$/;

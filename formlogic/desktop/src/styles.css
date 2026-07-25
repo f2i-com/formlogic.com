@@ -657,6 +657,98 @@ code {
 }
 .service-meta { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); }
 .service-meta a { color: var(--signal); }
+
+/* ---- Contributed services (DESK-506) --------------------------------------
+   A plugin-contributed service is NOT a process you start and stop — it is a
+   capability surface: a set of actions a flow can call. So the card leads with
+   its ACTIONS rather than a run state, and carries no start/stop affordances
+   that would not do anything. The provenance chip answers the question a
+   managed service never raises: where did this come from?                    */
+
+.service-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 4px 2px 2px;
+}
+.service-group-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.service-group-rule {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line) 0%, transparent 100%);
+}
+.service-group-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+/* Contributed cards use the accent rail (a capability), never the status hues
+   reserved for running/errored processes. */
+.service-card-contributed { border-left: 3px solid var(--signal-line); }
+
+.service-provenance {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--signal-soft);
+  border: 1px solid var(--signal-line);
+  color: var(--signal-strong);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.service-action-rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.service-action-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+  transition: border-color 0.15s, color 0.15s;
+}
+.service-card:hover .service-action-chip { border-color: var(--line-2); }
+/* A write action reaches outside this machine; a reader should see which ones
+   before wiring one into a flow. One dot, not a loud badge. */
+.service-action-chip[data-effect='external-write']::before,
+.service-action-chip[data-effect='destructive']::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--warn);
+  flex: none;
+}
+.service-action-chip[data-effect='destructive']::before { background: var(--err); }
+
+.service-empty-note {
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  line-height: 1.55;
+  padding: 2px 2px 0;
+}
 .service-error { font-size: 12px; color: var(--err-text); margin-top: 6px; }
 .service-actions { display: flex; gap: 7px; flex-shrink: 0; }
 

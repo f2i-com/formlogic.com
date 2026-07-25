@@ -597,6 +597,33 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // Desktop install jobs (DESK-502): durable coordination for work that runs on a DEVICE.
+        // A job outlives a disconnect, is claimed by exactly one device (claim_token proves
+        // which), and refuses replay once terminal.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS package_install_jobs (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                kind VARCHAR(32) NOT NULL,
+                state VARCHAR(16) NOT NULL DEFAULT 'queued',
+                plan_id VARCHAR(36) NULL,
+                installation_id VARCHAR(36) NULL,
+                distribution_id VARCHAR(128) NULL,
+                device_id VARCHAR(128) NULL,
+                claim_token CHAR(64) NULL,
+                progress TINYINT UNSIGNED NOT NULL DEFAULT 0,
+                step VARCHAR(190) NULL,
+                error_code VARCHAR(64) NULL,
+                error_text TEXT NULL,
+                created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                expires_at DATETIME NOT NULL,
+                INDEX idx_pij_user (user_id),
+                INDEX idx_pij_claimable (state, expires_at),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Pack catalog — marketplace registry
         // item_type / trust_level (spec §30) model a multi-artifact marketplace: for now every listing is
         // an 'application_package' with server-derived trust; the other item types are reserved (no runtime

@@ -806,50 +806,68 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                         key={pack.id}
                         type="button"
                         onClick={() => setSelectedSlug(pack.slug)}
-                        className="text-left p-4 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 hover:border-primary-300 dark:hover:border-primary-500/40 hover:shadow-md hover:shadow-primary-500/5 transition-all cursor-pointer group"
+                        className="group relative flex flex-col overflow-hidden rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-primary-300 dark:hover:border-primary-500/40 hover:shadow-lg hover:shadow-primary-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 motion-reduce:hover:translate-y-0 motion-reduce:transition-none cursor-pointer"
                       >
-                        {/* Card header: icon + name row (screenshot shown on the detail view, not here) */}
-                        <div className="flex items-center gap-3 mb-2">
+                        {/* An accent edge on hover, mirroring the Desktop's status rail so the
+                            two apps read as one product rather than two. */}
+                        <span
+                          aria-hidden="true"
+                          className="absolute inset-y-0 left-0 w-0.5 bg-primary-500 opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+                        />
+
+                        <div className="flex items-start gap-3">
                           <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary-50 dark:bg-primary-500/10" aria-hidden="true">
                             <PackIcon icon={pack.icon} className="h-4.5 w-4.5 text-primary-600 dark:text-primary-400" emojiClassName="text-2xl leading-none" />
                           </span>
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold text-gray-900 dark:text-white truncate group-hover:text-primary-700 dark:group-hover:text-primary-300 transition-colors">
+                            <p className="truncate text-sm font-semibold text-gray-900 dark:text-white transition-colors group-hover:text-primary-700 dark:group-hover:text-primary-300">
                               {pack.name}
                             </p>
-                            <p className="text-xs text-gray-400 dark:text-slate-500 truncate">
+                            <p className="truncate text-xs text-gray-400 dark:text-slate-500">
                               {pack.publisherName || 'FormLogic'}
                             </p>
                           </div>
                           {isInstalled && (
-                            <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0" />
+                            <span className="inline-flex flex-shrink-0 items-center gap-1 rounded-full bg-green-50 dark:bg-green-500/10 px-2 py-0.5 text-[10px] font-medium text-green-700 dark:text-green-400">
+                              <CheckCircle className="h-3 w-3" aria-hidden="true" />
+                              Installed
+                            </span>
                           )}
                         </div>
 
-                        {/* Description */}
-                        <p className="text-xs text-gray-500 dark:text-slate-400 line-clamp-2 leading-relaxed mb-3">
+                        <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-gray-500 dark:text-slate-400">
                           {pack.description}
                         </p>
 
-                        {/* Stats row */}
-                        <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-slate-500">
-                          <span className="inline-flex items-center gap-1">
-                            {renderStars(pack.avgRating)}
-                            {pack.ratingCount > 0 && <span className="ml-0.5">({pack.ratingCount})</span>}
-                          </span>
-                          <span className="text-gray-300 dark:text-slate-700">&middot;</span>
-                          <span className="inline-flex items-center gap-0.5">
-                            <Download className="h-3 w-3" />
-                            {pack.downloadCount}
-                          </span>
-                          <span className="text-gray-300 dark:text-slate-700">&middot;</span>
-                          <span>{pack.formCount} forms</span>
-                          {pack.appCount > 0 && (
-                            <>
-                              <span className="text-gray-300 dark:text-slate-700">&middot;</span>
-                              <span>{pack.appCount} apps</span>
-                            </>
-                          )}
+                        {/* What you actually get. A pack is a working app, so its COMPOSITION is
+                            the thing being chosen between — not its download count. Given the
+                            weight that deserves, in the numeric face, and read as units. */}
+                        <div className="mt-auto pt-3">
+                          <dl className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                            {([
+                              ['forms', pack.formCount],
+                              ['apps', pack.appCount],
+                            ] as const)
+                              .filter(([, n]) => n > 0)
+                              .map(([label, n]) => (
+                                <div key={label} className="flex items-baseline gap-1">
+                                  <dd className="fl-mono text-sm font-semibold tabular-nums text-gray-900 dark:text-white">{n}</dd>
+                                  <dt className="text-[11px] text-gray-400 dark:text-slate-500">{n === 1 ? label.replace(/s$/, '') : label}</dt>
+                                </div>
+                              ))}
+                          </dl>
+                          {/* Social proof is context, not substance — quieter, and below. */}
+                          <div className="mt-1.5 flex items-center gap-2 text-[11px] text-gray-400 dark:text-slate-500">
+                            <span className="inline-flex items-center gap-1">
+                              {renderStars(pack.avgRating)}
+                              {pack.ratingCount > 0 && <span className="ml-0.5">({pack.ratingCount})</span>}
+                            </span>
+                            <span aria-hidden="true" className="text-gray-300 dark:text-slate-700">&middot;</span>
+                            <span className="inline-flex items-center gap-0.5">
+                              <Download className="h-3 w-3" aria-hidden="true" />
+                              {pack.downloadCount}
+                            </span>
+                          </div>
                         </div>
 
                         {/* Tags */}

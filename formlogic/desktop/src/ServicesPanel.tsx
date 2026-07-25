@@ -786,27 +786,54 @@ export default function ServicesPanel() {
           ))}
         </section>
       )}
-      {/* DESK-506: services contributed by installed plugins are real, invocable services —
-          they belong in the Services controls beside managed ones, not only in the flow
-          editor. Absent when no plugin contributes any, so the section never sits empty. */}
+      {/* DESK-506: services contributed by installed plugins are real, invocable services and
+          belong in the Services controls beside managed ones. They are a CAPABILITY surface
+          rather than a process, so the card leads with the actions a flow can call and offers
+          no start/stop that would do nothing. Absent when nothing contributes. */}
       {contributedDefinitions.length > 0 && (
         <section className="service-section">
-          <h3 className="service-section-title">Contributed by plugins</h3>
-          {contributedDefinitions.map((definition) => (
-            <div key={definition.id} className="service-card">
-              <div className="service-card-head">
-                <strong>{definition.name || definition.id}</strong>
-                <span className="service-badge">from {definition.provider}</span>
-              </div>
-              {definition.description && <p className="service-card-body">{definition.description}</p>}
-              <p className="service-card-meta">
-                <code>{definition.id}</code>
-                {definition.actions && definition.actions.length > 0 && (
-                  <> · {definition.actions.length} action{definition.actions.length === 1 ? '' : 's'}: {definition.actions.map((a) => a.id).join(', ')}</>
+          <div className="service-group-head">
+            <span className="service-group-title">Contributed by plugins</span>
+            <span className="service-group-rule" />
+            <span className="service-group-count">
+              {contributedDefinitions.length} service{contributedDefinitions.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          {contributedDefinitions.map((definition) => {
+            const actions = definition.actions ?? [];
+            return (
+              <div key={definition.id} className="service-card service-card-contributed">
+                <div className="service-row">
+                  <div className="service-info">
+                    <div className="service-name">{definition.name || definition.id}</div>
+                    {definition.description && (
+                      <div className="service-desc" title={definition.description}>{definition.description}</div>
+                    )}
+                    <div className="service-meta">{definition.id}</div>
+                  </div>
+                  <span className="service-provenance" title={`Contributed by the ${definition.provider} plugin`}>
+                    {definition.provider}
+                  </span>
+                </div>
+                {actions.length > 0 ? (
+                  <div className="service-action-rail">
+                    {actions.map((action) => (
+                      <span
+                        key={action.id}
+                        className="service-action-chip"
+                        data-effect={(action as { sideEffects?: string }).sideEffects ?? 'none'}
+                        title={action.description || action.title || action.id}
+                      >
+                        {action.id}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="service-empty-note">This service declares no callable actions.</p>
                 )}
-              </p>
-            </div>
-          ))}
+              </div>
+            );
+          })}
         </section>
       )}
       {snapshot && result.total > 0 && (

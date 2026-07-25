@@ -197,12 +197,25 @@ export function ServiceSlotBindings({ installationId }: { installationId: string
                   )}
                 </div>
               ) : (
-                <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <span className="text-amber-600 dark:text-amber-400">
+                <div className="mt-1 space-y-1.5">
+                  <span className="block text-amber-600 dark:text-amber-400">
                     Not bound — nodes using this slot refuse to compile until a service is chosen.
                   </span>
-                  <Button variant="outline" size="sm" onClick={() => { setDraft({ definitionId: '', connection: '' }); setEditing(slot.slot); }}>
-                    Choose a service
+                  {/* The picker is the point of this row, so it is here rather than behind a
+                      button. With exactly one usable service (and one connection) the obvious
+                      choice is pre-selected — the user confirms rather than hunts. */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setDraft({
+                        definitionId: usable.length === 1 ? usable[0].id : '',
+                        connection: profiles && profiles.length === 1 ? profiles[0].refId : '',
+                      });
+                      setEditing(slot.slot);
+                    }}
+                  >
+                    {usable.length === 1 ? `Use ${usable[0].name || usable[0].id}` : 'Choose a service'}
                   </Button>
                 </div>
               )}

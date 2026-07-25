@@ -705,6 +705,33 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS `package_service_bindings` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 $applied[] = 'package_service_bindings table ensured';
 
+// 22. Desktop install jobs (DESK-502): the durable coordinator for work that happens on a
+//     DEVICE rather than in this process. Jobs outlive a disconnect, are claimed by exactly
+//     one device (claim_token proves it), and reject replay once terminal.
+$pdo->exec("CREATE TABLE IF NOT EXISTS `package_install_jobs` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `kind` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `state` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'queued',
+  `plan_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `installation_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `distribution_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `device_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `claim_token` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `progress` tinyint unsigned NOT NULL DEFAULT '0',
+  `step` varchar(190) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `error_code` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `error_text` text COLLATE utf8mb4_unicode_ci,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `expires_at` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_pij_user` (`user_id`),
+  KEY `idx_pij_claimable` (`state`,`expires_at`),
+  CONSTRAINT `package_install_jobs_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'package_install_jobs table ensured';
+
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";

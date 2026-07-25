@@ -31,7 +31,13 @@ class ApplicationPackageV2Validator
     private const NAMESPACED_ID = '/^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+$/';
     private const NODE_TYPE = '/^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*){2,}$/';
     private const SLOT = '/^[a-zA-Z][a-zA-Z0-9]{0,63}$/';
-    private const ACTION_ID = '/^[a-z0-9][a-z0-9-]{0,63}$/';
+    /**
+     * A service ACTION id, as service definitions actually name them. Dots are part of the
+     * vocabulary — every built-in uses them (`chat.complete`, `audio.transcribe`), so a
+     * dot-free pattern here meant no package could ever require a built-in action. Still must
+     * begin with an alphanumeric, so a leading dot or an empty segment is refused.
+     */
+    private const ACTION_ID = '/^[a-z0-9][a-z0-9.-]{0,63}$/';
     private const PORT_ID = '/^[a-zA-Z][a-zA-Z0-9_]{0,47}$/';
     private const CORE_TYPE = '/^[a-z][a-z0-9_]{0,47}$/';
     private const ICON_ID = '/^[a-z0-9-]{1,48}$/';

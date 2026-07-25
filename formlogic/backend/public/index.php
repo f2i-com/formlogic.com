@@ -500,6 +500,14 @@ $container->set(\FormLogic\Services\Packages\ServiceBindingService::class, funct
     return new \FormLogic\Services\Packages\ServiceBindingService($c->get(MySQLConnection::class));
 });
 
+// DESK-502: the durable install-job coordinator + its authenticated progress API.
+$container->set(\FormLogic\Services\Packages\InstallJobService::class, function (Container $c) {
+    return new \FormLogic\Services\Packages\InstallJobService($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Controllers\PackageJobController::class, function (Container $c) {
+    return new \FormLogic\Controllers\PackageJobController($c->get(\FormLogic\Services\Packages\InstallJobService::class));
+});
+
 // Package install plans (ADR-010 / PKG-106): owner-bound, expiring, single-use, digest-bound
 // review units for the v2 lane — propose stores the exact reviewed bytes; confirm installs them.
 $container->set(\FormLogic\Services\Packages\InstallPlanService::class, function (Container $c) {
@@ -2075,6 +2083,18 @@ $app->post('/api/packages/install-plans/{id}/cancel', function ($request, $respo
 // Management surface — stays available while the REL-705 kill switch is off.
 $app->get('/api/package-installations/{id}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(PackController::class)->getPackageInstallation($request, $response, $getArgs($request));
+})->add($authRequired);
+
+// DESK-502: install jobs — durable coordination for work that runs on a DEVICE. The browser
+// reads state/progress and may cancel; the device's claim token never comes back through here.
+$app->get('/api/package-jobs', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\PackageJobController::class)->list($request, $response);
+})->add($authRequired);
+$app->get('/api/package-jobs/{id}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\PackageJobController::class)->get($request, $response, $getArgs($request));
+})->add($authRequired);
+$app->post('/api/package-jobs/{id}/cancel', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\PackageJobController::class)->cancel($request, $response, $getArgs($request));
 })->add($authRequired);
 
 // Service binding slots (SRV-405): a contributed service-action node names a SLOT; these
