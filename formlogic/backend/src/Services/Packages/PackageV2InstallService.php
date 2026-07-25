@@ -493,7 +493,28 @@ class PackageV2InstallService
             throw new \RuntimeException('unsupported_content: v2 packages carrying Pack content are not installable yet — this lane installs node-only extensions (deliver app content as a Pack v1 for now)');
         }
         if (!empty($aggregate['serviceDistributions'])) {
-            throw new \RuntimeException('unsupported_distributions: signed service distributions need the desktop distribution pipeline, which is not enabled yet');
+            // DESK-501: the descriptors are VERIFIED even though the staging pipeline
+            // (DESK-504) is not built yet. A package whose distribution is malformed, targets
+            // another platform, oversized, or path-escaping should be told THAT — a blanket
+            // "not enabled yet" hides a defect the author could fix now, and would let a bad
+            // descriptor sit in a published package until the day staging arrives.
+            $host = [
+                'platform' => PHP_OS_FAMILY === 'Windows' ? 'windows' : strtolower(PHP_OS_FAMILY),
+                'arch' => php_uname('m'),
+                'requireSigned' => false, // policy is applied by the caller's trust gate
+            ];
+            foreach ($aggregate['serviceDistributions'] as $index => $distribution) {
+                if (!is_array($distribution)) {
+                    throw new \RuntimeException("invalid_distribution: serviceDistributions[$index] is not an object");
+                }
+                $verdict = DistributionVerifier::verify($distribution, $host);
+                // A platform mismatch is not a package defect — this host simply is not a
+                // target — so it must not masquerade as one.
+                if (!$verdict['ok'] && ($verdict['code'] ?? '') !== 'platform_unsupported') {
+                    throw new \RuntimeException("invalid_distribution: serviceDistributions[$index] {$verdict['message']} [{$verdict['code']}]");
+                }
+            }
+            throw new \RuntimeException('unsupported_distributions: the distribution descriptors verify, but installing them needs the desktop staging pipeline, which is not enabled yet');
         }
         $contributions = [];
         foreach (($aggregate['contributions']['flowNodes'] ?? []) as $node) {

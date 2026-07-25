@@ -440,7 +440,8 @@ express: quadratic work hides comfortably inside a generous budget until graphs 
 | `grant_review_required` | Send `approvedConnectorGrants` (array; `[]` approves none) on every import/confirm. |
 | `invalid_package` + issues | The aggregate failed validation — each issue carries a code and JSON path; the fixture corpus shows valid shapes. |
 | `unresolved_dependencies` | A required dependency is missing or the installed version is outside the declared range — the message names it. |
-| `unsupported_content` / `unsupported_distributions` | The aggregate uses a v2 feature this release cannot install yet. |
+| `unsupported_content` / `unsupported_distributions` | The aggregate uses a v2 feature this release cannot install yet. Distribution descriptors are still **verified** — see `invalid_distribution`. |
+| `invalid_distribution` | A `serviceDistributions[]` entry is malformed: unknown `runtimeKind`, bad sha256, oversized artifact, or a path that escapes staging. Fixable now, before staging ships. |
 | `unsupported_entry_path` | Entry-path contributions need archive delivery — inline the definitions, or ship a `.formlogic` archive. |
 | `handler_kind_not_enabled` | The definition uses a later handler kind — requires a newer FormLogic. |
 | `uninstall_blocked` | Another installed package requires this one; uninstall the named dependents first. |
