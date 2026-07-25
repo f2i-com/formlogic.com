@@ -149,7 +149,7 @@ describe('installed-package provider through the registry (FLOW-204)', () => {
         type: 'com.formlogic.ai.chat',
         version: '1.1.0',
         display: { label: 'LLM Chat', category: 'AI' },
-        handler: { kind: 'core-preset', coreType: 'llm_chat', defaults: {} },
+        handler: { kind: 'core-preset', coreType: 'llm_chat', defaults: {}, supersedesCore: true },
         sideEffects: 'external-write',
       } as unknown as FlowNodeDefinitionV1,
     }]);
@@ -170,7 +170,7 @@ describe('installed-package provider through the registry (FLOW-204)', () => {
         type: 'com.formlogic.ai.chat',
         version: '1.1.0',
         display: { label: 'LLM Chat', category: 'AI' },
-        handler: { kind: 'core-preset', coreType: 'llm_chat', defaults: {} },
+        handler: { kind: 'core-preset', coreType: 'llm_chat', defaults: {}, supersedesCore: true },
         sideEffects: 'external-write',
       } as unknown as FlowNodeDefinitionV1,
     }]);
@@ -189,7 +189,7 @@ describe('installed-package provider through the registry (FLOW-204)', () => {
         type: 'com.formlogic.ai.chat',
         version: '1.1.0',
         display: { label: 'LLM Chat', category: 'AI' },
-        handler: { kind: 'core-preset', coreType: 'llm_chat', defaults: {} },
+        handler: { kind: 'core-preset', coreType: 'llm_chat', defaults: {}, supersedesCore: true },
         sideEffects: 'external-write',
       } as unknown as FlowNodeDefinitionV1,
     }]);
@@ -197,6 +197,28 @@ describe('installed-package provider through the registry (FLOW-204)', () => {
 
     seedStore([]);
     expect(flowNodeRegistry.listNodeSpecs().some((s) => s.type === 'llm_chat')).toBe(true);
+  });
+
+  it('lowering to a core type does NOT by itself replace it', () => {
+    // The bug this exists to prevent: a specialised node built on `template` is not the
+    // Template node, and inferring supersession from the lowering silently took the built-in
+    // away from everyone who installed such a package.
+    seedStore([{
+      type: 'com.acme.greet',
+      definition: {
+        schemaVersion: 1,
+        type: 'com.acme.greet',
+        version: '1.0.0',
+        display: { label: 'Greet someone' },
+        handler: { kind: 'core-preset', coreType: 'template', defaults: { template: 'Hi {{name}}' } },
+        sideEffects: 'none',
+      } as unknown as FlowNodeDefinitionV1,
+    }]);
+
+    const specs = flowNodeRegistry.listNodeSpecs();
+    expect(specs.some((s) => s.type === 'com.acme.greet')).toBe(true);
+    expect(specs.some((s) => s.type === 'template')).toBe(true);
+    expect(specs.find((s) => s.type === 'com.acme.greet')!.supersedesCoreType).toBeUndefined();
   });
 
   it('a service-action node supersedes nothing (it lowers to no built-in)', () => {

@@ -23,7 +23,17 @@ export interface PackageV2Issue {
 }
 
 export type FlowNodeHandlerV1 =
-  | { kind: 'core-preset'; coreType: string; defaults?: Record<string, unknown> }
+  | {
+      kind: 'core-preset';
+      coreType: string;
+      defaults?: Record<string, unknown>;
+      /**
+       * Replace the built-in `coreType` in the palette. DECLARED, never inferred from the
+       * lowering: most packages use a core preset as an implementation detail, and a
+       * specialised node built on `template` is not the Template node.
+       */
+      supersedesCore?: boolean;
+    }
   | { kind: 'service-action'; bindingSlot: string; requiredAction: string };
 
 export interface FlowNodeDefinitionV1 {
@@ -367,7 +377,7 @@ export function validateFlowNodeDefinitionV1(
   if (!isMap(handler) || !isString(handler.kind)) {
     push('bad_handler', `${basePath}.handler`, 'handler with a kind is required');
   } else if (handler.kind === 'core-preset') {
-    checkUnknownKeys(handler, ['kind', 'coreType', 'defaults'], `${basePath}.handler`, push);
+    checkUnknownKeys(handler, ['kind', 'coreType', 'defaults', 'supersedesCore'], `${basePath}.handler`, push);
     if (!isString(handler.coreType) || !CORE_TYPE.test(handler.coreType)) {
       push('bad_handler', `${basePath}.handler.coreType`, 'coreType must be a dot-free core node type');
     }
@@ -377,6 +387,13 @@ export function validateFlowNodeDefinitionV1(
       } else if (JSON.stringify(handler.defaults).length > MAX_HANDLER_DEFAULTS_BYTES) {
         push('too_large', `${basePath}.handler.defaults`, 'defaults exceed the size cap');
       }
+    }
+    // A node that LOWERS to a core type is not thereby a REPLACEMENT for it: most packages
+    // use a core preset as an implementation detail. Superseding the built-in in the palette has
+    // to be asked for, or a specialised node built on `template` silently takes the Template
+    // node away from everyone who installs it.
+    if (handler.supersedesCore !== undefined && typeof handler.supersedesCore !== 'boolean') {
+      push('bad_handler', `${basePath}.handler.supersedesCore`, 'supersedesCore must be a boolean');
     }
   } else if (handler.kind === 'service-action') {
     checkUnknownKeys(handler, ['kind', 'bindingSlot', 'requiredAction'], `${basePath}.handler`, push);

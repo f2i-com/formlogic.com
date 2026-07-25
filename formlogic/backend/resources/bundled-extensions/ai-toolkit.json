@@ -3,7 +3,7 @@
   "package": {
     "id": "com.formlogic.ai-toolkit",
     "kind": "extension",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "publisherId": "com.formlogic",
     "displayName": "AI Toolkit",
     "description": "The LLM Chat, Speech to Text and Text to Speech flow nodes, delivered as a package so they can be updated without a release of the app.",
@@ -14,7 +14,7 @@
       {
         "schemaVersion": 1,
         "type": "com.formlogic.ai.chat",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "display": {
           "label": "LLM Chat",
           "description": "Call an OpenAI-compatible chat model and get its reply.",
@@ -42,14 +42,15 @@
         "handler": {
           "kind": "core-preset",
           "coreType": "llm_chat",
-          "defaults": {}
+          "defaults": {},
+          "supersedesCore": true
         },
         "sideEffects": "external-write"
       },
       {
         "schemaVersion": 1,
         "type": "com.formlogic.ai.transcribe",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "display": {
           "label": "Speech to Text",
           "description": "Transcribe audio to text.",
@@ -74,14 +75,15 @@
         "handler": {
           "kind": "core-preset",
           "coreType": "stt_transcribe",
-          "defaults": {}
+          "defaults": {},
+          "supersedesCore": true
         },
         "sideEffects": "external-write"
       },
       {
         "schemaVersion": 1,
         "type": "com.formlogic.ai.speak",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "display": {
           "label": "Text to Speech",
           "description": "Turn text into spoken audio.",
@@ -108,7 +110,8 @@
         "handler": {
           "kind": "core-preset",
           "coreType": "tts_speak",
-          "defaults": {}
+          "defaults": {},
+          "supersedesCore": true
         },
         "sideEffects": "external-write"
       }

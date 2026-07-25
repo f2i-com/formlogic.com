@@ -127,9 +127,13 @@ export function adaptInstalledDefinition(def: FlowNodeDefinitionV1, packageName?
   const runNote = kind === 'service-action'
     ? 'Runs on FormLogic Desktop (or a paired browser) once this extension’s service slot is bound — bind it under Details on the installed extension.'
     : 'Runs wherever flows run — lowered to a built-in node by the server compiler (FormLogic Desktop needs an up-to-date build).';
-  // A core-preset node lowers to a built-in, so it can stand in for it: same executor, same
-  // behaviour, just delivered by a package that can be updated independently.
-  const supersedes = kind === 'core-preset' && typeof def.handler?.coreType === 'string'
+  // Replacing a built-in in the palette is DECLARED, never inferred from what a node lowers to.
+  // Most packages use a core preset as an implementation detail — a specialised "Greet someone"
+  // built on `template` is not the Template node, and inferring otherwise made it silently take
+  // the built-in away from everyone who installed it.
+  const supersedes = kind === 'core-preset'
+    && def.handler?.supersedesCore === true
+    && typeof def.handler?.coreType === 'string'
     ? def.handler.coreType
     : undefined;
 

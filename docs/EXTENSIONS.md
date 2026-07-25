@@ -267,6 +267,24 @@ Asking to sit beside the other AI nodes is a reasonable request; inventing a sec
 Note that `Requires FormLogic Desktop` cannot be claimed at all — that section means "needs a
 local Desktop service", which is a host fact about how the node runs, not a label to choose.
 
+### Replacing a built-in
+
+A `core-preset` node may declare that it REPLACES the built-in it lowers to:
+
+```jsonc
+"handler": { "kind": "core-preset", "coreType": "llm_chat", "supersedesCore": true }
+```
+
+With that, the packaged node takes the built-in's place in the palette; without it, both appear.
+It is **declared, never inferred from the lowering** — most packages use a core preset as an
+implementation detail, and a specialised "Greet someone" built on `template` is not the Template
+node. Inferring it meant such a package silently took the built-in away from everyone who
+installed it.
+
+Only the palette is affected. A flow that already contains the built-in keeps its own spec and
+its own property editors, and uninstalling the package brings the built-in entry back — so
+replacing is never destructive to stored flows.
+
 Separately, **users can group nodes however they like** in their own palette (the ⚙ control in
 the node panel). That is a personal arrangement stored on their device, and deliberately not
 something a package can set or see.

@@ -531,7 +531,7 @@ class ApplicationPackageV2Validator
         if (!self::isMap($handler) || !self::isStr($kind)) {
             $issues[] = self::issue('bad_handler', $basePath . '.handler', 'handler with a kind is required');
         } elseif ($kind === 'core-preset') {
-            self::checkUnknownKeys($handler, ['kind', 'coreType', 'defaults'], $basePath . '.handler', $issues);
+            self::checkUnknownKeys($handler, ['kind', 'coreType', 'defaults', 'supersedesCore'], $basePath . '.handler', $issues);
             if (!self::isStr($handler['coreType'] ?? null) || preg_match(self::CORE_TYPE, (string) $handler['coreType']) !== 1) {
                 $issues[] = self::issue('bad_handler', $basePath . '.handler.coreType', 'coreType must be a dot-free core node type');
             }
@@ -541,6 +541,13 @@ class ApplicationPackageV2Validator
                 } elseif (strlen((string) json_encode($handler['defaults'])) > self::MAX_HANDLER_DEFAULTS_BYTES) {
                     $issues[] = self::issue('too_large', $basePath . '.handler.defaults', 'defaults exceed the size cap');
                 }
+            }
+            // A node that LOWERS to a core type is not thereby a REPLACEMENT for it: most
+            // packages use a core preset as an implementation detail. Superseding the built-in
+            // in the palette has to be asked for, or a specialised node built on `template`
+            // silently takes the Template node away from everyone who installs it.
+            if (array_key_exists('supersedesCore', $handler) && !is_bool($handler['supersedesCore'])) {
+                $issues[] = self::issue('bad_handler', $basePath . '.handler.supersedesCore', 'supersedesCore must be a boolean');
             }
         } elseif ($kind === 'service-action') {
             self::checkUnknownKeys($handler, ['kind', 'bindingSlot', 'requiredAction'], $basePath . '.handler', $issues);
