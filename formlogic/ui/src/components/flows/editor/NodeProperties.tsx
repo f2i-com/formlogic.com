@@ -36,6 +36,7 @@ import {
   type DesktopServiceSnapshot,
 } from '../../../client-runtime/desktop/desktopClient';
 import { catalogAction, useServiceCatalog } from '../../../hooks/useServiceCatalog';
+import { useProviderProfiles } from '../../../hooks/useProviderProfiles';
 import { mergeKnownConnectorCommands } from '../flowEventCatalog';
 import { useAuthStore } from '../../../stores/authStore';
 
@@ -771,6 +772,55 @@ function ServiceDefinitionPickerField({
   );
 }
 
+/**
+ * Provider-profile picker for a `connection`. The value is an opaque Desktop provider id, so
+ * offering the real list beats asking an author to recall one. Unpaired Desktop (or no
+ * configured providers) degrades to the ordinary text field rather than an empty select, and
+ * a stored id that is no longer offered stays selectable so opening a flow never drops it.
+ */
+function ProviderConnectionPickerField({
+  spec,
+  value,
+  onChange,
+}: {
+  spec: NodePropertySpec;
+  value: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  const profiles = useProviderProfiles();
+  const raw = typeof value === 'string' ? value : '';
+  if (profiles === undefined) {
+    return (
+      <label className="block">
+        <span className={LABEL_CLS}>{spec.label}</span>
+        <input type="text" value={raw} disabled placeholder="Loading Desktop providers…" className={INPUT_CLS + ' opacity-60'} />
+      </label>
+    );
+  }
+  if (profiles.length === 0) {
+    return <Field spec={spec} value={value} onChange={onChange} />;
+  }
+  const known = profiles.some((p) => p.refId === raw);
+  return (
+    <label className="block">
+      <span className={LABEL_CLS}>{spec.label}</span>
+      <select
+        value={raw}
+        onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+        aria-label="Connection"
+        className={INPUT_CLS + ' cursor-pointer'}
+      >
+        <option value="">Pick a connection…</option>
+        {raw !== '' && !known && <option value={raw}>{raw} (not currently available)</option>}
+        {profiles.map((profile) => (
+          <option key={profile.refId} value={profile.refId}>{profile.name}</option>
+        ))}
+      </select>
+      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+    </label>
+  );
+}
+
 /** Action picker within the node's chosen definition — schema-aware (§6.3): the picked
  *  action's description surfaces under the field so authors see what they wired. */
 function ServiceActionPickerField({
@@ -1311,6 +1361,9 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
                 }
                 if (p.type === 'serviceDefinition') {
                   return <ServiceDefinitionPickerField key={p.key} spec={p} value={data[p.key]} onChange={onChange} />;
+                }
+                if (p.type === 'providerConnection') {
+                  return <ProviderConnectionPickerField key={p.key} spec={p} value={data[p.key]} onChange={onChange} />;
                 }
                 if (p.type === 'serviceActionId') {
                   return (

@@ -100,7 +100,13 @@ export type FieldType =
   /** ServiceDefinition id — a select over the paired Desktop's v3 Services catalog, else free text. */
   | 'serviceDefinition'
   /** An action id within the node's chosen service definition (same catalog fetch), else free text. */
-  | 'serviceActionId';
+  | 'serviceActionId'
+  /**
+   * A Desktop AI provider-profile id (the credential-holding "connection"). A select over the
+   * paired Desktop's enabled providers, else free text — nobody should have to recall an
+   * opaque id. A stored id that is no longer offered stays selectable rather than vanishing.
+   */
+  | 'providerConnection';
 
 /**
  * A conditional-visibility predicate over the node's own data. A property with a `showIf` is only
@@ -864,7 +870,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     properties: [
       { key: 'definitionId', label: 'Service definition', type: 'serviceDefinition', required: true, placeholder: 'openai-api', help: 'The Desktop Services catalog definition id.' },
       { key: 'actionId', label: 'Action', type: 'serviceActionId', required: true, placeholder: 'chat.complete', help: 'The action id within that definition.' },
-      { key: 'connection', label: 'Connection (provider id)', type: 'text', required: true, placeholder: 'openai-platform', help: 'The Desktop AI provider profile that holds the credential. An opaque id — never a URL or key.' },
+      { key: 'connection', label: 'Connection (provider id)', type: 'providerConnection', required: true, placeholder: 'openai-platform', help: 'The Desktop AI provider profile that holds the credential. An opaque id — never a URL or key.' },
       { key: 'input', label: 'Input', type: 'code', language: 'json', referenceSyntax: 'selector', placeholder: '{ "messages": [{ "role": "user", "content": "$inputs.prompt" }] }', help: 'An object matching the action’s inputSchema. String values may be $ selectors.' },
       { key: 'timeoutMs', label: 'Timeout (ms)', type: 'number', placeholder: '(action default)', help: 'Optional override of the action’s declared timeout.' },
     ],

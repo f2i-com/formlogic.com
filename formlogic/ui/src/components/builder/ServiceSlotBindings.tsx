@@ -4,6 +4,7 @@ import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { api, type PackageServiceSlot } from '../../lib/api';
 import { useServiceCatalog } from '../../hooks/useServiceCatalog';
+import { useProviderProfiles } from '../../hooks/useProviderProfiles';
 import { toast } from '../../stores/toastStore';
 
 /**
@@ -26,6 +27,7 @@ export function ServiceSlotBindings({ installationId }: { installationId: string
   const [draft, setDraft] = useState<{ definitionId: string; connection: string }>({ definitionId: '', connection: '' });
   const [saving, setSaving] = useState(false);
   const catalog = useServiceCatalog();
+  const profiles = useProviderProfiles();
 
   useEffect(() => {
     let cancelled = false;
@@ -146,14 +148,34 @@ export function ServiceSlotBindings({ installationId }: { installationId: string
                       className="w-full rounded border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1 text-xs text-gray-900 dark:text-slate-100"
                     />
                   )}
-                  <input
-                    type="text"
-                    value={draft.connection}
-                    onChange={(e) => setDraft((d) => ({ ...d, connection: e.target.value }))}
-                    placeholder="Connection (Desktop provider profile id)"
-                    aria-label={`Connection for ${slot.slot}`}
-                    className="w-full rounded border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1 text-xs text-gray-900 dark:text-slate-100"
-                  />
+                  {/* The connection is an opaque provider-profile id — offer the real list
+                      rather than making the user go and find one. */}
+                  {profiles && profiles.length > 0 ? (
+                    <select
+                      value={draft.connection}
+                      onChange={(e) => setDraft((d) => ({ ...d, connection: e.target.value }))}
+                      aria-label={`Connection for ${slot.slot}`}
+                      className="w-full rounded border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1 text-xs text-gray-900 dark:text-slate-100"
+                    >
+                      <option value="">Choose a connection…</option>
+                      {profiles.map((profile) => (
+                        <option key={profile.refId} value={profile.refId}>{profile.name}</option>
+                      ))}
+                      {/* A stored id that is no longer listed stays selectable, not silently dropped. */}
+                      {draft.connection !== '' && !profiles.some((p) => p.refId === draft.connection) && (
+                        <option value={draft.connection}>{draft.connection} (not currently available)</option>
+                      )}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={draft.connection}
+                      onChange={(e) => setDraft((d) => ({ ...d, connection: e.target.value }))}
+                      placeholder="Connection (Desktop provider profile id)"
+                      aria-label={`Connection for ${slot.slot}`}
+                      className="w-full rounded border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1 text-xs text-gray-900 dark:text-slate-100"
+                    />
+                  )}
                   <p className="text-gray-400 dark:text-slate-500">
                     The connection is the Desktop AI provider profile holding the credential — an opaque id, never a key or URL.
                   </p>

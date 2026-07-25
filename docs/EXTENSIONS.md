@@ -202,7 +202,9 @@ Rules:
 - Only a **declared** slot can be bound (`unknown_slot`) — a binding can never grant reach
   the install review did not show.
 - `connection` is an opaque Desktop provider-profile id. **Packages never carry credentials**,
-  and this API never sees one.
+  and this API never sees one. The UI offers the paired Desktop's configured providers as a
+  list (both here and on the `service_action` node), falling back to a typed id only when
+  there is nothing to offer.
 - While a slot is unbound, every node using it fails compilation with `binding_unresolved`
   naming the slot. Fail-closed by design: a run that could only fail is never produced.
 - Once bound, the compiler lowers the node to the canonical `service_action` — `definitionId`
