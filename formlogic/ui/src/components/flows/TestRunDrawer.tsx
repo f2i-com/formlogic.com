@@ -22,7 +22,7 @@ import { executeFlow, type FlowRunOutcome } from '../../client-runtime/flows/flo
 import { resolveExecutableGraph } from '../../client-runtime/flows/compiledGraph';
 import { buildWorkspaceExecutorDeps } from '../../client-runtime/flows/flowDispatcher';
 import { runFlowOnDesktop, type DesktopFlowRunState } from '../../client-runtime/desktop/desktopFlowRun';
-import { getNodeSpec } from './editor/nodeCatalog';
+import { flowNodeRegistry } from './registry/FlowNodeRegistry';
 import { flowExecutionLocation, type CloudRunFeedback, type FlowRunExecutedLocation } from './editor/executionLocation';
 import {
   EMPTY_RUN_LOG,
@@ -102,7 +102,8 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
   // Friendly label per node id for the timeline (falls back to the raw type / id).
   const nodeLabel = useMemo(() => {
     const m = new Map<string, string>();
-    for (const n of flow.flowJson?.nodes ?? []) m.set(n.id, getNodeSpec(n.type)?.label ?? n.type);
+    // FLOW-203: registry, so a contributed node's timeline row is named, not dotted.
+    for (const n of flow.flowJson?.nodes ?? []) m.set(n.id, flowNodeRegistry.resolveKnownNodeSpec(n.type)?.label ?? n.type);
     return (id: string) => m.get(id) ?? id;
   }, [flow.flowJson]);
 

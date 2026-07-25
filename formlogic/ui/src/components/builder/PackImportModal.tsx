@@ -28,6 +28,7 @@ import { Modal } from '../ui/Modal';
 import { Badge } from '../ui/Badge';
 import { PackIcon } from '../ui/PackIcon';
 import { api, type PackData, type PackImportResult, type PackInstallation, type CatalogPack, type PackDescribeResult, type PackageInstallPlan } from '../../lib/api';
+import { usePackBrowse } from '../../hooks/usePackBrowse';
 import { validateApplicationPackage } from '../../application-package/packageValidator';
 import { packHasCodeScreen, packHasLogicScript, reviewableConnectorGrants } from '../../lib/packTrust';
 import { CapabilityReview } from './TrustBadge';
@@ -72,8 +73,11 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
   const [activeTab, setActiveTab] = useState<Tab>(initialTab ?? 'marketplace');
 
   // Marketplace state
-  const [catalogPacks, setCatalogPacks] = useState<CatalogPack[]>([]);
-  const [loadingCatalog, setLoadingCatalog] = useState(false);
+  // MKT-601: the popup and the routed gallery browse through the SAME hook — one initial fetch,
+  // stale-response cancellation, and an honest error state with a retry. They had drifted: this
+  // surface used to swallow every failure and render an empty catalog, which looks identical to
+  // "there is nothing here" and is the one thing a user cannot act on.
+  const [seededPacks, setSeededPacks] = useState<CatalogPack[] | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('popular');
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
@@ -149,65 +153,52 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
     };
   }, []);
 
+  // MKT-601: browsing (including its debounce and stale-response handling) now lives in
+  // usePackBrowse. Only the installed list is fetched here, and only when the modal opens —
+  // it must not re-fire on every search keystroke.
   useEffect(() => {
     if (isOpen && storageMode === 'api') {
-      loadCatalog();
       loadInstallations();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- open-effect: catalog+installations load only when modal opens or storage mode changes; loadCatalog identity tracks searchQuery/sortBy and is handled by the debounced effect below, so excluding it here prevents loadInstallations re-firing on every search keystroke
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- open-effect: the installed list loads when the modal opens or storage mode changes, never on search input
   }, [isOpen, storageMode]);
-
-  // Debounced search (API-only, mirroring the load effect above)
-  useEffect(() => {
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    searchTimerRef.current = setTimeout(() => {
-      if (isOpen && storageMode === 'api') loadCatalog();
-    }, 300);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- debounced search: loadCatalog only closes over searchQuery/sortBy which are already deps, so its identity is fully covered; listing the explicit values keeps the debounce reset tied to the actual search inputs
-  }, [searchQuery, sortBy, isOpen, storageMode]);
 
   const [seeding, setSeeding] = useState(false);
   const seedAttemptedRef = useRef(false);
 
-  const loadCatalog = useCallback(async () => {
-    setLoadingCatalog(true);
-    try {
-      const result = await api.browsePacks({
-        search: searchQuery || undefined,
-        sort: sortBy,
-        limit: 50,
-      });
-      if (result.data?.packs) {
-        setCatalogPacks(result.data.packs);
+  const browse = usePackBrowse({
+    enabled: isOpen && storageMode === 'api' && activeTab === 'marketplace',
+    search: searchQuery,
+    sort: sortBy,
+    limit: 50,
+  });
+  // A successful re-read after seeding supersedes the browse result until the next query.
+  const catalogPacks = seededPacks ?? browse.packs;
+  const loadingCatalog = browse.loading;
 
-        // MKT-602: an empty catalog TRIGGERS a server-side bootstrap (once per session). The
-        // client no longer supplies the packs — it used to bundle every pack payload and POST
-        // it, which let whoever opened this modal first decide what "official" meant on a new
-        // deployment. The server seeds from its own copy; we just ask and re-read.
-        if (result.data.packs.length === 0 && !searchQuery && !seedAttemptedRef.current) {
-          seedAttemptedRef.current = true;
-          setSeeding(true);
-          try {
-            const seedResult = await api.seedOfficialPacks();
-            if (seedResult.data?.success) {
-              const refreshed = await api.browsePacks({ sort: sortBy, limit: 50 });
-              if (refreshed.data?.packs) {
-                setCatalogPacks(refreshed.data.packs);
-              }
-            }
-          } catch {
-            // Seed failed — the user just sees an empty catalog, which is honest.
-          } finally {
-            setSeeding(false);
-          }
-        }
-      }
-    } catch {
-      // silently fail
-    } finally {
-      setLoadingCatalog(false);
-    }
-  }, [searchQuery, sortBy]);
+  // MKT-602: an empty catalog TRIGGERS a server-side bootstrap (once per session). The client
+  // no longer supplies the packs — it used to bundle every pack payload and POST it, which let
+  // whoever opened this modal first decide what "official" meant on a new deployment. The
+  // server seeds from its own copy; we just ask and re-read. Only ever on a genuinely EMPTY
+  // catalog, never on a failed load: seeding because a request failed would be a bootstrap
+  // triggered by a dropped connection.
+  useEffect(() => {
+    if (!isOpen || storageMode !== 'api') return;
+    if (browse.loading || browse.error || searchQuery) return;
+    if (browse.packs.length > 0 || seedAttemptedRef.current) return;
+    seedAttemptedRef.current = true;
+    setSeeding(true);
+    void api
+      .seedOfficialPacks()
+      .then((seedResult) => (seedResult.data?.success ? api.browsePacks({ sort: sortBy, limit: 50 }) : null))
+      .then((refreshed) => {
+        if (refreshed?.data?.packs) setSeededPacks(refreshed.data.packs);
+      })
+      .catch(() => {
+        // Seed failed — the empty catalog below is the honest result.
+      })
+      .finally(() => setSeeding(false));
+  }, [isOpen, storageMode, browse.loading, browse.error, browse.packs.length, searchQuery, sortBy]);
 
   const loadInstallations = useCallback(async () => {
     setLoadingInstallations(true);
@@ -786,6 +777,13 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                   <p className="text-sm text-gray-500 dark:text-slate-400">
                     {seeding ? 'Setting up marketplace...' : 'Loading packs...'}
                   </p>
+                </div>
+              ) : browse.error ? (
+                <div className="text-center py-16 text-gray-500 dark:text-slate-400">
+                  <AlertTriangle className="h-10 w-10 mx-auto mb-3 text-amber-500" />
+                  <p className="text-sm font-medium">Couldn&rsquo;t load the marketplace</p>
+                  <p className="text-xs mt-1 max-w-sm mx-auto">{browse.error}</p>
+                  <Button variant="outline" size="sm" className="mt-4" onClick={browse.retry}>Try again</Button>
                 </div>
               ) : catalogPacks.length === 0 ? (
                 <div className="text-center py-16 text-gray-400 dark:text-slate-500">

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Package,
@@ -13,6 +13,7 @@ import {
 import { Button } from '../components/ui/Button';
 import { Skeleton } from '../components/ui/Skeleton';
 import { PackIcon } from '../components/ui/PackIcon';
+import { usePackBrowse } from '../hooks/usePackBrowse';
 import { api, resolveFileUrl, type CatalogPack, type PackFacet } from '../lib/api';
 import { useMarketplaceChrome, useReveal } from '../lib/marketplaceChrome';
 
@@ -121,20 +122,14 @@ function PackCardSkeleton() {
 
 export default function PackGalleryPage() {
   const navigate = useNavigate();
-  const [packs, setPacks] = useState<CatalogPack[]>([]);
   const [featuredPacks, setFeaturedPacks] = useState<CatalogPack[]>([]);
   const [categories, setCategories] = useState<PackFacet[]>([]);
   const [tags, setTags] = useState<PackFacet[]>([]);
-  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('popular');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [tagFilter, setTagFilter] = useState('');
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [error, setError] = useState<string | null>(null);
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const loadSeqRef = useRef(0);
 
   useMarketplaceChrome();
   useReveal();
@@ -147,72 +142,49 @@ export default function PackGalleryPage() {
 
   // Declared before the effects below so the effects' dependency arrays can reference them
   // without hitting the const temporal dead zone (ReferenceError on mount).
-  const loadFeatured = useCallback(async () => {
-    try {
-      const result = await api.browsePacks({ sort: 'popular', limit: 6 });
-      if (result.data?.packs) {
+
+
+
+
+  // MKT-601: browsing (debounce, stale-response cancellation, error state, retry) lives in the
+  // shared hook, so this route and the Packs popup cannot drift into different behaviour for
+  // the same screen again.
+  const browse = usePackBrowse({
+    search: searchQuery,
+    sort: sortBy,
+    category: categoryFilter,
+    tag: tagFilter,
+    page,
+    limit: 12,
+  });
+  const packs = browse.packs;
+  const totalPages = browse.totalPages;
+  const loading = browse.loading;
+  const error = browse.error;
+  const loadPacks = browse.retry;
+
+  // Mount-only chrome: the featured strip and the facet chips. Fetched INLINE (react-hooks
+  // forbids calling a setState-ing helper from an effect body), and failures leave those
+  // sections simply absent — they are decoration around the catalog, not the catalog.
+  useEffect(() => {
+    let cancelled = false;
+    void api.browsePacks({ sort: 'popular', limit: 6 }).then((result) => {
+      if (!cancelled && result.data?.packs) {
         setFeaturedPacks(result.data.packs.filter((p) => p.featured));
       }
-    } catch {
-      // silently fail
-    }
-  }, []);
-
-  // Facets (categories + tags in use) drive the browse chips. Derived from the live catalog, so
-  // they adapt automatically as packs are published — there is no hardcoded taxonomy.
-  const loadFacets = useCallback(async () => {
-    try {
-      const result = await api.getPackFacets();
-      if (result.data) {
+    }).catch(() => {});
+    // Facets (categories + tags in use) drive the browse chips. Derived from the live catalog,
+    // so they adapt as packs are published — there is no hardcoded taxonomy.
+    void api.getPackFacets().then((result) => {
+      if (!cancelled && result.data) {
         setCategories(result.data.categories || []);
         setTags(result.data.tags || []);
       }
-    } catch {
-      // silently fail — chips just won't render
-    }
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
-
-  const loadPacks = useCallback(async () => {
-    // Ignore out-of-order responses: only the latest request may apply results,
-    // otherwise a slow earlier query/page can overwrite newer results.
-    const seq = ++loadSeqRef.current;
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await api.browsePacks({
-        search: searchQuery || undefined,
-        sort: sortBy,
-        category: categoryFilter || undefined,
-        tag: tagFilter || undefined,
-        page,
-        limit: 12,
-      });
-      if (seq !== loadSeqRef.current) return;
-      if (result.error) {
-        setError(typeof result.error === 'string' ? result.error : 'Failed to load packs');
-      } else if (result.data) {
-        setPacks(result.data.packs);
-        setTotalPages(result.data.totalPages);
-      }
-    } catch {
-      if (seq === loadSeqRef.current) setError('Failed to load packs. Please check your connection and try again.');
-    } finally {
-      if (seq === loadSeqRef.current) setLoading(false);
-    }
-  }, [searchQuery, sortBy, categoryFilter, tagFilter, page]);
-
-  useEffect(() => {
-    loadFeatured();
-    loadFacets();
-  }, [loadFeatured, loadFacets]);
-
-  useEffect(() => {
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    searchTimerRef.current = setTimeout(() => {
-      loadPacks();
-    }, 300);
-    return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
-  }, [searchQuery, sortBy, categoryFilter, tagFilter, page, loadPacks]);
 
   const chipClass = (active: boolean) =>
     `fl-mono px-3 py-1.5 rounded-full text-[11px] uppercase tracking-wider border transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${

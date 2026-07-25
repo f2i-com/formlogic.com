@@ -2,7 +2,7 @@
 //
 // These helpers cover persistence metadata and undo coalescing without a React Flow test harness.
 import type { WorkflowGraph } from '../../../types/flows';
-import { getNodeSpec } from './nodeCatalog';
+import { flowNodeRegistry } from '../registry/FlowNodeRegistry';
 
 export const PATCH_HISTORY_COALESCE_MS = 1000;
 
@@ -178,7 +178,9 @@ function nonEmptyString(value: unknown): string | null {
 export function computeCapabilitiesFromGraph(graph: WorkflowGraph): string[] {
   const caps = new Set<string>();
   for (const node of graph.nodes) {
-    const spec = getNodeSpec(node.type);
+    // FLOW-203: through the registry — a contributed node's declared capability belongs in the
+    // saved flow's capability list too, or the row under-declares its own reach.
+    const spec = flowNodeRegistry.resolveKnownNodeSpec(node.type);
     if (spec?.capability) caps.add(spec.capability);
 
     const data = node.data ?? {};

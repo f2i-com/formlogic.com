@@ -9,7 +9,7 @@ import { api } from '../../lib/api';
 import { parseServerDate } from '../../lib/utils';
 import { Button } from '../ui/Button';
 import { PanelHeader } from './PanelHeader';
-import { getNodeSpec } from './editor/nodeCatalog';
+import { flowNodeRegistry } from './registry/FlowNodeRegistry';
 import { runLocationLabel } from './editor/executionLocation';
 import { formatAbsoluteTimeTitle, formatRelativeTime } from './relativeTime';
 import { statusChipStyle } from './runHistoryChip';
@@ -78,7 +78,11 @@ function nodeLabelById(flow: FlowDefinition | undefined): Map<string, string> {
 }
 
 function labelForNode(node: WorkflowGraphNode): string | null {
-  return getNodeSpec(node.type)?.label ?? null;
+  // FLOW-203: through the registry, so a contributed node reads as its label here rather than as
+  // a raw dotted type. resolveKnownNodeSpec (not resolveNodeSpec) so an uninstalled extension
+  // shows its stored type instead of the word "missing" — the type is the more useful clue when
+  // reading a past run.
+  return flowNodeRegistry.resolveKnownNodeSpec(node.type)?.label ?? null;
 }
 
 export function FlowRunHistory({ flowId, flow, refreshKey }: { flowId: string; flow?: FlowDefinition; refreshKey?: number }) {
