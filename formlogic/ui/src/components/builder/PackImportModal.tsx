@@ -64,6 +64,8 @@ interface V2PlanState {
   version: string;
   /** RUN-306: what an update would do to flows already using the package. */
   migration: PackageInstallPlan['migration'];
+  /** MKT-603: the dependency resolution this plan was reviewed against. */
+  resolution: PackageInstallPlan['resolution'] | null;
 }
 
 export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModalProps) {
@@ -359,6 +361,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
               installedVersion: typeof proposal.data.installedVersion === 'string' ? proposal.data.installedVersion : null,
               version: typeof pkgMeta.version === 'string' ? pkgMeta.version : '',
               migration: proposal.data.migration ?? null,
+              resolution: proposal.data.resolution ?? null,
             };
             setV2Plan(v2PlanRef.current);
             setPackageReview({ trust: proposal.data.trust, formatVersion: 2, capabilities: proposal.data.capabilities });
@@ -1288,6 +1291,33 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                       {v2Plan.migration.affectedFlows.length === 1 ? 's' : ''} this package; no node types are being removed.
                     </p>
                   )}
+                </div>
+              )}
+              {/* MKT-603: what this package DEPENDS ON is part of the review — installing
+                  something that quietly requires other packages is not a reviewed install.
+                  Resolved dependencies name the exact version they locked to; unresolved ones
+                  say what to install first, and the import is refused until they are met. */}
+              {v2Plan?.resolution && (v2Plan.resolution.resolved.length > 0 || v2Plan.resolution.problems.length > 0) && (
+                <div className="rounded-lg border border-gray-200 dark:border-slate-800 p-3 text-sm">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Requires</p>
+                  <ul className="mt-1.5 space-y-1">
+                    {v2Plan.resolution.resolved.map((dep, i) => (
+                      <li key={`ok-${i}`} className="flex flex-wrap items-baseline gap-x-2 text-gray-600 dark:text-slate-300">
+                        <CheckCircle className="h-3.5 w-3.5 shrink-0 text-green-600 dark:text-green-400" aria-hidden="true" />
+                        <span className="font-mono text-[11px] break-all">{String(dep.id ?? '')}</span>
+                        <span className="text-[11px] text-gray-400 dark:text-slate-500">
+                          {String(dep.range ?? '')} → v{String(dep.resolvedVersion ?? '')}
+                          {dep.required === false ? ' (optional)' : ''}
+                        </span>
+                      </li>
+                    ))}
+                    {v2Plan.resolution.problems.map((problem, i) => (
+                      <li key={`bad-${i}`} className="flex items-start gap-2 text-amber-700 dark:text-amber-300">
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        <span className="break-words">{problem.message}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
               {packageReview && (
