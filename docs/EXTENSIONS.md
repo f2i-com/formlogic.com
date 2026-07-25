@@ -372,12 +372,24 @@ Contribution rules (the registry enforces all of them):
 An action declares a **transport**. Two are executable today, and they differ in exactly one
 important way — where the base URL comes from:
 
-| Transport | Base URL | Path rule |
-|---|---|---|
-| `openai-compatible` | The **connection** the owner bound (a provider profile the Desktop holds credentials for). | Must be under `/v1/*` — the inference surface. |
-| `managed-process-http` | The **service the Desktop supervises**, named by `transport.serviceId`. Scheme and host are hardcoded loopback; the port comes from the running process. | Any plain absolute route the process owns. |
+| Transport | Reaches | Bounded by | Status |
+|---|---|---|---|
+| `openai-compatible` | A provider profile's `/v1/*` surface | The connection the owner bound; the Desktop gateway holds the credential | enabled |
+| `managed-process-http` | One supervised local process | The registry's port for the named service; loopback only | enabled |
+| `plugin-command` | One installed plugin's declared commands | The plugin that **contributed** the definition, and only commands its manifest declares | enabled |
+| `stdio-jsonrpc` | A spawned child process's stdio | — | gated off |
+| streaming lanes | A long-lived duplex channel | — | gated off |
 
-In neither case does a definition author supply a host. That is deliberate and load-bearing:
+The last two are **named** rather than silently absent: writing one gets a typed refusal saying
+the transport exists and is not enabled, which is actionable, instead of "unknown transport",
+which reads like a typo. They are separate gates because they carry genuinely different risk — a
+spawned child process and a duplex stream are not one feature.
+
+Note that an action declaring `streaming: { mode: "sse" }` is **not** gated: a declared streaming
+mode is a capability, not a requirement, and such an action returns a complete response when
+nobody asks for a stream.
+
+In no case does a definition author supply a host. That is deliberate and load-bearing:
 there is no field an author could write that would aim a flow at an internal address, a cloud
 metadata endpoint, or the wider network, so the SSRF surface is closed by construction rather
 than by a blocklist that has to keep up. Both lanes also refuse `..`, query strings, fragments,
@@ -392,6 +404,23 @@ parameters.
   "path": "/render"
 }
 ```
+
+For `plugin-command`, the action names a command and nothing else — a command addresses a name,
+not a route, so declaring a path is refused:
+
+```jsonc
+"transport": { "kind": "plugin-command", "command": "tools.run" }
+```
+
+Two containment rules apply, and neither is taken on trust from the definition:
+
+- **The plugin is whoever contributed the definition.** It is read from the registry's record,
+  never from the transport block, so a definition cannot reach into another plugin's commands
+  (a `pluginId` written there is simply not read), and a host built-in cannot use this transport
+  at all — there would be no contributing plugin to be bounded by.
+- **The command must be one the plugin's own manifest declares.** The manifest is what the user
+  reviewed at install; a definition file shipped alongside it must not be able to widen that
+  surface afterwards.
 
 Behaviour worth knowing:
 

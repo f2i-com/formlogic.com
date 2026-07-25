@@ -120,6 +120,9 @@ struct AppState {
     flow_runtime: Option<Arc<FlowRuntime>>,
     /// AI-401: the provider registry backing the AI gateway (`/api/ai/*`).
     ai_providers: crate::ai::providers::ProviderRegistryHandle,
+    /// SRV-409: the plugin host, so a `plugin-command` service action can be dispatched to the
+    /// plugin that contributed its definition.
+    plugin_host: PluginHostHandle,
     /// Delegated ChatGPT OAuth + read-only agent surface. This is deliberately
     /// separate from the OpenAI-compatible provider registry because a
     /// ChatGPT subscription is not an OpenAI Platform API credential.
@@ -732,7 +735,15 @@ async fn invoke_service_action(
     // SRV-407: the two transports resolve their base URL from completely different places — a
     // provider profile vs a process this Desktop supervises — so the lane is chosen here rather
     // than inside one function that would have to hold both.
-    let outcome = if action.is_managed_process() {
+    let outcome = if action.is_plugin_command() {
+        crate::services::invocation::invoke_plugin_command(
+            &state.plugin_host,
+            &action,
+            &body.input,
+            body.timeout_ms,
+        )
+        .await
+    } else if action.is_managed_process() {
         crate::services::invocation::invoke_managed(
             service_invoke_http(),
             &state.registry,
@@ -5166,6 +5177,7 @@ pub async fn serve(
         catalog,
         flow_runtime: flow_runtime.clone(),
         ai_providers,
+        plugin_host: plugin_host.clone(),
         codex_agent,
         realtime_sessions: Arc::new(tokio::sync::Semaphore::new(2)),
         data,

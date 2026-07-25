@@ -88,6 +88,36 @@ pub enum Transport {
     /// definition therefore cannot aim a flow at an arbitrary address — it can only address the
     /// process it declared.
     ManagedProcessHttp { service_id: String },
+    /// SRV-409: a command dispatched to the plugin that CONTRIBUTED this definition, over the
+    /// existing connector channel. The boundary is the plugin itself: a definition can only
+    /// command its own plugin, because the plugin id is derived from the registry's record of
+    /// who contributed the definition, never from the transport block.
+    PluginCommand { plugin_id: String, command: String },
+}
+
+/// SRV-409: which transports this Desktop can execute, and what each one is allowed to reach.
+///
+/// | Transport | Reaches | Bounded by | Status |
+/// |---|---|---|---|
+/// | `openai-compatible` | A provider profile's `/v1/*` surface | The connection the owner bound; the gateway holds the credential | enabled |
+/// | `managed-process-http` | One supervised local process | The registry's port for the named service; loopback only | enabled |
+/// | `plugin-command` | One installed plugin's declared commands | The plugin that CONTRIBUTED the definition, and only commands its manifest declares | enabled |
+/// | `stdio-jsonrpc` | A spawned child process's stdio | — | gated off |
+/// | streaming lanes | A long-lived duplex channel | — | gated off |
+///
+/// The last two are named rather than silently absent: an author who writes one gets a typed
+/// refusal that says the transport exists and is not enabled, which is actionable, instead of
+/// "unknown transport", which reads like a typo. Each is its own gate because they carry
+/// genuinely different risk — a spawned child process and a duplex stream are not one feature.
+pub mod gates {
+    /// Spawning a child process and speaking JSON-RPC over its stdio. Off: a child process
+    /// inherits far more than an HTTP call, and the containment story is not written yet.
+    pub const STDIO_JSONRPC: bool = false;
+    /// Consuming an action AS a stream, and any mode that can only be consumed that way. Off:
+    /// cancellation, backpressure and partial output have no cross-runtime semantics yet, and a
+    /// half-specified stream is worse than none. Deliberately does NOT gate `sse`, which returns
+    /// a complete response when nobody asks for a stream.
+    pub const STREAMING: bool = false;
 }
 
 impl ResolvedServiceAction {
@@ -103,7 +133,20 @@ impl ResolvedServiceAction {
     pub fn managed_service_id(&self) -> Option<&str> {
         match &self.transport {
             Transport::ManagedProcessHttp { service_id } => Some(service_id),
-            Transport::OpenAiCompatible => None,
+            _ => None,
+        }
+    }
+
+    /// Does this action dispatch a command to the plugin that contributed it?
+    pub fn is_plugin_command(&self) -> bool {
+        matches!(self.transport, Transport::PluginCommand { .. })
+    }
+
+    /// The (plugin, command) this action dispatches, when it is a plugin-command action.
+    pub fn plugin_command(&self) -> Option<(&str, &str)> {
+        match &self.transport {
+            Transport::PluginCommand { plugin_id, command } => Some((plugin_id, command)),
+            _ => None,
         }
     }
 }
@@ -152,6 +195,46 @@ pub fn resolve_action(definition_id: &str, action_id: &str) -> Result<ResolvedSe
             }
             Transport::ManagedProcessHttp { service_id: service_id.to_string() }
         }
+        "plugin-command" => {
+            // THE boundary: the plugin is whoever the registry says contributed this definition,
+            // NOT a field in the transport block. A definition therefore cannot command a
+            // different plugin, and a BUILT-IN definition cannot use this transport at all —
+            // there is no contributing plugin to be bounded by.
+            let Some(plugin_id) = super::definitions::provider_of(definition_id) else {
+                return Err(InvokeError::new(
+                    InvokeErrorCode::ActionUnavailable,
+                    format!(
+                        "action '{action_id}' uses the plugin-command transport, which is only \
+                         available to a definition contributed by an installed plugin"
+                    ),
+                ));
+            };
+            let command = transport["command"].as_str().unwrap_or("");
+            // Same dot-separated shape the plugin manifest uses for its declared commands.
+            let command_ok = !command.is_empty()
+                && command.len() <= 64
+                && command
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-' || b == b'_')
+                && !command.starts_with('.')
+                && !command.ends_with('.');
+            if !command_ok {
+                return Err(InvokeError::new(
+                    InvokeErrorCode::ActionUnavailable,
+                    format!("action '{action_id}' declares a plugin-command transport without a valid command name"),
+                ));
+            }
+            Transport::PluginCommand { plugin_id, command: command.to_string() }
+        }
+        "stdio-jsonrpc" if !gates::STDIO_JSONRPC => {
+            return Err(InvokeError::new(
+                InvokeErrorCode::ActionUnavailable,
+                format!(
+                    "action '{action_id}' uses the stdio-jsonrpc transport, which this Desktop \
+                     recognises but does not have enabled"
+                ),
+            ))
+        }
         _ => {
             return Err(InvokeError::new(
                 InvokeErrorCode::ActionUnavailable,
@@ -165,6 +248,20 @@ pub fn resolve_action(definition_id: &str, action_id: &str) -> Result<ResolvedSe
         return Err(InvokeError::new(
             InvokeErrorCode::ActionUnavailable,
             format!("action '{action_id}' is an event-stream lane, not invocable as a flow node"),
+        ));
+    }
+    // A declared streaming mode is a CAPABILITY, not a requirement: `sse` actions return a
+    // complete response when nobody asks for a stream, which is exactly how the built-in chat
+    // action is invoked today. What must be refused is a mode that can ONLY be consumed as a
+    // stream — executing one on the request/response path would silently discard everything but
+    // the final chunk, which is a wrong answer rather than a refusal.
+    if !matches!(streaming_mode, "none" | "sse") && !gates::STREAMING {
+        return Err(InvokeError::new(
+            InvokeErrorCode::ActionUnavailable,
+            format!(
+                "action '{action_id}' declares streaming mode '{streaming_mode}', which this \
+                 Desktop recognises but does not have enabled"
+            ),
         ));
     }
     let method = match transport["method"].as_str().unwrap_or("POST") {
@@ -192,6 +289,9 @@ pub fn resolve_action(definition_id: &str, action_id: &str) -> Result<ResolvedSe
         Transport::OpenAiCompatible => path_shape_ok && path.starts_with("/v1/"),
         // A managed process owns its whole route space — but only its own.
         Transport::ManagedProcessHttp { .. } => path_shape_ok,
+        // A plugin command addresses a NAME, not a route. A path here would be meaningless, and
+        // accepting one would suggest it does something.
+        Transport::PluginCommand { .. } => path.is_empty(),
     };
     if !path_ok {
         return Err(InvokeError::new(
@@ -202,6 +302,9 @@ pub fn resolve_action(definition_id: &str, action_id: &str) -> Result<ResolvedSe
                 }
                 Transport::ManagedProcessHttp { .. } => {
                     format!("action '{action_id}' transport path must be a plain absolute route")
+                }
+                Transport::PluginCommand { .. } => {
+                    format!("action '{action_id}' is a plugin command and must not declare a path")
                 }
             },
         ));
@@ -395,6 +498,85 @@ pub async fn invoke_managed(
         .map_err(|detail| InvokeError::new(InvokeErrorCode::OutputInvalid, detail))
 }
 
+/// SRV-409: dispatch an action as a COMMAND to the plugin that contributed its definition.
+///
+/// Two containment rules, both enforced here rather than trusted from the definition:
+///
+/// 1. The plugin is whoever the registry says contributed the definition. A definition cannot
+///    name a different plugin, so a contributed service can never reach across into another
+///    plugin's command surface.
+/// 2. The command must be one that plugin's own MANIFEST declares. A plugin's manifest is the
+///    thing the user reviewed at install; a definition file shipped alongside it must not be
+///    able to widen that surface after the fact.
+///
+/// Everything else mirrors the other lanes: declared input schema in, declared output schema
+/// out, a bounded timeout, and redacted failure detail.
+pub async fn invoke_plugin_command(
+    host: &std::sync::Arc<crate::plugins::registry::PluginHost>,
+    action: &ResolvedServiceAction,
+    input: &Value,
+    timeout_override_ms: Option<u64>,
+) -> Result<Value, InvokeError> {
+    let Some((plugin_id, command)) = action.plugin_command() else {
+        return Err(InvokeError::new(
+            InvokeErrorCode::ActionUnavailable,
+            "this action does not use the plugin-command transport",
+        ));
+    };
+    if let Err(detail) = schema_subset::validate(&action.input_schema, input) {
+        return Err(InvokeError::new(InvokeErrorCode::InputInvalid, detail));
+    }
+
+    // Rule 2: the plugin must be installed AND must declare this command on one of its
+    // connectors. An undeclared command is refused even though the plugin is the right one.
+    let Some(plugin) = host.get(plugin_id) else {
+        return Err(InvokeError::new(
+            InvokeErrorCode::ServiceUnavailable,
+            format!("the '{plugin_id}' plugin that provides this service is not installed"),
+        ));
+    };
+    let connector_id = plugin
+        .connectors
+        .iter()
+        .find(|c| c.commands.iter().any(|k| k == command))
+        .map(|c| c.id.clone())
+        .ok_or_else(|| {
+            InvokeError::new(
+                InvokeErrorCode::ActionUnavailable,
+                format!("the '{plugin_id}' plugin does not declare the command '{command}'"),
+            )
+        })?;
+
+    let timeout_ms = timeout_override_ms.unwrap_or(action.timeout_ms).clamp(100, 600_000);
+    let request = crate::connectors::ConnectorRequestBody {
+        connector_id: Some(connector_id),
+        command: command.to_string(),
+        payload: Some(input.clone()),
+        timeout_ms: Some(timeout_ms),
+        // A service action is not a physical side effect the user can retry by hand, but the
+        // plugin journals by request id, so mint one rather than sending none.
+        request_id: Some(format!("service-action:{}", uuid::Uuid::new_v4().simple())),
+        ..Default::default()
+    };
+
+    let response = crate::connectors::dispatch(host, request.connector_id.as_deref().unwrap_or(plugin_id), &request)
+        .await
+        .map_err(|failure| {
+            InvokeError::new(
+                InvokeErrorCode::TransportFailed,
+                format!("the '{plugin_id}' plugin refused '{command}': {}", redact(&failure.message)),
+            )
+        })?;
+
+    // The connector envelope wraps the result; the action's schema describes the RESULT, not the
+    // envelope, so unwrap before validating rather than making every author describe our wrapper.
+    let output = response.get("data").cloned().unwrap_or(response);
+    if let Err(detail) = schema_subset::validate(&action.output_schema, &output) {
+        return Err(InvokeError::new(InvokeErrorCode::OutputInvalid, detail));
+    }
+    Ok(output)
+}
+
 /// Execute a resolved action: validate input → gateway transport → validate output.
 /// `timeout_override_ms` (node data) wins over the action's declared timeout when set.
 pub async fn invoke(
@@ -405,11 +587,12 @@ pub async fn invoke(
     timeout_override_ms: Option<u64>,
 ) -> Result<Value, InvokeError> {
     if action.transport != Transport::OpenAiCompatible {
-        // Sending a managed-process action down the gateway lane would resolve its path against
-        // a provider profile — a different service entirely. Refuse rather than mis-route.
+        // Sending another transport's action down the gateway lane would resolve its path
+        // against a provider profile — a different service entirely. Refuse rather than
+        // mis-route.
         return Err(InvokeError::new(
             InvokeErrorCode::ActionUnavailable,
-            "this action uses the managed-process transport and must be invoked on that lane",
+            "this action uses a different transport and must be invoked on that lane",
         ));
     }
     if let Err(detail) = schema_subset::validate(&action.input_schema, input) {
@@ -797,7 +980,7 @@ mod tests {
                 .block_on(invoke(&client, &action, "openai", &json!({ "prompt": "hi" }), None));
             let err = outcome.unwrap_err();
             assert_eq!(err.code, InvokeErrorCode::ActionUnavailable);
-            assert!(err.message.contains("managed-process"));
+            assert!(err.message.contains("different transport"));
         });
     }
 
@@ -846,5 +1029,148 @@ mod tests {
     fn a_long_error_body_cannot_flood_a_run_log() {
         let flood = "x ".repeat(10_000);
         assert!(redact(&flood).chars().count() <= MAX_ERROR_BODY_CHARS);
+    }
+    // -- SRV-409: plugin-command, and the gates on what is not enabled ----------------------
+
+    fn plugin_command_definition(plugin: &str, command: &str) -> serde_json::Value {
+        json!({
+            "schemaVersion": 3,
+            "id": format!("{plugin}.tools"),
+            "name": "SRV-409 Demo Tools",
+            "version": "1.0.0",
+            "actions": [{
+                "id": "run",
+                "title": "Run a plugin command",
+                "sideEffects": "none",
+                "timeoutMs": 5000,
+                "transport": { "kind": "plugin-command", "command": command },
+                "inputSchema": { "type": "object" },
+                "outputSchema": { "type": "object" }
+            }]
+        })
+    }
+
+    #[test]
+    fn a_plugin_command_is_bound_to_the_plugin_that_contributed_the_definition() {
+        let plugin = "srv409own";
+        with_managed_definition(plugin, plugin_command_definition(plugin, "tools.run"), || {
+            let action = resolve_action("srv409own.tools", "run").expect("resolves");
+            assert!(action.is_plugin_command());
+            // The plugin comes from the REGISTRY's record of who contributed the definition,
+            // not from anything the transport block says — so a definition cannot reach across
+            // into another plugin's command surface.
+            assert_eq!(action.plugin_command(), Some(("srv409own", "tools.run")));
+        });
+    }
+
+    #[test]
+    fn a_definition_cannot_name_a_different_plugin_to_command() {
+        let plugin = "srv409spoof";
+        let mut definition = plugin_command_definition(plugin, "tools.run");
+        // Try to steer the dispatch at someone else. The field is simply not read.
+        definition["actions"][0]["transport"]["pluginId"] = json!("aokie");
+        with_managed_definition(plugin, definition, || {
+            let action = resolve_action("srv409spoof.tools", "run").expect("resolves");
+            assert_eq!(
+                action.plugin_command().map(|(p, _)| p),
+                Some("srv409spoof"),
+                "the contributing plugin wins over any claim in the transport"
+            );
+        });
+    }
+
+    #[test]
+    fn a_builtin_definition_cannot_use_the_plugin_command_transport() {
+        // There is no contributing plugin to be bounded BY, so the transport has no meaning for
+        // a built-in — and allowing it would give a host definition an unbounded command reach.
+        // (Asserted through a contributed definition that is then removed: `provider_of` is the
+        // only thing that makes the transport resolvable at all.)
+        let plugin = "srv409gone";
+        with_managed_definition(plugin, plugin_command_definition(plugin, "tools.run"), || {
+            assert!(resolve_action("srv409gone.tools", "run").is_ok());
+        });
+        // After removal the definition is not in the registry at all.
+        let err = resolve_action("srv409gone.tools", "run").unwrap_err();
+        assert_eq!(err.code, InvokeErrorCode::ServiceUnavailable);
+    }
+
+    #[test]
+    fn a_malformed_command_name_is_refused() {
+        let plugin = "srv409cmd";
+        for bad in ["", "Tools.Run", "tools run", ".leading", "trailing.", &"x".repeat(65)] {
+            let definition = plugin_command_definition(plugin, bad);
+            with_managed_definition(plugin, definition, || {
+                let err = resolve_action("srv409cmd.tools", "run").unwrap_err();
+                assert_eq!(err.code, InvokeErrorCode::ActionUnavailable);
+                assert!(err.message.contains("command name"), "'{bad}' must be refused by shape");
+            });
+        }
+    }
+
+    #[test]
+    fn a_plugin_command_must_not_declare_a_path() {
+        // A command addresses a NAME. Accepting a path would imply it does something.
+        let plugin = "srv409path";
+        let mut definition = plugin_command_definition(plugin, "tools.run");
+        definition["actions"][0]["transport"]["path"] = json!("/v1/anything");
+        with_managed_definition(plugin, definition, || {
+            let err = resolve_action("srv409path.tools", "run").unwrap_err();
+            assert_eq!(err.code, InvokeErrorCode::ActionUnavailable);
+            assert!(err.message.contains("must not declare a path"));
+        });
+    }
+
+    #[test]
+    fn gated_transports_are_named_rather_than_silently_unknown() {
+        // An author who writes a gated transport should learn it EXISTS and is off — which is
+        // actionable — rather than "unknown transport", which reads like a typo.
+        assert!(!gates::STDIO_JSONRPC, "stdio-jsonrpc ships gated off");
+        let plugin = "srv409stdio";
+        let mut definition = plugin_command_definition(plugin, "tools.run");
+        definition["actions"][0]["transport"] = json!({ "kind": "stdio-jsonrpc", "command": "tools.run" });
+        with_managed_definition(plugin, definition, || {
+            let err = resolve_action("srv409stdio.tools", "run").unwrap_err();
+            assert_eq!(err.code, InvokeErrorCode::ActionUnavailable);
+            assert!(err.message.contains("stdio-jsonrpc"));
+            assert!(err.message.contains("does not have enabled"));
+        });
+    }
+
+    #[test]
+    fn a_streaming_action_is_refused_rather_than_executed_as_request_response() {
+        // Running a streaming action on the request/response path would silently discard
+        // everything but the final chunk — a wrong answer rather than a refusal.
+        assert!(!gates::STREAMING, "streaming ships gated off");
+        let plugin = "srv409stream";
+        let mut definition = plugin_command_definition(plugin, "tools.run");
+        // A mode that can ONLY be consumed as a stream. (`sse` is deliberately NOT gated: it
+        // returns a complete response when nobody asks for a stream, which is how the built-in
+        // chat action is invoked today.)
+        // A mode that can ONLY be consumed as a stream. `sse` is deliberately NOT gated: it
+        // returns a complete response when nobody asks for a stream, which is how the built-in
+        // chat action is invoked today.
+        definition["actions"][0]["streaming"] = json!({ "mode": "chunks" });
+        with_managed_definition(plugin, definition, || {
+            let err = resolve_action("srv409stream.tools", "run").unwrap_err();
+            assert_eq!(err.code, InvokeErrorCode::ActionUnavailable);
+            assert!(err.message.contains("streaming mode 'chunks'"));
+        });
+    }
+
+    #[test]
+    fn a_plugin_command_action_cannot_be_sent_down_the_gateway_lane() {
+        let plugin = "srv409lane";
+        with_managed_definition(plugin, plugin_command_definition(plugin, "tools.run"), || {
+            let action = resolve_action("srv409lane.tools", "run").expect("resolves");
+            let client = reqwest::Client::new();
+            let err = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime")
+                .block_on(invoke(&client, &action, "openai", &json!({}), None))
+                .unwrap_err();
+            assert_eq!(err.code, InvokeErrorCode::ActionUnavailable);
+            assert!(err.message.contains("different transport"));
+        });
     }
 }
