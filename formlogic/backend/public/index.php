@@ -511,7 +511,9 @@ $container->set(\FormLogic\Services\Packages\InstallPlanService::class, function
 $container->set(\FormLogic\Controllers\PackageInstallPlanController::class, function (Container $c) {
     return new \FormLogic\Controllers\PackageInstallPlanController(
         $c->get(\FormLogic\Services\Packages\InstallPlanService::class),
-        $c->get(\FormLogic\Services\SigningService::class)
+        $c->get(\FormLogic\Services\SigningService::class),
+        // ADR-010 archive lane: propose accepts a multipart .formlogic upload too.
+        $c->get(PackService::class)
     );
 });
 
@@ -1125,6 +1127,9 @@ $app->add(new BodySizeLimitMiddleware(
         // binary archive), so it needs the same cap as the archive import lane.
         ['path' => '#^/api/packs/describe$#', 'maxBytes' => $packMax + (4 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
         ['path' => '#^/api/packs/(import|describe)$#', 'maxBytes' => 8 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => true],
+        // ADR-010 archive lane: propose also accepts a multipart .formlogic upload (entry-path
+        // contributions), so it needs the archive cap. Listed BEFORE the JSON rule — first match wins.
+        ['path' => '#^/api/packages/install-plans$#', 'maxBytes' => $packMax + (4 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
         // PKG-106: install-plan propose carries the whole v2 aggregate (same cap as /packs/import).
         ['path' => '#^/api/packages/install-plans$#', 'maxBytes' => 8 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => true],
         ['path' => '#^/api/ai/generate-form-from-file$#', 'maxBytes' => $uploadMax + (2 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],

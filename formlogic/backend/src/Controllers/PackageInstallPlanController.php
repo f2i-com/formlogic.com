@@ -30,6 +30,7 @@ class PackageInstallPlanController
     public function __construct(
         private InstallPlanService $plans,
         private ?SigningService $signingService = null,
+        private ?PackService $packService = null,
     ) {
     }
 
@@ -83,6 +84,52 @@ class PackageInstallPlanController
         if (!\FormLogic\Services\Packages\PackagesFeature::v2Enabled()) {
             return $this->featureDisabled($response);
         }
+
+        // ── Archive lane (ADR-010): a multipart .formlogic upload. The parser inlines entry-path
+        // contributions and returns the archive's own trust, so the plan stores the SAME fully
+        // resolved aggregate a JSON proposal would — and the digest binds it. Reviewing an archive
+        // and installing it can therefore never diverge.
+        $uploaded = $request->getUploadedFiles()['file'] ?? null;
+        if ($uploaded !== null) {
+            if ($uploaded->getError() !== UPLOAD_ERR_OK) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Upload error'], 400);
+            }
+            if ($this->packService === null) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Archive uploads are not available here'], 400);
+            }
+            $tmpPath = null;
+            try {
+                $tmpPath = (string) tempnam(sys_get_temp_dir(), 'flplanarc_');
+                $uploaded->moveTo($tmpPath);
+                $parsed = $this->packService->parseApplicationPackageArchive($tmpPath, $this->signingService);
+                $aggregate = $parsed['pack'];
+                if (($aggregate['formatVersion'] ?? null) !== 2) {
+                    return $this->jsonResponse($response, [
+                        'error' => true,
+                        'code' => 'unsupported_source',
+                        'message' => 'This archive is a Pack v1 package — import it through the application-package lane.',
+                    ], 400);
+                }
+                if ($this->requireVerifiedPackages() && !in_array($parsed['trust'], ['official', 'local-only'], true)) {
+                    return $this->jsonResponse($response, [
+                        'error' => true,
+                        'code' => 'unverified_package',
+                        'message' => 'This workspace only allows verified (signed) application packages.',
+                    ], 403);
+                }
+                $plan = $this->plans->propose($aggregate, (string) $userId, (string) $parsed['trust'], 'archive', PackCapabilities::describeV2($aggregate));
+                return $this->jsonResponse($response, array_merge(['formatVersion' => 2], $plan), 201);
+            } catch (\RuntimeException $e) {
+                return $this->jsonResponse($response, ['error' => true, 'code' => 'invalid_package', 'message' => $e->getMessage()], 400);
+            } catch (\Exception $e) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to propose the install plan'], 500);
+            } finally {
+                if ($tmpPath !== null && file_exists($tmpPath)) {
+                    @unlink($tmpPath);
+                }
+            }
+        }
+
         $body = $request->getParsedBody() ?? [];
         $package = is_array($body['package'] ?? null) ? $body['package'] : null;
         if (!is_array($package)) {

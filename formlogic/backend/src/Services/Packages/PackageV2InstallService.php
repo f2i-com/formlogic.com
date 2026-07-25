@@ -370,7 +370,10 @@ class PackageV2InstallService
         $contributions = [];
         foreach (($aggregate['contributions']['flowNodes'] ?? []) as $node) {
             if (is_string($node)) {
-                throw new \RuntimeException('unsupported_entry_path: JSON-delivered packages must inline their flow-node definitions (archive entry paths need the archive lane)');
+                // The archive lane resolves entry paths into inline definitions before install
+                // (PackService::resolveV2EntryPathContributions), so a string here means the
+                // aggregate arrived as JSON, which carries no archive to read from.
+                throw new \RuntimeException('unsupported_entry_path: a JSON-delivered package must inline its flow-node definitions — deliver it as a .formlogic archive to use entry paths');
             }
             $contributions[] = $node;
         }

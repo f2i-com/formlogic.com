@@ -408,6 +408,28 @@ class PackController
                 $tmpPath = (string) tempnam(sys_get_temp_dir(), 'flappdesc_');
                 $uploaded->moveTo($tmpPath);
                 $parsed = $this->packService->parseApplicationPackageArchive($tmpPath, $this->signingService);
+                // ADR-010: an archive may carry a v2 AGGREGATE (its entry-path contributions were
+                // inlined by the parser). Describing it as a Pack v1 would review it as an empty
+                // 0-form pack — the same failure mode SAFE-001 fixed for signed envelopes.
+                if (($parsed['pack']['formatVersion'] ?? null) === 2) {
+                    if (!\FormLogic\Services\Packages\PackagesFeature::v2Enabled()) {
+                        return $this->jsonResponse($response, ['error' => true, 'code' => 'feature_disabled', 'message' => 'Application Package v2 installs are disabled on this deployment.'], 503);
+                    }
+                    $issues = \FormLogic\Helpers\ApplicationPackageV2Validator::validatePackage($parsed['pack']);
+                    if ($issues !== []) {
+                        return $this->jsonResponse($response, [
+                            'error' => true,
+                            'code' => 'invalid_package',
+                            'message' => 'Invalid application package: ' . $issues[0]['message'] . ' [' . $issues[0]['code'] . ' at ' . $issues[0]['path'] . ']',
+                            'issues' => $issues,
+                        ], 400);
+                    }
+                    return $this->jsonResponse($response, [
+                        'trust' => $parsed['trust'],
+                        'formatVersion' => 2,
+                        'capabilities' => PackCapabilities::describeV2($parsed['pack']),
+                    ]);
+                }
                 $envelopeLogic = is_array($parsed['envelope']['customLogic'] ?? null) ? $parsed['envelope']['customLogic'] : null;
                 return $this->jsonResponse($response, [
                     'trust' => $parsed['trust'],

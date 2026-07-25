@@ -418,8 +418,14 @@ class ScheduledBackupTest extends TestCase
             $this->assertSame(1, (int) $check->fetchColumn());
             // …but the snapshot dump shows the pre-change state only.
             $dump = (string) gzdecode((string) file_get_contents($out));
-            $this->assertStringContainsString($beforeMarker, $dump);
-            $this->assertStringNotContainsString($afterMarker, $dump, 'post-snapshot writes must not leak into the dump');
+            // str_contains inside assertTrue, NOT assertStringContainsString: PHPUnit exports the
+            // asserted value into its event stream on every assertion — pass or fail — and this
+            // one is a whole-database SQL dump. Handing it over duplicates megabytes per call and
+            // exhausts the CLI memory limit as the suite grows. The assertion is identical; only
+            // what PHPUnit is asked to stringify changes.
+            $this->assertTrue(str_contains($dump, $beforeMarker), 'the pre-snapshot row is in the dump');
+            $this->assertFalse(str_contains($dump, $afterMarker), 'post-snapshot writes must not leak into the dump');
+            unset($dump); // release before the second dump below allocates its own
 
             // A mid-dump failure publishes nothing and leaves no temp files.
             $failOut = self::$tmpRoot . '/dump-fail-' . bin2hex(random_bytes(3)) . '.sql.gz';

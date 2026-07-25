@@ -73,6 +73,106 @@ What happens on install:
 
 ---
 
+## Quickstart: a service-backed extension
+
+A `core-preset` node lowers to a built-in. When your node needs to *call something* — an
+image API, a transcription service — use a `service-action` handler. The package names a
+**slot** and the action it needs; the person installing it decides which service fills that
+slot. That separation is what makes the package portable and keeps credentials out of it
+entirely.
+
+```jsonc
+{
+  "formatVersion": 2,
+  "package": {
+    "id": "com.acme.vision", "kind": "extension", "version": "1.0.0",
+    "publisherId": "com.acme", "displayName": "Acme Vision"
+  },
+  "contributions": {
+    "flowNodes": [{
+      "schemaVersion": 1,
+      "type": "com.acme.vision.generate-image",
+      "version": "1.0.0",
+      "display": { "label": "Generate image" },
+      // The node's configuration IS the action input, so shape it like the action's
+      // inputSchema. The host re-validates against that schema at invocation.
+      "configurationSchema": {
+        "type": "object",
+        "properties": {
+          "prompt": { "type": "string" },
+          "size":   { "type": "string", "enum": ["1024x1024", "512x512"] }
+        },
+        "required": ["prompt"]
+      },
+      "handler": {
+        "kind": "service-action",
+        "bindingSlot": "imageGenerator",   // your name for the dependency
+        "requiredAction": "generate-image" // the action id the slot must provide
+      },
+      "sideEffects": "external-write"
+    }]
+  },
+  // Declare every slot your nodes reference. Only declared slots can be bound.
+  "requirements": {
+    "services": [
+      { "slot": "imageGenerator", "required": true, "requiredActions": ["generate-image"] }
+    ]
+  }
+}
+```
+
+After installing, the owner opens **Packs → Installed → Details** and binds
+`imageGenerator` to a service and a connection. Until they do, flows using the node refuse
+to compile with `binding_unresolved` naming the slot — the node is never silently broken at
+run time. Once bound, the compiler lowers it to the canonical `service_action`, taking the
+service and connection from the binding and the action id from your definition.
+
+### Supplying the service from a plugin
+
+The slot can be filled by a built-in service or by one a **Desktop plugin** contributes. A
+`schemaVersion: 3` plugin manifest points at Service Definition files:
+
+```jsonc
+// manifest.json
+{
+  "schemaVersion": 3,
+  "id": "acme-vision-host",
+  "name": "Acme Vision Host",
+  "version": "1.0.0",
+  "entry": { "kind": "process", "command": "acme-vision-host.exe" },
+  "serviceDefinitions": [{ "definitionFile": "definitions/images.json" }]
+}
+```
+
+```jsonc
+// definitions/images.json — id must be the plugin id, or start with "<plugin-id>."
+{
+  "schemaVersion": 3,
+  "id": "acme-vision-host.images",
+  "name": "Acme Images",
+  "version": "1.0.0",
+  "actions": [{
+    "id": "generate-image",                 // matches the package's requiredAction
+    "title": "Generate image",
+    "sideEffects": "external-write",
+    "transport": { "kind": "openai-compatible", "method": "POST", "path": "/v1/images/generations" },
+    "inputSchema": {
+      "type": "object",
+      "properties": { "prompt": { "type": "string" }, "size": { "type": "string" } },
+      "required": ["prompt"]
+    },
+    "outputSchema": { "type": "object" }
+  }]
+}
+```
+
+The Desktop registers it on install and it appears in the binding picker as
+*"Acme Images — from acme-vision-host"*. Note that the **transport declares a path, not a
+host**: the base URL and the credential come from the connection the owner picks, so a
+definition can never point your flows at an arbitrary server.
+
+---
+
 ## Package rules (v2 aggregate)
 
 | Rule | Detail |
@@ -135,6 +235,32 @@ Key properties:
 The Packs UI drives this flow automatically (upload a v2 JSON → the review *is* the
 proposed plan → Import confirms it). Pack **v1** sources currently use the direct
 describe→import lane with the same grant-review requirement.
+
+### Delivering as an archive
+
+A package can ship as a `.formlogic` archive instead of one JSON document. `pack.json` holds
+the aggregate, and `contributions.flowNodes[]` may then reference **entry paths** rather than
+inlining definitions:
+
+```jsonc
+// pack.json
+"contributions": { "flowNodes": ["flow-nodes/greet.json", "flow-nodes/upscale.json"] }
+```
+
+`POST /api/packages/install-plans` and `POST /api/packs/describe` both accept the archive as a
+multipart `file` upload. Entry paths are resolved **once, at parse**, so the review, the stored
+plan, its digest, and the install all see the same fully inlined aggregate — reviewing an
+archive and installing it cannot diverge.
+
+Rules:
+
+- A reference must be **package-relative** with no `..` — and must exist in the archive.
+- In a **signed** package, every referenced entry must be **covered by the signature**.
+  Otherwise a signed archive could be extended with unsigned definitions after signing and
+  still verify. Unsigned archives have no coverage set, so the rule does not apply to them.
+- A referenced file that is not valid JSON is refused, never skipped.
+- JSON delivery must still inline its definitions (`unsupported_entry_path`) — there is no
+  archive to resolve against.
 
 ## Updating
 
@@ -295,7 +421,8 @@ Notes for authors:
 | `grant_review_required` | Send `approvedConnectorGrants` (array; `[]` approves none) on every import/confirm. |
 | `invalid_package` + issues | The aggregate failed validation — each issue carries a code and JSON path; the fixture corpus shows valid shapes. |
 | `unresolved_dependencies` | A required dependency is missing or the installed version is outside the declared range — the message names it. |
-| `unsupported_content` / `unsupported_distributions` / `unsupported_entry_path` | The aggregate uses a v2 feature this release cannot install yet. |
+| `unsupported_content` / `unsupported_distributions` | The aggregate uses a v2 feature this release cannot install yet. |
+| `unsupported_entry_path` | Entry-path contributions need archive delivery — inline the definitions, or ship a `.formlogic` archive. |
 | `handler_kind_not_enabled` | The definition uses a later handler kind — requires a newer FormLogic. |
 | `uninstall_blocked` | Another installed package requires this one; uninstall the named dependents first. |
 | `update_blocked` | The new version escapes a dependent's declared range — update or remove the named dependents first. |

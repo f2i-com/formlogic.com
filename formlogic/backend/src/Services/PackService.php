@@ -1119,11 +1119,79 @@ class PackService
             //    For a signed archive, only entries covered by the verified manifest are honored — a present-
             //    but-unlisted applicable file is an unsigned extra and is rejected.
             $envelope = $this->readArchiveEnvelope($zip, $signatureCovers);
+
+            // 5. ADR-010 archive lane: an Application Package v2 aggregate may deliver its flow-node
+            //    contributions as ARCHIVE ENTRY PATHS rather than inline JSON. Resolve them here — inside
+            //    the zip-slip-guarded block and against the same signature coverage as every other entry —
+            //    so everything downstream (validation, review, install) sees one fully inlined aggregate
+            //    and never has to know how it arrived.
+            $pack = $this->resolveV2EntryPathContributions($zip, $pack, $signatureCovers);
         } finally {
             $zip->close();
         }
 
         return ['pack' => $pack, 'trust' => $trust, 'envelope' => $envelope];
+    }
+
+    /**
+     * ADR-010 archive lane: inline an Application Package v2 aggregate's entry-path flow-node
+     * contributions from the archive.
+     *
+     * `contributions.flowNodes[]` accepts either an inline definition object or a string path to
+     * an archive entry. JSON delivery can only carry the former (there is no archive to read), so
+     * this is the one place strings become definitions.
+     *
+     * The security rule that matters: **a referenced entry must be covered by the verified
+     * signature** when the archive is signed. Without that, a signed package could be extended
+     * with unsigned definition files after signing — the archive would still verify (its manifest
+     * covers what it always covered) while contributing code-shaped metadata nobody approved.
+     * Unsigned archives have no coverage set, so the check does not apply to them.
+     *
+     * Non-v2 packs pass through untouched.
+     *
+     * @param array<string,mixed> $pack
+     * @param array<string,bool>|null $signatureCovers
+     * @return array<string,mixed>
+     */
+    private function resolveV2EntryPathContributions(\ZipArchive $zip, array $pack, ?array $signatureCovers): array
+    {
+        if (($pack['formatVersion'] ?? null) !== 2 || !is_array($pack['contributions']['flowNodes'] ?? null)) {
+            return $pack;
+        }
+        $resolved = [];
+        foreach ($pack['contributions']['flowNodes'] as $index => $node) {
+            if (!is_string($node)) {
+                $resolved[] = $node; // already inline
+                continue;
+            }
+            $entry = $node;
+            // assertSafeArchive already rejected unsafe entry NAMES; this rejects an unsafe
+            // REFERENCE (the manifest asking for something outside the package).
+            if ($entry === ''
+                || str_contains($entry, ':')
+                || str_starts_with($entry, '/')
+                || str_starts_with($entry, '\\')
+                || in_array('..', preg_split('#[/\\\\]#', $entry) ?: [], true)
+            ) {
+                throw new \RuntimeException("contributions.flowNodes[$index] {$entry} must be a package-relative path with no '..'");
+            }
+            if ($signatureCovers !== null && !isset($signatureCovers[$entry])) {
+                throw new \RuntimeException(
+                    "contributions.flowNodes[$index] {$entry} is not covered by the package signature — refusing an unsigned contribution inside a signed package"
+                );
+            }
+            $raw = $zip->getFromName($entry);
+            if ($raw === false) {
+                throw new \RuntimeException("contributions.flowNodes[$index] references {$entry}, which is not in the package");
+            }
+            $definition = json_decode($raw, true, 64);
+            if (!is_array($definition)) {
+                throw new \RuntimeException("contributions.flowNodes[$index] {$entry} is not valid JSON");
+            }
+            $resolved[] = $definition;
+        }
+        $pack['contributions']['flowNodes'] = $resolved;
+        return $pack;
     }
 
     /**
