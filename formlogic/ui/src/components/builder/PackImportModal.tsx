@@ -767,6 +767,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                   />
                 </div>
                 <select
+                  aria-label="Sort packs"
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value)}
                   className="rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-gray-900 dark:text-white px-3 py-2.5 focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500 transition-shadow"
@@ -877,8 +878,9 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                         {/* Tags */}
                         {pack.tags.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-2.5">
+                            {/* Contrast: gray-500 on gray-100 fails WCAG AA at this size. */}
                             {pack.tags.slice(0, 3).map((tag) => (
-                              <span key={tag} className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400">
+                              <span key={tag} className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-300">
                                 {tag}
                               </span>
                             ))}

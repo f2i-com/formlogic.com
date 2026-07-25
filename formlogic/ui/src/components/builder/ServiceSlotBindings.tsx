@@ -111,14 +111,14 @@ export function ServiceSlotBindings({ installationId }: { installationId: string
                   ? <Badge variant={slot.binding ? 'success' : 'warning'} size="sm">{slot.binding ? 'bound' : 'required'}</Badge>
                   : <Badge variant="default" size="sm">optional</Badge>}
                 {slot.requiredActions.length > 0 && (
-                  <span className="text-gray-400 dark:text-slate-500">needs {slot.requiredActions.join(', ')}</span>
+                  <span className="text-gray-500 dark:text-slate-400">needs {slot.requiredActions.join(', ')}</span>
                 )}
               </div>
 
               {slot.binding && editing !== slot.slot ? (
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-gray-600 dark:text-slate-300">
                   <span className="font-mono text-[11px]">{slot.binding.definitionId}</span>
-                  <span className="text-gray-400 dark:text-slate-500">on {slot.binding.connection}</span>
+                  <span className="text-gray-500 dark:text-slate-400">on {slot.binding.connection}</span>
                   <Button variant="outline" size="sm" onClick={() => { setDraft({ definitionId: slot.binding!.definitionId, connection: slot.binding!.connection }); setEditing(slot.slot); }}>
                     Change
                   </Button>
@@ -181,7 +181,7 @@ export function ServiceSlotBindings({ installationId }: { installationId: string
                       className="w-full rounded border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1 text-xs text-gray-900 dark:text-slate-100"
                     />
                   )}
-                  <p className="text-gray-400 dark:text-slate-500">
+                  <p className="text-gray-500 dark:text-slate-400">
                     The connection is the Desktop AI provider profile holding the credential — an opaque id, never a key or URL.
                   </p>
                   <div className="flex items-center gap-1.5">
@@ -191,7 +191,7 @@ export function ServiceSlotBindings({ installationId }: { installationId: string
                     <Button variant="outline" size="sm" onClick={() => setEditing(null)} disabled={saving}>Cancel</Button>
                   </div>
                   {catalog === null && (
-                    <p className="text-gray-400 dark:text-slate-500">
+                    <p className="text-gray-500 dark:text-slate-400">
                       No paired Desktop right now — you can still type the ids, and they take effect when it reconnects.
                     </p>
                   )}

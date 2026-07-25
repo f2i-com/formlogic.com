@@ -19,10 +19,13 @@ async function login(page: Page) {
   await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 20_000 });
 }
 
-async function expectNoSeriousViolations(page: Page, surface: string) {
-  const results = await new AxeBuilder({ page })
-    .withTags(['wcag2a', 'wcag2aa'])
-    .analyze();
+async function expectNoSeriousViolations(page: Page, surface: string, scope?: string) {
+  // `scope` limits the scan to one region. A modal opens ON TOP of a page, so an unscoped
+  // scan attributes that page's pre-existing findings to the modal — which both blames the
+  // wrong surface and lets a real modal defect hide in the noise.
+  let builder = new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']);
+  if (scope) builder = builder.include(scope);
+  const results = await builder.analyze();
   const blocking = results.violations.filter(
     (violation) => violation.impact === 'serious' || violation.impact === 'critical'
   );
@@ -79,5 +82,39 @@ test.describe('accessibility smoke (axe)', () => {
     await page.goto('/flows');
     await page.getByRole('main').waitFor();
     await expectNoSeriousViolations(page, 'flows');
+  });
+
+  // MKT-606: the Install Center. Scanned at the surfaces where someone actually decides to
+  // install something — a review a screen-reader user cannot follow is not a review.
+  test('marketplace gallery', async ({ page }) => {
+    await login(page);
+    await page.goto('/packs');
+    // The gallery is a full-bleed marketing-style page without an AppShell <main>; wait on
+    // its own heading instead of assuming a landmark it does not render.
+    await page.getByRole('heading', { level: 1 }).first().waitFor({ timeout: 20_000 });
+    await expectNoSeriousViolations(page, 'marketplace gallery');
+  });
+
+  test('packs modal — marketplace and installed tabs', async ({ page }) => {
+    test.setTimeout(90_000);
+    await login(page);
+    await page.goto('/');
+    await page.getByRole('main').waitFor();
+    await page.getByRole('button', { name: /import pack/i }).first().click();
+    // The catalog grid is a list of buttons; scan it before switching tabs.
+    await page.getByRole('button', { name: /^Installed/ }).first().waitFor({ timeout: 20_000 });
+    await expectNoSeriousViolations(page, 'packs modal (marketplace)', '[role="dialog"]');
+
+    await page.getByRole('button', { name: /^Installed/ }).first().click();
+    await page.waitForTimeout(600);
+    await expectNoSeriousViolations(page, 'packs modal (installed)', '[role="dialog"]');
+
+    // The extension detail panel carries the review content — slots, grants, dependencies.
+    const details = page.getByRole('button', { name: /^Details$/ });
+    if ((await details.count()) > 0) {
+      await details.first().click();
+      await page.getByText('Contributed flow nodes').first().waitFor({ timeout: 10_000 });
+      await expectNoSeriousViolations(page, 'packs modal (extension details)', '[role="dialog"]');
+    }
   });
 });

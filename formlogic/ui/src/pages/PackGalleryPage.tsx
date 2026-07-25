@@ -72,7 +72,9 @@ function PackCard({ pack, onOpen }: { pack: CatalogPack; onOpen: () => void }) {
         {pack.description && (
           <p className="mt-1.5 text-sm text-gray-500 dark:text-slate-400 line-clamp-2">{pack.description}</p>
         )}
-        <div className="fl-mono mt-auto flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-3 text-[11px] text-gray-400 dark:text-slate-500">
+        {/* Contrast: gray-400 fails WCAG AA at 11px — and this row carries the composition,
+            which is the thing someone is choosing between. */}
+        <div className="fl-mono mt-auto flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-3 text-[11px] text-gray-500 dark:text-slate-400">
           <span className="whitespace-nowrap">
             {plural(pack.formCount, 'form')} · {plural(pack.appCount, 'app')}
           </span>
@@ -340,7 +342,7 @@ export default function PackGalleryPage() {
         {/* Tag cloud (dynamic) */}
         {tags.length > 0 && (
           <div className="mb-6 flex flex-wrap items-center gap-2">
-            <span className="fl-mono inline-flex items-center gap-1 text-[11px] uppercase tracking-wider text-gray-400 dark:text-slate-500">
+            <span className="fl-mono inline-flex items-center gap-1 text-[11px] uppercase tracking-wider text-gray-500 dark:text-slate-400">
               <TagIcon className="h-3.5 w-3.5" aria-hidden="true" /> Tags
             </span>
             {tags.slice(0, 14).map((tag) => (
@@ -396,7 +398,7 @@ export default function PackGalleryPage() {
             <Button variant="outline" className="mt-4" onClick={() => loadPacks()}>Try again</Button>
           </div>
         ) : packs.length === 0 ? (
-          <div className="py-16 text-center text-gray-400 dark:text-slate-500">
+          <div className="py-16 text-center text-gray-500 dark:text-slate-400">
             <Package className="mx-auto mb-3 h-12 w-12 opacity-50" />
             <p className="text-lg font-medium">No apps found</p>
             <p className="mt-1 text-sm">Try adjusting your search or filters.</p>

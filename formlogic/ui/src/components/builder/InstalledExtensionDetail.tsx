@@ -97,7 +97,7 @@ export function InstalledExtensionDetail({ installationId }: { installationId: s
                 <span className="font-mono text-[11px] text-gray-700 dark:text-slate-200 break-all">{node.type}</span>
                 <Badge variant="default" size="sm">v{node.version}</Badge>
                 {!node.enabled && <Badge variant="warning" size="sm">disabled</Badge>}
-                <span className="font-mono text-[10px] text-gray-400 dark:text-slate-500" title={`Definition digest ${node.digest}`}>
+                <span className="font-mono text-[10px] text-gray-500 dark:text-slate-400" title={`Definition digest ${node.digest}`}>
                   {node.digest.slice(0, 12)}…
                 </span>
               </li>
@@ -119,7 +119,7 @@ export function InstalledExtensionDetail({ installationId }: { installationId: s
             {detail.dependencies.map((dep) => (
               <li key={dep.packageId} className="flex flex-wrap items-center gap-2 text-gray-600 dark:text-slate-300">
                 <span className="font-mono text-[11px] break-all">{dep.packageId}</span>
-                <span className="text-gray-400 dark:text-slate-500">{dep.range} → v{dep.resolvedVersion}</span>
+                <span className="text-gray-500 dark:text-slate-400">{dep.range} → v{dep.resolvedVersion}</span>
                 {!dep.required && <Badge variant="default" size="sm">optional</Badge>}
               </li>
             ))}
@@ -137,7 +137,7 @@ export function InstalledExtensionDetail({ installationId }: { installationId: s
             {detail.dependents.map((dep) => (
               <li key={dep.packageId} className="flex flex-wrap items-center gap-2 text-gray-600 dark:text-slate-300">
                 <span>{dep.displayName} v{dep.version}</span>
-                <span className="text-gray-400 dark:text-slate-500">needs {dep.range}</span>
+                <span className="text-gray-500 dark:text-slate-400">needs {dep.range}</span>
                 {!dep.required && <Badge variant="default" size="sm">optional</Badge>}
               </li>
             ))}
@@ -171,7 +171,7 @@ export function InstalledExtensionDetail({ installationId }: { installationId: s
         )}
       </section>
 
-      <p className="text-gray-400 dark:text-slate-500">
+      <p className="text-gray-500 dark:text-slate-400">
         Installed {new Date(detail.installedAt).toLocaleString()} · source {detail.source} · state {detail.state}
       </p>
     </div>
