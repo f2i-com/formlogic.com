@@ -376,6 +376,105 @@ class PackageV2InstallService
     }
 
     /**
+     * RUN-306: what an update would DO to flows that already use this package, computed
+     * without changing anything.
+     *
+     * An update replaces a package's contributed definitions wholesale, so a version that
+     * stops shipping a node type silently turns every stored node of that type into a
+     * read-only placeholder — the flow keeps its data but stops compiling. Today the owner
+     * discovers that after committing. This answers it beforehand.
+     *
+     * "Affected" is derived from the definition LOCKS pinned into each flow's current
+     * revision, which is the same record the compiler wrote — so it reflects what flows
+     * actually compiled against, not a guess from scanning graph JSON.
+     *
+     * @param array<string,mixed> $aggregate The candidate new version.
+     * @return array{
+     *   removedTypes: list<string>,
+     *   addedTypes: list<string>,
+     *   affectedFlows: list<array{flowId:string,name:string,types:list<string>}>,
+     *   breakingFlows: list<string>
+     * }
+     */
+    public function previewUpdate(array $aggregate, string $userId): array
+    {
+        $meta = is_array($aggregate['package'] ?? null) ? $aggregate['package'] : [];
+        $packageId = (string) ($meta['id'] ?? '');
+
+        $stmt = $this->mysql->prepare('SELECT id FROM package_installations WHERE user_id = ? AND package_id = ?');
+        $stmt->execute([$userId, $packageId]);
+        $installationId = $stmt->fetchColumn();
+        if ($installationId === false) {
+            return ['removedTypes' => [], 'addedTypes' => [], 'affectedFlows' => [], 'breakingFlows' => []];
+        }
+
+        $current = $this->mysql->prepare('SELECT node_type FROM flow_node_definitions WHERE installation_id = ?');
+        $current->execute([$installationId]);
+        $currentTypes = array_map('strval', $current->fetchAll(PDO::FETCH_COLUMN));
+
+        $nextTypes = [];
+        foreach (($aggregate['contributions']['flowNodes'] ?? []) as $node) {
+            if (is_array($node) && is_string($node['type'] ?? null)) {
+                $nextTypes[] = $node['type'];
+            }
+        }
+        $removedTypes = array_values(array_diff($currentTypes, $nextTypes));
+        $addedTypes = array_values(array_diff($nextTypes, $currentTypes));
+
+        // Which flows compiled against this package, and against which of its types.
+        $rows = $this->mysql->prepare('
+            SELECT fd.id AS flow_id, fd.name, v.definition_locks_json
+            FROM flow_definition_versions v
+            JOIN flow_definitions fd ON fd.id = v.flow_definition_id
+            WHERE v.definition_locks_json IS NOT NULL
+              AND (fd.owner_user_id = ? OR fd.app_id IN (SELECT id FROM apps WHERE owner_id = ?))
+        ');
+        $rows->execute([$userId, $userId]);
+
+        $affected = [];
+        foreach ($rows->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $locks = json_decode((string) $row['definition_locks_json'], true);
+            if (!is_array($locks)) {
+                continue;
+            }
+            $types = [];
+            foreach ($locks as $lock) {
+                if (is_array($lock) && ($lock['packageId'] ?? null) === $packageId && is_string($lock['type'] ?? null)) {
+                    $types[] = $lock['type'];
+                }
+            }
+            if ($types === []) {
+                continue;
+            }
+            $types = array_values(array_unique($types));
+            sort($types);
+            $flowId = (string) $row['flow_id'];
+            // A flow already listed (an older revision) keeps its first entry — the current
+            // revision is what matters and rows arrive newest-relevant per flow id.
+            if (!isset($affected[$flowId])) {
+                $affected[$flowId] = ['flowId' => $flowId, 'name' => (string) $row['name'], 'types' => $types];
+            }
+        }
+
+        // A flow BREAKS if any type it compiled against is going away.
+        $breaking = [];
+        foreach ($affected as $flow) {
+            if (array_intersect($flow['types'], $removedTypes) !== []) {
+                $breaking[] = $flow['flowId'];
+            }
+        }
+
+        sort($removedTypes);
+        sort($addedTypes);
+        return [
+            'removedTypes' => $removedTypes,
+            'addedTypes' => $addedTypes,
+            'affectedFlows' => array_values($affected),
+            'breakingFlows' => $breaking,
+        ];
+    }
+
+    /**
      * PKG-106 shared preflight: validate the aggregate and refuse (typed) everything this
      * slice cannot install — the SAME checks the install commits under, so a proposed plan
      * can never accept what confirm would refuse. Returns the inline contributions.

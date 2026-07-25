@@ -1006,6 +1006,66 @@ class PackageV2InstallTest extends TestCase
         $this->assertSame(404, $call('putServiceBinding', ['id' => 'nope', 'slot' => 'imageGenerator'], ['definitionId' => 'openai-api', 'connection' => 'c1'])['status']);
     }
 
+    public function testUpdatePreviewNamesTheFlowsAnUpdateWouldBreak(): void
+    {
+        // RUN-306: removing a contributed type turns stored nodes into read-only placeholders.
+        // The owner should learn which flows that hits BEFORE committing the update.
+        $aggregate = $this->nodeOnlyAggregate('preview');
+        $aggregate['contributions']['flowNodes'][0]['handler'] = ['kind' => 'core-preset', 'coreType' => 'template', 'defaults' => ['template' => 'hi']];
+        $aggregate['contributions']['flowNodes'][] = [
+            'schemaVersion' => 1,
+            'type' => 'com.acme.preview.second',
+            'version' => '1.0.0',
+            'display' => ['label' => 'Second'],
+            'handler' => ['kind' => 'core-preset', 'coreType' => 'template', 'defaults' => ['template' => 'x']],
+            'sideEffects' => 'none',
+        ];
+        unset($aggregate['requirements']);
+        self::$pkgV2->install($aggregate, $this->userId, []);
+
+        // A flow that uses the FIRST type, compiled so its revision pins a definition lock.
+        $flowService = new \FormLogic\Services\FlowService(self::$mysql);
+        $flow = $flowService->createWorkspaceFlow($this->userId, [
+            'name' => 'Uses the doomed node',
+            'flowJson' => [
+                'nodes' => [
+                    ['id' => 'in', 'type' => 'input', 'data' => [], 'position' => ['x' => 0, 'y' => 0]],
+                    ['id' => 'g', 'type' => 'com.acme.preview.generate-image', 'data' => [], 'position' => ['x' => 200, 'y' => 0]],
+                ],
+                'edges' => [['id' => 'e1', 'source' => 'in', 'target' => 'g']],
+            ],
+        ]);
+        // Minting a revision is what writes the locks the preview reads.
+        $flowService->reserveOwnerRun($this->userId, [
+            'flowSlug' => (string) $flow['slug'],
+            'triggerEvent' => 'manual',
+            'correlationId' => 'preview-' . bin2hex(random_bytes(4)),
+            'idempotencyKey' => 'preview-' . bin2hex(random_bytes(8)),
+        ]);
+
+        // The candidate version DROPS the first type and keeps the second.
+        $next = $aggregate;
+        $next['package']['version'] = '2.0.0';
+        $next['contributions']['flowNodes'] = [$aggregate['contributions']['flowNodes'][1]];
+
+        $preview = self::$pkgV2->previewUpdate($next, $this->userId);
+        $this->assertSame(['com.acme.preview.generate-image'], $preview['removedTypes']);
+        $this->assertSame([], $preview['addedTypes']);
+        $this->assertCount(1, $preview['affectedFlows'], 'the flow that compiled against this package is listed');
+        $this->assertSame('Uses the doomed node', $preview['affectedFlows'][0]['name']);
+        $this->assertSame([(string) $flow['id']], $preview['breakingFlows'], 'and it is flagged as breaking');
+
+        // A version that keeps everything breaks nothing.
+        $safe = $aggregate;
+        $safe['package']['version'] = '1.5.0';
+        $safePreview = self::$pkgV2->previewUpdate($safe, $this->userId);
+        $this->assertSame([], $safePreview['removedTypes']);
+        $this->assertSame([], $safePreview['breakingFlows']);
+        $this->assertCount(1, $safePreview['affectedFlows'], 'still reports what the update touches');
+
+        self::$pdo->prepare('DELETE FROM flow_definitions WHERE id = ?')->execute([(string) $flow['id']]);
+    }
+
     public function testFlatImportLaneRedirectsV2Aggregates(): void
     {
         $req = $this->createMock(ServerRequestInterface::class);

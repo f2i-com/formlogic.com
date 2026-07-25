@@ -70,11 +70,16 @@ class InstallPlanService
 
         $aggregateJson = (string) json_encode($aggregate, JSON_UNESCAPED_SLASHES);
         $planDigest = hash('sha256', $aggregateJson);
+        // RUN-306: an update review shows what it would do to flows already using this
+        // package — a node type going away turns stored nodes into read-only placeholders,
+        // and that is worth knowing before committing rather than after.
+        $migration = $action === 'update' ? $this->installer->previewUpdate($aggregate, $userId) : null;
         $summary = [
             'action' => $action,
             'installedVersion' => $installedVersion,
             'capabilities' => $capabilities,
             'resolution' => $resolution,
+            'migration' => $migration,
         ];
         $planId = $this->uuid();
         $stmt = $this->mysql->prepare('
@@ -91,6 +96,7 @@ class InstallPlanService
             'trust' => $trust,
             'action' => $action,
             'installedVersion' => $installedVersion,
+            'migration' => $migration,
             'capabilities' => $capabilities,
             'resolution' => $resolution,
         ];
@@ -114,6 +120,7 @@ class InstallPlanService
             'expiresAt' => (string) $row['expires_at'],
             'action' => is_array($summary) ? (string) ($summary['action'] ?? 'install') : 'install',
             'installedVersion' => is_array($summary) && is_string($summary['installedVersion'] ?? null) ? $summary['installedVersion'] : null,
+            'migration' => is_array($summary) ? ($summary['migration'] ?? null) : null,
             'capabilities' => is_array($summary) ? ($summary['capabilities'] ?? null) : null,
             'resolution' => is_array($summary) ? ($summary['resolution'] ?? null) : null,
             'installationId' => $row['installation_id'] !== null ? (string) $row['installation_id'] : null,
