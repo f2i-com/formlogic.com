@@ -36,10 +36,15 @@ class PackCatalogService
             // PHP string collapses to ESCAPE '\' in SQL, whose \' escapes the quote and breaks the query.
             // Bind two distinct placeholders (not one reused :search) — PDO with emulation off rejects a
             // named placeholder used more than once.
-            $where[] = "(pc.name LIKE :searchName ESCAPE '!' OR pc.description LIKE :searchDesc ESCAPE '!')";
+            // Tags are searched too, not just filtered on. A package declares how it wants to be
+            // found (v2 packages via package.keywords), and a keyword nobody can type into the
+            // search box is decoration — the user would have to already know the tag exists and
+            // then find the chip for it.
+            $where[] = "(pc.name LIKE :searchName ESCAPE '!' OR pc.description LIKE :searchDesc ESCAPE '!' OR JSON_SEARCH(pc.tags, 'one', :searchTag, '!') IS NOT NULL)";
             $escaped = strtr($filters['search'], ['!' => '!!', '%' => '!%', '_' => '!_']);
             $params['searchName'] = '%' . $escaped . '%';
             $params['searchDesc'] = '%' . $escaped . '%';
+            $params['searchTag'] = '%' . $escaped . '%';
         }
 
         if (!empty($filters['category'])) {
@@ -86,8 +91,10 @@ class PackCatalogService
                    u.email AS publisher_email,
                    u.email AS publisher_email,
                    pv.version AS latest_version,
+                   pv.format_version,
                    pv.form_count,
-                   pv.app_count
+                   pv.app_count,
+                   pv.node_count
             FROM pack_catalog pc
             JOIN users u ON u.id = pc.publisher_id
             LEFT JOIN pack_versions pv ON pv.id = (
@@ -312,12 +319,13 @@ class PackCatalogService
             ]);
 
             // Create initial version
-            $formCount = count($packData['forms'] ?? []);
-            $appCount = count($packData['apps'] ?? []);
+            $counts = self::countsFor($packData);
+            $formCount = $counts['forms'];
+            $appCount = $counts['apps'];
 
             $vStmt = $this->mysql->prepare("
-                INSERT INTO pack_versions (id, catalog_id, version, changelog, pack_data, form_count, app_count)
-                VALUES (:id, :catalog_id, :version, :changelog, :pack_data, :form_count, :app_count)
+                INSERT INTO pack_versions (id, catalog_id, version, format_version, changelog, pack_data, form_count, app_count, node_count)
+                VALUES (:id, :catalog_id, :version, :format_version, :changelog, :pack_data, :form_count, :app_count, :node_count)
             ");
             $vStmt->execute([
                 'id' => $versionId,
@@ -325,8 +333,10 @@ class PackCatalogService
                 'version' => $version,
                 'changelog' => $metadata['changelog'] ?? 'Initial release',
                 'pack_data' => $packJson,
+                'format_version' => $counts['formats'],
                 'form_count' => $formCount,
                 'app_count' => $appCount,
+                'node_count' => $counts['nodes'],
             ]);
 
             $this->mysql->commit();
@@ -366,13 +376,14 @@ class PackCatalogService
 
         $packJson = $this->encodePackDataWithCap($packData);
         $versionId = $this->generateUuid();
-        $formCount = count($packData['forms'] ?? []);
-        $appCount = count($packData['apps'] ?? []);
+        $counts = self::countsFor($packData);
+        $formCount = $counts['forms'];
+        $appCount = $counts['apps'];
 
         try {
             $stmt = $this->mysql->prepare("
-                INSERT INTO pack_versions (id, catalog_id, version, changelog, pack_data, form_count, app_count)
-                VALUES (:id, :catalog_id, :version, :changelog, :pack_data, :form_count, :app_count)
+                INSERT INTO pack_versions (id, catalog_id, version, format_version, changelog, pack_data, form_count, app_count, node_count)
+                VALUES (:id, :catalog_id, :version, :format_version, :changelog, :pack_data, :form_count, :app_count, :node_count)
             ");
             $stmt->execute([
                 'id' => $versionId,
@@ -380,8 +391,10 @@ class PackCatalogService
                 'version' => $version,
                 'changelog' => $changelog,
                 'pack_data' => $packJson,
+                'format_version' => $counts['formats'],
                 'form_count' => $formCount,
                 'app_count' => $appCount,
+                'node_count' => $counts['nodes'],
             ]);
         } catch (\PDOException $e) {
             // Lost the race against a concurrent publish of the same version.
@@ -648,8 +661,11 @@ class PackCatalogService
                 'icon' => $entry['icon'] ?? null,
                 'tags' => $entry['tags'] ?? [],
                 'category' => $entry['category'] ?? null,
+                'itemType' => $entry['itemType'] ?? null,
                 'visibility' => 'public',
-                'version' => $entry['pack']['packMeta']['version'] ?? '1.0.0',
+                // A v2 aggregate carries its version in package.version, a v1 pack in packMeta;
+                // an explicit entry version wins over both so the loader can normalise.
+                'version' => $entry['version'] ?? ($entry['pack']['packMeta']['version'] ?? '1.0.0'),
                 'changelog' => 'Official pack',
             ]);
 
@@ -719,6 +735,49 @@ class PackCatalogService
         }
     }
 
+    /**
+     * What IS this payload — a Pack v1, or an Application Package v2 aggregate?
+     *
+     * Read from the payload's own `formatVersion`, never inferred from its shape. The two
+     * install through completely different lanes (v1 imports directly; v2 goes through
+     * propose/confirm with a grant review), and guessing wrong would run the wrong one.
+     */
+    public static function formatVersionOf(array $packData): int
+    {
+        return ($packData['formatVersion'] ?? null) === 2 ? 2 : 1;
+    }
+
+    /**
+     * Listing counts for a payload. A v1 pack is measured in forms and apps; a node-only
+     * extension has neither, and rendering it as "0 forms · 0 apps" says nothing about what it
+     * actually gives you — so it is measured in contributed nodes instead.
+     *
+     * @return array{formats:int,forms:int,apps:int,nodes:int}
+     */
+    private static function countsFor(array $packData): array
+    {
+        $format = self::formatVersionOf($packData);
+        if ($format === 2) {
+            $nodes = is_array($packData['contributions']['flowNodes'] ?? null)
+                ? count($packData['contributions']['flowNodes'])
+                : 0;
+            // A v2 aggregate MAY also carry pack content (ADR-010 allows it); count what is there.
+            $inner = is_array($packData['content']['pack'] ?? null) ? $packData['content']['pack'] : [];
+            return [
+                'formats' => 2,
+                'forms' => count($inner['forms'] ?? []),
+                'apps' => count($inner['apps'] ?? []),
+                'nodes' => $nodes,
+            ];
+        }
+        return [
+            'formats' => 1,
+            'forms' => count($packData['forms'] ?? []),
+            'apps' => count($packData['apps'] ?? []),
+            'nodes' => 0,
+        ];
+    }
+
     private function formatPack(array $row): array
     {
         return [
@@ -747,8 +806,12 @@ class PackCatalogService
             // identity, NOT the spoofable display name. The email itself is not exposed to clients.
             'official' => (($row['publisher_email'] ?? null) === ($_ENV['OFFICIAL_EMAIL'] ?? 'official@formlogic.local')),
             'latestVersion' => $row['latest_version'] ?? null,
+            // Which lane installs this. The client routes on it rather than sniffing the
+            // payload, and an older row with no column reads as 1 — which is what it is.
+            'formatVersion' => (int)($row['format_version'] ?? 1),
             'formCount' => (int)($row['form_count'] ?? 0),
             'appCount' => (int)($row['app_count'] ?? 0),
+            'nodeCount' => (int)($row['node_count'] ?? 0),
             'createdAt' => $row['created_at'],
             'updatedAt' => $row['updated_at'],
         ];

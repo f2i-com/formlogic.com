@@ -717,11 +717,16 @@ class MySQLConnection
                 id VARCHAR(36) PRIMARY KEY,
                 catalog_id VARCHAR(36) NOT NULL,
                 version VARCHAR(50) NOT NULL,
+                -- MKT: a version row DECLARES what its pack_data is. A Pack v1 and an
+                -- Application Package v2 install through completely different lanes, so the
+                -- reader must not have to guess from the payload's shape.
+                format_version TINYINT UNSIGNED NOT NULL DEFAULT 1,
                 changelog TEXT,
                 pack_data JSON NOT NULL,
                 file_path VARCHAR(500),
                 form_count INT UNSIGNED DEFAULT 0,
                 app_count INT UNSIGNED DEFAULT 0,
+                node_count INT UNSIGNED DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (catalog_id) REFERENCES pack_catalog(id) ON DELETE CASCADE,
                 UNIQUE KEY idx_catalog_version (catalog_id, version),
@@ -1544,6 +1549,17 @@ class MySQLConnection
     {
         $pdo = $this->getConnection();
 
+        // MKT: the marketplace catalog carries Application Package v2 aggregates alongside Pack
+        // v1. A version row DECLARES what its pack_data is rather than the reader guessing from
+        // its shape — the two install through different lanes, and guessing wrong runs the wrong
+        // one. Existing rows default to 1, which is what they are.
+        if ($pdo->query("SHOW COLUMNS FROM pack_versions LIKE 'format_version'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE pack_versions ADD COLUMN format_version TINYINT UNSIGNED NOT NULL DEFAULT 1 AFTER version");
+        }
+        if ($pdo->query("SHOW COLUMNS FROM pack_versions LIKE 'node_count'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE pack_versions ADD COLUMN node_count INT UNSIGNED DEFAULT 0 AFTER app_count");
+        }
+
         // Add logic_script column to forms table if it doesn't exist
         $result = $pdo->query("SHOW COLUMNS FROM forms LIKE 'logic_script'");
         if ($result->rowCount() === 0) {
@@ -1851,11 +1867,16 @@ class MySQLConnection
                 id VARCHAR(36) PRIMARY KEY,
                 catalog_id VARCHAR(36) NOT NULL,
                 version VARCHAR(50) NOT NULL,
+                -- MKT: a version row DECLARES what its pack_data is. A Pack v1 and an
+                -- Application Package v2 install through completely different lanes, so the
+                -- reader must not have to guess from the payload's shape.
+                format_version TINYINT UNSIGNED NOT NULL DEFAULT 1,
                 changelog TEXT,
                 pack_data JSON NOT NULL,
                 file_path VARCHAR(500),
                 form_count INT UNSIGNED DEFAULT 0,
                 app_count INT UNSIGNED DEFAULT 0,
+                node_count INT UNSIGNED DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (catalog_id) REFERENCES pack_catalog(id) ON DELETE CASCADE,
                 UNIQUE KEY idx_catalog_version (catalog_id, version),

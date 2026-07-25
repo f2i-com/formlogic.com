@@ -173,6 +173,26 @@ definition can never point your flows at an arbitrary server.
 
 ---
 
+## In the marketplace
+
+Application Package v2 extensions are listed in the **same catalog** as Pack v1 packs — from a
+user's side, "browse what I can install" is one question, not two.
+
+A listing declares which format it is, and that is read from the payload's own `formatVersion`
+rather than inferred from its shape. The distinction is load-bearing: a v1 pack imports directly,
+while a v2 aggregate goes through **propose → confirm** (validation, dependency resolution, and a
+review of the connector grants and service slots it asks for). Installing one down the other's
+lane would run the wrong thing, so the client routes on the declared format.
+
+Consequences you will see:
+
+- An extension is measured in **contributed flow nodes**, not forms and apps. A node-only
+  extension has neither, and "0 forms · 0 apps" says nothing about what it gives you.
+- `package.keywords` becomes the listing's searchable tags. A package says how it wants to be
+  found once, in its own manifest, instead of in a separate listing maintained beside it.
+- Search matches **tags as well as name and description**. A keyword you cannot type into the
+  search box is decoration — you would have to already know the tag exists to find its chip.
+
 ## Being found: keywords
 
 A package may declare search keywords:

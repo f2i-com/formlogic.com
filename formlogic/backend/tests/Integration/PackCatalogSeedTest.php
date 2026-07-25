@@ -112,6 +112,15 @@ class PackCatalogSeedTest extends TestCase
                 $onDisk[] = $decoded['name'];
             }
         }
+        // MKT: the catalog also carries the Application Package v2 extensions this deployment
+        // ships. They live in their own directory because they are a different aggregate, but
+        // they are equally the SERVER'S OWN files — which is the property under test here.
+        foreach (glob(dirname(__DIR__, 2) . '/resources/bundled-extensions/*.json') ?: [] as $file) {
+            $decoded = json_decode((string) file_get_contents($file), true);
+            if (is_array($decoded) && is_string($decoded['package']['displayName'] ?? null)) {
+                $onDisk[] = $decoded['package']['displayName'];
+            }
+        }
         foreach ($names as $name) {
             $this->assertContains($name, $onDisk, "seeded pack {$name} came from the server's own set");
         }

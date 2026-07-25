@@ -436,7 +436,59 @@ class PackCatalogController
             }
             $packs[] = $decoded;
         }
-        return $packs;
+        return array_merge($packs, $this->loadBundledExtensions());
+    }
+
+    /**
+     * The Application Package v2 extensions this deployment ships, as catalog entries.
+     *
+     * They live in their own directory because they are a different aggregate, not a Pack v1
+     * with extra fields — but they belong in the SAME catalog, because from a user's side
+     * "browse what I can install" is one question. The listing shape is normalised here so the
+     * seeder does not need to know which kind it is handling.
+     *
+     * `package.keywords` becomes the catalog's searchable tags: a package says how it wants to
+     * be found once, in its own manifest, rather than in a separate listing someone maintains
+     * alongside it and forgets to update.
+     *
+     * Invalid files are SKIPPED rather than failing the bootstrap — and skipping is safe,
+     * because a package that does not validate could not be installed anyway.
+     *
+     * @return list<array<string,mixed>>
+     */
+    private function loadBundledExtensions(): array
+    {
+        $dir = dirname(__DIR__, 2) . '/resources/bundled-extensions';
+        if (!is_dir($dir)) {
+            return [];
+        }
+        $files = glob($dir . '/*.json') ?: [];
+        sort($files, SORT_STRING);
+        $out = [];
+        foreach ($files as $file) {
+            $aggregate = json_decode((string) file_get_contents($file), true);
+            if (!is_array($aggregate)
+                || \FormLogic\Helpers\ApplicationPackageV2Validator::validatePackage($aggregate) !== []) {
+                continue;
+            }
+            $meta = is_array($aggregate['package'] ?? null) ? $aggregate['package'] : [];
+            $keywords = array_values(array_filter(
+                is_array($meta['keywords'] ?? null) ? $meta['keywords'] : [],
+                'is_string'
+            ));
+            $out[] = [
+                'name' => (string) ($meta['displayName'] ?? basename($file, '.json')),
+                'description' => (string) ($meta['description'] ?? ''),
+                'tags' => $keywords,
+                'category' => 'Extensions',
+                'itemType' => 'application_package',
+                'version' => (string) ($meta['version'] ?? '1.0.0'),
+                // The aggregate itself is the payload. publishPack reads its formatVersion and
+                // records which lane installs it.
+                'pack' => $aggregate,
+            ];
+        }
+        return $out;
     }
 
     public function seed(Request $request, Response $response): Response

@@ -782,6 +782,25 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS `package_components` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 $applied[] = 'package_components table ensured';
 
+// 25. MKT: the marketplace catalog carries Application Package v2 aggregates alongside Pack v1.
+//     A version row now DECLARES what its pack_data is, rather than the reader guessing from its
+//     shape — a v1 pack and a v2 aggregate install through completely different lanes, and
+//     guessing wrong would run the wrong one. Existing rows default to 1, which is what they are.
+if (!$columnExists($pdo, $db, 'pack_versions', 'format_version')) {
+    $pdo->exec("ALTER TABLE `pack_versions` ADD COLUMN `format_version` tinyint unsigned NOT NULL DEFAULT '1' AFTER `version`");
+    $applied[] = 'pack_versions.format_version added';
+} else {
+    $applied[] = 'pack_versions.format_version already present';
+}
+if (!$columnExists($pdo, $db, 'pack_versions', 'node_count')) {
+    // form_count/app_count are Pack v1 notions; a node-only extension contributes neither, and
+    // showing it as "0 forms · 0 apps" says nothing about what it actually gives you.
+    $pdo->exec("ALTER TABLE `pack_versions` ADD COLUMN `node_count` int unsigned DEFAULT '0' AFTER `app_count`");
+    $applied[] = 'pack_versions.node_count added';
+} else {
+    $applied[] = 'pack_versions.node_count already present';
+}
+
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";

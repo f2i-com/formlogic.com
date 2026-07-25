@@ -5036,8 +5036,16 @@ interface CatalogPack {
   publisherId: string;
   publisherName: string | null;
   latestVersion: string | null;
+  /**
+   * MKT: which lane installs this — 1 = Pack v1 (forms/apps), 2 = Application Package v2
+   * (contributed flow nodes, installed through propose/confirm). Absent on older servers,
+   * which only ever served v1.
+   */
+  formatVersion?: number;
   formCount: number;
   appCount: number;
+  /** Contributed flow nodes. Meaningful for formatVersion 2; 0 for a v1 pack. */
+  nodeCount?: number;
   createdAt: string;
   updatedAt: string;
 }

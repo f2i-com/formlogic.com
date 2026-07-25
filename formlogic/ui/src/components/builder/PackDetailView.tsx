@@ -22,6 +22,7 @@ import { api, type CatalogPack, type PackVersionInfo, type PackRatingEntry, type
 import { packHasCodeScreen, packHasLogicScript } from '../../lib/packTrust';
 import { PackScreenshots } from './PackScreenshots';
 import { TrustBadge, CapabilityReview } from './TrustBadge';
+import type { PackageInstallPlan } from '../../lib/api';
 import { reviewableConnectorGrants } from '../../lib/packTrust';
 import { toast } from '../../stores/toastStore';
 import { useFormStore } from '../../stores/formStore';
@@ -45,6 +46,11 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
   const [consent, setConsent] = useState<{ dl: PackData; catalogId: string; versionId: string; review: PackDescribeResult | null } | null>(null);
   // APP-502: the connector grants the user has ticked to approve in the review.
   const [approvedGrants, setApprovedGrants] = useState<Set<string>>(new Set());
+  // MKT: a proposed install plan for a v2 aggregate. Held separately from `consent` because the
+  // two lanes review different things — v1 reviews a pack's capabilities, v2 reviews a plan the
+  // SERVER produced (resolved dependencies, contributed nodes, service slots) and confirms
+  // against its digest.
+  const [v2Plan, setV2Plan] = useState<PackageInstallPlan | null>(null);
 
   // Ratings
   const [ratings, setRatings] = useState<PackRatingEntry[]>([]);
@@ -167,6 +173,29 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
         return;
       }
       const dl = dlResult.data.pack;
+
+      // MKT: a v2 aggregate installs through a completely different lane — propose (which
+      // validates, resolves dependencies and shows the connector grants and service slots),
+      // then a digest-bound confirm. Routing it down the v1 import would be refused by the
+      // server, which is safe but a dead end for the person trying to install it.
+      if ((dl as { formatVersion?: unknown }).formatVersion === 2) {
+        const planResult = await api.proposePackageInstallPlan(dl as unknown as Record<string, unknown>);
+        const plan = planResult.data ?? null;
+        if (!plan) {
+          toast.error(
+            'Install blocked',
+            typeof planResult.error === 'string' && planResult.error
+              ? planResult.error
+              : 'The install review failed — try again.'
+          );
+          setInstalling(false);
+          return;
+        }
+        setV2Plan(plan);
+        setInstalling(false); // the plan's review panel takes it from here
+        return;
+      }
+
       // Capability review: ask the server what this pack can do + its trust level (spec §30.1).
       // SAFE-001: the review is MANDATORY — if it fails there is no reviewed grant set to send,
       // so the install is blocked (previously a failed describe fell through and installed with
@@ -320,7 +349,107 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
       </div>
 
       {/* Install button + pre-install capability review */}
-      {consent ? (
+      {v2Plan ? (
+        <div className="space-y-3 rounded-xl border border-primary-200 dark:border-primary-500/30 bg-primary-50/60 dark:bg-primary-500/5 p-3">
+          <div className="flex items-start gap-2 text-sm text-primary-900 dark:text-primary-100">
+            <ShieldAlert className="h-4 w-4 flex-shrink-0 mt-0.5" />
+            <span>
+              Review what this extension adds before installing.
+              {v2Plan.action === 'update' && ` This replaces version ${v2Plan.installedVersion ?? 'the one'} you already have.`}
+            </span>
+          </div>
+
+          {(v2Plan.capabilities.packageV2?.nodes.length ?? 0) > 0 && (
+            <div className="text-xs text-gray-700 dark:text-slate-200">
+              <p className="font-semibold">Adds {v2Plan.capabilities.packageV2!.nodes.length} flow node(s)</p>
+              <ul className="mt-1 flex flex-wrap gap-1.5">
+                {v2Plan.capabilities.packageV2!.nodes.map((node) => (
+                  <li key={node.type} className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] dark:bg-slate-800/70">
+                    {node.label || node.type}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {(v2Plan.capabilities.packageV2?.requirementSlots.length ?? 0) > 0 && (
+            <div className="text-xs text-gray-700 dark:text-slate-200">
+              <p className="font-semibold">Needs a service for</p>
+              <ul className="mt-1 flex flex-wrap gap-1.5">
+                {v2Plan.capabilities.packageV2!.requirementSlots.map((slot) => (
+                  <li key={slot} className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] dark:bg-slate-800/70">{slot}</li>
+                ))}
+              </ul>
+              <p className="mt-1 text-[11px] text-gray-500 dark:text-slate-400">
+                You choose which service fills each one after installing. A node whose slot is
+                unfilled refuses to compile rather than failing at run time.
+              </p>
+            </div>
+          )}
+
+          {/* RUN-306: an update that would break existing flows says so BEFORE it is committed. */}
+          {(v2Plan.migration?.breakingFlows.length ?? 0) > 0 && (
+            <p className="rounded-lg bg-amber-100 px-2 py-1.5 text-[11px] text-amber-900 dark:bg-amber-500/15 dark:text-amber-200">
+              {v2Plan.migration!.breakingFlows.length} existing flow(s) use node types this version
+              removes. They will keep their nodes as read-only placeholders and stop compiling.
+            </p>
+          )}
+
+          {!v2Plan.resolution.ok && (
+            <p className="rounded-lg bg-red-100 px-2 py-1.5 text-[11px] text-red-900 dark:bg-red-500/15 dark:text-red-200">
+              {v2Plan.resolution.problems.map((p) => p.message).join(' ')}
+            </p>
+          )}
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="primary"
+              size="sm"
+              isLoading={installing}
+              disabled={installing || !v2Plan.resolution.ok}
+              onClick={async () => {
+                setInstalling(true);
+                try {
+                  // SAFE-001: the reviewed grant set is always explicit. [] says "nothing was
+                  // approved" rather than omitting the field and letting the server decide.
+                  const result = await api.confirmPackageInstallPlan(v2Plan.planId, {
+                    planDigest: v2Plan.planDigest,
+                    approvedConnectorGrants: [],
+                  });
+                  if (result.data) {
+                    setInstalled(true);
+                    setV2Plan(null);
+                    toast.success('Extension installed', 'Its nodes are available in the flow editor.');
+                    onInstalled?.();
+                  } else {
+                    toast.error('Install failed', typeof result.error === 'string' ? result.error : 'Unknown error');
+                  }
+                } catch (err) {
+                  toast.error('Install failed', err instanceof Error ? err.message : 'Unknown error');
+                } finally {
+                  setInstalling(false);
+                }
+              }}
+            >
+              {!installing && <Package className="h-4 w-4 mr-1.5" />}
+              {installing ? 'Installing...' : v2Plan.action === 'update' ? 'Update extension' : 'Install extension'}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={installing}
+              onClick={() => {
+                // Release the plan server-side rather than letting it sit until its TTL: it is
+                // single-use, and an abandoned one blocks a retry until it expires.
+                void api.cancelPackageInstallPlan(v2Plan.planId);
+                setV2Plan(null);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : consent ? (
         <div className="space-y-3 rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/5 p-3">
           <div className="flex items-start gap-2 text-sm text-amber-800 dark:text-amber-200">
             <ShieldAlert className="h-4 w-4 flex-shrink-0 mt-0.5" />

@@ -847,9 +847,14 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                             weight that deserves, in the numeric face, and read as units. */}
                         <div className="mt-auto pt-3">
                           <dl className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                            {/* An extension contributes flow NODES and usually no forms or apps
+                                at all — "0 forms · 0 apps" would say nothing about what it gives
+                                you. Zero-valued units are filtered out below, so each kind of
+                                pack describes itself in its own terms. */}
                             {([
                               ['forms', pack.formCount],
                               ['apps', pack.appCount],
+                              ['flow nodes', pack.nodeCount ?? 0],
                             ] as const)
                               .filter(([, n]) => n > 0)
                               .map(([label, n]) => (
