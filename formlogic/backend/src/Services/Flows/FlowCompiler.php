@@ -170,6 +170,13 @@ class FlowCompiler
             $diagnostics[] = self::diag('error', 'handler_not_supported', $nodeId, "definition \"$type\" uses handler kind \"$kind\", which this host cannot lower");
         }
 
+        // FLOW-206: readiness over graph-v3 data edges. A required input with no producer, a
+        // data cycle, or two producers on one input are all decidable here — and all produce
+        // runs that hang or pick a winner by arrival order if they reach a runtime instead.
+        foreach (DataEdgeAnalysis::analyse($graph, $installedByType) as $dataDiagnostic) {
+            $diagnostics[] = $dataDiagnostic;
+        }
+
         $ok = !self::hasErrors($diagnostics);
         if (!$ok) {
             // OBS-702: a compile refusal is the most common way an extension "does not work",

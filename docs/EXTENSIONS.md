@@ -449,4 +449,7 @@ express: quadratic work hides comfortably inside a generous budget until graphs 
 | `publisher_mismatch` | The update is signed by a different publisher than the installed package — refused. |
 | `plan_not_confirmable` / `plan_digest_mismatch` | The plan expired, was used/cancelled, or the digest is not the one you reviewed — re-propose. |
 | `missing_definition` (compile) | A flow uses a contributed type that is no longer installed/enabled. |
+| `data_input_unsatisfied` (compile) | A required data input has no producer and no configured value — the node could never become ready. |
+| `data_cycle` (compile) | Data dependencies form a ring; every node in it waits for the next, so the flow can never start. |
+| `data_fan_in_ambiguous` (compile) | Two producers feed one input — which value won would depend on arrival order. |
 | `binding_unresolved` (compile) | The node is a `service-action` — not runnable until service bindings ship. |
