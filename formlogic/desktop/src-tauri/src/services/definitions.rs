@@ -282,14 +282,22 @@ pub(crate) fn reset_for_tests() {
     with_write(|map| map.clear());
 }
 
+/// The contributed-definition registry is process-GLOBAL. Every test that registers, resolves,
+/// or resets it must hold this lock, or one suite's cleanup silently removes another's
+/// registration — a failure that only appears under parallel load and looks like flakiness.
+#[cfg(test)]
+pub(crate) fn test_lock() -> &'static std::sync::Mutex<()> {
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    &TEST_LOCK
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::sync::Mutex;
-
-    // The registry is process-global, so these tests serialize against each other.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    // The registry is process-global, so these tests serialize against each other AND against
+    // every other suite that touches it (services::invocation) via the shared lock.
+    use super::test_lock;
 
     fn definition(id: &str, actions: &[&str]) -> Value {
         json!({
@@ -306,7 +314,7 @@ mod tests {
 
     #[test]
     fn contributed_definitions_join_the_builtin_catalog_and_resolve() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
         reset_for_tests();
 
         let report = reconcile_plugin("acme", vec![definition("acme.images", &["generate-image"])]);
@@ -333,7 +341,7 @@ mod tests {
 
     #[test]
     fn a_plugin_cannot_shadow_a_builtin_or_take_over_another_plugins_id() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
         reset_for_tests();
 
         // Shadowing a built-in would silently re-point every flow bound to it.
@@ -354,7 +362,7 @@ mod tests {
 
     #[test]
     fn a_definition_cannot_claim_a_provenance_it_does_not_have() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
         reset_for_tests();
 
         // The file says it comes from a trusted-sounding plugin; the host stamps the truth.
@@ -374,7 +382,7 @@ mod tests {
 
     #[test]
     fn an_oversized_definition_is_refused() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
         reset_for_tests();
 
         // Every catalog fetch would carry this; definitions are metadata, not payloads.
@@ -393,7 +401,7 @@ mod tests {
 
     #[test]
     fn one_bad_definition_refuses_the_whole_set_and_keeps_the_previous_one() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
         reset_for_tests();
 
         // A working prior state to protect.
@@ -424,7 +432,7 @@ mod tests {
 
     #[test]
     fn the_same_id_declared_twice_by_one_plugin_is_refused() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
         reset_for_tests();
 
         // Otherwise which of the two wins would be an accident of iteration order.
@@ -441,7 +449,7 @@ mod tests {
 
     #[test]
     fn reconcile_reports_the_diff_and_removal_is_complete() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
         reset_for_tests();
 
         let first = reconcile_plugin(

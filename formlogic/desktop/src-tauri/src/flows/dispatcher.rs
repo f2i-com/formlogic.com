@@ -3113,6 +3113,12 @@ impl FlowRuntime {
     }
 
     /// Look up a cached run outcome (GET /api/flows/runs/{id}).
+    /// This desktop's stable instance id — the DEVICE identity a device-local artifact is
+    /// bound to (SRV-404/SRV-407). Stable across restarts; see `load_or_create_instance_id`.
+    pub fn instance_id(&self) -> &str {
+        &self.instance_id
+    }
+
     pub fn cached_run(&self, run_id: &str) -> Option<Value> {
         self.run_cache.lock().ok().and_then(|g| g.1.get(run_id).cloned())
     }

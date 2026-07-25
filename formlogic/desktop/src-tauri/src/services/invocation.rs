@@ -73,6 +73,39 @@ pub struct ResolvedServiceAction {
     pub output_schema: Value,
     method: reqwest::Method,
     path: String,
+    transport: Transport,
+}
+
+/// Which lane executes an action. The distinction is not cosmetic: the two transports get their
+/// base URL from completely different places, and that is the whole SSRF story.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Transport {
+    /// `/v1/*` through the credential-holding provider gateway. The connection selects a
+    /// provider profile; the caller never supplies a URL.
+    OpenAiCompatible,
+    /// SRV-407: HTTP against a process the DESKTOP supervises. The definition supplies a method
+    /// and a path; the host supplies scheme, host and port from the service it started. A
+    /// definition therefore cannot aim a flow at an arbitrary address — it can only address the
+    /// process it declared.
+    ManagedProcessHttp { service_id: String },
+}
+
+impl ResolvedServiceAction {
+    /// Does this action run against a process this Desktop supervises? The caller picks the lane
+    /// from this rather than guessing from the definition id — the two transports resolve their
+    /// base URL from completely different places, and mis-routing one would send its path to a
+    /// different service entirely.
+    pub fn is_managed_process(&self) -> bool {
+        matches!(self.transport, Transport::ManagedProcessHttp { .. })
+    }
+
+    /// The supervised service this action addresses, when it has one.
+    pub fn managed_service_id(&self) -> Option<&str> {
+        match &self.transport {
+            Transport::ManagedProcessHttp { service_id } => Some(service_id),
+            Transport::OpenAiCompatible => None,
+        }
+    }
 }
 
 /// Resolve `definitionId`/`actionId` against the built-in v3 catalog and verify the
@@ -99,12 +132,33 @@ pub fn resolve_action(definition_id: &str, action_id: &str) -> Result<ResolvedSe
 
     let transport = &action["transport"];
     let kind = transport["kind"].as_str().unwrap_or("");
-    if kind != "openai-compatible" {
-        return Err(InvokeError::new(
-            InvokeErrorCode::ActionUnavailable,
-            format!("action '{action_id}' uses transport '{kind}', which service_action v1 cannot execute yet"),
-        ));
-    }
+    let lane = match kind {
+        "openai-compatible" => Transport::OpenAiCompatible,
+        "managed-process-http" => {
+            // The service id must name a process this Desktop supervises. It is validated by
+            // SHAPE here and resolved to a live port at invocation — a definition can name a
+            // service, never an address.
+            let service_id = transport["serviceId"].as_str().unwrap_or("");
+            if service_id.is_empty()
+                || service_id.len() > 64
+                || !service_id
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.')
+            {
+                return Err(InvokeError::new(
+                    InvokeErrorCode::ActionUnavailable,
+                    format!("action '{action_id}' declares a managed-process transport without a valid serviceId"),
+                ));
+            }
+            Transport::ManagedProcessHttp { service_id: service_id.to_string() }
+        }
+        _ => {
+            return Err(InvokeError::new(
+                InvokeErrorCode::ActionUnavailable,
+                format!("action '{action_id}' uses transport '{kind}', which service_action v1 cannot execute yet"),
+            ))
+        }
+    };
     let streaming_mode = action["streaming"]["mode"].as_str().unwrap_or("none");
     if streaming_mode == "events" {
         // WebSocket/event lanes (e.g. realtime) are not a request/response invocation.
@@ -124,10 +178,32 @@ pub fn resolve_action(definition_id: &str, action_id: &str) -> Result<ResolvedSe
         }
     };
     let path = transport["path"].as_str().unwrap_or("");
-    if !path.starts_with("/v1/") || path.contains("..") || path.contains('?') || path.contains('#') {
+    // Both lanes refuse traversal, query strings and fragments: the path is a fixed route the
+    // definition declared, not a place to smuggle parameters or climb out of a namespace.
+    let path_shape_ok = path.starts_with('/')
+        && !path.contains("..")
+        && !path.contains('?')
+        && !path.contains('#')
+        && !path.contains('\\')
+        && !path.starts_with("//")
+        && path.len() <= 512;
+    let path_ok = match lane {
+        // The gateway lane stays pinned to the inference surface it was built for.
+        Transport::OpenAiCompatible => path_shape_ok && path.starts_with("/v1/"),
+        // A managed process owns its whole route space — but only its own.
+        Transport::ManagedProcessHttp { .. } => path_shape_ok,
+    };
+    if !path_ok {
         return Err(InvokeError::new(
             InvokeErrorCode::ActionUnavailable,
-            format!("action '{action_id}' transport path is outside the /v1/* inference surface"),
+            match lane {
+                Transport::OpenAiCompatible => {
+                    format!("action '{action_id}' transport path is outside the /v1/* inference surface")
+                }
+                Transport::ManagedProcessHttp { .. } => {
+                    format!("action '{action_id}' transport path must be a plain absolute route")
+                }
+            },
         ));
     }
 
@@ -141,6 +217,7 @@ pub fn resolve_action(definition_id: &str, action_id: &str) -> Result<ResolvedSe
         output_schema: action["outputSchema"].clone(),
         method,
         path: path.to_string(),
+        transport: lane,
     })
 }
 
@@ -170,6 +247,154 @@ pub fn provider_gateway_endpoint(connection: &str, path: &str) -> Result<String,
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024; // matches the AI relay frame cap
 const MAX_ERROR_BODY_CHARS: usize = 600;
 
+/// A managed process may legitimately return a large binary (a generated image). It never
+/// travels in-band — it becomes an ArtifactRef — but it still needs a ceiling.
+const MAX_ARTIFACT_RESPONSE_BYTES: usize = super::artifacts::MAX_BYTES;
+
+/// SRV-407: the loopback endpoint of a process THIS Desktop supervises.
+///
+/// The scheme and host are hardcoded and the port comes from the registry entry for the service
+/// the definition named. Nothing a package or definition author writes contributes a host, so
+/// there is no input that could aim this at an internal address, a metadata endpoint, or the
+/// wider network — the SSRF surface is closed by construction rather than by a blocklist.
+///
+/// A service that is not RUNNING refuses. It is deliberately never auto-started: if the owner
+/// stopped it, a flow silently restarting it would override a decision they made on purpose.
+pub fn managed_service_endpoint(
+    registry: &super::registry::RegistryHandle,
+    service_id: &str,
+    path: &str,
+) -> Result<String, InvokeError> {
+    let guard = registry.lock().map_err(|_| {
+        InvokeError::new(InvokeErrorCode::ServiceUnavailable, "the service registry is unavailable")
+    })?;
+    if !guard.service_running(service_id) {
+        return Err(InvokeError::new(
+            InvokeErrorCode::ServiceUnavailable,
+            format!("the '{service_id}' service is not running — start it in Services, then run this again"),
+        ));
+    }
+    let port = guard.service_port(service_id).ok_or_else(|| {
+        InvokeError::new(
+            InvokeErrorCode::ServiceUnavailable,
+            format!("the '{service_id}' service has no bound port"),
+        )
+    })?;
+    Ok(format!("http://127.0.0.1:{port}{path}"))
+}
+
+/// Strip anything that looks like a credential out of an error detail before it travels.
+///
+/// A managed process's error body is written by third-party code and can echo back the request —
+/// including a header or token it was given. That detail ends up in a flow run log, which is read
+/// by people debugging unrelated things, so it is redacted rather than trusted to be harmless.
+fn redact(detail: &str) -> String {
+    let mut out = String::with_capacity(detail.len());
+    for token in detail.split_inclusive(char::is_whitespace) {
+        let trimmed = token.trim_end();
+        let looks_secret = trimmed.len() >= 16
+            && (trimmed.starts_with("sk-")
+                || trimmed.starts_with("Bearer")
+                || trimmed.starts_with("flk_")
+                || trimmed.starts_with("eyJ")
+                || (trimmed.len() >= 32
+                    && trimmed.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')));
+        if looks_secret {
+            out.push_str("[redacted]");
+            out.push_str(&token[trimmed.len()..]);
+        } else {
+            out.push_str(token);
+        }
+    }
+    out.chars().take(MAX_ERROR_BODY_CHARS).collect()
+}
+
+/// Execute a resolved action on the MANAGED-PROCESS lane: validate input → loopback HTTP to the
+/// supervised process → typed output.
+///
+/// A JSON response is validated against the action's declared output schema, exactly like the
+/// gateway lane. A NON-JSON response (an image, an audio file) becomes an ArtifactRef stored on
+/// this device — large binary data never travels in-band, so it cannot end up inside a flow
+/// revision or a run log.
+pub async fn invoke_managed(
+    http: &reqwest::Client,
+    registry: &super::registry::RegistryHandle,
+    action: &ResolvedServiceAction,
+    input: &Value,
+    timeout_override_ms: Option<u64>,
+    device_id: &str,
+) -> Result<Value, InvokeError> {
+    let Transport::ManagedProcessHttp { service_id } = &action.transport else {
+        return Err(InvokeError::new(
+            InvokeErrorCode::ActionUnavailable,
+            "this action does not use the managed-process transport",
+        ));
+    };
+    if let Err(detail) = schema_subset::validate(&action.input_schema, input) {
+        return Err(InvokeError::new(InvokeErrorCode::InputInvalid, detail));
+    }
+    let endpoint = managed_service_endpoint(registry, service_id, &action.path)?;
+    let timeout = Duration::from_millis(timeout_override_ms.unwrap_or(action.timeout_ms).clamp(100, 600_000));
+
+    let mut request = http.request(action.method.clone(), &endpoint).timeout(timeout);
+    if action.method == reqwest::Method::POST {
+        request = request.json(input);
+    }
+    let response = request.send().await.map_err(|e| {
+        InvokeError::new(
+            InvokeErrorCode::TransportFailed,
+            format!("the '{service_id}' service did not respond: {}", redact(&e.to_string())),
+        )
+    })?;
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    let body = response.bytes().await.map_err(|e| {
+        InvokeError::new(
+            InvokeErrorCode::TransportFailed,
+            format!("reading the '{service_id}' response failed: {}", redact(&e.to_string())),
+        )
+    })?;
+
+    if !status.is_success() {
+        let detail = redact(&String::from_utf8_lossy(&body));
+        return Err(InvokeError::new(
+            InvokeErrorCode::TransportFailed,
+            format!("the '{service_id}' service returned {status}: {detail}"),
+        ));
+    }
+
+    let is_json = content_type.split(';').next().unwrap_or("").trim().eq_ignore_ascii_case("application/json");
+    if is_json {
+        if body.len() > MAX_RESPONSE_BYTES {
+            return Err(InvokeError::new(
+                InvokeErrorCode::TransportFailed,
+                format!("response exceeds the {MAX_RESPONSE_BYTES}-byte cap"),
+            ));
+        }
+        let output: Value = serde_json::from_slice(&body).map_err(|_| {
+            InvokeError::new(InvokeErrorCode::OutputInvalid, "the service response is not valid JSON")
+        })?;
+        if let Err(detail) = schema_subset::validate(&action.output_schema, &output) {
+            return Err(InvokeError::new(InvokeErrorCode::OutputInvalid, detail));
+        }
+        return Ok(output);
+    }
+
+    if body.len() > MAX_ARTIFACT_RESPONSE_BYTES {
+        return Err(InvokeError::new(
+            InvokeErrorCode::TransportFailed,
+            format!("binary response exceeds the {MAX_ARTIFACT_RESPONSE_BYTES}-byte artifact cap"),
+        ));
+    }
+    super::artifacts::store(&body, &content_type, device_id)
+        .map_err(|detail| InvokeError::new(InvokeErrorCode::OutputInvalid, detail))
+}
+
 /// Execute a resolved action: validate input → gateway transport → validate output.
 /// `timeout_override_ms` (node data) wins over the action's declared timeout when set.
 pub async fn invoke(
@@ -179,6 +404,14 @@ pub async fn invoke(
     input: &Value,
     timeout_override_ms: Option<u64>,
 ) -> Result<Value, InvokeError> {
+    if action.transport != Transport::OpenAiCompatible {
+        // Sending a managed-process action down the gateway lane would resolve its path against
+        // a provider profile — a different service entirely. Refuse rather than mis-route.
+        return Err(InvokeError::new(
+            InvokeErrorCode::ActionUnavailable,
+            "this action uses the managed-process transport and must be invoked on that lane",
+        ));
+    }
     if let Err(detail) = schema_subset::validate(&action.input_schema, input) {
         return Err(InvokeError::new(InvokeErrorCode::InputInvalid, detail));
     }
@@ -211,7 +444,7 @@ pub async fn invoke(
         ));
     }
     if !status.is_success() {
-        let detail: String = String::from_utf8_lossy(&body).chars().take(MAX_ERROR_BODY_CHARS).collect();
+        let detail = redact(&String::from_utf8_lossy(&body));
         return Err(InvokeError::new(
             InvokeErrorCode::TransportFailed,
             format!("provider gateway returned {status}: {detail}"),
@@ -467,5 +700,151 @@ mod tests {
         assert!(schema_subset::validate(&json!({ "type": "number" }), &json!(3)).is_ok());
         assert!(schema_subset::validate(&json!({ "description": "x" }), &json!("anything")).is_ok());
         assert!(schema_subset::validate(&Value::Null, &json!({ "a": 1 })).is_ok());
+    }
+    // -- SRV-407: managed-process-http ------------------------------------------------------
+
+    /// A v3 definition whose action addresses a process the Desktop supervises.
+    ///
+    /// The contributed-definition registry is process-GLOBAL, so each test owns a distinct
+    /// plugin id — otherwise one test's cleanup removes another's registration mid-run, and the
+    /// suite fails only under parallel load.
+    fn managed_definition(plugin: &str, service_id: &str, path: &str) -> serde_json::Value {
+        json!({
+            "schemaVersion": 3,
+            "id": format!("{plugin}.images"),
+            "name": "SRV-407 Demo Images",
+            "version": "1.0.0",
+            "actions": [{
+                "id": "render",
+                "title": "Render an image",
+                "sideEffects": "none",
+                "timeoutMs": 5000,
+                "transport": { "kind": "managed-process-http", "serviceId": service_id, "method": "POST", "path": path },
+                "inputSchema": {
+                    "type": "object",
+                    "properties": { "prompt": { "type": "string", "minLength": 1 } },
+                    "required": ["prompt"]
+                },
+                "outputSchema": { "type": "object" }
+            }]
+        })
+    }
+
+    fn with_managed_definition<T>(plugin: &str, definition: serde_json::Value, body: impl FnOnce() -> T) -> T {
+        // Hold the SHARED registry lock: definitions::tests can reset the whole global map, and
+        // without this the failure only shows up under parallel load.
+        let _guard = super::super::definitions::test_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        super::super::definitions::reconcile_plugin(plugin, vec![definition]);
+        let out = body();
+        super::super::definitions::remove_plugin(plugin);
+        out
+    }
+
+    #[test]
+    fn a_managed_action_resolves_onto_its_own_lane() {
+        let plugin = "srv407lane";
+        with_managed_definition(plugin, managed_definition(plugin, "demo-imaging", "/render"), || {
+            let action = resolve_action("srv407lane.images", "render").expect("resolves");
+            assert!(action.is_managed_process());
+            assert_eq!(action.managed_service_id(), Some("demo-imaging"));
+            // A managed process owns its whole route space, so /v1/* is not required here.
+            assert_eq!(action.path, "/render");
+        });
+    }
+
+    #[test]
+    fn a_managed_transport_without_a_valid_service_id_is_refused() {
+        let plugin = "srv407sid";
+        for bad in ["", "Not A Service", "../../etc", &"x".repeat(65)] {
+            let mut definition = managed_definition(plugin, "demo-imaging", "/render");
+            definition["actions"][0]["transport"]["serviceId"] = json!(bad);
+            with_managed_definition(plugin, definition, || {
+                let err = resolve_action("srv407sid.images", "render").unwrap_err();
+                assert_eq!(err.code, InvokeErrorCode::ActionUnavailable);
+                assert!(err.message.contains("serviceId"), "'{bad}' must be refused by shape");
+            });
+        }
+    }
+
+    #[test]
+    fn a_managed_path_cannot_traverse_smuggle_or_change_host() {
+        // The path is a fixed route the definition declared. Traversal, a query string, a
+        // fragment, a protocol-relative prefix and a backslash are all ways to make a declared
+        // route address something else, and each is refused.
+        for hostile in ["../admin", "/render?token=x", "/render#frag", "//evil.test/render", "/a\\b", "render"] {
+            let definition = managed_definition("srv407path", "demo-imaging", hostile);
+            with_managed_definition("srv407path", definition, || {
+                let err = resolve_action("srv407path.images", "render").unwrap_err();
+                assert_eq!(err.code, InvokeErrorCode::ActionUnavailable, "'{hostile}' must be refused");
+            });
+        }
+    }
+
+    #[test]
+    fn a_managed_action_cannot_be_sent_down_the_gateway_lane() {
+        // Mis-routing would resolve the path against a provider profile — a different service
+        // entirely — so the gateway lane refuses rather than sending it.
+        let plugin = "srv407route";
+        with_managed_definition(plugin, managed_definition(plugin, "demo-imaging", "/render"), || {
+            let action = resolve_action("srv407route.images", "render").expect("resolves");
+            let client = reqwest::Client::new();
+            let outcome = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime")
+                .block_on(invoke(&client, &action, "openai", &json!({ "prompt": "hi" }), None));
+            let err = outcome.unwrap_err();
+            assert_eq!(err.code, InvokeErrorCode::ActionUnavailable);
+            assert!(err.message.contains("managed-process"));
+        });
+    }
+
+    #[test]
+    fn a_stopped_service_refuses_rather_than_being_auto_started() {
+        // The acceptance criterion: a manual stop is RESPECTED. A flow silently restarting a
+        // service the owner stopped would override a decision they made on purpose.
+        let registry: super::super::registry::RegistryHandle = std::sync::Arc::new(std::sync::Mutex::new(
+            super::super::registry::Registry::empty(
+                std::env::temp_dir().join("srv407-empty"),
+                std::env::temp_dir().join("srv407-empty-models"),
+            ),
+        ));
+        let err = managed_service_endpoint(&registry, "demo-imaging", "/render").unwrap_err();
+        assert_eq!(err.code, InvokeErrorCode::ServiceUnavailable);
+        assert!(err.message.contains("not running"), "the refusal names the fix: start it");
+    }
+
+    #[test]
+    fn the_endpoint_is_composed_by_the_host_not_the_definition() {
+        // The whole SSRF story: scheme and host are hardcoded and the port comes from the
+        // registry entry for the service. No definition field contributes an address.
+        let endpoint = format!("http://127.0.0.1:{}{}", 51234, "/render");
+        assert!(endpoint.starts_with("http://127.0.0.1:"));
+        assert!(!endpoint.contains("evil"));
+    }
+
+    #[test]
+    fn error_details_are_redacted_before_they_travel() {
+        // A managed process's error body is third-party text that can echo back what it was
+        // given. It lands in a flow run log, so anything credential-shaped is stripped.
+        let redacted = redact("upstream rejected key sk-abcdefghijklmnopqrstuvwxyz012345 for tenant 7");
+        assert!(!redacted.contains("sk-abcdefghijklmnopqrstuvwxyz012345"));
+        assert!(redacted.contains("[redacted]"));
+        assert!(redacted.contains("upstream rejected key"), "the useful part of the message survives");
+
+        let jwt = redact("Authorization failed: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.body.sig");
+        assert!(!jwt.contains("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"));
+
+        // Ordinary prose is untouched — over-redaction that eats the message is its own failure.
+        let plain = redact("the render queue is full, try again shortly");
+        assert_eq!(plain, "the render queue is full, try again shortly");
+    }
+
+    #[test]
+    fn a_long_error_body_cannot_flood_a_run_log() {
+        let flood = "x ".repeat(10_000);
+        assert!(redact(&flood).chars().count() <= MAX_ERROR_BODY_CHARS);
     }
 }

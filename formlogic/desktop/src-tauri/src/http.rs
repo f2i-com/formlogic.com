@@ -721,6 +721,7 @@ fn service_invoke_http() -> &'static reqwest::Client {
 /// plugin gateway pass. Cancellation: the caller aborts its request — dropping
 /// the connection cancels this handler's future and the in-flight gateway call.
 async fn invoke_service_action(
+    State(state): State<AppState>,
     axum::extract::Path((definition_id, action_id)): axum::extract::Path<(String, String)>,
     Json(body): Json<ServiceActionInvokeBody>,
 ) -> Response {
@@ -728,14 +729,33 @@ async fn invoke_service_action(
         Ok(action) => action,
         Err(error) => return service_invoke_error(error),
     };
-    match crate::services::invocation::invoke(
-        service_invoke_http(),
-        &action,
-        &body.connection,
-        &body.input,
-        body.timeout_ms,
-    )
-    .await
+    // SRV-407: the two transports resolve their base URL from completely different places — a
+    // provider profile vs a process this Desktop supervises — so the lane is chosen here rather
+    // than inside one function that would have to hold both.
+    let outcome = if action.is_managed_process() {
+        crate::services::invocation::invoke_managed(
+            service_invoke_http(),
+            &state.registry,
+            &action,
+            &body.input,
+            body.timeout_ms,
+            // An artifact is bound to the DEVICE that produced it. Without a wired runtime
+            // there is no stable device identity, so it falls back to a name that will never
+            // match a real device — the ref stays honest rather than claiming a wrong owner.
+            state.flow_runtime.as_ref().map_or("unpaired-desktop", |rt| rt.instance_id()),
+        )
+        .await
+    } else {
+        crate::services::invocation::invoke(
+            service_invoke_http(),
+            &action,
+            &body.connection,
+            &body.input,
+            body.timeout_ms,
+        )
+        .await
+    };
+    match outcome
     {
         Ok(output) => {
             (StatusCode::OK, Json(serde_json::json!({ "ok": true, "output": output }))).into_response()

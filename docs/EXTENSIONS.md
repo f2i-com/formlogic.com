@@ -367,6 +367,49 @@ Contribution rules (the registry enforces all of them):
   immediately, and re-enabling restores them. Re-registering replaces a plugin's previous set,
   so a definition it stops shipping disappears rather than lingering.
 
+### Transports: where an action's address comes from
+
+An action declares a **transport**. Two are executable today, and they differ in exactly one
+important way — where the base URL comes from:
+
+| Transport | Base URL | Path rule |
+|---|---|---|
+| `openai-compatible` | The **connection** the owner bound (a provider profile the Desktop holds credentials for). | Must be under `/v1/*` — the inference surface. |
+| `managed-process-http` | The **service the Desktop supervises**, named by `transport.serviceId`. Scheme and host are hardcoded loopback; the port comes from the running process. | Any plain absolute route the process owns. |
+
+In neither case does a definition author supply a host. That is deliberate and load-bearing:
+there is no field an author could write that would aim a flow at an internal address, a cloud
+metadata endpoint, or the wider network, so the SSRF surface is closed by construction rather
+than by a blocklist that has to keep up. Both lanes also refuse `..`, query strings, fragments,
+backslashes and protocol-relative paths — a declared route is a route, not a place to smuggle
+parameters.
+
+```jsonc
+"transport": {
+  "kind": "managed-process-http",
+  "serviceId": "acme-renderer",   // a service THIS Desktop supervises
+  "method": "POST",
+  "path": "/render"
+}
+```
+
+Behaviour worth knowing:
+
+- **A stopped service refuses.** It is never auto-started. If the owner stopped it, a flow
+  quietly restarting it would override a decision they made on purpose; the refusal names the
+  service and tells them where to start it.
+- **A binary response becomes an artifact.** A JSON response is validated against the action's
+  `outputSchema` as usual; a non-JSON response (an image, an audio file) is stored on that device
+  and the node receives an
+  [ArtifactRef](contracts/artifact-ref.v1.schema.json) with `locality: "device"`. Large binary
+  data never travels in-band, so it cannot end up inside a flow revision or a run log — and the
+  bytes are not silently uploaded anywhere.
+- **Errors are redacted.** A managed process's error body is third-party text that can echo back
+  what it was given. Anything credential-shaped is stripped before it reaches a run log, and the
+  body is truncated.
+- **Size and time are capped** on both lanes; the artifact lane has its own larger ceiling.
+
+
 ## Service slots and bindings
 
 A `service-action` node never names a concrete service. It names a **slot** plus the action
