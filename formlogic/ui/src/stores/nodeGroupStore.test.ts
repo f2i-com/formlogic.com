@@ -93,4 +93,26 @@ describe('nodeGroupStore', () => {
     expect(createGroup('One too many')).toBeNull();
     expect(useNodeGroupStore.getState().groups).toHaveLength(24);
   });
+  it('rename refuses a name that already exists', () => {
+    // createGroup already refused a duplicate; rename did not, so the twin the create path
+    // prevents could be produced anyway — two indistinguishable sections in the palette.
+    const { createGroup } = useNodeGroupStore.getState();
+    createGroup('Voice');
+    const text = createGroup('Text')!;
+
+    useNodeGroupStore.getState().renameGroup(text, 'voice');
+
+    expect(useNodeGroupStore.getState().groups.map((g) => g.name)).toEqual(['Voice', 'Text']);
+  });
+
+  it('rename to its own name (or a new one) still works', () => {
+    const { createGroup } = useNodeGroupStore.getState();
+    const id = createGroup('Voice')!;
+
+    useNodeGroupStore.getState().renameGroup(id, 'Voice');
+    expect(useNodeGroupStore.getState().groups[0].name).toBe('Voice');
+
+    useNodeGroupStore.getState().renameGroup(id, 'Speech');
+    expect(useNodeGroupStore.getState().groups[0].name).toBe('Speech');
+  });
 });

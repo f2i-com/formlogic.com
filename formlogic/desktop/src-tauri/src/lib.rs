@@ -1437,6 +1437,15 @@ pub fn run() {
                 .into_iter()
                 .map(PathBuf::from)
                 .collect();
+            // SRV-404: point the artifact store at the app data directory and sweep what has
+            // expired. Without this it silently fell back to %TEMP% and nothing ever removed
+            // an artifact — a store with no init and no sweep is a slow disk leak.
+            crate::services::artifacts::init(&data_dir);
+            let swept = crate::services::artifacts::sweep();
+            if swept > 0 {
+                log::info!("artifact sweep removed {swept} expired artifact(s)");
+            }
+
             let registry: RegistryHandle =
                 match Registry::init(data_dir.clone(), models_dir.clone(), extra_model_dirs) {
                     Ok(r) => Arc::new(Mutex::new(r)),

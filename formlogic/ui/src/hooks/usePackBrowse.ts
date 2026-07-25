@@ -18,6 +18,12 @@ import { api, type CatalogPack } from '../lib/api';
  * - **Stale-response cancellation.** Only the newest request may apply results. Without this a
  *   slow earlier query overwrites a newer one, and the list silently shows the wrong search.
  * - **Explicit retry.** A failure is a state with an action, not a blank grid.
+ *
+ * `loading` is DERIVED from whether the displayed result answers the query being asked, rather
+ * than flipped inside the effect. That distinction mattered in practice: with `loading` starting
+ * false, callers saw "not loading, no results" for the whole debounce window and acted on an
+ * emptiness that had never been measured — the routed gallery flashed "No apps found" on every
+ * visit, and the Packs modal fired its catalog bootstrap before it had read anything at all.
  */
 export interface PackBrowseOptions {
   /** Skip fetching entirely (a closed modal, or the demo account's local-only catalog). */
@@ -35,11 +41,20 @@ export interface PackBrowseOptions {
 export interface PackBrowseResult {
   packs: CatalogPack[];
   totalPages: number;
+  /** True whenever what is displayed does not yet answer the current query. */
   loading: boolean;
   /** Non-null means the catalog could NOT be read — never rendered as "no packs". */
   error: string | null;
   /** Re-run the current query. */
   retry: () => void;
+}
+
+/** A completed result, tagged with the query it answered. */
+interface SettledResult {
+  key: string;
+  packs: CatalogPack[];
+  totalPages: number;
+  error: string | null;
 }
 
 export function usePackBrowse(options: PackBrowseOptions): PackBrowseResult {
@@ -54,11 +69,12 @@ export function usePackBrowse(options: PackBrowseOptions): PackBrowseResult {
     debounceMs = 300,
   } = options;
 
-  const [packs, setPacks] = useState<CatalogPack[]>([]);
-  const [totalPages, setTotalPages] = useState(1);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [retryToken, setRetryToken] = useState(0);
+  const [settled, setSettled] = useState<SettledResult | null>(null);
+
+  // The question currently being asked. A settled result carries the key it answered, so
+  // "loading" is just "what is on screen is not an answer to this".
+  const key = JSON.stringify({ enabled, search, sort, category, tag, page, limit, retryToken });
 
   // Monotonic request id: only the newest response may apply. A slow earlier query must never
   // overwrite a newer one — the user would see results for a search they have moved on from.
@@ -70,8 +86,6 @@ export function usePackBrowse(options: PackBrowseOptions): PackBrowseResult {
 
     const run = () => {
       const seq = ++seqRef.current;
-      setLoading(true);
-      setError(null);
       void api
         .browsePacks({
           search: search || undefined,
@@ -83,20 +97,32 @@ export function usePackBrowse(options: PackBrowseOptions): PackBrowseResult {
         })
         .then((result) => {
           if (seq !== seqRef.current) return; // a newer request has taken over
-          if (result.error) {
-            setError(typeof result.error === 'string' ? result.error : 'Could not load the marketplace catalog.');
-          } else if (result.data) {
-            setPacks(result.data.packs);
-            setTotalPages(result.data.totalPages ?? 1);
-          }
-          setLoading(false);
+          setSettled(
+            result.error
+              ? {
+                  key,
+                  packs: [],
+                  totalPages: 1,
+                  error: typeof result.error === 'string' ? result.error : 'Could not load the marketplace catalog.',
+                }
+              : {
+                  key,
+                  packs: result.data?.packs ?? [],
+                  totalPages: result.data?.totalPages ?? 1,
+                  error: null,
+                }
+          );
         })
         .catch(() => {
           if (seq !== seqRef.current) return;
           // Honest failure, not an empty grid: a user can retry a failure, but they cannot
           // retry a catalog that simply appears to have nothing in it.
-          setError('Could not load the marketplace catalog. Check your connection and try again.');
-          setLoading(false);
+          setSettled({
+            key,
+            packs: [],
+            totalPages: 1,
+            error: 'Could not load the marketplace catalog. Check your connection and try again.',
+          });
         });
     };
 
@@ -109,9 +135,17 @@ export function usePackBrowse(options: PackBrowseOptions): PackBrowseResult {
     }
     run();
     return undefined;
-  }, [enabled, search, sort, category, tag, page, limit, debounceMs, retryToken]);
+  }, [enabled, search, sort, category, tag, page, limit, debounceMs, key]);
 
   const retry = useCallback(() => setRetryToken((token) => token + 1), []);
 
-  return { packs, totalPages, loading, error, retry };
+  const answered = settled !== null && settled.key === key;
+  return {
+    packs: answered ? settled.packs : [],
+    totalPages: answered ? settled.totalPages : 1,
+    // Disabled means nothing is pending: not loading, simply without an answer.
+    loading: enabled && !answered,
+    error: answered ? settled.error : null,
+    retry,
+  };
 }

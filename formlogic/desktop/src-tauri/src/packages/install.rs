@@ -190,6 +190,10 @@ impl<'a, H: InstallHost> InstallPipeline<'a, H> {
     pub fn run(&mut self, request: &DistributionRequest, consent: RequireConsent) -> Result<(), InstallError> {
         self.precheck(request)?;
 
+        // What this machine had before we touched anything. A rollback that succeeds restores
+        // this, so an update that fails leaves the previous working version reported as working.
+        let previous = self.ledger.component(&request.component_key).map(|c| c.observed);
+
         // ── approve ────────────────────────────────────────────────────────────────────────
         // BEFORE fetching: asking for confirmation after downloading half a gigabyte wastes the
         // user's bandwidth on something they may be about to decline.
@@ -198,12 +202,15 @@ impl<'a, H: InstallHost> InstallPipeline<'a, H> {
             RequireConsent::NativeOnly => request.native,
             RequireConsent::Waived => false,
         };
+        // What this machine SHOULD have is recorded either way. Recording it only on the
+        // consent path left a waived install with desired=Absent, so the very next drift()
+        // reported the component that had just been installed as something to remove.
+        self.ledger.set_desired(
+            &request.component_key,
+            Desired::Present { version: request.version.clone() },
+            needs_consent,
+        );
         if needs_consent {
-            self.ledger.set_desired(
-                &request.component_key,
-                Desired::Present { version: request.version.clone() },
-                true,
-            );
             if let Err(refusal) = self.ledger.can_install(&request.component_key) {
                 self.record(request, Step::Approve, false, Some(refusal.message()));
                 return Err(InstallError::Blocked(refusal));
@@ -260,7 +267,7 @@ impl<'a, H: InstallHost> InstallPipeline<'a, H> {
         // ── install ────────────────────────────────────────────────────────────────────────
         if let Err(detail) = self.host.install(request, &staging) {
             self.record(request, Step::Install, false, Some(detail.clone()));
-            self.rollback(request, &detail);
+            self.rollback(request, &detail, previous.clone());
             return Err(InstallError::Failed { step: Step::Install, detail });
         }
         self.record(request, Step::Install, true, None);
@@ -274,7 +281,7 @@ impl<'a, H: InstallHost> InstallPipeline<'a, H> {
                 Observed::Installed { version: request.version.clone(), healthy: false },
             );
             self.record(request, Step::Health, false, Some(detail.clone()));
-            self.rollback(request, &detail);
+            self.rollback(request, &detail, previous.clone());
             return Err(InstallError::Failed { step: Step::Health, detail });
         }
         self.record(request, Step::Health, true, None);
@@ -311,7 +318,12 @@ impl<'a, H: InstallHost> InstallPipeline<'a, H> {
             self.record(request, Step::Verify, false, Some(detail.clone()));
             return Err(refuse("invalid_size", detail));
         }
-        if !(request.url.starts_with("https://") || request.url.starts_with("http://127.0.0.1")) {
+        // `starts_with("http://127.0.0.1")` also matched http://127.0.0.1.attacker.test — a
+        // prefix is not a host. Only real loopback authorities are exempt from https.
+        let loopback_http = request.url.starts_with("http://127.0.0.1/")
+            || request.url.starts_with("http://127.0.0.1:")
+            || request.url == "http://127.0.0.1";
+        if !(request.url.starts_with("https://") || loopback_http) {
             let detail = "a distribution must be fetched over https".to_string();
             self.record(request, Step::Fetch, false, Some(detail.clone()));
             return Err(refuse("insecure_source", detail));
@@ -345,13 +357,25 @@ impl<'a, H: InstallHost> InstallPipeline<'a, H> {
         Ok(())
     }
 
-    fn rollback(&mut self, request: &DistributionRequest, cause: &str) {
+    /// `previous` is what the ledger observed BEFORE this attempt — captured by the caller, so a
+    /// successful rollback can restore it rather than overwriting it with a failure.
+    fn rollback(&mut self, request: &DistributionRequest, cause: &str, previous: Option<Observed>) {
         match self.host.rollback(request) {
             Ok(()) => {
-                self.ledger.set_observed(
-                    &request.component_key,
-                    Observed::Failed { detail: cause.to_string() },
-                );
+                // Rollback SUCCEEDED: the machine is back to what it had. Recording Failed here
+                // marked a perfectly good restored version as unusable, so device readiness
+                // reported an outage that had already been undone.
+                match previous {
+                    Some(state @ Observed::Installed { .. }) => {
+                        self.ledger.set_observed(&request.component_key, state);
+                    }
+                    _ => {
+                        self.ledger.set_observed(
+                            &request.component_key,
+                            Observed::Failed { detail: cause.to_string() },
+                        );
+                    }
+                }
                 self.record(request, Step::Rollback, true, None);
             }
             Err(detail) => {
@@ -652,6 +676,105 @@ mod tests {
         assert_eq!(pipeline.audit()[0].step, Step::Verify);
         assert!(!pipeline.audit()[0].ok);
         assert!(pipeline.audit()[0].detail.as_deref().unwrap().contains("sha256"));
+    }
+
+    #[test]
+    fn a_waived_install_records_what_the_machine_should_have() {
+        // Recording `desired` only on the consent path left a waived install at desired=Absent,
+        // so the very next drift() reported the component that had just been installed as
+        // something to remove.
+        let (ledger, dir) = fixture();
+        let payload = b"runtime payload".to_vec();
+        let host = FakeHost { bytes: payload.clone(), ..Default::default() };
+        let mut pipeline = InstallPipeline::new(&host, &ledger, dir);
+
+        pipeline.run(&request(&payload), RequireConsent::Waived).expect("installs");
+
+        let record = ledger.component("runtime").expect("recorded");
+        assert_eq!(record.desired, Desired::Present { version: "1.0.0".into() });
+        assert!(ledger.drift().is_empty(), "a freshly installed component is not drift");
+    }
+
+    #[test]
+    fn a_successful_rollback_restores_the_previous_working_version() {
+        // Recording Failed after a SUCCESSFUL rollback marked a perfectly good restored version
+        // as unusable, so device readiness reported an outage that had already been undone.
+        let (ledger, dir) = fixture();
+        let payload = b"v1".to_vec();
+
+        let good = FakeHost { bytes: payload.clone(), ..Default::default() };
+        InstallPipeline::new(&good, &ledger, dir.clone())
+            .run(&request(&payload), RequireConsent::Waived)
+            .expect("first install");
+        assert!(ledger.component("runtime").unwrap().is_usable());
+
+        // An update fails health; rollback succeeds and puts v1.0.0 back.
+        let next = b"v2".to_vec();
+        let bad = FakeHost {
+            bytes: next.clone(),
+            health_error: Some("the new build crashes".into()),
+            ..Default::default()
+        };
+        let mut req = request(&next);
+        req.version = "2.0.0".into();
+        let error = InstallPipeline::new(&bad, &ledger, dir)
+            .run(&req, RequireConsent::Waived)
+            .unwrap_err();
+        assert_eq!(error.code(), "install_failed");
+
+        let record = ledger.component("runtime").expect("recorded");
+        assert!(record.is_usable(), "the restored version is working, and says so");
+        assert_eq!(record.observed, Observed::Installed { version: "1.0.0".into(), healthy: true });
+    }
+
+    #[test]
+    fn a_failed_rollback_still_reports_the_component_as_unusable() {
+        // The restore path must not paper over the case where nothing was restored.
+        let (ledger, dir) = fixture();
+        let payload = b"v1".to_vec();
+        let host = FakeHost {
+            bytes: payload.clone(),
+            install_error: Some("installer exited 1".into()),
+            rollback_error: Some("could not remove staged files".into()),
+            ..Default::default()
+        };
+        InstallPipeline::new(&host, &ledger, dir)
+            .run(&request(&payload), RequireConsent::Waived)
+            .unwrap_err();
+
+        assert!(!ledger.component("runtime").unwrap().is_usable());
+    }
+
+    #[test]
+    fn a_host_that_merely_starts_with_the_loopback_address_is_not_loopback() {
+        // `starts_with("http://127.0.0.1")` also matched http://127.0.0.1.attacker.test, letting
+        // a plain-http distribution past the https requirement.
+        let (ledger, dir) = fixture();
+        let host = FakeHost::default();
+        for hostile in [
+            "http://127.0.0.1.attacker.test/payload.zip",
+            "http://127.0.0.1evil.test/payload.zip",
+            "http://localhost/payload.zip",
+        ] {
+            let mut req = request(b"payload");
+            req.url = hostile.into();
+            let error = InstallPipeline::new(&host, &ledger, dir.clone())
+                .run(&req, RequireConsent::Waived)
+                .unwrap_err();
+            assert_eq!(error.code(), "insecure_source", "{hostile} must be refused");
+        }
+
+        // Real loopback is still allowed (a locally-served distribution).
+        for ok in ["http://127.0.0.1:8080/payload.zip", "http://127.0.0.1/payload.zip"] {
+            let mut req = request(b"payload");
+            req.url = ok.into();
+            let mut pipeline = InstallPipeline::new(&host, &ledger, dir.clone());
+            let outcome = pipeline.run(&req, RequireConsent::Waived);
+            // It fails LATER (the fake host returns no bytes), never at the source check.
+            if let Err(e) = outcome {
+                assert_ne!(e.code(), "insecure_source", "{ok} is real loopback");
+            }
+        }
     }
 
     #[test]

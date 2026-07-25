@@ -77,7 +77,6 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
   // stale-response cancellation, and an honest error state with a retry. They had drifted: this
   // surface used to swallow every failure and render an empty catalog, which looks identical to
   // "there is nothing here" and is the one thing a user cannot act on.
-  const [seededPacks, setSeededPacks] = useState<CatalogPack[] | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('popular');
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
@@ -172,8 +171,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
     sort: sortBy,
     limit: 50,
   });
-  // A successful re-read after seeding supersedes the browse result until the next query.
-  const catalogPacks = seededPacks ?? browse.packs;
+  const catalogPacks = browse.packs;
   const loadingCatalog = browse.loading;
 
   // MKT-602: an empty catalog TRIGGERS a server-side bootstrap (once per session). The client
@@ -184,21 +182,27 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
   // triggered by a dropped connection.
   useEffect(() => {
     if (!isOpen || storageMode !== 'api') return;
+    // Only on a MEASURED empty catalog. `browse.loading` is true for as long as the displayed
+    // result does not answer the current query, so this can no longer fire during the debounce
+    // window on a catalog that turns out to be full.
     if (browse.loading || browse.error || searchQuery) return;
     if (browse.packs.length > 0 || seedAttemptedRef.current) return;
     seedAttemptedRef.current = true;
     setSeeding(true);
     void api
       .seedOfficialPacks()
-      .then((seedResult) => (seedResult.data?.success ? api.browsePacks({ sort: sortBy, limit: 50 }) : null))
-      .then((refreshed) => {
-        if (refreshed?.data?.packs) setSeededPacks(refreshed.data.packs);
+      .then((seedResult) => {
+        // Re-run the browse rather than shadowing it with a snapshot: a stored snapshot kept
+        // being rendered after every later search and sort, so the list silently stopped
+        // responding to them.
+        if (seedResult.data?.success) browse.retry();
       })
       .catch(() => {
         // Seed failed — the empty catalog below is the honest result.
       })
       .finally(() => setSeeding(false));
-  }, [isOpen, storageMode, browse.loading, browse.error, browse.packs.length, searchQuery, sortBy]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- browse.retry is stable (useCallback with no deps); listing `browse` would re-run this on every result
+  }, [isOpen, storageMode, browse.loading, browse.error, browse.packs.length, searchQuery]);
 
   const loadInstallations = useCallback(async () => {
     setLoadingInstallations(true);

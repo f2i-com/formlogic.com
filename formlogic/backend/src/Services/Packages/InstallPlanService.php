@@ -113,6 +113,10 @@ class InstallPlanService
                     'version' => $step['version'],
                     'displayName' => $step['displayName'],
                     'nodeCount' => $step['nodeCount'],
+                    // Provenance the reviewer can judge: a chain step whose publisher and trust
+                    // are invisible is a step nobody can evaluate.
+                    'publisherId' => $step['publisherId'],
+                    'trust' => $step['trust'],
                 ],
                 $chain['chain']
             ),
@@ -211,11 +215,38 @@ class InstallPlanService
             // (plan §7.3.10) — the stored bytes are what commits, the world is re-checked.
             // An update plan whose target was uninstalled meanwhile fails typed (not_installed);
             // an install plan whose package appeared meanwhile fails typed (already installed).
-            // Dependencies first, in the order the plan reviewed them. Re-resolved against
-            // CURRENT state rather than replayed from the plan: something in the chain may have
-            // been installed by hand since, and installing it twice would fail the second time.
+            // Dependencies first. Re-resolved against CURRENT state rather than replayed from
+            // the plan, because something in the chain may have been installed by hand since —
+            // but the result is checked against what was REVIEWED, so re-resolving can only ever
+            // shrink the chain, never substitute or add to it behind the reviewer's back.
+            $resolved = $this->chain()->resolveChain($aggregate, $userId);
+            if (!$resolved['ok']) {
+                // The chain no longer resolves. Installing part of it and then failing on the
+                // target would leave packages behind that the owner never wanted on their own.
+                $lines = array_map(static fn (array $p): string => $p['message'], $resolved['problems']);
+                throw new \RuntimeException('unresolved_dependencies: ' . implode('; ', $lines));
+            }
+
+            $reviewed = [];
+            foreach ((is_array($summary['plannedInstalls'] ?? null) ? $summary['plannedInstalls'] : []) as $step) {
+                if (is_array($step) && isset($step['packageId'], $step['version'])) {
+                    $reviewed[(string) $step['packageId']] = (string) $step['version'];
+                }
+            }
+            foreach ($resolved['chain'] as $step) {
+                $id = $step['packageId'];
+                if (!isset($reviewed[$id]) || $reviewed[$id] !== $step['version']) {
+                    // Something the reviewer never saw. A listing published between propose and
+                    // confirm must not be able to insert itself into an approved install.
+                    throw new \RuntimeException(
+                        'plan_chain_changed: "' . $id . '" v' . $step['version']
+                        . ' was not part of the reviewed install — re-review the package'
+                    );
+                }
+            }
+
             $chainInstalled = [];
-            foreach ($this->chain()->resolveChain($aggregate, $userId)['chain'] as $step) {
+            foreach ($resolved['chain'] as $step) {
                 $installedStep = $this->installer->install(
                     $step['aggregate'],
                     $userId,
@@ -224,19 +255,40 @@ class InstallPlanService
                     // own grants when they choose to give it any.
                     [],
                     $row['source'] . ':dependency',
-                    (string) $row['trust']
+                    // Its OWN trust, never the parent's. Inheriting an 'official' parent's trust
+                    // would stamp an unsigned dependency as verified in its immutable receipt and
+                    // walk it straight past a verified-only workspace policy.
+                    $step['trust']
                 );
                 $chainInstalled[] = [
                     'packageId' => $step['packageId'],
                     'version' => $step['version'],
                     'displayName' => $step['displayName'],
+                    'publisherId' => $step['publisherId'],
+                    'trust' => $step['trust'],
                     'installationId' => $installedStep['installationId'],
                 ];
             }
 
-            $result = $action === 'update'
-                ? $this->installer->update($aggregate, $userId, $approvedConnectorGrants, $row['source'] . ':plan', (string) $row['trust'])
-                : $this->installer->install($aggregate, $userId, $approvedConnectorGrants, $row['source'] . ':plan', (string) $row['trust']);
+            try {
+                $result = $action === 'update'
+                    ? $this->installer->update($aggregate, $userId, $approvedConnectorGrants, $row['source'] . ':plan', (string) $row['trust'])
+                    : $this->installer->install($aggregate, $userId, $approvedConnectorGrants, $row['source'] . ':plan', (string) $row['trust']);
+            } catch (\Exception $e) {
+                // The target failed after its dependencies landed. Roll them back rather than
+                // leaving packages the owner only ever agreed to as a means to an end.
+                foreach (array_reverse($chainInstalled) as $step) {
+                    try {
+                        $this->installer->uninstall($step['installationId'], $userId);
+                    } catch (\Throwable) {
+                        // Best effort: a dependency that will not uninstall (something else now
+                        // requires it) is better left than retried into a worse state. The
+                        // original failure is what the caller needs to see.
+                    }
+                }
+                throw $e;
+            }
+
             if ($chainInstalled !== []) {
                 // Name what else landed. An install that quietly added three packages is not a
                 // thing anyone should have to discover from a list screen afterwards.

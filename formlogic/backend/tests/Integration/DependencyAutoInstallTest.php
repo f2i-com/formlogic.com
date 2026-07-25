@@ -242,7 +242,9 @@ class DependencyAutoInstallTest extends TestCase
 
         $this->assertFalse($chain['ok']);
         $this->assertSame('dependency_cycle', $chain['problems'][0]['code']);
-        $this->assertStringContainsString('→', $chain['problems'][0]['message']);
+        // Both ends of the ring are named — the author needs to know which two packages.
+        $this->assertStringContainsString('com.dep.cyc-a', $chain['problems'][0]['message']);
+        $this->assertStringContainsString('com.dep.cyc-b', $chain['problems'][0]['message']);
     }
 
     public function testProposeShowsTheChainAndConfirmInstallsItInOrder(): void
@@ -255,7 +257,16 @@ class DependencyAutoInstallTest extends TestCase
         // The plan is viable even though the dependency is absent — that is the whole point.
         $this->assertTrue($plan['resolution']['ok'], json_encode($plan['resolution']));
         $this->assertSame(
-            [['packageId' => 'com.dep.pb', 'version' => '1.0.0', 'displayName' => 'Dep pb', 'nodeCount' => 1]],
+            [[
+                'packageId' => 'com.dep.pb',
+                'version' => '1.0.0',
+                'displayName' => 'Dep pb',
+                'nodeCount' => 1,
+                // Provenance the reviewer can judge — same publisher namespace as the package
+                // that declared it, which is what makes it an acceptable dependency at all.
+                'publisherId' => 'com.dep',
+                'trust' => 'community',
+            ]],
             $plan['plannedInstalls'],
             'the review names what else this brings, before anything commits'
         );
@@ -293,5 +304,167 @@ class DependencyAutoInstallTest extends TestCase
         $receipt->execute([$this->userId, 'com.dep.gb']);
         $decoded = json_decode((string) $receipt->fetchColumn(), true);
         $this->assertSame([], $decoded['approvedConnectorGrants'], 'the dependency was installed with no grants');
+    }
+    // -- Provenance: who is allowed to satisfy a dependency ---------------------------------
+
+    public function testAThirdPartyCannotSquatAnotherPublishersDependencyId(): void
+    {
+        // Dependency confusion. publisherId is self-declared and ANY authenticated user can
+        // publish, so matching a dependency on package id alone let an attacker publish a
+        // squatting listing and have it installed into other people's accounts as a side effect
+        // of them installing something unrelated.
+        $attacker = 'atk-' . bin2hex(random_bytes(8));
+        self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, 'x', 'A')")
+            ->execute([$attacker, $attacker . '@example.com']);
+
+        $squat = [
+            'formatVersion' => 2,
+            'package' => [
+                'id' => 'com.victim.lib',
+                'kind' => 'extension',
+                'version' => '9.9.9',
+                'publisherId' => 'com.victim',
+                'displayName' => 'Totally The Real Lib',
+            ],
+            'contributions' => ['flowNodes' => [[
+                'schemaVersion' => 1,
+                'type' => 'com.victim.lib.evil',
+                'version' => '1.0.0',
+                'display' => ['label' => 'Evil'],
+                'handler' => ['kind' => 'core-preset', 'coreType' => 'template', 'defaults' => ['template' => 'x']],
+                'sideEffects' => 'none',
+            ]]],
+        ];
+        self::$catalog->publishPack($squat, $attacker, [
+            'name' => 'Squat ' . bin2hex(random_bytes(3)),
+            'slug' => 'squat-' . bin2hex(random_bytes(4)),
+            'visibility' => 'public',
+            'version' => '9.9.9',
+        ]);
+
+        $top = [
+            'formatVersion' => 2,
+            'package' => [
+                'id' => 'com.other.app',
+                'kind' => 'extension',
+                'version' => '1.0.0',
+                'publisherId' => 'com.other',
+                'displayName' => 'Other App',
+            ],
+            'dependencies' => ['packages' => [['id' => 'com.victim.lib', 'version' => '^9.0.0']]],
+            'contributions' => ['flowNodes' => [[
+                'schemaVersion' => 1,
+                'type' => 'com.other.app.node',
+                'version' => '1.0.0',
+                'display' => ['label' => 'Node'],
+                'handler' => ['kind' => 'core-preset', 'coreType' => 'template', 'defaults' => ['template' => 'x']],
+                'sideEffects' => 'none',
+            ]]],
+        ];
+
+        $chain = $this->resolver()->resolveChain($top, $this->userId);
+
+        $this->assertFalse($chain['ok'], 'a squatted listing must not satisfy the dependency');
+        $this->assertSame('dependency_unavailable', $chain['problems'][0]['code']);
+        $this->assertSame([], $chain['chain'], 'and nothing is planned for install');
+
+        self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$attacker]);
+    }
+
+    public function testAPublisherMaySatisfyItsOwnDependency(): void
+    {
+        // The legitimate case the provenance rule must not break.
+        $this->list($this->aggregate('own-lib'));
+        $top = $this->aggregate('own-app', '1.0.0', [['id' => 'com.dep.own-lib', 'version' => '^1.0.0']]);
+
+        $chain = $this->resolver()->resolveChain($top, $this->userId);
+
+        $this->assertTrue($chain['ok'], json_encode($chain['problems']));
+        $this->assertSame('com.dep.own-lib', $chain['chain'][0]['packageId']);
+        $this->assertSame('com.dep', $chain['chain'][0]['publisherId']);
+    }
+
+    public function testACycleThatDoesNotIncludeTheRootIsStillDetected(): void
+    {
+        // root -> b -> c -> b. An ancestry list keyed on the root alone walks straight past this
+        // and reports the plan viable; the install then fails halfway through the chain.
+        $this->list($this->aggregate('ring-b', '1.0.0', [['id' => 'com.dep.ring-c', 'version' => '^1.0.0']]));
+        $this->list($this->aggregate('ring-c', '1.0.0', [['id' => 'com.dep.ring-b', 'version' => '^1.0.0']]));
+        $root = $this->aggregate('ring-root', '1.0.0', [['id' => 'com.dep.ring-b', 'version' => '^1.0.0']]);
+
+        $chain = $this->resolver()->resolveChain($root, $this->userId);
+
+        $this->assertFalse($chain['ok'], 'the ring is below the root, but it is still a ring');
+        $this->assertSame('dependency_cycle', $chain['problems'][0]['code']);
+    }
+
+    public function testASelfDependencyIsRefused(): void
+    {
+        $top = $this->aggregate('selfdep', '1.0.0', [['id' => 'com.dep.selfdep', 'version' => '^1.0.0']]);
+        $chain = $this->resolver()->resolveChain($top, $this->userId);
+
+        $this->assertFalse($chain['ok']);
+        $this->assertSame('dependency_cycle', $chain['problems'][0]['code']);
+        $this->assertStringContainsString('itself', $chain['problems'][0]['message']);
+    }
+
+    public function testTwoRequirersWithIncompatibleRangesConflict(): void
+    {
+        // The chain brings ONE version of a shared dependency. If a second requirer cannot work
+        // with it that has to surface — previously the second range was simply dropped.
+        $this->list($this->aggregate('shared', '1.0.0'));
+        $this->list($this->aggregate('shared', '2.0.0'));
+        $this->list($this->aggregate('cl', '1.0.0', [['id' => 'com.dep.shared', 'version' => '^1.0.0']]));
+        $this->list($this->aggregate('cr', '1.0.0', [['id' => 'com.dep.shared', 'version' => '^2.0.0']]));
+        $top = $this->aggregate('ctop', '1.0.0', [
+            ['id' => 'com.dep.cl', 'version' => '^1.0.0'],
+            ['id' => 'com.dep.cr', 'version' => '^1.0.0'],
+        ]);
+
+        $chain = $this->resolver()->resolveChain($top, $this->userId);
+
+        $this->assertFalse($chain['ok'], 'no single version of com.dep.shared satisfies both');
+        $this->assertSame('dependency_conflict', $chain['problems'][0]['code']);
+    }
+
+    public function testConfirmRefusesAChainStepTheReviewNeverShowed(): void
+    {
+        // A listing published BETWEEN propose and confirm must not insert itself into an
+        // already-approved install: confirm re-resolves, but only ever to SHRINK the chain.
+        $this->list($this->aggregate('late-lib'));
+        $top = $this->aggregate('late', '1.0.0', [['id' => 'com.dep.late-lib', 'version' => '^1.0.0']]);
+
+        $plan = self::$plans->propose($top, $this->userId, 'community', 'json', []);
+        $this->assertCount(1, $plan['plannedInstalls']);
+
+        self::$pdo->prepare("UPDATE package_install_plans SET summary_json = JSON_SET(summary_json, '$.plannedInstalls[0].version', '0.0.1') WHERE id = ?")
+            ->execute([$plan['planId']]);
+
+        try {
+            self::$plans->confirm($plan['planId'], $this->userId, $plan['planDigest'], []);
+            $this->fail('confirm must refuse a chain that differs from the reviewed one');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('plan_chain_changed', $e->getMessage());
+        }
+
+        $count = self::$pdo->prepare('SELECT COUNT(*) FROM package_installations WHERE user_id = ?');
+        $count->execute([$this->userId]);
+        $this->assertSame(0, (int) $count->fetchColumn(), 'and installs nothing at all');
+    }
+
+    public function testADependencyKeepsItsOwnTrustNotTheParents(): void
+    {
+        // Inheriting an 'official' parent's trust would stamp an unsigned dependency as verified
+        // in its immutable receipt and walk it past a verified-only workspace policy.
+        $this->list($this->aggregate('trust-lib'));
+        $top = $this->aggregate('trust-app', '1.0.0', [['id' => 'com.dep.trust-lib', 'version' => '^1.0.0']]);
+
+        $plan = self::$plans->propose($top, $this->userId, 'official', 'json', []);
+        self::$plans->confirm($plan['planId'], $this->userId, $plan['planDigest'], []);
+
+        $receipt = self::$pdo->prepare('SELECT receipt_json FROM package_installations WHERE user_id = ? AND package_id = ?');
+        $receipt->execute([$this->userId, 'com.dep.trust-lib']);
+        $decoded = json_decode((string) $receipt->fetchColumn(), true);
+        $this->assertSame('community', $decoded['trust'], 'the dependency keeps its own trust');
     }
 }

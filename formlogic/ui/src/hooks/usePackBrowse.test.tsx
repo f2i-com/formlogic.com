@@ -56,6 +56,37 @@ function mount(props: { search?: string; enabled?: boolean } = {}) {
   };
 }
 
+/** Mount with the real 300ms debounce, plus a way to run it forward. */
+function mountDebounced() {
+  vi.useFakeTimers();
+  function Probe() {
+    const browse = usePackBrowse({});
+    return (
+      <div>
+        <span data-testid="ids">{browse.packs.map((p) => p.id).join(',')}</span>
+        <span data-testid="loading">{String(browse.loading)}</span>
+      </div>
+    );
+  }
+  host = document.createElement('div');
+  document.body.appendChild(host);
+  root = createRoot(host);
+  act(() => root!.render(<Probe />));
+  const read = (id: string) => host!.querySelector(`[data-testid="${id}"]`)?.textContent ?? '';
+  return {
+    ids: () => read('ids'),
+    loading: () => read('loading'),
+    advance: async () => {
+      await act(async () => {
+        vi.advanceTimersByTime(400);
+        vi.useRealTimers();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    },
+  };
+}
+
 /** Let queued promise callbacks run. */
 async function flush() {
   await act(async () => {
@@ -157,5 +188,46 @@ describe('usePackBrowse', () => {
 
     expect(spy).not.toHaveBeenCalled();
     expect(probe.loading()).toBe('false');
+  });
+  it('reports loading while a debounced fetch is still pending', async () => {
+    // The regression this exists to prevent: with loading starting false, callers saw
+    // "not loading, no results" for the whole debounce window and acted on an emptiness that
+    // had never been measured — the gallery flashed "No apps found" and the Packs modal fired
+    // its catalog bootstrap before reading anything.
+    vi.spyOn(api, 'browsePacks').mockResolvedValue({
+      data: { packs: [{ id: 'p1', name: 'Pack one' }], totalPages: 1 },
+    } as Awaited<ReturnType<typeof api.browsePacks>>);
+
+    const probe = mountDebounced();
+    // Before the debounce elapses: loading, with no result to misread.
+    expect(probe.loading()).toBe('true');
+    expect(probe.ids()).toBe('');
+
+    await probe.advance();
+    expect(probe.loading()).toBe('false');
+    expect(probe.ids()).toBe('p1');
+  });
+
+  it('is not loading when disabled — it simply has no answer', async () => {
+    const spy = vi.spyOn(api, 'browsePacks');
+    const probe = mount({ enabled: false });
+    await flush();
+
+    expect(probe.loading()).toBe('false');
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('goes back to loading when the query changes', async () => {
+    vi.spyOn(api, 'browsePacks').mockResolvedValue({
+      data: { packs: [{ id: 'p1', name: 'Pack one' }], totalPages: 1 },
+    } as Awaited<ReturnType<typeof api.browsePacks>>);
+
+    const probe = mount({ search: 'a' });
+    await flush();
+    expect(probe.loading()).toBe('false');
+
+    // A new question: what is on screen no longer answers it.
+    probe.rerender({ search: 'b' });
+    expect(probe.loading()).toBe('true');
   });
 });

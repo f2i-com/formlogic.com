@@ -172,6 +172,9 @@ struct LedgerFile {
     pending: Vec<PendingOperation>,
 }
 
+/// Monotonic suffix so two concurrent persists never share a temp path.
+static NEXT_TMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub struct Ledger {
     path: PathBuf,
     state: Mutex<LedgerFile>,
@@ -200,9 +203,22 @@ impl Ledger {
         };
         // tmp + rename: a crash mid-write must not leave a half-written ledger, which would read
         // as "this machine has nothing" on the next boot.
-        let tmp = self.path.with_extension("json.tmp");
+        //
+        // The tmp name is UNIQUE per write. A single shared `.json.tmp` meant two concurrent
+        // writers wrote over each other's temp file and then both renamed it — so one of them
+        // could rename a file containing the other's partial bytes straight onto the ledger.
+        let unique = format!(
+            "json.tmp-{:x}-{}",
+            std::process::id(),
+            NEXT_TMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        let tmp = self.path.with_extension(unique);
         if std::fs::write(&tmp, text).is_ok() {
-            let _ = std::fs::rename(&tmp, &self.path);
+            if std::fs::rename(&tmp, &self.path).is_err() {
+                let _ = std::fs::remove_file(&tmp); // never leave the scratch file behind
+            }
+        } else {
+            let _ = std::fs::remove_file(&tmp);
         }
     }
 

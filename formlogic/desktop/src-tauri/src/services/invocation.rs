@@ -471,8 +471,10 @@ pub async fn invoke_managed(
         ));
     }
 
-    let is_json = content_type.split(';').next().unwrap_or("").trim().eq_ignore_ascii_case("application/json");
-    if is_json {
+    // The SAME rule the gateway lane uses. A second, stricter inline test here meant a managed
+    // process returning `application/problem+json` (or no content type at all) had its JSON
+    // stored as an opaque artifact and skipped output validation entirely.
+    if is_json_content_type(&content_type) {
         if body.len() > MAX_RESPONSE_BYTES {
             return Err(InvokeError::new(
                 InvokeErrorCode::TransportFailed,
@@ -488,6 +490,13 @@ pub async fn invoke_managed(
         return Ok(output);
     }
 
+    if body.is_empty() {
+        // A handle to zero bytes looks like content and is not. Say the response was empty.
+        return Err(InvokeError::new(
+            InvokeErrorCode::OutputInvalid,
+            "the service returned an empty body where content was expected",
+        ));
+    }
     if body.len() > MAX_ARTIFACT_RESPONSE_BYTES {
         return Err(InvokeError::new(
             InvokeErrorCode::TransportFailed,
@@ -641,6 +650,13 @@ pub async fn invoke(
     // lane: the bytes stay on this device and the flow carries a handle. Large binary output
     // must never travel inside node payloads or run logs.
     if !is_json_content_type(&content_type) {
+        if body.is_empty() {
+            // A handle to zero bytes looks like content and is not.
+            return Err(InvokeError::new(
+                InvokeErrorCode::OutputInvalid,
+                "the provider returned an empty body where content was expected",
+            ));
+        }
         if body.len() > MAX_ARTIFACT_RESPONSE_BYTES {
             return Err(InvokeError::new(
                 InvokeErrorCode::TransportFailed,

@@ -215,6 +215,7 @@ function NodeGroupSection({
   groupOfType,
   onAddNode,
   draggable,
+  forceExpanded = false,
 }: {
   group: NodeGroup;
   specs: NodeSpec[];
@@ -223,6 +224,7 @@ function NodeGroupSection({
   groupOfType: Map<string, string>;
   onAddNode: (type: string) => void;
   draggable: boolean;
+  forceExpanded?: boolean;
 }) {
   const toggleCollapsed = useNodeGroupStore((s) => s.toggleCollapsed);
   const renameGroup = useNodeGroupStore((s) => s.renameGroup);
@@ -231,7 +233,7 @@ function NodeGroupSection({
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(group.name);
 
-  const collapsed = !!group.collapsed;
+  const collapsed = !!group.collapsed && !forceExpanded;
 
   return (
     <div>
@@ -502,6 +504,9 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
             groupOfType={groupOfType}
             onAddNode={onAddNode}
             draggable={draggable}
+            // A search that matches inside a collapsed group must not hide its own result:
+            // while searching, groups open regardless of their stored collapsed state.
+            forceExpanded={query.trim() !== ''}
           />
         ))}
         {grouped.map(({ cat, specs }) => (

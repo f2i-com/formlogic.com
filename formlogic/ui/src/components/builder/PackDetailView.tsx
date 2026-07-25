@@ -443,9 +443,14 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
                     onInstalled?.();
                   } else {
                     toast.error('Install failed', typeof result.error === 'string' ? result.error : 'Unknown error');
+                    // A plan is SINGLE-USE: once confirm has been attempted it can never be
+                    // confirmed again. Leaving the panel up offered a button that could only
+                    // ever fail, so the plan is cleared and the user starts a fresh review.
+                    setV2Plan(null);
                   }
                 } catch (err) {
                   toast.error('Install failed', err instanceof Error ? err.message : 'Unknown error');
+                  setV2Plan(null);
                 } finally {
                   setInstalling(false);
                 }

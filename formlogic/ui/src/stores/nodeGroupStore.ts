@@ -69,6 +69,13 @@ export const useNodeGroupStore = create<NodeGroupState>()(
       renameGroup: (id, name) => {
         const trimmed = name.trim().slice(0, MAX_NAME);
         if (!trimmed) return;
+        // Same rule createGroup enforces: two sections with the same name are indistinguishable
+        // in the palette, which is the opposite of organising. Renaming ONTO an existing name
+        // is refused rather than silently creating the twin the create path prevents.
+        const clash = get().groups.some(
+          (g) => g.id !== id && g.name.toLowerCase() === trimmed.toLowerCase()
+        );
+        if (clash) return;
         set({ groups: get().groups.map((g) => (g.id === id ? { ...g, name: trimmed } : g)) });
       },
 
