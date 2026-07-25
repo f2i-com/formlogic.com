@@ -262,6 +262,39 @@ Rules:
 - JSON delivery must still inline its definitions (`unsupported_entry_path`) — there is no
   archive to resolve against.
 
+## Activation: what "installed" actually means
+
+A package is not one thing. It can contribute flow-node definitions that live in the cloud, web
+content, and (later) a signed distribution staged on a **device**. Committing those one at a time
+and calling it done is how you get a half-installed package: the nodes appear in the editor, the
+service they need is still staging, and the first run fails in a way nobody can act on.
+
+So an install commits its components **provisionally** and activates them **together**, once
+every required component has passed a health check:
+
+| Component state | Meaning |
+|---|---|
+| `provisional` | Written, not yet proven. Never visible to consumers. |
+| `pending` | A device component whose device has not reported. Not a failure — an offline laptop is a normal condition, and the install waits. |
+| `active` | Proven healthy and visible. |
+| `failed` | Health refused. A **required** failure refuses the whole activation; an **optional** one is recorded and the rest proceed. |
+
+Consequences worth knowing as an author:
+
+- Until an installation is active, it contributes **nothing** — `/api/flow-node-definitions`
+  omits its nodes, so the editor never offers a node whose backing parts are not ready.
+- Activation is one transaction: either every component flips to active or none does. There is
+  no window in which a consumer sees an inconsistent set.
+- Retrying an activation that already succeeded is a **no-op**, not a second install.
+- The health check for cloud nodes is real: every stored definition must decode and agree with
+  its own stored type, which catches a truncated write before a node reaches the editor.
+- An **update** re-declares its components. A component the previous version had and the new one
+  does not cannot survive to gate — or falsely satisfy — the update.
+- Installations from before this existed have no component rows and read as **active**. A record
+  that was never written is not a refusal.
+
+The installed-extension **Details** panel names the blocking component and why.
+
 ## Updating
 
 Importing a **different version of an already-installed package id** proposes an

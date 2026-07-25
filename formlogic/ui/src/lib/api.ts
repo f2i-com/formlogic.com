@@ -4829,6 +4829,21 @@ export interface PackageInstallationDetail {
   dependencies: Array<{ packageId: string; range: string; resolvedVersion: string; required: boolean }>;
   /** What requires this package (inbound edges) — required ones block uninstall. */
   dependents: Array<{ packageId: string; displayName: string; version: string; range: string; required: boolean }>;
+  /**
+   * PKG-107: is this installation live? False means it committed but has not activated — its
+   * nodes are deliberately not offered until every required component is healthy.
+   */
+  active?: boolean;
+  /** PKG-107: what the install committed, and where each part stands. */
+  components?: Array<{
+    key: string;
+    kind: string;
+    target: 'cloud' | 'device';
+    required: boolean;
+    state: 'provisional' | 'pending' | 'active' | 'failed';
+    deviceId: string | null;
+    detail: string | null;
+  }>;
 }
 
 /**

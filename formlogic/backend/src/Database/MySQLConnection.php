@@ -597,6 +597,32 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // PKG-107: an installation's components. Cloud parts commit PROVISIONAL and activate
+        // together only after health; device parts start PENDING because an offline laptop is a
+        // normal condition, not a failure. An installation with no rows here reads as active —
+        // a record that was never written must not be read as a refusal.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS package_components (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                installation_id VARCHAR(36) NOT NULL,
+                component_key VARCHAR(64) NOT NULL,
+                kind VARCHAR(32) NOT NULL,
+                target ENUM('cloud','device') NOT NULL DEFAULT 'cloud',
+                required TINYINT(1) NOT NULL DEFAULT 1,
+                state ENUM('provisional','pending','active','failed') NOT NULL DEFAULT 'provisional',
+                device_id VARCHAR(64) NULL,
+                health_detail VARCHAR(500) NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                activated_at DATETIME NULL,
+                UNIQUE KEY uniq_pc_component (installation_id, component_key),
+                INDEX idx_pc_user (user_id),
+                INDEX idx_pc_state (state),
+                FOREIGN KEY (installation_id) REFERENCES package_installations(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Desktop install jobs (DESK-502): durable coordination for work that runs on a DEVICE.
         // A job outlives a disconnect, is claimed by exactly one device (claim_token proves
         // which), and refuses replay once terminal.

@@ -1213,4 +1213,156 @@ class PackageV2InstallTest extends TestCase
         $this->assertTrue($alive($other), 'another service is untouched');
         self::$pdo->prepare('DELETE FROM connector_capabilities WHERE owner_user_id = ?')->execute([$this->userId]);
     }
+    // -- PKG-107: provisional commit, joint activation, safe compensation --------------------
+
+    private function activation(): \FormLogic\Services\Packages\PackageActivationService
+    {
+        return new \FormLogic\Services\Packages\PackageActivationService(self::$mysql);
+    }
+
+    public function testAHealthyInstallActivatesItsComponentsTogether(): void
+    {
+        $installed = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        $this->assertSame('active', $installed['activation'], 'a healthy node-only install activates immediately');
+
+        $components = $this->activation()->components($installed['installationId'], $this->userId);
+        $this->assertCount(1, $components);
+        $this->assertSame('cloud-nodes', $components[0]['component_key']);
+        $this->assertSame('active', $components[0]['state']);
+        $this->assertNotNull($components[0]['activated_at'], 'activation is timestamped');
+        $this->assertTrue($this->activation()->isActive($installed['installationId']));
+    }
+
+    public function testAFailedRequiredComponentActivatesNothingAndIsRetriable(): void
+    {
+        $installed = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        // Put the component back to provisional so activation runs again for real.
+        self::$pdo->prepare("UPDATE package_components SET state = 'provisional', activated_at = NULL WHERE installation_id = ?")
+            ->execute([$installed['installationId']]);
+
+        $refuse = static fn (array $c): array => ['healthy' => false, 'detail' => 'staging never finished'];
+        $result = $this->activation()->activate($installed['installationId'], $this->userId, $refuse);
+
+        $this->assertSame('failed', $result['state']);
+        $this->assertSame([], $result['activated'], 'a required failure activates NOTHING');
+        $this->assertSame('staging never finished', $result['failed'][0]['detail']);
+        $this->assertFalse($this->activation()->isActive($installed['installationId']));
+
+        // Nothing it contributes is visible while it is inactive.
+        $this->assertSame([], self::$pkgV2->listDefinitions($this->userId), 'an inactive install contributes nothing');
+
+        // Retry is a clean retry: the same call with a passing check activates.
+        self::$pdo->prepare("UPDATE package_components SET state = 'provisional' WHERE installation_id = ?")
+            ->execute([$installed['installationId']]);
+        $retry = $this->activation()->activate($installed['installationId'], $this->userId);
+        $this->assertSame('active', $retry['state']);
+        $this->assertCount(1, self::$pkgV2->listDefinitions($this->userId));
+    }
+
+    public function testActivationIsIdempotent(): void
+    {
+        $installed = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        $first = $this->activation()->activate($installed['installationId'], $this->userId);
+        $second = $this->activation()->activate($installed['installationId'], $this->userId);
+        $this->assertSame('active', $first['state']);
+        $this->assertSame($first['state'], $second['state'], 'replaying an activation is a no-op, never a second install');
+
+        $components = $this->activation()->components($installed['installationId'], $this->userId);
+        $stamp = $components[0]['activated_at'];
+        $this->activation()->activate($installed['installationId'], $this->userId);
+        $again = $this->activation()->components($installed['installationId'], $this->userId);
+        $this->assertSame($stamp, $again[0]['activated_at'], 'a replayed activation does not re-stamp');
+    }
+
+    public function testAnOfflineDeviceComponentStaysPendingRatherThanFailing(): void
+    {
+        $installed = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        // Declare both a cloud and a REQUIRED device component: an offline laptop is a normal
+        // condition, so the install waits rather than reporting a failure the user cannot fix.
+        $this->activation()->recordComponents($installed['installationId'], $this->userId, [
+            ['key' => 'cloud-nodes', 'kind' => 'cloud-nodes', 'target' => 'cloud', 'required' => true],
+            ['key' => 'runtime', 'kind' => 'device-distribution', 'target' => 'device', 'required' => true],
+        ]);
+
+        $result = $this->activation()->activate($installed['installationId'], $this->userId);
+        $this->assertSame('pending', $result['state'], 'awaiting a device is pending, not failed');
+        $this->assertSame(['runtime'], $result['pending']);
+        $this->assertSame([], $result['activated'], 'the cloud half does not go live on its own');
+        $this->assertFalse($this->activation()->isActive($installed['installationId']));
+
+        // The device reports; now everything can activate together.
+        $this->assertTrue($this->activation()->reportDeviceComponent(
+            $installed['installationId'],
+            $this->userId,
+            'runtime',
+            'desk-A',
+            true
+        ));
+        $final = $this->activation()->activate($installed['installationId'], $this->userId);
+        $this->assertSame('active', $final['state']);
+        $this->assertTrue($this->activation()->isActive($installed['installationId']));
+    }
+
+    public function testAnOptionalComponentFailureDoesNotBlockTheRest(): void
+    {
+        $installed = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        $this->activation()->recordComponents($installed['installationId'], $this->userId, [
+            ['key' => 'cloud-nodes', 'kind' => 'cloud-nodes', 'target' => 'cloud', 'required' => true],
+            ['key' => 'extras', 'kind' => 'web-content', 'target' => 'cloud', 'required' => false],
+        ]);
+
+        $check = static fn (array $c): array => $c['component_key'] === 'extras'
+            ? ['healthy' => false, 'detail' => 'optional bundle missing']
+            : ['healthy' => true];
+        $result = $this->activation()->activate($installed['installationId'], $this->userId, $check);
+
+        $this->assertSame('active', $result['state'], 'an optional failure never blocks activation');
+        $this->assertSame(['cloud-nodes'], $result['activated']);
+        $this->assertSame('extras', $result['failed'][0]['key']);
+        $this->assertTrue($this->activation()->isActive($installed['installationId']));
+    }
+
+    public function testHealthCatchesAMangledDefinitionBeforeItReachesTheEditor(): void
+    {
+        $installed = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        // Corrupt the stored definition the way a truncated write would, then re-activate.
+        self::$pdo->prepare('UPDATE flow_node_definitions SET definition_json = ? WHERE installation_id = ?')
+            ->execute(['{"type": "com.acme.somethingelse"', $installed['installationId']]);
+        self::$pdo->prepare("UPDATE package_components SET state = 'provisional' WHERE installation_id = ?")
+            ->execute([$installed['installationId']]);
+
+        $result = $this->activation()->activate($installed['installationId'], $this->userId);
+        $this->assertSame('failed', $result['state']);
+        $this->assertStringContainsString('decoded', $result['failed'][0]['detail']);
+    }
+
+    public function testInstallsFromBeforeComponentsExistedStillReadAsActive(): void
+    {
+        $installed = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        // An installation with no component rows at all: a record that was never written must
+        // not be read as a refusal, or every pre-existing install would go dark.
+        self::$pdo->prepare('DELETE FROM package_components WHERE installation_id = ?')->execute([$installed['installationId']]);
+
+        $this->assertTrue($this->activation()->isActive($installed['installationId']));
+        $this->assertSame('active', $this->activation()->activate($installed['installationId'], $this->userId)['state']);
+        $this->assertCount(1, self::$pkgV2->listDefinitions($this->userId), 'its nodes stay available');
+    }
+
+    public function testUpdateReDeclaresComponentsRatherThanInheritingThem(): void
+    {
+        $installed = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        // Pretend the old version also shipped a device runtime.
+        $this->activation()->recordComponents($installed['installationId'], $this->userId, [
+            ['key' => 'cloud-nodes', 'kind' => 'cloud-nodes', 'target' => 'cloud', 'required' => true],
+            ['key' => 'legacy-runtime', 'kind' => 'device-distribution', 'target' => 'device', 'required' => true],
+        ]);
+
+        $next = $this->nodeOnlyAggregate();
+        $next['package']['version'] = '1.5.0';
+        $result = self::$pkgV2->update($next, $this->userId, [], 'json', 'community');
+
+        $keys = array_column($this->activation()->components($installed['installationId'], $this->userId), 'component_key');
+        $this->assertSame(['cloud-nodes'], $keys, 'a component the new version does not declare cannot survive');
+        $this->assertSame('active', $result['activation']);
+    }
 }

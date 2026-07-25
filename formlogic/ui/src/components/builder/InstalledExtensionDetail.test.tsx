@@ -112,4 +112,43 @@ describe('InstalledExtensionDetail', () => {
     expect(spy).toHaveBeenCalledTimes(2);
     expect(host!.textContent).toContain('Contributed flow nodes');
   });
+  it('says an installation is not active yet and why, rather than looking healthy', async () => {
+    // PKG-107: a package that committed but has not activated withholds its nodes. Rendering it
+    // identically to a working one would leave the user hunting for an extension that is simply
+    // waiting on a device.
+    vi.spyOn(api, 'getPackageInstallation').mockResolvedValue({
+      data: {
+        installation: detail({
+          active: false,
+          components: [
+            { key: 'cloud-nodes', kind: 'cloud-nodes', target: 'cloud', required: true, state: 'active', deviceId: null, detail: null },
+            { key: 'runtime', kind: 'device-distribution', target: 'device', required: true, state: 'pending', deviceId: 'desk-A', detail: null },
+          ],
+        }),
+      },
+    } as Awaited<ReturnType<typeof api.getPackageInstallation>>);
+
+    const text = await render();
+
+    expect(text).toContain('Not active yet');
+    expect(text).toContain('waiting for device desk-A to report');
+    expect(text).toContain('stay out of the editor');
+    // The healthy component is not listed as a problem.
+    expect(text).not.toContain('cloud-nodes —');
+  });
+
+  it('reports a failed component with the health detail', async () => {
+    vi.spyOn(api, 'getPackageInstallation').mockResolvedValue({
+      data: {
+        installation: detail({
+          active: false,
+          components: [
+            { key: 'cloud-nodes', kind: 'cloud-nodes', target: 'cloud', required: true, state: 'failed', deviceId: null, detail: 'a stored definition could not be decoded' },
+          ],
+        }),
+      },
+    } as Awaited<ReturnType<typeof api.getPackageInstallation>>);
+
+    expect(await render()).toContain('a stored definition could not be decoded');
+  });
 });

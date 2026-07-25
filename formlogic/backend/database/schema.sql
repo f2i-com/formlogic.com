@@ -1499,6 +1499,32 @@ CREATE TABLE `flow_artifacts` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
+-- Table structure for table `package_components`
+--
+
+DROP TABLE IF EXISTS `package_components`;
+CREATE TABLE `package_components` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `installation_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `component_key` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `kind` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `target` enum('cloud','device') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'cloud',
+  `required` tinyint(1) NOT NULL DEFAULT '1',
+  `state` enum('provisional','pending','active','failed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'provisional',
+  `device_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `health_detail` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `activated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_pc_component` (`installation_id`,`component_key`),
+  KEY `idx_pc_user` (`user_id`),
+  KEY `idx_pc_state` (`state`),
+  CONSTRAINT `package_components_ibfk_1` FOREIGN KEY (`installation_id`) REFERENCES `package_installations` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `package_components_ibfk_2` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
 -- Table structure for table `package_service_bindings`
 --
 

@@ -83,6 +83,32 @@ export function InstalledExtensionDetail({ installationId }: { installationId: s
         {updatedFrom && <span>updated from v{updatedFrom}</span>}
       </div>
 
+      {/* PKG-107: an installation that committed but has not activated must say so — its nodes
+          are deliberately withheld, and silence would read as "the extension is broken". */}
+      {detail.active === false && (
+        <div className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-2 text-amber-800 dark:text-amber-200">
+          <p className="flex items-start gap-1.5 font-semibold">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+            Not active yet
+          </p>
+          <ul className="mt-1 space-y-0.5 pl-5">
+            {(detail.components ?? [])
+              .filter((component) => component.state !== 'active')
+              .map((component) => (
+                <li key={component.key}>
+                  <span className="font-medium">{component.key}</span>
+                  {component.state === 'pending'
+                    ? ` — waiting for ${component.deviceId ? `device ${component.deviceId}` : 'a device'} to report`
+                    : component.state === 'failed'
+                      ? ` — ${component.detail || 'health check failed'}`
+                      : ' — committed, not yet checked'}
+                </li>
+              ))}
+          </ul>
+          <p className="mt-1">This extension&rsquo;s nodes stay out of the editor until every required part is healthy.</p>
+        </div>
+      )}
+
       <section>
         <h4 className="flex items-center gap-1.5 font-semibold text-gray-700 dark:text-slate-200">
           <PackageCheck className="h-3.5 w-3.5" aria-hidden="true" />

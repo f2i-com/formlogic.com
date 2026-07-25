@@ -30,6 +30,7 @@ class PackageV2InstallService
 {
     private PDO $mysql;
     private MySQLConnection $connection;
+    private ?PackageActivationService $activationService = null;
 
     public function __construct(MySQLConnection $mysql)
     {
@@ -153,11 +154,20 @@ class PackageV2InstallService
             foreach ($resolvedDeps as $dep) {
                 $edge->execute([$this->uuid(), $installationId, $dep['installationId'], $dep['id'], $dep['range'], $dep['resolvedVersion'], $dep['required'] ? 1 : 0]);
             }
+            // PKG-107: the components commit PROVISIONALLY inside this same transaction, so
+            // there can never be definitions with no component describing them. Nothing they
+            // contribute is visible until activation proves them healthy.
+            $this->activation()->recordComponents($installationId, $userId, self::componentsFor($definitionRows));
             $this->mysql->commit();
         } catch (\Exception $e) {
             $this->mysql->rollBack();
             throw $e;
         }
+
+        // Activate AFTER the commit: health reads the rows that were just written, and a failed
+        // activation leaves an installed-but-inactive package that can be retried, rather than
+        // rolling back an install the user was told succeeded.
+        $activation = $this->activation()->activate($installationId, $userId);
 
         // OBS-702: one durable line per install — which package, at what version, from where,
         // with how much contributed surface. Identifiers and counts only.
@@ -176,6 +186,7 @@ class PackageV2InstallService
         ]);
 
         return [
+            'activation' => $activation['state'],
             'installationId' => $installationId,
             'packageId' => $packageId,
             'version' => (string) $meta['version'],
@@ -347,11 +358,21 @@ class PackageV2InstallService
                     ->execute(array_merge([$installationId], $declaredSlots));
             }
 
+            // PKG-107: the new version re-declares its components. Re-recording replaces the
+            // previous set, so a component the old version had and this one does not cannot
+            // survive to gate (or falsely satisfy) the update.
+            $this->activation()->recordComponents($installationId, $userId, self::componentsFor($definitionRows));
+
             $this->mysql->commit();
         } catch (\Exception $e) {
             $this->mysql->rollBack();
             throw $e;
         }
+
+        // A failed activation leaves the update installed but INACTIVE — the previous version's
+        // rows are already gone, so the honest outcome is "not usable, retry" rather than a
+        // silent claim of success.
+        $activation = $this->activation()->activate($installationId, $userId);
 
         \FormLogic\Support\PackageTelemetry::emit('package.update', [
             'packageId' => $packageId,
@@ -367,6 +388,7 @@ class PackageV2InstallService
         ]);
 
         return [
+            'activation' => $activation['state'],
             'installationId' => $installationId,
             'packageId' => $packageId,
             'version' => $newVersion,
@@ -694,8 +716,14 @@ class PackageV2InstallService
             ORDER BY fnd.node_type ASC
         ');
         $stmt->execute([$userId]);
+        // PKG-107: an installation whose required components have not all activated contributes
+        // NOTHING yet. Offering its nodes in the editor would invite a flow that cannot run.
+        $inactive = array_flip($this->activation()->inactiveInstallationIds($userId));
         $out = [];
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            if (isset($inactive[(string) $row['installation_id']])) {
+                continue;
+            }
             $definition = json_decode((string) $row['definition_json'], true);
             if (!is_array($definition)) {
                 continue; // corrupt row — never ship an unparseable definition to the editor
@@ -756,6 +784,18 @@ class PackageV2InstallService
             'source' => (string) $row['source'],
             'installedAt' => (string) $row['created_at'],
             'receipt' => is_array($receipt) ? $receipt : null,
+            // PKG-107: what this install committed and whether it is live. An installation that
+            // is not usable should say so here rather than looking identical to a working one.
+            'active' => $this->activation()->isActive($installationId),
+            'components' => array_map(static fn (array $c): array => [
+                'key' => (string) $c['component_key'],
+                'kind' => (string) $c['kind'],
+                'target' => (string) $c['target'],
+                'required' => (bool) $c['required'],
+                'state' => (string) $c['state'],
+                'deviceId' => $c['device_id'] !== null ? (string) $c['device_id'] : null,
+                'detail' => $c['health_detail'] !== null ? (string) $c['health_detail'] : null,
+            ], $this->activation()->components($installationId, $userId)),
             'nodes' => array_map(static fn (array $d): array => [
                 'type' => (string) $d['node_type'],
                 'version' => (string) $d['version'],
@@ -776,6 +816,36 @@ class PackageV2InstallService
                 'required' => (bool) $e['required'],
             ], $dependents->fetchAll(PDO::FETCH_ASSOC)),
         ];
+    }
+
+    /**
+     * PKG-107: what an install COMMITS, as gateable components.
+     *
+     * Today a node-only v2 install has exactly one: the contributed definitions, in the cloud.
+     * Modelling it explicitly (rather than treating "install succeeded" as "everything works")
+     * is what lets a device distribution join later without changing the activation rule — it
+     * becomes another required component that must report healthy before anything goes live.
+     *
+     * @param list<array<string,mixed>> $definitionRows
+     * @return list<array{key:string,kind:string,target:string,required:bool}>
+     */
+    private static function componentsFor(array $definitionRows): array
+    {
+        if ($definitionRows === []) {
+            return [];
+        }
+        return [[
+            'key' => 'cloud-nodes',
+            'kind' => 'cloud-nodes',
+            'target' => 'cloud',
+            'required' => true,
+        ]];
+    }
+
+    /** Built lazily so the constructor signature (and every DI site) stays unchanged. */
+    private function activation(): PackageActivationService
+    {
+        return $this->activationService ??= new PackageActivationService($this->connection);
     }
 
     private function uuid(): string
