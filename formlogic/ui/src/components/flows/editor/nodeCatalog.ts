@@ -246,6 +246,17 @@ export interface NodeHandleSpec {
   label: string;
   /** Tailwind text/border accent token for the handle dot (condition true/false). */
   tone?: 'default' | 'true' | 'false';
+  /**
+   * FLOW-205: the §6.5-subset schema this DATA port carries, when the node declares one.
+   * Contributed nodes get theirs from the definition's `ports[]`; core nodes mostly declare
+   * nothing yet, and an absent schema normalizes to 'any' — never a red wire, only an
+   * un-checkable one. Control handles leave this undefined.
+   */
+  schema?: unknown;
+  /** True for a declared DATA port (vs the implicit control in/out handles). */
+  data?: boolean;
+  /** A required input port — an unconnected one is worth flagging, an optional one is not. */
+  required?: boolean;
 }
 
 export interface NodeSpec {

@@ -67,7 +67,16 @@ export function adaptInstalledDefinition(def: FlowNodeDefinitionV1, packageName?
   const outputs: NodeHandleSpec[] = [{ id: 'out', label: 'Out' }];
   for (const port of def.ports ?? []) {
     if (!port || typeof port.id !== 'string') continue;
-    const handle = { id: port.id, label: port.id };
+    // FLOW-205: carry the declared schema so the editor can type-check wires. Control ports
+    // carry none — only data ports participate in assignability.
+    const isData = port.kind !== 'control';
+    const handle: NodeHandleSpec = {
+      id: port.id,
+      label: port.id,
+      ...(isData ? { data: true } : {}),
+      ...(isData && port.schema !== undefined ? { schema: port.schema } : {}),
+      ...(port.required === true ? { required: true } : {}),
+    };
     if (port.direction === 'input') inputs.push(handle);
     else if (port.direction === 'output') outputs.push(handle);
   }

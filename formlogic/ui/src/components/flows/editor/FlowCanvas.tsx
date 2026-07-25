@@ -16,6 +16,7 @@ import {
   MarkerType,
   SelectionMode,
   type Connection,
+  type Edge,
   type EdgeChange,
   type EdgeTypes,
   type NodeChange,
@@ -36,6 +37,8 @@ import type { FlowRFEdge, FlowRFNode } from './flowGraph';
 import { PALETTE_DND_MIME } from './NodePalette';
 import { FlowNodeSignalsContext } from './flowNodeContext';
 import { deriveEdgeRunStates, type NodeRunStatus } from '../runStatus';
+import { checkWire } from './wireChecks';
+import { toast } from '../../../stores/toastStore';
 
 /** Minimap fill class for a node's run status (idle → '', so nodeColor's slate default shows). */
 function minimapRunClass(status: NodeRunStatus | undefined): string {
@@ -133,6 +136,8 @@ export function FlowCanvas({
   const instanceRef = useRef<ReactFlowInstance<FlowRFNode, FlowRFEdge> | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; onNode: boolean } | null>(null);
   const connectingRef = useRef<QuickConnectSource | null>(null);
+  // Dedupes the refusal toast: React Flow re-runs isValidConnection on every pointer move.
+  const lastRefusalRef = useRef<string | null>(null);
   const [quick, setQuick] = useState<{ x: number; y: number; flow: { x: number; y: number }; source: QuickConnectSource } | null>(null);
 
   // Live Wire: read the current Test Run's per-node status (provided by FlowEditor, never stored
@@ -150,6 +155,43 @@ export function FlowCanvas({
   const edgeRunStates = useMemo(
     () => deriveEdgeRunStates(edges, nodeTypeById, signals.status),
     [edges, nodeTypeById, signals.status],
+  );
+
+  // FLOW-205: type-check a proposed wire against the §6.4 lattice before it is created.
+  // React Flow calls this while dragging, so the invalid target simply refuses to connect
+  // instead of creating an edge the compiler would later reject. Resolution goes through the
+  // registry, so contributed nodes' declared port schemas participate automatically.
+  const resolveSpec = useCallback(
+    (nodeId: string) => {
+      const type = nodeTypeById(nodeId);
+      // resolveKnownNodeSpec (not resolveNodeSpec): an unknown type must yield undefined so
+      // checkWire allows the wire, rather than the missing-definition placeholder's handles.
+      return type ? flowNodeRegistry.resolveKnownNodeSpec(type) : undefined;
+    },
+    [nodeTypeById],
+  );
+  const isValidConnection = useCallback(
+    (connection: Connection | Edge) => {
+      // Reconnect hands an Edge; both shapes carry the four fields the check needs.
+      const verdict = checkWire(
+        {
+          source: connection.source,
+          target: connection.target,
+          sourceHandle: connection.sourceHandle ?? null,
+          targetHandle: connection.targetHandle ?? null,
+        },
+        resolveSpec,
+      );
+      if (!verdict.allowed && verdict.message) {
+        // Only surface the reason once per drag; React Flow polls this continuously.
+        if (lastRefusalRef.current !== verdict.message) {
+          lastRefusalRef.current = verdict.message;
+          toast.warning('Can’t connect these', verdict.message);
+        }
+      }
+      return verdict.allowed;
+    },
+    [resolveSpec],
   );
 
   // Every edge renders as the custom arrowed/deletable 'flow' edge, with its run-beam state (if
@@ -191,6 +233,7 @@ export function FlowCanvas({
   // Quick-connect: remember the source handle; when the drag ends on empty canvas (not a handle),
   // open a searchable node picker at the drop point (official React Flow "add node on edge drop").
   const onConnectStart = useCallback<OnConnectStart>((_event, params) => {
+    lastRefusalRef.current = null; // a new drag may legitimately hit the same refusal again
     connectingRef.current = params.nodeId && params.handleType === 'source'
       ? { nodeId: params.nodeId, handleId: params.handleId ?? null }
       : null;
@@ -276,6 +319,7 @@ export function FlowCanvas({
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        isValidConnection={isValidConnection}
         onConnectStart={onConnectStart}
         onConnectEnd={onConnectEnd}
         onReconnect={onReconnect}
