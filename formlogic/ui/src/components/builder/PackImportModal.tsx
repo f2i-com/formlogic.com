@@ -36,6 +36,7 @@ import { useFormStore } from '../../stores/formStore';
 import { useAppStore } from '../../stores/appStore';
 import { useInstalledNodeStore } from '../../stores/installedNodeStore';
 import { InstalledExtensionDetail } from './InstalledExtensionDetail';
+import { InstallJobProgress } from './InstallJobProgress';
 import { PackDetailView } from './PackDetailView';
 import { PublishPackDialog } from './PublishPackDialog';
 
@@ -912,6 +913,9 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
           {/* ==================== INSTALLED TAB ==================== */}
           {!importResult && activeTab === 'installed' && (
             <div className="space-y-3">
+              {/* MKT-604: installs that run on a device report here. Server-held state, so
+                  closing and reopening this modal shows the same job at the same point. */}
+              <InstallJobProgress />
               {loadingInstallations ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-6 w-6 animate-spin text-gray-400 dark:text-slate-500" />

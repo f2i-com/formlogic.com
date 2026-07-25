@@ -3794,6 +3794,19 @@ class ApiClient {
     });
   }
 
+  /** DESK-502/MKT-604: the owner's device install jobs (progress, outcome, cancel). */
+  async listPackageJobs(): Promise<ApiResponse<{ jobs: PackageInstallJob[] }>> {
+    return this.request('/package-jobs');
+  }
+
+  async getPackageJob(jobId: string): Promise<ApiResponse<{ job: PackageInstallJob }>> {
+    return this.request(`/package-jobs/${jobId}`);
+  }
+
+  async cancelPackageJob(jobId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/package-jobs/${jobId}/cancel`, { method: 'POST' });
+  }
+
   /** SRV-405: clear a slot's binding (its nodes go back to refusing at compile). */
   async unbindPackageServiceSlot(installationId: string, slot: string): Promise<ApiResponse<{ success: boolean }>> {
     return this.request(`/package-installations/${installationId}/service-bindings/${encodeURIComponent(slot)}`, { method: 'DELETE' });
@@ -4816,6 +4829,27 @@ export interface PackageInstallationDetail {
   dependencies: Array<{ packageId: string; range: string; resolvedVersion: string; required: boolean }>;
   /** What requires this package (inbound edges) — required ones block uninstall. */
   dependents: Array<{ packageId: string; displayName: string; version: string; range: string; required: boolean }>;
+}
+
+/**
+ * DESK-502: one device install job. The device's claim token is deliberately absent — it is
+ * the device's proof of ownership and never reaches a browser.
+ */
+export interface PackageInstallJob {
+  id: string;
+  kind: string;
+  state: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  progress: number;
+  step: string | null;
+  planId: string | null;
+  installationId: string | null;
+  distributionId: string | null;
+  deviceId: string | null;
+  errorCode: string | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
 }
 
 /** SRV-405: one service slot an installed package declares, plus the owner's binding. */
