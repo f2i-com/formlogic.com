@@ -17,6 +17,7 @@
 //!      + named, reusable venvs under `${dataDir}/venvs/`.
 
 pub mod catalog;
+pub mod definitions;
 pub mod downloads;
 pub mod invocation;
 pub mod platform;

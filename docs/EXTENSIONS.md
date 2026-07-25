@@ -178,6 +178,29 @@ move to. This is a **management** surface: it stays readable even when the
 
 The Packs UI renders this under **Details** on each installed extension.
 
+## Where services come from
+
+A binding points at a **service definition**. Two sources feed one registry, and the whole
+system — the catalog the browser lists, `service_action` resolution, every flow run — reads
+that one composed view:
+
+| Source | How |
+|---|---|
+| **Built-in** | Ships with FormLogic Desktop (`openai-api`, `openai-codex-agent`). |
+| **Desktop plugin** | A `schemaVersion: 3` plugin manifest declares `serviceDefinitions[].definitionFile` — package-relative paths to Service Definition v3 JSON. |
+
+Contribution rules (the registry enforces all of them):
+
+- A contributed definition **cannot shadow a built-in** — that would silently re-point every
+  flow already bound to it.
+- A definition id is **namespaced to its plugin** (`<plugin-id>` or `<plugin-id>.<name>`), so
+  provenance is readable from the id and two plugins cannot race for a generic name.
+- **One plugin owns an id.** A second plugin claiming it is refused, not first-wins.
+- One malformed definition is refused **without costing its valid siblings**.
+- Contributions **live and die with their plugin**: disabling or uninstalling removes them
+  immediately, and re-enabling restores them. Re-registering replaces a plugin's previous set,
+  so a definition it stops shipping disappears rather than lingering.
+
 ## Service slots and bindings
 
 A `service-action` node never names a concrete service. It names a **slot** plus the action

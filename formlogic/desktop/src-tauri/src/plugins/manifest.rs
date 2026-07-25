@@ -61,6 +61,15 @@ pub struct PluginManifest {
     /// the user as a manual checklist on purge (never auto-deleted).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<DataDecl>,
+
+    // ---- schemaVersion 3 additions ----
+    /// SRV-402: v3 Service Definitions this plugin contributes to the Desktop
+    /// service registry. Distinct from `services` above, which installs LEGACY
+    /// managed-process ServiceTemplates — a definition describes an INVOCABLE
+    /// action surface (what a `service_action` flow node binds to), and is
+    /// namespaced to the plugin so provenance is unambiguous.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service_definitions: Vec<PluginServiceDefinitionRef>,
 }
 
 fn default_plugin_api_version() -> u32 {
@@ -283,6 +292,14 @@ pub struct PluginServiceRef {
     pub template_file: String,
 }
 
+/// SRV-402 — one contributed v3 Service Definition file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginServiceDefinitionRef {
+    /// Package-relative path to a Service Definition v3 JSON (no `..`, no absolute).
+    pub definition_file: String,
+}
+
 /// PLG-202 — journalled command declaration (fail-closed).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -486,7 +503,7 @@ pub fn parse_manifest(text: &str) -> Result<PluginManifest, String> {
 }
 
 /// The highest manifest schemaVersion this desktop understands.
-pub const MAX_SCHEMA_VERSION: u32 = 2;
+pub const MAX_SCHEMA_VERSION: u32 = 3;
 
 pub fn validate_manifest(m: &PluginManifest) -> Result<(), String> {
     if m.schema_version < 1 || m.schema_version > MAX_SCHEMA_VERSION {
@@ -509,6 +526,14 @@ pub fn validate_manifest(m: &PluginManifest) -> Result<(), String> {
                 "the {section:?} section requires schemaVersion 2 (this manifest declares 1)"
             ));
         }
+    }
+    // Same rule one version up: a v3-only section under an older schemaVersion would be
+    // silently ignored by a host that predates it, so refuse it rather than half-honour it.
+    if m.schema_version < 3 && !m.service_definitions.is_empty() {
+        return Err(format!(
+            "the \"serviceDefinitions\" section requires schemaVersion 3 (this manifest declares {})",
+            m.schema_version
+        ));
     }
     if !is_valid_plugin_id(&m.id) {
         return Err(format!(
@@ -803,6 +828,32 @@ fn validate_v2_sections(m: &PluginManifest) -> Result<(), String> {
             return Err(format!(
                 "services[{i}].templateFile {:?} must be a package-relative path with no '..'",
                 s.template_file
+            ));
+        }
+    }
+    // SRV-402 serviceDefinitions — same package-relative rule as service templates.
+    if m.service_definitions.len() > 16 {
+        return Err(format!(
+            "serviceDefinitions has {} entries (max 16)",
+            m.service_definitions.len()
+        ));
+    }
+    for (i, d) in m.service_definitions.iter().enumerate() {
+        if d.definition_file.is_empty()
+            || d.definition_file.contains(':')
+            || d.definition_file.split(['/', '\\']).any(|seg| seg == "..")
+            || d.definition_file.starts_with('/')
+            || d.definition_file.starts_with('\\')
+        {
+            return Err(format!(
+                "serviceDefinitions[{i}].definitionFile {:?} must be a package-relative path with no '..'",
+                d.definition_file
+            ));
+        }
+        if m.service_definitions[..i].iter().any(|p| p.definition_file == d.definition_file) {
+            return Err(format!(
+                "serviceDefinitions[{i}].definitionFile {:?} is duplicated",
+                d.definition_file
             ));
         }
     }
@@ -1263,9 +1314,50 @@ mod tests {
     }
 
     #[test]
+    fn v3_service_definitions_parse_and_validate_their_paths() {
+        // SRV-402: a v3 manifest may contribute Service Definition files.
+        let mut v = base_v2();
+        v["schemaVersion"] = serde_json::json!(3);
+        v["serviceDefinitions"] = serde_json::json!([
+            { "definitionFile": "definitions/images.json" },
+            { "definitionFile": "definitions/audio.json" },
+        ]);
+        let m = parse(v.clone()).expect("v3 manifest parses");
+        assert_eq!(m.schema_version, 3);
+        assert_eq!(m.service_definitions.len(), 2);
+        assert_eq!(m.service_definitions[0].definition_file, "definitions/images.json");
+
+        // Same package-relative rule as service templates: no traversal, no absolute paths.
+        for bad in ["../escape.json", "/abs.json", "C:/win.json", ""] {
+            let mut bad_v = v.clone();
+            bad_v["serviceDefinitions"] = serde_json::json!([{ "definitionFile": bad }]);
+            let err = parse(bad_v).unwrap_err();
+            assert!(err.contains("package-relative"), "{bad:?}: {err}");
+        }
+
+        // A repeated file would register the same definition twice.
+        let mut dupe = v.clone();
+        dupe["serviceDefinitions"] = serde_json::json!([
+            { "definitionFile": "definitions/images.json" },
+            { "definitionFile": "definitions/images.json" },
+        ]);
+        assert!(parse(dupe).unwrap_err().contains("duplicated"));
+    }
+
+    #[test]
+    fn v3_service_definitions_refused_under_an_older_schema_version() {
+        // An older host would silently ignore the section, so declaring it under
+        // schemaVersion 2 must fail loudly rather than half-apply.
+        let mut v = base_v2();
+        v["serviceDefinitions"] = serde_json::json!([{ "definitionFile": "definitions/images.json" }]);
+        let err = parse(v).unwrap_err();
+        assert!(err.contains("requires schemaVersion 3"), "{err}");
+    }
+
+    #[test]
     fn schema_version_out_of_range_refused() {
         let mut v = base_manifest();
-        v["schemaVersion"] = serde_json::json!(3);
+        v["schemaVersion"] = serde_json::json!(MAX_SCHEMA_VERSION + 1);
         assert!(parse(v).unwrap_err().contains("not supported"));
     }
 
@@ -1286,9 +1378,10 @@ mod tests {
             ("version", serde_json::json!("1.2"), "semver"),
             ("version", serde_json::json!("v1.2.3"), "semver"),
             ("minDesktopVersion", serde_json::json!("1.2.3-beta"), "minDesktopVersion"),
-            // schemaVersion 2 is now VALID (PLG-201); 0 and 3 are out of range.
+            // schemaVersion 2 (PLG-201) and 3 (SRV-402) are VALID; 0 and anything
+            // above MAX_SCHEMA_VERSION are out of range.
             ("schemaVersion", serde_json::json!(0), "schemaVersion"),
-            ("schemaVersion", serde_json::json!(3), "schemaVersion"),
+            ("schemaVersion", serde_json::json!(MAX_SCHEMA_VERSION + 1), "schemaVersion"),
         ] {
             let mut v = base_manifest();
             v[field] = val;

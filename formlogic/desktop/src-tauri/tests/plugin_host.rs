@@ -535,6 +535,89 @@ async fn v2_plugin_contributes_ui_owns_service_binds_and_disables_cleanly() {
     let _ = std::fs::remove_dir_all(&data);
 }
 
+/// SRV-401/402 — a schemaVersion-3 plugin contributes v3 Service Definitions to the shared
+/// registry: they join the built-in catalog, resolve for invocation exactly like a built-in,
+/// vanish while the plugin is disabled, come back on re-enable, and are gone after uninstall.
+/// A definition outside the plugin's own namespace is refused without costing its siblings.
+#[tokio::test(flavor = "multi_thread")]
+async fn v3_plugin_contributes_service_definitions_across_the_lifecycle() {
+    use formlogic_desktop_lib::services::definitions;
+
+    let data = temp_data_dir("v3-service-defs");
+    let built = PathBuf::from(env!("CARGO_BIN_EXE_mock-plugin"));
+    let exe_name = built.file_name().and_then(|n| n.to_str()).unwrap().to_string();
+
+    let src = data.join("src");
+    std::fs::create_dir_all(src.join("definitions")).unwrap();
+    std::fs::copy(&built, src.join(&exe_name)).unwrap();
+    // One valid definition inside the plugin's namespace…
+    std::fs::write(
+        src.join("definitions").join("images.json"),
+        r#"{"schemaVersion":3,"id":"mock.images","name":"Mock Images","version":"1.0.0",
+            "actions":[{"id":"generate-image","sideEffects":"external-write",
+              "transport":{"kind":"openai-compatible","method":"POST","path":"/v1/images/generations"}}]}"#,
+    )
+    .unwrap();
+    // …and one that tries to claim an id it does not own.
+    std::fs::write(
+        src.join("definitions").join("squat.json"),
+        r#"{"schemaVersion":3,"id":"someone-else.audio","name":"Squat","version":"1.0.0",
+            "actions":[{"id":"speak","transport":{"kind":"openai-compatible","method":"POST","path":"/v1/audio/speech"}}]}"#,
+    )
+    .unwrap();
+    let manifest = format!(
+        r#"{{
+          "schemaVersion": 3, "id": "mock", "name": "Mock", "version": "1.0.0",
+          "entry": {{ "kind": "process", "command": "{exe_name}" }},
+          "connectors": [{{ "id": "mock", "name": "Mock", "commands": ["echo.ping"] }}],
+          "serviceDefinitions": [
+            {{ "definitionFile": "definitions/images.json" }},
+            {{ "definitionFile": "definitions/squat.json" }}
+          ]
+        }}"#
+    );
+    std::fs::write(src.join("manifest.json"), manifest).unwrap();
+
+    let host = PluginHost::new(&data, false, EventBus::new());
+    let id = host
+        .install_from_source(&formlogic_desktop_lib::plugins::install::InstallSource::Folder(src.clone()))
+        .expect("install v3");
+    assert_eq!(id, "mock");
+
+    // The contributed definition joins the catalog alongside the built-ins…
+    let catalog = definitions::catalog();
+    assert!(catalog.definitions.iter().any(|d| d["id"] == "openai-api"), "built-ins survive");
+    assert!(catalog.definitions.iter().any(|d| d["id"] == "mock.images"));
+    assert_eq!(definitions::provider_of("mock.images").as_deref(), Some("mock"));
+    // …and resolves for invocation through the same path a built-in takes.
+    let action = formlogic_desktop_lib::services::invocation::resolve_action("mock.images", "generate-image")
+        .expect("contributed action resolves");
+    assert_eq!(action.definition_id, "mock.images");
+    assert_eq!(action.action_id, "generate-image");
+    // The out-of-namespace definition was refused; its valid sibling still registered.
+    assert!(definitions::find("someone-else.audio").is_none(), "namespace squatting refused");
+
+    // Disabled → the services go with it (a switched-off plugin must not be invocable).
+    host.set_enabled("mock", false).await.expect("disable");
+    assert!(definitions::find("mock.images").is_none(), "disabled plugin contributes nothing");
+    assert!(
+        formlogic_desktop_lib::services::invocation::resolve_action("mock.images", "generate-image").is_err(),
+        "and its actions stop resolving"
+    );
+
+    // Re-enable restores them, uninstall removes them for good.
+    host.set_enabled("mock", true).await.expect("enable");
+    assert!(definitions::find("mock.images").is_some(), "re-enable restores the contribution");
+    host.uninstall("mock", false).await.expect("uninstall");
+    assert!(definitions::find("mock.images").is_none(), "uninstall leaves nothing resolvable");
+    assert!(
+        definitions::catalog().definitions.iter().any(|d| d["id"] == "openai-api"),
+        "built-ins are untouched throughout"
+    );
+
+    let _ = std::fs::remove_dir_all(&data);
+}
+
 /// PLG-104 — install refuses a plugin whose connector id collides with an
 /// already-installed plugin (deterministic first-match routing would otherwise
 /// be ambiguous). Exercised through the real install pipeline.

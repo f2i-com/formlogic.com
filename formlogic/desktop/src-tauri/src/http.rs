@@ -588,7 +588,8 @@ async fn clear_ai_secret_value(
 // ------- ServiceDefinition v3 catalog + OpenAI Codex delegated agent -------
 
 async fn list_service_definition_catalog() -> impl IntoResponse {
-    Json(crate::services::platform::builtin_catalog())
+    // SRV-401: built-ins + whatever installed plugins currently contribute.
+    Json(crate::services::definitions::catalog())
 }
 
 fn codex_agent_error(error: crate::ai::codex::CodexAgentError) -> Response {

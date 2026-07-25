@@ -1,0 +1,315 @@
+//! Dynamic Service Definition registry (SRV-401).
+//!
+//! Built-in definitions and definitions contributed by installed plugins are served through
+//! ONE interface: [`catalog`] for listing, [`find`] for resolution. Everything downstream —
+//! the paired browser's catalog fetch, `ServiceActionHost::resolve_action`, and therefore
+//! every `service_action` flow node — sees the same composed view, so a contributed service
+//! is a first-class citizen rather than a special case.
+//!
+//! The composition rules exist to make provenance unambiguous and takeover impossible:
+//!
+//!   * **built-ins always win** — a contributed definition may never shadow `openai-api`
+//!     (or any built-in). Allowing that would let a plugin silently re-point every flow
+//!     already bound to a built-in service;
+//!   * **a definition id belongs to one plugin** — a second plugin claiming an id another
+//!     already owns is refused, not first-wins-silently;
+//!   * **ids are namespaced to their plugin** (`<plugin-id>` or `<plugin-id>.<something>`),
+//!     the same rule Application Package v2 applies to contributed node types. Provenance is
+//!     then readable from the id alone, and two plugins cannot race for a generic name;
+//!   * **removal is complete** — [`remove_plugin`] drops everything a plugin contributed, so
+//!     disabling or uninstalling it takes its services with it. Nothing outlives its owner.
+//!
+//! Registration is idempotent per plugin: re-registering replaces that plugin's own set, so a
+//! restart or a re-scan refreshes rather than accumulating.
+//!
+//! State is process-global (like the built-in catalog it extends) because the consumers are
+//! free functions reached from the flow runner and the HTTP layer alike; threading a handle
+//! to all of them would buy nothing but churn.
+
+use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::RwLock;
+
+/// One plugin-contributed definition plus its provenance.
+#[derive(Debug, Clone)]
+struct Contributed {
+    plugin_id: String,
+    definition: Value,
+}
+
+static CONTRIBUTED: RwLock<Option<HashMap<String, Contributed>>> = RwLock::new(None);
+
+fn with_read<T>(f: impl FnOnce(&HashMap<String, Contributed>) -> T) -> T {
+    let guard = CONTRIBUTED.read().unwrap_or_else(|e| e.into_inner());
+    match guard.as_ref() {
+        Some(map) => f(map),
+        None => f(&HashMap::new()),
+    }
+}
+
+fn with_write<T>(f: impl FnOnce(&mut HashMap<String, Contributed>) -> T) -> T {
+    let mut guard = CONTRIBUTED.write().unwrap_or_else(|e| e.into_inner());
+    f(guard.get_or_insert_with(HashMap::new))
+}
+
+/// Is `id` a definition the host itself ships? Built-ins can never be replaced.
+fn is_builtin(id: &str) -> bool {
+    super::platform::builtin_catalog()
+        .definitions
+        .iter()
+        .any(|d| d["id"].as_str() == Some(id))
+}
+
+/// Validate one contributed definition, returning its id.
+///
+/// This is a STRUCTURAL gate, not the §6.5 value validator: it establishes that the entry is
+/// a v3 definition, owned by the declaring plugin, and internally consistent enough that
+/// resolution cannot be ambiguous. Action-level transport/schema checking stays in
+/// `invocation::resolve_action`, which every execution path already goes through.
+fn validate(definition: &Value, plugin_id: &str) -> Result<String, String> {
+    if definition["schemaVersion"].as_u64() != Some(3) {
+        return Err("definition must declare schemaVersion 3".into());
+    }
+    let id = definition["id"]
+        .as_str()
+        .filter(|id| !id.is_empty() && id.len() <= 128)
+        .ok_or_else(|| "definition id is missing or too long".to_string())?;
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-' || c == '_')
+    {
+        return Err(format!("definition id {id:?} has characters outside [a-z0-9._-]"));
+    }
+    // Namespace rule: a plugin may only contribute under its own id.
+    if id != plugin_id && !id.starts_with(&format!("{plugin_id}.")) {
+        return Err(format!(
+            "definition id {id:?} must be {plugin_id:?} or start with \"{plugin_id}.\" (a plugin owns only its own namespace)"
+        ));
+    }
+    let actions = definition["actions"]
+        .as_array()
+        .ok_or_else(|| format!("definition {id:?} has no actions array"))?;
+    if actions.is_empty() {
+        return Err(format!("definition {id:?} declares no actions"));
+    }
+    let mut seen = Vec::new();
+    for action in actions {
+        let action_id = action["id"]
+            .as_str()
+            .filter(|a| !a.is_empty())
+            .ok_or_else(|| format!("definition {id:?} has an action without an id"))?;
+        if seen.contains(&action_id) {
+            return Err(format!("definition {id:?} declares action {action_id:?} twice"));
+        }
+        seen.push(action_id);
+    }
+    Ok(id.to_string())
+}
+
+/// Register (or refresh) everything `plugin_id` contributes.
+///
+/// Returns one human-readable refusal per rejected definition; accepted ones are live
+/// immediately. A partial result is deliberate — one malformed definition must not cost a
+/// plugin its other, valid services.
+pub fn register_plugin(plugin_id: &str, definitions: Vec<Value>) -> Vec<String> {
+    let mut refusals = Vec::new();
+    with_write(|map| {
+        // Refresh semantics: this plugin's previous set goes first, so a definition it no
+        // longer ships disappears instead of lingering.
+        map.retain(|_, c| c.plugin_id != plugin_id);
+        for definition in definitions {
+            let id = match validate(&definition, plugin_id) {
+                Ok(id) => id,
+                Err(e) => {
+                    refusals.push(e);
+                    continue;
+                }
+            };
+            if is_builtin(&id) {
+                refusals.push(format!(
+                    "definition {id:?} collides with a built-in service and cannot replace it"
+                ));
+                continue;
+            }
+            if let Some(existing) = map.get(&id) {
+                if existing.plugin_id != plugin_id {
+                    refusals.push(format!(
+                        "definition {id:?} is already provided by plugin {:?}",
+                        existing.plugin_id
+                    ));
+                    continue;
+                }
+            }
+            map.insert(
+                id,
+                Contributed {
+                    plugin_id: plugin_id.to_string(),
+                    definition,
+                },
+            );
+        }
+    });
+    refusals
+}
+
+/// Drop everything `plugin_id` contributed (disable, uninstall, or a failed rescan).
+/// Returns how many definitions were removed.
+pub fn remove_plugin(plugin_id: &str) -> usize {
+    with_write(|map| {
+        let before = map.len();
+        map.retain(|_, c| c.plugin_id != plugin_id);
+        before - map.len()
+    })
+}
+
+/// The composed catalog: built-ins first (stable order), then contributed ids sorted so the
+/// listing is deterministic for a caller diffing it.
+pub fn catalog() -> super::platform::ServiceDefinitionCatalog {
+    let mut catalog = super::platform::builtin_catalog();
+    let mut contributed: Vec<(String, Value)> =
+        with_read(|map| map.iter().map(|(id, c)| (id.clone(), c.definition.clone())).collect());
+    contributed.sort_by(|a, b| a.0.cmp(&b.0));
+    catalog
+        .definitions
+        .extend(contributed.into_iter().map(|(_, definition)| definition));
+    catalog
+}
+
+/// Resolve one definition by id across built-ins and contributions.
+pub fn find(definition_id: &str) -> Option<Value> {
+    if let Some(builtin) = super::platform::builtin_catalog()
+        .definitions
+        .into_iter()
+        .find(|d| d["id"].as_str() == Some(definition_id))
+    {
+        return Some(builtin);
+    }
+    with_read(|map| map.get(definition_id).map(|c| c.definition.clone()))
+}
+
+/// Which plugin provides `definition_id`, if any (None for built-ins and unknown ids).
+pub fn provider_of(definition_id: &str) -> Option<String> {
+    with_read(|map| map.get(definition_id).map(|c| c.plugin_id.clone()))
+}
+
+#[cfg(test)]
+pub(crate) fn reset_for_tests() {
+    with_write(|map| map.clear());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    // The registry is process-global, so these tests serialize against each other.
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn definition(id: &str, actions: &[&str]) -> Value {
+        json!({
+            "schemaVersion": 3,
+            "id": id,
+            "name": format!("Service {id}"),
+            "version": "1.0.0",
+            "actions": actions.iter().map(|a| json!({
+                "id": a,
+                "transport": { "kind": "openai-compatible", "method": "POST", "path": "/v1/images/generations" }
+            })).collect::<Vec<_>>(),
+        })
+    }
+
+    #[test]
+    fn contributed_definitions_join_the_builtin_catalog_and_resolve() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_for_tests();
+
+        let refusals = register_plugin("acme", vec![definition("acme.images", &["generate-image"])]);
+        assert!(refusals.is_empty(), "{refusals:?}");
+
+        let catalog = catalog();
+        assert!(catalog.definitions.iter().any(|d| d["id"] == "openai-api"), "built-ins survive");
+        assert!(catalog.definitions.iter().any(|d| d["id"] == "acme.images"));
+        assert_eq!(find("acme.images").expect("resolves")["id"], "acme.images");
+        assert_eq!(provider_of("acme.images").as_deref(), Some("acme"));
+        assert_eq!(provider_of("openai-api"), None, "built-ins have no plugin owner");
+
+        reset_for_tests();
+    }
+
+    #[test]
+    fn a_plugin_cannot_shadow_a_builtin_or_take_over_another_plugins_id() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_for_tests();
+
+        // Shadowing a built-in would silently re-point every flow bound to it.
+        let refusals = register_plugin("openai-api", vec![definition("openai-api", &["chat.complete"])]);
+        assert_eq!(refusals.len(), 1);
+        assert!(refusals[0].contains("built-in"), "{refusals:?}");
+        assert_eq!(provider_of("openai-api"), None);
+
+        register_plugin("acme", vec![definition("acme.images", &["generate-image"])]);
+        // A second plugin claiming acme's id is refused twice over (namespace + ownership).
+        let refusals = register_plugin("evil", vec![definition("acme.images", &["generate-image"])]);
+        assert_eq!(refusals.len(), 1);
+        assert!(refusals[0].contains("own namespace"), "{refusals:?}");
+        assert_eq!(provider_of("acme.images").as_deref(), Some("acme"), "ownership is unchanged");
+
+        reset_for_tests();
+    }
+
+    #[test]
+    fn malformed_definitions_are_refused_without_costing_the_valid_ones() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_for_tests();
+
+        let mut wrong_version = definition("acme.old", &["a"]);
+        wrong_version["schemaVersion"] = json!(2);
+        let mut duplicate_actions = definition("acme.dupe", &["a", "a"]);
+        duplicate_actions["name"] = json!("Dupe");
+        let no_actions = json!({ "schemaVersion": 3, "id": "acme.empty", "actions": [] });
+
+        let refusals = register_plugin(
+            "acme",
+            vec![
+                wrong_version,
+                duplicate_actions,
+                no_actions,
+                definition("acme.good", &["generate-image"]),
+            ],
+        );
+        assert_eq!(refusals.len(), 3, "{refusals:?}");
+        assert!(find("acme.good").is_some(), "a valid sibling still registers");
+        assert!(find("acme.old").is_none());
+        assert!(find("acme.dupe").is_none());
+        assert!(find("acme.empty").is_none());
+
+        reset_for_tests();
+    }
+
+    #[test]
+    fn re_registering_refreshes_and_removal_is_complete() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_for_tests();
+
+        register_plugin(
+            "acme",
+            vec![definition("acme.images", &["generate-image"]), definition("acme.audio", &["speak"])],
+        );
+        assert!(find("acme.audio").is_some());
+
+        // A refresh that no longer ships acme.audio must drop it, not keep a stale entry.
+        register_plugin("acme", vec![definition("acme.images", &["generate-image", "upscale"])]);
+        assert!(find("acme.audio").is_none(), "definitions the plugin stopped shipping disappear");
+        assert_eq!(find("acme.images").expect("still there")["actions"].as_array().unwrap().len(), 2);
+
+        // Disable/uninstall takes everything with it; built-ins are untouched.
+        register_plugin("other", vec![definition("other.thing", &["do"])]);
+        assert_eq!(remove_plugin("acme"), 1);
+        assert!(find("acme.images").is_none());
+        assert!(find("other.thing").is_some(), "another plugin's services survive");
+        assert!(catalog().definitions.iter().any(|d| d["id"] == "openai-api"));
+
+        reset_for_tests();
+    }
+}

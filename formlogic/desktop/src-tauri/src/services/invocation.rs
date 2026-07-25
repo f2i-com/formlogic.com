@@ -78,17 +78,15 @@ pub struct ResolvedServiceAction {
 /// Resolve `definitionId`/`actionId` against the built-in v3 catalog and verify the
 /// transport is one v1 can execute.
 pub fn resolve_action(definition_id: &str, action_id: &str) -> Result<ResolvedServiceAction, InvokeError> {
-    let catalog = super::platform::builtin_catalog();
-    let definition = catalog
-        .definitions
-        .iter()
-        .find(|d| d["id"].as_str() == Some(definition_id))
-        .ok_or_else(|| {
-            InvokeError::new(
-                InvokeErrorCode::ServiceUnavailable,
-                format!("unknown service definition '{definition_id}' (not in the Desktop catalog)"),
-            )
-        })?;
+    // SRV-401: built-ins AND definitions contributed by installed plugins resolve through the
+    // one registry, so a contributed service executes by exactly the same path as a built-in.
+    let definition = super::definitions::find(definition_id).ok_or_else(|| {
+        InvokeError::new(
+            InvokeErrorCode::ServiceUnavailable,
+            format!("unknown service definition '{definition_id}' (not in the Desktop catalog)"),
+        )
+    })?;
+    let definition = &definition;
     let action = definition["actions"]
         .as_array()
         .and_then(|actions| actions.iter().find(|a| a["id"].as_str() == Some(action_id)))

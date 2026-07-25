@@ -361,6 +361,9 @@ impl PluginHost {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .forget_plugin(id);
+        // SRV-401: drop the plugin's contributed Service Definitions too — an uninstalled
+        // plugin must leave nothing resolvable behind for a flow to invoke.
+        crate::services::definitions::remove_plugin(id);
         // PLG-206: remove any service templates this plugin owned (stopping a
         // running one first) BEFORE deleting the plugin dir, so an owned
         // service never outlives its plugin as a dead card.

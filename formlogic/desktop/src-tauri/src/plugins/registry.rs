@@ -628,6 +628,65 @@ impl PluginHost {
         if changed {
             self.persist();
         }
+        self.sync_service_definitions();
+    }
+
+    /// SRV-401/402: reconcile the shared Service Definition registry with what the CURRENTLY
+    /// installed-and-not-disabled plugins declare.
+    ///
+    /// One reconcile point rather than per-lifecycle-event calls: scan (startup, install,
+    /// rescan) and enable/disable both land here, so the registry cannot drift from the slot
+    /// table. Disabled, quarantined, and unparseable plugins contribute nothing — a plugin
+    /// that is not allowed to run must not leave an invocable service behind.
+    pub fn sync_service_definitions(&self) {
+        // Collect under the lock, do file I/O outside it.
+        let targets: Vec<(String, PathBuf, Vec<String>, bool)> = {
+            let map = self.lock_plugins();
+            map.iter()
+                .map(|(id, slot)| {
+                    let files = slot
+                        .manifest
+                        .as_ref()
+                        .map(|m| {
+                            m.service_definitions
+                                .iter()
+                                .map(|d| d.definition_file.clone())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let active = slot.manifest.is_some()
+                        && !slot.user_disabled
+                        && !matches!(slot.state, PluginState::Disabled);
+                    (id.clone(), slot.dir.clone(), files, active)
+                })
+                .collect()
+        };
+        for (id, dir, files, active) in targets {
+            if !active || files.is_empty() {
+                crate::services::definitions::remove_plugin(&id);
+                continue;
+            }
+            let mut loaded = Vec::new();
+            for file in files {
+                let path = dir.join(&file);
+                // The path is validated package-relative at manifest parse; re-check after
+                // joining so a crafted manifest can never read outside the plugin dir.
+                if !path.starts_with(&dir) {
+                    log::warn!("plugin {id}: service definition {file:?} escapes the plugin dir — skipped");
+                    continue;
+                }
+                match std::fs::read_to_string(&path) {
+                    Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
+                        Ok(value) => loaded.push(value),
+                        Err(e) => log::warn!("plugin {id}: bad service definition {}: {e}", path.display()),
+                    },
+                    Err(e) => log::warn!("plugin {id}: cannot read service definition {}: {e}", path.display()),
+                }
+            }
+            for refusal in crate::services::definitions::register_plugin(&id, loaded) {
+                log::warn!("plugin {id}: service definition refused: {refusal}");
+            }
+        }
     }
 
     /// PLG-105: durably enable or disable a plugin. Disable stops a running
@@ -672,6 +731,9 @@ impl PluginHost {
             if !enabled {
                 slot.state = PluginState::Disabled;
                 slot.reason = Some("disabled by user".into());
+                // SRV-401: a disabled plugin's contributed services go with it immediately —
+                // leaving them resolvable would let flows invoke a plugin that is switched off.
+                crate::services::definitions::remove_plugin(id);
             } else if matches!(slot.state, PluginState::Disabled) {
                 // Only lift the disabled state if the flag was its ONLY cause;
                 // a re-scan re-derives quarantine/compat/missing-binary reasons.
