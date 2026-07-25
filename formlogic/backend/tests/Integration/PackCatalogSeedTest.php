@@ -152,4 +152,51 @@ class PackCatalogSeedTest extends TestCase
         $this->assertSame(0, $second['body']['seeded'], 'a populated catalog is never re-seeded');
         $this->assertSame($countAfterFirst, (int) self::$pdo->query('SELECT COUNT(*) FROM pack_catalog')->fetchColumn());
     }
+    public function testSeedingAddsWhatIsMissingRatherThanStoppingAtTheFirstRow(): void
+    {
+        // Seeding used to return early the moment the catalog had any rows, which made anything
+        // the deployment shipped LATER invisible on every deployment that had already
+        // bootstrapped — that is, every deployment in use.
+        $first = $this->seed([]);
+        $this->assertGreaterThan(0, $first['body']['seeded']);
+
+        // Drop one listing to stand in for something newly shipped, then seed again.
+        $slug = (string) self::$pdo->query('SELECT slug FROM pack_catalog ORDER BY slug LIMIT 1')->fetchColumn();
+        $before = (int) self::$pdo->query('SELECT COUNT(*) FROM pack_catalog')->fetchColumn();
+        self::$pdo->prepare('DELETE FROM pack_catalog WHERE slug = ?')->execute([$slug]);
+
+        $second = $this->seed([]);
+        $this->assertSame(1, $second['body']['seeded'], 'the missing one is added back');
+        $this->assertSame(
+            $before,
+            (int) self::$pdo->query('SELECT COUNT(*) FROM pack_catalog')->fetchColumn(),
+            'and nothing is duplicated'
+        );
+
+        // A call with nothing missing writes nothing — idempotent, not merely tolerable.
+        $third = $this->seed([]);
+        $this->assertSame(0, $third['body']['seeded']);
+        $this->assertSame(
+            $before,
+            (int) self::$pdo->query('SELECT COUNT(*) FROM pack_catalog')->fetchColumn()
+        );
+    }
+
+    public function testTheBundledV2ExtensionIsSeededAsAV2Listing(): void
+    {
+        $this->seed([]);
+        $row = self::$pdo->query(
+            "SELECT pv.format_version, pv.node_count, pc.tags
+             FROM pack_catalog pc
+             JOIN pack_versions pv ON pv.catalog_id = pc.id
+             WHERE pc.name = 'AI Toolkit' LIMIT 1"
+        )->fetch(\PDO::FETCH_ASSOC);
+
+        $this->assertIsArray($row, 'the bundled extension is in the catalog');
+        $this->assertSame(2, (int) $row['format_version'], 'listed as v2, so the client routes it correctly');
+        $this->assertSame(3, (int) $row['node_count']);
+        // package.keywords became the searchable tags — the package says how it wants to be
+        // found once, in its own manifest.
+        $this->assertContains('text-to-speech', json_decode((string) $row['tags'], true));
+    }
 }

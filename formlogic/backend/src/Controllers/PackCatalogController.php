@@ -498,11 +498,16 @@ class PackCatalogController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
         }
 
-        // Only allow seeding when the catalog is empty (initial bootstrap)
-        $existing = $this->catalogService->listPublicPacks([], 'popular', 1, 1);
-        if (($existing['total'] ?? 0) > 0) {
-            return $this->jsonResponse($response, ['success' => true, 'seeded' => 0, 'message' => 'Catalog already has packs']);
-        }
+        // Seeding used to be bootstrap-only: it returned early the moment the catalog had any
+        // rows. That made anything the deployment shipped LATER — a new official pack, a new
+        // bundled extension — invisible forever on every deployment that had already
+        // bootstrapped, which is every deployment that has been used.
+        //
+        // It now adds whatever is missing. That is safe because seeding is already idempotent
+        // per slug (seedOfficialPacks skips a slug it finds) and because MKT-602 made the
+        // content come from the SERVER'S OWN files rather than the request body: the worst a
+        // repeat call can do is publish the deployment's own official content, which is what
+        // this endpoint is for. A call with nothing missing writes nothing and reports 0.
 
         // MKT-602: the catalog is seeded from the SERVER'S OWN copy of the official packs
         // (resources/marketplace-packs, emitted from src/data/packs at build time). The client
