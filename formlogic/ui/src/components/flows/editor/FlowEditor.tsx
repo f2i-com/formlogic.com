@@ -44,6 +44,8 @@ import { cloneSelection, dagreLayout } from './canvasOps';
 // ADR-010 / FLOW-204: registers the installed-package node provider with the FlowNodeRegistry
 // (side effect) so contributed definitions resolve in the palette, canvas, and properties panel.
 import '../registry/installedNodeProvider';
+import { setServiceCatalogForProjections } from '../registry/serviceNodeProvider';
+import { fetchServiceCatalogOnce } from '../../../hooks/useServiceCatalog';
 import { useInstalledNodeStore } from '../../../stores/installedNodeStore';
 import { lintNodeIssues } from '../flowGraphLint';
 import type { NodeStatusMap } from '../runStatus';
@@ -117,6 +119,19 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
     if (!useInstalledNodeStore.getState().loaded) {
       void useInstalledNodeStore.getState().refresh();
     }
+  }, []);
+
+  // SRV-406: publish the paired Desktop's service catalog so each invocable action appears in
+  // the palette pre-addressed. No Desktop (or an unreachable one) simply means no projections
+  // — the generic Service action node is still there for anyone who knows the ids.
+  useEffect(() => {
+    let cancelled = false;
+    void fetchServiceCatalogOnce().then((next) => {
+      if (!cancelled) setServiceCatalogForProjections(next);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const editorRootRef = useRef<HTMLDivElement | null>(null);
@@ -204,12 +219,14 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
 
   const addNodeAt = useCallback((type: string, position: { x: number; y: number }) => {
     // Registry-resolved (FLOW-203): contributed extension nodes insert like core nodes.
-    const spec = flowNodeRegistry.resolveNodeSpec(type);
-    if (spec.missing || !spec.executable) return; // display-only nodes are never insertable
+    // SRV-406: a PROJECTION's palette identity differs from what it stores (`insertAs`).
+    const spec = flowNodeRegistry.resolvePaletteSpec(type);
+    if (!spec || spec.missing || !spec.executable) return; // display-only nodes are never insertable
+    const storedType = spec.insertAs ?? spec.type;
     pushHistory();
     setNodes((nds) => {
-      const id = nextNodeId(type, nds);
-      const node: FlowRFNode = { id, type, position, data: initialNodeData(spec) };
+      const id = nextNodeId(storedType, nds);
+      const node: FlowRFNode = { id, type: storedType, position, data: initialNodeData(spec) };
       setSelectedId(id);
       return [...nds, node];
     });
@@ -320,11 +337,12 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
   // Quick-connect: an edge dragged into empty canvas creates a node at the drop point + wires it.
   const quickConnect = useCallback(
     (type: string, position: { x: number; y: number }, source: { nodeId: string; handleId: string | null }) => {
-      const spec = flowNodeRegistry.resolveNodeSpec(type);
-      if (spec.missing || !spec.executable) return;
-      const id = nextNodeId(type, nodes);
+      const spec = flowNodeRegistry.resolvePaletteSpec(type);
+      if (!spec || spec.missing || !spec.executable) return;
+      const storedType = spec.insertAs ?? spec.type;
+      const id = nextNodeId(storedType, nodes);
       pushHistory();
-      setNodes((nds) => [...nds.map((n) => ({ ...n, selected: false })), { id, type, position, data: initialNodeData(spec), selected: true }]);
+      setNodes((nds) => [...nds.map((n) => ({ ...n, selected: false })), { id, type: storedType, position, data: initialNodeData(spec), selected: true }]);
       setEdges((eds) => addEdge({ source: source.nodeId, sourceHandle: source.handleId ?? null, target: id, targetHandle: null }, eds));
       setSelectedId(id);
     },

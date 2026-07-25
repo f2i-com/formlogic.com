@@ -262,6 +262,13 @@ export interface NodeHandleSpec {
 export interface NodeSpec {
   /** Stored `node.type`. Executable types match a case in executeNode(). */
   type: string;
+  /**
+   * SRV-406: for a PROJECTION — a palette entry that inserts a different, preconfigured node
+   * (a service action projects onto a `service_action` node with its ids filled in). `type` is
+   * then a palette identity only; the graph stores `insertAs`. Absent for ordinary specs, where
+   * the palette identity and the stored type are the same thing.
+   */
+  insertAs?: string;
   label: string;
   category: NodeCategory;
   description: string;

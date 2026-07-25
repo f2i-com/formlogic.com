@@ -30,8 +30,20 @@ export function missingNodeSpec(type: string): NodeSpec {
   };
 }
 
+/** FLOW-202: one type offered by more than one provider; the EARLIER provider keeps it. */
+export interface NodeTypeCollision {
+  type: string;
+  /** The provider whose spec is used. */
+  ownedBy: string;
+  /** The provider whose spec is shadowed. */
+  shadowedProvider: string;
+}
+
 class FlowNodeRegistry {
   private providers: FlowNodeProvider[] = [coreNodeProvider];
+  /** Bumped on any provider-set change; memo dependency for consumers that cache specs. */
+  private revision = 0;
+  private collisions: NodeTypeCollision[] = [];
 
   /** Register an additional provider (Pack/Service). Later registrations resolve after earlier ones. */
   register(provider: FlowNodeProvider): void {
@@ -39,6 +51,53 @@ class FlowNodeRegistry {
       throw new Error(`FlowNodeRegistry: provider '${provider.id}' is already registered`);
     }
     this.providers.push(provider);
+    this.revision++;
+  }
+
+  /**
+   * FLOW-202: remove a provider (its source went away — a pack uninstalled, a Desktop
+   * unpaired). Stored graph nodes it owned fall back to the §4.5 placeholder rather than
+   * disappearing, which is the whole point of resolving through one registry.
+   * Returns false when nothing was registered under that id. 'core' can never be removed.
+   */
+  unregister(providerId: string): boolean {
+    if (providerId === coreNodeProvider.id) {
+      throw new Error('FlowNodeRegistry: the core provider cannot be unregistered');
+    }
+    const next = this.providers.filter((p) => p.id !== providerId);
+    if (next.length === this.providers.length) return false;
+    this.providers = next;
+    this.revision++;
+    return true;
+  }
+
+  /** Which providers are registered, in resolution order. */
+  listProviders(): string[] {
+    return this.providers.map((p) => p.id);
+  }
+
+  /**
+   * FLOW-202: signal that a provider's underlying source changed (a pack installed, the
+   * Desktop catalog refreshed) WITHOUT changing the provider set. Consumers memoize on
+   * `registryRevision()`, so this is how a live palette picks new specs up.
+   */
+  refresh(): number {
+    this.revision++;
+    return this.revision;
+  }
+
+  /** Monotonic revision — a stable memo dependency for palette/canvas consumers. */
+  registryRevision(): number {
+    return this.revision;
+  }
+
+  /**
+   * Collisions observed during the most recent listNodeSpecs() pass. Surfacing them beats
+   * silently dropping a shadowed spec: a package whose node never appears is otherwise
+   * indistinguishable from one that failed to install.
+   */
+  lastCollisions(): NodeTypeCollision[] {
+    return [...this.collisions];
   }
 
   /**
@@ -58,17 +117,34 @@ class FlowNodeRegistry {
     return undefined;
   }
 
+  /**
+   * SRV-406: resolve a PALETTE identity (which may be a projection) rather than a stored node
+   * type. Insertion paths use this; stored-graph resolution stays on resolveNodeSpec, so a
+   * projection can never be mistaken for a real node type in a saved flow.
+   */
+  resolvePaletteSpec(type: string, ctx: FlowEditorContext = EMPTY_FLOW_EDITOR_CONTEXT): NodeSpec | undefined {
+    return this.resolveKnownNodeSpec(type, ctx) ?? this.listNodeSpecs(ctx).find((s) => s.type === type);
+  }
+
   /** The raw candidate set across providers (palette source; call sites filter/group). */
   listNodeSpecs(ctx: FlowEditorContext = EMPTY_FLOW_EDITOR_CONTEXT): NodeSpec[] {
-    const seen = new Set<string>();
+    const owner = new Map<string, string>();
     const out: NodeSpec[] = [];
+    const collisions: NodeTypeCollision[] = [];
     for (const provider of this.providers) {
       for (const spec of provider.list(ctx)) {
-        if (seen.has(spec.type)) continue; // earlier provider wins (core shadows late arrivals)
-        seen.add(spec.type);
+        const existing = owner.get(spec.type);
+        if (existing !== undefined) {
+          // Earlier provider wins (core shadows late arrivals) — but RECORD it, so a
+          // shadowed contribution can be explained instead of just vanishing.
+          collisions.push({ type: spec.type, ownedBy: existing, shadowedProvider: provider.id });
+          continue;
+        }
+        owner.set(spec.type, provider.id);
         out.push(spec);
       }
     }
+    this.collisions = collisions;
     return out;
   }
 }

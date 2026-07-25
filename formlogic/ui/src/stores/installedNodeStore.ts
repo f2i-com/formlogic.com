@@ -5,6 +5,7 @@
 // authoritative (install/uninstall invalidates it server-side).
 import { create } from 'zustand';
 import { api, type InstalledFlowNodeDefinition } from '../lib/api';
+import { flowNodeRegistry } from '../components/flows/registry/FlowNodeRegistry';
 
 interface InstalledNodeState {
   definitions: InstalledFlowNodeDefinition[];
@@ -28,6 +29,9 @@ export const useInstalledNodeStore = create<InstalledNodeState>((set, get) => ({
       const res = await api.listFlowNodeDefinitions();
       if (res.data) {
         set((s) => ({ definitions: res.data!.definitions, version: s.version + 1, loaded: true, loading: false }));
+        // FLOW-202: the provider set is unchanged but its underlying data is not — tell the
+        // registry, so consumers memoizing on its revision recompute too.
+        flowNodeRegistry.refresh();
       } else {
         set({ loading: false, loaded: true });
       }
