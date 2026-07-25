@@ -173,6 +173,44 @@ definition can never point your flows at an arbitrary server.
 
 ---
 
+## Dependencies
+
+A package may declare packages it needs:
+
+```jsonc
+"dependencies": {
+  "packages": [
+    { "id": "com.formlogic.ai-toolkit", "version": "^1.1.0" }
+  ]
+}
+```
+
+If a required dependency is not installed, the install plan looks for it **in the marketplace
+catalog** and adds it to the plan — dependencies first, in install order. The review names every
+package the install will bring before anything commits.
+
+The rules are deliberately conservative, because auto-install is one step away from a silent
+bulk installer:
+
+| Situation | What happens |
+|---|---|
+| Required, missing, in the catalog | Planned and installed first |
+| Required, missing, **not** in the catalog | Refused: `dependency_unavailable`, naming the id |
+| Required, installed, incompatible version | Refused: `dependency_incompatible` — replacing a version something else may rely on is an **update**, reviewed on its own terms |
+| **Optional**, missing | Left alone. Optional means the owner chooses; filling it in for them is not help |
+| Already satisfied | Nothing planned |
+| A cycle | Refused: `dependency_cycle`, naming the ring |
+
+Two things worth being explicit about:
+
+- **A dependency's grants are not granted by approving the package that wanted it.** Dependencies
+  install with no connector access. If one needs access, you grant it deliberately, to it.
+- **Dependencies are re-resolved at confirm, not replayed from the plan.** Something in the chain
+  may have been installed by hand since the plan was proposed, and installing it twice would fail.
+
+Once installed, a dependency cannot be uninstalled while something still requires it — the
+existing reference counting applies, and the refusal names the dependents.
+
 ## In the marketplace
 
 Application Package v2 extensions are listed in the **same catalog** as Pack v1 packs — from a

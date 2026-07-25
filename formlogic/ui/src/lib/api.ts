@@ -4809,6 +4809,13 @@ export interface PackageInstallPlan {
     missingOptional: Array<Record<string, unknown>>;
     problems: Array<{ code: string; id: string; message: string }>;
   };
+  /**
+   * What ELSE this install brings, in the order it will be installed — declared dependencies
+   * that are not installed yet and were found in the catalog. Empty when the package stands
+   * alone. Shown before confirming: an install that quietly adds three packages is not
+   * something anyone should discover afterwards.
+   */
+  plannedInstalls?: Array<{ packageId: string; version: string; displayName: string; nodeCount: number }>;
 }
 
 /** ADR-010 §13.1: the full detail view of one installed Application Package v2. */

@@ -1,0 +1,117 @@
+{
+  "formatVersion": 2,
+  "package": {
+    "id": "com.formlogic.aokie-phone",
+    "kind": "extension",
+    "version": "1.0.0",
+    "publisherId": "com.formlogic",
+    "displayName": "Aokie Phone Nodes",
+    "description": "Place calls, speak on a live call and send SMS from a flow, through the phone services the Aokie plugin contributes. Brings the AI Toolkit with it, since a receptionist flow needs a language model.",
+    "keywords": ["aokie", "phone", "calls", "sms", "telephony", "receptionist"]
+  },
+  "dependencies": {
+    "packages": [
+      { "id": "com.formlogic.ai-toolkit", "version": "^1.1.0" }
+    ]
+  },
+  "contributions": {
+    "flowNodes": [
+      {
+        "schemaVersion": 1,
+        "type": "com.formlogic.aokie.dial",
+        "version": "1.0.0",
+        "display": {
+          "label": "Place a call",
+          "description": "Dial a number and speak an opening line when they answer.",
+          "category": "Connectors",
+          "iconId": "phone"
+        },
+        "configurationSchema": {
+          "type": "object",
+          "properties": {
+            "number": { "type": "string", "title": "Number", "minLength": 3, "maxLength": 32, "description": "The number to dial." },
+            "openingLine": { "type": "string", "title": "Opening line", "minLength": 1, "maxLength": 500, "description": "The exact first words spoken when they answer. Written as speech, spoken verbatim." },
+            "purpose": { "type": "string", "title": "Purpose", "maxLength": 1000, "description": "What the call is for. Grounds the agent; never spoken as-is." }
+          },
+          "required": ["number", "openingLine"]
+        },
+        "uiHints": {
+          "openingLine": { "control": "textarea" },
+          "purpose": { "control": "textarea" }
+        },
+        "handler": {
+          "kind": "service-action",
+          "bindingSlot": "phone",
+          "requiredAction": "call.dial"
+        },
+        "sideEffects": "external-write"
+      },
+      {
+        "schemaVersion": 1,
+        "type": "com.formlogic.aokie.speak",
+        "version": "1.0.0",
+        "display": {
+          "label": "Speak on the call",
+          "description": "Say something on the call that is currently connected.",
+          "category": "Connectors",
+          "iconId": "volume-2"
+        },
+        "configurationSchema": {
+          "type": "object",
+          "properties": {
+            "text": { "type": "string", "title": "Text", "minLength": 1, "maxLength": 2000, "description": "What to say. Spoken verbatim." },
+            "callId": { "type": "string", "title": "Call id", "maxLength": 64, "description": "Optional. Defaults to the active call." }
+          },
+          "required": ["text"]
+        },
+        "uiHints": {
+          "text": { "control": "textarea" }
+        },
+        "handler": {
+          "kind": "service-action",
+          "bindingSlot": "phone",
+          "requiredAction": "call.speak"
+        },
+        "sideEffects": "external-write"
+      },
+      {
+        "schemaVersion": 1,
+        "type": "com.formlogic.aokie.sms",
+        "version": "1.0.0",
+        "display": {
+          "label": "Send an SMS",
+          "description": "Send a text message from the paired phone.",
+          "category": "Connectors",
+          "iconId": "message-square"
+        },
+        "configurationSchema": {
+          "type": "object",
+          "properties": {
+            "to": { "type": "string", "title": "To", "minLength": 3, "maxLength": 32, "description": "The recipient number." },
+            "body": { "type": "string", "title": "Message", "minLength": 1, "maxLength": 1600 },
+            "messageId": { "type": "string", "title": "Message id", "maxLength": 64, "description": "Optional. Supplying one makes a retry idempotent instead of sending twice." }
+          },
+          "required": ["to", "body"]
+        },
+        "uiHints": {
+          "body": { "control": "textarea" }
+        },
+        "handler": {
+          "kind": "service-action",
+          "bindingSlot": "phone",
+          "requiredAction": "sms.send"
+        },
+        "sideEffects": "external-write"
+      }
+    ]
+  },
+  "requirements": {
+    "services": [
+      {
+        "slot": "phone",
+        "required": true,
+        "requiredActions": ["call.dial", "call.speak", "sms.send"]
+      }
+    ]
+  }
+}

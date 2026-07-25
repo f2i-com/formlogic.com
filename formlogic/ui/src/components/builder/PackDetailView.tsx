@@ -387,6 +387,26 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
             </div>
           )}
 
+          {(v2Plan.plannedInstalls?.length ?? 0) > 0 && (
+            <div className="text-xs text-gray-700 dark:text-slate-200">
+              <p className="font-semibold">Also installs {v2Plan.plannedInstalls!.length} required package(s)</p>
+              <ul className="mt-1 space-y-0.5">
+                {v2Plan.plannedInstalls!.map((dep) => (
+                  <li key={dep.packageId} className="flex flex-wrap items-baseline gap-1.5">
+                    <span>{dep.displayName}</span>
+                    <span className="text-[10px] text-gray-500 dark:text-slate-400">
+                      v{dep.version}{dep.nodeCount > 0 && ` · ${dep.nodeCount} flow node(s)`}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1 text-[11px] text-gray-500 dark:text-slate-400">
+                This package needs them. They install first, each with no connector access —
+                approving this install does not grant anything to them.
+              </p>
+            </div>
+          )}
+
           {/* RUN-306: an update that would break existing flows says so BEFORE it is committed. */}
           {(v2Plan.migration?.breakingFlows.length ?? 0) > 0 && (
             <p className="rounded-lg bg-amber-100 px-2 py-1.5 text-[11px] text-amber-900 dark:bg-amber-500/15 dark:text-amber-200">
