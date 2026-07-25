@@ -116,50 +116,109 @@ fn validate(definition: &Value, plugin_id: &str) -> Result<String, String> {
     Ok(id.to_string())
 }
 
-/// Register (or refresh) everything `plugin_id` contributes.
+/// What a reconcile did (SRV-408): the applied diff, or why nothing was applied.
+#[derive(Debug, Default, PartialEq)]
+pub struct ReconcileReport {
+    /// Ids newly offered by this plugin.
+    pub added: Vec<String>,
+    /// Ids it already provided and has re-declared (content may differ).
+    pub updated: Vec<String>,
+    /// Ids it previously provided and no longer ships.
+    pub removed: Vec<String>,
+    /// Non-empty => NOTHING was applied; the plugin's previous set is intact.
+    pub refusals: Vec<String>,
+}
+
+impl ReconcileReport {
+    pub fn applied(&self) -> bool {
+        self.refusals.is_empty()
+    }
+}
+
+/// Reconcile everything `plugin_id` contributes — ATOMICALLY (SRV-408).
 ///
-/// Returns one human-readable refusal per rejected definition; accepted ones are live
-/// immediately. A partial result is deliberate — one malformed definition must not cost a
-/// plugin its other, valid services.
-pub fn register_plugin(plugin_id: &str, definitions: Vec<Value>) -> Vec<String> {
-    let mut refusals = Vec::new();
+/// The whole declared set is validated against the live registry BEFORE anything is written.
+/// If any definition is refused, none are applied and the plugin's previous set stays exactly
+/// as it was.
+///
+/// Partial success was the earlier behaviour and it is the wrong shape for a reconciler: a
+/// plugin that ships three services and gets two leaves a state neither its author nor the
+/// user can reason about, and the missing one only surfaces later as a binding that will not
+/// resolve or a flow that will not compile. Refusing the set puts the failure where it can be
+/// fixed — in the package — and names every reason at once.
+///
+/// Applying is idempotent: re-reconciling an unchanged set reports it all as `updated` and
+/// changes nothing observable.
+pub fn reconcile_plugin(plugin_id: &str, definitions: Vec<Value>) -> ReconcileReport {
+    let mut report = ReconcileReport::default();
+    let mut staged: Vec<(String, Value)> = Vec::new();
+
     with_write(|map| {
-        // Refresh semantics: this plugin's previous set goes first, so a definition it no
-        // longer ships disappears instead of lingering.
-        map.retain(|_, c| c.plugin_id != plugin_id);
+        // ---- validate the ENTIRE set first; nothing is written in this pass ----
         for definition in definitions {
             let id = match validate(&definition, plugin_id) {
                 Ok(id) => id,
                 Err(e) => {
-                    refusals.push(e);
+                    report.refusals.push(e);
                     continue;
                 }
             };
             if is_builtin(&id) {
-                refusals.push(format!(
+                report.refusals.push(format!(
                     "definition {id:?} collides with a built-in service and cannot replace it"
                 ));
                 continue;
             }
+            // Another PLUGIN's id (this plugin's own ids are being replaced, so they are fine).
             if let Some(existing) = map.get(&id) {
                 if existing.plugin_id != plugin_id {
-                    refusals.push(format!(
+                    report.refusals.push(format!(
                         "definition {id:?} is already provided by plugin {:?}",
                         existing.plugin_id
                     ));
                     continue;
                 }
             }
-            map.insert(
-                id,
-                Contributed {
-                    plugin_id: plugin_id.to_string(),
-                    definition,
-                },
-            );
+            if staged.iter().any(|(staged_id, _)| staged_id == &id) {
+                report.refusals.push(format!("definition {id:?} is declared twice by this plugin"));
+                continue;
+            }
+            staged.push((id, definition));
+        }
+
+        if !report.refusals.is_empty() {
+            return; // atomic: the plugin keeps whatever it had
+        }
+
+        // ---- diff against what this plugin currently provides ----
+        let previous: Vec<String> = map
+            .iter()
+            .filter(|(_, c)| c.plugin_id == plugin_id)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for (id, _) in &staged {
+            if previous.contains(id) {
+                report.updated.push(id.clone());
+            } else {
+                report.added.push(id.clone());
+            }
+        }
+        for id in &previous {
+            if !staged.iter().any(|(staged_id, _)| staged_id == id) {
+                report.removed.push(id.clone());
+            }
+        }
+        report.added.sort();
+        report.updated.sort();
+        report.removed.sort();
+
+        // ---- commit ----
+        map.retain(|_, c| c.plugin_id != plugin_id);
+        for (id, definition) in staged.drain(..) {
+            map.insert(id, Contributed { plugin_id: plugin_id.to_string(), definition });
         }
     });
-    refusals
+    report
 }
 
 /// Drop everything `plugin_id` contributed (disable, uninstall, or a failed rescan).
@@ -250,8 +309,9 @@ mod tests {
         let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         reset_for_tests();
 
-        let refusals = register_plugin("acme", vec![definition("acme.images", &["generate-image"])]);
-        assert!(refusals.is_empty(), "{refusals:?}");
+        let report = reconcile_plugin("acme", vec![definition("acme.images", &["generate-image"])]);
+        assert!(report.applied(), "{report:?}");
+        assert_eq!(report.added, vec!["acme.images".to_string()]);
 
         let catalog = catalog();
         assert!(catalog.definitions.iter().any(|d| d["id"] == "openai-api"), "built-ins survive");
@@ -277,16 +337,16 @@ mod tests {
         reset_for_tests();
 
         // Shadowing a built-in would silently re-point every flow bound to it.
-        let refusals = register_plugin("openai-api", vec![definition("openai-api", &["chat.complete"])]);
-        assert_eq!(refusals.len(), 1);
-        assert!(refusals[0].contains("built-in"), "{refusals:?}");
+        let report = reconcile_plugin("openai-api", vec![definition("openai-api", &["chat.complete"])]);
+        assert_eq!(report.refusals.len(), 1);
+        assert!(report.refusals[0].contains("built-in"), "{report:?}");
         assert_eq!(provider_of("openai-api"), None);
 
-        register_plugin("acme", vec![definition("acme.images", &["generate-image"])]);
+        reconcile_plugin("acme", vec![definition("acme.images", &["generate-image"])]);
         // A second plugin claiming acme's id is refused twice over (namespace + ownership).
-        let refusals = register_plugin("evil", vec![definition("acme.images", &["generate-image"])]);
-        assert_eq!(refusals.len(), 1);
-        assert!(refusals[0].contains("own namespace"), "{refusals:?}");
+        let report = reconcile_plugin("evil", vec![definition("acme.images", &["generate-image"])]);
+        assert_eq!(report.refusals.len(), 1);
+        assert!(report.refusals[0].contains("own namespace"), "{report:?}");
         assert_eq!(provider_of("acme.images").as_deref(), Some("acme"), "ownership is unchanged");
 
         reset_for_tests();
@@ -300,7 +360,7 @@ mod tests {
         // The file says it comes from a trusted-sounding plugin; the host stamps the truth.
         let mut liar = definition("acme.images", &["generate-image"]);
         liar["provider"] = json!("formlogic-official");
-        assert!(register_plugin("acme", vec![liar]).is_empty());
+        assert!(reconcile_plugin("acme", vec![liar]).applied());
 
         let listed = catalog()
             .definitions
@@ -320,62 +380,93 @@ mod tests {
         // Every catalog fetch would carry this; definitions are metadata, not payloads.
         let mut bloated = definition("acme.bloat", &["generate-image"]);
         bloated["description"] = json!("x".repeat(MAX_DEFINITION_BYTES));
-        let refusals = register_plugin("acme", vec![bloated, definition("acme.ok", &["generate-image"])]);
-        assert_eq!(refusals.len(), 1);
-        assert!(refusals[0].contains("over the"), "{refusals:?}");
+        let report = reconcile_plugin("acme", vec![bloated, definition("acme.ok", &["generate-image"])]);
+        assert!(!report.applied());
+        assert_eq!(report.refusals.len(), 1);
+        assert!(report.refusals[0].contains("over the"), "{report:?}");
+        // SRV-408: atomic — the oversized entry takes its whole set with it.
         assert!(find("acme.bloat").is_none());
-        assert!(find("acme.ok").is_some(), "its valid sibling still registers");
+        assert!(find("acme.ok").is_none());
 
         reset_for_tests();
     }
 
     #[test]
-    fn malformed_definitions_are_refused_without_costing_the_valid_ones() {
+    fn one_bad_definition_refuses_the_whole_set_and_keeps_the_previous_one() {
         let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         reset_for_tests();
+
+        // A working prior state to protect.
+        assert!(reconcile_plugin("acme", vec![definition("acme.images", &["generate-image"])]).applied());
 
         let mut wrong_version = definition("acme.old", &["a"]);
         wrong_version["schemaVersion"] = json!(2);
-        let mut duplicate_actions = definition("acme.dupe", &["a", "a"]);
-        duplicate_actions["name"] = json!("Dupe");
+        let duplicate_actions = definition("acme.dupe", &["a", "a"]);
         let no_actions = json!({ "schemaVersion": 3, "id": "acme.empty", "actions": [] });
 
-        let refusals = register_plugin(
+        // SRV-408: the plugin now ships a set that is partly broken. Applying the good half
+        // would leave a state neither the author nor the user can reason about, and the
+        // missing service would only surface later as a binding that will not resolve.
+        let report = reconcile_plugin(
             "acme",
-            vec![
-                wrong_version,
-                duplicate_actions,
-                no_actions,
-                definition("acme.good", &["generate-image"]),
-            ],
+            vec![wrong_version, duplicate_actions, no_actions, definition("acme.good", &["generate-image"])],
         );
-        assert_eq!(refusals.len(), 3, "{refusals:?}");
-        assert!(find("acme.good").is_some(), "a valid sibling still registers");
-        assert!(find("acme.old").is_none());
-        assert!(find("acme.dupe").is_none());
-        assert!(find("acme.empty").is_none());
+        assert!(!report.applied());
+        assert_eq!(report.refusals.len(), 3, "every reason is named at once: {report:?}");
+        assert!(find("acme.good").is_none(), "no part of a refused set is applied");
+        assert!(
+            find("acme.images").is_some(),
+            "the plugin keeps exactly what it had before the bad reconcile"
+        );
 
         reset_for_tests();
     }
 
     #[test]
-    fn re_registering_refreshes_and_removal_is_complete() {
+    fn the_same_id_declared_twice_by_one_plugin_is_refused() {
         let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         reset_for_tests();
 
-        register_plugin(
+        // Otherwise which of the two wins would be an accident of iteration order.
+        let report = reconcile_plugin(
+            "acme",
+            vec![definition("acme.images", &["generate-image"]), definition("acme.images", &["upscale"])],
+        );
+        assert!(!report.applied());
+        assert!(report.refusals[0].contains("declared twice"), "{report:?}");
+        assert!(find("acme.images").is_none());
+
+        reset_for_tests();
+    }
+
+    #[test]
+    fn reconcile_reports_the_diff_and_removal_is_complete() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_for_tests();
+
+        let first = reconcile_plugin(
             "acme",
             vec![definition("acme.images", &["generate-image"]), definition("acme.audio", &["speak"])],
         );
-        assert!(find("acme.audio").is_some());
+        assert_eq!(first.added, vec!["acme.audio".to_string(), "acme.images".to_string()]);
+        assert!(first.removed.is_empty());
 
-        // A refresh that no longer ships acme.audio must drop it, not keep a stale entry.
-        register_plugin("acme", vec![definition("acme.images", &["generate-image", "upscale"])]);
+        // A set that no longer ships acme.audio: dropped, and REPORTED as dropped.
+        let second = reconcile_plugin("acme", vec![definition("acme.images", &["generate-image", "upscale"])]);
+        assert!(second.applied());
+        assert_eq!(second.updated, vec!["acme.images".to_string()]);
+        assert_eq!(second.removed, vec!["acme.audio".to_string()]);
         assert!(find("acme.audio").is_none(), "definitions the plugin stopped shipping disappear");
         assert_eq!(find("acme.images").expect("still there")["actions"].as_array().unwrap().len(), 2);
 
-        // Disable/uninstall takes everything with it; built-ins are untouched.
-        register_plugin("other", vec![definition("other.thing", &["do"])]);
+        // Re-applying the SAME set changes nothing observable (idempotent).
+        let third = reconcile_plugin("acme", vec![definition("acme.images", &["generate-image", "upscale"])]);
+        assert!(third.applied());
+        assert!(third.added.is_empty() && third.removed.is_empty());
+        assert_eq!(third.updated, vec!["acme.images".to_string()]);
+
+        // Disable/uninstall takes everything with it; built-ins and other plugins are untouched.
+        reconcile_plugin("other", vec![definition("other.thing", &["do"])]);
         assert_eq!(remove_plugin("acme"), 1);
         assert!(find("acme.images").is_none());
         assert!(find("other.thing").is_some(), "another plugin's services survive");

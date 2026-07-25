@@ -322,8 +322,11 @@ Contribution rules (the registry enforces all of them):
 - A definition id is **namespaced to its plugin** (`<plugin-id>` or `<plugin-id>.<name>`), so
   provenance is readable from the id and two plugins cannot race for a generic name.
 - **One plugin owns an id.** A second plugin claiming it is refused, not first-wins.
-- One malformed definition is refused **without costing its valid siblings**, and a
-  definition over 64 KiB is refused outright — every catalog fetch would carry it.
+- A plugin's declared set applies **atomically**: if any definition is refused, none are
+  applied and the plugin keeps whatever it had. Half a set is a state neither you nor the
+  installing user can reason about — the missing service surfaces later as a binding that
+  will not resolve. Every reason is reported at once so the packaging error is fixable in
+  one pass. A definition over 64 KiB is refused outright; every catalog fetch carries it.
 - The catalog stamps each contributed entry with `provider` (the plugin id), so a
   plugin-supplied service is never indistinguishable from a built-in in a picker. The **host**
   stamps it from its registry: a definition file claiming a `provider` cannot fake provenance.

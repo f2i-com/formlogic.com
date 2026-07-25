@@ -683,8 +683,23 @@ impl PluginHost {
                     Err(e) => log::warn!("plugin {id}: cannot read service definition {}: {e}", path.display()),
                 }
             }
-            for refusal in crate::services::definitions::register_plugin(&id, loaded) {
-                log::warn!("plugin {id}: service definition refused: {refusal}");
+            // SRV-408: atomic — a refused set leaves the plugin's previous services intact
+            // rather than half-applying a state nobody can reason about.
+            let report = crate::services::definitions::reconcile_plugin(&id, loaded);
+            if report.applied() {
+                if !report.added.is_empty() || !report.removed.is_empty() {
+                    log::info!(
+                        "plugin {id}: services reconciled (+{} ~{} -{})",
+                        report.added.len(),
+                        report.updated.len(),
+                        report.removed.len()
+                    );
+                }
+            } else {
+                log::warn!(
+                    "plugin {id}: service definitions REFUSED as a set, previous services kept: {}",
+                    report.refusals.join("; ")
+                );
             }
         }
     }

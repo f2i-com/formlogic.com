@@ -535,6 +535,12 @@ async fn v2_plugin_contributes_ui_owns_service_binds_and_disables_cleanly() {
     let _ = std::fs::remove_dir_all(&data);
 }
 
+/// ⚠️ Tests that contribute service definitions must use a UNIQUE plugin id. The definition
+/// registry is process-global and keyed by plugin id (correct in production, where one host
+/// owns the process), but these tests run in parallel with their own data dirs — so a second
+/// test installing a plugin with the SAME id and no `serviceDefinitions` reconciles that id to
+/// empty and silently removes the first test's registration mid-run.
+///
 /// SRV-401/402 — a schemaVersion-3 plugin contributes v3 Service Definitions to the shared
 /// registry: they join the built-in catalog, resolve for invocation exactly like a built-in,
 /// vanish while the plugin is disabled, come back on re-enable, and are gone after uninstall.
@@ -553,26 +559,18 @@ async fn v3_plugin_contributes_service_definitions_across_the_lifecycle() {
     // One valid definition inside the plugin's namespace…
     std::fs::write(
         src.join("definitions").join("images.json"),
-        r#"{"schemaVersion":3,"id":"mock.images","name":"Mock Images","version":"1.0.0",
+        r#"{"schemaVersion":3,"id":"v3svc.images","name":"Mock Images","version":"1.0.0",
             "actions":[{"id":"generate-image","sideEffects":"external-write",
               "transport":{"kind":"openai-compatible","method":"POST","path":"/v1/images/generations"}}]}"#,
     )
     .unwrap();
-    // …and one that tries to claim an id it does not own.
-    std::fs::write(
-        src.join("definitions").join("squat.json"),
-        r#"{"schemaVersion":3,"id":"someone-else.audio","name":"Squat","version":"1.0.0",
-            "actions":[{"id":"speak","transport":{"kind":"openai-compatible","method":"POST","path":"/v1/audio/speech"}}]}"#,
-    )
-    .unwrap();
     let manifest = format!(
         r#"{{
-          "schemaVersion": 3, "id": "mock", "name": "Mock", "version": "1.0.0",
+          "schemaVersion": 3, "id": "v3svc", "name": "Mock", "version": "1.0.0",
           "entry": {{ "kind": "process", "command": "{exe_name}" }},
-          "connectors": [{{ "id": "mock", "name": "Mock", "commands": ["echo.ping"] }}],
+          "connectors": [{{ "id": "v3svc", "name": "Mock", "commands": ["echo.ping"] }}],
           "serviceDefinitions": [
-            {{ "definitionFile": "definitions/images.json" }},
-            {{ "definitionFile": "definitions/squat.json" }}
+            {{ "definitionFile": "definitions/images.json" }}
           ]
         }}"#
     );
@@ -582,39 +580,96 @@ async fn v3_plugin_contributes_service_definitions_across_the_lifecycle() {
     let id = host
         .install_from_source(&formlogic_desktop_lib::plugins::install::InstallSource::Folder(src.clone()))
         .expect("install v3");
-    assert_eq!(id, "mock");
+    assert_eq!(id, "v3svc");
 
     // The contributed definition joins the catalog alongside the built-ins…
     let catalog = definitions::catalog();
     assert!(catalog.definitions.iter().any(|d| d["id"] == "openai-api"), "built-ins survive");
-    assert!(catalog.definitions.iter().any(|d| d["id"] == "mock.images"));
-    assert_eq!(definitions::provider_of("mock.images").as_deref(), Some("mock"));
+    assert!(catalog.definitions.iter().any(|d| d["id"] == "v3svc.images"));
+    assert_eq!(definitions::provider_of("v3svc.images").as_deref(), Some("v3svc"));
     // …and resolves for invocation through the same path a built-in takes.
-    let action = formlogic_desktop_lib::services::invocation::resolve_action("mock.images", "generate-image")
+    let action = formlogic_desktop_lib::services::invocation::resolve_action("v3svc.images", "generate-image")
         .expect("contributed action resolves");
-    assert_eq!(action.definition_id, "mock.images");
+    assert_eq!(action.definition_id, "v3svc.images");
     assert_eq!(action.action_id, "generate-image");
-    // The out-of-namespace definition was refused; its valid sibling still registered.
-    assert!(definitions::find("someone-else.audio").is_none(), "namespace squatting refused");
 
     // Disabled → the services go with it (a switched-off plugin must not be invocable).
-    host.set_enabled("mock", false).await.expect("disable");
-    assert!(definitions::find("mock.images").is_none(), "disabled plugin contributes nothing");
+    host.set_enabled("v3svc", false).await.expect("disable");
+    assert!(definitions::find("v3svc.images").is_none(), "disabled plugin contributes nothing");
     assert!(
-        formlogic_desktop_lib::services::invocation::resolve_action("mock.images", "generate-image").is_err(),
+        formlogic_desktop_lib::services::invocation::resolve_action("v3svc.images", "generate-image").is_err(),
         "and its actions stop resolving"
     );
 
     // Re-enable restores them, uninstall removes them for good.
-    host.set_enabled("mock", true).await.expect("enable");
-    assert!(definitions::find("mock.images").is_some(), "re-enable restores the contribution");
-    host.uninstall("mock", false).await.expect("uninstall");
-    assert!(definitions::find("mock.images").is_none(), "uninstall leaves nothing resolvable");
+    host.set_enabled("v3svc", true).await.expect("enable");
+    assert!(definitions::find("v3svc.images").is_some(), "re-enable restores the contribution");
+    host.uninstall("v3svc", false).await.expect("uninstall");
+    assert!(definitions::find("v3svc.images").is_none(), "uninstall leaves nothing resolvable");
     assert!(
         definitions::catalog().definitions.iter().any(|d| d["id"] == "openai-api"),
         "built-ins are untouched throughout"
     );
 
+    let _ = std::fs::remove_dir_all(&data);
+}
+
+/// SRV-408 — a plugin whose declared service set is PARTLY invalid contributes NOTHING. Half
+/// a set is a state neither the author nor the user can reason about: the missing service only
+/// surfaces later as a binding that will not resolve. Exercised through the real installer.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_partly_invalid_service_set_contributes_nothing() {
+    use formlogic_desktop_lib::services::definitions;
+
+    let data = temp_data_dir("v3-atomic-services");
+    let built = PathBuf::from(env!("CARGO_BIN_EXE_mock-plugin"));
+    let exe_name = built.file_name().and_then(|n| n.to_str()).unwrap().to_string();
+
+    let src = data.join("src");
+    std::fs::create_dir_all(src.join("definitions")).unwrap();
+    std::fs::copy(&built, src.join(&exe_name)).unwrap();
+    // Perfectly valid…
+    std::fs::write(
+        src.join("definitions").join("good.json"),
+        r#"{"schemaVersion":3,"id":"atomic.good","name":"Good","version":"1.0.0",
+            "actions":[{"id":"do-it","transport":{"kind":"openai-compatible","method":"POST","path":"/v1/images/generations"}}]}"#,
+    )
+    .unwrap();
+    // …alongside one claiming an id this plugin does not own.
+    std::fs::write(
+        src.join("definitions").join("squat.json"),
+        r#"{"schemaVersion":3,"id":"someone-else.audio","name":"Squat","version":"1.0.0",
+            "actions":[{"id":"speak","transport":{"kind":"openai-compatible","method":"POST","path":"/v1/audio/speech"}}]}"#,
+    )
+    .unwrap();
+    let manifest = format!(
+        r#"{{
+          "schemaVersion": 3, "id": "atomic", "name": "Atomic", "version": "1.0.0",
+          "entry": {{ "kind": "process", "command": "{exe_name}" }},
+          "connectors": [{{ "id": "atomic", "name": "Atomic", "commands": ["echo.ping"] }}],
+          "serviceDefinitions": [
+            {{ "definitionFile": "definitions/good.json" }},
+            {{ "definitionFile": "definitions/squat.json" }}
+          ]
+        }}"#
+    );
+    std::fs::write(src.join("manifest.json"), manifest).unwrap();
+
+    let host = PluginHost::new(&data, false, EventBus::new());
+    host.install_from_source(&formlogic_desktop_lib::plugins::install::InstallSource::Folder(src.clone()))
+        .expect("install");
+
+    // The squat is refused — and takes its valid sibling with it, so the packaging error is
+    // visible as "this plugin contributes no services" rather than a silent half-install.
+    assert!(definitions::find("someone-else.audio").is_none(), "namespace squatting refused");
+    assert!(
+        definitions::find("atomic.good").is_none(),
+        "no part of a refused set is applied"
+    );
+    // Built-ins are untouched throughout.
+    assert!(definitions::catalog().definitions.iter().any(|d| d["id"] == "openai-api"));
+
+    let _ = host.uninstall("atomic", true).await;
     let _ = std::fs::remove_dir_all(&data);
 }
 
