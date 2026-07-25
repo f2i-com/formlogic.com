@@ -5,7 +5,7 @@
 // image_gen / stt_transcribe / tts_speak) are fully insertable and render a functional "Runs on
 // FormLogic Desktop" badge — they execute against a local Desktop service at run time.
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, MonitorDown, PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, FolderPlus, MonitorDown, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings2, X } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { Button } from '../../ui/Button';
 import {
@@ -16,6 +16,7 @@ import {
   type NodeSpec,
 } from './nodeCatalog';
 import { flowNodeRegistry } from '../registry/FlowNodeRegistry';
+import { useNodeGroupStore, type NodeGroup } from '../../../stores/nodeGroupStore';
 import { useInstalledNodeStore } from '../../../stores/installedNodeStore';
 import { ACCENT_CHIP } from './accents';
 import { FlowDesktopPresenceContext } from './flowNodeContext';
@@ -84,7 +85,22 @@ interface NodePaletteProps {
   className?: string;
 }
 
-function PaletteItem({ spec, onAddNode, draggable = true }: { spec: NodeSpec; onAddNode: (type: string) => void; draggable?: boolean }) {
+function PaletteItem({
+  spec,
+  onAddNode,
+  draggable = true,
+  organising = false,
+  groups = [],
+  currentGroupId,
+}: {
+  spec: NodeSpec;
+  onAddNode: (type: string) => void;
+  draggable?: boolean;
+  /** Organise mode: the tile grows a "put this in a group" control instead of inserting. */
+  organising?: boolean;
+  groups?: NodeGroup[];
+  currentGroupId?: string;
+}) {
   const Icon = spec.icon;
   const disabled = !spec.executable;
   const desktop = spec.requiresDesktopService;
@@ -105,6 +121,9 @@ function PaletteItem({ spec, onAddNode, draggable = true }: { spec: NodeSpec; on
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
     setDocRect(null);
   };
+
+  const assignNode = useNodeGroupStore((s) => s.assignNode);
+  const unassignNode = useNodeGroupStore((s) => s.unassignNode);
 
   // Icon-first tile: big icon + name only; the description (and the desktop-service /
   // capability notes) live in the delayed hover/focus popover.
@@ -156,8 +175,159 @@ function PaletteItem({ spec, onAddNode, draggable = true }: { spec: NodeSpec; on
         {spec.label}
       </span>
     </button>
+    {organising && (
+      // In organise mode the tile is not for inserting — it is for filing. A select rather than
+      // drag-and-drop because this has to work on a phone and with a keyboard, and because the
+      // set of groups is small enough to read at a glance.
+      <select
+        value={currentGroupId ?? ''}
+        onChange={(e) => {
+          const next = e.target.value;
+          if (next === '') unassignNode(spec.type);
+          else assignNode(spec.type, next);
+        }}
+        aria-label={`Group for ${spec.label}`}
+        className="mt-1 w-full rounded-md border border-gray-300 bg-white px-1 py-0.5 text-[10px] text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+      >
+        <option value="">Ungrouped</option>
+        {groups.map((group) => (
+          <option key={group.id} value={group.id}>{group.name}</option>
+        ))}
+      </select>
+    )}
     {docRect && <PaletteDoc spec={spec} anchor={docRect} degraded={degraded && !disabled} />}
     </>
+  );
+}
+
+/**
+ * One user-defined palette group: a collapsible section the person made themselves.
+ *
+ * While organising, it grows rename / reorder / delete controls. Deleting a group RELEASES its
+ * nodes back to their default sections rather than hiding them — nothing a user installed
+ * should be able to disappear from the palette because of a filing decision.
+ */
+function NodeGroupSection({
+  group,
+  specs,
+  organising,
+  groups,
+  groupOfType,
+  onAddNode,
+  draggable,
+}: {
+  group: NodeGroup;
+  specs: NodeSpec[];
+  organising: boolean;
+  groups: NodeGroup[];
+  groupOfType: Map<string, string>;
+  onAddNode: (type: string) => void;
+  draggable: boolean;
+}) {
+  const toggleCollapsed = useNodeGroupStore((s) => s.toggleCollapsed);
+  const renameGroup = useNodeGroupStore((s) => s.renameGroup);
+  const deleteGroup = useNodeGroupStore((s) => s.deleteGroup);
+  const moveGroup = useNodeGroupStore((s) => s.moveGroup);
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(group.name);
+
+  const collapsed = !!group.collapsed;
+
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center gap-1 px-1">
+        <button
+          type="button"
+          onClick={() => toggleCollapsed(group.id)}
+          aria-expanded={!collapsed}
+          className="flex min-w-0 flex-1 items-center gap-1 text-left"
+        >
+          {collapsed ? (
+            <ChevronRight className="h-3 w-3 flex-none text-gray-400" aria-hidden="true" />
+          ) : (
+            <ChevronDown className="h-3 w-3 flex-none text-gray-400" aria-hidden="true" />
+          )}
+          {renaming ? (
+            <input
+              value={draft}
+              autoFocus
+              maxLength={40}
+              onChange={(e) => setDraft(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              onBlur={() => { renameGroup(group.id, draft); setRenaming(false); }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { renameGroup(group.id, draft); setRenaming(false); }
+                if (e.key === 'Escape') { setDraft(group.name); setRenaming(false); }
+              }}
+              aria-label={`Rename group ${group.name}`}
+              className="min-w-0 flex-1 rounded border border-gray-300 bg-white px-1 py-0.5 text-[11px] text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+            />
+          ) : (
+            <span className="truncate text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">
+              {group.name}
+            </span>
+          )}
+          <span className="flex-none text-[10px] text-gray-400 dark:text-slate-600">{specs.length}</span>
+        </button>
+        {organising && !renaming && (
+          <span className="flex flex-none items-center">
+            <button
+              type="button"
+              onClick={() => moveGroup(group.id, -1)}
+              aria-label={`Move group ${group.name} up`}
+              className="rounded p-0.5 text-gray-400 hover:text-gray-700 dark:hover:text-slate-200"
+            >
+              <ChevronUp className="h-3 w-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => moveGroup(group.id, 1)}
+              aria-label={`Move group ${group.name} down`}
+              className="rounded p-0.5 text-gray-400 hover:text-gray-700 dark:hover:text-slate-200"
+            >
+              <ChevronDown className="h-3 w-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => { setDraft(group.name); setRenaming(true); }}
+              aria-label={`Rename group ${group.name}`}
+              className="rounded p-0.5 text-[10px] text-gray-400 hover:text-gray-700 dark:hover:text-slate-200"
+            >
+              Rename
+            </button>
+            <button
+              type="button"
+              onClick={() => deleteGroup(group.id)}
+              aria-label={`Delete group ${group.name} (its nodes return to their usual sections)`}
+              className="rounded p-0.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        )}
+      </div>
+      {!collapsed && (
+        specs.length === 0 ? (
+          <p className="px-1 pb-1 text-[10px] text-gray-400 dark:text-slate-600">
+            Empty — pick this group under a node below to file it here.
+          </p>
+        ) : (
+          <div className="grid gap-1.5 [grid-template-columns:repeat(auto-fill,minmax(6.25rem,1fr))]">
+            {specs.map((spec) => (
+              <PaletteItem
+                key={spec.type}
+                spec={spec}
+                onAddNode={onAddNode}
+                draggable={draggable}
+                organising={organising}
+                groups={groups}
+                currentGroupId={groupOfType.get(spec.type)}
+              />
+            ))}
+          </div>
+        )
+      )}
+    </div>
   );
 }
 
@@ -176,20 +346,55 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
   // not the static catalog — installed extensions appear without a rebuild. `installedVersion`
   // re-runs the memo when definitions arrive/refresh (the registry itself is not reactive).
   const installedVersion = useInstalledNodeStore((s) => s.version);
-  const grouped = useMemo(() => {
+  const userGroups = useNodeGroupStore((s) => s.groups);
+  const [organising, setOrganising] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const createGroup = useNodeGroupStore((s) => s.createGroup);
+
+  const { userSections, grouped } = useMemo(() => {
     const q = query.trim().toLowerCase();
     const match = (s: NodeSpec) =>
       q === '' ||
       s.label.toLowerCase().includes(q) ||
       s.type.toLowerCase().includes(q) ||
       s.description.toLowerCase().includes(q);
-    const specs = flowNodeRegistry.listNodeSpecs(context);
-    return NODE_CATEGORIES.map((cat) => ({
+    const specs = flowNodeRegistry.listNodeSpecs(context).filter((s) => isNodeAvailableInContext(s, context));
+    const byType = new Map(specs.map((spec) => [spec.type, spec]));
+
+    // A node in a user group appears THERE and nowhere else. Showing it twice would not be
+    // organisation, it would be a duplicate to hunt through.
+    const claimed = new Set<string>();
+    const userSections = userGroups.map((group) => {
+      const groupSpecs: NodeSpec[] = [];
+      for (const type of group.nodeTypes) {
+        const spec = byType.get(type);
+        // A type with no spec is an extension that was uninstalled. It stays in the stored
+        // group (reinstalling brings it straight back) but is not rendered as an empty tile.
+        if (!spec) continue;
+        claimed.add(type);
+        if (match(spec)) groupSpecs.push(spec);
+      }
+      return { group, specs: groupSpecs };
+    });
+
+    const grouped = NODE_CATEGORIES.map((cat) => ({
       cat,
-      specs: specs.filter((s) => s.category === cat.id && match(s) && isNodeAvailableInContext(s, context)),
+      specs: specs.filter((s) => s.category === cat.id && !claimed.has(s.type) && match(s)),
     })).filter((g) => g.specs.length > 0);
+
+    return { userSections, grouped };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- installedVersion is the registry's change signal
-  }, [query, context, installedVersion]);
+  }, [query, context, installedVersion, userGroups]);
+
+  const groupOfType = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const group of userGroups) for (const type of group.nodeTypes) map.set(type, group.id);
+    return map;
+  }, [userGroups]);
+
+  // Organise mode shows every group, including the empty ones — you cannot file anything into a
+  // group you cannot see.
+  const visibleUserSections = organising ? userSections : userSections.filter((s) => s.specs.length > 0);
 
   if (collapsed) {
     return (
@@ -221,6 +426,17 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
             className="w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 py-1.5 pl-8 pr-2.5 text-xs text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
           />
         </div>
+        <Button
+          variant={organising ? 'secondary' : 'ghost'}
+          size="iconOnly"
+          onClick={() => setOrganising((on) => !on)}
+          aria-label={organising ? 'Done organising nodes' : 'Organise nodes into groups'}
+          aria-pressed={organising}
+          title={organising ? 'Done organising' : 'Organise into groups'}
+          className="h-8 w-8 flex-none"
+        >
+          <Settings2 className="h-4 w-4" />
+        </Button>
         {onToggleCollapsed && (
           <Button
             variant="ghost"
@@ -234,6 +450,33 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
           </Button>
         )}
       </div>
+      {organising && (
+        // Only visible while organising: the palette's job is inserting nodes, and a permanent
+        // "new group" box would take space from that for something done occasionally.
+        <form
+          className="flex items-center gap-1.5 px-2.5 pb-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (createGroup(newGroupName)) setNewGroupName('');
+          }}
+        >
+          <div className="relative min-w-0 flex-1">
+            <FolderPlus className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+            <input
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              placeholder="New group name"
+              aria-label="New node group name"
+              maxLength={40}
+              className="w-full rounded-lg border border-gray-300 bg-white py-1.5 pl-8 pr-2.5 text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+            />
+          </div>
+          <Button type="submit" variant="outline" size="sm" disabled={!newGroupName.trim()} className="flex-none">
+            <Plus className="h-3.5 w-3.5" />
+            Add
+          </Button>
+        </form>
+      )}
       <div
         ref={resultsRef}
         onScroll={(e) => { resultsScrollTop.current = e.currentTarget.scrollTop; }}
@@ -244,9 +487,23 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
           draggable && 'pb-16',
         )}
       >
-        {grouped.length === 0 && (
+        {grouped.length === 0 && visibleUserSections.length === 0 && (
           <p className="px-1 text-xs text-gray-400 dark:text-slate-500">No nodes match "{query}".</p>
         )}
+        {/* The user's own groups come first: someone who bothered to organise their palette
+            put the things they reach for most into it. */}
+        {visibleUserSections.map(({ group, specs }) => (
+          <NodeGroupSection
+            key={group.id}
+            group={group}
+            specs={specs}
+            organising={organising}
+            groups={userGroups}
+            groupOfType={groupOfType}
+            onAddNode={onAddNode}
+            draggable={draggable}
+          />
+        ))}
         {grouped.map(({ cat, specs }) => (
           <div key={cat.id}>
             <div className="mb-1.5 px-1">
@@ -257,7 +514,15 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
                 and the full-width mobile sheet (3+-up). */}
             <div className="grid gap-1.5 [grid-template-columns:repeat(auto-fill,minmax(6.25rem,1fr))]">
               {specs.map((spec) => (
-                <PaletteItem key={spec.type} spec={spec} onAddNode={onAddNode} draggable={draggable} />
+                <PaletteItem
+                  key={spec.type}
+                  spec={spec}
+                  onAddNode={onAddNode}
+                  draggable={draggable}
+                  organising={organising}
+                  groups={userGroups}
+                  currentGroupId={groupOfType.get(spec.type)}
+                />
               ))}
             </div>
           </div>

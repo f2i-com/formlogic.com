@@ -173,6 +173,46 @@ definition can never point your flows at an arbitrary server.
 
 ---
 
+## Being found: keywords
+
+A package may declare search keywords:
+
+```jsonc
+"package": {
+  "id": "com.acme.vision", "kind": "extension", "version": "1.0.0",
+  "publisherId": "com.acme", "displayName": "Acme Vision",
+  "keywords": ["ai", "image", "text-to-speech"]
+}
+```
+
+The grammar is deliberately narrow — **lowercase letters, digits and hyphens, 1–32 characters,
+at most 16 entries** — and anything else is refused with `bad_keywords`. Free-form keywords look
+friendlier but make search worse: `Text To Speech`, `text-to-speech` and `TextToSpeech` become
+three different terms for one idea, and an unbounded list is an invitation to stuff it. One
+spelling per idea means two authors who mean the same thing are found by the same query.
+
+## Where a node appears in the palette
+
+A node definition may ask for a section with `display.category`:
+
+```jsonc
+"display": { "label": "LLM Chat", "category": "AI", "iconId": "message-square" }
+```
+
+This is matched against the host's existing sections (by id or label, case-insensitively) —
+`AI`, `Logic`, `Input / Output`, `FormLogic data`, `Connectors`, `Flow storage`. Anything
+unrecognised lands under **Installed extensions**, which is accurate rather than a failure.
+
+It is an allowlist for the same reason icons are: the palette's section list is shared by every
+package, and an author who could invent sections could fragment it or push their own to the top.
+Asking to sit beside the other AI nodes is a reasonable request; inventing a section is not.
+Note that `Requires FormLogic Desktop` cannot be claimed at all — that section means "needs a
+local Desktop service", which is a host fact about how the node runs, not a label to choose.
+
+Separately, **users can group nodes however they like** in their own palette (the ⚙ control in
+the node panel). That is a personal arrangement stored on their device, and deliberately not
+something a package can set or see.
+
 ## Package rules (v2 aggregate)
 
 | Rule | Detail |

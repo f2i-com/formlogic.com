@@ -1534,9 +1534,16 @@ async fn run_service_action(
         .await
         .map_err(node_err);
     }
-    crate::services::invocation::invoke(&deps.http, &action, &connection, &input, timeout_override)
-        .await
-        .map_err(node_err)
+    crate::services::invocation::invoke(
+        &deps.http,
+        &action,
+        &connection,
+        &input,
+        timeout_override,
+        &deps.instance_id,
+    )
+    .await
+    .map_err(node_err)
 }
 
 /// `flow_call` (extensible-flows plan §8, desktop leg). data: flowId (STABLE id, §8.1),

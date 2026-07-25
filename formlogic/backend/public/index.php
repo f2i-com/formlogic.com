@@ -493,6 +493,10 @@ $container->set(\FormLogic\Services\Packages\PackageV2InstallService::class, fun
     return new \FormLogic\Services\Packages\PackageV2InstallService($c->get(MySQLConnection::class));
 });
 
+$container->set(\FormLogic\Controllers\BundledExtensionController::class, function () {
+    return new \FormLogic\Controllers\BundledExtensionController();
+});
+
 // SRV-404: flow artifacts — opaque handles to binary content produced/consumed by nodes, so
 // large binaries never travel inside a flow's IR, node payloads, or run logs.
 $container->set(\FormLogic\Services\Flows\ArtifactService::class, function (Container $c) {
@@ -2102,6 +2106,12 @@ $app->post('/api/packages/install-plans/{id}/cancel', function ($request, $respo
 // Management surface — stays available while the REL-705 kill switch is off.
 $app->get('/api/package-installations/{id}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(PackController::class)->getPackageInstallation($request, $response, $getArgs($request));
+})->add($authRequired);
+
+// The Application Package v2 extensions this deployment ships. Listing only — installing goes
+// through the ordinary install-plan lane, so a first-party extension is reviewed like any other.
+$app->get('/api/bundled-extensions', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\BundledExtensionController::class)->index($request, $response);
 })->add($authRequired);
 
 // SRV-404: artifact refs. Owner-scoped; missing and foreign ids answer identically so the

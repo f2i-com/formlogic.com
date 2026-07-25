@@ -38,6 +38,9 @@ class ApplicationPackageV2Validator
      * begin with an alphanumeric, so a leading dot or an empty segment is refused.
      */
     private const ACTION_ID = '/^[a-z0-9][a-z0-9.-]{0,63}$/';
+    /** Search keyword grammar (MKT-602): lowercase, hyphen-separated, no spaces or punctuation. */
+    private const KEYWORD = '/^[a-z0-9][a-z0-9-]{0,31}$/';
+    private const MAX_KEYWORDS = 16;
     private const PORT_ID = '/^[a-zA-Z][a-zA-Z0-9_]{0,47}$/';
     private const CORE_TYPE = '/^[a-z][a-z0-9_]{0,47}$/';
     private const ICON_ID = '/^[a-z0-9-]{1,48}$/';
@@ -88,7 +91,7 @@ class ApplicationPackageV2Validator
         if (!self::isMap($meta)) {
             $issues[] = self::issue('bad_package_meta', '$.package', 'package metadata is required');
         } else {
-            self::checkUnknownKeys($meta, ['id', 'kind', 'version', 'publisherId', 'displayName', 'description'], '$.package', $issues);
+            self::checkUnknownKeys($meta, ['id', 'kind', 'version', 'publisherId', 'displayName', 'description', 'keywords'], '$.package', $issues);
             $idOk = self::isStr($meta['id'] ?? null, 1, 128) && preg_match(self::NAMESPACED_ID, (string) $meta['id']) === 1;
             if (!$idOk) {
                 $issues[] = self::issue('bad_package_id', '$.package.id', 'package id must be a namespaced id (>=2 dot-segments)');
@@ -112,6 +115,20 @@ class ApplicationPackageV2Validator
             }
             if (array_key_exists('description', $meta) && !self::isStr($meta['description'], 0, 2000)) {
                 $issues[] = self::issue('bad_display_name', '$.package.description', 'description must be a string of at most 2000 chars');
+            }
+            // Keywords are how a package is FOUND. The grammar is deliberately narrow — lowercase,
+            // no spaces, bounded count — so a search index cannot be gamed with punctuation
+            // variants or a wall of terms, and so two authors spelling the same idea agree.
+            if (array_key_exists('keywords', $meta)) {
+                if (!self::isList($meta['keywords']) || count($meta['keywords']) > 16) {
+                    $issues[] = self::issue('bad_keywords', '$.package.keywords', 'keywords must be an array of ' . self::MAX_KEYWORDS . ' entries or fewer');
+                } else {
+                    foreach ($meta['keywords'] as $i => $keyword) {
+                        if (!self::isStr($keyword, 1, 32) || preg_match(self::KEYWORD, (string) $keyword) !== 1) {
+                            $issues[] = self::issue('bad_keywords', '$.package.keywords[' . $i . ']', 'each keyword is 1..32 chars of lowercase letters, digits and hyphens');
+                        }
+                    }
+                }
             }
         }
 

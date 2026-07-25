@@ -149,6 +149,35 @@
       "dataClasses": ["audio", "transcripts"]
     },
     {
+      "id": "audio.speech",
+      "title": "Synthesize speech",
+      "description": "Turn text into spoken audio through Desktop-held credentials. The response is audio bytes, so the caller receives an ArtifactRef rather than the audio inline — speech is far too large to travel inside a flow's node payloads or run logs.",
+      "category": { "id": "ai.audio", "label": "AI / Audio" },
+      "tags": ["audio", "speech", "text-to-speech", "tts"],
+      "capability": "speech.synthesize",
+      "sideEffects": "external-communication",
+      "idempotency": "optional",
+      "streaming": { "mode": "none", "cancellable": true },
+      "timeoutMs": 120000,
+      "inputSchema": {
+        "type": "object",
+        "required": ["input"],
+        "properties": {
+          "input": { "type": "string", "description": "The text to speak." },
+          "model": { "type": "string", "default": "gpt-4o-mini-tts" },
+          "voice": { "type": "string", "default": "alloy" },
+          "responseFormat": { "type": "string", "default": "mp3", "description": "Audio container: mp3, opus, aac, flac, wav or pcm." },
+          "speed": { "type": "number", "minimum": 0.25, "maximum": 4 }
+        }
+      },
+      "outputSchema": { "$ref": "formlogic://schemas/artifact-ref.json", "x-artifactKinds": ["audio"] },
+      "transport": { "kind": "openai-compatible", "method": "POST", "path": "/v1/audio/speech", "authInjection": { "kind": "bearer", "secret": "api-key" } },
+      "request": { "body": { "$path": "$.input" } },
+      "response": { "successStatuses": [200], "contentTypes": ["audio/mpeg", "audio/opus", "audio/aac", "audio/flac", "audio/wav", "audio/pcm"], "output": { "$path": "$.response" } },
+      "requiredGrants": ["services.invoke"],
+      "dataClasses": ["audio", "prompts"]
+    },
+    {
       "id": "audio.chat",
       "title": "Generate an audio response",
       "description": "Send text or audio messages to gpt-audio-1.5 or another compatible audio model and receive a typed text/audio chat response.",

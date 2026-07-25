@@ -763,6 +763,7 @@ async fn invoke_service_action(
             &body.connection,
             &body.input,
             body.timeout_ms,
+            state.flow_runtime.as_ref().map_or("unpaired-desktop", |rt| rt.instance_id()),
         )
         .await
     };

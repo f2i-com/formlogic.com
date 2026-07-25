@@ -21,7 +21,13 @@
         "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$", "maxLength": 64 },
         "publisherId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*(\\.[a-z0-9][a-z0-9-]*)+$", "maxLength": 96 },
         "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
-        "description": { "type": "string", "maxLength": 2000 }
+        "description": { "type": "string", "maxLength": 2000 },
+        "keywords": {
+          "type": "array",
+          "description": "Search terms this package should be found by. The grammar is deliberately narrow (lowercase, hyphen-separated, no spaces or punctuation) and the count is bounded, so a search index cannot be gamed with punctuation variants or a wall of terms, and two authors spelling the same idea agree.",
+          "maxItems": 16,
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$", "maxLength": 32 }
+        }
       },
       "additionalProperties": false
     },

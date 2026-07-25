@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import type { FlowNodeDefinitionV1 } from '../../../application-package/packageV2';
 import { useInstalledNodeStore } from '../../../stores/installedNodeStore';
-import type { NodeHandleSpec, NodePropertySpec, NodeSpec } from '../editor/nodeCatalog';
+import { NODE_CATEGORIES, type NodeCategory, type NodeHandleSpec, type NodePropertySpec, type NodeSpec } from '../editor/nodeCatalog';
 import { flowNodeRegistry } from './FlowNodeRegistry';
 import type { FlowNodeProvider } from './types';
 
@@ -121,7 +121,7 @@ export function adaptInstalledDefinition(def: FlowNodeDefinitionV1, packageName?
   return {
     type: def.type,
     label: def.display?.label || def.type,
-    category: 'installed',
+    category: hostCategoryFor(def.display?.category),
     description: def.display?.description || def.display?.label || def.type,
     doc: `${def.display?.description || def.display?.label || def.type}\n\n${provenance} ${runNote}`,
     icon: (def.display?.iconId && ICON_BY_ID[def.display.iconId]) || Puzzle,
@@ -131,6 +131,33 @@ export function adaptInstalledDefinition(def: FlowNodeDefinitionV1, packageName?
     outputs,
     properties,
   };
+}
+
+/**
+ * Map a definition's declared `display.category` onto a HOST category, or fall back to
+ * "Installed extensions".
+ *
+ * An allowlist rather than a free string, for the same reason icons are: the palette's section
+ * list is a presentation surface shared by every package, and an author who could invent
+ * sections could fragment it or push their own to the top. Matching an existing section is a
+ * legitimate request — an AI node belongs beside the other AI nodes — so that is what is
+ * honoured, by id or by label, case-insensitively. Anything else lands under Installed
+ * extensions, which is accurate rather than a failure.
+ *
+ * Users organise their own palette separately (see the node-groups store); that is a personal
+ * preference and is deliberately NOT something a package can set.
+ */
+function hostCategoryFor(declared: unknown): NodeCategory {
+  if (typeof declared !== 'string' || declared.trim() === '') return 'installed';
+  const wanted = declared.trim().toLowerCase();
+  const match = NODE_CATEGORIES.find(
+    (category) => category.id === wanted || category.label.toLowerCase() === wanted
+  );
+  // 'installed' stays the home for anything unrecognised, and a package cannot claim the
+  // desktop section — that one means "needs a local FormLogic Desktop service", which is a
+  // host fact about how the node runs, not a label an author gets to choose.
+  if (!match || match.id === 'desktop') return 'installed';
+  return match.id;
 }
 
 // Adapted specs cached by digest so repeat resolutions return stable identities

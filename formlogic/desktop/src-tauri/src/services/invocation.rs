@@ -585,6 +585,7 @@ pub async fn invoke(
     connection: &str,
     input: &Value,
     timeout_override_ms: Option<u64>,
+    device_id: &str,
 ) -> Result<Value, InvokeError> {
     if action.transport != Transport::OpenAiCompatible {
         // Sending another transport's action down the gateway lane would resolve its path
@@ -616,21 +617,44 @@ pub async fn invoke(
         .await
         .map_err(|e| InvokeError::new(InvokeErrorCode::TransportFailed, format!("gateway unreachable: {e}")))?;
     let status = response.status();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/json")
+        .to_string();
     let body = response
         .bytes()
         .await
         .map_err(|e| InvokeError::new(InvokeErrorCode::TransportFailed, format!("gateway read failed: {e}")))?;
-    if body.len() > MAX_RESPONSE_BYTES {
-        return Err(InvokeError::new(
-            InvokeErrorCode::TransportFailed,
-            format!("response exceeds the {MAX_RESPONSE_BYTES}-byte cap"),
-        ));
-    }
     if !status.is_success() {
         let detail = redact(&String::from_utf8_lossy(&body));
         return Err(InvokeError::new(
             InvokeErrorCode::TransportFailed,
             format!("provider gateway returned {status}: {detail}"),
+        ));
+    }
+
+    // A provider action can legitimately return BYTES rather than JSON — /v1/audio/speech is
+    // audio, not a document. Parsing that as JSON would fail an action that worked perfectly,
+    // so a non-JSON success becomes an ArtifactRef on the same terms as the managed-process
+    // lane: the bytes stay on this device and the flow carries a handle. Large binary output
+    // must never travel inside node payloads or run logs.
+    if !is_json_content_type(&content_type) {
+        if body.len() > MAX_ARTIFACT_RESPONSE_BYTES {
+            return Err(InvokeError::new(
+                InvokeErrorCode::TransportFailed,
+                format!("binary response exceeds the {MAX_ARTIFACT_RESPONSE_BYTES}-byte artifact cap"),
+            ));
+        }
+        return super::artifacts::store(&body, &content_type, device_id)
+            .map_err(|detail| InvokeError::new(InvokeErrorCode::OutputInvalid, detail));
+    }
+
+    if body.len() > MAX_RESPONSE_BYTES {
+        return Err(InvokeError::new(
+            InvokeErrorCode::TransportFailed,
+            format!("response exceeds the {MAX_RESPONSE_BYTES}-byte cap"),
         ));
     }
     let output: Value = serde_json::from_slice(&body).map_err(|_| {
@@ -640,6 +664,14 @@ pub async fn invoke(
         return Err(InvokeError::new(InvokeErrorCode::OutputInvalid, detail));
     }
     Ok(output)
+}
+
+/// Is this response JSON? Anything else on a SUCCESS is content, not a document — and is stored
+/// as an artifact rather than parsed. `+json` suffixes count (application/problem+json), and an
+/// absent/blank type is treated as JSON because that is what every existing action returns.
+fn is_json_content_type(content_type: &str) -> bool {
+    let base = content_type.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+    base.is_empty() || base == "application/json" || base == "text/json" || base.ends_with("+json")
 }
 
 /// §6.5 JSON-Schema SUBSET validator: type (incl. nullable unions), properties, required,
@@ -884,6 +916,30 @@ mod tests {
         assert!(schema_subset::validate(&json!({ "description": "x" }), &json!("anything")).is_ok());
         assert!(schema_subset::validate(&Value::Null, &json!({ "a": 1 })).is_ok());
     }
+    #[test]
+    fn only_json_responses_are_parsed_as_documents() {
+        // The rule the whole speech path rests on: /v1/audio/speech returns AUDIO on success,
+        // and parsing that as JSON would fail an action that worked perfectly.
+        for json_type in ["application/json", "APPLICATION/JSON", "application/json; charset=utf-8", "text/json", "application/problem+json", ""] {
+            assert!(is_json_content_type(json_type), "{json_type:?} should be treated as JSON");
+        }
+        for binary in ["audio/mpeg", "audio/wav", "image/png", "application/octet-stream", "text/plain"] {
+            assert!(!is_json_content_type(binary), "{binary:?} should become an artifact");
+        }
+    }
+
+    #[test]
+    fn the_builtin_speech_action_resolves_and_declares_an_artifact_output() {
+        // A pack node binds to this action by id, so it must exist and stay on the gateway lane.
+        let action = resolve_action("openai-api", "audio.speech").expect("resolves");
+        assert!(!action.is_managed_process() && !action.is_plugin_command(), "speech is a gateway action");
+        assert_eq!(action.side_effects, "external-communication");
+        assert_eq!(
+            action.output_schema["$ref"], "formlogic://schemas/artifact-ref.json",
+            "the caller receives a handle, never the audio inline"
+        );
+    }
+
     // -- SRV-407: managed-process-http ------------------------------------------------------
 
     /// A v3 definition whose action addresses a process the Desktop supervises.
@@ -977,7 +1033,7 @@ mod tests {
                 .enable_all()
                 .build()
                 .expect("runtime")
-                .block_on(invoke(&client, &action, "openai", &json!({ "prompt": "hi" }), None));
+                .block_on(invoke(&client, &action, "openai", &json!({ "prompt": "hi" }), None, "test-desktop"));
             let err = outcome.unwrap_err();
             assert_eq!(err.code, InvokeErrorCode::ActionUnavailable);
             assert!(err.message.contains("different transport"));
@@ -1167,7 +1223,7 @@ mod tests {
                 .enable_all()
                 .build()
                 .expect("runtime")
-                .block_on(invoke(&client, &action, "openai", &json!({}), None))
+                .block_on(invoke(&client, &action, "openai", &json!({}), None, "test-desktop"))
                 .unwrap_err();
             assert_eq!(err.code, InvokeErrorCode::ActionUnavailable);
             assert!(err.message.contains("different transport"));

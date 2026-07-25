@@ -115,6 +115,9 @@ const SIDE_EFFECTS = ['none', 'read', 'external-write', 'destructive'];
 const IDEMPOTENCY = ['none', 'caller-key'];
 const LATER_HANDLER_KINDS = ['connector-action', 'subflow', 'quickjs', 'hosted-action'];
 const REF_ALLOWLIST = ['formlogic://schemas/artifact-ref.json'];
+/** Search keyword grammar (MKT-602): lowercase, hyphen-separated, no spaces or punctuation. */
+const KEYWORD = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const MAX_KEYWORDS = 16;
 const SCHEMA_TYPES = ['string', 'number', 'integer', 'boolean', 'object', 'array', 'null'];
 const SCHEMA_KEYWORDS = new Set([
   'type', 'properties', 'required', 'additionalProperties', 'items', 'enum', 'const',
@@ -453,7 +456,7 @@ export function validateApplicationPackageV2(value: unknown): PackageV2Issue[] {
   if (!isMap(meta)) {
     push('bad_package_meta', '$.package', 'package metadata is required');
   } else {
-    checkUnknownKeys(meta, ['id', 'kind', 'version', 'publisherId', 'displayName', 'description'], '$.package', push);
+    checkUnknownKeys(meta, ['id', 'kind', 'version', 'publisherId', 'displayName', 'description', 'keywords'], '$.package', push);
     const idOk = isString(meta.id, 1, 128) && NAMESPACED_ID.test(meta.id);
     if (!idOk) {
       push('bad_package_id', '$.package.id', 'package id must be a namespaced id (>=2 dot-segments)');
@@ -477,6 +480,20 @@ export function validateApplicationPackageV2(value: unknown): PackageV2Issue[] {
     }
     if (meta.description !== undefined && !isString(meta.description, 0, 2000)) {
       push('bad_display_name', '$.package.description', 'description must be a string of at most 2000 chars');
+    }
+    // Keywords are how a package is FOUND. The grammar is deliberately narrow — lowercase, no
+    // spaces, bounded count — so a search index cannot be gamed with punctuation variants or a
+    // wall of terms, and so two authors spelling the same idea agree.
+    if (meta.keywords !== undefined) {
+      if (!Array.isArray(meta.keywords) || meta.keywords.length > MAX_KEYWORDS) {
+        push('bad_keywords', '$.package.keywords', `keywords must be an array of ${MAX_KEYWORDS} entries or fewer`);
+      } else {
+        meta.keywords.forEach((keyword: unknown, i: number) => {
+          if (!isString(keyword, 1, 32) || !KEYWORD.test(keyword)) {
+            push('bad_keywords', `$.package.keywords[${i}]`, 'each keyword is 1..32 chars of lowercase letters, digits and hyphens');
+          }
+        });
+      }
     }
   }
 
