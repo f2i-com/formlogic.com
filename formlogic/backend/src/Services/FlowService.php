@@ -18,6 +18,13 @@ use PDO;
  */
 class FlowService
 {
+    /**
+     * RUN-305: how long a Desktop may keep executing cached compiled IR without hearing from
+     * the server. Long enough that ordinary offline work is uninterrupted; short enough that a
+     * revoked or re-bound definition cannot keep running indefinitely on a disconnected machine.
+     */
+    public const COMPILED_IR_TTL_SECONDS = 24 * 60 * 60;
+
     public const MAX_FLOW_JSON_BYTES = 262144;      // 256 KiB
     public const MAX_BINDING_JSON_BYTES = 16384;    // 16 KiB per JSON column
     public const MAX_INPUT_SNAPSHOT_BYTES = 65536;  // 64 KiB per run inputSnapshot
@@ -1011,7 +1018,18 @@ class FlowService
         if (!is_array($ir) || !is_array($ir['nodes'] ?? null) || !is_array($ir['edges'] ?? null)) {
             return null;
         }
-        return ['nodes' => $ir['nodes'], 'edges' => $ir['edges']];
+        // RUN-305: the Desktop caches this IR so it can run offline without recompiling every
+        // time. That cache needs a horizon: an uninstalled extension, a re-bound service slot
+        // or a revoked definition all change what a flow SHOULD lower to, and a Desktop that
+        // has not reached the server since then cannot know. Stamping a validity window means
+        // stale IR stops being used on its own — rather than the Desktop silently executing a
+        // lowering the server has already moved on from.
+        return [
+            'nodes' => $ir['nodes'],
+            'edges' => $ir['edges'],
+            'issuedAt' => gmdate('c'),
+            'validForSeconds' => self::COMPILED_IR_TTL_SECONDS,
+        ];
     }
 
     public function ensureFlowVersion(string $flowDefinitionId): ?string

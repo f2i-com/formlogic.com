@@ -143,11 +143,46 @@ struct CachedSnapshot {
 /// snapshot (`compiledIr` — the server compiler is the ONLY lowering authority; the desktop
 /// never lowers). Prefer it when well-formed; otherwise the stored graph, where an unknown
 /// dotted type fails typed at parse (fail-safe when no IR was deliverable).
+/// RUN-305: has this cached IR outlived the window the server issued it for?
+///
+/// The Desktop keeps compiled IR so it can run offline without recompiling. But an
+/// uninstalled extension, a re-bound service slot or a revoked definition all change what a
+/// flow should lower to, and a Desktop that has not reached the server since then has no way
+/// to know. Past its window the IR stops being used — the flow falls back to its stored graph,
+/// where a contributed node fails as unknown. Refusing loudly beats executing a lowering the
+/// server has already moved on from.
+///
+/// A snapshot with no stamps at all is treated as CURRENT: older servers do not send them, and
+/// silently disabling extension flows against an older backend would be a worse failure.
+fn compiled_ir_is_stale(ir: &Value, now: i64) -> bool {
+    let (Some(issued_at), Some(valid_for)) = (
+        ir.get("issuedAt").and_then(Value::as_str),
+        ir.get("validForSeconds").and_then(Value::as_i64),
+    ) else {
+        return false;
+    };
+    match chrono::DateTime::parse_from_rfc3339(issued_at) {
+        Ok(parsed) => now.saturating_sub(parsed.timestamp()) > valid_for.max(0),
+        // An unparseable stamp is not a licence to run forever.
+        Err(_) => true,
+    }
+}
+
 fn effective_flow_graph(flow: &Value) -> Value {
     flow.get("compiledIr")
         .filter(|ir| {
             ir.get("nodes").map(Value::is_array).unwrap_or(false)
                 && ir.get("edges").map(Value::is_array).unwrap_or(false)
+        })
+        .filter(|ir| {
+            let fresh = !compiled_ir_is_stale(ir, chrono::Utc::now().timestamp());
+            if !fresh {
+                log::warn!(
+                    "compiled IR for flow {:?} is past its validity window — falling back to the stored graph; reconnect to refresh",
+                    flow.get("slug").and_then(Value::as_str).unwrap_or("?")
+                );
+            }
+            fresh
         })
         .cloned()
         .unwrap_or_else(|| flow.get("flowJson").cloned().unwrap_or_else(|| json!({})))
@@ -4390,6 +4425,46 @@ mod tests {
 
             let absent = json!({ "flowJson": { "nodes": [], "edges": [] } });
             assert_eq!(effective_flow_graph(&absent), json!({ "nodes": [], "edges": [] }));
+        }
+
+        /// RUN-305: cached IR has a validity window. Inside it the Desktop runs offline from
+        /// cache; outside it the IR is abandoned rather than silently executing a lowering the
+        /// server may have revoked (an uninstalled extension, a re-bound slot).
+        #[test]
+        fn stale_compiled_ir_is_not_executed() {
+            let now = 1_800_000_000_i64;
+            let at = |secs: i64| {
+                chrono::DateTime::from_timestamp(secs, 0).unwrap().to_rfc3339()
+            };
+
+            let fresh = json!({ "nodes": [], "edges": [], "issuedAt": at(now - 60), "validForSeconds": 86400 });
+            assert!(!compiled_ir_is_stale(&fresh, now));
+
+            let expired = json!({ "nodes": [], "edges": [], "issuedAt": at(now - 90_000), "validForSeconds": 86400 });
+            assert!(compiled_ir_is_stale(&expired, now));
+
+            // An unparseable stamp is not a licence to run forever.
+            let bogus = json!({ "nodes": [], "edges": [], "issuedAt": "not-a-date", "validForSeconds": 86400 });
+            assert!(compiled_ir_is_stale(&bogus, now));
+
+            // No stamps at all = an older server that does not send them. Treated as current,
+            // because silently disabling extension flows against an older backend is worse.
+            let unstamped = json!({ "nodes": [], "edges": [] });
+            assert!(!compiled_ir_is_stale(&unstamped, now));
+
+            // End to end: expired IR is dropped in favour of the stored graph. This path reads
+            // the REAL clock, so the stamp has to be genuinely in the past — a fabricated
+            // "now" would put issuedAt in the future, where the age is negative and nothing
+            // looks stale.
+            let flow = json!({
+                "slug": "x",
+                "flowJson": { "nodes": [1], "edges": [] },
+                "compiledIr": {
+                    "nodes": [], "edges": [],
+                    "issuedAt": "2020-01-01T00:00:00+00:00", "validForSeconds": 3600,
+                },
+            });
+            assert_eq!(effective_flow_graph(&flow), json!({ "nodes": [1], "edges": [] }));
         }
 
         /// RUN-301: a snapshot flow carrying a server-compiled canonical IR EXECUTES the IR.

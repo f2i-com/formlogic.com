@@ -599,6 +599,10 @@ class PackageV2InstallTest extends TestCase
         $this->assertIsArray($ir, 'the contributed flow ships its compiled IR');
         $this->assertSame('template', $ir['nodes'][1]['type'], 'the IR carries the lowered node');
         $this->assertArrayNotHasKey('compiledIr', $byId[$plain['id']], 'plain flows carry nothing extra');
+        // RUN-305: cached IR carries the window it may be executed offline within, so a
+        // Desktop that has not reached the server cannot run a revoked lowering forever.
+        $this->assertNotEmpty($ir['issuedAt'], 'the IR is stamped when it was issued');
+        $this->assertSame(\FormLogic\Services\FlowService::COMPILED_IR_TTL_SECONDS, $ir['validForSeconds']);
         $this->assertSame('com.acme.desktopir.greet', $byId[$withNode['id']]['flowJson']['nodes'][1]['type'], 'the stored graph keeps the contributed identity');
 
         self::$pdo->prepare('DELETE FROM flow_definitions WHERE owner_user_id = ?')->execute([$this->userId]);
