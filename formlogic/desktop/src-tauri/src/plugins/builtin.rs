@@ -164,15 +164,25 @@ mod tests {
         }
     }
 
-    /// AOK-301: the bundled aokie manifest is v2 and its declarative UI
+    /// AOK-301 / SRV-402: the bundled aokie manifest is v3 and its declarative UI
     /// contributions (nav + Overview hero + status cards) are internally valid —
     /// every status card polls a declared command and the CTA resolves to a nav
     /// entry (all enforced by validate_v2_sections, exercised here on the REAL
     /// manifest so the deliverable is provably well-formed before deploy).
+    ///
+    /// It moved to v3 when it began contributing its own Service Definitions: a v3-only
+    /// section under an older schemaVersion is REFUSED rather than ignored, so the version
+    /// and the section have to move together.
     #[test]
-    fn aokie_manifest_is_v2_with_valid_ui_contributions() {
+    fn aokie_manifest_is_v3_with_valid_ui_and_service_contributions() {
         let m = parse_manifest(template("aokie").unwrap().manifest_json).unwrap();
-        assert_eq!(m.schema_version, 2, "aokie manifest is schemaVersion 2");
+        assert_eq!(m.schema_version, 3, "aokie manifest is schemaVersion 3");
+        assert_eq!(
+            m.service_definitions.len(),
+            1,
+            "aokie contributes its phone service definition"
+        );
+        assert_eq!(m.service_definitions[0].definition_file, "definitions/phone.json");
         let ui = m.ui.as_ref().expect("aokie declares ui contributions");
         assert!(ui.nav.iter().any(|n| n.id == "receptionist"), "receptionist nav entry");
         assert!(ui.overview.iter().any(|c| c.kind == "hero"), "an Overview hero card");

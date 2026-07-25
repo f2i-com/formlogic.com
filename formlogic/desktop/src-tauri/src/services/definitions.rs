@@ -483,3 +483,44 @@ mod tests {
         reset_for_tests();
     }
 }
+
+#[cfg(test)]
+mod aokie_definition_check {
+    /// The SHIPPED Aokie service definition must satisfy the host's own v3 rules.
+    ///
+    /// A definition that only ever gets checked by being deployed fails on the live phone line,
+    /// where the cost of finding out is a plugin that quarantines itself. Reads the file from the
+    /// sibling aokie checkout; skipped when that checkout is absent so this does not become a
+    /// machine-specific test.
+    #[test]
+    fn the_shipped_aokie_definition_is_accepted_by_this_host() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../../../Users/User/Documents/repos/aokie.com/crates/aokie-plugin/definitions/phone.json");
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            eprintln!("aokie checkout not present at {} — skipping", path.display());
+            return;
+        };
+        let definition: serde_json::Value = serde_json::from_str(&raw).expect("phone.json is valid JSON");
+
+        let _guard = super::test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        super::reset_for_tests();
+        let report = super::reconcile_plugin("aokie", vec![definition]);
+        assert!(report.refusals.is_empty(), "host refused the shipped definition: {:?}", report.refusals);
+        assert_eq!(report.added, vec!["aokie.phone".to_string()]);
+
+        // Every declared action must resolve on the transport it claims.
+        for action in ["call.dial", "call.speak", "call.hangup", "call.current", "sms.send", "sms.threads", "sms.thread", "phone.status"] {
+            let resolved = crate::services::invocation::resolve_action("aokie.phone", action)
+                .unwrap_or_else(|e| panic!("action {action:?} does not resolve: {}", e.message));
+            assert!(resolved.is_plugin_command(), "{action} must run on the plugin-command lane");
+            assert_eq!(resolved.plugin_command().map(|(p, _)| p), Some("aokie"));
+        }
+
+        // The host stamps provenance: a contributed definition cannot claim to be a built-in.
+        let catalog = super::catalog();
+        let entry = catalog.definitions.iter().find(|d| d["id"] == "aokie.phone").expect("in the catalog");
+        assert_eq!(entry["provider"], "aokie");
+
+        super::reset_for_tests();
+    }
+}
