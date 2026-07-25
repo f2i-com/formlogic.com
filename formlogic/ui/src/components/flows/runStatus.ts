@@ -6,8 +6,14 @@
 // node cards read to draw status pills, and (b) an ordered run log the Test Run drawer renders
 // as a debug timeline. Nothing here executes a flow — it only records what the executor reports.
 
-/** A node's live run phase (idle = never reported, so it's simply absent from the map). */
-export type NodeRunPhase = 'running' | 'done' | 'error';
+/**
+ * A node's live run phase (idle = never reported, so it's simply absent from the map).
+ *
+ * RUN-302 added 'skipped': a node whose typed data inputs can never arrive is not run, and that
+ * is neither success nor failure. Showing it as either would misreport what happened — the node
+ * did not fail, and it did not produce anything.
+ */
+export type NodeRunPhase = 'running' | 'done' | 'error' | 'skipped';
 
 /** One node's recorded run status. */
 export interface NodeRunStatus {

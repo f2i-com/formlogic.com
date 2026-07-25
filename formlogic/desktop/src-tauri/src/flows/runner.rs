@@ -386,6 +386,13 @@ pub async fn execute_flow(flow_json: &Value, deps: &RunDeps, opts: &RunOptions) 
         incoming.entry(e.target.as_str()).or_default().push((e.source.as_str(), i));
     }
 
+    // RUN-302: typed data ports. The plan rides on the compiled IR when the server produced one
+    // (so Desktop, browser and cloud read the SAME wiring); a graph the compiler never saw
+    // derives it by the identical rule. No data edges → empty plan → every line below is inert
+    // and existing flows behave exactly as before.
+    let data_plan = super::data_ports::plan_from(flow_json);
+    let mut node_outcomes: HashMap<String, super::data_ports::NodeOutcome> = HashMap::new();
+
     let mut outputs: HashMap<String, Value> = HashMap::new();
     let mut executed: HashSet<String> = HashSet::new();
     let mut active: HashSet<String> = HashSet::new();
@@ -442,12 +449,42 @@ pub async fn execute_flow(flow_json: &Value, deps: &RunDeps, opts: &RunOptions) 
             }
         };
 
+        // RUN-302 readiness, in lock-step with the browser and cloud: a node whose data inputs
+        // can never arrive is SKIPPED here rather than run with missing values or left waiting
+        // for a producer that has already terminated.
+        let readiness = super::data_ports::readiness(&data_plan, &node_outcomes, &node.id);
+        if readiness.verdict != super::data_ports::Verdict::Ready {
+            let state = if readiness.verdict == super::data_ports::Verdict::Blocked {
+                "failed"
+            } else {
+                "skipped"
+            };
+            node_outcomes.insert(node.id.clone(), super::data_ports::NodeOutcome::terminal(state));
+            if let Some(progress) = &opts.progress {
+                progress(NodeProgress {
+                    node_id: node.id.clone(),
+                    status: "skipped",
+                    message: Some(format!(
+                        "{}: {}",
+                        readiness.reason.as_deref().unwrap_or("data_input_unsatisfied"),
+                        readiness.unsatisfied.join(", ")
+                    )),
+                });
+            }
+            continue; // outgoing edges stay inactive, so the skip propagates downstream
+        }
+
         let scope = SelectorScope {
             inputs: Some(opts.inputs.clone()),
             event: opts.event.clone(),
             app: opts.app.clone(),
             nodes: Some(nodes_map(&outputs)),
             upstream,
+            data: if readiness.inputs.is_empty() {
+                None
+            } else {
+                Some(Value::Object(readiness.inputs.clone()))
+            },
             result: None,
         };
 
@@ -456,6 +493,7 @@ pub async fn execute_flow(flow_json: &Value, deps: &RunDeps, opts: &RunOptions) 
         let output = match tokio::time::timeout(remaining, exec).await {
             Ok(Ok(v)) => v,
             Ok(Err(e)) => {
+                node_outcomes.insert(node.id.clone(), super::data_ports::NodeOutcome::terminal("failed"));
                 if let Some(progress) = &opts.progress {
                     progress(NodeProgress {
                         node_id: node.id.clone(),
@@ -475,6 +513,10 @@ pub async fn execute_flow(flow_json: &Value, deps: &RunDeps, opts: &RunOptions) 
 
         nodes_executed += 1;
         executed.insert(node.id.clone());
+        node_outcomes.insert(
+            node.id.clone(),
+            super::data_ports::NodeOutcome::succeeded(super::data_ports::output_ports_of(&output)),
+        );
         if let Some(progress) = &opts.progress {
             progress(NodeProgress {
                 node_id: node.id.clone(),
@@ -520,6 +562,7 @@ fn expr_context(scope: &SelectorScope) -> Value {
         "app": scope.app.clone().unwrap_or(Value::Null),
         "nodes": scope.nodes.clone().unwrap_or(json!({})),
         "upstream": scope.upstream.clone().unwrap_or(Value::Null),
+        "data": scope.data.clone().unwrap_or(Value::Null),
     })
 }
 
@@ -2402,6 +2445,7 @@ mod tests {
             app: None,
             nodes: None,
             upstream: None,
+            data: None,
             result: None,
         }
     }

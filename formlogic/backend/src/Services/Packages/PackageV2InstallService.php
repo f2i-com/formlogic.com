@@ -29,10 +29,12 @@ use PDO;
 class PackageV2InstallService
 {
     private PDO $mysql;
+    private MySQLConnection $connection;
 
     public function __construct(MySQLConnection $mysql)
     {
         $this->mysql = $mysql->getConnection();
+        $this->connection = $mysql;
     }
 
     /**
@@ -594,8 +596,21 @@ class PackageV2InstallService
         $count->execute([$installationId]);
         $nodes = (int) $count->fetchColumn();
 
+        // SRV-403: capture the bound services BEFORE the cascade removes the rows — a live
+        // capability whose install is gone must stop working now, not when its TTL lapses.
+        $boundStmt = $this->mysql->prepare('SELECT DISTINCT definition_id FROM package_service_bindings WHERE installation_id = ?');
+        $boundStmt->execute([$installationId]);
+        $bound = $boundStmt->fetchAll(PDO::FETCH_COLUMN);
+
         $del = $this->mysql->prepare('DELETE FROM package_installations WHERE id = ? AND user_id = ?');
         $del->execute([$installationId, $userId]);
+
+        $authorization = new ServiceAuthorizationService($this->connection);
+        foreach ($bound as $definitionId) {
+            if (is_string($definitionId) && $definitionId !== '') {
+                $authorization->revoke($userId, $definitionId);
+            }
+        }
 
         \FormLogic\Support\PackageTelemetry::emit('package.uninstall', [
             'packageId' => (string) $row['package_id'],

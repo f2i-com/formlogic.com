@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "formlogic://schemas/artifact-ref.json",
+  "title": "ArtifactRef v1",
+  "description": "An opaque HANDLE to binary content produced or consumed by a flow node — never the content itself, and never a path. Large binary data (an image, an audio file, a video) must not travel inside a flow's IR, node payloads, or run logs: it would bloat every persisted revision and run record, and would force every runtime to hold it in memory to pass it along. A node therefore emits a ref, and a downstream consumer resolves it through an authorizing endpoint. The `locality` field records WHERE the bytes actually are, which is what makes cross-device semantics honest: a desktop-local artifact is not silently uploaded to the cloud, and a consumer on another device is told so rather than handed a broken handle. Deliberately absent: any filesystem path, absolute URL, storage key, bucket name, or credential — everything here is safe to persist in a flow run log and to show a user.",
+  "type": "object",
+  "required": ["$artifact", "kind", "mediaType", "byteSize", "locality"],
+  "additionalProperties": false,
+  "properties": {
+    "$artifact": {
+      "type": "string",
+      "pattern": "^art_[a-z0-9]{24}$",
+      "description": "Opaque artifact id. Carries no meaning: not a path, not a hash, not derived from user input."
+    },
+    "kind": {
+      "enum": ["image", "audio", "video", "text", "file"],
+      "description": "Coarse content family. Matched against a port's `x-artifactKinds` at authoring time, so a node that accepts images cannot silently be wired an audio artifact."
+    },
+    "mediaType": {
+      "type": "string",
+      "maxLength": 190,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9!#$&^_.+-]{0,126}/[a-zA-Z0-9][a-zA-Z0-9!#$&^_.+-]{0,126}$",
+      "description": "Exact IANA media type of the stored bytes."
+    },
+    "byteSize": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Size of the stored bytes. Present so a consumer can refuse before transferring."
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "sha256 over the stored bytes. Lets a consumer verify what it received is what the producer wrote."
+    },
+    "locality": {
+      "enum": ["cloud", "device"],
+      "description": "Where the bytes live. `device` artifacts are never uploaded implicitly — a run on another device fails with a typed refusal instead of a silent transfer the user never approved."
+    },
+    "deviceId": {
+      "type": "string",
+      "maxLength": 64,
+      "description": "Required when locality is `device`; the only device that may read the bytes."
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "After this instant the ref resolves as expired, whether or not cleanup has run yet. Expiry is a property of the ref, not of the sweep schedule."
+    },
+    "filename": {
+      "type": "string",
+      "maxLength": 190,
+      "description": "Display name only. Never used to build a storage path."
+    }
+  }
+}

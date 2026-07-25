@@ -277,6 +277,15 @@ class CloudFlowRunner
         $executed = [];
         $active = [];
         $activatedEdges = [];
+        // RUN-302: typed data ports. The plan rides on the compiled IR when there is one, so the
+        // cloud reads the SAME wiring the browser does rather than re-deriving it; a graph the
+        // compiler never saw derives it by the identical rule. No data edges → empty plan →
+        // every line below is inert and existing flows behave exactly as before.
+        $effectiveGraph = is_array($flow['flowJson'] ?? null) ? $flow['flowJson'] : [];
+        $dataPlan = is_array($effectiveGraph['dataPlan'] ?? null)
+            ? $effectiveGraph['dataPlan']
+            : \FormLogic\Services\Flows\DataPortRuntime::planFrom(['edges' => $edges]);
+        $outcomes = [];
         foreach ($nodes as $node) {
             if (empty($incoming[$node['id']])) {
                 $active[$node['id']] = true;
@@ -319,6 +328,15 @@ class CloudFlowRunner
                 }
             }
 
+            // RUN-302 readiness, in lock-step with the browser: a node whose data inputs can
+            // never arrive is SKIPPED rather than run with missing values or left waiting for a
+            // producer that has already terminated.
+            $readiness = \FormLogic\Services\Flows\DataPortRuntime::readiness($dataPlan, $outcomes, $node['id']);
+            if ($readiness['verdict'] !== 'ready') {
+                $outcomes[$node['id']] = ['state' => $readiness['verdict'] === 'blocked' ? 'failed' : 'skipped'];
+                continue; // outgoing edges stay inactive, so the skip propagates downstream
+            }
+
             $scope = [
                 'inputs' => $inputs,
                 'event' => null,
@@ -327,11 +345,15 @@ class CloudFlowRunner
                 'upstream' => $upstream,
                 'result' => null,
             ];
+            if ($readiness['inputs'] !== []) {
+                $scope['data'] = $readiness['inputs'];
+            }
 
             $output = $this->executeNode($node, $scope, $flow, $userId, $runCtx);
 
             $nodesExecuted++;
             $executed[$node['id']] = true;
+            $outcomes[$node['id']] = ['state' => 'succeeded', 'outputs' => self::outputPortsOf($output)];
             if ($node['type'] === 'output') {
                 $sawOutput = true;
                 $outputResult = $output;
@@ -439,6 +461,22 @@ class CloudFlowRunner
     // ── Node executors ──
 
     /** Which outgoing edges a finished node activates (flow_call routes by handle). */
+    /**
+     * RUN-302: a node's output PORT map, by the same convention the browser uses — an object
+     * result exposes its own keys as ports, and every result is additionally available on the
+     * conventional `output` port. That keeps single-value nodes wireable without forcing authors
+     * to wrap scalars, and lets a node already returning `{ text, url }` feed typed ports as-is.
+     *
+     * @return array<string,mixed>
+     */
+    private static function outputPortsOf(mixed $output): array
+    {
+        if (is_array($output) && !array_is_list($output)) {
+            return $output + ['output' => $output];
+        }
+        return ['output' => $output];
+    }
+
     private function edgeIsActive(array $node, mixed $output, ?string $sourceHandle): bool
     {
         if (($node['type'] ?? '') !== 'flow_call') {

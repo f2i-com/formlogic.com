@@ -1472,6 +1472,33 @@ CREATE TABLE `package_install_jobs` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
+-- Table structure for table `flow_artifacts`
+--
+
+DROP TABLE IF EXISTS `flow_artifacts`;
+CREATE TABLE `flow_artifacts` (
+  `id` varchar(28) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `run_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `kind` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `media_type` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `filename` varchar(190) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `byte_size` bigint unsigned NOT NULL DEFAULT '0',
+  `digest` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `locality` enum('cloud','device') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'cloud',
+  `device_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `storage_key` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `last_accessed_at` datetime DEFAULT NULL,
+  `expires_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_fa_user` (`user_id`),
+  KEY `idx_fa_expiry` (`expires_at`),
+  KEY `idx_fa_run` (`run_id`),
+  CONSTRAINT `flow_artifacts_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
 -- Table structure for table `package_service_bindings`
 --
 

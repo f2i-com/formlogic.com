@@ -17,6 +17,10 @@ pub struct SelectorScope {
     pub inputs: Option<Value>,
     pub nodes: Option<Value>,
     pub upstream: Option<Value>,
+    /// RUN-302: this node's resolved typed data-port inputs, keyed by input port id. Present
+    /// only for nodes with declared data wiring; `$.data.<port>` addresses one. Artifacts appear
+    /// here as REFS, never bytes.
+    pub data: Option<Value>,
 }
 
 /// Walk `path` segments into `root`; a missing / non-object hop yields `None`

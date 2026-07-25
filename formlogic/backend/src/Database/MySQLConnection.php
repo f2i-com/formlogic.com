@@ -624,6 +624,32 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // SRV-404: flow artifacts. Rows are HANDLES — the bytes live under storage/artifacts
+        // (cloud locality) or on a device (device locality, storage_key NULL). storage_key is
+        // never projected onto the wire; reads always pass through ArtifactService.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS flow_artifacts (
+                id VARCHAR(28) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                run_id VARCHAR(36) NULL,
+                kind VARCHAR(16) NOT NULL,
+                media_type VARCHAR(190) NOT NULL,
+                filename VARCHAR(190) NULL,
+                byte_size BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                digest CHAR(64) NULL,
+                locality ENUM('cloud','device') NOT NULL DEFAULT 'cloud',
+                device_id VARCHAR(64) NULL,
+                storage_key VARCHAR(255) NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_accessed_at DATETIME NULL,
+                expires_at DATETIME NULL,
+                INDEX idx_fa_user (user_id),
+                INDEX idx_fa_expiry (expires_at),
+                INDEX idx_fa_run (run_id),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Pack catalog — marketplace registry
         // item_type / trust_level (spec §30) model a multi-artifact marketplace: for now every listing is
         // an 'application_package' with server-derived trust; the other item types are reserved (no runtime

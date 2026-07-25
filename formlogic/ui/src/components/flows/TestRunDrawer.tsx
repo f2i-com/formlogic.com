@@ -13,7 +13,7 @@
 // (credit-metered; typed refusals — credits exhausted / unsupported nodes — surface inline).
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Check, Cloud, Laptop, Loader2, PlayCircle, ServerCog, X } from 'lucide-react';
+import { AlertTriangle, Check, Cloud, Laptop, Loader2, MinusCircle, PlayCircle, ServerCog, X } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { PanelHeader } from './PanelHeader';
 import { toast } from '../../stores/toastStore';
@@ -67,6 +67,8 @@ function statusTone(status: string): string {
 function PhaseGlyph({ phase }: { phase: NodeRunPhase }) {
   if (phase === 'running') return <Loader2 className="h-3.5 w-3.5 flex-none animate-spin text-primary-500" />;
   if (phase === 'done') return <Check className="h-3.5 w-3.5 flex-none text-emerald-500" />;
+  // Skipped is neither success nor failure: the node never ran because an input could not arrive.
+  if (phase === 'skipped') return <MinusCircle className="h-3.5 w-3.5 flex-none text-gray-400 dark:text-slate-500" />;
   return <X className="h-3.5 w-3.5 flex-none text-red-500" />;
 }
 
@@ -244,6 +246,8 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
       onProgress: (p) => {
         if (p.status === 'done' || p.status === 'error') executed += 1;
         if (!p.nodeId) return;
+        // The Desktop progress stream has no skipped phase of its own yet (RUN-303 carries the
+        // readiness rule to the Rust runner); until then it only reports running/done/error.
         const phase: NodeRunPhase = p.status === 'done' ? 'done' : p.status === 'error' ? 'error' : 'running';
         const info = p.status === 'error' ? { error: p.message ?? 'Failed' } : undefined;
         setRunLog((l) => reduceRunLog(l, p.nodeId as string, phase, info));

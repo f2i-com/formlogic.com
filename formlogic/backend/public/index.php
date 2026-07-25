@@ -493,6 +493,24 @@ $container->set(\FormLogic\Services\Packages\PackageV2InstallService::class, fun
     return new \FormLogic\Services\Packages\PackageV2InstallService($c->get(MySQLConnection::class));
 });
 
+// SRV-404: flow artifacts — opaque handles to binary content produced/consumed by nodes, so
+// large binaries never travel inside a flow's IR, node payloads, or run logs.
+$container->set(\FormLogic\Services\Flows\ArtifactService::class, function (Container $c) {
+    return new \FormLogic\Services\Flows\ArtifactService($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Controllers\ArtifactController::class, function (Container $c) {
+    return new \FormLogic\Controllers\ArtifactController(
+        $c->get(\FormLogic\Services\Flows\ArtifactService::class),
+        $c->get(MySQLConnection::class)
+    );
+});
+
+// SRV-403: what a website may invoke on the owner's Desktop, derived from live installed
+// state (host built-in, or a service the owner bound to an installed package's slot).
+$container->set(\FormLogic\Services\Packages\ServiceAuthorizationService::class, function (Container $c) {
+    return new \FormLogic\Services\Packages\ServiceAuthorizationService($c->get(MySQLConnection::class));
+});
+
 // Service binding slots (ADR-010 / SRV-405): the owner's answer to "which service, on which
 // connection, fills this package's declared slot" — the compiler's input for lowering
 // contributed service-action nodes.
@@ -844,7 +862,8 @@ $container->set(\FormLogic\Controllers\ConnectorCommandController::class, functi
         $c->get(\FormLogic\Services\DesktopCommandService::class),
         $c->get(AppService::class),
         $c->get(AppUserService::class),
-        $c->get(\FormLogic\Database\MySQLConnection::class)
+        $c->get(\FormLogic\Database\MySQLConnection::class),
+        $c->get(\FormLogic\Services\Packages\ServiceAuthorizationService::class)
     );
 });
 // E2E AI relay (docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md Phase 1): sealed AI requests
@@ -2083,6 +2102,21 @@ $app->post('/api/packages/install-plans/{id}/cancel', function ($request, $respo
 // Management surface — stays available while the REL-705 kill switch is off.
 $app->get('/api/package-installations/{id}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(PackController::class)->getPackageInstallation($request, $response, $getArgs($request));
+})->add($authRequired);
+
+// SRV-404: artifact refs. Owner-scoped; missing and foreign ids answer identically so the
+// endpoint is never an existence oracle. Content is always an attachment, never inline.
+$app->get('/api/artifacts/usage', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\ArtifactController::class)->usage($request, $response);
+})->add($authRequired);
+$app->get('/api/artifacts/{id}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\ArtifactController::class)->show($request, $response, $getArgs($request));
+})->add($authRequired);
+$app->get('/api/artifacts/{id}/content', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\ArtifactController::class)->content($request, $response, $getArgs($request));
+})->add($authRequired);
+$app->delete('/api/artifacts/{id}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\ArtifactController::class)->destroy($request, $response, $getArgs($request));
 })->add($authRequired);
 
 // DESK-502: install jobs — durable coordination for work that runs on a DEVICE. The browser

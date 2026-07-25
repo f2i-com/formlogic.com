@@ -20,6 +20,12 @@ export interface SelectorScope {
   nodes?: unknown;
   /** The current node's upstream output (available inside the executor). */
   upstream?: unknown;
+  /**
+   * RUN-302: this node's resolved typed data-port inputs, keyed by input port id. Present only
+   * for nodes with declared data wiring; `$.data.<port>` addresses one. Artifacts appear here as
+   * REFS, never bytes.
+   */
+  data?: unknown;
 }
 
 const MAX_DEEP_RESOLVE_DEPTH = 8;

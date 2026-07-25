@@ -202,6 +202,15 @@ class FlowCompiler
             'nodes' => array_values($loweredNodes),
             'edges' => array_values($edges),
         ];
+        // RUN-302: the data plan travels WITH the IR rather than being re-derived per runtime.
+        // Three independent derivations of the same wiring is three chances to disagree about
+        // which producer feeds a port — and the disagreement would only show up as a flow that
+        // behaves differently in the browser than in the cloud. Emitted only when the graph
+        // actually has data edges, so legacy IR stays byte-identical to before.
+        $dataPlan = DataPortRuntime::planFrom($graph);
+        if ($dataPlan !== []) {
+            $ir['dataPlan'] = $dataPlan;
+        }
         // RUN-304: availability is HOST-DERIVED from what each node actually lowers to — a
         // package cannot declare its way onto a surface with no handler. Surfaces missing a
         // handler are reported as INFO, not errors: the flow is valid, it simply cannot run

@@ -379,6 +379,34 @@ Rules:
 The Packs UI renders slots under **Details** on the installed extension, offering only
 services whose actions satisfy the slot.
 
+### What a binding actually authorizes
+
+Binding a slot is not just bookkeeping — it is the **authorization** that lets a browser
+invoke that service on the owner's Desktop. Before service slots existed, a two-entry list
+of host built-ins (`openai-api`, `openai-codex-agent`) was compiled into the backend and
+mirrored in the browser client, so a plugin-contributed service could never be invoked from
+a browser at all, however legitimately it was installed and registered.
+
+Authorization is now derived from live installed state, and the derived grants are the same
+`service.<definition>.<action>` strings the Desktop already enforces:
+
+| Definition | Authorized when | Actions granted |
+|---|---|---|
+| Host built-in | always | the built-in's own action list |
+| Anything else | the owner bound an installed package's declared slot to it | the union of that slot's `requiredActions` and the `handler.requiredAction` of every enabled node bound to it |
+
+The action set comes from both halves deliberately. `requiredActions` is what install review
+displayed; `handler.requiredAction` is what the compiler actually lowers. Taking only the
+first would let a node compile to a call the capability refuses; taking only the second would
+let a node widen past what the owner reviewed. A bound slot that resolves to **no** actions
+authorizes nothing rather than the whole service.
+
+Because capability tokens are short-lived but not instantaneous, the events that remove the
+justification — unbinding, re-binding the slot elsewhere, uninstalling — **revoke live tokens
+immediately** rather than letting them run out their TTL. Unauthorized, unknown, and
+malformed definition ids all get the identical refusal, so the response cannot be used to
+probe which is which.
+
 ## Uninstalling
 
 - Removes the package's contributed node definitions. Flows already using them keep

@@ -11,6 +11,7 @@
 import type { FlowRunError, WorkflowGraph, WorkflowGraphNode } from '../../types/flows';
 import { executeNode, FlowExecError, FLOW_NODE_BUDGET, type FlowExecutorDeps } from './nodes';
 import type { SelectorScope } from './selectors';
+import { dataPlanFrom, dataPortReadiness, type DataPlan, type NodeOutcome } from './dataPorts';
 
 const DEFAULT_TIMEOUT_MS = 30000;
 
@@ -97,7 +98,7 @@ export interface ExecuteFlowOptions {
    */
   onNodeStatus?: (
     nodeId: string,
-    status: 'running' | 'done' | 'error',
+    status: 'running' | 'done' | 'error' | 'skipped',
     info?: { output?: unknown; error?: string },
   ) => void;
 }
@@ -181,6 +182,22 @@ function topologicalOrder(graph: WorkflowGraph): WorkflowGraphNode[] | null {
 }
 
 /** Which outgoing edges a finished node activates (condition nodes route by sourceHandle). */
+/**
+ * RUN-302: a node's output PORT map.
+ *
+ * Core nodes return one value; contributed nodes with declared output ports return an object
+ * keyed by port id. Both are supported by one convention: an object result exposes its own keys
+ * as ports, and every result is additionally available on the conventional `output` port. That
+ * keeps single-value nodes wireable without forcing authors to wrap scalars, and it means a
+ * node that already returns `{ text, url }` needs no adapter to feed typed ports.
+ */
+function outputPortsOf(output: unknown): Record<string, unknown> {
+  if (output !== null && typeof output === 'object' && !Array.isArray(output)) {
+    return { ...(output as Record<string, unknown>), output };
+  }
+  return { output };
+}
+
 function edgeIsActive(node: WorkflowGraphNode, output: unknown, sourceHandle: string | undefined): boolean {
   if (node.type === 'condition') {
     const branch = output ? 'true' : 'false';
@@ -273,6 +290,14 @@ export async function executeFlow(graph: WorkflowGraph, options: ExecuteFlowOpti
   });
   const activatedEdges = new Set<number>(); // edge indexes whose branch was taken
 
+  // RUN-302: typed data ports. The plan rides on the compiled IR when the server produced one
+  // (so browser and cloud read the SAME wiring); a graph the compiler never saw derives it
+  // locally by the same rule. A graph with no data edges yields an empty plan and every line
+  // below is inert — existing flows behave exactly as before.
+  const dataPlan: DataPlan =
+    (graph as { dataPlan?: DataPlan }).dataPlan ?? dataPlanFrom(graph);
+  const outcomes: Record<string, NodeOutcome> = {};
+
   for (const node of order) {
     if ((incoming.get(node.id) ?? []).length === 0) active.add(node.id);
   }
@@ -308,12 +333,27 @@ export async function executeFlow(graph: WorkflowGraph, options: ExecuteFlowOpti
         upstream = merged;
       }
 
+      // RUN-302 readiness. A node whose data inputs can never arrive is SKIPPED here rather
+      // than run with undefined values or left waiting until the deadline — the producer has
+      // already terminated, so waiting could only ever end in a timeout.
+      const readiness = dataPortReadiness(dataPlan, outcomes, node.id);
+      if (readiness.verdict !== 'ready') {
+        outcomes[node.id] = { state: readiness.verdict === 'blocked' ? 'failed' : 'skipped' };
+        options.onNodeStatus?.(node.id, 'skipped', {
+          error: `${readiness.reason ?? 'data_input_unsatisfied'}: ${readiness.unsatisfied.join(', ') || readiness.waitingOn.join(', ')}`,
+        });
+        continue; // its outgoing edges are never activated, so the skip propagates downstream
+      }
+
       const scope: SelectorScope = {
         inputs: options.inputs ?? {},
         event: options.event,
         app: options.app,
         nodes: outputs,
         upstream,
+        ...(readiness.artifactInputs.length > 0 || Object.keys(readiness.inputs).length > 0
+          ? { data: readiness.inputs }
+          : {}),
       };
 
       // Observer (browser-only, additive): 'running' before, 'done'/'error' after. Never alters
@@ -354,6 +394,7 @@ export async function executeFlow(graph: WorkflowGraph, options: ExecuteFlowOpti
       nodesExecuted += 1;
       executed.add(node.id);
       outputs[node.id] = output;
+      outcomes[node.id] = { state: 'succeeded', outputs: outputPortsOf(output) };
       lastOutput = output;
       if (node.type === 'output') {
         sawOutputNode = true;

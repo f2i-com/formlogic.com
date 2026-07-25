@@ -27,10 +27,12 @@ use PDO;
 class ServiceBindingService
 {
     private PDO $mysql;
+    private ServiceAuthorizationService $authorization;
 
     public function __construct(MySQLConnection $mysql)
     {
         $this->mysql = $mysql->getConnection();
+        $this->authorization = new ServiceAuthorizationService($mysql);
     }
 
     /**
@@ -97,23 +99,48 @@ class ServiceBindingService
             throw new \RuntimeException('invalid_binding: connection must be a non-empty provider profile id');
         }
 
+        $previous = $this->mysql->prepare('SELECT definition_id FROM package_service_bindings WHERE installation_id = ? AND slot = ?');
+        $previous->execute([$installationId, $slot]);
+        $replaced = $previous->fetchColumn();
+
         $this->mysql->prepare('
             INSERT INTO package_service_bindings (id, user_id, installation_id, slot, definition_id, `connection`)
             VALUES (?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE definition_id = VALUES(definition_id), `connection` = VALUES(`connection`)
         ')->execute([$this->uuid(), $userId, $installationId, $slot, $definitionId, $connection]);
+
+        // SRV-403: re-pointing a slot elsewhere must not leave capabilities for the service it
+        // used to point at still live for the rest of their TTL.
+        if (is_string($replaced) && $replaced !== '' && $replaced !== $definitionId) {
+            $this->authorization->revoke($userId, $replaced);
+        }
     }
 
     /** Remove a binding. Returns false when there was nothing bound (or the id is foreign). */
     public function unbind(string $installationId, string $userId, string $slot): bool
     {
+        $lookup = $this->mysql->prepare('
+            SELECT b.definition_id FROM package_service_bindings b
+            JOIN package_installations pi ON pi.id = b.installation_id
+            WHERE b.installation_id = ? AND pi.user_id = ? AND b.slot = ?
+        ');
+        $lookup->execute([$installationId, $userId, $slot]);
+        $doomed = $lookup->fetchColumn();
+
         $stmt = $this->mysql->prepare('
             DELETE b FROM package_service_bindings b
             JOIN package_installations pi ON pi.id = b.installation_id
             WHERE b.installation_id = ? AND pi.user_id = ? AND b.slot = ?
         ');
         $stmt->execute([$installationId, $userId, $slot]);
-        return $stmt->rowCount() > 0;
+        if ($stmt->rowCount() === 0) {
+            return false;
+        }
+        // The justification is gone; the capability must go with it rather than expiring later.
+        if (is_string($doomed) && $doomed !== '') {
+            $this->authorization->revoke($userId, $doomed);
+        }
+        return true;
     }
 
     /**

@@ -1,0 +1,163 @@
+{
+  "$comment": "RUN-302/RUN-303 cross-runtime conformance corpus for typed data ports. Every case is asserted by BOTH the PHP resolver (backend/src/Services/Flows/DataPortRuntime.php) and the TypeScript one (ui/src/client-runtime/flows/dataPorts.ts) — and, for the cases a Desktop can reach, by the Rust leg. The point of a shared corpus is that 'the browser and the cloud agree' is a fact under test rather than a hope: the same plan plus the same node outcomes must produce the same readiness verdict and the same resolved inputs everywhere, including for skip, error, cancel and deadlock, which are exactly the paths that get implemented differently by accident.",
+  "version": 1,
+  "notes": {
+    "plan": "A dataPlan maps each consumer node's INPUT ports to the (node, port) that produces them. The compiler builds it; runtimes never infer it from edges themselves.",
+    "outcomes": "A node outcome is one of: succeeded (with an outputs map), failed, skipped, cancelled, or absent (has not run).",
+    "verdicts": "ready = every required input is satisfied, run it. waiting = a producer has not finished yet. skipped = a required input can never arrive (its producer terminated without producing). blocked = the producer errored or was cancelled; the consumer must not run.",
+    "artifacts": "An ArtifactRef passes by reference. A resolved input may contain a ref, never the bytes — 'large binary data is never embedded' is asserted by the artifact cases."
+  },
+  "cases": [
+    {
+      "name": "value flows from producer to consumer",
+      "why": "The base case: a succeeded producer's output port becomes the consumer's input value.",
+      "plan": { "b": { "text": { "node": "a", "port": "out" } } },
+      "outcomes": { "a": { "state": "succeeded", "outputs": { "out": "hello" } } },
+      "node": "b",
+      "expect": { "verdict": "ready", "inputs": { "text": "hello" } }
+    },
+    {
+      "name": "two inputs from two producers",
+      "why": "Multiple input ports are independent; both must be satisfied before the node runs.",
+      "plan": { "c": { "left": { "node": "a", "port": "out" }, "right": { "node": "b", "port": "out" } } },
+      "outcomes": {
+        "a": { "state": "succeeded", "outputs": { "out": 1 } },
+        "b": { "state": "succeeded", "outputs": { "out": 2 } }
+      },
+      "node": "c",
+      "expect": { "verdict": "ready", "inputs": { "left": 1, "right": 2 } }
+    },
+    {
+      "name": "waits while one producer has not run",
+      "why": "A partially satisfied node is NOT ready — running it would see an undefined input.",
+      "plan": { "c": { "left": { "node": "a", "port": "out" }, "right": { "node": "b", "port": "out" } } },
+      "outcomes": { "a": { "state": "succeeded", "outputs": { "out": 1 } } },
+      "node": "c",
+      "expect": { "verdict": "waiting", "waitingOn": ["b"] }
+    },
+    {
+      "name": "producer skipped means consumer skipped",
+      "why": "An untaken branch's node never produces. The consumer is skipped, not run with a missing value and not left waiting forever.",
+      "plan": { "b": { "text": { "node": "a", "port": "out" } } },
+      "outcomes": { "a": { "state": "skipped" } },
+      "node": "b",
+      "expect": { "verdict": "skipped", "reason": "data_input_unsatisfied", "unsatisfied": ["text"] }
+    },
+    {
+      "name": "producer failed blocks the consumer",
+      "why": "Distinct from skipped: an error is a fault to surface, not a branch that was not taken.",
+      "plan": { "b": { "text": { "node": "a", "port": "out" } } },
+      "outcomes": { "a": { "state": "failed" } },
+      "node": "b",
+      "expect": { "verdict": "blocked", "reason": "data_producer_failed", "unsatisfied": ["text"] }
+    },
+    {
+      "name": "cancellation blocks the consumer",
+      "why": "A cancelled run must not keep starting downstream work; the consumer is blocked, never ready.",
+      "plan": { "b": { "text": { "node": "a", "port": "out" } } },
+      "outcomes": { "a": { "state": "cancelled" } },
+      "node": "b",
+      "expect": { "verdict": "blocked", "reason": "data_producer_cancelled", "unsatisfied": ["text"] }
+    },
+    {
+      "name": "failure wins over a merely-waiting sibling",
+      "why": "Determinism: with one failed and one pending producer, every runtime must reach the same verdict rather than depending on which finished first.",
+      "plan": { "c": { "left": { "node": "a", "port": "out" }, "right": { "node": "b", "port": "out" } } },
+      "outcomes": { "a": { "state": "failed" } },
+      "node": "c",
+      "expect": { "verdict": "blocked", "reason": "data_producer_failed", "unsatisfied": ["left"] }
+    },
+    {
+      "name": "skip wins over waiting",
+      "why": "Same determinism rule for the skip path: a never-arriving input decides the verdict now.",
+      "plan": { "c": { "left": { "node": "a", "port": "out" }, "right": { "node": "b", "port": "out" } } },
+      "outcomes": { "a": { "state": "skipped" } },
+      "node": "c",
+      "expect": { "verdict": "skipped", "reason": "data_input_unsatisfied", "unsatisfied": ["left"] }
+    },
+    {
+      "name": "succeeded producer that never wrote the port",
+      "why": "Deadlock guard: the producer finished, so waiting can never end. Refuse now with a typed reason instead of hanging until the deadline.",
+      "plan": { "b": { "text": { "node": "a", "port": "missing" } } },
+      "outcomes": { "a": { "state": "succeeded", "outputs": { "other": "value" } } },
+      "node": "b",
+      "expect": { "verdict": "skipped", "reason": "data_input_unsatisfied", "unsatisfied": ["text"] }
+    },
+    {
+      "name": "producer is not in the graph at all",
+      "why": "A plan that names an absent node can never be satisfied — the same deadlock guard, reached from a corrupt or stale plan.",
+      "plan": { "b": { "text": { "node": "ghost", "port": "out" } } },
+      "outcomes": { "b": { "state": "absent" } },
+      "node": "b",
+      "expect": { "verdict": "waiting", "waitingOn": ["ghost"] }
+    },
+    {
+      "name": "null is a real value, not a missing one",
+      "why": "A produced null must satisfy its port. Treating null as absent would make legitimate empty results look like deadlock.",
+      "plan": { "b": { "text": { "node": "a", "port": "out" } } },
+      "outcomes": { "a": { "state": "succeeded", "outputs": { "out": null } } },
+      "node": "b",
+      "expect": { "verdict": "ready", "inputs": { "text": null } }
+    },
+    {
+      "name": "false and zero are real values",
+      "why": "The classic falsy-value bug: a boolean false or a numeric zero must not read as unsatisfied.",
+      "plan": { "c": { "flag": { "node": "a", "port": "out" }, "count": { "node": "b", "port": "out" } } },
+      "outcomes": {
+        "a": { "state": "succeeded", "outputs": { "out": false } },
+        "b": { "state": "succeeded", "outputs": { "out": 0 } }
+      },
+      "node": "c",
+      "expect": { "verdict": "ready", "inputs": { "flag": false, "count": 0 } }
+    },
+    {
+      "name": "an artifact passes by reference",
+      "why": "Large binary data is never embedded: the consumer receives the handle, and the bytes stay wherever the producer put them.",
+      "plan": { "b": { "image": { "node": "a", "port": "out" } } },
+      "outcomes": {
+        "a": {
+          "state": "succeeded",
+          "outputs": {
+            "out": {
+              "$artifact": "art_abcdefghijklmnopqrstuvwx",
+              "kind": "image",
+              "mediaType": "image/png",
+              "byteSize": 918273,
+              "locality": "cloud"
+            }
+          }
+        }
+      },
+      "node": "b",
+      "expect": {
+        "verdict": "ready",
+        "inputs": {
+          "image": {
+            "$artifact": "art_abcdefghijklmnopqrstuvwx",
+            "kind": "image",
+            "mediaType": "image/png",
+            "byteSize": 918273,
+            "locality": "cloud"
+          }
+        },
+        "artifactInputs": ["image"]
+      }
+    },
+    {
+      "name": "a node with no data inputs is always ready",
+      "why": "Control-only nodes must not be gated by a data plan they do not participate in.",
+      "plan": { "b": {} },
+      "outcomes": {},
+      "node": "b",
+      "expect": { "verdict": "ready", "inputs": {} }
+    },
+    {
+      "name": "a node absent from the plan is always ready",
+      "why": "Legacy graphs have no data edges at all; their nodes must behave exactly as before.",
+      "plan": {},
+      "outcomes": {},
+      "node": "b",
+      "expect": { "verdict": "ready", "inputs": {} }
+    }
+  ]
+}

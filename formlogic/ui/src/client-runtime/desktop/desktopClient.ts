@@ -846,13 +846,14 @@ function capabilityFailure<T>(serviceId: string): DesktopClientResult<T> {
   };
 }
 
-type DesktopServiceId = 'openai-api' | 'openai-codex-agent';
-
-/** The capability service a catalog definition mints under — the backend's exact allow-list. */
-function serviceCapabilityId(definitionId: string): DesktopServiceId | null {
-  return definitionId === 'openai-api' || definitionId === 'openai-codex-agent' ? definitionId : null;
-}
-
+/**
+ * SRV-403: any definition id may be ASKED for. This module used to carry a copy of the
+ * backend's two-entry allow-list and refuse everything else before trying, which meant a
+ * service contributed by an installed package could never be invoked from a browser at all.
+ * Authorization is the server's to decide — it derives grants from the owner's live installed
+ * state — so an unauthorized id now fails at the mint (a denial the user can act on) instead
+ * of at a hardcoded list the user cannot see.
+ */
 /** One §7.6 service-action invocation through the paired Desktop's ServiceActionHost. */
 export interface DesktopServiceActionInvokeRequest {
   definitionId: string;
@@ -865,7 +866,7 @@ export interface DesktopServiceActionInvokeRequest {
 }
 
 async function mintServiceCapability(
-  serviceId: DesktopServiceId,
+  serviceId: string,
   contextEpoch: number,
   appSlug: string | null
 ): Promise<string | null> {
@@ -914,7 +915,7 @@ async function mintServiceCapability(
   }
 }
 
-async function getServiceCapability(serviceId: DesktopServiceId): Promise<string | null> {
+async function getServiceCapability(serviceId: string): Promise<string | null> {
   const cached = serviceCapabilityCache.get(serviceId);
   if (cached && cached.validUntil > Date.now()) return cached.token;
 
@@ -939,7 +940,7 @@ async function getServiceCapability(serviceId: DesktopServiceId): Promise<string
 }
 
 async function withServiceCapability<T>(
-  serviceId: DesktopServiceId,
+  serviceId: string,
   send: (token: string) => Promise<DesktopClientResult<T>>
 ): Promise<DesktopClientResult<T>> {
   const first = await getServiceCapability(serviceId);
@@ -1063,28 +1064,19 @@ export const desktopClient = {
      * same-machine browser leg: one catalog action through the Desktop's
      * ServiceActionHost (catalog resolution → §6.5 validation → credential-holding
      * gateway transport → output validation). The Desktop requires the exact
-     * owner-minted `service.{definition}.{action}` capability; definitions outside
-     * the backend's mintable allow-list refuse here without a wasted round trip.
+     * owner-minted `service.{definition}.{action}` capability, which the backend issues
+     * only for a host built-in or a service the owner bound to an installed package's slot
+     * (SRV-403) — an unauthorized definition is refused at the mint, not guessed at here.
      * Aborting `signal` cancels the in-flight Desktop-side gateway call too
      * (dropping the connection cancels the handler).
      */
     invokeAction(req: DesktopServiceActionInvokeRequest): Promise<DesktopClientResult<{ output: unknown }>> {
-      const serviceId = serviceCapabilityId(req.definitionId);
-      if (!serviceId) {
-        return Promise.resolve({
-          ok: false,
-          error: {
-            code: 'capability_denied',
-            message: `No owner capability is mintable for service '${req.definitionId}'.`,
-          },
-        });
-      }
       const path = `/api/services/actions/${encodeURIComponent(req.definitionId)}/${encodeURIComponent(req.actionId)}/invoke`;
       // The default client timeout is tuned for management calls; an inference
       // action needs the action's own budget (plus transport headroom) unless
       // the caller supplied a signal (the flow's deadline/cancel signal).
       const signal = req.signal ?? timeoutSignal(Math.max(60_000, (req.timeoutMs ?? 120_000) + 30_000));
-      return withServiceCapability(serviceId, (capabilityToken) =>
+      return withServiceCapability(req.definitionId, (capabilityToken) =>
         desktopFetch<{ output: unknown }>(path, {
           method: 'POST',
           headers: { 'X-FormLogic-Capability': capabilityToken },

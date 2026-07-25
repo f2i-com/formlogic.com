@@ -1080,4 +1080,137 @@ class PackageV2InstallTest extends TestCase
         $this->assertSame(400, $out->getStatusCode());
         $this->assertSame('use_application_package_lane', $body['code']);
     }
+    // -- SRV-403: authorization derived from live installed state ---------------------------
+
+    private function authorization(): \FormLogic\Services\Packages\ServiceAuthorizationService
+    {
+        return new \FormLogic\Services\Packages\ServiceAuthorizationService(self::$mysql);
+    }
+
+    /** @return array{0:callable,1:callable} mint a live capability row, and check one is alive. */
+    private function capabilityProbes(): array
+    {
+        $pdo = self::$pdo;
+        $userId = $this->userId;
+        $mint = static function (string $connectorId, array $grants) use ($pdo, $userId): string {
+            $id = 'cap-' . bin2hex(random_bytes(8));
+            $pdo->prepare(
+                'INSERT INTO connector_capabilities (id, token_hash, owner_user_id, user_id, app_id, connector_id, grants_json, expires_at)
+                 VALUES (?, ?, ?, ?, NULL, ?, ?, DATE_ADD(NOW(), INTERVAL 300 SECOND))'
+            )->execute([$id, hash('sha256', $id), $userId, $userId, $connectorId, json_encode($grants)]);
+            return $id;
+        };
+        $alive = static function (string $id) use ($pdo): bool {
+            $stmt = $pdo->prepare('SELECT 1 FROM connector_capabilities WHERE id = ?');
+            $stmt->execute([$id]);
+            return $stmt->fetchColumn() !== false;
+        };
+        return [$mint, $alive];
+    }
+
+    public function testBuiltInServicesStayAuthorizedWithoutAnyInstall(): void
+    {
+        $auth = $this->authorization();
+        foreach (['openai-api', 'openai-codex-agent'] as $builtin) {
+            $result = $auth->authorize($this->userId, $builtin);
+            $this->assertNotNull($result, 'host built-ins never depend on an install');
+            $this->assertSame('builtin', $result['source']);
+            $this->assertContains('service.' . $builtin . '.models.list', $result['grants']);
+        }
+    }
+
+    public function testUnauthorizedServiceIdsFailClosed(): void
+    {
+        $auth = $this->authorization();
+        // Never installed, never bound, and structurally invalid ids all get the SAME answer:
+        // nothing. The response cannot be used to tell which case was hit.
+        foreach (['com.acme.images', 'not a service id', '', str_repeat('a', 200)] as $unknown) {
+            $this->assertNull($auth->authorize($this->userId, $unknown), 'an unauthorized id must not authorize');
+        }
+
+        // Installed but UNBOUND is still nothing: the package asked, the owner never answered.
+        self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        $this->assertNull($auth->authorize($this->userId, 'com.acme.images'), 'declaring a slot never authorizes by itself');
+    }
+
+    public function testBindingAServiceAuthorizesExactlyTheDeclaredActions(): void
+    {
+        $installed = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        $bindings = $this->bindingService();
+        $auth = $this->authorization();
+
+        $bindings->bind($installed['installationId'], $this->userId, 'imageGenerator', 'com.acme.images', 'conn-1');
+
+        $result = $auth->authorize($this->userId, 'com.acme.images');
+        $this->assertNotNull($result, 'a bound slot is what authorizes a contributed service');
+        $this->assertSame('package', $result['source']);
+        // The fixture declares requiredActions ['generate-image'] AND one node whose handler
+        // requires the same action - the union is that one action and nothing else.
+        $this->assertSame(['generate-image'], $result['actions']);
+        $this->assertSame(['service.com.acme.images.generate-image'], $result['grants']);
+        $this->assertSame([$installed['installationId']], $result['installationIds']);
+
+        // Another account gets nothing from someone else's binding.
+        $stranger = 'srv403-' . bin2hex(random_bytes(6));
+        self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, 'x', 'Stranger')")
+            ->execute([$stranger, $stranger . '@example.com']);
+        $this->assertNull($auth->authorize($stranger, 'com.acme.images'), 'authorization is per owner');
+        self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$stranger]);
+    }
+
+    public function testActionsComeFromNodeHandlersNotJustTheDeclaredList(): void
+    {
+        // A package may declare a slot without listing every action its own nodes need. The
+        // handler is what the compiler lowers, so it must be covered or the node would compile
+        // to a call the capability refuses.
+        $aggregate = $this->nodeOnlyAggregate('handler-actions');
+        $aggregate['requirements']['services'] = [['slot' => 'imageGenerator', 'required' => true]];
+        $installed = self::$pkgV2->install($aggregate, $this->userId, []);
+        $this->bindingService()->bind($installed['installationId'], $this->userId, 'imageGenerator', 'com.acme.images', 'conn-1');
+
+        $result = $this->authorization()->authorize($this->userId, 'com.acme.images');
+        $this->assertNotNull($result);
+        $this->assertSame(['generate-image'], $result['actions'], 'the handler requiredAction is covered');
+    }
+
+    public function testUninstallAndUnbindRevokeLiveCapabilities(): void
+    {
+        $installed = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        $bindings = $this->bindingService();
+        $bindings->bind($installed['installationId'], $this->userId, 'imageGenerator', 'com.acme.images', 'conn-1');
+        [$mint, $alive] = $this->capabilityProbes();
+
+        // Re-binding the slot elsewhere revokes the service it used to point at.
+        $token = $mint('com.acme.images', ['service.com.acme.images.generate-image']);
+        $bindings->bind($installed['installationId'], $this->userId, 'imageGenerator', 'com.acme.other', 'conn-1');
+        $this->assertFalse($alive($token), 're-binding must not leave the old service live for its TTL');
+
+        // Unbinding revokes.
+        $token = $mint('com.acme.other', ['service.com.acme.other.generate-image']);
+        $this->assertTrue($bindings->unbind($installed['installationId'], $this->userId, 'imageGenerator'));
+        $this->assertFalse($alive($token), 'unbinding revokes immediately');
+
+        // Uninstalling revokes.
+        $bindings->bind($installed['installationId'], $this->userId, 'imageGenerator', 'com.acme.images', 'conn-1');
+        $token = $mint('com.acme.images', ['service.com.acme.images.generate-image']);
+        self::$pkgV2->uninstall($installed['installationId'], $this->userId);
+        $this->assertFalse($alive($token), 'uninstall revokes immediately, not when the TTL lapses');
+        $this->assertNull($this->authorization()->authorize($this->userId, 'com.acme.images'));
+    }
+
+    public function testRevokeLeavesOtherServicesAndConnectorsAlone(): void
+    {
+        // The capability table is shared with connectors; a connector id could collide with a
+        // service definition id. Revoking a service must not disarm an unrelated capability.
+        [$mint, $alive] = $this->capabilityProbes();
+        $target = $mint('com.acme.images', ['service.com.acme.images.generate-image']);
+        $connector = $mint('com.acme.images', ['connector.com.acme.images.read']);
+        $other = $mint('com.acme.audio', ['service.com.acme.audio.transcribe']);
+
+        $this->assertSame(1, $this->authorization()->revoke($this->userId, 'com.acme.images'));
+        $this->assertFalse($alive($target));
+        $this->assertTrue($alive($connector), 'a same-named CONNECTOR capability is a different grant');
+        $this->assertTrue($alive($other), 'another service is untouched');
+        self::$pdo->prepare('DELETE FROM connector_capabilities WHERE owner_user_id = ?')->execute([$this->userId]);
+    }
 }

@@ -29,45 +29,11 @@ class ConnectorCommandController
         private AppService $appService,
         private AppUserService $appUserService,
         private ?\FormLogic\Database\MySQLConnection $db = null,
+        private ?\FormLogic\Services\Packages\ServiceAuthorizationService $serviceAuth = null,
     ) {}
 
     /** Capability token lifetime — long enough to amortise minting, short enough to bound revocation lag. */
     private const CAPABILITY_TTL_SECONDS = 300;
-
-    /**
-     * Exact owner-only Desktop service pilot allow-list. Actions are safe
-     * response metadata; grants are the authoritative Desktop permissions.
-     */
-    private const SERVICE_CAPABILITY_DEFINITIONS = [
-        'openai-codex-agent' => [
-            'actions' => [
-                'status.read',
-                'models.list',
-                'assistant.chat',
-            ],
-            'grants' => [
-                'service.openai-codex-agent.status.read',
-                'service.openai-codex-agent.models.list',
-                'service.openai-codex-agent.assistant.chat',
-            ],
-        ],
-        'openai-api' => [
-            'actions' => [
-                'chat.complete',
-                'models.list',
-                'audio.transcribe',
-                'audio.chat',
-                'realtime.session.create',
-            ],
-            'grants' => [
-                'service.openai-api.chat.complete',
-                'service.openai-api.models.list',
-                'service.openai-api.audio.transcribe',
-                'service.openai-api.audio.chat',
-                'service.openai-api.realtime.session.create',
-            ],
-        ],
-    ];
 
     /**
      * POST /api/app/{slug}/connector-capability {connectorId} — mint a short-lived
@@ -222,17 +188,22 @@ class ConnectorCommandController
             ], 400);
         }
         $serviceId = $body['serviceId'];
-        if (
-            !is_string($serviceId)
-            || strlen($serviceId) > 64
-            || !array_key_exists($serviceId, self::SERVICE_CAPABILITY_DEFINITIONS)
-        ) {
+        if (!is_string($serviceId) || strlen($serviceId) > 128) {
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'Unsupported service id',
             ], 400);
         }
-        $definition = self::SERVICE_CAPABILITY_DEFINITIONS[$serviceId];
+        // SRV-403: authorization is DERIVED from the owner's live installed state (built-in, or a
+        // package slot they bound), not read from a list compiled in here. An unauthorized id
+        // fails closed with the same answer an unknown one gets — no probing which is which.
+        $definition = $this->serviceAuthorization()->authorize($ownerId, $serviceId);
+        if ($definition === null) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Unsupported service id',
+            ], 400);
+        }
 
         // Transitional storage: Desktop already introspects this short-lived,
         // owner-scoped opaque-token table. The identifier records which pilot
@@ -293,6 +264,22 @@ class ConnectorCommandController
     }
 
     /** @param list<string> $grants */
+    /**
+     * Built lazily from the connection this controller already holds, so callers that construct
+     * it with four arguments (every existing test) keep working while still getting the derived
+     * rule rather than a silently different one.
+     */
+    private function serviceAuthorization(): \FormLogic\Services\Packages\ServiceAuthorizationService
+    {
+        if ($this->serviceAuth === null) {
+            if ($this->db === null) {
+                throw new \LogicException('Capability storage is unavailable');
+            }
+            $this->serviceAuth = new \FormLogic\Services\Packages\ServiceAuthorizationService($this->db);
+        }
+        return $this->serviceAuth;
+    }
+
     private function storeCapability(
         string $ownerId,
         string $userId,
