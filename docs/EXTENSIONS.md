@@ -213,6 +213,10 @@ Rules:
 - The binding is pinned into the revision's definition lock, so re-binding later is visible
   as a different lock rather than a silent swap under an already-published flow.
 - Uninstalling removes the bindings with the installation — no orphaned grants survive.
+- **Updating** keeps bindings for slots the new version still declares (a patch release does
+  not make you re-choose), and **drops** bindings for slots it no longer declares. A later
+  version re-declaring that slot name comes back **unbound** — a binding is never silently
+  resurrected for a purpose the owner did not re-approve.
 
 The Packs UI renders slots under **Details** on the installed extension, offering only
 services whose actions satisfy the slot.

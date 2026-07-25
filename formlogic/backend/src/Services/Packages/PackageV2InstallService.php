@@ -309,6 +309,26 @@ class PackageV2InstallService
             $this->mysql->prepare('UPDATE package_dependency_edges SET resolved_version = ? WHERE child_installation_id = ?')
                 ->execute([$newVersion, $installationId]);
 
+            // SRV-405: bindings for slots the new version NO LONGER DECLARES must go. Keeping
+            // them would leave rows the owner cannot see (listSlots shows declared slots only)
+            // and cannot remove — and a later version re-declaring the same slot name would
+            // silently reactivate a binding that was never re-reviewed. Bindings for slots
+            // that survive the update are deliberately KEPT: the installation is the same, so
+            // re-choosing the same service after every patch release would be busywork.
+            $declaredSlots = [];
+            foreach ((is_array($aggregate['requirements']['services'] ?? null) ? $aggregate['requirements']['services'] : []) as $service) {
+                if (is_array($service) && is_string($service['slot'] ?? null) && $service['slot'] !== '') {
+                    $declaredSlots[] = $service['slot'];
+                }
+            }
+            if ($declaredSlots === []) {
+                $this->mysql->prepare('DELETE FROM package_service_bindings WHERE installation_id = ?')->execute([$installationId]);
+            } else {
+                $placeholders = implode(',', array_fill(0, count($declaredSlots), '?'));
+                $this->mysql->prepare("DELETE FROM package_service_bindings WHERE installation_id = ? AND slot NOT IN ($placeholders)")
+                    ->execute(array_merge([$installationId], $declaredSlots));
+            }
+
             $this->mysql->commit();
         } catch (\Exception $e) {
             $this->mysql->rollBack();
