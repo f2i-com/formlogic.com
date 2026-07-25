@@ -27,7 +27,7 @@ import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Badge } from '../ui/Badge';
 import { PackIcon } from '../ui/PackIcon';
-import { api, type PackData, type PackImportResult, type PackInstallation, type CatalogPack, type PackDescribeResult } from '../../lib/api';
+import { api, type PackData, type PackImportResult, type PackInstallation, type CatalogPack, type PackDescribeResult, type PackageInstallPlan } from '../../lib/api';
 import { validateApplicationPackage } from '../../application-package/packageValidator';
 import { packHasCodeScreen, packHasLogicScript, reviewableConnectorGrants } from '../../lib/packTrust';
 import { CapabilityReview } from './TrustBadge';
@@ -52,6 +52,17 @@ interface PackImportModalProps {
   onClose: () => void;
   /** Which tab to open on. Defaults to the marketplace; pass 'upload' to jump straight to file import. */
   initialTab?: Tab;
+}
+
+/** The reviewed v2 install plan the Import button will confirm. */
+interface V2PlanState {
+  planId: string;
+  planDigest: string;
+  action: 'install' | 'update';
+  installedVersion: string | null;
+  version: string;
+  /** RUN-306: what an update would do to flows already using the package. */
+  migration: PackageInstallPlan['migration'];
 }
 
 export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModalProps) {
@@ -79,9 +90,9 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
   const [approvedGrants, setApprovedGrants] = useState<Set<string>>(new Set());
   // PKG-106: an Application Package v2 review IS a proposed install plan — Import confirms
   // exactly the server-stored bytes it reviewed (digest-bound, single-use, expiring).
-  const [v2Plan, setV2Plan] = useState<{ planId: string; planDigest: string; action: 'install' | 'update'; installedVersion: string | null; version: string } | null>(null);
+  const [v2Plan, setV2Plan] = useState<V2PlanState | null>(null);
   // Ref mirror so cleanup paths can cancel the current plan without a stale closure.
-  const v2PlanRef = useRef<{ planId: string; planDigest: string; action: 'install' | 'update'; installedVersion: string | null; version: string } | null>(null);
+  const v2PlanRef = useRef<V2PlanState | null>(null);
   // Guards a stale review response landing after a newer file was chosen + remembers what to Retry.
   const reviewSeqRef = useRef(0);
   const reviewSourceRef = useRef<ReviewSource | null>(null);
@@ -346,6 +357,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
               action: proposal.data.action === 'update' ? 'update' : 'install',
               installedVersion: typeof proposal.data.installedVersion === 'string' ? proposal.data.installedVersion : null,
               version: typeof pkgMeta.version === 'string' ? pkgMeta.version : '',
+              migration: proposal.data.migration ?? null,
             };
             setV2Plan(v2PlanRef.current);
             setPackageReview({ trust: proposal.data.trust, formatVersion: 2, capabilities: proposal.data.capabilities });
@@ -1215,12 +1227,45 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                 </div>
               )}
               {packageReview && v2Plan?.action === 'update' && (
-                <div className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm text-foreground">
-                  <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                  <p>
-                    This package is already installed at v{v2Plan.installedVersion}. Importing updates it to v{v2Plan.version} —
-                    existing flows keep the versions they were published with.
-                  </p>
+                <div className="space-y-2">
+                  <div className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm text-foreground">
+                    <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                    <p>
+                      This package is already installed at v{v2Plan.installedVersion}. Importing updates it to v{v2Plan.version} —
+                      existing flows keep the versions they were published with.
+                    </p>
+                  </div>
+                  {/* RUN-306: a version that stops shipping a node type turns stored nodes into
+                      read-only placeholders. Say so, and name the flows, before it happens. */}
+                  {v2Plan.migration && v2Plan.migration.removedTypes.length > 0 && (
+                    <div className="flex items-start gap-2 rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <div className="min-w-0">
+                        <p className="font-medium">
+                          This version removes {v2Plan.migration.removedTypes.length} node type
+                          {v2Plan.migration.removedTypes.length === 1 ? '' : 's'}.
+                        </p>
+                        <p className="mt-0.5 break-words">
+                          {v2Plan.migration.breakingFlows.length > 0
+                            ? `${v2Plan.migration.breakingFlows.length} flow${v2Plan.migration.breakingFlows.length === 1 ? '' : 's'} using ${v2Plan.migration.breakingFlows.length === 1 ? 'it' : 'them'} will stop compiling until updated: ` +
+                              v2Plan.migration.affectedFlows
+                                .filter((f) => v2Plan.migration!.breakingFlows.includes(f.flowId))
+                                .map((f) => f.name)
+                                .join(', ')
+                            : 'No existing flow uses the removed types.'}
+                        </p>
+                        <p className="mt-0.5 text-xs opacity-80">
+                          Stored nodes keep their configuration and become read-only placeholders — nothing is deleted.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  {v2Plan.migration && v2Plan.migration.removedTypes.length === 0 && v2Plan.migration.affectedFlows.length > 0 && (
+                    <p className="px-1 text-xs text-gray-500 dark:text-slate-400">
+                      {v2Plan.migration.affectedFlows.length} flow{v2Plan.migration.affectedFlows.length === 1 ? '' : 's'} use
+                      {v2Plan.migration.affectedFlows.length === 1 ? 's' : ''} this package; no node types are being removed.
+                    </p>
+                  )}
                 </div>
               )}
               {packageReview && (

@@ -4779,6 +4779,16 @@ export interface PackageInstallPlan {
   /** PKG-108: 'update' when the same package id is already installed at another version. */
   action?: 'install' | 'update';
   installedVersion?: string | null;
+  /**
+   * RUN-306: what this update would do to flows already using the package — derived from the
+   * definition locks pinned into each flow revision. Null for a fresh install.
+   */
+  migration?: {
+    removedTypes: string[];
+    addedTypes: string[];
+    affectedFlows: Array<{ flowId: string; name: string; types: string[] }>;
+    breakingFlows: string[];
+  } | null;
   capabilities: PackCapabilitySummary;
   resolution: {
     ok: boolean;
