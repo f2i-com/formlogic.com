@@ -254,6 +254,13 @@ export interface ServiceDefinitionSummary {
   tags: string[];
   capabilities: string[];
   ui?: { pilot?: boolean };
+  /**
+   * SRV-401: the plugin supplying this definition; absent for the host's own built-ins.
+   * Stamped by the registry, so a definition file cannot claim it.
+   */
+  provider?: string;
+  /** Actions this service offers — what a flow's `service_action` node can call. */
+  actions?: Array<{ id: string; title?: string; description?: string }>;
 }
 
 export interface ServiceDefinitionCatalog {

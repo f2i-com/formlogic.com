@@ -480,6 +480,12 @@ export default function ServicesPanel() {
     () => serviceDefinitions.find((definition) => definition.id === 'openai-codex-agent'),
     [serviceDefinitions],
   );
+  // DESK-506: only plugin-supplied definitions carry a provider; built-ins are covered by
+  // the sections above, so listing them again would be noise.
+  const contributedDefinitions = useMemo(
+    () => serviceDefinitions.filter((definition) => typeof definition.provider === 'string' && definition.provider !== ''),
+    [serviceDefinitions],
+  );
   const catalogItems = useMemo(
     () => buildServiceCenterItems(
       snapshot?.services ?? [],
@@ -776,6 +782,29 @@ export default function ServicesPanel() {
             <div key={i} className="service-card service-skeleton">
               <div className="skeleton-line skeleton-line-title" />
               <div className="skeleton-line skeleton-line-body" />
+            </div>
+          ))}
+        </section>
+      )}
+      {/* DESK-506: services contributed by installed plugins are real, invocable services —
+          they belong in the Services controls beside managed ones, not only in the flow
+          editor. Absent when no plugin contributes any, so the section never sits empty. */}
+      {contributedDefinitions.length > 0 && (
+        <section className="service-section">
+          <h3 className="service-section-title">Contributed by plugins</h3>
+          {contributedDefinitions.map((definition) => (
+            <div key={definition.id} className="service-card">
+              <div className="service-card-head">
+                <strong>{definition.name || definition.id}</strong>
+                <span className="service-badge">from {definition.provider}</span>
+              </div>
+              {definition.description && <p className="service-card-body">{definition.description}</p>}
+              <p className="service-card-meta">
+                <code>{definition.id}</code>
+                {definition.actions && definition.actions.length > 0 && (
+                  <> · {definition.actions.length} action{definition.actions.length === 1 ? '' : 's'}: {definition.actions.map((a) => a.id).join(', ')}</>
+                )}
+              </p>
             </div>
           ))}
         </section>
