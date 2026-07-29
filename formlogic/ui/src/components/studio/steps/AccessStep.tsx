@@ -481,6 +481,8 @@ function PermissionCard({
 // ── People & invites ─────────────────────────────────────────────────────────
 
 function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
+  const navigate = useNavigate();
+  const location = useLocation();
   const { fetchUsers, fetchInvitations, inviteUser, revokeInvitation, removeUser, updateUser } = useAppUserStore();
   // Store slices are keyed by appId; fall back to STABLE empties (see NO_USERS).
   const users = useAppUserStore((s) => s.users[app.id] ?? NO_USERS);
@@ -582,13 +584,26 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
         {browserOnlyDemo ? (
           <Badge variant="primary" size="sm">Browser-only demo</Badge>
         ) : (
-          <Button
-            size="sm"
-            onClick={() => { setInviteRoleId(defaultInviteRole?.id ?? ''); setInviteLink(null); setShowInvite(true); }}
-            leftIcon={<UserPlus className="h-4 w-4" />}
-          >
-            Invite people
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Suspending a member (a reversible cut-off, as opposed to Remove) only
+                exists on the members page — without a pointer, the likely outcome here
+                is a permanent Remove where a pause was intended. */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate(`/apps/${app.id}/users`, { state: returnToState(location.pathname, 'App Studio') })}
+              title="Suspend members, search the full list and review invitation expiry"
+            >
+              Advanced
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => { setInviteRoleId(defaultInviteRole?.id ?? ''); setInviteLink(null); setShowInvite(true); }}
+              leftIcon={<UserPlus className="h-4 w-4" />}
+            >
+              Invite people
+            </Button>
+          </div>
         )}
       </div>
       <div className="divide-y divide-gray-100 dark:divide-white/[0.06]">

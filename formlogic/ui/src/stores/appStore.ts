@@ -117,8 +117,13 @@ export const useAppStore = create<AppState>()(
             return false;
           }
           if (result.data) {
+            // MERGE, never replace. The update response comes from AppService::getApp,
+            // which does not carry the list-only fields AppController::index bolts on
+            // (formCount, canManage, canCreateCompanion). Replacing the row dropped
+            // canManage, so the sidebar then sent the app's own OWNER to the read-only
+            // member runtime, and cards fell back to the "0 forms" count.
             set((s) => ({
-              apps: s.apps.map((a) => (a.id === id ? (result.data!.app as App) : a)),
+              apps: s.apps.map((a) => (a.id === id ? { ...a, ...(result.data!.app as App) } : a)),
             }));
           }
           return true;

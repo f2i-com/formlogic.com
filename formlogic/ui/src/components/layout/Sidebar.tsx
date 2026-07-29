@@ -73,11 +73,16 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
       const stored = localStorage.getItem(TOOLS_OPEN_KEY);
       if (stored !== null) return stored === '1';
     } catch { /* private browsing */ }
-    return false;
+    // No stored preference yet: open the section if the user arrived on one of its
+    // routes, so it is not collapsed over the page they are looking at.
+    return onToolRoute;
   });
-  const toolsExpanded = toolsOpen || onToolRoute;
+  // The stored flag is the single source of truth. Deriving `toolsExpanded` from
+  // `|| onToolRoute` made the control DEAD while on a tools route: the toggle wrote
+  // '0' but the section stayed open, so nothing happened until you navigated away.
+  const toolsExpanded = toolsOpen;
   const toggleTools = () => {
-    const next = !toolsExpanded;
+    const next = !toolsOpen;
     setToolsOpen(next);
     try { localStorage.setItem(TOOLS_OPEN_KEY, next ? '1' : '0'); } catch { /* ignore */ }
   };

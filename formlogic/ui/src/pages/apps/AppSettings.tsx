@@ -29,6 +29,24 @@ const tabs = [
 
 const TAB_VALUES = tabs.map((t) => t.value);
 
+/**
+ * The `settings` keys this page has controls for. Save replays ONLY these over the
+ * server's current settings, so a key another surface owns (landingPage from the
+ * Studio's Screens section, the sign-up keys from its Access section, the PWA keys
+ * from Deploy) can never be reverted by a stale snapshot from this page.
+ */
+const EDITED_SETTING_KEYS = [
+  'icon',
+  'appKind',
+  'allowSelfRegistration',
+  'requireApproval',
+  'defaultRoleId',
+  'landingPage',
+  'timezone',
+  'hideNav',
+  'services',
+] as const;
+
 // The accent hex lands in an inline CSS custom property, so keep the format strict.
 const isHexColor = (v: string | null | undefined): v is string => !!v && /^#[0-9a-fA-F]{3,8}$/.test(v);
 
@@ -144,7 +162,38 @@ export function AppSettings() {
     setSlugError(null);
     setSaving(true);
     setSaveSuccess(false);
-    const ok = await updateApp(appId, app);
+
+    // Send ONLY what this page edits, merged against a fresh read.
+    //
+    // The old save PUT the whole app object captured at mount, and the server writes
+    // each present key wholesale with no merge. Two consequences, both silent:
+    //  - `status` from the stale snapshot un-published an app the Studio (or a second
+    //    tab, or the AI chat) had published since, while published_version survived —
+    //    leaving "Published v1" on a draft that members get 404s from.
+    //  - `customScreen` was always in the payload, and the server re-stamps
+    //    custom_screen_trust = 'owner' whenever that key is present. So renaming an app
+    //    silently promoted an imported, unreviewed pack screen to full data/hardware
+    //    bridge access. This page has no screen editor and must never send that key.
+    await fetchApps();
+    const server = useAppStore.getState().getApp(appId);
+    // Only the settings keys this page has controls for are replayed; everything else
+    // (landingPage from the Studio's Screens section, sign-up keys from its Access
+    // section, PWA keys from Deploy) keeps whatever the server currently holds.
+    const edited = app.settings as unknown as Record<string, unknown> | undefined;
+    const ownedSettings = { ...(server?.settings ?? {}) } as unknown as Record<string, unknown>;
+    for (const key of EDITED_SETTING_KEYS) {
+      ownedSettings[key] = edited?.[key];
+    }
+    const ok = await updateApp(appId, {
+      name: app.name,
+      slug: app.slug,
+      description: app.description,
+      logoUrl: app.logoUrl,
+      status: app.status,
+      theme: app.theme,
+      navConfig: app.navConfig,
+      settings: ownedSettings as unknown as App['settings'],
+    });
     setSaving(false);
     // Only show the success state when the update actually persisted; updateApp
     // already surfaces an error toast on failure.
@@ -202,7 +251,7 @@ export function AppSettings() {
   return (
     <div className="min-h-screen">
       <Header
-        title="Manage"
+        title="App settings"
         actions={
           <>
             <Button
@@ -215,16 +264,17 @@ export function AppSettings() {
             >
               <span className="hidden sm:inline">{backTo.label ? `Back to ${backTo.label}` : 'Back'}</span>
             </Button>
-            {/* Nothing on the Manage tab is savable — hide the Save action there. */}
-            {activeTab !== 'manage' && (
-              <Button size="sm" onClick={handleSave} disabled={saving} leftIcon={saveSuccess ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />}>
-                {saving ? 'Saving...' : saveSuccess ? 'Saved!' : 'Save'}
-              </Button>
-            )}
+            {/* Save stays mounted on every tab. Hiding it on Manage made edits made on
+                Theme look already-committed, and clicking any Manage tile then asked to
+                "discard unsaved changes" the user believed were saved. Disabled-when-clean
+                is a self-explaining control; a vanishing one is not. */}
+            <Button size="sm" onClick={handleSave} disabled={saving || !dirty} leftIcon={saveSuccess ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />}>
+              {saving ? 'Saving...' : saveSuccess ? 'Saved!' : dirty ? 'Save' : 'Saved'}
+            </Button>
           </>
         }
       />
-      <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
+      <div className="@container/appsettings w-full flex-1 p-4 @xl/appsettings:p-6 @3xl/appsettings:p-8">
       <div className="max-w-4xl mx-auto">
 
       {/* Identity + quick actions: opening the running app and jumping to Deploy are the two
@@ -553,7 +603,7 @@ export function AppSettings() {
 
           <TabsContent value="theme">
           <div className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 @xl/appsettings:grid-cols-2">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Accent color</label>
                 <div className="flex gap-2 items-center">
@@ -576,14 +626,15 @@ export function AppSettings() {
             </div>
             {(() => {
               const primary = app.theme?.primaryColor || '#6366f1';
-              const bg = app.theme?.backgroundColor || '#ffffff';
               // The accent is painted as text/links on CARDS — white in light mode,
-              // slate-900 (#0f172a) in dark. Check both and report the WORST case, so
-              // the badge reflects dark mode too (not just the configured page bg).
-              const rBg = hexContrast(primary, bg);
+              // slate-900 (#0f172a) in dark. The page background is NOT one of those
+              // surfaces, and measuring against it certified failures: #ffd400 on a
+              // #111111 page scored ~15:1 and went green, while the runtime renders it
+              // on white cards at ~1.4:1 — invisible. Report the worst REAL case.
+              const rLight = hexContrast(primary, '#ffffff');
               const rDark = hexContrast(primary, '#0f172a');
-              if (rBg === null) return null;
-              const ratio = rDark === null ? rBg : Math.min(rBg, rDark);
+              if (rLight === null) return null;
+              const ratio = rDark === null ? rLight : Math.min(rLight, rDark);
               const level = contrastLevel(ratio);
               const ok = level !== 'fail';
               return (
@@ -671,7 +722,7 @@ export function AppSettings() {
                   <div className="space-y-3">
                     {navLinks.map((l) => (
                       <div key={l.id || l.displayName} className="rounded-xl border border-gray-200 dark:border-slate-700 p-4 space-y-3">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 gap-3 @xl/appsettings:grid-cols-2">
                           <div>
                             <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Label</label>
                             <input
@@ -788,8 +839,8 @@ export function AppSettings() {
               title="Experience & delivery"
               description="Shape the frontend, create another view over the same data, and publish it."
               items={[
-                { label: 'Custom frontend', desc: 'Build a custom HTML, CSS and TypeScript experience (Beta)', icon: MonitorPlay, onClick: () => navGuarded(paths.appSub(`${appId}`, 'home/edit')) },
-                { label: 'Companion app', desc: 'Create another app over these same forms and records', icon: Layers, onClick: () => navGuarded(paths.appSub(`${appId}`, 'forms')) },
+                { label: 'Home screen code', desc: 'Build the app home as custom HTML, CSS and TypeScript (Beta)', icon: MonitorPlay, onClick: () => navGuarded(paths.appSub(`${appId}`, 'home/edit')) },
+                { label: 'Companion app', desc: 'Create another app over these same forms and records', icon: Layers, onClick: () => navGuarded(`${paths.appSub(`${appId}`, 'forms')}#companion`) },
                 { label: 'Deploy', desc: 'Manage publishing, share links and PWA settings', icon: Rocket, onClick: () => navGuarded(paths.appSub(`${appId}`, 'deploy')) },
               ]}
             />
@@ -869,7 +920,7 @@ function ManageAppGroup({
         </h3>
         <p className="mt-0.5 text-xs leading-5 text-gray-500 dark:text-slate-400">{description}</p>
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 @2xl/appsettings:grid-cols-2">
         {items.map((item) => (
           <button
             key={item.label}

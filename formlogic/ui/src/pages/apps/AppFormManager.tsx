@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useReturnTo } from '../../hooks/useReturnTo';
-import { ArrowLeft, Plus, X, Pencil, Link2, ArrowLeftIcon, ChevronUp, ChevronDown, Check, Tag, Share2, Layers } from 'lucide-react';
+import { ArrowLeft, Plus, X, Pencil, Link2, ArrowLeftIcon, ChevronUp, ChevronDown, Check, Search, Tag, Share2, Layers } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useFormStore } from '../../stores/formStore';
 import { toast } from '../../stores/toastStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
+import { Input } from '../../components/ui/Input';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { cn } from '../../lib/utils';
 import { useResourcePaths } from '../../components/admin/AdminActingContext';
@@ -15,6 +16,14 @@ import { api } from '../../lib/api';
 import type { AppFormRelations } from '../../lib/api';
 import type { App, AppForm, DashboardWidget, AppReportItem } from '../../types/app';
 import { isReportDocument } from '../../types/app';
+
+/** What each visibility state means for members, said in the row rather than a tooltip. */
+const NAV_STATE_HELP: Record<'shown' | 'unlisted' | 'data-only' | 'off', string> = {
+  shown: 'In the app menu — members can open it from anywhere.',
+  unlisted: 'Not in the menu, but still openable by link and from other screens.',
+  'data-only': 'No screens at all. It keeps storing records, which custom screens can still read.',
+  off: 'Removed from the app entirely — not even the SDK can reach it. Records are kept.',
+};
 
 interface RelationBadge {
   type: 'outgoing' | 'incoming';
@@ -37,6 +46,7 @@ export function AppFormManager() {
   const [busyFormId, setBusyFormId] = useState<string | null>(null);
   const [editingNameId, setEditingNameId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
+  const [availableSearch, setAvailableSearch] = useState('');
   const [relationBadges, setRelationBadges] = useState<Record<string, RelationBadge[]>>({});
   const [removeConfirm, setRemoveConfirm] = useState<{ formId: string; formName: string; affectedFields: Array<{ formName: string; fieldLabel: string }>; sharedWith: string[]; dashboardRefCount: number } | null>(null);
   // Cache the app's linked_record relations (one round trip) so we can check for
@@ -118,6 +128,15 @@ export function AppFormManager() {
     setLoading(false);
   };
 
+  // Settings → Manage → "Companion app" deep-links here with #companion; scroll to it
+  // rather than dropping the user at the top of a page titled "Manage forms".
+  useEffect(() => {
+    if (window.location.hash === '#companion') {
+      const id = window.setTimeout(() => document.getElementById('companion')?.scrollIntoView({ block: 'start' }), 250);
+      return () => window.clearTimeout(id);
+    }
+  }, []);
+
   useEffect(() => {
     const init = async () => {
       await refreshForms();
@@ -173,7 +192,13 @@ export function AppFormManager() {
   };
 
   const includedFormIds = appForms.map((f) => f.formId);
-  const availableForms = allForms.filter((f) => !includedFormIds.includes(f.id) && !packFormIds.has(f.id));
+  const attachable = allForms.filter((f) => !includedFormIds.includes(f.id) && !packFormIds.has(f.id));
+  // The list is every form in the workspace, so it is long for anyone with a few
+  // apps — attaching one was a scroll hunt with no way to narrow it.
+  const availableQuery = availableSearch.trim().toLowerCase();
+  const availableForms = availableQuery
+    ? attachable.filter((f) => f.title.toLowerCase().includes(availableQuery))
+    : attachable;
 
   const handleAdd = async (formId: string) => {
     if (!appId) return;
@@ -361,17 +386,29 @@ export function AppFormManager() {
           </Button>
         }
       />
-      <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
+      <div className="@container/page w-full flex-1 p-4 @xl/page:p-6 @3xl/page:p-8">
       <div className="max-w-5xl mx-auto">
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-6 @3xl/page:grid-cols-2">
         {/* Available forms */}
         <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4">
-          <h3 className="font-medium text-gray-900 dark:text-white mb-3 tracking-tight">Available forms</h3>
-          <p className="text-xs text-gray-400 dark:text-slate-500 -mt-2 mb-3">Your forms not yet in this app. Adding a form that another app already uses shares it — both apps read and write the same data.</p>
+          <h3 className="font-medium text-gray-900 dark:text-white mb-1 tracking-tight">Available forms</h3>
+          <p className="mb-3 text-xs text-gray-500 dark:text-slate-400">Your forms not yet in this app. Adding a form that another app already uses shares it — both apps read and write the same data.</p>
+          {attachable.length > 5 && (
+            <Input
+              value={availableSearch}
+              onChange={(e) => setAvailableSearch(e.target.value)}
+              placeholder={`Search ${attachable.length} forms…`}
+              aria-label="Search available forms"
+              leftIcon={<Search className="h-4 w-4" />}
+              className="mb-3"
+            />
+          )}
           {availableForms.length === 0 ? (
-            <p className="text-sm text-gray-400 dark:text-slate-400 py-4 text-center">
-              {allForms.length === 0 ? 'No forms created yet. Create forms first.' : 'No forms to add — all your forms are already in this app or managed by a pack.'}
+            <p className="py-4 text-center text-sm text-gray-500 dark:text-slate-400">
+              {attachable.length === 0
+                ? (allForms.length === 0 ? 'No forms created yet. Create forms first.' : 'No forms to add — all your forms are already in this app or managed by a pack.')
+                : `No forms match "${availableSearch.trim()}".`}
             </p>
           ) : (
             <div className="space-y-2">
@@ -415,12 +452,24 @@ export function AppFormManager() {
                 <div key={af.formId} className="p-3 rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-gray-50 dark:bg-slate-800/50">
                   <div className="flex flex-wrap items-center gap-2">
                   <div className="flex items-center gap-2 flex-1 min-w-0">
-                  <div className="flex flex-col -my-1 flex-shrink-0">
-                    <button onClick={() => handleMove(index, -1)} disabled={index === 0} aria-label="Move up" className="p-0.5 rounded text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 disabled:opacity-30 disabled:cursor-default cursor-pointer">
-                      <ChevronUp className="h-3.5 w-3.5" />
+                  {/* Reorder controls sized for a finger: 18px targets were below the
+                      24px floor and sat directly beside each other. */}
+                  <div className="-my-1 flex flex-shrink-0 flex-col">
+                    <button
+                      onClick={() => handleMove(index, -1)}
+                      disabled={index === 0}
+                      aria-label={`Move ${af.displayName} up`}
+                      className="flex h-6 w-7 cursor-pointer items-center justify-center rounded text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:cursor-default disabled:opacity-30 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+                    >
+                      <ChevronUp className="h-4 w-4" />
                     </button>
-                    <button onClick={() => handleMove(index, 1)} disabled={index === appForms.length - 1} aria-label="Move down" className="p-0.5 rounded text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 disabled:opacity-30 disabled:cursor-default cursor-pointer">
-                      <ChevronDown className="h-3.5 w-3.5" />
+                    <button
+                      onClick={() => handleMove(index, 1)}
+                      disabled={index === appForms.length - 1}
+                      aria-label={`Move ${af.displayName} down`}
+                      className="flex h-6 w-7 cursor-pointer items-center justify-center rounded text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:cursor-default disabled:opacity-30 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+                    >
+                      <ChevronDown className="h-4 w-4" />
                     </button>
                   </div>
                   {editingNameId === af.formId ? (
@@ -439,7 +488,7 @@ export function AppFormManager() {
                   </div>
                   {/* Action cluster — wraps to its own line on narrow screens (flex-wrap
                       on the row) so the name isn't squeezed and targets stay tappable. */}
-                  <div className="flex items-center gap-0.5 flex-shrink-0 ml-auto">
+                  <div className="ml-auto flex min-w-0 flex-wrap items-center gap-0.5">
                   {editingNameId === af.formId ? (
                     <button onMouseDown={(e) => { e.preventDefault(); saveRename(af.formId); }} aria-label="Save name" className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-green-600 transition-colors cursor-pointer">
                       <Check className="h-4 w-4" />
@@ -457,10 +506,10 @@ export function AppFormManager() {
                     onChange={(e) => applyNavState(af, e.target.value as FormNavState)}
                     disabled={busyFormId === af.formId}
                     aria-label={`Visibility for ${af.displayName}`}
-                    title={'Shown — normal menu entry.\nUnlisted — no menu link, still openable by URL and screens.\nData-only — no UI at all; records stay available to other forms’ custom screens through the SDK.\nOff — removed from the app runtime entirely.'}
+                    aria-describedby={`nav-state-${af.formId}`}
                     className={cn(
-                      'text-xs px-1.5 py-1 rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-900 disabled:opacity-50 transition-colors cursor-pointer',
-                      formNavState(af) === 'shown' ? 'text-green-600' : formNavState(af) === 'off' ? 'text-gray-400 dark:text-slate-500' : 'text-amber-600 dark:text-amber-400'
+                      'min-h-8 cursor-pointer rounded-lg border border-gray-200 bg-white px-1.5 py-1 text-xs transition-colors disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900',
+                      formNavState(af) === 'shown' ? 'text-green-600' : formNavState(af) === 'off' ? 'text-gray-500 dark:text-slate-400' : 'text-amber-600 dark:text-amber-400'
                     )}
                   >
                     <option value="shown">Shown</option>
@@ -473,6 +522,13 @@ export function AppFormManager() {
                   </button>
                   </div>
                   </div>
+                  {/* What the chosen visibility actually does, in the row. It used to
+                      live only in a `title` tooltip, which never appears on touch and
+                      is the one place the four states are explained at all. */}
+                  <p id={`nav-state-${af.formId}`} className="mt-1.5 text-[11px] leading-4 text-gray-500 dark:text-slate-400">
+                    {NAV_STATE_HELP[formNavState(af)]}
+                  </p>
+
                   {/* Shared-data + relation badges */}
                   {(sharedApps.length > 0 || relationBadges[af.formId]?.length > 0) && (
                     <div className="flex flex-wrap gap-1 mt-2">
@@ -516,8 +572,9 @@ export function AppFormManager() {
         </div>
       </div>
 
-      {/* Companion app */}
-      <div className="mt-6 bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4">
+      {/* Companion app — id anchors the Settings → Manage tile, which used to land
+          on this page's top with the card far below the fold. */}
+      <div id="companion" className="mt-6 bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4">
         <h3 className="font-medium text-gray-900 dark:text-white mb-1 tracking-tight flex items-center gap-2">
           <Layers className="h-4 w-4 text-violet-500 dark:text-violet-400" />
           Create a companion app

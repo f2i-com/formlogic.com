@@ -114,6 +114,8 @@ export default function AppHomeStudio() {
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [screenLoaded, setScreenLoaded] = useState(false);
+  /** A non-code home already exists here: replacing it needs an explicit choice. */
+  const [existingKind, setExistingKind] = useState<'dashboard' | 'sdk' | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [compileError, setCompileError] = useState<string | null>(null);
@@ -173,6 +175,13 @@ export default function AppHomeStudio() {
       if (cs && (cs.html || cs.js || cs.ts || cs.files?.length)) {
         setFiles(toFiles(cs));
         setPreview({ ...cs, enabled: true });
+      } else if (cs?.kind === 'dashboard' && (cs.dashboard?.widgets?.length ?? 0) > 0) {
+        // A widget dashboard carries no code, so it used to fall through to the blank
+        // start screen — and "Start blank" + Save then destroyed the widget specs with
+        // no confirmation and nothing to restore from.
+        setExistingKind('dashboard');
+      } else if (cs?.kind === 'sdk' && cs.sdkScreen?.screenId) {
+        setExistingKind('sdk');
       }
       const afRes = await api.getAppForms(appId);
       const appForms = (afRes.data?.forms || []) as Array<{ formId: string; displayName: string }>;
@@ -342,6 +351,33 @@ export default function AppHomeStudio() {
             <div className="flex-1 flex flex-col items-center justify-center gap-3 py-16 text-center px-4">
               <p className="text-sm text-gray-600 dark:text-slate-300">{loadError}</p>
               <Button variant="outline" size="sm" onClick={() => { setLoadError(null); setScreenLoaded(false); setLoadAttempt((n) => n + 1); }}>Try again</Button>
+            </div>
+          ) : existingKind ? (
+            /* This app already HAS a home screen — just not a code one. Starting blank
+               here would overwrite the widget dashboard / pack screen with no warning
+               and nothing to restore from, so replacing it takes an explicit choice. */
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              <div className="mx-auto max-w-xl px-6 py-12 text-center">
+                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-50 dark:bg-amber-400/10">
+                  <FileCode2 className="h-7 w-7 text-amber-600 dark:text-amber-300" />
+                </div>
+                <h2 className="text-lg font-semibold tracking-tight text-gray-900 dark:text-white">
+                  {existingKind === 'dashboard' ? 'This app already has a widget dashboard' : 'This app already has a built-in screen'}
+                </h2>
+                <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
+                  {existingKind === 'dashboard'
+                    ? 'Its home is a no-code widget dashboard, edited in the live app. Writing custom code here replaces it, and the widget layout is not kept.'
+                    : 'Its home is a screen provided by an installed pack. Writing custom code here replaces it.'}
+                </p>
+                <div className="mt-8 flex flex-col items-center gap-2 sm:flex-row sm:justify-center">
+                  <Button variant="secondary" onClick={() => window.open(`/app/${slug}`, '_blank', 'noopener,noreferrer')}>
+                    {existingKind === 'dashboard' ? 'Edit the dashboard in the app' : 'Open the app'}
+                  </Button>
+                  <Button variant="outline" onClick={() => setExistingKind(null)}>
+                    Replace with custom code
+                  </Button>
+                </div>
+              </div>
             </div>
           ) : files.length === 0 ? (
             /* Empty state: load succeeded but nothing saved yet — pick an explicit starting point. */

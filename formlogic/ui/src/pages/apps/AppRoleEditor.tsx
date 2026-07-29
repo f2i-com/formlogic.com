@@ -28,6 +28,10 @@ export function AppRoleEditor() {
   const [editRoleName, setEditRoleName] = useState('');
   const [appForms, setAppForms] = useState<AppForm[]>([]);
   const [permissions, setPermissions] = useState<Array<{ formId: string | null; permission: PermissionAction }>>([]);
+  /** True only after a SUCCESSFUL read — gates rendering and saving the matrix. */
+  const [permsLoaded, setPermsLoaded] = useState(false);
+  const [permsError, setPermsError] = useState<string | null>(null);
+  const [permsReloadToken, setPermsReloadToken] = useState(0);
   const [newRoleName, setNewRoleName] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -66,24 +70,31 @@ export function AppRoleEditor() {
   useEffect(() => {
     if (!appId || !selectedRoleId) return;
     setPermissions([]); // Clear previous role's permissions immediately
+    setPermsLoaded(false);
+    setPermsError(null);
     setDirty(false); // fresh role load is not a user edit
     let cancelled = false;
+    // api.request NEVER throws — it returns { error } — so the error branch has to be
+    // read here. Rendering an unread set as an empty matrix looked exactly like a
+    // correctly-loaded empty role: ticking one box to enable Save then replaced the
+    // role's ENTIRE real permission set with that single row, and every member holding
+    // the role silently lost access.
     api.getAppRolePermissions(appId, selectedRoleId).then((result) => {
       if (cancelled) return;
-      if (result.data?.permissions) {
-        setPermissions((result.data.permissions as Array<{ formId: string | null; permission: PermissionAction }>).map((p) => ({
-          formId: (p as Record<string, unknown>).formId as string | null,
-          permission: (p as Record<string, unknown>).permission as PermissionAction,
-        })));
+      if (result.error) {
+        setPermsError(typeof result.error === 'string' ? result.error : 'Could not read this role.');
+        return;
       }
+      setPermissions(((result.data?.permissions ?? []) as Array<{ formId: string | null; permission: PermissionAction }>).map((p) => ({
+        formId: (p as Record<string, unknown>).formId as string | null,
+        permission: (p as Record<string, unknown>).permission as PermissionAction,
+      })));
+      setPermsLoaded(true);
     }).catch(() => {
-      if (!cancelled) {
-        setPermissions([]);
-        toast.error('Load failed', 'Could not load permissions for this role');
-      }
+      if (!cancelled) setPermsError('Could not read this role.');
     });
     return () => { cancelled = true; };
-  }, [appId, selectedRoleId]);
+  }, [appId, selectedRoleId, permsReloadToken]);
 
   const selectedRole = roles.find((r) => r.id === selectedRoleId);
   // The immutable Owner role is identified by identity (system role named Owner),
@@ -116,7 +127,8 @@ export function AppRoleEditor() {
   };
 
   const handleSavePermissions = async () => {
-    if (!appId || !selectedRoleId) return;
+    // Never POST over a set that was never read — that is the write which destroys grants.
+    if (!appId || !selectedRoleId || !permsLoaded) return;
     setSaving(true);
     setSaveSuccess(false);
     setRoleError(null);
@@ -137,9 +149,13 @@ export function AppRoleEditor() {
 
   const handleCreateRole = async () => {
     if (!appId || !newRoleName.trim()) return;
+    // Creating a role SWITCHES the selection, which discards an unsaved matrix — the
+    // same loss the role buttons already confirm before causing.
+    if (dirty && !window.confirm('You have unsaved permission changes. Create the role and discard them?')) return;
     const role = await createRole(appId, { name: newRoleName.trim() });
     if (role) {
       setRoles((prev) => [...prev, role]);
+      setDirty(false);
       setSelectedRoleId(role.id);
       setNewRoleName('');
     }
@@ -172,7 +188,7 @@ export function AppRoleEditor() {
           </Button>
         }
       />
-      <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
+      <div className="@container/roles w-full flex-1 p-4 @xl/roles:p-6 @3xl/roles:p-8">
       <div className="max-w-6xl mx-auto">
 
       {roleError && (
@@ -184,7 +200,7 @@ export function AppRoleEditor() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 gap-6 @3xl/roles:grid-cols-4">
         {/* Role list */}
         <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4 overflow-hidden">
           <h3 className="font-medium text-gray-900 dark:text-white mb-3 tracking-tight">Roles</h3>
@@ -204,7 +220,13 @@ export function AppRoleEditor() {
                     className="flex-1 min-w-0 text-sm px-2 py-1 rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:outline-none"
                   />
                 ) : (
-                  <button onClick={() => { if (dirty && role.id !== selectedRoleId) setPendingRoleId(role.id); else setSelectedRoleId(role.id); }} className="flex items-center gap-2 flex-1 text-left text-sm min-w-0">
+                  <button
+                    onClick={() => { if (dirty && role.id !== selectedRoleId) setPendingRoleId(role.id); else setSelectedRoleId(role.id); }}
+                    // Selection was conveyed by background colour only, so a screen-reader
+                    // user could not tell which role the matrix on the right belonged to.
+                    aria-current={role.id === selectedRoleId ? 'true' : undefined}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm"
+                  >
                     <Shield className="h-4 w-4 flex-shrink-0" />
                     <span className="truncate">{role.name}</span>
                     {role.isSystem && <span className="text-xs text-gray-400 flex-shrink-0">(system)</span>}
@@ -236,17 +258,31 @@ export function AppRoleEditor() {
         </div>
 
         {/* Permission matrix */}
-        <div className="lg:col-span-3 bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">
+        <div className="rounded-2xl border border-gray-200/80 bg-white p-6 @3xl/roles:col-span-3 dark:border-slate-700/60 dark:bg-slate-900/50">
           {selectedRole ? (
             <>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-medium text-gray-900 dark:text-white tracking-tight">Permissions for "{selectedRole.name}"</h3>
-                <Button size="sm" onClick={handleSavePermissions} disabled={saving || isOwnerRole || !dirty}>
+                <Button size="sm" onClick={handleSavePermissions} disabled={saving || isOwnerRole || !dirty || !permsLoaded}>
                   {saving ? 'Saving...' : saveSuccess ? 'Saved!' : 'Save permissions'}
                 </Button>
               </div>
               {isOwnerRole ? (
                 <p className="text-sm text-gray-500 dark:text-slate-400">The Owner role has all permissions and cannot be modified.</p>
+              ) : permsError ? (
+                /* Nothing is shown or editable until the real set loads — saving over an
+                   unknown set would revoke every grant the role actually holds. */
+                <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+                  <p className="text-sm font-medium text-gray-900 dark:text-white">Couldn't read this role's permissions</p>
+                  <p className="max-w-sm text-sm text-gray-500 dark:text-slate-400">{permsError}</p>
+                  <Button variant="outline" size="sm" className="mt-2" onClick={() => setPermsReloadToken((t) => t + 1)}>
+                    Try again
+                  </Button>
+                </div>
+              ) : !permsLoaded ? (
+                <div className="flex items-center justify-center py-10">
+                  <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-primary-600" role="status" aria-label="Loading permissions" />
+                </div>
               ) : (
                 <PermissionMatrix
                   permissions={permissions}

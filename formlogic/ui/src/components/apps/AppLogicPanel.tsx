@@ -5,7 +5,7 @@
 // (hook badge, optional description, enable toggle, permission quick-add chips), and
 // "Test run" each one against the real QuickJS host with a sample ctx before saving.
 // Persists via api.updateApp; the backend re-sanitizes + re-validates on save and on submit.
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Braces, ChevronDown, ChevronRight, Play, Plus, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import { runHook, type AppLogicHookOutcome } from '../../client-runtime/logic/appLogicHost';
@@ -188,7 +188,12 @@ function AddScriptForm({ onClose, onAdd }: {
   );
 }
 
-export function AppLogicPanel({ appId, initialLogic }: { appId: string; initialLogic?: CustomAppLogicBundle }) {
+export function AppLogicPanel({ appId, initialLogic, onDirtyChange }: {
+  appId: string;
+  initialLogic?: CustomAppLogicBundle;
+  /** Reports unsaved script edits so the page hosting this editor can guard exits. */
+  onDirtyChange?: (dirty: boolean) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [scripts, setScripts] = useState<CustomAppLogicScript[]>(() => initialLogic?.scripts ?? []);
   const [appPerms, setAppPerms] = useState(() => (initialLogic?.permissions ?? []).join(', '));
@@ -274,6 +279,14 @@ export function AppLogicPanel({ appId, initialLogic }: { appId: string; initialL
     }
   };
 
+  // Minutes of editor work used to vanish on any Back click or reload, because the
+  // page hosting this panel had no idea there were unsaved edits (and the panel is
+  // collapsible, so they were often not even on screen).
+  const savedBundleRef = useRef(JSON.stringify(initialLogic ?? null));
+  const dirty = JSON.stringify(bundle) !== savedBundleRef.current;
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+
   const save = async () => {
     setSaving(true);
     const r = await api.updateApp(appId, { customLogic: bundle });
@@ -282,13 +295,15 @@ export function AppLogicPanel({ appId, initialLogic }: { appId: string; initialL
       toast.error('Failed to save app logic', typeof r.error === 'string' ? r.error : undefined);
     } else {
       setLastSavedCount(scripts.length);
+      savedBundleRef.current = JSON.stringify(bundle);
+      onDirtyChange?.(false);
       toast.success('App logic saved', `${scripts.length} script${scripts.length === 1 ? '' : 's'} active.`);
     }
   };
 
   return (
     <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">
-      <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-3 text-left">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-3 text-left">
         <Braces className="h-5 w-5 text-primary-600 dark:text-primary-400" />
         <h3 className="flex-1 font-medium text-gray-900 dark:text-white tracking-tight">App logic (QuickJS)</h3>
         <span className="text-xs text-gray-400 dark:text-slate-500">{scripts.length} script{scripts.length === 1 ? '' : 's'}</span>

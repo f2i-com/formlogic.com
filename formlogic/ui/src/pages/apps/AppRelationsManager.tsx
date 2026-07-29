@@ -91,7 +91,16 @@ export function AppRelationsManager() {
       }
       const form = res.data.form as Form;
       const updatedFields = form.fields.filter((f) => f.id !== deleteTarget.field.id);
-      await api.updateForm(deleteTarget.sourceFormId, { fields: updatedFields });
+      // api.updateForm returns { error } rather than throwing, so discarding the result
+      // turned every refusal (permission, validation, a private form demanding an
+      // encryptionSchema) into a silent no-op: the dialog closed, the list reloaded,
+      // and the relation was still there with no message at all.
+      const upd = await api.updateForm(deleteTarget.sourceFormId, { fields: updatedFields });
+      if (upd.error) {
+        setDeleteError(typeof upd.error === 'string' ? upd.error : 'Could not delete the relation.');
+        setDeleting(false);
+        return;
+      }
       setDeleteTarget(null);
       await loadRelations();
     } catch (err) {

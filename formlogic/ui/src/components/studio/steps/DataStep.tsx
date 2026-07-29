@@ -723,6 +723,7 @@ export function DataStep({
         onClose={() => setShowRelation(false)}
         onSave={() => { setShowRelation(false); void onReloadForms(); }}
         appForms={relationForms}
+        defaultSourceFormId={selected?.id}
       />
       <VaultSetupWizard
         isOpen={showVaultSetup}

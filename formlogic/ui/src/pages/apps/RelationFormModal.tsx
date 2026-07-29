@@ -13,12 +13,19 @@ interface RelationFormModalProps {
   onClose: () => void;
   onSave: () => void;
   appForms: Array<{ formId: string; displayName: string }>;
+  /**
+   * Opened from a data type's own Relationships tab: that form IS the source, so it
+   * is preselected and locked. Leaving it editable let "add a relationship here"
+   * silently write onto a different form, which then never appeared in the tab the
+   * user was standing in. Omit for the app-wide relations page.
+   */
+  defaultSourceFormId?: string;
   existing?: null;
 }
 
 const EXCLUDED_TYPES = new Set(['statement', 'welcome_screen', 'thank_you', 'linked_record']);
 
-export function RelationFormModal({ isOpen, onClose, onSave, appForms }: RelationFormModalProps) {
+export function RelationFormModal({ isOpen, onClose, onSave, appForms, defaultSourceFormId }: RelationFormModalProps) {
   const [sourceFormId, setSourceFormId] = useState('');
   const [targetFormId, setTargetFormId] = useState('');
   const [label, setLabel] = useState('');
@@ -32,14 +39,14 @@ export function RelationFormModal({ isOpen, onClose, onSave, appForms }: Relatio
   useEffect(() => {
     if (isOpen) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- modal-open reset: draft state must re-sync synchronously when isOpen flips
-      setSourceFormId('');
+      setSourceFormId(defaultSourceFormId ?? '');
       setTargetFormId('');
       setLabel('');
       setAllowMultiple(false);
       setDisplayFieldIds([]);
       setTargetFields([]);
     }
-  }, [isOpen]);
+  }, [isOpen, defaultSourceFormId]);
 
   // Load target form fields when target changes
   useEffect(() => {
@@ -92,8 +99,16 @@ export function RelationFormModal({ isOpen, onClose, onSave, appForms }: Relatio
         order: sourceForm.fields.length,
       };
 
-      await api.updateForm(sourceFormId, { fields: [...sourceForm.fields, newField] });
+      // Report what actually happened: this used to toast success unconditionally, so a
+      // refused write closed the modal with a green "Relation created" and no relation.
+      // The modal stays OPEN on failure — its open-effect wipes the draft, so closing
+      // would throw away the source/target/label/display-field choices too.
+      const res = await api.updateForm(sourceFormId, { fields: [...sourceForm.fields, newField] });
       setSaving(false);
+      if (res.error) {
+        toast.error('Save failed', typeof res.error === 'string' ? res.error : 'Could not create the relation.');
+        return;
+      }
       toast.success('Relation created', `"${label.trim()}" was added.`);
       onSave();
     } catch {
@@ -109,18 +124,26 @@ export function RelationFormModal({ isOpen, onClose, onSave, appForms }: Relatio
       <div className="p-6 space-y-5">
         {/* Source Form */}
         <div>
-          <label htmlFor="relation-source-form" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Source Form</label>
-          <select
-            id="relation-source-form"
-            value={sourceFormId}
-            onChange={(e) => { setSourceFormId(e.target.value); setTargetFormId(''); }}
-            className="w-full px-3 py-2.5 border border-gray-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900/50 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <option value="">Select a form...</option>
-            {appForms.map((f) => (
-              <option key={f.formId} value={f.formId}>{f.displayName}</option>
-            ))}
-          </select>
+          <span className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-slate-300">Source Form</span>
+          {defaultSourceFormId ? (
+            <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-900 dark:border-slate-700 dark:bg-slate-800/60 dark:text-white">
+              {appForms.find((f) => f.formId === defaultSourceFormId)?.displayName ?? 'This data type'}
+              <span className="ml-1.5 text-xs text-gray-500 dark:text-slate-400">— the link is added here</span>
+            </p>
+          ) : (
+            <select
+              id="relation-source-form"
+              aria-label="Source Form"
+              value={sourceFormId}
+              onChange={(e) => { setSourceFormId(e.target.value); setTargetFormId(''); }}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-gray-900 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900/50 dark:text-white"
+            >
+              <option value="">Select a form...</option>
+              {appForms.map((f) => (
+                <option key={f.formId} value={f.formId}>{f.displayName}</option>
+              ))}
+            </select>
+          )}
         </div>
 
         {/* Target Form */}

@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Globe, Trash2, ExternalLink, Search, Package, Plug, Upload, FileText, LayoutGrid, List, Settings } from 'lucide-react';
+import { Plus, Globe, Trash2, ExternalLink, Search, Package, Plug, Upload, FileText, LayoutGrid, List, Settings , RotateCcw } from 'lucide-react';
 import { AppTile } from '../../components/apps/AppTile';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useAppStore } from '../../stores/appStore';
@@ -28,6 +28,7 @@ const APPS_PAGE = 9;
 export function AppsDashboard() {
   const navigate = useNavigate();
   const { apps, isLoading, fetchApps, deleteApp } = useAppStore();
+  const loadError = useAppStore((s) => s.error);
   const [deleteTarget, setDeleteTarget] = useState<App | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -76,6 +77,9 @@ export function AppsDashboard() {
     if (!q) return apps;
     return apps.filter((app) =>
       app.name.toLowerCase().includes(q) ||
+      // The slug is printed on every card and used in the /app/<slug> URL, so it is
+      // the obvious thing to paste in. The sidebar's search already matched it.
+      app.slug.toLowerCase().includes(q) ||
       (appPackMap[app.id]?.toLowerCase().includes(q) ?? false)
     );
   }, [apps, searchQuery, appPackMap]);
@@ -86,20 +90,23 @@ export function AppsDashboard() {
         title="Apps"
         actions={
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => setShowHandToAi(true)} leftIcon={<Plug className="h-4 w-4" />} title="Share a temporary MCP link so your own AI can build a new app">
-              Connect an AI
+            {/* Labels collapse on phones — three full-width buttons pushed the theme
+                toggle and user menu past a clipped edge, making them unreachable. */}
+            <Button variant="outline" size="sm" onClick={() => setShowHandToAi(true)} leftIcon={<Plug className="h-4 w-4" />} aria-label="Connect an AI" title="Share a temporary MCP link so your own AI can build a new app">
+              <span className="hidden sm:inline">Connect an AI</span>
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setShowImport(true)} leftIcon={<Upload className="h-4 w-4" />} title="Import an app from a .json bundle exported from FormLogic">
-              Import
+            <Button variant="outline" size="sm" onClick={() => setShowImport(true)} leftIcon={<Upload className="h-4 w-4" />} aria-label="Import an app" title="Import an app from a .json bundle exported from FormLogic">
+              <span className="hidden sm:inline">Import</span>
             </Button>
-            <Button size="sm" onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />}>
-              Create app
+            <Button size="sm" onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />} aria-label="Create app">
+              <span className="hidden sm:inline">Create app</span>
+              <span className="sm:hidden">New</span>
             </Button>
           </div>
         }
       />
 
-      <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
+      <div className="@container/apps w-full flex-1 p-4 @2xl/apps:p-6 @5xl/apps:p-8">
         <div className="mb-6">
           <p className="text-gray-500 dark:text-slate-400">Build and manage deployable applications</p>
         </div>
@@ -109,7 +116,7 @@ export function AppsDashboard() {
           <div className="mb-4 sm:mb-6 flex items-center gap-3">
             <Input
               placeholder="Search…"
-              aria-label="Search apps or packs"
+              aria-label="Search apps by name, slug or pack"
               value={searchQuery}
               onChange={(e) => { setSearchQuery(e.target.value); setAppLimit(APPS_PAGE); }}
               leftIcon={<Search className="h-4 w-4" />}
@@ -139,9 +146,18 @@ export function AppsDashboard() {
         )}
 
         {isLoading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6" aria-busy="true" aria-label="Loading apps">
+          <div className="grid grid-cols-1 gap-4 @2xl/apps:grid-cols-2 @2xl/apps:gap-6 @5xl/apps:grid-cols-3" aria-busy="true" aria-label="Loading apps">
             {Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)}
           </div>
+        ) : loadError && apps.length === 0 ? (
+          /* A failed fetch is not "you have no apps" — that reading has users create a
+             duplicate of an app they already own. */
+          <EmptyState
+            icon={Globe}
+            title="Couldn't load your apps"
+            description={loadError}
+            action={<Button onClick={() => void fetchApps()} leftIcon={<RotateCcw className="h-4 w-4" />}>Try again</Button>}
+          />
         ) : filteredApps.length === 0 && apps.length === 0 ? (
           <EmptyState
             icon={Globe}
@@ -172,13 +188,16 @@ export function AppsDashboard() {
         ) : (
           <>
             {viewMode === 'grid' ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+              <div className="grid grid-cols-1 gap-4 @2xl/apps:grid-cols-2 @2xl/apps:gap-6 @5xl/apps:grid-cols-3">
                 {filteredApps.slice(0, appLimit).map((app) => (
                   <AppCard
                     key={app.id}
                     app={app}
                     packName={appPackMap[app.id] ?? null}
-                    onClick={() => navigate(`/apps/${app.id}/studio`)}
+                    canManage={canManageApp(app)}
+                    // A member goes straight to the runtime; the studio would only
+                    // bounce them there anyway.
+                    onClick={() => navigate(canManageApp(app) ? `/apps/${app.id}/studio` : `/app/${app.slug}`)}
                     onManage={() => navigate(`/apps/${app.id}/settings?tab=manage`)}
                     onDelete={() => setDeleteTarget(app)}
                   />
@@ -193,7 +212,8 @@ export function AppsDashboard() {
                     key={app.id}
                     app={app}
                     packName={appPackMap[app.id] ?? null}
-                    onManage={() => navigate(`/apps/${app.id}/studio`)}
+                    canManage={canManageApp(app)}
+                    onManage={() => navigate(canManageApp(app) ? `/apps/${app.id}/studio` : `/app/${app.slug}`)}
                     onSettings={() => navigate(`/apps/${app.id}/settings?tab=manage`)}
                     onDelete={() => setDeleteTarget(app)}
                   />
@@ -215,7 +235,9 @@ export function AppsDashboard() {
           finally { setDeleting(false); }
         }}
         title="Delete app"
-        message={`Delete "${deleteTarget?.name}"? The app (with its flows, roles and members) moves to the recycle bin, restorable for 30 days. Its forms and their records stay in your workspace.`}
+        message={deleteTarget && isDemoLocalId(deleteTarget.id)
+          ? `Delete "${deleteTarget.name}"? This browser-only app is removed from this device immediately and cannot be restored.`
+          : `Delete "${deleteTarget?.name}"? The app (with its flows, roles and members) moves to the recycle bin, restorable for 30 days. Its forms and their records stay in your workspace.`}
         confirmLabel="Delete app"
         variant="danger"
         isLoading={deleting}
@@ -227,15 +249,31 @@ export function AppsDashboard() {
   );
 }
 
+/**
+ * Whether this user can edit the app, not merely open it. The apps list carries
+ * `canManage`; a persisted slice from before that flag existed falls back to ownerId.
+ * Members were shown Delete and Settings on apps they only belong to — the delete
+ * confirmed, then failed with "App not found or access denied".
+ */
+function canManageApp(app: App): boolean {
+  return app.canManage ?? !!app.ownerId;
+}
+
 // Compact list-mode row: click opens the App Studio; explicit View app / Settings / Remove actions.
-function AppRow({ app, packName, onManage, onSettings, onDelete }: { app: App; packName: string | null; onManage: () => void; onSettings: () => void; onDelete: () => void }) {
+function AppRow({ app, packName, canManage, onManage, onSettings, onDelete }: { app: App; packName: string | null; canManage: boolean; onManage: () => void; onSettings: () => void; onDelete: () => void }) {
   const formCount = app.formCount ?? app.navConfig?.length ?? 0;
   return (
     <div
       role="button"
       tabIndex={0}
       onClick={onManage}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onManage(); } }}
+      // Only the row itself opens the app. Without the target check, Enter on the
+      // nested Settings / Remove buttons was preventDefaulted here, so those controls
+      // were unreachable without a mouse.
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onManage(); }
+      }}
       title="Edit app"
       className="flex items-center gap-3 px-4 py-3.5 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500"
     >
@@ -275,30 +313,36 @@ function AppRow({ app, packName, onManage, onSettings, onDelete }: { app: App; p
             <ExternalLink className="h-4 w-4" />
           </button>
         )}
-        <button
-          type="button"
-          onClick={onSettings}
-          title="Manage app"
-          aria-label={`Manage ${app.name}`}
-          className="p-2 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"
-        >
-          <Settings className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={onDelete}
-          title="Remove app"
-          aria-label={`Remove ${app.name}`}
-          className="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:text-red-400 dark:hover:bg-red-500/10 transition-colors cursor-pointer"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
+        {/* Settings and Remove are owner-only on the server; offering them to a member
+            produced a confirmed delete that then failed with "access denied". */}
+        {canManage && (
+          <>
+            <button
+              type="button"
+              onClick={onSettings}
+              title="Manage app"
+              aria-label={`Manage ${app.name}`}
+              className="cursor-pointer rounded-lg p-2 text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-600 dark:text-slate-400 dark:hover:bg-primary-500/10 dark:hover:text-primary-400"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={onDelete}
+              title="Remove app"
+              aria-label={`Remove ${app.name}`}
+              className="cursor-pointer rounded-lg p-2 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-red-500/10 dark:hover:text-red-400"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-function AppCard({ app, packName, onClick, onManage, onDelete }: { app: App; packName: string | null; onClick: () => void; onManage: () => void; onDelete: () => void }) {
+function AppCard({ app, packName, canManage, onClick, onManage, onDelete }: { app: App; packName: string | null; canManage: boolean; onClick: () => void; onManage: () => void; onDelete: () => void }) {
   // Real count from the list endpoint; navConfig is only a stale-cache fallback (it can be empty
   // on pack-provisioned apps — the "0 forms" bug).
   const formCount = app.formCount ?? app.navConfig?.length ?? 0;
@@ -309,7 +353,10 @@ function AppCard({ app, packName, onClick, onManage, onDelete }: { app: App; pac
       role="button"
       tabIndex={0}
       onClick={onClick}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); }
+      }}
       aria-label={`Edit ${app.name}`}
       className={cn(
         'flex h-full flex-col bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200/80 dark:border-white/[0.06] shadow-sm shadow-gray-900/[0.03] p-6',
@@ -379,23 +426,27 @@ function AppCard({ app, packName, onClick, onManage, onDelete }: { app: App; pac
               <ExternalLink className="h-4 w-4" />
             </button>
           )}
-          <button
-            type="button"
-            onClick={onManage}
-            title="Manage app"
-            aria-label={`Manage ${app.name}`}
-            className="p-2.5 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 transition-colors cursor-pointer"
-          >
-            <Settings className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            className="p-2.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors cursor-pointer"
-            aria-label="Delete app"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
+          {canManage && (
+            <>
+              <button
+                type="button"
+                onClick={onManage}
+                title="Manage app"
+                aria-label={`Manage ${app.name}`}
+                className="cursor-pointer rounded-lg p-2.5 text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-600 dark:text-slate-400 dark:hover:bg-primary-500/10 dark:hover:text-primary-400"
+              >
+                <Settings className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={onDelete}
+                className="cursor-pointer rounded-lg p-2.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-red-500/10 dark:hover:text-red-400"
+                aria-label={`Delete ${app.name}`}
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

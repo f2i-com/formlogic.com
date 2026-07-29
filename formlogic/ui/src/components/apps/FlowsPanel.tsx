@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronRight, ExternalLink, Plus, RefreshCw, Workflow } from 'lucide-react';
 import { api } from '../../lib/api';
-import { parseServerDate } from '../../lib/utils';
+import { formatRelativeTime, parseServerDate } from '../../lib/utils';
 import { useAppStore } from '../../stores/appStore';
 import { toast } from '../../stores/toastStore';
 import { Button } from '../ui/Button';
@@ -56,7 +56,13 @@ function FlowRow({ appId, flow, onSaved }: {
         <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{flow.name}</p>
         <p className="truncate font-mono text-xs text-gray-400 dark:text-slate-500">{flow.slug} - v{flow.version}</p>
       </div>
-      <Switch checked={flow.enabled} onChange={toggleEnabled} label="Enabled" size="sm" />
+      {/* `label` wins over `ariaLabel` in Switch, so pass ariaLabel ONLY — otherwise
+          every row announces as an identical "Enabled, switch" and pausing the wrong
+          production automation is a coin flip. */}
+      <span className="flex items-center gap-1.5">
+        <span className="text-xs text-gray-600 dark:text-slate-300" aria-hidden="true">Enabled</span>
+        <Switch checked={flow.enabled} onChange={toggleEnabled} ariaLabel={`Enable ${flow.name}`} size="sm" />
+      </span>
       <Link
         to={`/flows?flow=${encodeURIComponent(flow.id)}`}
         className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-primary-600 hover:bg-primary-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-primary-400 dark:hover:bg-primary-500/10"
@@ -70,6 +76,9 @@ function FlowRow({ appId, flow, onSaved }: {
 
 function RunHistory({ appId }: { appId: string }) {
   const [runs, setRuns] = useState<FlowRunLog[] | null>(null);
+  // A failed fetch left `runs` null forever, so the section claimed "Loading..."
+  // permanently while the only signal — a toast — had already faded.
+  const [runsError, setRunsError] = useState(false);
   const [loading, setLoading] = useState(false);
   const [expandedRun, setExpandedRun] = useState<string | null>(null);
 
@@ -77,8 +86,11 @@ function RunHistory({ appId }: { appId: string }) {
     let cancelled = false;
     api.listFlowRuns(appId, { limit: 25 }).then((r) => {
       if (cancelled) return;
-      if (r.data) setRuns(r.data.runs);
-      else if (r.error) toast.error('Failed to load run history', typeof r.error === 'string' ? r.error : undefined);
+      if (r.data) { setRuns(r.data.runs); setRunsError(false); }
+      else if (r.error) {
+        setRunsError(true);
+        toast.error('Failed to load run history', typeof r.error === 'string' ? r.error : undefined);
+      }
     });
     return () => { cancelled = true; };
   }, [appId]);
@@ -88,9 +100,11 @@ function RunHistory({ appId }: { appId: string }) {
     const r = await api.listFlowRuns(appId, { limit: 25 });
     setLoading(false);
     if (r.error || !r.data) {
+      setRunsError(true);
       toast.error('Failed to load run history', typeof r.error === 'string' ? r.error : undefined);
       return;
     }
+    setRunsError(false);
     setRuns(r.data.runs);
   }, [appId]);
 
@@ -102,9 +116,13 @@ function RunHistory({ appId }: { appId: string }) {
           Refresh
         </Button>
       </div>
-      {runs === null || runs.length === 0 ? (
-        <p className="text-xs text-gray-400 dark:text-slate-500">
-          {runs === null ? 'Loading...' : 'No runs yet - bindings and test runs appear here.'}
+      {runsError ? (
+        <p className="text-xs text-red-600 dark:text-red-400">
+          Couldn't load run history. Use Refresh to try again.
+        </p>
+      ) : runs === null || runs.length === 0 ? (
+        <p className="text-xs text-gray-500 dark:text-slate-400">
+          {runs === null ? 'Loading…' : 'No runs yet - bindings and test runs appear here.'}
         </p>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-gray-200/80 dark:border-slate-700/60">
@@ -139,13 +157,27 @@ function RunRow({ run, expanded, onToggle }: { run: FlowRunLog; expanded: boolea
   return (
     <>
       <tr
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        aria-label={`Details for the ${run.flow ?? 'flow'} run`}
         onClick={onToggle}
-        className="cursor-pointer border-b border-gray-100 hover:bg-gray-50 last:border-b-0 dark:border-slate-800 dark:hover:bg-slate-800/40"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); }
+        }}
+        className="cursor-pointer border-b border-gray-100 last:border-b-0 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 dark:border-slate-800 dark:hover:bg-slate-800/40"
       >
         <td className="px-3 py-2 font-mono text-xs text-gray-700 dark:text-slate-300">{run.flow ?? '-'}</td>
         <td className="px-3 py-2 font-mono text-xs text-gray-500 dark:text-slate-400">{run.triggerEvent}</td>
         <td className="px-3 py-2">{statusChip(run.status)}</td>
-        <td className="whitespace-nowrap px-3 py-2 text-xs text-gray-500 dark:text-slate-400">{run.startedAt ?? run.createdAt}</td>
+        <td
+          className="whitespace-nowrap px-3 py-2 text-xs text-gray-500 dark:text-slate-400"
+          title={parseServerDate(run.startedAt ?? run.createdAt).toLocaleString()}
+        >
+          {/* The raw column is a zone-less UTC string with no hint that it is UTC, so a
+              run 5 minutes old read as 10 hours old in an Australian browser. */}
+          {formatRelativeTime(run.startedAt ?? run.createdAt)}
+        </td>
         <td className="px-3 py-2 text-xs text-gray-500 dark:text-slate-400">{runDuration(run)}</td>
       </tr>
       {expanded && (
@@ -220,7 +252,7 @@ export function FlowsPanel({ appId }: { appId: string; appSlug?: string }) {
 
   return (
     <div className="rounded-2xl border border-gray-200/80 bg-white p-6 dark:border-slate-700/60 dark:bg-slate-900/50">
-      <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-3 text-left">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-3 text-left">
         <Workflow className="h-5 w-5 text-primary-600 dark:text-primary-400" />
         <h3 className="flex-1 font-medium tracking-tight text-gray-900 dark:text-white">Flows</h3>
         <span className="text-xs text-gray-400 dark:text-slate-500">

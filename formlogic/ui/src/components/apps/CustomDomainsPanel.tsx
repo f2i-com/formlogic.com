@@ -11,6 +11,7 @@
 import { useEffect, useState } from 'react';
 import { Globe2, Plus, Trash2, RefreshCw, ExternalLink, Copy, Check, ChevronDown, ChevronRight, Sliders, Lock, Smartphone } from 'lucide-react';
 import { api, type AppDomain } from '../../lib/api';
+import { copyToClipboard } from '../../lib/utils';
 import { Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { toast } from '../../stores/toastStore';
@@ -110,6 +111,7 @@ function LaunchPageEditor({ appId, domain, onSaved }: { appId: string; domain: A
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
         className="flex items-center gap-1.5 text-xs font-medium text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white"
       >
         {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
@@ -282,6 +284,7 @@ function NativeConfigEditor({ appId, domain, onSaved }: { appId: string; domain:
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
         className="flex items-center gap-1.5 text-xs font-medium text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white"
       >
         {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
@@ -376,7 +379,7 @@ function NativeConfigEditor({ appId, domain, onSaved }: { appId: string; domain:
   );
 }
 
-export function CustomDomainsPanel({ appId }: { appId: string; appSlug?: string }) {
+export function CustomDomainsPanel({ appId, published = true }: { appId: string; appSlug?: string; published?: boolean }) {
   const [domains, setDomains] = useState<AppDomain[]>([]);
   const [loading, setLoading] = useState(true);
   const [newDomain, setNewDomain] = useState('');
@@ -416,16 +419,34 @@ export function CustomDomainsPanel({ appId }: { appId: string; appSlug?: string 
     setBusyId(d.id);
     const res = await api.verifyAppDomain(appId, d.id);
     setBusyId(null);
-    if (res.data?.domain) {
+    // A dropped request, an expired session or a domain deleted in another tab used to
+    // fall through to "add the DNS TXT record and try again" — sending owners off to
+    // re-check a registrar record that was correct all along.
+    if (res.error || !res.data) {
+      if (res.status === 404) {
+        setDomains((list) => list.filter((x) => x.id !== d.id));
+        toast.error('Domain no longer exists', 'It was removed, so there is nothing to verify.');
+        return;
+      }
+      toast.error('Could not check the domain', typeof res.error === 'string'
+        ? res.error
+        : 'FormLogic could not reach the verification service. Try again shortly.');
+      return;
+    }
+    if (res.data.domain) {
       setDomains((list) => list.map((x) => (x.id === d.id ? res.data!.domain! : x)));
     }
-    const status = res.data?.domain?.status ?? res.data?.status;
-    if (res.data?.ok || status === 'active') {
-      toast.success('Domain verified', 'Your app is now reachable on this domain.');
+    const status = res.data.domain?.status ?? res.data.status;
+    if (res.data.ok || status === 'active') {
+      // Domains route through the published app, so a draft answers with a not-found
+      // page however healthy the DNS is. Saying "now reachable" sent owners chasing it.
+      toast.success('Domain verified', published
+        ? 'Your app is now reachable on this domain.'
+        : 'DNS is set up. The domain starts serving once you publish the app.');
     } else if (status === 'verified') {
-      toast.info('Ownership verified', res.data?.message || 'Waiting for HTTPS to go live before this domain activates.');
+      toast.info('Ownership verified', res.data.message || 'Waiting for HTTPS to go live before this domain activates.');
     } else {
-      toast.warning('Not verified yet', res.data?.message || 'Add the DNS TXT record and try again.');
+      toast.warning('Not verified yet', res.data.message || 'Add the DNS TXT record and try again.');
     }
   };
 
@@ -443,11 +464,15 @@ export function CustomDomainsPanel({ appId }: { appId: string; appSlug?: string 
   };
 
   const copyDns = async (d: AppDomain) => {
-    try {
-      await navigator.clipboard.writeText(d.dns.value);
+    // The Clipboard API is unavailable on plain HTTP (this project's own host is
+    // http://formlogic.local), where the old call rejected silently: no icon change,
+    // nothing copied, no error — leaving a long random token to transcribe by hand.
+    if (await copyToClipboard(d.dns.value)) {
       setCopiedId(d.id);
       setTimeout(() => setCopiedId(null), 2000);
-    } catch { /* ignore */ }
+    } else {
+      toast.error('Copy failed', 'Select the value and copy it manually.');
+    }
   };
 
   return (
@@ -461,7 +486,11 @@ export function CustomDomainsPanel({ appId }: { appId: string; appSlug?: string 
       </p>
 
       {/* Add */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center mb-4">
+      {/* A container row, not a viewport one: with the chat rail docked this panel has
+          ~300-400px while `sm:` (viewport 640) had already fired, laying ~450px of
+          controls out horizontally — and the shell CLIPS, so the Add button simply
+          vanished with no way to scroll to it. */}
+      <div className="@container/addrow mb-4 flex flex-col gap-2 @lg/addrow:flex-row @lg/addrow:items-center">
         <input
           type="text"
           value={newDomain}
@@ -475,7 +504,7 @@ export function CustomDomainsPanel({ appId }: { appId: string; appSlug?: string 
           value={mode}
           onChange={(e) => setMode(e.target.value)}
           aria-label="Domain mode"
-          className="px-3 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500"
+          className="w-full min-w-0 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 focus:ring-2 focus:ring-primary-500 @lg/addrow:w-auto @lg/addrow:max-w-56 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
         >
           {MODE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>

@@ -14,6 +14,7 @@ import { DynamicIcon } from '../../components/ui/DynamicIcon';
 import { ExportDataMenu } from '../../components/apps/ExportDataMenu';
 import { useAdminActing } from '../../components/admin/AdminActingContext';
 import { useAppStore } from '../../stores/appStore';
+import { api } from '../../lib/api';
 import { useFormStore } from '../../stores/formStore';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
 import type { AppForm } from '../../types/app';
@@ -25,10 +26,12 @@ export function AppRecords() {
   const backTo = useReturnTo(`/apps/${appId}/settings?tab=manage`);
   // Acting admins see record COUNTS only — no data export.
   const acting = useAdminActing();
-  const { getApp, fetchApps, fetchAppForms } = useAppStore();
+  const { getApp, fetchApps } = useAppStore();
   const ownerForms = useFormStore((s) => s.forms);
   const [appForms, setAppForms] = useState<AppForm[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
   const [query, setQuery] = useState('');
 
   const app = appId ? getApp(appId) : undefined;
@@ -40,14 +43,23 @@ export function AppRecords() {
     const run = async () => {
       // The apps list may not be loaded on a hard refresh straight to this URL.
       if (!useAppStore.getState().apps.length) await fetchApps();
-      const forms = await fetchAppForms(appId);
+      // Read the API directly: the store helper returns [] for a FAILURE too, which
+      // rendered "No forms in this app yet" — the opposite of the truth — and invited
+      // the owner to go add forms they already have.
+      const res = await api.getAppForms(appId);
       if (cancelled) return;
-      setAppForms([...forms].sort((a, b) => a.sortOrder - b.sortOrder));
+      if (res.error) {
+        setLoadError(typeof res.error === 'string' ? res.error : "Couldn't load this app's forms.");
+        setLoading(false);
+        return;
+      }
+      setLoadError(null);
+      setAppForms([...((res.data?.forms ?? []) as AppForm[])].sort((a, b) => a.sortOrder - b.sortOrder));
       setLoading(false);
     };
     void run();
     return () => { cancelled = true; };
-  }, [appId, fetchApps, fetchAppForms]);
+  }, [appId, fetchApps, reloadToken]);
 
   // Join app forms with the owner's form records for counts + status.
   const rows = useMemo(() => {
@@ -118,6 +130,13 @@ export function AppRecords() {
           <div className="space-y-2" role="status" aria-label="Loading forms">
             {[0, 1, 2].map((i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}
           </div>
+        ) : loadError ? (
+          <EmptyState
+            icon={Inbox}
+            title="Couldn't load this app's forms"
+            description={loadError}
+            action={<Button variant="outline" onClick={() => setReloadToken((n) => n + 1)}>Try again</Button>}
+          />
         ) : rows.length === 0 ? (
           <EmptyState
             icon={Inbox}
@@ -135,7 +154,13 @@ export function AppRecords() {
                 role="button"
                 tabIndex={0}
                 onClick={() => navigate(`/responses/${r.formId}`)}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/responses/${r.formId}`); } }}
+                // Only the row itself opens records — a bubbled Enter from the nested
+                // Analytics / Open-in-app buttons used to be preventDefaulted here, so
+                // those controls were unreachable without a mouse.
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/responses/${r.formId}`); }
+                }}
                 title="View records"
                 className="flex items-center gap-3 px-4 py-3.5 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500"
               >

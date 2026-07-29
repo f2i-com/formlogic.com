@@ -624,11 +624,25 @@ class AppService
 
         if (array_key_exists('customScreen', $data)) {
             $customScreen = $this->screenForStorage($data['customScreen']);
-            $updates[] = "custom_screen = :custom_screen";
-            $params['custom_screen'] = !empty($customScreen) ? json_encode($customScreen) : null;
-            $updates[] = "custom_screen_trust = 'owner'";
-            $updates[] = "custom_screen_provenance = :custom_screen_provenance";
-            $params['custom_screen_provenance'] = !empty($customScreen) ? json_encode(['source' => 'owner']) : null;
+            $current = $this->screenForStorage($existing['customScreen'] ?? null);
+
+            // Re-stamp trust ONLY when the screen body actually changes. The rule is
+            // "the owner authored this screen, so it is owner-trusted" — but the key
+            // rides along in any whole-app PUT, so replaying an UNCHANGED screen used
+            // to promote an imported pack screen from 'untrusted' to 'owner' and hand
+            // unreviewed third-party code the full record/connector SDK. A no-op write
+            // must never be able to elevate trust.
+            // `==` on arrays compares key/value pairs regardless of order, so a
+            // re-encoded but identical body is correctly treated as unchanged.
+            $changed = ($customScreen === null) !== ($current === null)
+                || ($customScreen !== null && $current !== null && $customScreen != $current);
+            if ($changed) {
+                $updates[] = "custom_screen = :custom_screen";
+                $params['custom_screen'] = $customScreen !== null ? json_encode($customScreen) : null;
+                $updates[] = "custom_screen_trust = 'owner'";
+                $updates[] = "custom_screen_provenance = :custom_screen_provenance";
+                $params['custom_screen_provenance'] = $customScreen !== null ? json_encode(['source' => 'owner']) : null;
+            }
         }
 
         if (array_key_exists('reports', $data)) {

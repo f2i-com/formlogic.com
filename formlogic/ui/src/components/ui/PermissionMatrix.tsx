@@ -73,7 +73,7 @@ export function PermissionMatrix({ permissions, forms, onChange, disabled = fals
           App-level permissions
           {appLevelDisabled && <span className="ml-2 text-xs font-normal text-gray-400 dark:text-slate-500">(Owner only)</span>}
         </h4>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="@container/perms grid grid-cols-1 @sm/perms:grid-cols-2 @2xl/perms:grid-cols-4 gap-3">
           {APP_LEVEL_PERMISSIONS.map((perm) => (
             <label
               key={perm}

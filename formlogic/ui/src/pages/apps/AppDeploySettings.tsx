@@ -5,6 +5,7 @@ import { ArrowLeft, Copy, Check, Globe, Smartphone, ExternalLink, CheckCircle2, 
 import { useAppStore } from '../../stores/appStore';
 import { useAdminActing, useResourcePaths } from '../../components/admin/AdminActingContext';
 import { api } from '../../lib/api';
+import { copyToClipboard } from '../../lib/utils';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -31,7 +32,24 @@ export function AppDeploySettings() {
   const [pwaThemeColor, setPwaThemeColor] = useState('#6366f1');
   const [savingPwa, setSavingPwa] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  // The App logic panel hosts a Monaco editor; without a dirty signal, Back or a
+  // sidebar click threw away however long the owner had spent in it.
+  const [logicDirty, setLogicDirty] = useState(false);
+  const pwaDirty = !!app && (
+    pwaShortName !== (app.settings?.pwaShortName ?? app.name.slice(0, 12))
+    || pwaThemeColor !== (app.settings?.pwaThemeColor ?? app.theme?.primaryColor ?? '#6366f1')
+  );
+  const dirty = logicDirty || pwaDirty;
+  const [pendingNav, setPendingNav] = useState<string | null>(null);
   const [showUnpublish, setShowUnpublish] = useState(false);
+
+  // Warn on tab close / refresh while there are unsaved edits.
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
 
   useEffect(() => {
     fetchApps().then(() => {
@@ -49,9 +67,19 @@ export function AppDeploySettings() {
   const handleSavePwa = async () => {
     if (!appId || !app) return;
     setSavingPwa(true);
-    const ok = await updateApp(appId, { settings: { ...app.settings, pwaShortName, pwaThemeColor } });
+    // Merge onto the CURRENT settings, read at click time. `app` is captured once at
+    // mount, so spreading it replayed a stale blob and reverted whatever the Studio
+    // (or a second tab, or a chat tool) had saved in the meantime — landing screen,
+    // sign-up settings, icon, timezone — with no warning.
+    const current = useAppStore.getState().getApp(appId)?.settings ?? app.settings;
+    const ok = await updateApp(appId, { settings: { ...current, pwaShortName, pwaThemeColor } });
     setSavingPwa(false);
-    if (ok) toast.success('PWA settings saved', 'Install name and theme color updated.');
+    if (ok) {
+      // Re-sync this page's own copy, or the NEXT save here replays the stale one again.
+      const fresh = useAppStore.getState().getApp(appId) as App | undefined;
+      if (fresh) setApp(fresh);
+      toast.success('PWA settings saved', 'Install name and theme color updated.');
+    }
   };
 
   const [exporting, setExporting] = useState(false);
@@ -107,23 +135,14 @@ export function AppDeploySettings() {
   const appUrl = `${window.location.origin}/app/${app.slug}`;
 
   const handleCopy = async () => {
-    try {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(appUrl);
-      } else {
-        const textarea = document.createElement('textarea');
-        textarea.value = appUrl;
-        textarea.style.position = 'fixed';
-        textarea.style.opacity = '0';
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textarea);
-      }
+    // One shared helper (secure-context Clipboard API, legacy textarea fallback) —
+    // the hand-rolled duplicate here is how the domains panel drifted into a version
+    // that failed silently on plain HTTP.
+    if (await copyToClipboard(appUrl)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
-      toast.error('Copy failed', 'Could not copy to clipboard');
+    } else {
+      toast.error('Copy failed', 'Select the link and copy it manually.');
     }
   };
 
@@ -161,7 +180,7 @@ export function AppDeploySettings() {
       <Header
         title="Deploy & share"
         actions={
-          <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path, { state: backTo.state })} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+          <Button variant="ghost" size="sm" onClick={() => { if (dirty) setPendingNav(backTo.path); else navigate(backTo.path, { state: backTo.state }); }} leftIcon={<ArrowLeft className="h-4 w-4" />}>
             {backTo.label ? `Back to ${backTo.label}` : 'Back'}
           </Button>
         }
@@ -284,14 +303,14 @@ export function AppDeploySettings() {
         </div>
 
         {/* Custom domains */}
-        <CustomDomainsPanel appId={appId!} appSlug={app.slug} />
+        <CustomDomainsPanel appId={appId!} appSlug={app.slug} published={app.status === 'published'} />
 
         {/* FormLogic Desktop (local companion) — hidden while acting: this panel shows
             the signed-in ADMIN's own desktop, not the owner's. */}
         {!acting && <DesktopStatusPanel />}
 
         {/* App logic (QuickJS) */}
-        <AppLogicPanel appId={appId!} initialLogic={app.customLogic} />
+        <AppLogicPanel appId={appId!} initialLogic={app.customLogic} onDirtyChange={setLogicDirty} />
 
         {/* FormLogic Flows (event-driven automations, docs/FORMLOGIC_FLOWS.md) */}
         <FlowsPanel appId={appId!} appSlug={app.slug} />
@@ -320,6 +339,16 @@ export function AppDeploySettings() {
       </div>
     </div>
     </div>
+      <ConfirmDialog
+        isOpen={pendingNav !== null}
+        onClose={() => setPendingNav(null)}
+        onConfirm={() => { const to = pendingNav; setPendingNav(null); if (to) navigate(to, { state: backTo.state }); }}
+        title="Discard unsaved changes?"
+        message="You have unsaved app logic or PWA settings on this page. Leaving now discards them."
+        confirmLabel="Discard and leave"
+        variant="danger"
+      />
+
       <ConfirmDialog
         isOpen={showUnpublish}
         onClose={() => setShowUnpublish(false)}

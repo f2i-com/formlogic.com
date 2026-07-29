@@ -13,7 +13,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { Modal } from '../../components/ui/Modal';
 import { DataTable, type Column } from '../../components/ui/DataTable';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
-import { statusBadgeVariant, formatStatusLabel } from '../../lib/utils';
+import { statusBadgeVariant, formatStatusLabel, formatDate, parseServerDate } from '../../lib/utils';
 import { Badge } from '../../components/ui/Badge';
 import type { AppUser, AppInvitation, AppRole, AppUserGroup } from '../../types/app';
 
@@ -111,10 +111,13 @@ export function AppUserManager() {
 
   useEffect(() => {
     if (!appId) return;
+    // Groups are behind GROUPS_ENABLED (permanently false today): fetching them cost a
+    // request per visit, and a failure of that dead endpoint told the owner their member
+    // and invitation data had failed to load when both were fine.
     Promise.allSettled([
       fetchUsers(appId),
       fetchInvitations(appId),
-      fetchGroups(appId),
+      ...(GROUPS_ENABLED ? [fetchGroups(appId)] : []),
       fetchRoles(appId).then(setRoles),
     ]).then((results) => {
       const failed = results.filter((r) => r.status === 'rejected');
@@ -232,9 +235,11 @@ export function AppUserManager() {
             searchPlaceholder="Search users..."
             actions={(user) => {
               const u = user as unknown as AppUser;
-              // The Owner can't be edited or removed (the API always rejects it), so don't
-              // offer affordances that do nothing.
-              const isOwner = u.roleName === 'Owner';
+              // The immutable Owner is the SYSTEM role named Owner — matching the display
+              // name alone froze every member of a custom role someone happened to call
+              // "Owner" (e.g. franchise operators), with no explanation.
+              const ownerRole = roles.find((r) => r.id === u.roleId);
+              const isOwner = !!ownerRole?.isSystem && ownerRole.name === 'Owner';
               return (
               <div className="flex items-center justify-end gap-1">
                 {u.status === 'pending' && (
@@ -261,8 +266,19 @@ export function AppUserManager() {
             columns={[
               { key: 'email', label: 'Email', sortable: true },
               { key: 'roleName', label: 'Role', sortable: true },
-              { key: 'status', label: 'Status', sortable: true, render: (inv) => { const s = String((inv as unknown as AppInvitation).status); return <Badge variant={statusBadgeVariant(s)} size="sm">{formatStatusLabel(s)}</Badge>; } },
-              { key: 'expiresAt', label: 'Expires', sortable: true, render: (inv) => new Date(String((inv as unknown as AppInvitation).expiresAt)).toLocaleDateString() },
+              { key: 'status', label: 'Status', sortable: true, render: (inv) => {
+                const invitation = inv as unknown as AppInvitation;
+                const s = String(invitation.status);
+                // A pending invitation past its expiry can never be accepted — showing it
+                // as "Pending" had owners waiting instead of re-inviting.
+                const expired = s === 'pending' && parseServerDate(invitation.expiresAt).getTime() < Date.now();
+                return expired
+                  ? <Badge variant="error" size="sm">Expired</Badge>
+                  : <Badge variant={statusBadgeVariant(s)} size="sm">{formatStatusLabel(s)}</Badge>;
+              } },
+              // Zone-less server timestamps are UTC; `new Date()` reads them as LOCAL,
+              // shifting the shown expiry by the viewer's offset (a whole day near midnight).
+              { key: 'expiresAt', label: 'Expires', sortable: true, render: (inv) => formatDate(String((inv as unknown as AppInvitation).expiresAt)) },
             ] as Column<Record<string, unknown>>[]}
             searchable
             isLoading={loading}
@@ -308,9 +324,12 @@ export function AppUserManager() {
       <Modal isOpen={showInviteModal} onClose={closeInviteModal} title="Invite user" size="sm">
         {inviteLink ? (
           <div className="p-6 space-y-4">
-            <div className="flex items-center gap-2 p-3 text-sm text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-500/10 rounded-lg border border-green-200 dark:border-green-500/20">
+            {/* The token is returned once, at creation. Closing without copying leaves the
+                invitee with no way in and nothing on screen saying so — the recovery is to
+                revoke and invite again, which nobody guesses. */}
+            <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
               <Check className="h-4 w-4 flex-shrink-0" />
-              <span>Invitation created. Share this link with the user to let them join.</span>
+              <span>Invitation created. <strong>This link is shown once</strong> — copy it before closing.</span>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Invite link</label>
@@ -321,7 +340,10 @@ export function AppUserManager() {
                   {linkCopied ? 'Copied' : 'Copy'}
                 </Button>
               </div>
-              <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">The user must sign in (or sign up) with the invited email to accept.</p>
+              <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
+                The user must sign in (or sign up) with the invited email to accept. If the link is
+                lost, revoke the invitation and send a new one.
+              </p>
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="ghost" onClick={() => { setInviteLink(null); setLinkCopied(false); }}>Invite another</Button>
