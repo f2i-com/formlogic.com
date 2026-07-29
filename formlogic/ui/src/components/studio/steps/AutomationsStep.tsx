@@ -99,7 +99,12 @@ export function AutomationsStep({
       if (res.error) {
         toast.error('Test run failed', typeof res.error === 'string' ? res.error : undefined);
       } else {
-        toast.success('Test run finished', 'See run history in the Flows workspace for details.');
+        toast.success('Test run finished', 'Open run history to see what each step did.', {
+          action: {
+            label: 'Run history',
+            onClick: () => navigate(`/flows?flow=${flow.id}&panel=history`, { state: studioReturn }),
+          },
+        });
       }
     } finally {
       setTestingId(null);
@@ -168,7 +173,7 @@ export function AutomationsStep({
           </Button>
         </section>
       ) : (
-        <div className="grid gap-4 xl:grid-cols-[minmax(300px,.85fr)_minmax(0,1.15fr)]">
+        <div className="grid gap-4 @3xl/studio:grid-cols-[minmax(0,.85fr)_minmax(0,1.15fr)]">
           {/* Automation list */}
           <section className="overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 shadow-sm h-fit">
             <div className="border-b border-gray-200/80 dark:border-white/[0.06] p-4">
@@ -223,12 +228,16 @@ export function AutomationsStep({
                           </span>
                         </span>
                       </button>
-                      <Switch
-                        ariaLabel={`Toggle ${flow.name}`}
-                        checked={flow.enabled}
-                        onChange={(v) => void toggleFlow(flow, v)}
-                        size="sm"
-                      />
+                      {/* The visual switch stays small; the hit area matches every other
+                          row in the studio so a phone tap can't land on the row behind it. */}
+                      <span className="flex min-h-11 min-w-11 shrink-0 items-center justify-center">
+                        <Switch
+                          ariaLabel={`Toggle ${flow.name}`}
+                          checked={flow.enabled}
+                          onChange={(v) => void toggleFlow(flow, v)}
+                          size="sm"
+                        />
+                      </span>
                     </div>
                   </div>
                 );
@@ -323,7 +332,7 @@ export function AutomationsStep({
                 <span>Runs {selected.executionLocation === 'desktop' ? 'on your Desktop' : selected.executionLocation === 'cloud' ? 'in FormLogic Cloud' : 'automatically (Cloud or Desktop)'}</span>
                 <button
                   type="button"
-                  onClick={() => navigate(`/flows?flow=${selected.id}`, { state: studioReturn })}
+                  onClick={() => navigate(`/flows?flow=${selected.id}&panel=history`, { state: studioReturn })}
                   className="cursor-pointer font-bold text-primary-600 dark:text-primary-400"
                 >
                   View run history <ChevronRight className="inline h-3 w-3" />

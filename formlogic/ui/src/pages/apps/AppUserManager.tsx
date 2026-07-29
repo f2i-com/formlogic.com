@@ -206,7 +206,7 @@ export function AppUserManager() {
         title="Users & access"
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+            <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path, { state: backTo.state })} leftIcon={<ArrowLeft className="h-4 w-4" />}>
               {backTo.label ? `Back to ${backTo.label}` : 'Back'}
             </Button>
             <Button size="sm" onClick={() => setShowInviteModal(true)} leftIcon={<UserPlus className="h-4 w-4" />}>Invite user</Button>

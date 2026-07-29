@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Check, Compass, Sparkles } from 'lucide-react';
+import { ArrowRight, Compass, RotateCcw, Sparkles } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { StudioTopBar } from '../../components/studio/StudioTopBar';
 import { StudioRail } from '../../components/studio/StudioRail';
@@ -9,8 +9,8 @@ import { useStudioData } from '../../components/studio/useStudioData';
 import {
   STUDIO_STEPS,
   computeUnpublishedChanges,
-  deriveCompletedSteps,
   deriveNextAction,
+  deriveSectionBadges,
   isStudioStep,
   type StudioStepId,
 } from '../../components/studio/studioSteps';
@@ -22,55 +22,50 @@ import { AutomationsStep } from '../../components/studio/steps/AutomationsStep';
 import { AccessStep } from '../../components/studio/steps/AccessStep';
 import { PublishStep } from '../../components/studio/steps/PublishStep';
 import { useUIStore } from '../../stores/uiStore';
+import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { returnToState } from '../../hooks/useReturnTo';
 import { getAiReadiness } from '../../client-runtime/flows/aiDefault';
-import { cn } from '../../lib/utils';
 import { isDemoLocalId } from '../../lib/demoLocal';
 import { useKeyboardShortcuts, type KeyboardShortcut } from '../../hooks/useKeyboardShortcuts';
 
-/** Per-step chat seeds (recommendation #8) — shown only when a default AI can run. */
-const STEP_PROMPTS: Record<StudioStepId, string[]> = {
-  plan: ['Plan this app for me', 'Sketch this app as a diagram', 'What would make this app more useful?'],
-  data: ['Add the data types this app needs', 'Create relationships between my data types', 'Improve the fields on my forms'],
-  screens: ['Design a dashboard home screen', 'Which screen should members land on?', 'Simplify the navigation'],
-  automations: ['Notify me when a record is submitted', 'Add an approval process', 'What automations would help here?'],
-  access: ['What roles should this app have?', 'How do permissions work here?'],
-  publish: ['Is this app ready to publish?', 'What should I check before going live?'],
+/** One suggestion per section, offered only when a default AI can actually run. */
+const STEP_PROMPTS: Record<StudioStepId, string> = {
+  plan: 'Plan this app for me',
+  data: 'Add the data types this app needs',
+  screens: 'Design a dashboard home screen',
+  automations: 'Notify me when a record is submitted',
+  access: 'What roles should this app have?',
+  publish: 'Is this app ready to publish?',
 };
 
 /**
- * The App Studio (app-first redesign): one workspace per app with a top bar
- * (Use app / Edit app), a six-step prefilled, skippable builder — Plan, Data,
- * Screens, Automations, Access, Publish — and a footer step navigator.
- * Everything reads and writes the real app APIs; deep surfaces (form builder,
- * flow canvas, diagram, studios) open from their steps.
+ * The App Studio: one workspace per app with a top bar, a six-section nav —
+ * Plan, Data, Screens, Automations, Access, Publish — and a single line of
+ * guidance. Everything reads and writes the real app APIs; deep surfaces (form
+ * builder, flow canvas, diagram, screen studios) open from their sections.
+ *
+ * It is deliberately NOT a wizard. An owner opens this screen for the life of
+ * the app, so there is no step counter, no progress bar and no Previous/Next
+ * bar pinned over the content — the nav carries what each section holds, and
+ * one recommendation says what is worth doing next.
  */
 export function AppStudio() {
   const { appId, step: stepParam } = useParams<{ appId: string; step?: string }>();
   const navigate = useNavigate();
   const data = useStudioData(appId);
-  const { isMobile, sidebarCollapsed } = useUIStore();
-  const chatDockedVisible = useUIStore((s) => s.chatDocked && s.chatOpen && !s.chatMinimized);
-  const setFixedBottomBar = useUIStore((s) => s.setFixedBottomBar);
+  const isOnline = useOnlineStatus();
   const setChatSeed = useUIStore((s) => s.setChatSeed);
   const setChatOpen = useUIStore((s) => s.setChatOpen);
   const setChatMinimized = useUIStore((s) => s.setChatMinimized);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
-  const askAi = (prompt: string) => {
-    setChatSeed(prompt);
+  const askAi = (prompt?: string) => {
+    if (prompt) setChatSeed(prompt);
     setChatMinimized(false);
     setChatOpen(true);
   };
 
   const activeStep: StudioStepId = isStudioStep(stepParam) ? stepParam : 'data';
-
-  // The footer step navigator is fixed — float the chat bubble / desktop chip
-  // above it while the studio is mounted.
-  useEffect(() => {
-    setFixedBottomBar(true);
-    return () => setFixedBottomBar(false);
-  }, [setFixedBottomBar]);
 
   // The save indicator starts clean per app — one app's failure must not haunt
   // the next one's top bar.
@@ -92,26 +87,18 @@ export function AppStudio() {
     return () => { cancelled = true; };
   }, []);
 
-  // /studio (no step) → the natural entry: brand-new apps start at Plan,
-  // existing apps at Data.
+  // /studio (no section) → the natural entry: brand-new apps start at Plan,
+  // existing apps at Data. An unknown section in the URL is corrected too, so
+  // the address bar can never disagree with what is on screen.
   useEffect(() => {
-    if (!appId || stepParam !== undefined || data.loading) return;
-    const target = data.appForms.length === 0 ? 'plan' : 'data';
-    navigate(`/apps/${appId}/studio/${target}`, { replace: true });
+    if (!appId) return;
+    if (stepParam === undefined) {
+      if (data.loading) return;
+      navigate(`/apps/${appId}/studio/${data.appForms.length === 0 ? 'plan' : 'data'}`, { replace: true });
+      return;
+    }
+    if (!isStudioStep(stepParam)) navigate(`/apps/${appId}/studio/data`, { replace: true });
   }, [appId, stepParam, data.loading, data.appForms.length, navigate]);
-
-  const completedSteps = useMemo(
-    () =>
-      deriveCompletedSteps({
-        formCount: data.appForms.length,
-        hasBlueprint: data.blueprint !== null,
-        hasHomeScreen: !!(data.app?.customScreen as { kind?: string } | undefined)?.kind,
-        flowCount: data.flows.length,
-        roleCount: data.roles.length,
-        published: data.app?.status === 'published',
-      }),
-    [data.appForms.length, data.blueprint, data.app, data.flows.length, data.roles.length]
-  );
 
   const changes = useMemo(() => {
     if (!data.app) return { everPublished: false, count: 0, changed: [] };
@@ -125,13 +112,28 @@ export function AppStudio() {
     );
   }, [data.app, data.appForms, data.formsById, data.flows]);
 
+  const badges = useMemo(
+    () =>
+      deriveSectionBadges({
+        formCount: data.appForms.length,
+        hasBlueprint: data.blueprint !== null,
+        hasHomeScreen: !!(data.app?.customScreen as { kind?: string } | undefined)?.kind,
+        flowCount: data.flows.length,
+        activeFlowCount: data.flows.filter((f) => f.enabled).length,
+        roleCount: data.roles.length,
+        published: data.app?.status === 'published',
+        publishedVersion: data.app?.publishedVersion ?? 0,
+        unpublishedCount: changes.everPublished ? changes.count : 0,
+      }),
+    [data.appForms.length, data.blueprint, data.app, data.flows, data.roles.length, changes]
+  );
+
   const setStep = useCallback((step: StudioStepId) => {
     if (appId) navigate(`/apps/${appId}/studio/${step}`);
   }, [appId, navigate]);
 
   const activeIndex = STUDIO_STEPS.findIndex((s) => s.id === activeStep);
-  const previous = STUDIO_STEPS[activeIndex - 1]?.id;
-  const next = STUDIO_STEPS[activeIndex + 1]?.id;
+  const next = STUDIO_STEPS[activeIndex + 1];
   const openPreview = useCallback(() => {
     if (!data.app) return;
     navigate(`/app/${data.app.slug}`, {
@@ -151,15 +153,6 @@ export function AppStudio() {
       action: () => setCommandPaletteOpen(true),
     },
     {
-      key: 'Enter',
-      ctrl: true,
-      description: 'Continue to the next Studio step',
-      action: () => {
-        if (next) setStep(next);
-        else openPreview();
-      },
-    },
-    {
       key: 'p',
       ctrl: true,
       shift: true,
@@ -169,7 +162,7 @@ export function AppStudio() {
     {
       key: 'p',
       ctrl: true,
-      description: 'Preview app',
+      description: 'Open the app',
       action: openPreview,
     },
     {
@@ -177,18 +170,21 @@ export function AppStudio() {
       description: 'Search App Studio',
       action: () => setCommandPaletteOpen(true),
     },
+    // Matched on event.code so Option+digit works on macOS, where Option rewrites
+    // event.key into a symbol and the shortcut would otherwise never fire.
     ...STUDIO_STEPS.map<KeyboardShortcut>((step, index) => ({
       key: String(index + 1),
+      code: `Digit${index + 1}`,
       alt: true,
       description: `Open ${step.label}`,
       action: () => setStep(step.id),
     })),
-  ], [next, openPreview, setStep]);
+  ], [openPreview, setStep]);
   useKeyboardShortcuts({ shortcuts, enabled: !!data.app });
 
-  // ONE recommended next action (recommendation #1) — where the rail says
-  // "you are here", this says "this matters next". Null = the app is in good
-  // shape and the card stays out of the way.
+  // ONE recommendation, derived from real state — the nav says what each section
+  // holds, this says what is worth doing next. Null = the app is in good shape
+  // and the line disappears instead of nagging.
   const nextAction = useMemo(() => {
     if (!data.app || data.loading) return null;
     return deriveNextAction({
@@ -198,21 +194,36 @@ export function AppStudio() {
         .map((af) => af.displayName || data.formsById[af.formId]?.title || 'Untitled'),
       flowCount: data.flows.length,
       // Browser-only demo apps cannot send real invitations, so do not point
-      // their next-action card at an unavailable cloud operation.
+      // their recommendation at an unavailable cloud operation.
       memberCount: isDemoLocalId(data.app.id) ? 2 : data.memberCount,
+      memberCountKnown: !data.auxFailed,
       published: data.app.status === 'published',
       unpublishedCount: changes.everPublished ? changes.count : 0,
     });
-  }, [data.app, data.loading, data.appForms, data.formsById, data.flows.length, data.memberCount, changes]);
+  }, [data.app, data.loading, data.appForms, data.formsById, data.flows.length, data.memberCount, data.auxFailed, changes]);
 
   if (!appId) return <Navigate to="/apps" replace />;
 
-  if (data.appLoaded && !data.app) {
+  // A transport failure is not a missing app: telling an owner their app was
+  // deleted because a request dropped is both wrong and a dead end.
+  if (data.appError && !data.app) {
+    const missing = data.appError.kind === 'notFound';
     return (
-      <div className="flex flex-col items-center justify-center py-24 px-4 text-center">
-        <p className="text-lg font-medium text-gray-700 dark:text-slate-300">App not found</p>
-        <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">It may have been deleted, or you don't have access.</p>
-        <Button variant="outline" className="mt-4" onClick={() => navigate('/apps')}>Back to apps</Button>
+      <div className="flex flex-col items-center justify-center px-4 py-24 text-center">
+        <p className="text-lg font-medium text-gray-700 dark:text-slate-300">
+          {missing ? 'App not found' : "Couldn't load this app"}
+        </p>
+        <p className="mt-1 max-w-sm text-sm text-gray-500 dark:text-slate-400">
+          {missing ? "It may have been deleted, or you don't have access." : data.appError.message}
+        </p>
+        <div className="mt-4 flex flex-wrap justify-center gap-2">
+          {!missing && (
+            <Button onClick={() => void data.reload()} leftIcon={<RotateCcw className="h-4 w-4" />}>
+              Try again
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => navigate('/apps')}>Back to apps</Button>
+        </div>
       </div>
     );
   }
@@ -242,7 +253,7 @@ export function AppStudio() {
         onOpenPublish={() => setStep('publish')}
         onOpenCommandPalette={() => setCommandPaletteOpen(true)}
       />
-      <StudioRail activeStep={activeStep} completedSteps={completedSteps} onStepChange={setStep} />
+      <StudioRail activeStep={activeStep} badges={badges} isOnline={isOnline} onStepChange={setStep} />
 
       {commandPaletteOpen && (
         <StudioCommandPalette
@@ -261,55 +272,53 @@ export function AppStudio() {
         />
       )}
 
-      <main className="mx-auto max-w-[1540px] p-4 pb-28 sm:p-6 sm:pb-28 lg:p-7 lg:pb-28">
-        <div className="mb-5 flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
-          <div className="min-w-0">
-            <div className="mb-1.5 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400 dark:text-slate-500">
-              App Studio · Step {activeIndex + 1} of {STUDIO_STEPS.length}
-              {active.optional && <span className="rounded-full border border-gray-200 dark:border-white/10 px-2 py-0.5">Optional</span>}
-              {completedSteps.includes(activeStep) && (
-                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 dark:border-emerald-400/20 bg-emerald-50 dark:bg-emerald-400/10 px-2 py-0.5 text-emerald-600 dark:text-emerald-300">
-                  <Check className="h-3 w-3" /> Configured
-                </span>
-              )}
-            </div>
-            <h2 className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">{active.label}</h2>
-            <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">{active.description}</p>
-            {/* Studio-aware prompt chips (recommendation #8): teach capability in place. */}
-            {aiAvailable && STEP_PROMPTS[activeStep].length > 0 && (
-              <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5 text-primary-500 dark:text-primary-400" aria-hidden="true" />
-                {STEP_PROMPTS[activeStep].map((prompt) => (
-                  <button
-                    key={prompt}
-                    type="button"
-                    onClick={() => askAi(prompt)}
-                    className="cursor-pointer rounded-full border border-gray-200 dark:border-white/10 bg-white dark:bg-white/[0.04] px-2.5 py-1 text-[11px] font-medium text-gray-600 dark:text-slate-300 transition hover:border-primary-300 hover:text-primary-700 dark:hover:border-primary-500/40 dark:hover:text-primary-300"
-                  >
-                    {prompt}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* ONE recommended next action (recommendation #1). */}
-          {nextAction && nextAction.step !== activeStep && (
-            <div className="grid w-full flex-none grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-xl border border-primary-200/70 dark:border-primary-500/20 bg-primary-50/60 dark:bg-primary-500/[0.07] px-3.5 py-2.5 sm:grid-cols-[auto_minmax(0,1fr)_auto] lg:w-auto lg:max-w-md">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-600 text-primary-foreground">
-                <Compass className="h-4.5 w-4.5" />
+      {/* One guidance line: the recommendation when there is one, the section's own
+          purpose when there isn't. AppShell already provides the main landmark. */}
+      <div className="border-b border-gray-200/60 px-4 py-2 dark:border-white/[0.06] sm:px-6 lg:px-7">
+        <div className="mx-auto flex max-w-[1540px] flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
+          {nextAction ? (
+            <p className="flex min-w-0 items-center gap-2 text-xs text-gray-600 dark:text-slate-300">
+              <Compass className="h-4 w-4 shrink-0 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+              <span className="min-w-0">
+                <span className="font-semibold text-gray-900 dark:text-white">{nextAction.title}</span>
+                <span className="hidden sm:inline"> — {nextAction.detail}</span>
               </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-primary-600/80 dark:text-primary-300/80">Next recommended step</p>
-                <p className="truncate text-xs font-semibold text-gray-900 dark:text-white" title={nextAction.title}>{nextAction.title}</p>
-                <p className="mt-0.5 hidden text-[11px] leading-4 text-gray-500 dark:text-slate-400 sm:line-clamp-1">{nextAction.detail}</p>
-              </div>
-              <Button size="sm" variant="secondary" className="col-span-2 w-full shrink-0 sm:col-span-1 sm:w-auto" onClick={() => setStep(nextAction.step)}>
-                {nextAction.cta}
-              </Button>
-            </div>
+              {nextAction.step !== activeStep && (
+                <button
+                  type="button"
+                  onClick={() => setStep(nextAction.step)}
+                  className="shrink-0 cursor-pointer font-bold text-primary-600 hover:underline dark:text-primary-400"
+                >
+                  {nextAction.cta}
+                </button>
+              )}
+            </p>
+          ) : (
+            <p className="min-w-0 truncate text-xs text-gray-500 dark:text-slate-400">{active.description}</p>
+          )}
+          {aiAvailable && (
+            <button
+              type="button"
+              onClick={() => askAi(STEP_PROMPTS[activeStep])}
+              className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-600 transition hover:border-primary-300 hover:text-primary-700 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:hover:border-primary-500/40 dark:hover:text-primary-300"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-primary-500 dark:text-primary-400" aria-hidden="true" />
+              {STEP_PROMPTS[activeStep]}
+            </button>
           )}
         </div>
+      </div>
+
+      {/*
+        A query CONTAINER, not a viewport breakpoint: the studio's usable width is the
+        viewport minus the app sidebar (0 / 64 / 256px) minus the docked chat rail
+        (384px), so a viewport-based layout is wrong for half of those combinations.
+        Sections size themselves off `@container/studio` and stay right at every width.
+        The bottom padding clears the floating chat launcher and desktop chip so the
+        trailing "Next" control is never underneath them.
+      */}
+      <div className="@container/studio mx-auto max-w-[1540px] p-4 pb-24 sm:p-6 sm:pb-28 lg:p-7 lg:pb-28">
+        <h2 className="sr-only">{active.label}</h2>
 
         {activeStep === 'plan' && (
           <PlanStep
@@ -319,11 +328,19 @@ export function AppStudio() {
             formsById={data.formsById}
             roles={data.roles}
             aiAvailable={aiAvailable}
-            onSkip={() => setStep('data')}
+            onGoToData={() => setStep('data')}
           />
         )}
         {activeStep === 'data' && (
-          <DataStep app={data.app} appForms={data.appForms} formsById={data.formsById} onReloadForms={data.reloadForms} />
+          <DataStep
+            app={data.app}
+            appForms={data.appForms}
+            formsById={data.formsById}
+            unreadableFormIds={data.unreadableFormIds}
+            formsResolving={data.formsResolving}
+            formsFailed={data.formsFailed}
+            onReloadForms={data.reloadForms}
+          />
         )}
         {activeStep === 'screens' && (
           <ScreensStep
@@ -353,7 +370,7 @@ export function AppStudio() {
             roles={data.roles}
             appForms={data.appForms}
             formsById={data.formsById}
-            onReloadAux={data.reload}
+            onReloadRoles={data.reloadRoles}
             onReloadApp={data.reloadApp}
           />
         )}
@@ -367,53 +384,24 @@ export function AppStudio() {
             domains={data.domains}
             versions={data.versions}
             memberCount={data.memberCount}
+            memberCountKnown={!data.auxFailed}
+            formCountKnown={!data.formsFailed}
             changes={changes}
             onStepChange={setStep}
             onPublished={data.reload}
           />
         )}
-      </main>
 
-      {/* Footer step navigator */}
-      <div
-        className={cn(
-          'fixed inset-x-0 z-30 border-t border-gray-200/80 dark:border-white/[0.08] bg-white/92 dark:bg-slate-900/92 px-4 py-3 backdrop-blur-xl shadow-[0_-8px_30px_rgba(15,23,42,0.06)] dark:shadow-black/20',
-          isMobile ? 'bottom-[calc(4rem+env(safe-area-inset-bottom))]' : 'bottom-0',
-          !isMobile && (sidebarCollapsed ? 'left-16' : 'left-64'),
-          !isMobile && chatDockedVisible && 'right-96'
-        )}
-      >
-        <div className="mx-auto flex max-w-[1540px] items-center justify-between gap-3">
-          <Button
-            variant="secondary"
-            disabled={!previous}
-            onClick={() => previous && setStep(previous)}
-            leftIcon={<ArrowLeft className="h-4 w-4" />}
-          >
-            <span className="hidden sm:inline">Previous</span>
-            <span className="sm:hidden">Back</span>
-          </Button>
-          <div className="hidden text-center sm:block">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-slate-500">Saved automatically</p>
-            <p className="mt-0.5 text-xs font-medium text-gray-600 dark:text-slate-300">
-              Move freely — every step is prefilled and editable
-            </p>
+        {/* Forward movement lives at the END of the content, where a reader
+            actually finishes — not pinned over it in a fixed bar. */}
+        {next && (
+          <div className="mt-6 flex justify-end border-t border-gray-200/70 pt-4 dark:border-white/[0.06]">
+            <Button variant="ghost" size="sm" onClick={() => setStep(next.id)}>
+              Next: {next.label}
+              <ArrowRight className="ml-1.5 h-4 w-4" />
+            </Button>
           </div>
-          {next ? (
-            <Button onClick={() => setStep(next)}>
-              Continue to {STUDIO_STEPS[activeIndex + 1].shortLabel}
-              <ArrowRight className="h-4 w-4 ml-1.5" />
-            </Button>
-          ) : (
-            <Button
-              variant="secondary"
-              onClick={openPreview}
-              leftIcon={<Check className="h-4 w-4" />}
-            >
-              Open the app
-            </Button>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );

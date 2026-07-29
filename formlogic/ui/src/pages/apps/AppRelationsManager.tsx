@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { useReturnTo } from '../../hooks/useReturnTo';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { forwardReturnTo, useReturnTo } from '../../hooks/useReturnTo';
 import { ArrowLeft, ArrowRight, Plus, Trash2, Link2, ExternalLink, X } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useResourcePaths } from '../../components/admin/AdminActingContext';
@@ -23,8 +23,9 @@ interface Relation {
 export function AppRelationsManager() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const paths = useResourcePaths();
-  // Origin-relative Back: opened from the App Studio this returns to its step.
+  // Origin-relative Back: opened from the App Studio this returns to its section.
   const backTo = useReturnTo(paths.appSub(`${appId}`, 'settings?tab=manage'));
   const { fetchAppForms } = useAppStore();
 
@@ -100,8 +101,11 @@ export function AppRelationsManager() {
   };
 
   const handleEdit = (rel: Relation) => {
-    // Navigate to the form builder — the linked_record field can be fully configured there
-    navigate(paths.builder(rel.sourceFormId, appId));
+    // Navigate to the form builder — the linked_record field can be fully configured there.
+    // Carry the origin so the builder's Back returns here, not to the global Forms list.
+    navigate(paths.builder(rel.sourceFormId, appId), {
+      state: forwardReturnTo(`${location.pathname}${location.search}`, 'Relations', backTo),
+    });
   };
 
   const handleAdd = () => {
@@ -123,7 +127,7 @@ export function AppRelationsManager() {
         title="Relations"
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+            <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path, { state: backTo.state })} leftIcon={<ArrowLeft className="h-4 w-4" />}>
               {backTo.label ? `Back to ${backTo.label}` : 'Back'}
             </Button>
             <Button size="sm" onClick={handleAdd} disabled={appForms.length < 2} title={appForms.length < 2 ? 'Add at least two forms to this app first' : undefined} leftIcon={<Plus className="h-4 w-4" />}>

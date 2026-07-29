@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useReturnTo } from '../../hooks/useReturnTo';
+import { useReturnTo, type ReturnToState } from '../../hooks/useReturnTo';
 import { ArrowLeft, Plus, Trash2, Shield, X, Pencil, Check } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useResourcePaths } from '../../components/admin/AdminActingContext';
@@ -35,9 +35,11 @@ export function AppRoleEditor() {
   const [deleteRoleId, setDeleteRoleId] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [pendingRoleId, setPendingRoleId] = useState<string | null>(null);
-  const [pendingNav, setPendingNav] = useState<string | null>(null);
+  const [pendingNav, setPendingNav] = useState<{ to: string; state?: ReturnToState } | null>(null);
 
-  const navGuarded = (to: string) => { if (dirty) setPendingNav(to); else navigate(to); };
+  const navGuarded = (to: string, state?: ReturnToState) => {
+    if (dirty) setPendingNav({ to, state }); else navigate(to, { state });
+  };
 
   const loadData = async () => {
     if (!appId) return;
@@ -165,7 +167,7 @@ export function AppRoleEditor() {
       <Header
         title="Roles & permissions"
         actions={
-          <Button variant="ghost" size="sm" onClick={() => navGuarded(backTo.path)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+          <Button variant="ghost" size="sm" onClick={() => navGuarded(backTo.path, backTo.state)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
             {backTo.label ? `Back to ${backTo.label}` : 'Back'}
           </Button>
         }
@@ -283,7 +285,7 @@ export function AppRoleEditor() {
       <ConfirmDialog
         isOpen={pendingNav !== null}
         onClose={() => setPendingNav(null)}
-        onConfirm={() => { const to = pendingNav; setPendingNav(null); setDirty(false); if (to) navigate(to); }}
+        onConfirm={() => { const target = pendingNav; setPendingNav(null); setDirty(false); if (target) navigate(target.to, { state: target.state }); }}
         title="Discard unsaved changes?"
         message="You have unsaved permission changes. If you leave now, they'll be lost."
         confirmLabel="Discard changes"

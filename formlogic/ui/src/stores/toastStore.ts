@@ -75,8 +75,15 @@ export const useToastStore = create<ToastState>((set) => ({
 
 // Convenience functions for direct usage
 export const toast = {
-  success: (title: string, message?: string) => {
-    useToastStore.getState().addToast({ type: 'success', title, message });
+  /** `action` turns the toast's follow-up ("see the run history") into one click. */
+  success: (title: string, message?: string, opts?: { action?: { label: string; onClick: () => void }; duration?: number }) => {
+    useToastStore.getState().addToast({
+      type: 'success',
+      title,
+      message,
+      ...(opts?.action ? { action: opts.action, duration: opts.duration ?? 8000 } : {}),
+      ...(opts?.duration ? { duration: opts.duration } : {}),
+    });
   },
   error: (title: string, message?: string) => {
     useToastStore.getState().addToast({ type: 'error', title, message, duration: 7000 });

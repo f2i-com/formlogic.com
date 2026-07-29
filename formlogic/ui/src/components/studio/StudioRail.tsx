@@ -1,7 +1,7 @@
-import { Check, ChevronDown, Database, GitBranch, LayoutPanelTop, Map, Rocket, ShieldCheck } from 'lucide-react';
+import { useEffect, useRef } from 'react';
+import { Database, GitBranch, LayoutPanelTop, Map, Rocket, ShieldCheck } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { Badge } from '../ui/Badge';
-import { STUDIO_STEPS, type StudioStepId } from './studioSteps';
+import { STUDIO_STEPS, type SectionBadge, type StudioStepId } from './studioSteps';
 
 const STEP_ICONS: Record<StudioStepId, typeof Map> = {
   plan: Map,
@@ -13,125 +13,93 @@ const STEP_ICONS: Record<StudioStepId, typeof Map> = {
 };
 
 /**
- * The six-step App Studio rail: desktop = a horizontal step tracker under the
- * top bar; mobile = a collapsible current-step summary with a progress bar.
- * Every step is always clickable — the studio is prefilled and skippable.
+ * The App Studio section nav: one scrollable row of the app's six sections, each
+ * carrying a fact about what it holds (data types, automations, roles, pending
+ * changes). It is a nav, not a progress tracker — the studio is a workspace an
+ * owner returns to, not a wizard they finish once.
+ *
+ * The sticky offset mirrors the top bar's exactly, including the demo /
+ * acting-as banner variable and the offline strip; a hard-coded offset here let
+ * the top bar paint over the nav for every banner-carrying session.
  */
 export function StudioRail({
   activeStep,
-  completedSteps,
+  badges,
+  isOnline = true,
   onStepChange,
 }: {
   activeStep: StudioStepId;
-  completedSteps: StudioStepId[];
+  badges: Record<StudioStepId, SectionBadge | null>;
+  /** Offline adds the shell's 2rem status strip above the top bar. */
+  isOnline?: boolean;
   onStepChange: (step: StudioStepId) => void;
 }) {
-  const currentIndex = STUDIO_STEPS.findIndex((step) => step.id === activeStep);
-  return (
-    <>
-      <div className="sticky top-14 sm:top-16 z-20 hidden border-b border-gray-200/60 dark:border-white/[0.06] bg-white/90 dark:bg-slate-900/80 px-4 py-2.5 backdrop-blur-xl md:block lg:px-7">
-        <ol className="mx-auto grid max-w-[1460px] grid-cols-6 gap-1" aria-label="App Studio steps">
-          {STUDIO_STEPS.map((step, index) => {
-            const Icon = STEP_ICONS[step.id];
-            const active = step.id === activeStep;
-            const complete = completedSteps.includes(step.id);
-            return (
-              <li key={step.id} className="relative min-w-0">
-                {index > 0 && (
-                  <div
-                    aria-hidden="true"
-                    className={cn(
-                      'absolute right-[calc(50%+19px)] top-[17px] h-px w-[calc(100%-38px)]',
-                      complete || active ? 'bg-primary-300 dark:bg-primary-500/40' : 'bg-gray-200 dark:bg-white/10'
-                    )}
-                  />
-                )}
-                <button
-                  type="button"
-                  onClick={() => onStepChange(step.id)}
-                  aria-current={active ? 'step' : undefined}
-                  className={cn(
-                    'relative z-10 flex w-full cursor-pointer flex-col items-center gap-1 rounded-xl px-1 py-1 text-center transition-colors',
-                    active
-                      ? 'text-primary-600 dark:text-primary-400'
-                      : 'text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200'
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'flex h-8 w-8 items-center justify-center rounded-xl border transition-all',
-                      active
-                        ? 'border-primary-300 dark:border-primary-500/40 bg-primary-600 text-primary-foreground shadow-md shadow-primary-600/20'
-                        : complete
-                          ? 'border-primary-200 dark:border-primary-500/20 bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400'
-                          : 'border-gray-200 dark:border-white/10 bg-white dark:bg-slate-900 text-gray-400 dark:text-slate-500'
-                    )}
-                  >
-                    {complete && !active ? <Check className="h-4 w-4" /> : <Icon className="h-4 w-4" />}
-                  </span>
-                  <span className="max-w-full truncate text-[11px] font-semibold">{step.shortLabel}</span>
-                  {step.optional && !complete && !active && (
-                    <span className="text-[9px] text-gray-400 dark:text-slate-500">Optional</span>
-                  )}
-                </button>
-              </li>
-            );
-          })}
-        </ol>
-      </div>
+  // On narrow widths the row scrolls; the current section has to be the one you can
+  // see, whether you arrived by tab, by shortcut or on a deep link. The scroll offset
+  // is computed rather than delegated to scrollIntoView, which under-scrolled the last
+  // tab and also scrolled the PAGE while trying to reach it.
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const activeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    const tab = activeRef.current;
+    if (!scroller || !tab) return;
+    const centered = tab.offsetLeft - (scroller.clientWidth - tab.offsetWidth) / 2;
+    scroller.scrollLeft = Math.max(0, Math.min(centered, scroller.scrollWidth - scroller.clientWidth));
+  }, [activeStep, badges]);
 
-      {/* Mobile step tracker */}
-      <div className="sticky top-14 z-20 border-b border-gray-200/60 dark:border-white/[0.06] bg-white/95 dark:bg-slate-900/90 px-4 py-3 backdrop-blur-xl md:hidden">
-        <details className="group">
-          <summary className="flex cursor-pointer list-none items-center gap-3">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-600 text-xs font-bold text-primary-foreground">
-              {currentIndex + 1}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-[10px] font-bold uppercase tracking-[0.12em] text-gray-400 dark:text-slate-500">
-                Step {currentIndex + 1} of {STUDIO_STEPS.length}
-              </span>
-              <span className="mt-0.5 flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
-                {STUDIO_STEPS[currentIndex]?.label}
-                {STUDIO_STEPS[currentIndex]?.optional && <Badge size="sm">Optional</Badge>}
-              </span>
-            </span>
-            <ChevronDown className="h-4 w-4 text-gray-400 transition-transform group-open:rotate-180" />
-          </summary>
-          <div className="mt-3 grid grid-cols-2 gap-1.5 border-t border-gray-100 dark:border-white/[0.06] pt-3">
-            {STUDIO_STEPS.map((step, index) => {
-              const Icon = STEP_ICONS[step.id];
-              return (
-                <button
-                  key={step.id}
-                  type="button"
-                  onClick={(event) => {
-                    onStepChange(step.id);
-                    event.currentTarget.closest('details')?.removeAttribute('open');
-                  }}
+  return (
+    <nav
+      aria-label="App Studio sections"
+      className={cn(
+        'sticky z-20 border-b border-gray-200/60 dark:border-white/[0.06] bg-white/90 dark:bg-slate-900/85 backdrop-blur-xl',
+        isOnline
+          ? 'top-[calc(3.5rem+var(--fl-demo-banner-h,0px))] sm:top-[calc(4rem+var(--fl-demo-banner-h,0px))]'
+          : 'top-[calc(5.5rem+var(--fl-demo-banner-h,0px))] sm:top-[calc(6rem+var(--fl-demo-banner-h,0px))]'
+      )}
+    >
+      {/* `relative` makes this the offsetParent, so the tabs' offsetLeft is measured
+          against the scroller rather than some ancestor. */}
+      <div ref={scrollerRef} className="scrollbar-thin relative mx-auto flex max-w-[1540px] gap-0.5 overflow-x-auto px-2 sm:px-4 lg:px-6">
+        {STUDIO_STEPS.map((step) => {
+          const Icon = STEP_ICONS[step.id];
+          const active = step.id === activeStep;
+          const badge = badges[step.id];
+          return (
+            <button
+              key={step.id}
+              ref={active ? activeRef : undefined}
+              type="button"
+              onClick={() => onStepChange(step.id)}
+              aria-current={active ? 'page' : undefined}
+              title={badge?.title ?? step.description}
+              className={cn(
+                'relative flex min-h-11 shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap px-2.5 py-2.5 text-xs font-semibold transition-colors sm:px-3',
+                active
+                  ? 'text-primary-700 dark:text-primary-300 after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary-600 dark:after:bg-primary-400'
+                  : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'
+              )}
+            >
+              <Icon className={cn('h-4 w-4 shrink-0', active ? 'text-primary-600 dark:text-primary-400' : 'text-gray-400 dark:text-slate-500')} />
+              {step.shortLabel}
+              {badge && (
+                <span
                   className={cn(
-                    'flex min-h-11 cursor-pointer items-center gap-2 rounded-xl px-2.5 text-left text-xs font-semibold',
-                    step.id === activeStep
-                      ? 'bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400'
-                      : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/[0.04]'
+                    'rounded-full px-1.5 py-px text-[10px] font-bold leading-4',
+                    badge.tone === 'attention'
+                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-400/15 dark:text-amber-200'
+                      : active
+                        ? 'bg-primary-100 text-primary-700 dark:bg-primary-500/15 dark:text-primary-200'
+                        : 'bg-gray-100 text-gray-600 dark:bg-white/[0.07] dark:text-slate-300'
                   )}
                 >
-                  <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-current/15">
-                    <Icon className="h-3.5 w-3.5" />
-                  </span>
-                  {index + 1}. {step.shortLabel}
-                </button>
-              );
-            })}
-          </div>
-        </details>
-        <div className="mt-3 h-1 overflow-hidden rounded-full bg-gray-100 dark:bg-white/[0.08]">
-          <div
-            className="h-full rounded-full bg-primary-600 dark:bg-primary-400 transition-all"
-            style={{ width: `${((currentIndex + 1) / STUDIO_STEPS.length) * 100}%` }}
-          />
-        </div>
+                  {badge.text}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
-    </>
+    </nav>
   );
 }

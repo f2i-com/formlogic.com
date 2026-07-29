@@ -1,4 +1,4 @@
-import { useMemo, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Bot,
@@ -28,13 +28,16 @@ import type { FlowDefinition } from '../../types/flows';
 
 interface CommandItem {
   id: string;
-  group: 'Actions' | 'Studio steps' | 'Data types' | 'Automations' | 'Roles';
+  group: 'Actions' | 'Sections' | 'Data types' | 'Automations' | 'Roles';
   label: string;
   detail: string;
   keywords: string;
   icon: LucideIcon;
   action: () => void;
 }
+
+/** Results shown at once. The list scrolls, so this only bounds render cost. */
+const MAX_RESULTS = 40;
 
 const STEP_ICONS: Record<StudioStepId, LucideIcon> = {
   plan: Map,
@@ -45,7 +48,7 @@ const STEP_ICONS: Record<StudioStepId, LucideIcon> = {
   publish: Rocket,
 };
 
-const GROUP_ORDER: CommandItem['group'][] = ['Actions', 'Studio steps', 'Data types', 'Automations', 'Roles'];
+const GROUP_ORDER: CommandItem['group'][] = ['Actions', 'Sections', 'Data types', 'Automations', 'Roles'];
 
 /**
  * Current-app command palette. It keeps fast navigation local to the Studio:
@@ -88,9 +91,9 @@ export function StudioCommandPalette({
       {
         id: 'preview',
         group: 'Actions',
-        label: 'Preview app',
-        detail: 'Open the current draft as its owner',
-        keywords: 'use app test play runtime cmd p',
+        label: 'Open app',
+        detail: 'Use the current draft the way a member would',
+        keywords: 'use app preview test play runtime cmd p',
         icon: Play,
         action: onPreview,
       },
@@ -127,10 +130,10 @@ export function StudioCommandPalette({
 
     const steps: CommandItem[] = STUDIO_STEPS.map((step, index) => ({
       id: `step-${step.id}`,
-      group: 'Studio steps',
+      group: 'Sections',
       label: step.label,
-      detail: `${index + 1} of ${STUDIO_STEPS.length} · ${step.description}`,
-      keywords: `${step.shortLabel} ${step.description} step ${index + 1}`,
+      detail: step.description,
+      keywords: `${step.shortLabel} ${step.description} section step ${index + 1}`,
       icon: STEP_ICONS[step.id],
       action: () => onStepChange(step.id),
     }));
@@ -185,7 +188,7 @@ export function StudioCommandPalette({
     studioReturn,
   ]);
 
-  const filtered = useMemo(() => {
+  const { filtered, matchCount } = useMemo(() => {
     const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
     const matches = terms.length === 0
       ? items
@@ -193,8 +196,17 @@ export function StudioCommandPalette({
           const haystack = `${item.label} ${item.detail} ${item.group} ${item.keywords}`.toLowerCase();
           return terms.every((term) => haystack.includes(term));
         });
-    return matches.slice(0, 24);
+    return { filtered: matches.slice(0, MAX_RESULTS), matchCount: matches.length };
   }, [items, query]);
+
+  // Focus stays in the search field, so the active option has to be scrolled by hand.
+  const activeId = filtered[activeIndex]?.id;
+  useEffect(() => {
+    if (!activeId) return;
+    // Guarded: scrollIntoView is absent in jsdom and in some embedded webviews.
+    const option = document.getElementById(`studio-cmd-${activeId}`);
+    option?.scrollIntoView?.({ block: 'nearest' });
+  }, [activeId]);
 
   const run = (item: CommandItem) => {
     onClose();
@@ -224,6 +236,8 @@ export function StudioCommandPalette({
       showCloseButton={false}
     >
       <div className="p-3 sm:p-4">
+        {/* Combobox pattern: focus stays in the field and the active option is announced
+            through aria-activedescendant, so arrowing the list is audible, not just visible. */}
         <Input
           value={query}
           onChange={(event) => {
@@ -231,13 +245,17 @@ export function StudioCommandPalette({
             setActiveIndex(0);
           }}
           onKeyDown={onSearchKeyDown}
-          placeholder="Search steps, forms, flows, roles and actions…"
+          placeholder="Search sections, forms, flows, roles and actions…"
           aria-label="Search App Studio commands"
+          role="combobox"
+          aria-expanded
+          aria-controls="studio-command-list"
+          aria-activedescendant={filtered[activeIndex] ? `studio-cmd-${filtered[activeIndex].id}` : undefined}
           leftIcon={<Search className="h-4 w-4" />}
           autoFocus
         />
 
-        <div className="scrollbar-thin mt-3 max-h-[52dvh] overflow-y-auto" role="listbox" aria-label="App Studio commands">
+        <div id="studio-command-list" className="scrollbar-thin mt-3 max-h-[52dvh] overflow-y-auto" role="listbox" aria-label="App Studio commands">
           {filtered.length === 0 ? (
             <div className="rounded-xl border border-dashed border-gray-200 px-4 py-10 text-center dark:border-white/10">
               <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">No matches</p>
@@ -248,8 +266,8 @@ export function StudioCommandPalette({
               const groupItems = filtered.filter((item) => item.group === group);
               if (groupItems.length === 0) return null;
               return (
-                <section key={group} className="mb-3 last:mb-0">
-                  <p className="px-2 pb-1 pt-1 text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400 dark:text-slate-500">
+                <div key={group} role="group" aria-label={group} className="mb-3 last:mb-0">
+                  <p className="px-2 pb-1 pt-1 text-[10px] font-bold uppercase tracking-[0.14em] text-gray-500 dark:text-slate-400">
                     {group}
                   </p>
                   <div className="space-y-1">
@@ -259,8 +277,10 @@ export function StudioCommandPalette({
                       return (
                         <button
                           key={item.id}
+                          id={`studio-cmd-${item.id}`}
                           type="button"
                           role="option"
+                          tabIndex={-1}
                           aria-selected={itemIndex === activeIndex}
                           onMouseEnter={() => setActiveIndex(itemIndex)}
                           onClick={() => run(item)}
@@ -276,22 +296,27 @@ export function StudioCommandPalette({
                           </span>
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-xs font-bold">{item.label}</span>
-                            <span className="mt-0.5 block truncate text-[10px] text-gray-400 dark:text-slate-500">{item.detail}</span>
+                            <span className="mt-0.5 block truncate text-[10px] text-gray-500 dark:text-slate-400">{item.detail}</span>
                           </span>
-                          <ExternalLink className="h-3.5 w-3.5 shrink-0 text-gray-300 dark:text-slate-600" aria-hidden="true" />
+                          <ExternalLink className="h-3.5 w-3.5 shrink-0 text-gray-400 dark:text-slate-500" aria-hidden="true" />
                         </button>
                       );
                     })}
                   </div>
-                </section>
+                </div>
               );
             })
           )}
+          {matchCount > filtered.length && (
+            <p className="px-2 py-2 text-[10px] font-medium text-gray-500 dark:text-slate-400">
+              Showing {filtered.length} of {matchCount} — keep typing to narrow the list.
+            </p>
+          )}
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 px-1 pt-3 text-[10px] text-gray-400 dark:border-white/[0.06] dark:text-slate-500">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 px-1 pt-3 text-[10px] text-gray-500 dark:border-white/[0.06] dark:text-slate-400">
           <span>↑↓ choose · Enter open · Esc close</span>
-          <span>Shortcuts: Ctrl+P preview · Ctrl+Shift+P publish · Alt+1–6 steps</span>
+          <span>Ctrl+P open app · Ctrl+Shift+P publish · Alt+1–6 sections</span>
         </div>
       </div>
     </Modal>

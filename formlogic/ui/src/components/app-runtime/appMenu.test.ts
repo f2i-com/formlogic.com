@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { interleaveMenu, menuForms, menuLinks } from './appMenu';
-import type { AppNavItem, AppRuntimeForm } from '../../types/app';
+import { interleaveMenu, menuForms, menuLinks, roleCanSeeForm } from './appMenu';
+import type { AppNavItem, AppRuntimeForm, PermissionAction } from '../../types/app';
 
 const form = (formId: string, extra: Partial<AppRuntimeForm> = {}): AppRuntimeForm => ({
   formId,
@@ -14,6 +14,33 @@ describe('menuForms', () => {
   it('drops data-only (hidden) and unlisted (menuHidden) forms, keeps the rest', () => {
     const forms = [form('a'), form('b', { hidden: true }), form('c', { menuHidden: true }), form('d')];
     expect(menuForms(forms).map((f) => f.formId)).toEqual(['a', 'd']);
+  });
+});
+
+// Mirrors AppPublicController::memberCanSeeForm. The Studio's role preview reads the
+// SAME rule; when they drifted, the preview told owners that working screens were
+// inaccessible and invited them to hide live navigation.
+describe('roleCanSeeForm', () => {
+  const p = (permission: PermissionAction, formId: string | null = null) => ({ formId, permission });
+
+  it('accepts every per-form permission, not just view/submit', () => {
+    for (const perm of ['submit_responses', 'view_own_responses', 'view_all_responses', 'edit_responses', 'delete_responses', 'export_responses'] as PermissionAction[]) {
+      expect(roleCanSeeForm([p(perm, 'f1')], 'f1')).toBe(true);
+    }
+    expect(roleCanSeeForm([p('view_analytics', 'f1')], 'f1')).toBe(true);
+  });
+
+  it('an app-wide (formId null) grant covers every form', () => {
+    expect(roleCanSeeForm([p('manage_app')], 'anything')).toBe(true);
+    expect(roleCanSeeForm([p('view_analytics')], 'anything')).toBe(true);
+    expect(roleCanSeeForm([p('submit_responses')], 'anything')).toBe(true);
+  });
+
+  it('a grant on another form does not leak, and admin grants that are not app-wide do not either', () => {
+    expect(roleCanSeeForm([p('view_all_responses', 'f2')], 'f1')).toBe(false);
+    expect(roleCanSeeForm([], 'f1')).toBe(false);
+    // manage_users is not a form-reaching permission at all.
+    expect(roleCanSeeForm([p('manage_users')], 'f1')).toBe(false);
   });
 });
 

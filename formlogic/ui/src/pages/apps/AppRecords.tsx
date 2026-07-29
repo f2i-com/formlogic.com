@@ -75,7 +75,7 @@ export function AppRecords() {
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto">
         <button
           type="button"
-          onClick={() => navigate(backTo.path)}
+          onClick={() => navigate(backTo.path, { state: backTo.state })}
           className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 hover:text-gray-800 dark:text-slate-400 dark:hover:text-white transition-colors cursor-pointer mb-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded"
         >
           <ArrowLeft className="h-4 w-4" /> {backTo.label ?? `${app?.name ?? 'App'} settings`}

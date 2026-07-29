@@ -26,7 +26,7 @@ import { useAppStore } from '../../../stores/appStore';
 import { useAuthStore } from '../../../stores/authStore';
 import { isDemoLocalId } from '../../../lib/demoLocal';
 import { cn, formatRelativeTime } from '../../../lib/utils';
-import { buildPreflightChecks, type StudioStepId, type UnpublishedChanges } from '../studioSteps';
+import { buildPreflightChecks, summarizePreflight, type StudioStepId, type UnpublishedChanges } from '../studioSteps';
 import { returnToState } from '../../../hooks/useReturnTo';
 import type { App, AppForm, AppRole, AppVersion } from '../../../types/app';
 import type { AppDomain } from '../../../lib/api';
@@ -47,6 +47,8 @@ export function PublishStep({
   domains,
   versions,
   memberCount,
+  memberCountKnown = true,
+  formCountKnown = true,
   changes,
   onStepChange,
   onPublished,
@@ -59,6 +61,10 @@ export function PublishStep({
   domains: AppDomain[];
   versions: AppVersion[];
   memberCount: number;
+  /** False when the member fetch failed — the count is unknown, not zero. */
+  memberCountKnown?: boolean;
+  /** False when the form list failed to load — never block publish on an unread list. */
+  formCountKnown?: boolean;
   changes: UnpublishedChanges;
   onStepChange: (step: StudioStepId) => void;
   onPublished: () => Promise<void>;
@@ -75,14 +81,18 @@ export function PublishStep({
   const [showUnpublish, setShowUnpublish] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showAllVersions, setShowAllVersions] = useState(false);
   const [justPublished, setJustPublished] = useState<number | null>(null);
 
   const appUrl = `${window.location.origin}/app/${app.slug}`;
   const published = app.status === 'published';
   const currentVersion = app.publishedVersion ?? 0;
   const nextVersion = currentVersion + 1;
+  // Live but with no publishedAt: the app went live through a raw status flip, so it
+  // has no version and no history. It MUST stay publishable — otherwise the only way
+  // to release an edit is to take the live app offline first.
   const legacyPublished = published && !changes.everPublished;
-  const hasChanges = !published || (changes.everPublished && changes.count > 0);
+  const hasChanges = !published || legacyPublished || changes.count > 0;
 
   const checks = useMemo(() => {
     // Landing pages that target a FORM must still point at an attached form —
@@ -102,15 +112,18 @@ export function PublishStep({
       hasHomeScreen: !!(app.customScreen as { kind?: string } | undefined)?.kind,
       hasCustomDomain: domains.some((d) => d.status === 'active'),
       memberCount,
+      memberCountKnown,
+      formCountKnown,
       landingPageMissing,
       signupWithoutDefaultRole: settings?.allowSelfRegistration === true && !settings?.defaultRoleId,
-      // Identity = a curated icon (settings.icon) or an uploaded logo (theme.logoUrl).
-      hasIcon: !!(app.settings?.icon || app.theme?.logoUrl),
+      // Identity, resolved the way AppTile resolves it: a curated icon, an uploaded
+      // logo on the app, or a logo on the theme. Checking only two of the three made
+      // the warning unsatisfiable for apps that plainly show a logo everywhere.
+      hasIcon: !!(app.settings?.icon || app.logoUrl || app.theme?.logoUrl),
     });
     return browserOnlyDemo ? preflight.filter((check) => check.id !== 'members') : preflight;
-  }, [app.settings, app.customScreen, app.theme?.logoUrl, appForms, formsById, flows, roles, domains, memberCount, browserOnlyDemo]);
-  const warnings = checks.filter((c) => c.state === 'warning');
-  const blocking = warnings.filter((c) => c.severity === 'blocking');
+  }, [app.settings, app.customScreen, app.logoUrl, app.theme?.logoUrl, appForms, formsById, flows, roles, domains, memberCount, memberCountKnown, formCountKnown, browserOnlyDemo]);
+  const { blocking, optional, passed, scored, ready } = useMemo(() => summarizePreflight(checks), [checks]);
   const releaseSummary = useMemo(() => {
     if (changes.everPublished) {
       return changes.changed.map((item) => ({
@@ -229,8 +242,8 @@ export function PublishStep({
         </div>
       )}
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <div className="min-w-0 space-y-5">
+      <div className="grid gap-4 @2xl/studio:gap-5 @4xl/studio:grid-cols-[minmax(0,1fr)_minmax(0,21rem)] @6xl/studio:grid-cols-[minmax(0,1fr)_23.75rem]">
+        <div className="min-w-0 space-y-4 @2xl/studio:space-y-5">
           {/* Preflight */}
           <section className="overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 shadow-sm">
             <div className="flex flex-col gap-3 border-b border-gray-200/80 dark:border-white/[0.06] p-5 sm:flex-row sm:items-start sm:justify-between">
@@ -240,20 +253,28 @@ export function PublishStep({
                     {blocking.length > 0
                       ? 'A few things need fixing'
                       : published
-                        ? warnings.length === 0 ? 'Live and ready' : 'Live with recommendations'
-                        : warnings.length === 0 ? 'Ready to publish' : 'Almost ready'}
+                        ? ready ? 'Live and ready' : 'Live with recommendations'
+                        : ready ? 'Ready to publish' : 'Almost ready'}
                   </h3>
-                  <Badge variant={blocking.length > 0 ? 'error' : warnings.length === 0 ? 'success' : 'warning'} size="sm">
-                    <CheckCircle2 className="h-3 w-3 mr-1 inline" />
-                    {checks.length - warnings.length}/{checks.length} checks
+                  {/* Scored on blocking + recommended only. Counting the optional
+                      findings meant a healthy app sat permanently on amber, which
+                      teaches owners to ignore amber when it does mean something. */}
+                  <Badge variant={blocking.length > 0 ? 'error' : ready ? 'success' : 'warning'} size="sm">
+                    <CheckCircle2 className="mr-1 inline h-3 w-3" />
+                    {passed}/{scored} checks
                   </Badge>
+                  {optional.length > 0 && (
+                    <span className="text-[11px] text-gray-500 dark:text-slate-400">
+                      +{optional.length} optional
+                    </span>
+                  )}
                 </div>
                 <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
                   {blocking.length > 0
                     ? 'Blocking issues would break the app for members — everything else is advice, not homework.'
                     : published
                       ? 'The live app passes every blocking check. Recommendations can be finished whenever they are useful.'
-                      : 'Everything below is read from the app\'s real state. Recommendations can be finished later.'}
+                      : "Everything below is read from the app's real state. Recommendations can be finished later."}
                 </p>
               </div>
             </div>
@@ -298,6 +319,9 @@ export function PublishStep({
                     <button
                       type="button"
                       onClick={() => onStepChange(check.step!)}
+                      // Every row's button reads "Set up" — the accessible name names
+                      // the check so an elements list can tell them apart.
+                      aria-label={`${isBlocking ? 'Fix' : 'Set up'}: ${check.title}`}
                       className={cn(
                         'cursor-pointer text-xs font-bold hover:underline',
                         isBlocking ? 'text-red-600 dark:text-red-300' : 'text-amber-600 dark:text-amber-300'
@@ -310,7 +334,18 @@ export function PublishStep({
                     <button
                       type="button"
                       onClick={() => navigate(`/apps/${app.id}/deploy`, { state: studioReturn })}
-                      className="cursor-pointer text-xs font-bold text-amber-600 dark:text-amber-300 hover:underline"
+                      aria-label="Set up: custom domain"
+                      className="cursor-pointer text-xs font-bold text-amber-600 hover:underline dark:text-amber-300"
+                    >
+                      Set up
+                    </button>
+                  )}
+                  {check.state === 'warning' && check.id === 'icon' && (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/apps/${app.id}/settings`, { state: studioReturn })}
+                      aria-label="Set up: app icon"
+                      className="cursor-pointer text-xs font-bold text-amber-600 hover:underline dark:text-amber-300"
                     >
                       Set up
                     </button>
@@ -358,7 +393,9 @@ export function PublishStep({
           </section>
         </div>
 
-        <div className="min-w-0 space-y-5">
+        {/* Stacked (narrow container) the publish card leads — it is the point of the
+            section; in the two-column layout it returns to the right rail. */}
+        <div className="order-first min-w-0 space-y-4 @2xl/studio:space-y-5 @4xl/studio:order-none">
           {/* Publish card */}
           <section className="rounded-xl border border-primary-200 dark:border-primary-500/20 bg-gradient-to-br from-primary-50 to-white dark:from-primary-500/[0.09] dark:to-slate-900/60 p-5 shadow-sm">
             <div className="flex items-center justify-between">
@@ -370,38 +407,43 @@ export function PublishStep({
               </Badge>
             </div>
             <h3 className="mt-5 text-lg font-semibold text-gray-900 dark:text-white">
-              {!published
+              {hasChanges
                 ? `Publish version ${nextVersion}`
-                : changes.count > 0
-                  ? `Publish version ${nextVersion}`
-                  : currentVersion > 0
-                    ? `Live version ${currentVersion} is up to date`
-                    : 'Live app is up to date'}
+                : currentVersion > 0
+                  ? `Live version ${currentVersion} is up to date`
+                  : 'Live app is up to date'}
             </h3>
             <p className="mt-1 text-sm leading-6 text-gray-500 dark:text-slate-400">
               {!published
                 ? 'Make the app available at its link. You can unpublish at any time — data is kept.'
-                : changes.count > 0
-                  ? `Update the live app for everyone. Version ${currentVersion} stays in the history.`
-                  : 'Every saved change is live. Make another edit and it will appear here for review.'}
+                : legacyPublished
+                  ? 'This app went live before release history existed. Publishing now records version 1 and starts the history.'
+                  : changes.count > 0
+                    ? `Update the live app for everyone. Version ${currentVersion} stays in the history.`
+                    : 'Every saved change is live. Make another edit and it will appear here for review.'}
             </p>
             <Button
               className="mt-5 w-full"
               onClick={() => setDialogOpen(true)}
-              disabled={(published && !hasChanges) || seededDemoReadOnly || blocking.length > 0}
+              disabled={!hasChanges || seededDemoReadOnly || blocking.length > 0}
               leftIcon={hasChanges ? <Rocket className="h-4 w-4" /> : <Check className="h-4 w-4" />}
-              title={
-                seededDemoReadOnly
-                  ? 'Publishing is disabled in the shared demo'
-                  : blocking.length > 0
-                    ? 'Fix the blocking issues in the checklist first'
-                    : undefined
-              }
             >
               {blocking.length > 0
                 ? `Fix ${blocking.length} blocking ${blocking.length === 1 ? 'issue' : 'issues'} first`
-                : !published ? 'Publish app' : changes.count > 0 ? 'Publish changes' : 'No changes to publish'}
+                : !published ? 'Publish app' : hasChanges ? 'Publish changes' : 'No changes to publish'}
             </Button>
+            {/* Why the button is off, as visible text — a title tooltip never appears
+                on a disabled button in Chrome, so the reason simply went missing. */}
+            {seededDemoReadOnly && (
+              <p className="mt-2 text-center text-[11px] leading-4 text-gray-500 dark:text-slate-400">
+                Publishing is disabled in the shared demo — sign up free to publish your own app.
+              </p>
+            )}
+            {!seededDemoReadOnly && blocking.length > 0 && (
+              <p className="mt-2 text-center text-[11px] leading-4 text-red-600 dark:text-red-300">
+                Fix the blocking issues in the checklist first.
+              </p>
+            )}
             {browserOnlyDemo && (
               <p className="mt-3 text-center text-[10px] leading-4 text-primary-700 dark:text-primary-300">
                 Demo releases stay in this browser and never touch the shared cloud data.
@@ -443,7 +485,7 @@ export function PublishStep({
                 {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
               </button>
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-2">
+            <div className="mt-3 grid grid-cols-1 gap-2 @xs/studio:grid-cols-2">
               <Button variant="secondary" size="sm" onClick={() => window.open(appUrl, '_blank', 'noopener,noreferrer')} leftIcon={<ExternalLink className="h-4 w-4" />}>
                 Open app
               </Button>
@@ -482,7 +524,7 @@ export function PublishStep({
                     : 'No versions yet — the first publish starts the history.'}
                 </p>
               )}
-              {versions.slice(0, 6).map((version, index) => (
+              {(showAllVersions ? versions : versions.slice(0, 6)).map((version, index) => (
                 <div key={version.id} className="flex items-start gap-3">
                   <span
                     className={cn(
@@ -502,6 +544,16 @@ export function PublishStep({
                   {index === 0 && published && <Badge variant="success" size="sm">Live</Badge>}
                 </div>
               ))}
+              {versions.length > 6 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllVersions((v) => !v)}
+                  aria-expanded={showAllVersions}
+                  className="cursor-pointer text-xs font-bold text-primary-600 hover:underline dark:text-primary-400"
+                >
+                  {showAllVersions ? 'Show fewer releases' : `Show ${versions.length - 6} earlier releases`}
+                </button>
+              )}
             </div>
           </section>
         </div>
@@ -551,7 +603,19 @@ function PublishDialog({
   onConfirm: (label: string) => void;
 }) {
   const [label, setLabel] = useState('');
-  const suggestedLabel = releaseSummary.map((item) => item.text).join('; ').slice(0, 160);
+  // A joined list of every row, hard-cut at 160 chars, wrote mid-word truncations
+  // into permanent history. Count the kinds instead — that reads as a release note.
+  const suggestedLabel = useMemo(() => {
+    const counts = { app: 0, form: 0, flow: 0 } as Record<'app' | 'form' | 'flow', number>;
+    for (const item of releaseSummary) counts[item.kind] += 1;
+    const parts: string[] = [];
+    if (counts.app > 0) parts.push('app settings');
+    if (counts.form > 0) parts.push(`${counts.form} ${counts.form === 1 ? 'form' : 'forms'}`);
+    if (counts.flow > 0) parts.push(`${counts.flow} ${counts.flow === 1 ? 'automation' : 'automations'}`);
+    if (parts.length === 0) return '';
+    const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+    return `Updated ${list}`.slice(0, 160);
+  }, [releaseSummary]);
   return (
     <Modal isOpen={open} onClose={onClose} title={`Publish version ${nextVersion}?`} size="sm">
       <div className="p-4 sm:p-5 space-y-4">

@@ -1,6 +1,6 @@
 import { useState, useEffect, type CSSProperties } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { useReturnTo } from '../../hooks/useReturnTo';
+import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
+import { forwardReturnTo, useReturnTo, type ReturnToState } from '../../hooks/useReturnTo';
 import { ArrowLeft, Save, Check, ChevronRight, ExternalLink, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay, Plug, Download, Trash2, Layers, Table, PencilRuler } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { api } from '../../lib/api';
@@ -35,6 +35,7 @@ const isHexColor = (v: string | null | undefined): v is string => !!v && /^#[0-9
 export function AppSettings() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   // Platform-admin acting mode (managing another user's app): links stay inside
   // /admin/..., and data-showing/identity-bound actions are hidden or disabled.
   const acting = useAdminActing();
@@ -54,7 +55,7 @@ export function AppSettings() {
   const [appForms, setAppForms] = useState<AppForm[]>([]);
   // Snapshot of the persisted state; anything diverging from it is unsaved.
   const [initialSnapshot, setInitialSnapshot] = useState('');
-  const [pendingNav, setPendingNav] = useState<string | null>(null);
+  const [pendingNav, setPendingNav] = useState<{ to: string; state: ReturnToState | undefined } | null>(null);
   const [showMcp, setShowMcp] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -96,8 +97,15 @@ export function AppSettings() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [dirty]);
 
-  // Navigate, but confirm first if there are unsaved edits.
-  const navGuarded = (to: string) => { if (dirty) setPendingNav(to); else navigate(to); };
+  // Every sub-page opened from here carries this page AND the origin this page was
+  // opened from, so two Backs in a row return to the App Studio instead of /apps.
+  const childState = forwardReturnTo(`${location.pathname}${location.search}`, 'App settings', backTo);
+
+  // Navigate, but confirm first if there are unsaved edits. Sub-pages get childState;
+  // going Back hands over the origin THIS page was opened from.
+  const navGuarded = (to: string, state: ReturnToState | undefined = childState) => {
+    if (dirty) setPendingNav({ to, state }); else navigate(to, { state });
+  };
 
   // Roles + forms power the membership defaults (default role, landing page).
   useEffect(() => {
@@ -200,7 +208,7 @@ export function AppSettings() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => navGuarded(backTo.path)}
+              onClick={() => navGuarded(backTo.path, backTo.state)}
               leftIcon={<ArrowLeft className="h-4 w-4" />}
               aria-label={backTo.label ? `Back to ${backTo.label}` : 'Back'}
               title={backTo.label ? `Back to ${backTo.label}` : 'Back'}
@@ -351,13 +359,29 @@ export function AppSettings() {
             </div>
             <div>
               <label htmlFor="app-status" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Status</label>
+              {/* "Published" is deliberately NOT offered here: going live has to run the
+                  readiness checks and record a version, which only the App Studio's
+                  Review & publish does. A raw flip left the app live with no version and
+                  no history, and disabled the Studio's own Publish button. */}
               <select id="app-status" value={app.status} onChange={(e) => setApp({ ...app, status: e.target.value as App['status'] })}
                 className="px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200">
+                {/* Acting admins have no Studio route, so they keep the raw option. */}
+                {(acting || app.status === 'published') && <option value="published">Published</option>}
                 <option value="draft">Draft</option>
-                <option value="published">Published</option>
                 <option value="archived">Archived</option>
               </select>
-              <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Archived: hidden from members; data kept.</p>
+              <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
+                Archived: hidden from members; data kept.{' '}
+                {!acting && app.status !== 'published' && (
+                  <button
+                    type="button"
+                    onClick={() => navGuarded(paths.appSub(`${appId}`, 'studio/publish'))}
+                    className="cursor-pointer font-semibold text-primary-600 hover:underline dark:text-primary-400"
+                  >
+                    Publish in the App Studio
+                  </button>
+                )}
+              </p>
             </div>
             <div>
               <label htmlFor="app-logo" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Logo URL</label>
@@ -446,13 +470,15 @@ export function AppSettings() {
               )}
               <div>
                 <label htmlFor="app-landing-page" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Landing page</label>
+                {/* The Studio stores the default as the token 'dashboard'; an empty-string
+                    option meant a landing page chosen there rendered this select blank. */}
                 <select
                   id="app-landing-page"
-                  value={(app.settings?.landingPage as string) || ''}
-                  onChange={(e) => updateSetting('landingPage', e.target.value || undefined)}
+                  value={(app.settings?.landingPage as string) || 'dashboard'}
+                  onChange={(e) => updateSetting('landingPage', e.target.value)}
                   className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 >
-                  <option value="">Dashboard (default)</option>
+                  <option value="dashboard">Dashboard (default)</option>
                   {appForms.map((f) => (
                     <option key={f.formId} value={f.formId}>{f.displayName}</option>
                   ))}
@@ -793,7 +819,7 @@ export function AppSettings() {
       <ConfirmDialog
         isOpen={pendingNav !== null}
         onClose={() => setPendingNav(null)}
-        onConfirm={() => { const to = pendingNav; setPendingNav(null); if (to) navigate(to); }}
+        onConfirm={() => { const target = pendingNav; setPendingNav(null); if (target) navigate(target.to, { state: target.state }); }}
         title="Discard unsaved changes?"
         message="You have unsaved changes to this app. If you leave now, they'll be lost."
         confirmLabel="Discard changes"

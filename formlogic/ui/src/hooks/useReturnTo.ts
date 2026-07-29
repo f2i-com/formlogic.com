@@ -11,11 +11,32 @@ export interface ReturnToState {
   returnTo?: string;
   /** Optional short label for the origin (e.g. "App Studio") for button text. */
   returnToLabel?: string;
+  /**
+   * The origin the PARENT page was itself opened from. Carried so a Back chain
+   * survives more than one hop: Studio → Settings → Forms → Back → Settings →
+   * Back must land on the Studio section the user started from, not on /apps.
+   */
+  returnToParent?: ReturnToState;
 }
 
 /** Build router state for navigate()/Link so the target's Back returns here. */
-export function returnToState(path: string, label?: string): ReturnToState {
-  return label ? { returnTo: path, returnToLabel: label } : { returnTo: path };
+export function returnToState(path: string, label?: string, parent?: ReturnToState): ReturnToState {
+  return {
+    returnTo: path,
+    ...(label ? { returnToLabel: label } : {}),
+    ...(parent?.returnTo ? { returnToParent: parent } : {}),
+  };
+}
+
+export interface ReturnTo {
+  path: string;
+  label: string | null;
+  fromState: boolean;
+  /**
+   * State to hand to navigate() when going Back, so the page returned to keeps
+   * ITS own origin: `navigate(backTo.path, { state: backTo.state })`.
+   */
+  state: ReturnToState | undefined;
 }
 
 /**
@@ -23,7 +44,7 @@ export function returnToState(path: string, label?: string): ReturnToState {
  * (internal paths only) or the given fallback; `label` is set only when an
  * origin label rode along.
  */
-export function useReturnTo(fallback: string): { path: string; label: string | null; fromState: boolean } {
+export function useReturnTo(fallback: string): ReturnTo {
   const location = useLocation();
   const state = location.state as ReturnToState | null;
   const returnTo = state?.returnTo;
@@ -34,5 +55,21 @@ export function useReturnTo(fallback: string): { path: string; label: string | n
     path: valid ? returnTo : fallback,
     label: valid && typeof state?.returnToLabel === 'string' ? state.returnToLabel : null,
     fromState: valid,
+    state: valid ? state?.returnToParent : undefined,
   };
+}
+
+/**
+ * Router state for opening a CHILD surface from a page that was itself opened
+ * from somewhere: the child returns here, and this page keeps its own origin.
+ */
+export function forwardReturnTo(here: string, hereLabel: string, origin?: ReturnTo): ReturnToState {
+  const parent: ReturnToState | undefined = origin?.fromState
+    ? {
+        returnTo: origin.path,
+        ...(origin.label ? { returnToLabel: origin.label } : {}),
+        ...(origin.state ? { returnToParent: origin.state } : {}),
+      }
+    : undefined;
+  return returnToState(here, hereLabel, parent);
 }

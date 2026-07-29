@@ -3,18 +3,21 @@ import {
   STUDIO_STEPS,
   buildPreflightChecks,
   computeUnpublishedChanges,
-  deriveCompletedSteps,
   deriveNextAction,
+  deriveSectionBadges,
   isStudioStep,
   parseApiDate,
+  summarizePreflight,
   versionLabel,
 } from './studioSteps';
 
 describe('studioSteps', () => {
-  it('defines the six steps in order with Plan optional', () => {
+  it('defines the six sections in order, none of them a wizard step', () => {
     expect(STUDIO_STEPS.map((s) => s.id)).toEqual(['plan', 'data', 'screens', 'automations', 'access', 'publish']);
-    expect(STUDIO_STEPS[0].optional).toBe(true);
-    expect(STUDIO_STEPS.slice(1).every((s) => !s.optional)).toBe(true);
+    expect(STUDIO_STEPS.every((s) => s.label && s.shortLabel && s.description)).toBe(true);
+    // No "optional" marking: the studio is a workspace, so every section is
+    // always available and nothing is a step you can be part-way through.
+    expect(STUDIO_STEPS.some((s) => 'optional' in s)).toBe(false);
   });
 
   it('isStudioStep accepts only real step ids', () => {
@@ -25,38 +28,46 @@ describe('studioSteps', () => {
     expect(isStudioStep(null)).toBe(false);
   });
 
-  describe('deriveCompletedSteps', () => {
+  describe('deriveSectionBadges', () => {
     const empty = {
       formCount: 0,
       hasBlueprint: false,
       hasHomeScreen: false,
       flowCount: 0,
+      activeFlowCount: 0,
       roleCount: 0,
       published: false,
+      publishedVersion: 0,
+      unpublishedCount: 0,
     };
 
-    it('a fresh app with roles only has access complete', () => {
-      expect(deriveCompletedSteps({ ...empty, roleCount: 3 })).toEqual(['access']);
+    it('states what a section holds, and flags an app with nothing built yet', () => {
+      const badges = deriveSectionBadges(empty);
+      expect(badges.data).toMatchObject({ text: '0', tone: 'attention' });
+      // Screens always include the app home, so an empty app still has one.
+      expect(badges.screens?.text).toBe('1');
+      // Nothing to say yet — an empty badge is quieter than a zero.
+      expect(badges.plan).toBeNull();
+      expect(badges.automations).toBeNull();
+      expect(badges.access).toBeNull();
     });
 
-    it('forms complete plan, data and screens together', () => {
-      expect(deriveCompletedSteps({ ...empty, formCount: 2, roleCount: 3 })).toEqual([
-        'plan',
-        'data',
-        'screens',
-        'access',
-      ]);
+    it('counts real content once the app has some', () => {
+      const badges = deriveSectionBadges({ ...empty, formCount: 3, flowCount: 2, activeFlowCount: 1, roleCount: 4, hasBlueprint: true });
+      expect(badges.data).toMatchObject({ text: '3', tone: 'muted' });
+      expect(badges.screens?.text).toBe('4');
+      expect(badges.automations).toMatchObject({ text: '2' });
+      expect(badges.automations?.title).toContain('1 active');
+      expect(badges.access?.text).toBe('4');
+      expect(badges.plan?.text).toBe('Linked');
     });
 
-    it('a blueprint alone completes plan; a custom home alone completes screens', () => {
-      expect(deriveCompletedSteps({ ...empty, hasBlueprint: true })).toEqual(['plan']);
-      expect(deriveCompletedSteps({ ...empty, hasHomeScreen: true })).toEqual(['screens']);
-    });
-
-    it('flows and publish complete their steps', () => {
-      expect(
-        deriveCompletedSteps({ ...empty, formCount: 1, flowCount: 2, roleCount: 3, published: true })
-      ).toEqual(['plan', 'data', 'screens', 'automations', 'access', 'publish']);
+    it('publish reports the live version, pending changes, or an unpublished draft', () => {
+      expect(deriveSectionBadges(empty).publish).toMatchObject({ text: 'Draft', tone: 'attention' });
+      expect(deriveSectionBadges({ ...empty, published: true, publishedVersion: 4 }).publish)
+        .toMatchObject({ text: 'v4', tone: 'muted' });
+      expect(deriveSectionBadges({ ...empty, published: true, publishedVersion: 4, unpublishedCount: 2 }).publish)
+        .toMatchObject({ text: '2', tone: 'attention' });
     });
   });
 
@@ -154,7 +165,10 @@ describe('studioSteps', () => {
       expect(checks.find((c) => c.id === 'forms')?.severity).toBe('blocking');
       expect(checks.find((c) => c.id === 'landing')?.severity).toBe('blocking');
       expect(checks.find((c) => c.id === 'landing')?.step).toBe('screens');
-      expect(checks.find((c) => c.id === 'signup-role')?.severity).toBe('blocking');
+      // NOT blocking: with no default role the server assigns the lowest-privilege
+      // one, which is exactly what App Settings promises for the same blank value.
+      expect(checks.find((c) => c.id === 'signup-role')?.severity).toBe('recommended');
+      expect(checks.find((c) => c.id === 'signup-role')?.detail).toContain('lowest-privilege role');
       expect(checks.find((c) => c.id === 'signup-role')?.step).toBe('access');
       expect(checks.find((c) => c.id === 'icon')?.severity).toBe('optional');
       expect(checks.find((c) => c.id === 'domain')?.severity).toBe('optional');
@@ -165,6 +179,51 @@ describe('studioSteps', () => {
       const healthy = buildPreflightChecks({ ...base, hasIcon: true });
       expect(healthy.some((c) => c.id === 'landing' || c.id === 'signup-role' || c.id === 'icon')).toBe(false);
       expect(healthy.filter((c) => c.state === 'complete').every((c) => c.severity === undefined)).toBe(true);
+    });
+
+    it('never blocks publish on a form list that failed to load', () => {
+      // Reading a dropped request as "no data types" disabled Publish on an app that
+      // has plenty, with no way forward but a page reload.
+      const checks = buildPreflightChecks({ ...base, formCount: 0, formCountKnown: false });
+      const forms = checks.find((c) => c.id === 'forms')!;
+      expect(forms.severity).toBe('recommended');
+      expect(forms.title).toBe('Data types not loaded');
+      expect(summarizePreflight(checks).blocking).toEqual([]);
+    });
+
+    it('reports an unknown member count instead of asserting zero', () => {
+      const checks = buildPreflightChecks({ ...base, memberCount: 0, memberCountKnown: false });
+      const members = checks.find((c) => c.id === 'members')!;
+      expect(members.title).toBe('Members not loaded');
+      expect(members.title).not.toContain('0 members');
+    });
+  });
+
+  describe('summarizePreflight', () => {
+    const base = {
+      formCount: 3,
+      formsWithoutFields: [] as string[],
+      flowCount: 2,
+      activeFlowCount: 1,
+      roleCount: 3,
+      hasHomeScreen: true,
+      hasCustomDomain: false,
+      memberCount: 5,
+    };
+
+    it('scores readiness on blocking + recommended only, so a healthy app can reach green', () => {
+      // No custom domain and no icon: both optional, so readiness is still met.
+      const summary = summarizePreflight(buildPreflightChecks({ ...base, hasIcon: false }));
+      expect(summary.ready).toBe(true);
+      expect(summary.passed).toBe(summary.scored);
+      expect(summary.optional.map((c) => c.id).sort()).toEqual(['domain', 'icon']);
+    });
+
+    it('a blocking finding fails readiness and is listed separately', () => {
+      const summary = summarizePreflight(buildPreflightChecks({ ...base, formCount: 0, hasHomeScreen: false }));
+      expect(summary.ready).toBe(false);
+      expect(summary.blocking.map((c) => c.id)).toEqual(['forms']);
+      expect(summary.passed).toBeLessThan(summary.scored);
     });
   });
 
@@ -190,6 +249,13 @@ describe('studioSteps', () => {
     it('unfinished data outranks publishing; a healthy app gets no nag', () => {
       expect(deriveNextAction({ ...base, formCount: 0, published: false })?.step).toBe('data');
       expect(deriveNextAction(base)).toBeNull();
+    });
+
+    it('never suggests inviting when the member count could not be read', () => {
+      // A failed members fetch used to read as "0 members", so a twenty-person app
+      // was told to invite its first member.
+      expect(deriveNextAction({ ...base, memberCount: 0, memberCountKnown: false })).toBeNull();
+      expect(deriveNextAction({ ...base, memberCount: 0, memberCountKnown: true })?.step).toBe('access');
     });
   });
 

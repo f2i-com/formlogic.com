@@ -68,28 +68,34 @@ export function StudioTopBar({
 
   return (
     <>
+      {/*
+        The bar is a query CONTAINER, not a viewport-breakpoint layout. It lives INSIDE
+        the app shell's sidebar offset, so at a 768px viewport it only has ~512px —
+        viewport-based `md:` rules expanded the actions exactly when there was no room
+        and the right-hand controls were silently clipped.
+      */}
       <header
         className={cn(
-          'sticky z-30 flex h-14 sm:h-16 items-center gap-2.5 sm:gap-3 border-b border-gray-200/60 dark:border-white/[0.06] bg-white/95 dark:bg-slate-900/70 backdrop-blur-xl px-3 sm:px-5',
+          '@container/topbar sticky z-30 flex h-14 items-center gap-2 border-b border-gray-200/60 bg-white/95 px-3 backdrop-blur-xl dark:border-white/[0.06] dark:bg-slate-900/70 @2xl/topbar:h-16 @2xl/topbar:gap-3 @2xl/topbar:px-5',
           isOnline ? 'top-[var(--fl-demo-banner-h,0px)]' : 'top-[calc(2rem+var(--fl-demo-banner-h,0px))]'
         )}
       >
         <AppTile app={app} size="sm" />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 min-w-0">
-            <h1 className="truncate text-sm sm:text-base font-semibold tracking-tight text-gray-900 dark:text-white" title={app.name}>
+          <div className="flex min-w-0 items-center gap-2">
+            <h1 className="truncate text-sm font-semibold tracking-tight text-gray-900 @2xl/topbar:text-base dark:text-white" title={app.name}>
               {app.name}
             </h1>
-            <Badge variant={published ? 'success' : 'warning'} size="sm" className="hidden sm:inline-flex whitespace-nowrap">
+            <Badge variant={published ? 'success' : 'warning'} size="sm" className="hidden whitespace-nowrap @md/topbar:inline-flex">
               {published ? `Live${liveVersion ? ` ${liveVersion}` : ''}` : 'Draft'}
             </Badge>
             {browserOnly && (
-              <Badge variant="primary" size="sm" className="hidden lg:inline-flex whitespace-nowrap">
+              <Badge variant="primary" size="sm" className="hidden whitespace-nowrap @4xl/topbar:inline-flex">
                 Saved in browser
               </Badge>
             )}
           </div>
-          <div className="mt-0.5 hidden items-center gap-1.5 text-[11px] text-gray-400 dark:text-slate-500 sm:flex min-w-0">
+          <div className="mt-0.5 hidden min-w-0 items-center gap-1.5 text-[11px] text-gray-500 @lg/topbar:flex dark:text-slate-400">
             {saving ? (
               <>
                 <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary-500" aria-hidden="true" />
@@ -147,92 +153,52 @@ export function StudioTopBar({
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={onOpenCommandPalette}
-          aria-label="Search App Studio"
-          title="Search App Studio (Ctrl+K)"
-          className="hidden h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 transition-colors hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-400 dark:hover:border-primary-500/30 dark:hover:bg-primary-500/10 dark:hover:text-primary-300 sm:flex"
-        >
-          <Search className="h-4 w-4" aria-hidden="true" />
-        </button>
+        {/*
+          Actions, widest-first: each control keeps its icon form at every width and
+          gains a label only when the bar can actually spare it. Nothing disappears —
+          the bar degrades to icons rather than clipping controls off the edge.
+        */}
+        <IconAction icon={Search} label="Search App Studio" title="Search App Studio (Ctrl+K)" onClick={onOpenCommandPalette} className="hidden @sm/topbar:flex" />
 
-        {/* Use app / Edit app switch (the studio is always the "Edit" side) */}
-        <div className="hidden md:flex items-center gap-1 rounded-xl bg-gray-100 dark:bg-white/[0.06] p-1" role="group" aria-label="App mode">
-          <button
-            type="button"
-            onClick={openRuntime}
-            className="h-8 cursor-pointer rounded-lg px-3 text-xs font-semibold text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-white transition-all"
-          >
-            Use app
-          </button>
-          <button
-            type="button"
-            aria-current="page"
-            className="h-8 cursor-default rounded-lg px-3 text-xs font-semibold bg-white dark:bg-slate-800 text-primary-600 dark:text-primary-400 shadow-sm"
-          >
-            Edit app
-          </button>
-        </div>
-
-        {aiAvailable && (
-          <Button variant="secondary" size="sm" onClick={openChat} leftIcon={<Sparkles className="h-4 w-4" />} className="hidden sm:inline-flex">
-            Ask AI
-          </Button>
-        )}
-        <Button
+        <ActionButton
+          icon={Settings}
+          label="Manage app"
+          onClick={openManage}
           variant="ghost"
-          size="sm"
-          onClick={openManage}
-          leftIcon={<Settings className="h-4 w-4" />}
-          className="hidden lg:inline-flex"
-        >
-          Manage
-        </Button>
-        <Button
-          variant={!published || changes.count > 0 ? 'primary' : 'outline'}
-          size="sm"
-          onClick={onOpenPublish}
-          leftIcon={!published || changes.count > 0 ? <Rocket className="h-4 w-4" /> : <Check className="h-4 w-4" />}
-          className="hidden xl:inline-flex"
-        >
-          {!published ? 'Publish' : changes.count > 0 ? 'Review changes' : 'Up to date'}
-        </Button>
-
-        {/* Compact studio layouts use this top-bar shortcut instead of a
-            floating launcher that can cover step content above the footer. */}
+          tier="manage"
+        />
         {aiAvailable && (
-          <button
-            type="button"
+          <ActionButton
+            icon={Sparkles}
+            label="Ask AI"
+            srLabel="Ask AI about this app"
             onClick={openChat}
-            aria-label="Ask AI"
-            className="sm:hidden flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-gray-200 bg-white text-primary-600 transition-colors hover:bg-primary-50 dark:border-white/10 dark:bg-white/[0.05] dark:text-primary-300 dark:hover:bg-primary-500/10"
-          >
-            <Sparkles className="h-4 w-4" aria-hidden="true" />
-          </button>
+            variant="ghost"
+            accent
+            tier="askAi"
+          />
         )}
-
-        <button
-          type="button"
-          onClick={openManage}
-          aria-label="Manage app"
-          title="Manage app"
-          className="lg:hidden flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 transition-colors hover:bg-gray-50 hover:text-primary-600 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-300 dark:hover:bg-primary-500/10 dark:hover:text-primary-300"
-        >
-          <Settings className="h-4 w-4" aria-hidden="true" />
-        </button>
-
-        {/* Mobile: jump into the live app */}
-        <button
-          type="button"
+        {/* Opening the app the way a member sees it — the studio replaced a Use/Edit
+            segmented control whose "Edit" half was a focusable button that did nothing. */}
+        <ActionButton
+          icon={Play}
+          label="Open app"
           onClick={openRuntime}
-          className="md:hidden flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-white/[0.05] px-2.5 text-xs font-semibold text-gray-700 dark:text-slate-200"
-        >
-          <Play className="h-3.5 w-3.5" />
-          Use
-        </button>
+          variant="secondary"
+          tier="openApp"
+        />
+        {/* The studio's primary action — it keeps its label longest. */}
+        <ActionButton
+          icon={!published || changes.count > 0 ? Rocket : Check}
+          label={!published ? 'Publish' : changes.count > 0 ? 'Review changes' : 'Up to date'}
+          srLabel={!published ? 'Publish app' : changes.count > 0 ? 'Review pending changes' : 'Review & publish'}
+          onClick={onOpenPublish}
+          variant={!published || changes.count > 0 ? 'primary' : 'outline'}
+          tier="publish"
+        />
 
-        <div className="hidden sm:flex items-center gap-2">
+        {/* Account chrome yields to the app actions until the bar is genuinely wide. */}
+        <div className="hidden items-center gap-2 @4xl/topbar:flex">
           <VaultChip />
           <ThemeToggle />
         </div>
@@ -240,5 +206,93 @@ export function StudioTopBar({
       </header>
       <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} />
     </>
+  );
+}
+
+/**
+ * Container widths at which each action earns its text label. Written out in full
+ * because Tailwind extracts class names from source TEXT — a template literal that
+ * composes `@3xl/topbar:inline-flex` at runtime produces no CSS.
+ */
+const LABEL_TIER = {
+  publish: { label: 'hidden whitespace-nowrap @xl/topbar:inline-flex', icon: 'flex @xl/topbar:hidden' },
+  openApp: { label: 'hidden whitespace-nowrap @2xl/topbar:inline-flex', icon: 'flex @2xl/topbar:hidden' },
+  askAi: { label: 'hidden whitespace-nowrap @3xl/topbar:inline-flex', icon: 'flex @3xl/topbar:hidden' },
+  manage: { label: 'hidden whitespace-nowrap @4xl/topbar:inline-flex', icon: 'flex @4xl/topbar:hidden' },
+} as const;
+
+/**
+ * A top-bar action that is an icon button when space is tight and a labelled button
+ * when it isn't. The accessible name is the SAME in both forms, so the control never
+ * changes identity for a screen reader or for voice control as the bar resizes.
+ */
+function ActionButton({
+  icon: Icon,
+  label,
+  srLabel,
+  onClick,
+  variant,
+  accent,
+  tier,
+}: {
+  icon: typeof Search;
+  label: string;
+  /** Fuller name for assistive tech when the visible label is terse. */
+  srLabel?: string;
+  onClick: () => void;
+  variant: 'primary' | 'secondary' | 'outline' | 'ghost';
+  accent?: boolean;
+  tier: keyof typeof LABEL_TIER;
+}) {
+  const classes = LABEL_TIER[tier];
+  return (
+    <>
+      <Button
+        variant={variant}
+        size="sm"
+        onClick={onClick}
+        aria-label={srLabel ?? label}
+        leftIcon={<Icon className="h-4 w-4" />}
+        className={classes.label}
+      >
+        {label}
+      </Button>
+      <IconAction icon={Icon} label={srLabel ?? label} onClick={onClick} accent={accent} className={classes.icon} />
+    </>
+  );
+}
+
+/** Square icon button with a real accessible name — the top bar's compact form. */
+function IconAction({
+  icon: Icon,
+  label,
+  title,
+  onClick,
+  accent,
+  className,
+}: {
+  icon: typeof Search;
+  label: string;
+  title?: string;
+  onClick: () => void;
+  accent?: boolean;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={title ?? label}
+      className={cn(
+        'h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-gray-200 bg-white transition-colors dark:border-white/10 dark:bg-white/[0.05]',
+        accent
+          ? 'text-primary-600 hover:bg-primary-50 dark:text-primary-300 dark:hover:bg-primary-500/10'
+          : 'text-gray-600 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 dark:text-slate-300 dark:hover:border-primary-500/30 dark:hover:bg-primary-500/10 dark:hover:text-primary-300',
+        className ?? 'flex'
+      )}
+    >
+      <Icon className="h-4 w-4" aria-hidden="true" />
+    </button>
   );
 }

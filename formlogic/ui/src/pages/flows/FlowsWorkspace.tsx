@@ -265,7 +265,13 @@ export function FlowsWorkspace() {
       setLoading(false);
       const params = new URLSearchParams(window.location.search);
       const target = params.get('flow');
-      if (target && nextGroups.some((group) => group.flows.some((flow) => flow.id === target))) setSelectedId(target);
+      if (target && nextGroups.some((group) => group.flows.some((flow) => flow.id === target))) {
+        setSelectedId(target);
+        // ?panel= opens the requested side panel with the flow, so a link that
+        // promises "run history" actually lands on the run history.
+        const panel = params.get('panel');
+        if (panel === 'history' || panel === 'triggers' || panel === 'test') setRightPanel(panel);
+      }
       // ?new=1 (the mobile + quick menu) opens the New-flow dialog straight away, once.
       if (params.get('new') === '1') {
         setShowNew(true);

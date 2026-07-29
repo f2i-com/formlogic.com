@@ -2,6 +2,13 @@ import { useEffect, useCallback } from 'react';
 
 export interface KeyboardShortcut {
   key: string;
+  /**
+   * Physical key (KeyboardEvent.code, e.g. 'Digit3'). When present it is matched
+   * INSTEAD of `key`. Needed for Alt/Option combinations: macOS rewrites
+   * event.key under Option (Option+3 yields '‹'), so a key-only Alt shortcut can
+   * never fire there. `key` stays required for display via formatShortcut.
+   */
+  code?: string;
   ctrl?: boolean;
   shift?: boolean;
   alt?: boolean;
@@ -46,7 +53,9 @@ export function useKeyboardShortcuts({ shortcuts, enabled = true }: UseKeyboardS
         const shiftMatch = shortcut.shift ? event.shiftKey : !event.shiftKey;
         const altMatch = shortcut.alt ? event.altKey : !event.altKey;
 
-        const keyMatch = event.key.toLowerCase() === shortcut.key.toLowerCase();
+        const keyMatch = shortcut.code
+          ? event.code === shortcut.code
+          : event.key.toLowerCase() === shortcut.key.toLowerCase();
 
         if (keyMatch && ctrlOrMeta && shiftMatch && altMatch) {
           // Allow Ctrl+S and similar even in inputs — except ones flagged

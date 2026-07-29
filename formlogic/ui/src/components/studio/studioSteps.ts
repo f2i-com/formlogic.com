@@ -1,9 +1,11 @@
 import type { App } from '../../types/app';
 
 /**
- * App Studio (app-first redesign): the six-step guided builder — Plan, Data,
- * Screens, Automations, Access, Publish. Pure derivations live here so the
- * step rail, footer and publish preflight can be unit-tested without the DOM.
+ * App Studio: one workspace per app, divided into six sections — Plan, Data,
+ * Screens, Automations, Access, Publish. They are sections, not wizard steps:
+ * every one is always available, everything saves as you go, and an app is
+ * never "part-way through" them. Pure derivations live here so the section
+ * nav, the guidance line and the publish preflight are unit-testable.
  */
 export type StudioStepId = 'plan' | 'data' | 'screens' | 'automations' | 'access' | 'publish';
 
@@ -12,47 +14,75 @@ export interface StudioStep {
   label: string;
   shortLabel: string;
   description: string;
-  optional?: boolean;
 }
 
 export const STUDIO_STEPS: StudioStep[] = [
-  { id: 'plan', label: 'Plan', shortLabel: 'Plan', description: 'Describe or diagram the app', optional: true },
-  { id: 'data', label: 'Data & forms', shortLabel: 'Data', description: 'Fields, forms and relationships' },
-  { id: 'screens', label: 'Screens', shortLabel: 'Screens', description: 'Home, navigation and record views' },
-  { id: 'automations', label: 'Automations', shortLabel: 'Automations', description: 'Triggers, actions and advanced flows' },
-  { id: 'access', label: 'Users & roles', shortLabel: 'Access', description: 'People, roles and permissions' },
-  { id: 'publish', label: 'Review & publish', shortLabel: 'Publish', description: 'Test, publish and manage versions' },
+  { id: 'plan', label: 'Plan', shortLabel: 'Plan', description: 'Sketch the app as a diagram, or plan it with AI' },
+  { id: 'data', label: 'Data & forms', shortLabel: 'Data', description: 'The forms behind the app: fields and relationships' },
+  { id: 'screens', label: 'Screens', shortLabel: 'Screens', description: 'Home, navigation and the views members get' },
+  { id: 'automations', label: 'Automations', shortLabel: 'Automations', description: 'What happens when records arrive' },
+  { id: 'access', label: 'Users & roles', shortLabel: 'Access', description: 'Who can open the app and what they can do' },
+  { id: 'publish', label: 'Review & publish', shortLabel: 'Publish', description: 'Check the app over and release a version' },
 ];
 
 export function isStudioStep(value: string | undefined | null): value is StudioStepId {
   return !!value && STUDIO_STEPS.some((step) => step.id === value);
 }
 
-/** The facts each step's "complete" state derives from — all real app state, no wizard bookkeeping. */
+/** What the app actually contains — the source for every section badge. */
 export interface StudioSnapshot {
   formCount: number;
   hasBlueprint: boolean;
   hasHomeScreen: boolean;
   flowCount: number;
+  activeFlowCount: number;
   roleCount: number;
   published: boolean;
+  publishedVersion: number;
+  unpublishedCount: number;
+}
+
+/** A short fact rendered beside a section name in the nav. */
+export interface SectionBadge {
+  /** Rendered text — a count or a version, never a judgement. */
+  text: string;
+  /** 'attention' = something is waiting on the owner (unpublished work, nothing built yet). */
+  tone: 'muted' | 'attention';
+  /** Spoken/hover expansion, since the badge itself is a bare number. */
+  title: string;
 }
 
 /**
- * Steps are "complete" when the app genuinely has that aspect configured —
- * the studio is prefilled and skippable, so completion is DERIVED from real
- * state rather than tracked as wizard progress.
+ * Section badges state what a section CONTAINS rather than whether it is "done".
+ * The old completion ticks marked Screens and Access complete for every app that
+ * had a form (screens are generated, roles ship with the app), so the ticks said
+ * nothing — a count is a fact the owner can act on.
  */
-export function deriveCompletedSteps(s: StudioSnapshot): StudioStepId[] {
-  const done: StudioStepId[] = [];
-  if (s.hasBlueprint || s.formCount > 0) done.push('plan');
-  if (s.formCount > 0) done.push('data');
-  // Generated screens exist as soon as there are forms; a custom home also counts.
-  if (s.formCount > 0 || s.hasHomeScreen) done.push('screens');
-  if (s.flowCount > 0) done.push('automations');
-  if (s.roleCount > 0) done.push('access');
-  if (s.published) done.push('publish');
-  return done;
+export function deriveSectionBadges(s: StudioSnapshot): Record<StudioStepId, SectionBadge | null> {
+  const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  return {
+    plan: s.hasBlueprint ? { text: 'Linked', tone: 'muted', title: 'A diagram is linked to this app' } : null,
+    data: {
+      text: String(s.formCount),
+      tone: s.formCount === 0 ? 'attention' : 'muted',
+      title: s.formCount === 0 ? 'No data types yet' : plural(s.formCount, 'data type'),
+    },
+    // Every form contributes its generated screens; the home screen is always there.
+    screens: {
+      text: String(s.formCount + 1),
+      tone: 'muted',
+      title: `${plural(s.formCount + 1, 'screen')} including the app home`,
+    },
+    automations: s.flowCount > 0
+      ? { text: String(s.flowCount), tone: 'muted', title: `${plural(s.flowCount, 'automation')} · ${s.activeFlowCount} active` }
+      : null,
+    access: s.roleCount > 0 ? { text: String(s.roleCount), tone: 'muted', title: plural(s.roleCount, 'role') } : null,
+    publish: s.unpublishedCount > 0
+      ? { text: String(s.unpublishedCount), tone: 'attention', title: `${plural(s.unpublishedCount, 'change')} not published yet` }
+      : s.published
+        ? { text: s.publishedVersion > 0 ? `v${s.publishedVersion}` : 'Live', tone: 'muted', title: 'The live app is up to date' }
+        : { text: 'Draft', tone: 'attention', title: 'This app has never been published' },
+  };
 }
 
 /**
@@ -141,12 +171,28 @@ export function buildPreflightChecks(input: {
   memberCount: number;
   /** settings.landingPage when it targets a form: does that form still exist? */
   landingPageMissing?: boolean;
-  /** settings.allowSelfRegistration without a defaultRoleId = joiners with no role. */
+  /** settings.allowSelfRegistration without a defaultRoleId = joiners on the automatic role. */
   signupWithoutDefaultRole?: boolean;
   hasIcon?: boolean;
+  /** False when the member fetch failed — the count is unknown, not zero. */
+  memberCountKnown?: boolean;
+  /** False when the attachment list failed to load — the app's forms are unknown, not zero. */
+  formCountKnown?: boolean;
 }): PreflightCheck[] {
   const checks: PreflightCheck[] = [];
 
+  if (input.formCountKnown === false) {
+    // A failed read is not "no data types": blocking publish on it would stop an
+    // owner releasing a twelve-form app because one request dropped.
+    checks.push({
+      id: 'forms',
+      state: 'warning',
+      severity: 'recommended',
+      title: 'Data types not loaded',
+      detail: 'The form list could not be read — reload to check it before publishing',
+      step: 'data',
+    });
+  } else {
   checks.push(
     input.formCount > 0
       ? {
@@ -169,6 +215,7 @@ export function buildPreflightChecks(input: {
           step: 'data',
         }
   );
+  }
 
   if (input.landingPageMissing) {
     checks.push({
@@ -185,9 +232,12 @@ export function buildPreflightChecks(input: {
     checks.push({
       id: 'signup-role',
       state: 'warning',
-      severity: 'blocking',
-      title: 'Sign-up is open but has no default role',
-      detail: 'People who join would have no permissions — pick a default role in Users & roles',
+      // NOT blocking: with no default role the server assigns the lowest-privilege role, so
+      // sign-up works. Blocking publish here contradicted App Settings, which describes the
+      // same blank value as "Lowest-privilege role (automatic)".
+      severity: 'recommended',
+      title: 'Sign-up is open with no default role picked',
+      detail: 'New members get the lowest-privilege role automatically — pick one to be explicit',
       step: 'access',
     });
   }
@@ -227,8 +277,14 @@ export function buildPreflightChecks(input: {
   checks.push({
     id: 'members',
     state: 'complete',
-    title: `${input.memberCount} ${input.memberCount === 1 ? 'member' : 'members'}`,
-    detail: input.memberCount <= 1 ? 'Invite people from Users & roles when you are ready' : 'People already have access',
+    title: input.memberCountKnown === false
+      ? 'Members not loaded'
+      : `${input.memberCount} ${input.memberCount === 1 ? 'member' : 'members'}`,
+    detail: input.memberCountKnown === false
+      ? 'The member list could not be read — reload to check it'
+      : input.memberCount <= 1
+        ? 'Invite people from Users & roles when you are ready'
+        : 'People already have access',
     step: 'access',
   });
 
@@ -253,6 +309,41 @@ export function buildPreflightChecks(input: {
   return checks;
 }
 
+export interface PreflightSummary {
+  blocking: PreflightCheck[];
+  /** Worth doing before release. */
+  recommended: PreflightCheck[];
+  /** Nice to have — never counted against readiness. */
+  optional: PreflightCheck[];
+  /** Checks that pass, out of the ones readiness is scored on (blocking + recommended). */
+  passed: number;
+  scored: number;
+  /** True when nothing blocking or recommended is outstanding. */
+  ready: boolean;
+}
+
+/**
+ * Split the checklist into the part that describes readiness and the part that is
+ * advice. Scoring optional findings (a custom domain almost nobody connects) meant
+ * a healthy app sat permanently on an amber "6/8", which teaches owners to ignore
+ * amber — including when it means something.
+ */
+export function summarizePreflight(checks: PreflightCheck[]): PreflightSummary {
+  const warnings = checks.filter((c) => c.state === 'warning');
+  const blocking = warnings.filter((c) => c.severity === 'blocking');
+  const recommended = warnings.filter((c) => c.severity === 'recommended');
+  const optional = warnings.filter((c) => c.severity === 'optional');
+  const scored = checks.length - optional.length;
+  return {
+    blocking,
+    recommended,
+    optional,
+    passed: scored - blocking.length - recommended.length,
+    scored,
+    ready: blocking.length === 0 && recommended.length === 0,
+  };
+}
+
 // ── Recommended next action (recommendation #1) ─────────────────────────────
 
 export interface NextAction {
@@ -263,9 +354,9 @@ export interface NextAction {
 }
 
 /**
- * ONE recommended next action from real app state — the rail says where you
+ * ONE recommended next action from real app state — the section nav says where you
  * are, this says what matters next. Returns null when the app is in good shape
- * (published, no pending changes) so the card disappears instead of nagging.
+ * (published, no pending changes) so the line disappears instead of nagging.
  */
 export function deriveNextAction(s: {
   formCount: number;
@@ -274,6 +365,8 @@ export function deriveNextAction(s: {
   memberCount: number;
   published: boolean;
   unpublishedCount: number;
+  /** False when the member fetch failed — never suggest inviting on an unknown count. */
+  memberCountKnown?: boolean;
 }): NextAction | null {
   if (s.formCount === 0) {
     return {
@@ -315,7 +408,7 @@ export function deriveNextAction(s: {
       cta: 'Add automation',
     };
   }
-  if (s.memberCount <= 1) {
+  if (s.memberCount <= 1 && s.memberCountKnown !== false) {
     return {
       step: 'access',
       title: 'Invite your first member',

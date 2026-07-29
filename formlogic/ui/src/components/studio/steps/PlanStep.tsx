@@ -13,10 +13,9 @@ import type { Form } from '../../../types/form';
 import type { Blueprint } from '../../../types/blueprints';
 
 /**
- * Studio step 1 — Plan (optional): the app's linked diagram plus AI planning.
- * The diagram is the real Blueprints surface (materialise / apply-changes live
- * on the canvas); "Plan with AI" seeds the site chat, which can sketch and
- * build through its tool set.
+ * Plan: the app's linked diagram plus AI planning. The diagram is the real
+ * Blueprints surface (materialise / apply-changes live on the canvas); "Plan
+ * with AI" seeds the site chat, which can sketch and build through its tool set.
  */
 export function PlanStep({
   app,
@@ -25,7 +24,7 @@ export function PlanStep({
   formsById,
   roles,
   aiAvailable = false,
-  onSkip,
+  onGoToData,
 }: {
   app: App;
   blueprint: Blueprint | null;
@@ -35,7 +34,7 @@ export function PlanStep({
   /** A usable default AI exists — without one the "Plan with AI" card is dropped
    *  (manual building shouldn't advertise a copilot that would refuse). */
   aiAvailable?: boolean;
-  onSkip: () => void;
+  onGoToData: () => void;
 }) {
   const navigate = useNavigate();
   // The diagram canvas returns here via its back link.
@@ -77,22 +76,20 @@ export function PlanStep({
   };
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,.7fr)]">
+    <div className="grid gap-4 @2xl/studio:gap-5 @3xl/studio:grid-cols-[minmax(0,1.3fr)_minmax(0,.7fr)]">
       {/* Diagram card */}
       <section className="overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 shadow-sm">
         <div className="flex flex-col gap-3 border-b border-gray-200/80 dark:border-white/[0.06] p-5 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white">App blueprint</h3>
-              <Badge size="sm">Optional</Badge>
-            </div>
+            <h3 className="text-base font-semibold text-gray-900 dark:text-white">App blueprint</h3>
             <p className="mt-1 max-w-2xl text-sm leading-6 text-gray-500 dark:text-slate-400">
               Sketch the people, data and process on a diagram. FormLogic materialises an approved
               plan into connected forms, flows and roles — and keeps the diagram linked to this app.
+              Planning is never required: you can build the app directly instead.
             </p>
           </div>
-          <Button variant="secondary" size="sm" onClick={onSkip}>
-            Skip planning
+          <Button variant="secondary" size="sm" onClick={onGoToData}>
+            Build it directly
           </Button>
         </div>
 
@@ -104,7 +101,7 @@ export function PlanStep({
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{blueprint.name}</p>
+                  <p className="min-w-0 truncate text-sm font-semibold text-gray-900 dark:text-white">{blueprint.name}</p>
                   <Badge variant="success" size="sm">Linked to this app</Badge>
                 </div>
                 <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
@@ -157,6 +154,13 @@ export function PlanStep({
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
+            // Ctrl/Cmd+Enter submits, matching the site chat composer.
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                askAi();
+              }
+            }}
             rows={5}
             aria-label="Describe the app"
             placeholder={`e.g. Customers submit requests, staff assign a technician, and customers get updates until the job is invoiced.`}
@@ -196,7 +200,7 @@ function MappingLine({ icon: Icon, label, detail, done }: { icon: typeof Databas
       <Icon className="h-4 w-4 text-primary-600 dark:text-primary-400" />
       <div className="min-w-0 flex-1">
         <p className="text-xs font-semibold text-gray-800 dark:text-slate-200">{label}</p>
-        <p className="mt-0.5 text-[11px] text-gray-400 dark:text-slate-500 truncate">{detail}</p>
+        <p className="mt-0.5 truncate text-[11px] text-gray-500 dark:text-slate-400">{detail}</p>
       </div>
       {done && <Check className="h-3.5 w-3.5 text-emerald-500" />}
     </div>

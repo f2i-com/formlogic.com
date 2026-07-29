@@ -190,13 +190,18 @@ describe('AppStudio', () => {
     });
 
     expect(document.body.textContent).toContain('Search App Studio');
-    expect(document.body.textContent).toContain('Preview app');
+    expect(document.body.textContent).toContain('Open app');
     expect(document.body.textContent).toContain('Repair request');
     expect(document.body.textContent).toContain('Notify dispatch');
-    expect(document.body.querySelector('input[aria-label="Search App Studio commands"]')).toBeTruthy();
+    const search = document.body.querySelector('input[aria-label="Search App Studio commands"]')!;
+    expect(search).toBeTruthy();
+    // Combobox wiring: arrowing the list has to announce the active option, since
+    // focus never leaves the search field.
+    expect(search.getAttribute('role')).toBe('combobox');
+    expect(search.getAttribute('aria-activedescendant')).toBeTruthy();
   });
 
-  it('describes legacy published apps as live without inventing release history', async () => {
+  it('keeps an app published outside the versioned flow publishable', async () => {
     vi.mocked(api.getApp).mockResolvedValueOnce({
       data: {
         app: {
@@ -212,24 +217,58 @@ describe('AppStudio', () => {
 
     expect(container.textContent).not.toContain('Not published yet');
     expect(container.textContent).toContain('Current release');
-    expect(container.textContent).toContain('Live app is up to date');
     expect(container.textContent).toContain('No recorded releases yet');
+    // Live but with no publishedAt (published from a raw status flip, or before
+    // versioning existed): publishing has to stay possible, otherwise the only way
+    // to release an edit is to take the live app offline first.
+    expect(container.textContent).toContain('Publish version 1');
+    const publish = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === 'Publish changes')!;
+    expect(publish).toBeTruthy();
+    expect(publish.disabled).toBe(false);
   });
 
-  it('uses the fixed footer as the single continue action on Plan', async () => {
+  it('moves forward with an in-flow link at the end of the section, not a fixed bar', async () => {
     await renderStudio('/apps/a1/studio/plan');
-    expect(container.textContent).not.toContain('Continue to Data & forms');
-    expect(container.textContent).toContain('Continue to Data');
+    // No wizard framing: no step counter, no Previous/Continue bar over the content.
+    expect(container.textContent).not.toContain('Step 1 of 6');
+    expect(container.textContent).not.toContain('Continue to Data');
+    expect(container.textContent).not.toContain('Saved automatically');
+    expect(container.textContent).toContain('Next: Data & forms');
   });
 
-  it('the rail marks configured steps and navigates between them', async () => {
+  it('the section nav states what each section holds and navigates between them', async () => {
     await renderStudio('/apps/a1/studio/data');
-    const rail = container.querySelector('[aria-label="App Studio steps"]')!;
-    expect(rail).toBeTruthy();
-    const publishBtn = Array.from(rail.querySelectorAll('button')).find((b) => b.textContent?.includes('Publish'))!;
+    const nav = container.querySelector('[aria-label="App Studio sections"]')!;
+    expect(nav).toBeTruthy();
+    // Counts, not completion ticks: 1 data type, 2 screens (form + home), 1 automation.
+    const dataTab = Array.from(nav.querySelectorAll('button')).find((b) => b.textContent?.startsWith('Data'))!;
+    expect(dataTab.textContent).toBe('Data1');
+    expect(dataTab.getAttribute('aria-current')).toBe('page');
+    const publishBtn = Array.from(nav.querySelectorAll('button')).find((b) => b.textContent?.includes('Publish'))!;
     await act(async () => { publishBtn.click(); });
     await act(async () => { await Promise.resolve(); });
     expect(container.textContent).toContain('Review & publish');
+  });
+
+  it('reports a failed app load as a retryable error, not a deleted app', async () => {
+    vi.mocked(api.getApp).mockResolvedValueOnce({ error: 'Server error (500)' } as never);
+
+    await renderStudio('/apps/a1/studio/data');
+
+    expect(container.textContent).toContain("Couldn't load this app");
+    expect(container.textContent).toContain('Server error (500)');
+    expect(container.textContent).not.toContain('It may have been deleted');
+    expect(Array.from(container.querySelectorAll('button')).some((b) => b.textContent?.includes('Try again'))).toBe(true);
+  });
+
+  it('reports a real 404 as a missing app', async () => {
+    vi.mocked(api.getApp).mockResolvedValueOnce({ error: 'App not found', status: 404 } as never);
+
+    await renderStudio('/apps/a1/studio/data');
+
+    expect(container.textContent).toContain('App not found');
+    expect(container.textContent).toContain('It may have been deleted');
+    expect(Array.from(container.querySelectorAll('button')).some((b) => b.textContent?.includes('Try again'))).toBe(false);
   });
 
   it('an invalid step falls back to Data', async () => {

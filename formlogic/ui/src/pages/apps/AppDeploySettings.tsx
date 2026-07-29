@@ -127,33 +127,32 @@ export function AppDeploySettings() {
     }
   };
 
-  const handlePublish = async () => {
-    if (!appId || publishing) return;
-    setPublishing(true);
-    await updateApp(appId, { status: 'published' });
-    // Re-read from store to verify the update succeeded
-    const updated = useAppStore.getState().getApp(appId);
-    setPublishing(false);
-    if (updated && (updated as App).status === 'published') {
-      setApp(updated as App);
-      toast.success('Published', 'Your app is now live');
-    } else {
-      toast.error('Publish failed', 'Could not publish the app. Please try again.');
-    }
-  };
+  /**
+   * Going live is owned by the App Studio's Review & publish section, which runs the
+   * preflight and records a version. This page used to flip `status` directly: that
+   * produced a live app with no version and no publishedAt, and the Studio then had
+   * nothing to compare against — its Publish button stayed disabled forever. Deploy
+   * now reports the status and hands off.
+   *
+   * Platform admins acting on someone else's app have no Studio route (the acting
+   * boundary registers no `studio` child), so they keep a direct control here rather
+   * than a link to a page that does not exist for them.
+   */
+  const openPublish = () => navigate(paths.appSub(`${appId}`, 'studio/publish'));
 
-  const handleUnpublish = async () => {
+  const setStatus = async (status: 'published' | 'draft') => {
     if (!appId || publishing) return;
     setShowUnpublish(false);
     setPublishing(true);
-    await updateApp(appId, { status: 'draft' });
-    const updated = useAppStore.getState().getApp(appId);
+    await updateApp(appId, { status });
+    const updated = useAppStore.getState().getApp(appId) as App | undefined;
     setPublishing(false);
-    if (updated && (updated as App).status !== 'published') {
-      setApp(updated as App);
-      toast.success('Unpublished', 'Your app is now offline.');
+    if (updated && updated.status === status) {
+      setApp(updated);
+      toast.success(status === 'published' ? 'Published' : 'Unpublished',
+        status === 'published' ? 'The app is now live.' : 'The app is now offline.');
     } else {
-      toast.error('Unpublish failed', 'Could not take the app offline. Please try again.');
+      toast.error(status === 'published' ? 'Publish failed' : 'Unpublish failed', 'Please try again.');
     }
   };
 
@@ -162,7 +161,7 @@ export function AppDeploySettings() {
       <Header
         title="Deploy & share"
         actions={
-          <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+          <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path, { state: backTo.state })} leftIcon={<ArrowLeft className="h-4 w-4" />}>
             {backTo.label ? `Back to ${backTo.label}` : 'Back'}
           </Button>
         }
@@ -171,23 +170,40 @@ export function AppDeploySettings() {
       <div className="max-w-3xl mx-auto">
 
       <div className="space-y-6">
-        {/* Status */}
+        {/* Status — publishing itself lives in the App Studio (versioned + preflight). */}
         {app.status === 'published' ? (
           <div className="bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200/80 dark:border-emerald-500/20 rounded-2xl p-6">
             <div className="flex items-start gap-3">
               <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400 flex-shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
-                <h3 className="font-medium text-emerald-800 dark:text-emerald-400 tracking-tight">App is live</h3>
-                <p className="text-sm text-emerald-700 dark:text-emerald-300/70 mt-1 mb-4">Anyone with access can use this app at its share link below.</p>
-                <Button variant="outline" onClick={() => setShowUnpublish(true)} disabled={publishing} isLoading={publishing}>Unpublish</Button>
+                <h3 className="font-medium text-emerald-800 dark:text-emerald-400 tracking-tight">
+                  App is live{app.publishedVersion ? ` — version ${app.publishedVersion}` : ''}
+                </h3>
+                <p className="text-sm text-emerald-700 dark:text-emerald-300/70 mt-1 mb-4">
+                  Anyone with access can use this app at its share link below.
+                  {acting ? '' : ' Releases, version history and taking the app offline live in Review & publish.'}
+                </p>
+                {acting ? (
+                  <Button variant="outline" onClick={() => setShowUnpublish(true)} disabled={publishing} isLoading={publishing}>Unpublish</Button>
+                ) : (
+                  <Button variant="outline" onClick={openPublish}>Review &amp; publish</Button>
+                )}
               </div>
             </div>
           </div>
         ) : (
           <div className="bg-yellow-50 dark:bg-yellow-500/10 border border-yellow-200/80 dark:border-yellow-500/20 rounded-2xl p-6">
             <h3 className="font-medium text-yellow-800 dark:text-yellow-400 mb-2 tracking-tight">App is not published</h3>
-            <p className="text-sm text-yellow-700 dark:text-yellow-300/70 mb-4">Publish your app to make it accessible to users.</p>
-            <Button onClick={handlePublish} disabled={publishing} isLoading={publishing}>Publish app</Button>
+            <p className="text-sm text-yellow-700 dark:text-yellow-300/70 mb-4">
+              {acting
+                ? 'Publish this app to make it accessible to its users.'
+                : 'Publishing runs the readiness checks and records a version, so it happens in the App Studio.'}
+            </p>
+            {acting ? (
+              <Button onClick={() => void setStatus('published')} disabled={publishing} isLoading={publishing}>Publish app</Button>
+            ) : (
+              <Button onClick={openPublish}>Review &amp; publish</Button>
+            )}
           </div>
         )}
 
@@ -307,9 +323,9 @@ export function AppDeploySettings() {
       <ConfirmDialog
         isOpen={showUnpublish}
         onClose={() => setShowUnpublish(false)}
-        onConfirm={handleUnpublish}
+        onConfirm={() => void setStatus('draft')}
         title="Take this app offline?"
-        message="Users will lose access until you republish. Existing data is kept."
+        message="Users will lose access until it is published again. Existing data is kept."
         confirmLabel="Unpublish"
         variant="danger"
       />
