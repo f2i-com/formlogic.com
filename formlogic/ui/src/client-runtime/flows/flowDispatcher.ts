@@ -44,6 +44,8 @@ import {
   resolveDesktopServiceBase,
   type AiSourceListing,
 } from './desktopService';
+import { oaiyRouteAvailable } from '../oaiy/oaiyRuntime';
+import { oaiyAiChat } from '../oaiy/oaiyAi';
 import { executeFlow, type FlowRunOutcome } from './flowExecutor';
 import { resolveExecutableGraph } from './compiledGraph';
 import { invokeChildFlowWith, type ChildFlowBackend } from './childFlowInvoker';
@@ -85,7 +87,12 @@ async function invokeDesktopNamedAiChat(
   const sources = await listAiSources();
   const selected = sources.find((source) => isDesktopFlowChatProvider(source, id));
   if (!selected) return null;
-  const result = await desktopClient.ai.chat(body as DesktopAiChatRequest, id, { signal });
+  // When OAIY is the paired runtime, the advertised providers ARE OAIY's, so the
+  // chat runs through OAIY's credential-hidden gateway; otherwise FormLogic
+  // Desktop. Either way the key never reaches the browser.
+  const result = oaiyRouteAvailable()
+    ? await oaiyAiChat(id, body, { signal })
+    : await desktopClient.ai.chat(body as DesktopAiChatRequest, id, { signal });
   if (!result.ok) throw new Error(result.error.message || `Desktop AI provider '${id}' failed`);
   return result.data;
 }

@@ -12,6 +12,7 @@ import { getDesktopInfo } from '../desktop/desktopDetection';
 import { getDesktopToken } from '../desktop/desktopPairing';
 import { oaiyRouteAvailable } from '../oaiy/oaiyRuntime';
 import { listOaiyServices } from '../oaiy/oaiyServices';
+import { listOaiySources } from '../oaiy/oaiyAi';
 
 /** Loopback base of a RUNNING service by id, from a service listing. Shared by
  *  the OAIY and FormLogic Desktop paths so both resolve a base identically. */
@@ -117,66 +118,53 @@ export interface AiSourceListing {
   enabled: boolean;
 }
 
-/** Map an OAIY service to a lane-picker source. OAIY has no AI-gateway union, so
- *  there are no providers and no capability tags — infer the common `chat`
- *  capability from an `llm` category, else leave it open. */
-function oaiyServiceToSource(s: DesktopServiceSnapshot): AiSourceListing {
-  const port = s.port || s.defaultPort || 0;
-  const capabilities = (s.category ?? '').toLowerCase() === 'llm' ? ['chat'] : [];
+/** A well-formed DesktopAiSource (has a string id). */
+function isValidAiSource(s: DesktopAiSource): s is DesktopAiSource {
+  return !!s && typeof s.id === 'string';
+}
+
+/** Map a desktop AI-gateway source (from OAIY or FormLogic Desktop — the SAME
+ *  `/api/ai/sources` shape) to a lane-picker listing. */
+function mapDesktopAiSource(s: DesktopAiSource): AiSourceListing {
+  const kind: 'service' | 'provider' = s.kind === 'provider' ? 'provider' : 'service';
+  const refId = (kind === 'service' ? s.serviceId : s.providerId) ?? s.id.replace(/^(service|provider):/, '');
+  const port = s.port ?? 0;
   return {
-    id: `service:${s.id}`,
-    kind: 'service',
-    refId: s.id,
-    name: s.name || s.id,
+    id: s.id,
+    kind,
+    refId,
+    name: typeof s.name === 'string' && s.name ? s.name : refId,
     category: s.category ?? '',
-    status: s.status,
-    capabilities,
-    url: s.status === 'running' && port ? `http://127.0.0.1:${port}` : '',
-    model: '',
-    enabled: true,
+    status: kind === 'provider' ? 'provider' : (s.status ?? ''),
+    capabilities: Array.isArray(s.capabilities) ? s.capabilities.filter((c) => typeof c === 'string') : [],
+    ...(Array.isArray(s.useCases)
+      ? { useCases: s.useCases.filter((useCase) => typeof useCase === 'string') }
+      : {}),
+    // Same running-only rule as listDesktopServices — a stopped service must
+    // never hand a picker a dead URL.
+    url: kind === 'service' && s.status === 'running' && port ? `http://127.0.0.1:${port}` : '',
+    model: typeof s.model === 'string' ? s.model : '',
+    enabled: kind === 'provider' ? s.enabled !== false : true,
   };
 }
 
 /**
- * List everything a receptionist lane picker can point at — the SAME union the
- * desktop's AI-gateway serves (GET /api/ai/sources): managed services with
+ * List everything a receptionist lane picker can point at — the union the local
+ * runtime's AI gateway serves (GET /api/ai/sources): managed services with
  * capability tags + configured AI providers. OAIY Desktop is preferred when
- * paired, degraded to its plain service listing (it has no provider union).
- * No runtime / unreachable / pre-SRC-202 build → [] (callers degrade to
- * listDesktopServices or saved ids). Never throws.
+ * paired (its gateway now serves the same union, including credential-hidden
+ * providers); FormLogic Desktop is the fallback. No runtime / unreachable /
+ * pre-SRC-202 build → [] (callers degrade to listDesktopServices or saved ids).
+ * Never throws.
  */
 export async function listAiSources(): Promise<AiSourceListing[]> {
   if (oaiyRouteAvailable()) {
-    const services = await listOaiyServices();
-    if (services !== null) return services.map(oaiyServiceToSource);
+    const sources = await listOaiySources();
+    if (sources !== null) return sources.filter(isValidAiSource).map(mapDesktopAiSource);
+    // OAIY unreachable — fall through to FormLogic Desktop.
   }
   if (!getDesktopInfo().available || !getDesktopToken()) return [];
   const res = await desktopClient.ai.sources();
   if (!res.ok) return [];
-  return res.data
-    .filter((s): s is DesktopAiSource => !!s && typeof s.id === 'string')
-    .map((s) => {
-      const kind: 'service' | 'provider' = s.kind === 'provider' ? 'provider' : 'service';
-      const refId =
-        (kind === 'service' ? s.serviceId : s.providerId) ??
-        s.id.replace(/^(service|provider):/, '');
-      const port = s.port ?? 0;
-      return {
-        id: s.id,
-        kind,
-        refId,
-        name: typeof s.name === 'string' && s.name ? s.name : refId,
-        category: s.category ?? '',
-        status: kind === 'provider' ? 'provider' : (s.status ?? ''),
-        capabilities: Array.isArray(s.capabilities) ? s.capabilities.filter((c) => typeof c === 'string') : [],
-        ...(Array.isArray(s.useCases)
-          ? { useCases: s.useCases.filter((useCase) => typeof useCase === 'string') }
-          : {}),
-        // Same running-only rule as listDesktopServices — a stopped service
-        // must never hand a picker a dead URL.
-        url: kind === 'service' && s.status === 'running' && port ? `http://127.0.0.1:${port}` : '',
-        model: typeof s.model === 'string' ? s.model : '',
-        enabled: kind === 'provider' ? s.enabled !== false : true,
-      };
-    });
+  return res.data.filter(isValidAiSource).map(mapDesktopAiSource);
 }

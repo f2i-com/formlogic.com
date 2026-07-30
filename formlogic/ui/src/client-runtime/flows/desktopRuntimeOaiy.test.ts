@@ -25,13 +25,51 @@ const OAIY_SERVICES = {
   dataDir: 'C:/data',
 };
 
-/** Route by path: /api/health → identity handshake, /api/services → the listing. */
+// OAIY's /api/ai/sources union (services + credential-hidden providers).
+const OAIY_AI_SOURCES = {
+  sources: [
+    {
+      id: 'provider:openai',
+      kind: 'provider',
+      providerId: 'openai',
+      name: 'OpenAI',
+      category: null,
+      status: 'provider',
+      protocol: 'openai',
+      capabilities: ['chat'],
+      hasKey: true,
+      enabled: true,
+      model: 'gpt-4o-mini',
+      useCases: ['flows'],
+    },
+    {
+      id: 'service:llamacpp',
+      kind: 'service',
+      serviceId: 'llamacpp',
+      name: 'llama.cpp',
+      category: 'llm',
+      status: 'running',
+      port: 8080,
+      capabilities: ['chat'],
+      useCases: ['background', 'forms', 'flows', 'live-call'],
+    },
+  ],
+};
+
+/** Route by path: /api/health → identity, /api/ai/sources → the AI union,
+ *  /api/services → the plain service listing. */
 function mockOaiy() {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      const body = url.includes('/api/health') ? healthy : url.includes('/api/services') ? OAIY_SERVICES : {};
+      const body = url.includes('/api/health')
+        ? healthy
+        : url.includes('/api/ai/sources')
+          ? OAIY_AI_SOURCES
+          : url.includes('/api/services')
+            ? OAIY_SERVICES
+            : {};
       return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
     })
   );
@@ -73,11 +111,13 @@ describe('flow resolvers prefer OAIY when it is the paired runtime', () => {
     ]);
   });
 
-  it('listAiSources degrades OAIY services to service-kind sources (chat for llm)', async () => {
+  it('listAiSources returns OAIY\'s gateway union (providers + services) mapped for the picker', async () => {
     const out = await listAiSources();
     expect(out).toEqual([
-      { id: 'service:llamacpp', kind: 'service', refId: 'llamacpp', name: 'llama.cpp', category: 'llm', status: 'running', capabilities: ['chat'], url: 'http://127.0.0.1:8080', model: '', enabled: true },
-      { id: 'service:krea2', kind: 'service', refId: 'krea2', name: 'Krea', category: 'image', status: 'stopped', capabilities: [], url: '', model: '', enabled: true },
+      // A credential-hidden provider — must carry chat + the flows use-case so
+      // isDesktopFlowChatProvider accepts it for flow routing.
+      { id: 'provider:openai', kind: 'provider', refId: 'openai', name: 'OpenAI', category: '', status: 'provider', capabilities: ['chat'], useCases: ['flows'], url: '', model: 'gpt-4o-mini', enabled: true },
+      { id: 'service:llamacpp', kind: 'service', refId: 'llamacpp', name: 'llama.cpp', category: 'llm', status: 'running', capabilities: ['chat'], useCases: ['background', 'forms', 'flows', 'live-call'], url: 'http://127.0.0.1:8080', model: '', enabled: true },
     ]);
   });
 });
