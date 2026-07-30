@@ -34,16 +34,21 @@ export default function DiagramsEntry() {
 
   if (failed) {
     return (
-      <div className="flex h-[calc(100vh-4rem)] flex-col items-center justify-center gap-3 px-6 text-center">
+      // min-h, not a fixed height that subtracts a 4rem header: AppShell renders no
+      // header of its own here, so the old calc left the panel short of centre.
+      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 px-6 text-center">
         <AlertTriangle className="h-6 w-6 text-amber-500" />
-        <p className="text-sm text-gray-600 dark:text-gray-300">Couldn&apos;t load your diagrams.</p>
+        <p className="text-sm text-gray-600 dark:text-slate-300">Couldn&apos;t load your diagrams.</p>
         <button
           type="button"
           onClick={() => {
             setFailed(false);
             setAttempt((n) => n + 1);
           }}
-          className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+          // `bg-primary` is NOT a token in this theme (only primary-50…950 and
+          // primary-foreground exist), so the previous class emitted no CSS at all and
+          // this button rendered as near-white text on the page background.
+          className="cursor-pointer rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
         >
           Try again
         </button>
@@ -53,7 +58,7 @@ export default function DiagramsEntry() {
 
   if (!target) {
     return (
-      <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
+      <div className="flex min-h-[60vh] items-center justify-center" role="status" aria-label="Loading your diagrams">
         <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
       </div>
     );

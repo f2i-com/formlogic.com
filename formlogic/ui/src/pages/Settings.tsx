@@ -85,16 +85,16 @@ const SECTIONS = [
   { id: 'notifications', label: 'Notifications' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'form-defaults', label: 'Form defaults' },
-  { id: 'ai', label: 'AI' },
+  { id: 'ai', label: 'AI assistant' },
   { id: 'security', label: 'Security' },
   { id: 'api-keys', label: 'API keys' },
   { id: 'linked-desktops', label: 'Linked desktops' },
-  { id: 'mcp', label: 'MCP' },
-  { id: 'audit', label: 'Audit' },
-  { id: 'your-data', label: 'Your data' },
+  { id: 'mcp', label: 'External AI access' },
+  { id: 'audit', label: 'Audit trail' },
+  { id: 'your-data', label: 'Export a copy' },
   { id: 'backup', label: 'Backup & restore' },
   { id: 'trash', label: 'Recycle bin' },
-  { id: 'danger', label: 'Danger zone' },
+  { id: 'danger', label: 'Delete account' },
 ] as const;
 
 // API-key expiry choices (days; 'never' = no expiresAt sent)
@@ -595,8 +595,12 @@ export function Settings() {
     <div className="min-h-screen">
       <Header title="Settings" />
 
-      <div className="flex-1 w-full p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto">
-        <div className="lg:flex lg:items-start lg:gap-8">
+      {/* @container/settings: `lg:` fires at viewport 1024, but this page sits inside
+          AppShell's sidebar inset and can lose another 384px to a docked chat — at
+          1024px with both, `main` is 384px yet the row still split off a 176px rail,
+          leaving the settings cards ~144px wide and clipped (main is overflow-x-clip). */}
+      <div className="@container/settings flex-1 w-full p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto">
+        <div className="@3xl/settings:flex @3xl/settings:items-start @3xl/settings:gap-8">
         <div className="min-w-0 flex-1 space-y-6">
         {/* Profile Settings */}
         <Card id="profile" className="overflow-hidden scroll-mt-24">
@@ -652,7 +656,7 @@ export function Settings() {
                   disabled={!hasProfileChanges || isSavingProfile}
                   isLoading={isSavingProfile}
                 >
-                  {hasProfileChanges ? 'Save Changes' : 'No Changes'}
+                  Save changes
                 </Button>
               </div>
             </div>
@@ -795,8 +799,8 @@ export function Settings() {
           <CardContent className="p-6">
             <SectionHeader
               icon={Sparkles}
-              title="AI"
-              description="Choose which AI answers your chats and default flows"
+              title="AI assistant"
+              description="Choose which AI answers your chats and automations"
               iconBg="bg-indigo-50 dark:bg-indigo-500/10"
               iconColor="text-indigo-600 dark:text-indigo-400"
             />
@@ -1148,8 +1152,8 @@ export function Settings() {
           <CardContent className="p-6">
             <SectionHeader
               icon={Plug}
-              title="Connect an AI"
-              description="Let an external AI (Claude, Cursor, …) build and edit your apps over MCP"
+              title="External AI access"
+              description="Let an AI app you use elsewhere (Claude, Cursor, …) build and edit your apps"
               iconBg="bg-primary-50 dark:bg-primary-500/10"
               iconColor="text-primary-600 dark:text-primary-400"
             />
@@ -1166,7 +1170,7 @@ export function Settings() {
           <CardContent className="p-6">
             <SectionHeader
               icon={Shield}
-              title="Audit & Compliance"
+              title="Audit trail"
               description="Verify the integrity of your audit trail"
               iconBg="bg-emerald-50 dark:bg-emerald-500/10"
               iconColor="text-emerald-600 dark:text-emerald-400"
@@ -1222,7 +1226,7 @@ export function Settings() {
             <SectionHeader
               icon={Download}
               title="Your data"
-              description="Download a copy of your account data"
+              description="A readable copy for your own records — not a restorable backup"
               iconBg="bg-sky-50 dark:bg-sky-500/10"
               iconColor="text-sky-600 dark:text-sky-400"
             />
@@ -1230,7 +1234,11 @@ export function Settings() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60">
                 <div>
                   <p className="font-medium text-gray-900 dark:text-white">Download my data</p>
-                  <p className="text-sm text-gray-500 dark:text-slate-400">Profile, forms, apps, and API-key metadata as JSON. Per-form responses export from each form; secrets are never included.</p>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">
+                    Profile, forms, apps, and API-key metadata as JSON — for reading, or for taking elsewhere.
+                    It cannot be restored back into FormLogic; use <span className="font-medium">Backup &amp; restore</span> below for that.
+                    Records export from each form separately; secrets are never included.
+                  </p>
                 </div>
                 <Button variant="outline" onClick={handleExportData} isLoading={isExportingData} leftIcon={<Download className="h-4 w-4" />}>
                   Export
@@ -1246,7 +1254,7 @@ export function Settings() {
             <SectionHeader
               icon={Archive}
               title="Backup & restore"
-              description="Download a full backup of your workspace, or restore one as new copies"
+              description="A file you can restore later — this is the one to keep"
               iconBg="bg-indigo-50 dark:bg-indigo-500/10"
               iconColor="text-indigo-600 dark:text-indigo-400"
             />
@@ -1330,8 +1338,8 @@ export function Settings() {
           <CardContent className="p-6">
             <SectionHeader
               icon={AlertTriangle}
-              title="Danger Zone"
-              description="Permanently delete your account and its data"
+              title="Delete account"
+              description="Permanently delete your account and everything in it"
               iconBg="bg-red-50 dark:bg-red-500/10"
               iconColor="text-red-600 dark:text-red-400"
             />
@@ -1351,7 +1359,7 @@ export function Settings() {
         </div>
 
         {/* Sticky anchor rail (lg+) */}
-        <nav aria-label="Settings sections" className="hidden lg:block w-44 shrink-0 sticky top-24">
+        <nav aria-label="Settings sections" className="sticky top-24 hidden w-44 shrink-0 @3xl/settings:block">
           <ul className="space-y-0.5 text-sm">
             {SECTIONS.map((section) => (
               <li key={section.id}>

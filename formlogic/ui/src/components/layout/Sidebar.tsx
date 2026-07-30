@@ -28,6 +28,7 @@ import { useAppStore } from '../../stores/appStore';
 import { Button } from '../ui/Button';
 import { Logo } from '../ui/Logo';
 import { AppTile } from '../apps/AppTile';
+import { appClickPath } from '../../lib/appNavigation';
 import type { AppListItem } from '../../types/app';
 
 const TOOLS_OPEN_KEY = 'formlogic.sidebar.toolsOpen';
@@ -55,8 +56,11 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
     } catch { /* private browsing */ }
     return true;
   });
-  // Searching always reveals matches even if the section was collapsed.
-  const appsExpanded = appsOpen || query.trim().length > 0;
+  // Deriving this as `appsOpen || query` made the collapse control DEAD while a search
+  // was active (exactly the defect already fixed for Advanced tools below): the toggle
+  // wrote its flag but the section stayed open. The stored flag is the single source of
+  // truth; typing a query OPENS the section (see the input's onChange) instead.
+  const appsExpanded = appsOpen;
   const toggleApps = () => {
     const next = !appsOpen;
     setAppsOpen(next);
@@ -105,19 +109,22 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
 
   const openApp = (app: AppListItem) => {
     // Owners land in the App Studio; members go straight to the live app.
-    if (app.canManage) navigate(`/apps/${app.id}/studio`);
-    else navigate(`/app/${app.slug}`);
+    navigate(appClickPath(app));
   };
 
   // The demo account's Dashboard lives at /dashboard ("/" is the marketing landing for it).
   const homePath = isDemo ? '/dashboard' : '/';
 
+  // One name per concept, and a plain-language hint for each. The App Studio step and
+  // the chat both call /flows "automations"; only the nav used to say "Flows", so an
+  // owner following either had no way to tell they were the same thing. "Flow" survives
+  // inside the editor, where it names the thing being edited.
   const toolLinks = [
-    { path: '/forms', icon: FileText, label: 'Forms' },
-    { path: '/flows', icon: Workflow, label: 'Flows' },
-    { path: '/diagrams', icon: Map, label: 'Diagrams' },
-    { path: '/packs', icon: Package, label: 'Templates' },
-    ...(!isDemo ? [{ path: '/trash', icon: Trash2, label: 'Recycle bin' }] : []),
+    { path: '/forms', icon: FileText, label: 'Forms', hint: 'Questions you collect answers to' },
+    { path: '/flows', icon: Workflow, label: 'Automations', hint: 'Do something automatically' },
+    { path: '/diagrams', icon: Map, label: 'Diagrams', hint: 'Sketch an app before building it' },
+    { path: '/packs', icon: Package, label: 'Templates', hint: 'Ready-made apps to install' },
+    ...(!isDemo ? [{ path: '/trash', icon: Trash2, label: 'Recycle bin', hint: 'Restore deleted items' }] : []),
   ];
 
   return (
@@ -152,7 +159,11 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400 dark:text-slate-500" />
             <input
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                // Reveal matches when a search begins, without disabling the toggle.
+                if (e.target.value.trim() && !appsOpen) toggleApps();
+              }}
               aria-label="Search apps"
               placeholder="Search apps"
               className="h-9 w-full rounded-lg border border-gray-200 bg-gray-50 pl-9 pr-3 text-sm text-gray-900 outline-none transition focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/15 dark:border-white/10 dark:bg-white/5 dark:text-white dark:placeholder:text-slate-500"
@@ -275,17 +286,23 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
                   <NavLink
                     key={item.path}
                     to={item.path}
+                    title={item.hint}
                     className={({ isActive }) =>
                       cn(
-                        'flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors',
+                        'flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors',
                         isActive
                           ? 'bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400 font-medium'
                           : 'text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-slate-100'
                       )
                     }
                   >
-                    <item.icon className="h-4 w-4" />
-                    {item.label}
+                    <item.icon className="mt-0.5 h-4 w-4 flex-none" />
+                    <span className="min-w-0">
+                      <span className="block truncate">{item.label}</span>
+                      <span className="mt-0.5 block text-[11px] leading-snug text-gray-400 dark:text-slate-500">
+                        {item.hint}
+                      </span>
+                    </span>
                   </NavLink>
                 ))}
               </div>

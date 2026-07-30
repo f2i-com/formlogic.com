@@ -492,10 +492,19 @@ export const useFormStore = create<FormState>()(
                 forms: dedupeFormsById([...forms, ...localDemo]),
                 isLoading: false,
                 isInitialized: true,
+                error: null,
               });
               purgeEmptyForms();
               return;
             }
+            // fetchAllForms() returned null: the READ FAILED. In cloud mode the persist
+            // layer holds no forms, so falling through silently leaves forms: [] with no
+            // error — indistinguishable from a brand-new account, and the Dashboard duly
+            // showed a first-time-user hero to an owner whose 47 forms had just failed to
+            // load. Record the failure so consumers can tell "empty" from "broken".
+            set({ error: 'Failed to load forms', isLoading: false, isInitialized: true });
+            purgeEmptyForms();
+            return;
           }
 
           // Fallback to localStorage (already loaded by persist middleware)
@@ -534,7 +543,10 @@ export const useFormStore = create<FormState>()(
               ? forms.map((f) => ({ ...f, _adminForeign: true } as Form))
               : forms;
             const localDemo = get().forms.filter((f) => isDemoLocalFormId(f.id));
-            set({ forms: dedupeFormsById([...fetched, ...localDemo]), isLoading: false });
+            // Clear `error` on success: it is what the Dashboard and Forms list read to
+            // decide between "you have no forms" and "we couldn't load them", so a
+            // successful retry has to retract the failure.
+            set({ forms: dedupeFormsById([...fetched, ...localDemo]), isLoading: false, error: null });
           } else {
             set({ error: 'Failed to load forms', isLoading: false });
           }

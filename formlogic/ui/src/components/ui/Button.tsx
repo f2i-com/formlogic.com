@@ -39,7 +39,10 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     };
 
     const sizes = {
-      sm: 'px-3 py-1.5 text-xs font-medium gap-1.5',
+      // max-sm:min-h-11 — `sm` renders ~30px tall, under the ~44px a finger reliably
+      // hits, and it is the size used for most row and header actions. Phones get the
+      // full target; desktop keeps the compact height dense toolbars are built around.
+      sm: 'px-3 py-1.5 text-xs font-medium gap-1.5 max-sm:min-h-11',
       md: 'px-4 py-2 text-sm font-medium gap-2',
       lg: 'px-6 py-2.5 text-[15px] font-semibold gap-2.5',
       // Square icon-only button with a guaranteed >=40px touch target

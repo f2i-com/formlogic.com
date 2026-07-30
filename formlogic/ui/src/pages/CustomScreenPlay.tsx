@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { api } from '../lib/api';
+import { LoadFailure } from '../components/ui/LoadFailure';
 import { CustomScreenRuntime } from '../components/custom-screen/CustomScreenRuntime';
 import { FormWidgetDashboard } from '../components/custom-screen/FormWidgetDashboard';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
@@ -18,6 +19,8 @@ export default function CustomScreenPlay() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [screen, setScreen] = useState<CustomScreen | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
   const [title, setTitle] = useState('');
   const [fields, setFields] = useState<PlayField[]>([]);
   useDocumentTitle(title || 'Custom screen');
@@ -27,16 +30,32 @@ export default function CustomScreenPlay() {
     let cancelled = false;
     api.getForm(formId).then((res) => {
       if (cancelled) return;
-      const form = res.data?.form as { title?: string; customScreen?: CustomScreen & { enabled?: boolean }; fields?: PlayField[] } | undefined;
+      // A failed or forbidden read used to fall through to "This form has no custom
+      // screen." — asserting something about the form that we never actually learned.
+      if (res.error || !res.data?.form) {
+        setLoadError(
+          res.status === 401 || res.status === 403
+            ? "You don't have access to this form."
+            : typeof res.error === 'string' ? res.error : 'Please try again.'
+        );
+        setLoading(false);
+        return;
+      }
+      const form = res.data.form as { title?: string; customScreen?: CustomScreen & { enabled?: boolean }; fields?: PlayField[] } | undefined;
       const cs = form?.customScreen;
       setTitle(form?.title || '');
       setFields(form?.fields || []);
       const usable = cs?.enabled && (cs.kind === 'dashboard' ? !!cs.dashboard : (cs.html || cs.js || cs.ts || cs.files?.length));
       setScreen(usable ? cs! : null);
+      setLoadError(null);
       setLoading(false);
-    }).catch(() => { if (!cancelled) setLoading(false); });
+    }).catch((e: unknown) => {
+      if (cancelled) return;
+      setLoadError(e instanceof Error ? e.message : 'Please try again.');
+      setLoading(false);
+    });
     return () => { cancelled = true; };
-  }, [formId]);
+  }, [formId, reloadToken]);
 
   return (
     <div className="h-dvh flex flex-col bg-white dark:bg-slate-950">
@@ -54,6 +73,15 @@ export default function CustomScreenPlay() {
             <div className="max-w-6xl mx-auto">
               <FormWidgetDashboard dashboard={screen.dashboard} formId={formId!} fields={fields} formTitle={title} publicMode={false} />
             </div>
+          </div>
+        ) : loadError ? (
+          <div className="flex h-full items-center justify-center p-4">
+            <LoadFailure
+              title="We couldn't load this screen"
+              message={loadError}
+              className="w-full max-w-md"
+              onRetry={() => { setLoadError(null); setLoading(true); setReloadToken((n) => n + 1); }}
+            />
           </div>
         ) : screen ? (
           <CustomScreenRuntime screen={screen} formId={formId!} formTitle={title} fields={fields.map((f) => ({ id: f.id, label: f.label, type: f.type, options: f.properties?.options }))} className="w-full h-full border-0" />

@@ -14,6 +14,7 @@ import { cn } from '../../lib/utils';
 import { useAppStore } from '../../stores/appStore';
 import { useAuthStore } from '../../stores/authStore';
 import { AppTile } from '../apps/AppTile';
+import { appClickPath } from '../../lib/appNavigation';
 import type { AppListItem } from '../../types/app';
 
 export function MobileNav() {
@@ -52,8 +53,7 @@ export function MobileNav() {
 
   const openApp = (app: AppListItem) => {
     setAppsOpen(false);
-    if (app.canManage) navigate(`/apps/${app.id}/studio`);
-    else navigate(`/app/${app.slug}`);
+    navigate(appClickPath(app));
   };
 
   const go = (path: string) => {
@@ -68,7 +68,7 @@ export function MobileNav() {
     { action: () => go('/apps/new'), icon: Plus, label: 'Create app', isAction: true },
     // Apps opens the quick-access drawer; "View all apps" remains one tap inside.
     { action: () => setAppsOpen((open) => !open), icon: Boxes, label: 'Apps', isApps: true },
-    { path: '/flows', icon: Workflow, label: 'Flows' },
+    { path: '/flows', icon: Workflow, label: 'Automations' },
   ];
 
   return (

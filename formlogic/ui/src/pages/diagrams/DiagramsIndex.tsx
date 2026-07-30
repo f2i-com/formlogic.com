@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Loader2, Map as MapIcon, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
+import { LoadFailure } from '../../components/ui/LoadFailure';
 import { formatDateTimeInZone, useAccountTimezone } from '../../lib/timezone';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -21,6 +22,8 @@ export default function DiagramsIndex() {
   const tz = useAccountTimezone();
   const [diagrams, setDiagrams] = useState<Blueprint[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
   const [pendingDelete, setPendingDelete] = useState<Blueprint | null>(null);
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
@@ -40,17 +43,28 @@ export default function DiagramsIndex() {
     let cancelled = false;
     void api.listBlueprints().then((res) => {
       if (cancelled) return;
-      setDiagrams(res.data?.blueprints ?? []);
+      // `?? []` here rendered a failed read as "No diagrams yet", so a broken list looked
+      // like an empty one and the owner's diagrams appeared to be gone.
+      if (res.error || !res.data) {
+        setLoadError(typeof res.error === 'string' ? res.error : 'Please try again.');
+      } else {
+        setDiagrams(res.data.blueprints ?? []);
+        setLoadError(null);
+      }
       setLoading(false);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadToken]);
 
   const refresh = useCallback(async () => {
     const res = await api.listBlueprints();
-    setDiagrams(res.data?.blueprints ?? []);
+    // A failed refresh keeps the rows already on screen rather than blanking them.
+    if (!res.error && res.data) {
+      setDiagrams(res.data.blueprints ?? []);
+      setLoadError(null);
+    }
   }, []);
 
   const confirmDelete = useCallback(async () => {
@@ -102,6 +116,12 @@ export default function DiagramsIndex() {
         <p className="flex items-center gap-2 text-sm text-gray-400 dark:text-slate-500">
           <Loader2 className="h-4 w-4 animate-spin" /> Loading…
         </p>
+      ) : loadError ? (
+        <LoadFailure
+          title="We couldn't load your diagrams"
+          message={loadError}
+          onRetry={() => { setLoadError(null); setLoading(true); setReloadToken((n) => n + 1); }}
+        />
       ) : diagrams.length === 0 ? (
         <p className="text-sm text-gray-400 dark:text-slate-500">
           No diagrams yet — create one above, or use "Start with a diagram" on the Dashboard.

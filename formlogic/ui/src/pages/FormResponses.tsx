@@ -43,6 +43,7 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { Modal } from '../components/ui/Modal';
 import { Skeleton, ListRowSkeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
+import { LoadFailure } from '../components/ui/LoadFailure';
 import { VaultUnlockDialog } from '../components/vault/VaultUnlockDialog';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
@@ -158,6 +159,8 @@ function FormResponses() {
   const [form, setForm] = useState<Form | null>(null);
   const [responses, setResponses] = useState<ResponseWithStatus[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  // Distinguish "no responses" from "couldn't read them" — see LoadFailure.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedResponse, setSelectedResponse] = useState<ResponseWithStatus | null>(null);
@@ -213,11 +216,16 @@ function FormResponses() {
           if (cancelled) return;
           setResponses(all);
           setPrivateCapInfo(privateCap);
+          setLoadError(null);
           if (truncated) {
             toast.error('Showing first 100,000 responses', 'This form has more responses than can be displayed at once.');
           }
         } catch (e) {
           if (cancelled) return;
+          // A toast that scrolls away is not a state. Without this the table below fell
+          // through to "No responses yet — share your form", telling an owner with 300
+          // records that nobody had replied.
+          setLoadError(e instanceof Error ? e.message : 'Unknown error');
           toast.error('Failed to load responses', e instanceof Error ? e.message : 'Unknown error');
         }
       } else {
@@ -242,6 +250,10 @@ function FormResponses() {
   // has no route key, so this component instance is reused across formId changes.
   const formIdRef = useRef(formId);
   formIdRef.current = formId;
+  // Mirrored so reloadResponses can tell "retry of a failed first load" (nothing on
+  // screen — surface the failure) from "background refresh" (keep what we have).
+  const responsesRef = useRef(responses);
+  responsesRef.current = responses;
   const reloadResponses = useCallback(async () => {
     if (!formId || storageMode !== 'api') return;
     const fid = formId;
@@ -252,9 +264,16 @@ function FormResponses() {
       if (formIdRef.current === fid) {
         setResponses(all); // drop stale result if navigated away
         setPrivateCapInfo(privateCap);
+        setLoadError(null);
       }
-    } catch {
-      // Keep the current data on a transient refresh failure.
+    } catch (e) {
+      // A background refresh keeps the current data and stays quiet. But this is also
+      // the explicit Retry behind the load-failure panel, so record the failure —
+      // otherwise a failed retry cleared the panel and fell through to "No responses
+      // yet", which is the lie the panel exists to prevent.
+      if (formIdRef.current === fid && responsesRef.current.length === 0) {
+        setLoadError(e instanceof Error ? e.message : 'Unknown error');
+      }
     } finally {
       setIsRefreshing(false);
     }
@@ -768,20 +787,26 @@ function FormResponses() {
       <Header
         title="Responses"
         actions={
-          <div className="flex flex-wrap gap-1.5 sm:gap-2">
+          // Labels and the secondary actions are gated on the HEADER's own width
+          // (@…/header), never the viewport: `main` is inset by the sidebar and the
+          // docked chat, so `lg:` revealed the labels at exactly the widths where the
+          // header had least room and the account menu was silently clipped away.
+          // Share and Import both need a desktop (an embed target, a file to pick), so
+          // a phone-width header drops them rather than crowding the primary actions.
+          <div className="flex gap-1.5 sm:gap-2">
             {storageMode === 'api' && (
               <Button variant="outline" size="sm" onClick={reloadResponses} disabled={isRefreshing} title="Refresh responses">
                 <RefreshCw className={`h-4 w-4${isRefreshing ? ' animate-spin' : ''}`} />
-                <span className="hidden lg:inline ml-2">Refresh</span>
+                <span className="ml-2 hidden @4xl/header:inline">Refresh</span>
               </Button>
             )}
-            <Button variant="outline" size="sm" onClick={() => setShowEmbedModal(true)} title="Share & Embed" className="hidden sm:flex">
+            <Button variant="outline" size="sm" onClick={() => setShowEmbedModal(true)} title="Share & Embed" className="hidden @lg/header:flex">
               <Share2 className="h-4 w-4" />
-              <span className="hidden lg:inline ml-2">Share</span>
+              <span className="ml-2 hidden @4xl/header:inline">Share</span>
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setShowCsvImport(true)} title="Import CSV">
+            <Button variant="outline" size="sm" onClick={() => setShowCsvImport(true)} title="Import CSV" className="hidden @lg/header:flex">
               <Upload className="h-4 w-4" />
-              <span className="hidden lg:inline ml-2">Import</span>
+              <span className="ml-2 hidden @4xl/header:inline">Import</span>
             </Button>
             <div className="relative" ref={exportRef}>
               <Button
@@ -798,7 +823,7 @@ function FormResponses() {
                 ) : (
                   <Download className="h-4 w-4" />
                 )}
-                <span className="hidden lg:inline ml-2">Export</span>
+                <span className="ml-2 hidden @4xl/header:inline">Export</span>
                 <ChevronDown className="h-4 w-4 ml-1" />
               </Button>
               {exportMenuOpen && (
@@ -993,7 +1018,13 @@ function FormResponses() {
         </div>
 
         {/* Responses Table */}
-        {responses.length === 0 ? (
+        {loadError ? (
+          <LoadFailure
+            title="We couldn't load this form's responses"
+            message={loadError}
+            onRetry={() => { setLoadError(null); reloadResponses(); }}
+          />
+        ) : responses.length === 0 ? (
           <Card>
             <CardContent className="p-0">
               <EmptyState
@@ -1060,19 +1091,19 @@ function FormResponses() {
                       <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">{formatDuration(response.completionTime || 0)}</p>
                     </button>
                     <div className="flex gap-1 flex-shrink-0">
-                      <button onClick={() => handleView(response)} className="p-2 text-gray-500 hover:text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-500/10 rounded-lg transition-colors cursor-pointer" aria-label="View response details">
+                      <button onClick={() => handleView(response)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-600 cursor-pointer dark:hover:bg-primary-500/10" aria-label="View response details">
                         <Eye className="h-4 w-4" />
                       </button>
                       <button
                         onClick={() => handleEdit(response)}
                         disabled={isPrivateForm && vaultLocked}
-                        className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-500"
+                        className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-500 dark:hover:bg-blue-500/10"
                         aria-label="Edit response"
                         title={isPrivateForm && vaultLocked ? 'Unlock your vault to edit' : 'Edit response'}
                       >
                         <Edit2 className="h-4 w-4" />
                       </button>
-                      <button onClick={() => handleDeleteConfirm(response)} className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer" aria-label="Delete response">
+                      <button onClick={() => handleDeleteConfirm(response)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 cursor-pointer dark:hover:bg-red-500/10" aria-label="Delete response">
                         <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
@@ -1204,7 +1235,7 @@ function FormResponses() {
                         <div className="flex justify-end gap-1">
                           <button
                             onClick={(e) => { e.stopPropagation(); handleView(response); }}
-                            className="p-2 text-gray-500 hover:text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-500/10 rounded-lg transition-colors cursor-pointer"
+                            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-600 cursor-pointer dark:hover:bg-primary-500/10"
                             title="View details"
                             aria-label="View response details"
                           >
@@ -1213,7 +1244,7 @@ function FormResponses() {
                           <button
                             onClick={(e) => { e.stopPropagation(); handleEdit(response); }}
                             disabled={isPrivateForm && vaultLocked}
-                            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-500"
+                            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-500 dark:hover:bg-blue-500/10"
                             title={isPrivateForm && vaultLocked ? 'Unlock your vault to edit' : 'Edit response'}
                             aria-label="Edit response"
                           >
@@ -1221,7 +1252,7 @@ function FormResponses() {
                           </button>
                           <button
                             onClick={(e) => { e.stopPropagation(); handleDeleteConfirm(response); }}
-                            className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
+                            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 cursor-pointer dark:hover:bg-red-500/10"
                             title="Delete response"
                             aria-label="Delete response"
                           >

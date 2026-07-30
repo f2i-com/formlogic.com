@@ -13,6 +13,7 @@ import { cn } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
 import { Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { LoadFailure } from '../ui/LoadFailure';
 import { Switch } from '../ui/Switch';
 import { PanelHeader } from './PanelHeader';
 import { BindingEditor, type BindingDraft } from './bindings/BindingEditor';
@@ -26,6 +27,8 @@ interface TriggersPanelProps {
   flow: FlowDefinition;
   bindings: FlowBinding[];
   loading?: boolean;
+  /** Set when the triggers READ failed — never render "No triggers yet" in that case. */
+  loadError?: string | null;
   forms: FlowFormOption[];
   context?: FlowEditorContext;
   /** The selected flow's sibling flows (same app) — source options for flow.* outcome triggers (§9.1). */
@@ -54,6 +57,7 @@ export function TriggersPanel({
   flow,
   bindings,
   loading = false,
+  loadError = null,
   forms,
   context = EMPTY_FLOW_EDITOR_CONTEXT,
   appFlows,
@@ -287,7 +291,17 @@ export function TriggersPanel({
               />
             )}
 
-            {bindings.length === 0 && !adding && (
+            {loadError && !adding && (
+              <LoadFailure
+                compact
+                className="mt-1"
+                title="We couldn't load this automation's triggers"
+                message={loadError}
+                onRetry={() => { void onRefresh(); }}
+              />
+            )}
+
+            {!loadError && bindings.length === 0 && !adding && (
               <p className="px-1 py-3 text-xs text-gray-400 dark:text-slate-500">
                 No triggers yet. Add one so this flow runs itself — on a call, an SMS, or a form submission.
               </p>

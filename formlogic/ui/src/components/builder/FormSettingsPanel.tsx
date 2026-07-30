@@ -98,15 +98,23 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
           </button>
         </div>
 
-        {/* Tabs */}
-        <div className="flex border-b border-gray-200 dark:border-slate-800 px-6">
+        {/* Tabs. Below 640px the labels are hidden, so without an accessible name these
+            became five anonymous icons — "button" five times to a screen reader, and no
+            tooltip for anyone else. The name always ships; only its VISIBILITY is
+            responsive. Marked up as a real tablist so the five panels are announced as
+            one set rather than five loose buttons. */}
+        <div role="tablist" aria-label="Form settings sections" className="flex border-b border-gray-200 dark:border-slate-800 px-6">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               type="button"
+              role="tab"
+              aria-selected={activeTab === tab.id}
+              aria-label={tab.label}
+              title={tab.label}
               onClick={() => setActiveTab(tab.id)}
               className={cn(
-                'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 motion-safe:transition-colors -mb-px cursor-pointer rounded-t-md focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500',
+                'flex min-h-11 items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 motion-safe:transition-colors -mb-px cursor-pointer rounded-t-md focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500',
                 activeTab === tab.id
                   ? 'border-primary-500 text-primary-600 dark:text-primary-400'
                   : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'

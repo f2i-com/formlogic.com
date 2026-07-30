@@ -402,7 +402,7 @@ export function FormFlowsPanel({
             </Button>
             {createdFlowId && (
               <Button variant="outline" size="sm" onClick={() => navigate(`/flows?flow=${encodeURIComponent(createdFlowId)}`)}>
-                <ExternalLink className="h-3.5 w-3.5" /> Open in Flows
+                <ExternalLink className="h-3.5 w-3.5" /> Open in Automations
               </Button>
             )}
           </div>
@@ -469,7 +469,7 @@ export function FormFlowsPanel({
                           size="sm"
                           onClick={() => navigate(`/flows?flow=${encodeURIComponent(binding.flowDefinitionId)}`)}
                         >
-                          <ExternalLink className="h-3.5 w-3.5" /> Open in Flows
+                          <ExternalLink className="h-3.5 w-3.5" /> Open in Automations
                         </Button>
                         <div className="flex gap-1">
                           <button

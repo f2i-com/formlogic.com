@@ -38,6 +38,7 @@ import { Input } from '../components/ui/Input';
 import { Badge } from '../components/ui/Badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/Tabs';
 import { EmptyState } from '../components/ui/EmptyState';
+import { LoadFailure } from '../components/ui/LoadFailure';
 import { Skeleton } from '../components/ui/Skeleton';
 import { ShowMore } from '../components/ui/ShowMore';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
@@ -507,13 +508,13 @@ const FormListRow = memo(function FormListRow({
         </div>
       </div>
       <StatusPill status={form.status} />
-      <div className="flex items-center gap-0.5 flex-none" onClick={(e) => e.stopPropagation()}>
+      <div className="flex flex-none items-center gap-1" onClick={(e) => e.stopPropagation()}>
         <button
           type="button"
           onClick={() => onNavigate(`/responses/${form.id}`)}
           title="View records"
           aria-label={`View records for ${form.title}`}
-          className="p-2 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"
+          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-primary-50 hover:text-primary-600 cursor-pointer dark:hover:bg-primary-500/10 dark:hover:text-primary-400"
         >
           <Table className="h-4 w-4" />
         </button>
@@ -522,7 +523,7 @@ const FormListRow = memo(function FormListRow({
           onClick={() => onNavigate(`/analytics/${form.id}`)}
           title="Analytics"
           aria-label={`Analytics for ${form.title}`}
-          className="hidden sm:block p-2 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"
+          className="hidden min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-primary-50 hover:text-primary-600 cursor-pointer sm:flex dark:hover:bg-primary-500/10 dark:hover:text-primary-400"
         >
           <BarChart3 className="h-4 w-4" />
         </button>
@@ -531,7 +532,7 @@ const FormListRow = memo(function FormListRow({
           onClick={() => onNavigate(`/builder/${form.id}`)}
           title="Edit form"
           aria-label={`Edit ${form.title}`}
-          className="p-2 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"
+          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-primary-50 hover:text-primary-600 cursor-pointer dark:hover:bg-primary-500/10 dark:hover:text-primary-400"
         >
           <Pencil className="h-4 w-4" />
         </button>
@@ -540,7 +541,7 @@ const FormListRow = memo(function FormListRow({
           onClick={() => onPreview(form.id)}
           title="Preview"
           aria-label={`Preview ${form.title}`}
-          className="hidden sm:block p-2 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"
+          className="hidden min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-primary-50 hover:text-primary-600 cursor-pointer sm:flex dark:hover:bg-primary-500/10 dark:hover:text-primary-400"
         >
           <Eye className="h-4 w-4" />
         </button>
@@ -558,6 +559,8 @@ export function FormsList() {
   const { openNewForm, newFormPicker } = useCreateFormFlow();
   const formsLoading = useFormStore((s) => s.isLoading || !s.isInitialized);
   const storageMode = useFormStore((s) => s.storageMode);
+  // "Loaded and empty" vs "failed to read" — see LoadFailure.
+  const formsFailed = useFormStore((s) => !!s.error) && storageMode === 'api';
   const { getResponsesByFormId } = useResponseStore();
   // Cloud mode keeps responses on the server, so the local store is empty — use the
   // server-provided per-form count there (falls back to the local store offline/local).
@@ -1001,19 +1004,24 @@ export function FormsList() {
       <Header
         title="Forms"
         actions={
+          // Gated on the header's own width — see the note in FormResponses.
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />} aria-label="Manage Packs" title="Manage Packs">
-              <span className="hidden sm:inline">Manage Packs</span>
+            <Button variant="outline" size="sm" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />} aria-label="Templates" title="Install or manage templates">
+              <span className="hidden @2xl/header:inline">Templates</span>
             </Button>
-            <Button onClick={openNewForm} size="sm" leftIcon={<Plus className="h-4 w-4" />}>
-              <span className="hidden sm:inline">New Form</span>
-              <span className="sm:hidden">New</span>
+            <Button onClick={openNewForm} size="sm" leftIcon={<Plus className="h-4 w-4" />} aria-label="New form" title="New form">
+              <span className="hidden @lg/header:inline">New form</span>
             </Button>
           </div>
         }
       />
 
-      <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
+      {/* @container/forms: this page is inset by the sidebar (64/256px) and can lose a
+          further 384px to the docked chat, so grids and the filter row must respond to
+          the space they actually have. Viewport breakpoints expanded them exactly when
+          there was no room, and `main` is overflow-x-clip — the controls that fell off
+          the right edge simply vanished, with no scrollbar to find them. */}
+      <div className="@container/forms flex-1 w-full p-4 sm:p-6 lg:p-8">
         {/* Breadcrumb + app actions when drilled into an app */}
         {selectedAppId && (
           <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -1058,16 +1066,16 @@ export function FormsList() {
 
         {/* Search first (free search): typing switches the page to GLOBAL results across every
             app and form — nothing is scoped away. Sort/view/pack controls sit to the right. */}
-        <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="mb-4 sm:mb-6 flex flex-col gap-3 @3xl/forms:flex-row @3xl/forms:items-center">
           <Input
             placeholder="Search all forms and apps..."
             aria-label="Search forms and apps"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             leftIcon={<Search className="h-4 w-4" />}
-            className="w-full sm:max-w-md"
+            className="w-full @3xl/forms:max-w-md"
           />
-          <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-3 sm:ml-auto sm:flex sm:w-auto">
+          <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-3 @3xl/forms:ml-auto @3xl/forms:flex @3xl/forms:w-auto">
             {/* Grid / list view toggle */}
             <div className="flex flex-none rounded-lg border border-gray-300 dark:border-slate-700 overflow-hidden" role="group" aria-label="View mode">
               <button
@@ -1099,7 +1107,7 @@ export function FormsList() {
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as 'modified' | 'name' | 'responses')}
               aria-label="Sort forms by"
-              className="min-w-0 w-full flex-1 sm:w-auto sm:flex-none px-3.5 py-2.5 bg-white dark:bg-slate-900/60 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-colors duration-200 cursor-pointer"
+              className="min-w-0 w-full flex-1 @3xl/forms:w-auto @3xl/forms:flex-none px-3.5 py-2.5 bg-white dark:bg-slate-900/60 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-colors duration-200 cursor-pointer"
             >
               <option value="modified">Last Modified</option>
               <option value="name">Name A-Z</option>
@@ -1109,14 +1117,14 @@ export function FormsList() {
               <select
                 value={packFilter}
                 onChange={(e) => setPackFilter(e.target.value)}
-                aria-label="Filter forms by pack"
-                className="col-span-2 min-w-0 w-full flex-1 sm:col-auto sm:w-auto sm:flex-none px-3.5 py-2.5 bg-white dark:bg-slate-900/60 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-colors duration-200 cursor-pointer"
+                aria-label="Filter forms by template"
+                className="col-span-2 min-w-0 w-full flex-1 @3xl/forms:col-auto @3xl/forms:w-auto @3xl/forms:flex-none px-3.5 py-2.5 bg-white dark:bg-slate-900/60 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-colors duration-200 cursor-pointer"
               >
-                <option value="all">All packs</option>
+                <option value="all">All templates</option>
                 {packOptions.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
-                <option value="none">Not from a pack</option>
+                <option value="none">Not from a template</option>
               </select>
             )}
           </div>
@@ -1131,7 +1139,7 @@ export function FormsList() {
                   Apps
                   <span className="font-medium tabular-nums text-gray-300 dark:text-slate-600">{filteredApps.length}</span>
                 </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 gap-3 @xl/forms:grid-cols-2 @4xl/forms:grid-cols-3 @6xl/forms:grid-cols-4">
                   {filteredApps.slice(0, appLimit).map(renderAppTile)}
                 </div>
                 <ShowMore shown={Math.min(appLimit, filteredApps.length)} total={filteredApps.length} onShowMore={() => setAppLimit((n) => n + APPS_PAGE)} noun="apps" className="mt-3" />
@@ -1159,11 +1167,11 @@ export function FormsList() {
                         <span className="normal-case tracking-normal">{group.label}</span>
                       </>
                     ) : (
-                      'Standalone forms'
+                      'Forms not in an app'
                     )}
                     <span className="font-medium tabular-nums text-gray-300 dark:text-slate-600">{group.forms.length}</span>
                   </h2>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-1 gap-4 @2xl/forms:grid-cols-2 @4xl/forms:grid-cols-3 @7xl/forms:grid-cols-4">
                     {renderFormsView(group.forms)}
                   </div>
                 </div>
@@ -1183,7 +1191,7 @@ export function FormsList() {
                 : <span className="font-medium tabular-nums text-gray-300 dark:text-slate-600">{filteredApps.length}</span>}
             </h2>
             {appsLoading ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3" aria-busy="true">
+              <div className="grid grid-cols-1 gap-3 @xl/forms:grid-cols-2 @4xl/forms:grid-cols-3 @6xl/forms:grid-cols-4" aria-busy="true">
                 {Array.from({ length: 4 }).map((_, i) => (
                   <div key={i} className="flex items-center gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 motion-safe:animate-pulse">
                     <div className="h-9 w-9 rounded-lg bg-gray-200 dark:bg-slate-700 shrink-0" />
@@ -1198,13 +1206,13 @@ export function FormsList() {
               <p className="text-sm text-gray-500 dark:text-slate-400">No apps match your search.</p>
             ) : (
               <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 gap-3 @xl/forms:grid-cols-2 @4xl/forms:grid-cols-3 @6xl/forms:grid-cols-4">
                   {filteredApps.slice(0, appLimit).map(renderAppTile)}
                 </div>
                 <ShowMore shown={Math.min(appLimit, filteredApps.length)} total={filteredApps.length} onShowMore={() => setAppLimit((n) => n + APPS_PAGE)} noun="apps" className="mt-3" />
               </>
             )}
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mt-6 mb-2.5">Standalone forms</h2>
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mt-6 mb-2.5">Forms not in an app</h2>
           </div>
         )}
 
@@ -1218,18 +1226,25 @@ export function FormsList() {
           </TabsList>
 
           <TabsContent value="all">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4" aria-busy={gridLoading && filteredForms.length === 0}>
+            <div className="grid grid-cols-1 gap-4 @2xl/forms:grid-cols-2 @4xl/forms:grid-cols-3 @7xl/forms:grid-cols-4" aria-busy={gridLoading && filteredForms.length === 0}>
               {gridLoading && filteredForms.length === 0 && !filtersActive ? (
                 Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
               ) : filteredForms.length === 0 ? (
                 <div className="col-span-full">
-                  {filtersActive ? (
+                  {formsFailed ? (
+                    // A cloud read failure also leaves forms: [], so without this the owner
+                    // was shown "No forms yet — create your first form" over intact data.
+                    <LoadFailure
+                      title="We couldn't load your forms"
+                      onRetry={() => { void useFormStore.getState().refreshForms(); }}
+                    />
+                  ) : filtersActive ? (
                     clearFiltersEmptyState
                   ) : (
                     <EmptyState
                       icon={Inbox}
                       title="No forms yet"
-                      description="Create your first form from scratch, or start faster with a ready-made pack."
+                      description="Create your first form from scratch, or start faster with a ready-made template."
                       className={EMPTY_SHELL_CLASS}
                       action={
                         <div className="flex flex-wrap items-center justify-center gap-2">
@@ -1237,7 +1252,7 @@ export function FormsList() {
                             Create Form
                           </Button>
                           <Button variant="outline" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />}>
-                            Browse packs
+                            Browse templates
                           </Button>
                         </div>
                       }
@@ -1252,7 +1267,7 @@ export function FormsList() {
           </TabsContent>
 
           <TabsContent value="published">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 gap-4 @2xl/forms:grid-cols-2 @4xl/forms:grid-cols-3 @7xl/forms:grid-cols-4">
               {gridLoading && publishedForms.length === 0 && !filtersActive ? (
                 Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
               ) : publishedForms.length === 0 ? (
@@ -1274,7 +1289,7 @@ export function FormsList() {
           </TabsContent>
 
           <TabsContent value="draft">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 gap-4 @2xl/forms:grid-cols-2 @4xl/forms:grid-cols-3 @7xl/forms:grid-cols-4">
               {gridLoading && draftForms.length === 0 && !filtersActive ? (
                 Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
               ) : draftForms.length === 0 ? (
@@ -1296,7 +1311,7 @@ export function FormsList() {
           </TabsContent>
 
           <TabsContent value="archived">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 gap-4 @2xl/forms:grid-cols-2 @4xl/forms:grid-cols-3 @7xl/forms:grid-cols-4">
               {gridLoading && archivedForms.length === 0 && !filtersActive ? (
                 Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
               ) : archivedForms.length === 0 ? (

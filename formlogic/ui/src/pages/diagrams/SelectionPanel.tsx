@@ -77,7 +77,7 @@ export function SelectionPanel({
   // Desktop: a fixed right rail. Phones (audit FL-26): a bottom sheet — a 256px
   // side panel on a 390px viewport left ~134px of canvas, unusable.
   return (
-    <div className="scrollbar-thin border-gray-200 bg-white p-3 dark:border-slate-700/60 dark:bg-slate-900 max-md:fixed max-md:inset-x-0 max-md:bottom-16 max-md:z-40 max-md:max-h-[45dvh] max-md:overflow-y-auto max-md:rounded-t-2xl max-md:border-t max-md:shadow-2xl md:w-64 md:flex-none md:overflow-y-auto md:border-l">
+    <div className="scrollbar-thin border-gray-200 bg-white p-3 dark:border-slate-700/60 dark:bg-slate-900 max-md:fixed max-md:inset-x-0 max-md:bottom-[var(--fl-mobile-nav-h)] max-md:z-40 max-md:max-h-[45dvh] max-md:overflow-y-auto max-md:rounded-t-2xl max-md:pb-[calc(var(--fl-mobile-fab-h)+0.5rem)] max-md:border-t max-md:shadow-2xl md:w-64 md:flex-none md:overflow-y-auto md:border-l">
       {isEdge ? (
         <>
           <p className="mb-2 text-xs font-medium text-gray-500 dark:text-slate-400">

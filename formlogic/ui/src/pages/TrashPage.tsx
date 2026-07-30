@@ -115,9 +115,17 @@ export function TrashPage() {
       <Header title="Recycle bin" />
 
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8 max-w-4xl mx-auto space-y-4">
+        {/* "exactly where they were … whenever possible" promised more than the snapshot
+            captures, and buried the exception in a hedge. The zip manifest's own
+            `excluded` list (AccountBackupService::exportScoped) is the authority; name the
+            entries an owner would otherwise have to rediscover by hand. */}
         <p className="text-sm text-gray-500 dark:text-slate-400">
-          Deleted forms, apps and flows stay here for 30 days. Restoring puts them back exactly where they were
-          (records, files and automations included) whenever possible.
+          Deleted forms, apps and flows stay here for 30 days. Restoring brings back their records, files,
+          screens and automations.
+        </p>
+        <p className="text-sm text-gray-500 dark:text-slate-400">
+          Some things are deliberately left out of the snapshot and will need setting up again: the people
+          you had invited, custom domains, API keys and webhook secrets.
         </p>
 
         {items === null && !error && (

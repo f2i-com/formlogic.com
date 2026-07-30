@@ -27,6 +27,7 @@ import {
   ChevronRight,
   Search,
   ShieldCheck,
+  AlertTriangle,
   X,
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
@@ -44,6 +45,7 @@ import { useAppStore } from '../stores/appStore';
 import { api } from '../lib/api';
 import { loadUiCache, saveUiCache } from '../lib/uiCache';
 import { loadAppGroupsCache, fetchAppGroups, type AppGroup } from '../lib/appGroups';
+import { appClickLabel, appClickPath } from '../lib/appNavigation';
 import { isDemoLocalId } from '../lib/demoLocal';
 import { cn, formatRelativeTime, sanitizeFilename, parseServerDate } from '../lib/utils';
 import { EmbedModal, TemplateSelector, PackImportModal, useFormPreview } from '../components/builder';
@@ -597,7 +599,7 @@ function QuickFind({
           role="combobox"
           aria-expanded={open}
           aria-label="Quick find a form"
-          placeholder="Search..."
+          placeholder="Search your forms"
           value={q}
           onChange={(e) => { setQ(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
@@ -712,6 +714,11 @@ export function Dashboard() {
   // value — so the headline can hold its '—' dash instead of flashing "0 responses" while
   // the analytics fetch is still in flight.
   const [statsReady, setStatsReady] = useState(false);
+  // api.request never throws — a 500 from every /analytics call returns {error} and used
+  // to leave totalResponses at 0, which the headline reported as "No responses yet" and
+  // the cache then persisted. Track the failure so the page can say so instead of lying.
+  const [statsFailed, setStatsFailed] = useState(false);
+  const [statsReloadToken, setStatsReloadToken] = useState(0);
   // Cloud (API) mode keeps responses on the server, not in the local store, so
   // per-form counts + Recent Activity must come from the API (else the cards show
   // 0 / "No submissions yet" while the Total Responses stat shows the real number).
@@ -974,11 +981,17 @@ export function Dashboard() {
             serverForms.map((form) => api.getFormAnalytics(form.id, tzOffsetMinutes))
           );
           if (cancelled) return;
+          let analyticsFailures = 0;
           for (const result of analyticsResults) {
             if (result.data?.analytics) {
               totalResponses += result.data.analytics.totalResponses;
+            } else {
+              analyticsFailures += 1;
             }
           }
+          // Every call failed: there are no figures, as opposed to figures of zero.
+          const allAnalyticsFailed = serverForms.length > 0 && analyticsFailures === serverForms.length;
+          setStatsFailed(allAnalyticsFailed);
 
           setStats({ totalResponses });
 
@@ -1039,21 +1052,23 @@ export function Dashboard() {
           const recent = merged.slice(0, 5);
           setApiRecent(recent);
           setStatsReady(true);
-          statsShownFor.current = user.id;
-          saveUiCache<DashboardStatsCache>('dashboard-stats', user.id, {
-            totalResponses,
-            responseCounts: counts,
-            pulses,
-            recent,
-            lastActivity,
-          });
+          if (!allAnalyticsFailed) {
+            statsShownFor.current = user.id;
+            saveUiCache<DashboardStatsCache>('dashboard-stats', user.id, {
+              totalResponses,
+              responseCounts: counts,
+              pulses,
+              recent,
+              lastActivity,
+            });
+          }
         } catch (error) {
           if (cancelled) return;
           logger.error('Failed to fetch dashboard stats:', error);
           // With cached data on screen a failed revalidate degrades silently to
           // the stale numbers; only an empty dashboard warns and falls back.
           if (statsShownFor.current !== user?.id) {
-            toast.warning('Connection issue', 'Using local data. Some stats may not be up to date.');
+            setStatsFailed(true);
             setStats(localStats);
           }
           setStatsReady(true);
@@ -1072,7 +1087,7 @@ export function Dashboard() {
       }
     })();
     return () => { cancelled = true; };
-  }, [forms, storageMode, user, localStats, formsLoading]);
+  }, [forms, storageMode, user, localStats, formsLoading, statsReloadToken]);
 
   const totalResponses = stats.totalResponses + (storageMode === 'api' ? browserStats.totalResponses : 0);
   const displayedResponseCounts = useMemo(
@@ -1188,8 +1203,12 @@ export function Dashboard() {
   const statsLoading = storageMode === 'api' && (!statsReady || !browserStatsReady);
 
   // Show getting started only for genuinely-new users — not during the initial
-  // cloud-data load (which would briefly flash the onboarding hero + zeroed stats).
-  const showGettingStarted = forms.length === 0 && !formsLoading;
+  // cloud-data load (which would briefly flash the onboarding hero + zeroed stats),
+  // and NOT when the forms read failed: in cloud mode a failed read also leaves
+  // forms: [], so without this an owner whose data failed to load was shown the
+  // brand-new-account hero and told to create their first form.
+  const formsFailed = useFormStore((s) => !!s.error) && storageMode === 'api';
+  const showGettingStarted = forms.length === 0 && !formsLoading && !formsFailed;
   const showWelcome = showGettingStarted && !welcomeDismissed;
 
   // The headline band — one prose sentence, data figures set in primary color.
@@ -1203,12 +1222,16 @@ export function Dashboard() {
   const num = (n: number | string) => (
     <span className="tabular-nums text-primary-600 dark:text-primary-400">{n}</span>
   );
-  if (!headlineReady) {
+  if (formsFailed) {
+    headline = <span className="text-gray-500 dark:text-slate-400">We couldn&apos;t load your forms.</span>;
+  } else if (!headlineReady) {
     headline = (
       <span className="text-gray-500 dark:text-slate-400">
         Getting your workspace ready…
       </span>
     );
+  } else if (statsFailed) {
+    headline = <span className="text-gray-500 dark:text-slate-400">We couldn&apos;t load your response figures.</span>;
   } else if (totalForms === 0) {
     headline = <>Create your first form to start collecting responses.</>;
   } else if (totalResponses === 0) {
@@ -1228,7 +1251,11 @@ export function Dashboard() {
     <div className="min-h-screen">
       <Header title="Dashboard" />
 
-      <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
+      {/* @container/dash: Home sits inside AppShell's sidebar inset (64/256px) and can
+          lose another 384px to a docked chat, so viewport breakpoints fired the 3-column
+          layout exactly when the content box was 704px — 219px tracks, with app names and
+          "12 forms · published" both truncated to nothing. Size against the real box. */}
+      <div className="@container/dash flex-1 w-full p-4 sm:p-6 lg:p-8">
         {/* Post-signup security nudge: suggest (optional) two-factor auth to new accounts. */}
         {showMfaNudge && (
           <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-primary-200/70 dark:border-primary-500/25 bg-primary-50/70 dark:bg-primary-500/10 p-4">
@@ -1255,9 +1282,42 @@ export function Dashboard() {
           </div>
         )}
 
+        {(formsFailed || statsFailed) && (
+          <div
+            role="status"
+            className="mb-6 flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50/80 p-4 dark:border-amber-500/30 dark:bg-amber-500/10 @2xl/dash:flex-row @2xl/dash:items-center"
+          >
+            <AlertTriangle className="h-5 w-5 flex-none text-amber-600 dark:text-amber-400" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-gray-900 dark:text-white">
+                {formsFailed ? "We couldn't load your forms" : "We couldn't load your response figures"}
+              </p>
+              <p className="mt-0.5 text-xs text-gray-600 dark:text-slate-300">
+                Nothing has been lost — this is a problem reading them, not a problem with your data.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="flex-none"
+              onClick={() => {
+                if (formsFailed) void useFormStore.getState().refreshForms();
+                setStatsFailed(false);
+                setStatsReloadToken((n) => n + 1);
+              }}
+            >
+              Try again
+            </Button>
+          </div>
+        )}
+
         {/* §11B O1: the availability-routed creation band — chat-first when an AI can
-            answer, "Build your way" when none is connected. */}
-        {storageMode === 'api' && <CreateBand />}
+            answer, "Build your way" when none is connected. A brand-new owner used to get
+            this PLUS the headline's two buttons PLUS the "Get started" hero PLUS the
+            welcome modal — four competing invitations, two of which contradicted the
+            app-first spine by leading with a single form. On first run the hero owns the
+            invitation and this band stands down. */}
+        {storageMode === 'api' && !showGettingStarted && <CreateBand />}
 
         {/* Headline band — the intake ledger reads as one live sentence, not four stat cards. */}
         <div className="mb-8">
@@ -1267,14 +1327,16 @@ export function Dashboard() {
           {/* Deliberately minimal (owner direction): the sidebar's Create app owns the
               whole app journey (studio covers diagrams, AI and the rest) — the dashboard
               keeps just the form quick-start and pack import. */}
-          <div className="mt-4 flex flex-wrap gap-3">
-            <Button onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
-              Start with a form
-            </Button>
-            <Button variant="outline" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />}>
-              Import pack
-            </Button>
-          </div>
+          {!showGettingStarted && (
+            <div className="mt-4 flex flex-wrap gap-3">
+              <Button onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
+                Start with a form
+              </Button>
+              <Button variant="outline" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />}>
+                Start from a template
+              </Button>
+            </div>
+          )}
         </div>
 
         {/* Quick find — jump straight to any form's records/builder/analytics. */}
@@ -1327,12 +1389,12 @@ export function Dashboard() {
         )}
 
         {/* Main Content - Two Column Layout on Desktop */}
-        <div className="grid lg:grid-cols-3 gap-6">
+        <div className="grid gap-6 @4xl/dash:grid-cols-3">
           {/* Recent Forms - Takes 2/3 on desktop. min-w-0: grid items default to
               min-width:auto, so one long nowrap form title would otherwise blow the
               track past the viewport and shove the pulse strips over/under the text. */}
-          <div className="min-w-0 lg:col-span-2">
-            <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+          <div className="min-w-0 @4xl/dash:col-span-2">
+            <div className="mb-4 flex flex-col gap-3 @3xl/dash:flex-row @3xl/dash:items-end @3xl/dash:justify-between">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg font-semibold tracking-tight text-gray-900 dark:text-white">My forms</h2>
@@ -1347,7 +1409,7 @@ export function Dashboard() {
                 </p>
               </div>
               {forms.length > 0 && (
-                <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 xl:flex xl:w-auto">
+                <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 @3xl/dash:flex @3xl/dash:w-auto">
                   <select
                     value={formsSort}
                     onChange={(e) => changeFormsSort(e.target.value as DashFormsSort)}
@@ -1455,7 +1517,7 @@ export function Dashboard() {
                                 onClick={() => previewForm(form.id)}
                                 title="Preview form"
                                 aria-label="Preview form"
-                                className="hidden text-slate-400 hover:text-gray-700 dark:hover:text-white xl:flex"
+                                className="hidden text-slate-400 hover:text-gray-700 dark:hover:text-white @3xl/dash:flex"
                               >
                                 <Eye className="h-4 w-4" />
                               </Button>
@@ -1465,7 +1527,7 @@ export function Dashboard() {
                                 onClick={() => navigate(`/analytics/${form.id}`)}
                                 title="View analytics"
                                 aria-label="View analytics"
-                                className="hidden text-slate-400 hover:text-gray-700 dark:hover:text-white xl:flex"
+                                className="hidden text-slate-400 hover:text-gray-700 dark:hover:text-white @3xl/dash:flex"
                               >
                                 <BarChart3 className="h-4 w-4" />
                               </Button>
@@ -1475,7 +1537,7 @@ export function Dashboard() {
                                 onClick={() => navigate(`/responses/${form.id}`)}
                                 title="View data"
                                 aria-label="View data"
-                                className="hidden text-slate-400 hover:text-gray-700 dark:hover:text-white xl:flex"
+                                className="hidden text-slate-400 hover:text-gray-700 dark:hover:text-white @3xl/dash:flex"
                               >
                                 <Table className="h-4 w-4" />
                               </Button>
@@ -1492,7 +1554,7 @@ export function Dashboard() {
                             </div>
                           </div>
 
-                          <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(13rem,16rem)] sm:items-end">
+                          <div className="mt-4 grid min-w-0 gap-3 @xl/dash:grid-cols-[minmax(0,1fr)_minmax(13rem,16rem)] @xl/dash:items-end">
                             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 text-xs text-gray-500 dark:text-slate-400">
                               <span className="flex items-center gap-1.5 tabular-nums">
                                 <Clock className="h-3.5 w-3.5 flex-none" />
@@ -1573,15 +1635,15 @@ export function Dashboard() {
                     <ArrowRight className="h-4 w-4 ml-1" />
                   </Button>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 @2xl/dash:grid-cols-2">
                   {recentApps.map((app) => {
                     // Real count from the list endpoint; navConfig.length is empty on pack-provisioned apps.
                     const formCount = app.formCount ?? app.navConfig?.length ?? 0;
                     return (
                       <button
                         key={app.id}
-                        onClick={() => navigate(`/apps/${app.id}/settings`)}
-                        title={`Manage ${app.name}`}
+                        onClick={() => navigate(appClickPath(app))}
+                        title={appClickLabel(app)}
                         className={cn(
                           'flex items-center gap-3 p-4 min-w-0 rounded-xl border text-left group cursor-pointer',
                           'bg-white dark:bg-slate-900/50 border-gray-200/80 dark:border-white/[0.06] shadow-sm shadow-gray-900/[0.03]',
@@ -1608,7 +1670,7 @@ export function Dashboard() {
           </div>
 
           {/* Recent Activity - Takes 1/3 on desktop (min-w-0: same grid-item rule as above) */}
-          <div className="min-w-0 lg:col-span-1">
+          <div className="min-w-0 @4xl/dash:col-span-1">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Recent activity</h2>
             </div>

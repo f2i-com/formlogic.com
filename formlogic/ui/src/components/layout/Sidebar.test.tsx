@@ -2,7 +2,7 @@
 // The app-first sidebar (App Studio redesign): the user's apps are the primary
 // navigation — published/draft state shown per app, owner clicks land in the
 // App Studio, member clicks open the live runtime, and the shared building
-// blocks (Forms/Flows/Diagrams/Templates/Recycle bin) live under Advanced tools.
+// blocks (Forms/Automations/Diagrams/Templates/Recycle bin) live under Advanced tools.
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
@@ -159,7 +159,7 @@ describe('Sidebar (app-first)', () => {
     await renderSidebar();
     const toggle = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Advanced tools'))!;
     await act(async () => { toggle.click(); });
-    for (const label of ['Forms', 'Flows', 'Diagrams', 'Templates', 'Recycle bin']) {
+    for (const label of ['Forms', 'Automations', 'Diagrams', 'Templates', 'Recycle bin']) {
       expect(container.textContent).toContain(label);
     }
   });

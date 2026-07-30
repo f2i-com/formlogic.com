@@ -6,6 +6,7 @@ import { MobileNav } from './MobileNav';
 import { DemoBanner } from './DemoBanner';
 import { DesktopConnectionPopover } from '../desktop/DesktopConnectionPopover';
 import { SiteChatWidget } from '../chat/SiteChatWidget';
+import { useChatDockOffset } from '../chat/useChatDockOffset';
 import { useUIStore } from '../../stores/uiStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
@@ -15,7 +16,9 @@ import { cn } from '../../lib/utils';
 export function AppShell() {
   const { sidebarCollapsed, isMobile, setIsMobile } = useUIStore();
   // §11B O5: the docked chat narrows the workspace (see the main className below).
-  const chatDockedVisible = useUIStore((s) => s.chatDocked && s.chatOpen && !s.chatMinimized);
+  // The EFFECTIVE state, not the stored preference: docking is refused on windows
+  // too narrow to hold both, so this inset can never strand the workspace at 128px.
+  const chatDockedVisible = useChatDockOffset();
   const isOnline = useOnlineStatus();
   const location = useLocation();
   const mainRef = useRef<HTMLElement>(null);
@@ -120,7 +123,7 @@ export function AppShell() {
           !isMobile && chatDockedVisible && 'mr-96',
           // Clear the fixed bottom nav PLUS the home-indicator safe-area inset on
           // notched phones, so trailing content isn't hidden behind the nav.
-          isMobile && 'pb-[calc(5rem+env(safe-area-inset-bottom))]',
+          isMobile && 'pb-[var(--fl-mobile-reserve)]',
           (!isOnline || (maintenance.active && isAdmin)) && 'pt-8'
         )}
       >

@@ -3,6 +3,7 @@ import { Plug, Copy, Loader2, Trash2, ShieldAlert, Sparkles, ChevronDown } from 
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { api } from '../../lib/api';
+import { LoadFailure } from '../ui/LoadFailure';
 import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
 import { formatRelativeTime, formatTimeUntil, copyToClipboard } from '../../lib/utils';
@@ -12,6 +13,10 @@ type NewToken = { token: string; mcpUrl: string; expiresAt: string; idleTimeout:
 
 export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = false }: { isOpen: boolean; onClose: () => void; appId?: string; appName?: string; creator?: boolean }) {
   const [sessions, setSessions] = useState<Session[]>([]);
+  // A failed read must not render as "No active connections": these are live grants
+  // that let an outside AI act in this account, so an owner who cannot see one cannot
+  // revoke it — and would reasonably conclude there was nothing to revoke.
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [fresh, setFresh] = useState<NewToken | null>(null);
   // The OAuth paste-the-URL path is primary; the manual flm_ token flow lives behind this.
@@ -32,7 +37,16 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
 
   // Fetch only inside the async callback (no synchronous setState in the effect body).
   const load = useCallback(() => {
-    api.listMcpTokens(appId).then((r) => { setSessions(r.data?.sessions || []); }).catch(() => {});
+    api.listMcpTokens(appId)
+      .then((r) => {
+        if (r.error || !r.data) {
+          setSessionsError(typeof r.error === 'string' ? r.error : 'Please try again.');
+          return;
+        }
+        setSessions(r.data.sessions || []);
+        setSessionsError(null);
+      })
+      .catch((e: unknown) => setSessionsError(e instanceof Error ? e.message : 'Please try again.'));
   }, [appId]);
   useEffect(() => { if (isOpen) load(); }, [isOpen, load]);
 
@@ -202,7 +216,14 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
 
         <div>
           <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-1.5">Active connections</p>
-          {sessions.length === 0 ? (
+          {sessionsError ? (
+            <LoadFailure
+              compact
+              title="We couldn't load your active connections"
+              message={sessionsError}
+              onRetry={() => { setSessionsError(null); load(); }}
+            />
+          ) : sessions.length === 0 ? (
             <p className="text-xs text-gray-400 dark:text-slate-500">No active connections.</p>
           ) : (
             <div className="rounded-xl border border-gray-200/80 dark:border-slate-700/60 divide-y divide-gray-100 dark:divide-slate-800">

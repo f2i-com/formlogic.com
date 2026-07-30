@@ -68,7 +68,7 @@ function FlowRow({ appId, flow, onSaved }: {
         className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-primary-600 hover:bg-primary-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-primary-400 dark:hover:bg-primary-500/10"
       >
         <ExternalLink className="h-3.5 w-3.5" />
-        Open in Flows workspace
+        Open in Automations
       </Link>
     </div>
   );
@@ -265,7 +265,7 @@ export function FlowsPanel({ appId }: { appId: string; appSlug?: string }) {
         <div className="mt-4 space-y-5">
           <p className="text-sm text-gray-600 dark:text-slate-400">
             Event-driven automations over this app's data. Author flows in the{' '}
-            <Link to="/flows" className="font-medium text-primary-600 hover:underline dark:text-primary-400">Flows workspace</Link>{' '}
+            <Link to="/flows" className="font-medium text-primary-600 hover:underline dark:text-primary-400">Automations</Link>{' '}
             (visual graph editor + test runs); bind them to events here.
           </p>
 
@@ -274,14 +274,14 @@ export function FlowsPanel({ appId }: { appId: string; appSlug?: string }) {
               <EmptyState
                 icon={Workflow}
                 title="No flows yet"
-                description="Create this app's flows in the Flows workspace (starter templates included), then bind them to events here."
+                description="Build this app's automations under Automations (starter templates included), then choose what starts them here."
                 action={
                   <Link
                     to="/flows"
                     className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
-                    Open Flows workspace
+                    Open Automations
                   </Link>
                 }
               />

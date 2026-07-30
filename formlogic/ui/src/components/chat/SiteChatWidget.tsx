@@ -63,6 +63,7 @@ import { demoChatDirector } from './demoChatDirector';
 import { CHAT_IMAGES_PER_MESSAGE, downscaleChatImage } from './chatImages';
 import { CODEX_PROVIDER_ID, CODEX_REASONING_EFFORTS } from '../../client-runtime/desktop/desktopTunnel';
 import { chatPrivacyBadge, chatThreadTitle, chatToolLinkPath } from './siteChatView';
+import { useCanDockChat } from './useChatDockOffset';
 
 const PAGE_SIZE = 30;
 /** Desktop panel dock size (w-96 x h-[34rem]) used to clamp a restored drag offset. */
@@ -191,7 +192,9 @@ export function SiteChatWidget() {
   const setChatLaunch = useUIStore((s) => s.setChatLaunch);
   const chatFollowAi = useUIStore((s) => s.chatFollowAi);
   const setChatFollowAi = useUIStore((s) => s.setChatFollowAi);
-  const chatDocked = useUIStore((s) => s.chatDocked);
+  // Effective docking (stored preference AND enough room) — see useChatDockOffset.
+  const canDockChat = useCanDockChat();
+  const chatDocked = useUIStore((s) => s.chatDocked) && canDockChat;
   const setChatDocked = useUIStore((s) => s.setChatDocked);
   const chatMinimized = useUIStore((s) => s.chatMinimized);
   const setChatOpen = useUIStore((s) => s.setChatOpen);
@@ -699,6 +702,10 @@ export function SiteChatWidget() {
   if (!user) return null;
 
   const badge = chatPrivacyBadge(lastSource, prefs);
+  // The conversation-controls strip renders only when it would hold something: a real
+  // account always has Follow-AI, while the demo only ever gets Clear.
+  const hasConversationControls =
+    !isDemo || (view === 'chat' && activeThreadId !== null && messages.length > 0);
   const showReasoningSelect =
     prefs?.aiSource === 'desktop' && prefs.desktopProviderId === CODEX_PROVIDER_ID && !isDemo;
   const confirmMode = prefs?.chatToolMode === 'confirm';
@@ -722,6 +729,40 @@ export function SiteChatWidget() {
       >
         <MessageCircle className="h-4 w-4 flex-shrink-0 text-primary-600 dark:text-primary-400" aria-hidden="true" />
         <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-900 dark:text-white">Chat</h2>
+        <button
+          type="button"
+          aria-label="Chat history"
+          onClick={() => setView((v) => (v === 'threads' ? 'chat' : 'threads'))}
+          className="flex-shrink-0 rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+        >
+          <History className="h-4 w-4" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          aria-label="Minimize chat"
+          onClick={() => setChatMinimized(true)}
+          className="flex-shrink-0 rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+        >
+          <Minus className="h-4 w-4" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          aria-label="Close chat"
+          onClick={() => setChatOpen(false)}
+          className="flex-shrink-0 rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </header>
+
+      {/* Conversation controls, deliberately NOT in the header. Eight controls used to
+          compete for one row: on a 320px phone the row needed ~320px of fixed width and
+          the Close button was clipped off the end. Splitting them also separates two
+          different jobs — the header is window chrome (history, minimise, close), this
+          strip is how the conversation behaves — so a first-time user is not met with a
+          row of eight unexplained icons. */}
+      {hasConversationControls && (
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-gray-200/80 px-3 py-1.5 dark:border-slate-700/60">
         {prefs && !isDemo && (
           <button
             type="button"
@@ -756,7 +797,7 @@ export function SiteChatWidget() {
               else setConfirmingClear(true);
             }}
             className={cn(
-              'flex-shrink-0 rounded-md p-1.5 disabled:opacity-50',
+              'ml-auto flex-shrink-0 rounded-md p-1.5 disabled:opacity-50',
               confirmingClear
                 ? 'text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40'
                 : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white'
@@ -785,14 +826,6 @@ export function SiteChatWidget() {
           <Footprints className="h-4 w-4" aria-hidden="true" />
         </button>
         )}
-        <button
-          type="button"
-          aria-label="Chat history"
-          onClick={() => setView((v) => (v === 'threads' ? 'chat' : 'threads'))}
-          className="flex-shrink-0 rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
-        >
-          <History className="h-4 w-4" aria-hidden="true" />
-        </button>
         {uncompactedCount >= COMPACT_THRESHOLD && !isDemo && (
           <button
             type="button"
@@ -805,7 +838,7 @@ export function SiteChatWidget() {
             <Shrink className="h-4 w-4" aria-hidden="true" />
           </button>
         )}
-        {!isMobile && !isDemo && (
+        {!isMobile && !isDemo && canDockChat && (
           <button
             type="button"
             aria-label={chatDocked ? 'Float the chat' : 'Dock the chat beside the workspace'}
@@ -821,23 +854,8 @@ export function SiteChatWidget() {
             <PanelRight className="h-4 w-4" aria-hidden="true" />
           </button>
         )}
-        <button
-          type="button"
-          aria-label="Minimize chat"
-          onClick={() => setChatMinimized(true)}
-          className="flex-shrink-0 rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
-        >
-          <Minus className="h-4 w-4" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          aria-label="Close chat"
-          onClick={() => setChatOpen(false)}
-          className="flex-shrink-0 rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
-        >
-          <X className="h-4 w-4" aria-hidden="true" />
-        </button>
-      </header>
+        </div>
+      )}
 
       {badge && (
         <div
@@ -1156,7 +1174,7 @@ export function SiteChatWidget() {
           className={cn(
             'fixed z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary-600 text-primary-foreground shadow-lg transition-colors hover:bg-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2',
             isMobile
-              ? 'right-4 bottom-[calc(4rem+env(safe-area-inset-bottom)+0.75rem)]'
+              ? 'right-4 bottom-[var(--fl-mobile-float)]'
               : 'bottom-4 right-4'
           )}
         >
@@ -1168,7 +1186,7 @@ export function SiteChatWidget() {
         <section
           role="dialog"
           aria-label="Site chat"
-          className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-40 flex h-[65dvh] max-h-[65dvh] flex-col overflow-hidden rounded-t-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+          className="fixed inset-x-0 bottom-[var(--fl-mobile-nav-h)] z-40 flex h-[65dvh] max-h-[65dvh] flex-col overflow-hidden rounded-t-2xl pb-[var(--fl-mobile-fab-h)] border border-gray-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900"
         >
           {panelBody}
         </section>

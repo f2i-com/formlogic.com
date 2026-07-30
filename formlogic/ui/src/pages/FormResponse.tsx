@@ -309,7 +309,7 @@ export function FieldResponse({
         const maxStars = field.properties.maxStars || 5;
         const currentRating = (value as number) || 0;
         return (
-          <div className="flex gap-3 justify-center" role="radiogroup" aria-label={`${field.label} rating`} aria-required={required || undefined}>
+          <div className="flex flex-wrap justify-center gap-2 sm:gap-3" role="radiogroup" aria-label={`${field.label} rating`} aria-required={required || undefined}>
             {Array.from({ length: maxStars }, (_, i) => (
               <button
                 key={i}
@@ -328,7 +328,7 @@ export function FieldResponse({
                   }
                 }}
                 className={cn(
-                  'text-5xl transition-transform hover:scale-110 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center',
+                  'text-4xl sm:text-5xl transition-transform hover:scale-110 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center',
                   i < currentRating ? 'text-yellow-400' : 'opacity-30'
                 )}
               >
@@ -356,7 +356,7 @@ export function FieldResponse({
               aria-required={required || undefined}
               className={cn(
               "grid gap-2",
-              scaleLength <= 5 ? "grid-cols-5" : scaleLength <= 7 ? "grid-cols-7" : "grid-cols-5 sm:grid-cols-10"
+              scaleLength <= 5 ? "grid-cols-5" : scaleLength <= 7 ? "grid-cols-4 sm:grid-cols-7" : "grid-cols-5 sm:grid-cols-10"
             )}>
               {Array.from({ length: scaleLength }, (_, i) => {
                 const num = start + i;
@@ -735,7 +735,7 @@ export function FieldResponse({
           style={{ color: textColor }}
         >
           {field.label}
-          {required && <span className="text-red-500 ml-1">*</span>}
+          {required && <span className="ml-1 text-red-600 dark:text-red-400" aria-hidden="true">*</span>}
         </h2>
         {field.description && field.type !== 'statement' && field.type !== 'welcome_screen' && (
           <p className="text-lg" style={{ color: textColor, opacity: 0.7 }}>{field.description}</p>
@@ -810,7 +810,7 @@ export default function FormResponse() {
   const { formId } = useParams<{ formId: string }>();
   // Pre-auth instance flags — carries the admin's maintenance message for embeds.
   const publicConfig = usePublicConfig();
-  const { getForm, updateForm } = useFormStore();
+  const { getForm, setFormLocal } = useFormStore();
   const {
     startResponse,
     setAnswer,
@@ -1375,7 +1375,12 @@ export default function FormResponse() {
       submitIdemKeyRef.current = null;
       setSubmitQueued(queued);
       // Only an ACCEPTED submission bumps the count — a queued one hasn't landed.
-      if (!queued) updateForm(form.id, { responseCount: form.responseCount + 1 });
+      // setFormLocal, NOT updateForm: updateForm schedules a full form-definition PUT
+      // when the viewer happens to be the signed-in owner, and it sends this tab's
+      // possibly-stale snapshot — so testing your own public link could silently revert
+      // a theme or setting you had just changed elsewhere. A submission must never
+      // write the form definition.
+      if (!queued) setFormLocal(form.id, { responseCount: form.responseCount + 1 });
       setIsSubmitted(true);
       const privateRedirectUrl = form.settings?.redirectUrl;
       if (privateRedirectUrl) {
@@ -1457,7 +1462,8 @@ export default function FormResponse() {
     submitIdemKeyRef.current = null;
     setSubmitQueued(queuedForSync);
     // Only an ACCEPTED submission bumps the count — a queued one hasn't landed yet.
-    if (!queuedForSync) updateForm(form.id, { responseCount: form.responseCount + 1 });
+    // Local-only bump — see the note on the private path above.
+    if (!queuedForSync) setFormLocal(form.id, { responseCount: form.responseCount + 1 });
     setIsSubmitted(true);
 
     // Handle redirectUrl (strict URL validation to prevent XSS)
@@ -1800,23 +1806,23 @@ export default function FormResponse() {
             onClick={() => setResponseMode('focused')}
             aria-pressed={effectiveMode === 'focused'}
             className={cn(
-              'px-3 py-1 text-xs rounded-md transition-all cursor-pointer',
+              'inline-flex min-h-9 items-center rounded-md px-3 text-xs transition-all cursor-pointer max-sm:min-h-11',
               effectiveMode === 'focused' ? 'shadow-sm' : 'opacity-50 hover:opacity-80'
             )}
             style={effectiveMode === 'focused' ? { backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) } : { color: form.theme.textColor }}
           >
-            Focused
+            One at a time
           </button>
           <button
             onClick={() => setResponseMode('classic')}
             aria-pressed={effectiveMode === 'classic'}
             className={cn(
-              'px-3 py-1 text-xs rounded-md transition-all cursor-pointer',
+              'inline-flex min-h-9 items-center rounded-md px-3 text-xs transition-all cursor-pointer max-sm:min-h-11',
               effectiveMode === 'classic' ? 'shadow-sm' : 'opacity-50 hover:opacity-80'
             )}
             style={effectiveMode === 'classic' ? { backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) } : { color: form.theme.textColor }}
           >
-            Classic
+            All questions
           </button>
         </div>
       )}
@@ -1874,15 +1880,50 @@ export default function FormResponse() {
 
       {effectiveMode === 'focused' ? (
       <>
-      {/* Progress Bar */}
+      {/* Progress Bar — a real progressbar with a visible track. A bare filled sliver
+          on the page background gave no sense of how much was left, and announced
+          nothing to assistive tech. */}
       {form.settings.showProgressBar && (
-        <div className="fixed top-0 left-0 right-0 z-10">
+        <div
+          className="fixed top-0 left-0 right-0 z-10 h-1 bg-current/10"
+          role="progressbar"
+          aria-valuenow={safeCurrentStep + 1}
+          aria-valuemin={1}
+          aria-valuemax={visibleFields.length}
+          aria-label={`Question ${safeCurrentStep + 1} of ${visibleFields.length}`}
+        >
           <div
-            className="h-1 transition-all duration-300"
+            className="h-full transition-all duration-300"
             style={{ width: `${progress}%`, backgroundColor: form.theme.primaryColor }}
           />
         </div>
       )}
+
+      {/* Who is asking. Focused mode is the DEFAULT presentation, and it used to render
+          the question alone — a visitor following a texted link saw "What's your
+          postcode? *" on a blank page, with nothing naming the business or the form.
+          People do not answer forms they cannot identify. Shown in full on the first
+          step, then reduced to a quiet title line so it never competes with the
+          question. */}
+      {/* (The brand logo is rendered above, for both presentation modes.) */}
+      <div className="flex-none px-4 pt-4 text-center md:px-8">
+        <div className={cn('mx-auto w-full max-w-xl', safeCurrentStep === 0 ? 'space-y-2' : '')}>
+          <h1
+            className={cn(
+              'break-words font-semibold tracking-tight',
+              safeCurrentStep === 0 ? 'text-xl md:text-2xl' : 'text-sm opacity-60'
+            )}
+            style={{ color: form.theme.textColor }}
+          >
+            {form.title}
+          </h1>
+          {safeCurrentStep === 0 && form.description && (
+            <p className="text-sm md:text-base" style={{ color: form.theme.textColor, opacity: 0.7 }}>
+              {form.description}
+            </p>
+          )}
+        </div>
+      </div>
 
       {/* Main Content */}
       <main id="form-main" className="flex-1 flex items-center justify-center p-4 md:p-8">
@@ -1927,7 +1968,7 @@ export default function FormResponse() {
                 screens instead of sitting at the far left. */}
             {fieldError && (
               <div className="w-full max-w-xl mx-auto">
-                <p id={`field-error-${currentField.id}`} role="alert" aria-live="polite" className="mt-3 text-red-500 text-sm">{fieldError}</p>
+                <p id={`field-error-${currentField.id}`} role="alert" aria-live="polite" className="mt-3 text-sm font-medium text-red-600 dark:text-red-400">{fieldError}</p>
               </div>
             )}
 
@@ -1952,7 +1993,7 @@ export default function FormResponse() {
 
             {/* Submission error */}
             {submitError && (
-              <p role="alert" aria-live="polite" className="mt-4 text-red-500 text-sm text-center">{submitError}</p>
+              <p role="alert" aria-live="polite" className="mt-4 text-center text-sm font-medium text-red-600 dark:text-red-400">{submitError}</p>
             )}
             {pinConflictNotice}
           </motion.div>
@@ -2022,7 +2063,7 @@ export default function FormResponse() {
             </div>
 
             {submitError && (
-              <p role="alert" aria-live="polite" className="mt-4 text-red-500 text-sm text-center">{submitError}</p>
+              <p role="alert" aria-live="polite" className="mt-4 text-center text-sm font-medium text-red-600 dark:text-red-400">{submitError}</p>
             )}
             {pinConflictNotice}
 

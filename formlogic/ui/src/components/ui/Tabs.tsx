@@ -141,7 +141,9 @@ export function TabsTrigger({
       disabled={disabled}
       tabIndex={isActive ? 0 : -1}
       className={cn(
-        'text-sm font-medium flex-shrink-0 whitespace-nowrap transition-all duration-200 cursor-pointer',
+        // Pills render ~32px tall. Tabs are a primary way to move around a page, so give
+        // them a full finger target on phones without changing desktop density.
+        'text-sm font-medium flex-shrink-0 whitespace-nowrap transition-all duration-200 cursor-pointer max-sm:inline-flex max-sm:min-h-11 max-sm:items-center',
         'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900',
         variant === 'pills' && [
           'px-3 py-1.5 rounded-md',

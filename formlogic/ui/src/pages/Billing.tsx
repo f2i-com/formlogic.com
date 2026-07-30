@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Cloud, Check, Minus, Plus, Loader2, Info, Sparkles } from 'lucide-react';
+import { Check, Minus, Plus, Loader2, Info, Sparkles } from 'lucide-react';
 import { api, type AiUsageInfo, type BillingStatus } from '../lib/api';
 import { parseServerDate } from '../lib/utils';
 import { toast } from '../stores/toastStore';
 import { logger } from '../lib/logger';
+import { Header } from '../components/layout/Header';
 
 // Minimal typing for the PayPal JS SDK (loaded on demand).
 interface PayPalButtonsInstance { render: (sel: string) => Promise<void>; }
@@ -157,13 +158,9 @@ export function Billing() {
   const beta = !!status?.betaMode;
 
   return (
-    <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-      <div className="flex items-center gap-3 mb-2">
-        <div className="h-10 w-10 rounded-xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center">
-          <Cloud className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-        </div>
-        <h1 className="text-2xl font-semibold text-gray-900 dark:text-white tracking-tight">Cloud</h1>
-      </div>
+    <div className="min-h-screen">
+      <Header title="Cloud" />
+      <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <p className="text-gray-500 dark:text-slate-400 mb-8">{status?.betaMode ? "Free while we're in public beta — no payment, no card required." : 'Pay only for the time you use — no subscription, no auto-renew.'}</p>
 
       {/* Current status */}
@@ -296,6 +293,7 @@ export function Billing() {
         Payments are one-time and processed securely by PayPal. No subscription is created and nothing auto-renews.
       </p>
       </>)}
+      </div>
     </div>
   );
 }

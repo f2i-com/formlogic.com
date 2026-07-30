@@ -138,7 +138,10 @@ export function FlowsOverview({
     <div className="scrollbar-thin h-full min-h-0 w-full overflow-y-auto">
       {/* pb-28 keeps the last rows clear of the floating Desktop-connection chip (fixed
           bottom-left) and the chat launcher (bottom-right). */}
-      <div className="mx-auto w-full max-w-7xl px-4 pb-28 pt-5 sm:px-6 sm:pt-6 lg:px-8">
+      {/* @container/flows: viewport breakpoints split off a fixed 21–24rem right rail while
+          the real content box could be 640px (sidebar 256 + docked chat 384 at 1280), which
+          left the flow list ~250px wide and clipped by AppShell's overflow-x-clip. */}
+      <div className="@container/flows mx-auto w-full max-w-7xl px-4 pb-28 pt-5 sm:px-6 sm:pt-6 lg:px-8">
         {/* Hero — one glance: what flows do plus how many are live. */}
         <section className="relative overflow-hidden rounded-2xl border border-gray-200/80 bg-white p-5 dark:border-slate-700/60 dark:bg-slate-900 sm:p-6">
           <div
@@ -179,7 +182,7 @@ export function FlowsOverview({
         </section>
 
         {/* Main grid: flow list + templates | readiness + recent runs. Single column below lg. */}
-        <div className="mt-5 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr),21rem] xl:grid-cols-[minmax(0,1fr),24rem]">
+        <div className="mt-5 grid items-start gap-5 @4xl/flows:grid-cols-[minmax(0,1fr),21rem] @6xl/flows:grid-cols-[minmax(0,1fr),24rem]">
           <div className="min-w-0 space-y-5">
             {flows.length === 0 ? (
               <section className="rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
@@ -210,7 +213,7 @@ export function FlowsOverview({
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Start from a template</h3>
                 <p className="text-xs text-gray-500 dark:text-slate-400">Open the New flow dialog with a starter preselected.</p>
               </div>
-              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-2.5 @xl/flows:grid-cols-2">
                 {visibleTemplates.map((template) => {
                   const Icon = TEMPLATE_ICON[template.id] ?? FileText;
                   return (
@@ -351,10 +354,10 @@ function FlowListCard({
             <select
               value={scope}
               onChange={(e) => setScope(e.target.value)}
-              aria-label="Filter flows by scope"
-              className="max-w-40 flex-none cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
+              aria-label="Show automations from"
+              className="max-w-40 min-h-9 flex-none cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 max-sm:min-h-11 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
             >
-              <option value="all">All scopes</option>
+              <option value="all">All apps</option>
               {groups.map((g) => (
                 <option key={g.app?.id ?? 'workspace'} value={g.app?.id ?? 'workspace'}>
                   {g.app ? g.app.name : 'Workspace'} · {g.flows.length}
@@ -397,7 +400,7 @@ function FlowListCard({
           <button
             type="button"
             onClick={onNewFlow}
-            className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-primary-300 dark:hover:bg-primary-500/10"
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 max-sm:min-h-11 dark:text-primary-300 dark:hover:bg-primary-500/10"
           >
             <Plus className="h-3.5 w-3.5" /> New flow
           </button>
@@ -539,7 +542,7 @@ function FlowRow({ flow, onSelect, onDuplicate, onRename, onRequestToggleEnabled
           aria-label={flow.enabled ? `Disable ${flow.name}` : `Enable ${flow.name}`}
           title={flow.enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}
           className={cn(
-            'flex-none cursor-pointer rounded p-1 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+            'flex min-h-11 min-w-11 flex-none items-center justify-center cursor-pointer rounded transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
             flow.enabled
               ? 'text-emerald-500 hover:bg-emerald-50 hover:text-emerald-600 dark:text-emerald-400 dark:hover:bg-emerald-500/10'
               : 'text-gray-300 hover:bg-gray-100 hover:text-gray-500 dark:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-400',
@@ -555,7 +558,7 @@ function FlowRow({ flow, onSelect, onDuplicate, onRename, onRequestToggleEnabled
             aria-label={`Flow actions for ${flow.name}`}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
-            className="cursor-pointer rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-slate-700 dark:hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+            className="flex min-h-11 min-w-11 items-center justify-center cursor-pointer rounded text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-slate-700 dark:hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
           >
             <MoreVertical className="h-4 w-4" />
           </button>

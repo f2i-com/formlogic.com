@@ -18,6 +18,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
+import { LoadFailure } from '../components/ui/LoadFailure';
 import { Badge } from '../components/ui/Badge';
 import { PackIcon } from '../components/ui/PackIcon';
 import { api, type CatalogPack, type PackVersionInfo, type PackRatingEntry, type PackData, type PackDescribeResult } from '../lib/api';
@@ -53,6 +54,7 @@ export default function PackDetailPage() {
 
   const [pack, setPack] = useState<PackDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
   const [installed, setInstalled] = useState(false);
   const [versionsExpanded, setVersionsExpanded] = useState(false);
@@ -124,11 +126,21 @@ export default function PackDetailPage() {
     setLoading(true);
     try {
       const result = await api.getPackDetail(slug);
-      if (shouldApply() && result.data?.pack) {
-        setPack(result.data.pack);
+      if (shouldApply()) {
+        if (result.data?.pack) {
+          setPack(result.data.pack);
+          setLoadError(null);
+        } else if (result.status === 404) {
+          // A genuine 404 is the only case that means "this template doesn't exist".
+          setLoadError(null);
+        } else {
+          setLoadError(typeof result.error === 'string' ? result.error : 'Please try again.');
+        }
       }
-    } catch {
-      // silently fail
+    } catch (e) {
+      // Silently failing rendered "Pack not found" — asserting the template does not
+      // exist when in fact we could not reach the server.
+      if (shouldApply()) setLoadError(e instanceof Error ? e.message : 'Please try again.');
     } finally {
       if (shouldApply()) setLoading(false);
     }
@@ -335,14 +347,27 @@ export default function PackDetailPage() {
 
   if (!pack) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-white dark:bg-slate-950">
-        <div className="text-center">
-          <Package className="mx-auto mb-3 h-12 w-12 text-gray-400 opacity-50" />
-          <p className="text-lg font-medium text-gray-600 dark:text-slate-400">Pack not found</p>
-          <Button variant="outline" className="mt-4" onClick={() => navigate('/packs')}>
-            Back to marketplace
-          </Button>
-        </div>
+      <div className="flex min-h-screen items-center justify-center bg-white px-4 dark:bg-slate-950">
+        {loadError ? (
+          <div className="w-full max-w-md">
+            <LoadFailure
+              title="We couldn't load this template"
+              message={loadError}
+              onRetry={() => { setLoadError(null); void loadPackDetail(); }}
+            />
+            <div className="mt-4 text-center">
+              <Button variant="outline" onClick={() => navigate('/packs')}>Back to templates</Button>
+            </div>
+          </div>
+        ) : (
+          <div className="text-center">
+            <Package className="mx-auto mb-3 h-12 w-12 text-gray-400 opacity-50" />
+            <p className="text-lg font-medium text-gray-600 dark:text-slate-400">Template not found</p>
+            <Button variant="outline" className="mt-4" onClick={() => navigate('/packs')}>
+              Back to templates
+            </Button>
+          </div>
+        )}
       </div>
     );
   }

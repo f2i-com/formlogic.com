@@ -1262,8 +1262,11 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
               )}
               {packageReview && v2Plan?.action === 'update' && (
                 <div className="space-y-2">
-                  <div className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm text-foreground">
-                    <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                  {/* primary/foreground are not tokens in this theme — `border-primary/30`,
+                      `bg-primary/5`, `text-foreground` and `text-primary` all emitted no CSS,
+                      so this update notice rendered as unstyled text with no panel at all. */}
+                  <div className="flex items-start gap-2 rounded-lg border border-primary-200/70 bg-primary-50/70 p-3 text-sm text-gray-700 dark:border-primary-500/25 dark:bg-primary-500/10 dark:text-slate-200">
+                    <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 text-primary-600 dark:text-primary-400" />
                     <p>
                       This package is already installed at v{v2Plan.installedVersion}. Importing updates it to v{v2Plan.version} —
                       existing flows keep the versions they were published with.

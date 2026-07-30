@@ -5,6 +5,7 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Toolti
 import { useUIStore } from '../stores/uiStore';
 import { ListRowSkeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
+import { LoadFailure } from '../components/ui/LoadFailure';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
@@ -50,6 +51,8 @@ export default function FormAnalytics() {
   // Real response rows for API/cloud mode (the local store is empty there).
   const [apiResponses, setApiResponses] = useState<ReturnType<typeof getResponsesByFormId>>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
 
   // Load full form data (with fields) from API
   useEffect(() => {
@@ -105,6 +108,11 @@ export default function FormAnalytics() {
           if (cancelled) return;
           if (result.data?.analytics) {
             setAnalytics(result.data.analytics);
+            setLoadError(null);
+          } else {
+            // api.request never throws, so without this a 500 left every metric at 0 and
+            // the page reported a busy form as having no responses at all.
+            setLoadError(typeof result.error === 'string' ? result.error : 'Please try again.');
           }
           // Also pull real response rows so the field breakdown + Recent Responses
           // table aren't empty in cloud mode.
@@ -123,7 +131,7 @@ export default function FormAnalytics() {
         } catch (error) {
           if (cancelled) return;
           logger.error('Failed to fetch analytics:', error);
-          toast.warning('Connection Issue', 'Using local analytics data.');
+          setLoadError(error instanceof Error ? error.message : 'Please try again.');
         } finally {
           if (!cancelled) setIsLoading(false);
         }
@@ -132,7 +140,7 @@ export default function FormAnalytics() {
 
     fetchAnalytics();
     return () => { cancelled = true; };
-  }, [formId, storageMode, user]);
+  }, [formId, storageMode, user, reloadToken]);
 
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -546,14 +554,15 @@ export default function FormAnalytics() {
       <Header
         title="Analytics"
         actions={
+          // Gated on the header's own width — see the note in FormResponses.
           <div className="flex gap-1 sm:gap-2">
-            <Button variant="outline" size="sm" onClick={() => navigate(`/responses/${form.id}`)} title="View Data">
+            <Button variant="outline" size="sm" onClick={() => navigate(`/responses/${form.id}`)} title="View responses">
               <Table className="h-4 w-4" />
-              <span className="hidden lg:inline ml-2">Data</span>
+              <span className="ml-2 hidden @4xl/header:inline">Responses</span>
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setShowEmbedModal(true)} title="Share & Embed" className="hidden sm:flex">
+            <Button variant="outline" size="sm" onClick={() => setShowEmbedModal(true)} title="Share & Embed" className="hidden @lg/header:flex">
               <Share2 className="h-4 w-4" />
-              <span className="hidden lg:inline ml-2">Share</span>
+              <span className="ml-2 hidden @4xl/header:inline">Share</span>
             </Button>
             <div className="relative" ref={exportRef}>
               <Button
@@ -569,7 +578,7 @@ export default function FormAnalytics() {
                 ) : (
                   <Download className="h-4 w-4" />
                 )}
-                <span className="hidden sm:inline ml-2">Export</span>
+                <span className="ml-2 hidden @2xl/header:inline">Export</span>
                 <ChevronDown className="h-4 w-4 ml-1" />
               </Button>
               {exportMenuOpen && (
@@ -608,7 +617,10 @@ export default function FormAnalytics() {
         }
       />
 
-      <div className="flex-1 w-full p-4 sm:p-6 lg:p-8 space-y-4 sm:space-y-6">
+      {/* @container/analytics: the six-number strip used `lg:grid-cols-6` on the viewport,
+          so at 1280px with the sidebar out and the chat docked it packed six numbers into
+          a ~576px box and they wrapped mid-digit. */}
+      <div className="@container/analytics flex-1 w-full p-4 sm:p-6 lg:p-8 space-y-4 sm:space-y-6">
         <PageHeader
           title={form.title}
           subtitle="Analytics"
@@ -616,11 +628,19 @@ export default function FormAnalytics() {
           backLabel="Back"
         />
 
+        {loadError && (
+          <LoadFailure
+            title="We couldn't load this form's analytics"
+            message={loadError}
+            onRetry={() => { setLoadError(null); setReloadToken((n) => n + 1); }}
+          />
+        )}
+
         {/* Metrics — one divided card (gap-px hairlines) instead of separate tiles, so up to
             six numbers stay readable at every width: 2-up on phones, 3-up on tablets, 6-up on
             desktop. The icon is a small inline label, not a chip that steals the number's room. */}
         <Card className="overflow-hidden">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-px bg-gray-100 dark:bg-slate-800/80">
+          <div className="grid grid-cols-2 gap-px bg-gray-100 @xl/analytics:grid-cols-3 @4xl/analytics:grid-cols-6 dark:bg-slate-800/80">
             {([
               { icon: Eye, iconColor: 'text-sky-500', label: 'Views', value: hasServerAnalytics ? totalViews : '—', subtext: hasServerAnalytics ? undefined : 'Cloud only' },
               ...(typeof totalStarts === 'number' ? [{ icon: MousePointerClick, iconColor: 'text-teal-500', label: 'Starts', value: totalStarts }] : []),

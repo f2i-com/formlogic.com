@@ -63,6 +63,10 @@ export function Switch({
         className={cn(
           'relative inline-flex shrink-0 rounded-full transition-all duration-200',
           'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900',
+          // The track is only ~24px tall. Rather than distort the control, extend its
+          // touch area vertically with a pseudo-element — a 44px tap target on phones
+          // with no layout shift and no change to how the switch looks.
+          "max-sm:before:absolute max-sm:before:-inset-y-2.5 max-sm:before:inset-x-0 max-sm:before:content-['']",
           disabled ? 'cursor-not-allowed' : 'cursor-pointer',
           sizes[size].track,
           checked

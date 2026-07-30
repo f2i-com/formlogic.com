@@ -26,6 +26,22 @@
     --primary-foreground: 255 255 255;
 
     --radius: 0.5rem;
+
+    /* Phone bottom chrome, in ONE place. The fixed MobileNav is h-16 plus the
+       home-indicator inset; the floating chat launcher and desktop chip sit above
+       it, bottom sheets stop at it, and AppShell reserves room below the content
+       for all of it. Those four offsets were separately hand-written as
+       `calc(4rem + env(safe-area-inset-bottom) + …)` and had already drifted — the
+       page reserved 5rem while the launcher reached 7.75rem, so the last row of
+       every list sat under a floating button. Derive, never restate.
+         --fl-mobile-nav-h  : the nav's painted box
+         --fl-mobile-fab-h  : how far the centre Create action protrudes above it
+         --fl-mobile-float  : where a floating control's bottom edge belongs
+         --fl-mobile-reserve: page padding that clears the tallest floating control */
+    --fl-mobile-nav-h: calc(4rem + env(safe-area-inset-bottom, 0px));
+    --fl-mobile-fab-h: 1.5rem;
+    --fl-mobile-float: calc(var(--fl-mobile-nav-h) + 0.75rem);
+    --fl-mobile-reserve: calc(var(--fl-mobile-nav-h) + 4rem);
   }
 
   :root.dark {

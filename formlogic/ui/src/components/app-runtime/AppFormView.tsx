@@ -1127,7 +1127,7 @@ export function AppFormView() {
             <button
               type="button"
               onClick={() => setShowFormView(true)}
-              className={`app-btn-primary fixed right-5 z-20 inline-flex cursor-pointer items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold shadow-lg motion-safe:transition-transform motion-safe:hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 app-ring-primary focus-visible:ring-offset-2 ${(config.app?.settings as { hideNav?: boolean } | undefined)?.hideNav ? 'bottom-[4.5rem]' : 'bottom-5'}`}
+              className={`app-btn-primary fixed right-5 z-20 inline-flex cursor-pointer items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold shadow-lg motion-safe:transition-transform motion-safe:hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 app-ring-primary focus-visible:ring-offset-2 ${(config.app?.settings as { hideNav?: boolean } | undefined)?.hideNav ? 'bottom-[4.5rem]' : 'bottom-[4.5rem] md:bottom-5'}`}
               style={{ marginBottom: 'env(safe-area-inset-bottom)' }}
             >
               <Plus className="h-4 w-4" />
@@ -1201,8 +1201,12 @@ export function AppFormView() {
             <button
               type="button"
               onClick={() => setShowFormView(true)}
-              // Chromeless apps park their Records/Reports pills bottom-right — sit above them.
-              className={`app-btn-primary fixed right-5 z-20 inline-flex cursor-pointer items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold shadow-lg motion-safe:transition-transform motion-safe:hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 app-ring-primary focus-visible:ring-offset-2 ${(config.app?.settings as { hideNav?: boolean } | undefined)?.hideNav ? 'bottom-[4.5rem]' : 'bottom-5'}`}
+              // Phones render a bottom nav below `main` (AppRuntimeShell) while this pill is
+              // FIXED to the viewport, so at bottom-5 it covered the nav's centre tabs —
+              // including "More", the only route to the app's other forms. Stay lifted on
+              // phones; md+ has no bottom nav, so drop back down. Chromeless apps park their
+              // Records/Reports pills bottom-right at every width — sit above those.
+              className={`app-btn-primary fixed right-5 z-20 inline-flex cursor-pointer items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold shadow-lg motion-safe:transition-transform motion-safe:hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 app-ring-primary focus-visible:ring-offset-2 ${(config.app?.settings as { hideNav?: boolean } | undefined)?.hideNav ? 'bottom-[4.5rem]' : 'bottom-[4.5rem] md:bottom-5'}`}
               style={{ marginBottom: 'env(safe-area-inset-bottom)' }}
             >
               <Plus className="h-4 w-4" />

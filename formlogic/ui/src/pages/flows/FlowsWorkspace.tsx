@@ -79,6 +79,7 @@ export function FlowsWorkspace() {
   // The author's forms, fetched once — powers the List/Submit/Update-response form pickers.
   const [forms, setForms] = useState<FlowFormOption[]>([]);
   const [flowBindingsById, setFlowBindingsById] = useState<Record<string, FlowBinding[]>>({});
+  const [flowBindingsErrorById, setFlowBindingsErrorById] = useState<Record<string, string | null>>({});
   const [flowBindingsLoading, setFlowBindingsLoading] = useState<Record<string, boolean>>({});
   // "Run on" (plan §5.7) cloud feedback per flow id: nodes the cloud runner refused
   // (inline warning — the selection stays saveable) and a typed refusal that means the
@@ -192,6 +193,13 @@ export function FlowsWorkspace() {
       if (!api.isDemoMode()) {
         toast.error('Failed to load triggers', typeof res.error === 'string' ? res.error : undefined);
       }
+      // Committing [] here made a failed read indistinguishable from a flow with no
+      // triggers — the panel then said "No triggers yet", i.e. "nothing starts this
+      // automation", about a flow that may well be running in production.
+      setFlowBindingsErrorById((map) => ({
+        ...map,
+        [flow.id]: typeof res.error === 'string' ? res.error : 'Please try again.',
+      }));
       setFlowBindingsById((map) => ({ ...map, [flow.id]: [] }));
       return;
     }
@@ -203,6 +211,7 @@ export function FlowsWorkspace() {
       }))).flat().filter((binding) => bindingReferencesFlow(binding, flow))
       : serverBindings;
     setFlowBindingsById((map) => ({ ...map, [flow.id]: loaded }));
+    setFlowBindingsErrorById((map) => (map[flow.id] ? { ...map, [flow.id]: null } : map));
   }, [forms]);
 
   useEffect(() => {
@@ -514,7 +523,7 @@ export function FlowsWorkspace() {
       {!selectedFlow && (
         <div className="[--fl-demo-banner-h:0px]">
           <Header
-            title="Flows"
+            title="Automations"
             actions={
               <>
                 <AiServicesChip onClick={() => setShowAiServices(true)} />
@@ -606,6 +615,7 @@ export function FlowsWorkspace() {
               forms={forms}
               context={editorContext}
               appFlows={selectedAppFlows}
+              loadError={flowBindingsErrorById[selectedFlow.id] ?? null}
               onRefresh={() => fetchFlowBindings(selectedFlow)}
             />
           </div>
@@ -638,6 +648,7 @@ export function FlowsWorkspace() {
             forms={forms}
             context={editorContext}
             appFlows={selectedAppFlows}
+            loadError={flowBindingsErrorById[selectedFlow.id] ?? null}
             onRefresh={() => fetchFlowBindings(selectedFlow)}
           />
         </FlowMobileDrawer>

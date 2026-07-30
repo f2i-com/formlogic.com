@@ -134,7 +134,7 @@ export function CreateBand() {
   if (mode === 'ai') {
     const canSubmit = prompt.trim() !== '' || pendingImages.length > 0;
     return (
-      <section className="relative mb-8 overflow-hidden rounded-3xl border border-primary-200/80 bg-gradient-to-br from-primary-50 via-white to-primary-50/40 p-5 shadow-sm shadow-primary-900/[0.03] sm:p-6 dark:border-primary-500/25 dark:from-primary-500/10 dark:via-slate-900 dark:to-slate-900">
+      <section className="@container/band relative mb-8 overflow-hidden rounded-3xl border border-primary-200/80 bg-gradient-to-br from-primary-50 via-white to-primary-50/40 p-5 shadow-sm shadow-primary-900/[0.03] sm:p-6 dark:border-primary-500/25 dark:from-primary-500/10 dark:via-slate-900 dark:to-slate-900">
         <div
           className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full bg-primary-200/25 blur-3xl dark:bg-primary-500/10"
           aria-hidden="true"
@@ -144,7 +144,7 @@ export function CreateBand() {
           onClick={dismiss}
           title="Browse the builders instead"
           aria-label="Dismiss the creation prompt"
-          className="absolute right-3 top-3 z-10 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-primary-100/70 hover:text-gray-700 dark:hover:bg-primary-500/20 dark:hover:text-slate-200"
+          className="absolute right-3 top-3 z-10 flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-primary-100/70 hover:text-gray-700 dark:hover:bg-primary-500/20 dark:hover:text-slate-200"
         >
           <X className="h-4 w-4" />
         </button>
@@ -260,7 +260,7 @@ export function CreateBand() {
             </div>
           </div>
 
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="mt-3 flex flex-col gap-2 @2xl/band:flex-row @2xl/band:items-center">
             <span className="flex-none text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-slate-500">
               Try a starting point
             </span>
@@ -271,7 +271,7 @@ export function CreateBand() {
                   type="button"
                   disabled={submitting}
                   onClick={() => startChat(suggestion)}
-                  className="rounded-full border border-gray-200 bg-white/70 px-2.5 py-1 text-xs text-gray-600 transition-colors hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-white/[0.025] dark:text-slate-400 dark:hover:border-primary-500/40 dark:hover:bg-primary-500/10 dark:hover:text-primary-300"
+                  className="inline-flex min-h-9 items-center rounded-full border border-gray-200 bg-white/70 px-3 text-xs text-gray-600 transition-colors hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-50 max-sm:min-h-11 dark:border-slate-700 dark:bg-white/[0.025] dark:text-slate-400 dark:hover:border-primary-500/40 dark:hover:bg-primary-500/10 dark:hover:text-primary-300"
                 >
                   {suggestion}
                 </button>

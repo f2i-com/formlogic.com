@@ -250,7 +250,7 @@ export function DesktopConnectionPopover() {
           isMobile
             ? fixedBottomBar
               ? 'left-4 bottom-[calc(8.25rem+env(safe-area-inset-bottom)+0.75rem)]'
-              : 'left-4 bottom-[calc(4rem+env(safe-area-inset-bottom)+0.75rem)]'
+              : 'left-4 bottom-[var(--fl-mobile-float)]'
             : cn(
                 fixedBottomBar ? 'bottom-[5.25rem]' : 'bottom-4',
                 sidebarCollapsed ? 'left-[4.75rem]' : 'left-[16.75rem]'

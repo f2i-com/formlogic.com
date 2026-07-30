@@ -63,24 +63,41 @@ export interface WidgetDashboardProps extends WidgetDataDeps {
   canEdit?: boolean;
 }
 
-/** Use matchMedia to collapse the grid to a single column on narrow screens. */
-function useNarrow(): boolean {
-  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches);
+/**
+ * Collapse the grid to a single column when the DASHBOARD is narrow — measured on its
+ * own box, not the window.
+ *
+ * This is the app home every member sees. matchMedia('(max-width: 768px)') asked the
+ * wrong question: the host chain is AppRuntimeShell's 256px sidebar at md+ plus 48px of
+ * main padding, so at a 769px viewport the grid had ~465px to render the multi-column
+ * layout in — the window said "wide", the box was phone-sized, and widgets were squeezed
+ * to unreadable slivers. Same arithmetic in the owner-side host with the studio rails.
+ *
+ * Stacking below 640px of CONTAINER width matches what the widgets can actually render.
+ */
+const STACK_BELOW_PX = 640;
+
+function useNarrowContainer(): [React.RefObject<HTMLDivElement | null>, boolean] {
+  const ref = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const mq = window.matchMedia('(max-width: 768px)');
-    const on = () => setNarrow(mq.matches);
-    mq.addEventListener('change', on);
-    return () => mq.removeEventListener('change', on);
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setWidth(el.clientWidth));
+    ro.observe(el);
+    setWidth(el.clientWidth);
+    return () => ro.disconnect();
   }, []);
-  return narrow;
+  // Before the first measurement (width 0) assume narrow: stacking is the safe layout,
+  // and a multi-column first paint that immediately reflows is worse than the reverse.
+  return [ref, width === 0 || width < STACK_BELOW_PX];
 }
 
 export function WidgetDashboard(props: WidgetDashboardProps) {
   const { dashboard, forms, scope, accent } = props;
   const { appSlug } = useParams();
   const navigate = useNavigate();
-  const narrow = useNarrow();
+  const [dashRef, narrow] = useNarrowContainer();
   // Stable per-mount scope for the custom-CSS injection (CSS.escape-safe).
   const scopeId = useMemo(() => `fl-dash-${++dashScopeCounter}`, []);
   const cols = Math.max(1, Math.min(dashboard.cols ?? DEFAULT_COLS, 24));
@@ -230,7 +247,7 @@ export function WidgetDashboard(props: WidgetDashboardProps) {
     : { display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridAutoRows: `${GRID_ROW}px`, gap: GRID_GAP };
 
   return (
-    <div className={`fl-dash-scope ${props.className ?? 'w-full'}`} id={scopeId}>
+    <div ref={dashRef} className={`fl-dash-scope ${props.className ?? 'w-full'}`} id={scopeId}>
       <DashboardCustomCss css={dashboard.customCss} scopeId={scopeId} />
       <div className="fl-dash">
       {showPicker && (

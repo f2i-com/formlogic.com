@@ -116,7 +116,7 @@ export function AppsDashboard() {
           <div className="mb-4 sm:mb-6 flex items-center gap-3">
             <Input
               placeholder="Search…"
-              aria-label="Search apps by name, slug or pack"
+              aria-label="Search apps by name, address or template"
               value={searchQuery}
               onChange={(e) => { setSearchQuery(e.target.value); setAppLimit(APPS_PAGE); }}
               leftIcon={<Search className="h-4 w-4" />}
