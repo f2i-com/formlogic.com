@@ -23,6 +23,9 @@ import { logger } from '../../lib/logger';
 import { getDesktopBaseUrl, type DesktopEventEnvelope } from './desktopTypes';
 import { getDesktopToken } from './desktopPairing';
 import { getDesktopInfo, subscribeDesktopStatus } from './desktopDetection';
+import { oaiyRouteAvailable, subscribeOaiyPaired } from '../oaiy/oaiyRuntime';
+import { subscribeOaiyStatus } from '../oaiy/oaiyDetection';
+import { startOaiyEventPolling, stopOaiyEventPolling } from '../oaiy/oaiyEvents';
 
 const DEDUPE_LRU_SIZE = 512;
 const RECONNECT_MIN_MS = 1000;
@@ -40,6 +43,10 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectDelay = RECONNECT_MIN_MS;
 let unsubscribeDetection: (() => void) | null = null;
 let connectedToken: string | null = null;
+/** Teardown for the OAIY event source (detection + pairing subscriptions). OAIY
+ *  events are polled and fed through the SAME ingest pipeline as the SSE stream,
+ *  so consumers see one merged, deduped stream regardless of runtime. */
+let unsubscribeOaiy: (() => void) | null = null;
 
 /** Minimal envelope validation: the schema's required fields, correctly typed. */
 export function isValidDesktopEvent(value: unknown): value is DesktopEventEnvelope {
@@ -199,23 +206,51 @@ function connectIfReady(): void {
 }
 
 /**
+ * Start/stop OAIY event polling to match readiness: poll only while someone is
+ * subscribed AND OAIY is detected + paired. Polled envelopes feed the shared
+ * ingestDesktopEvent pipeline, so OAIY events dedupe and fan out exactly like SSE
+ * ones. Driven by BOTH OAIY detection changes (runtime appears/vanishes) and
+ * pairing changes (a token is stored/dropped) — either can flip readiness.
+ */
+function syncOaiyPolling(): void {
+  if (listeners.size > 0 && oaiyRouteAvailable()) {
+    startOaiyEventPolling(ingestDesktopEvent);
+  } else {
+    stopOaiyEventPolling();
+  }
+}
+
+/**
  * Subscribe to desktop events. The first subscriber wires up desktop detection (which
  * itself only polls while subscribed) and opens the SSE stream once Desktop is detected
- * AND paired; the last unsubscribe tears everything down. Locally-emitted (mock) events
- * flow regardless of any Desktop being present.
+ * AND paired; it also begins OAIY event polling once OAIY is detected AND paired. The
+ * last unsubscribe tears everything down. Locally-emitted (mock) events flow regardless
+ * of any runtime being present.
  */
 export function subscribeDesktopEvents(listener: DesktopEventListener): () => void {
   listeners.add(listener);
   if (!unsubscribeDetection) {
     unsubscribeDetection = subscribeDesktopStatus(() => connectIfReady());
   }
+  if (!unsubscribeOaiy) {
+    const offStatus = subscribeOaiyStatus(() => syncOaiyPolling());
+    const offPaired = subscribeOaiyPaired(() => syncOaiyPolling());
+    unsubscribeOaiy = () => {
+      offStatus();
+      offPaired();
+    };
+  }
   connectIfReady();
+  syncOaiyPolling();
   return () => {
     listeners.delete(listener);
     if (listeners.size === 0) {
       disconnect();
       unsubscribeDetection?.();
       unsubscribeDetection = null;
+      stopOaiyEventPolling();
+      unsubscribeOaiy?.();
+      unsubscribeOaiy = null;
     }
   };
 }
@@ -230,6 +265,9 @@ export function __resetDesktopEventsForTests(): void {
   disconnect();
   unsubscribeDetection?.();
   unsubscribeDetection = null;
+  stopOaiyEventPolling();
+  unsubscribeOaiy?.();
+  unsubscribeOaiy = null;
   listeners.clear();
   seenKeys.clear();
   reconnectDelay = RECONNECT_MIN_MS;
