@@ -13,7 +13,7 @@ import { CustomDomainsPanel } from '../../components/apps/CustomDomainsPanel';
 import { ShareQrCode } from '../../components/ui/ShareQrCode';
 import { AppLogicPanel } from '../../components/apps/AppLogicPanel';
 import { FlowsPanel } from '../../components/apps/FlowsPanel';
-import { DesktopStatusPanel } from '../../components/desktop/DesktopStatusPanel';
+import { LocalRuntimePanel } from '../../components/desktop/LocalRuntimePanel';
 import { toast } from '../../stores/toastStore';
 import type { App } from '../../types/app';
 
@@ -305,9 +305,9 @@ export function AppDeploySettings() {
         {/* Custom domains */}
         <CustomDomainsPanel appId={appId!} appSlug={app.slug} published={app.status === 'published'} />
 
-        {/* FormLogic Desktop (local companion) — hidden while acting: this panel shows
-            the signed-in ADMIN's own desktop, not the owner's. */}
-        {!acting && <DesktopStatusPanel />}
+        {/* Local runtime (OAIY Desktop, or FormLogic Desktop as fallback) — hidden
+            while acting: this panel shows the signed-in ADMIN's own machine, not the owner's. */}
+        {!acting && <LocalRuntimePanel />}
 
         {/* App logic (QuickJS) */}
         <AppLogicPanel appId={appId!} initialLogic={app.customLogic} onDirtyChange={setLogicDirty} />

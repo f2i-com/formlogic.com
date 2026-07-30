@@ -6,7 +6,8 @@
 // 'none' so authoring stays usable even when the registry is unreadable.
 import { useEffect, useState } from 'react';
 import { getDesktopInfo, subscribeDesktopStatus } from '../../client-runtime/desktop/desktopDetection';
-import { isDesktopPaired } from '../../client-runtime/desktop/desktopPairing';
+import { isDesktopPaired, subscribeDesktopPaired } from '../../client-runtime/desktop/desktopPairing';
+import { subscribeOaiyStatus } from '../../client-runtime/oaiy/oaiyDetection';
 import { api } from '../../lib/api';
 import {
   PRESENCE_POLL_MS,
@@ -22,6 +23,11 @@ export type FlowsDesktopPresence =
   | { kind: 'none'; label?: undefined; lastSeenMs?: undefined };
 
 export function hasLocalDesktopBridge(): boolean {
+  // FormLogic-Desktop-specific on purpose: this signal drives the header
+  // DesktopConnectionPopover, which issues FormLogic Desktop loopback calls when
+  // it reads 'local'. OAIY is preferred by the connector layer independently (via
+  // oaiyRouteAvailable()); folding OAIY in here would make the popover claim a
+  // local bridge and then call the wrong runtime.
   return getDesktopInfo().available && isDesktopPaired();
 }
 
@@ -78,15 +84,24 @@ export function useFlowsDesktopPresence(): FlowsDesktopPresence {
   const [localBridge, setLocalBridge] = useState(() => hasLocalDesktopBridge());
   const [remote, setRemote] = useState<FlowsDesktopPresence | null>(null);
 
-  useEffect(
-    () =>
-      subscribeDesktopStatus((info) => {
-        const local = info.available && isDesktopPaired();
-        setLocalBridge(local);
-        if (local) setRemote(null);
-      }),
-    []
-  );
+  // Recompute the local-bridge signal on a FormLogic Desktop detection OR pairing
+  // change (previously only detection — so pairing while the workspace was open
+  // didn't flip it until the next tick). Separately keep OAIY detection warm here
+  // so a flow run finds OAIY even if the user never opened the runtime panel; this
+  // does NOT change the presence signal (see hasLocalDesktopBridge).
+  useEffect(() => {
+    const recompute = () => {
+      const local = hasLocalDesktopBridge();
+      setLocalBridge(local);
+      if (local) setRemote(null);
+    };
+    const unsubs = [
+      subscribeDesktopStatus(recompute),
+      subscribeDesktopPaired(recompute),
+      subscribeOaiyStatus(() => {}), // keep-warm only
+    ];
+    return () => unsubs.forEach((u) => u());
+  }, []);
 
   useEffect(() => {
     if (localBridge) return;

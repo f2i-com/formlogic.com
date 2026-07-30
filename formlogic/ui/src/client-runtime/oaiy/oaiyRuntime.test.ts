@@ -3,11 +3,14 @@ import {
   __resetOaiyBaseUrlForTests,
   __setOaiyBaseUrlForTests,
   getOaiyToken,
+  isOaiyPaired,
+  listOaiyPlugins,
   mapOaiyErrorCode,
   oaiyConnectorRequest,
   oaiyRouteAvailable,
   probeOaiy,
   setOaiyToken,
+  subscribeOaiyPaired,
   unwrapConnectorEnvelope,
   __resetOaiyDetectionForTests,
 } from './oaiyRuntime';
@@ -185,5 +188,62 @@ describe('token storage', () => {
     expect(getOaiyToken()).toBe('abc');
     setOaiyToken(null);
     expect(getOaiyToken()).toBeNull();
+  });
+});
+
+describe('paired-state notifications', () => {
+  it('isOaiyPaired tracks the token', () => {
+    expect(isOaiyPaired()).toBe(false);
+    setOaiyToken('t');
+    expect(isOaiyPaired()).toBe(true);
+  });
+
+  it('subscribeOaiyPaired fires on store and clear, and stops after unsubscribe', () => {
+    const seen: boolean[] = [];
+    const unsub = subscribeOaiyPaired((p) => seen.push(p));
+    setOaiyToken('t'); // → true
+    setOaiyToken(null); // → false
+    unsub();
+    setOaiyToken('t2'); // no longer observed
+    expect(seen).toEqual([true, false]);
+  });
+});
+
+describe('listOaiyPlugins', () => {
+  it('maps records to the shared summary, taking name/version from the manifest and dropping dir', async () => {
+    mockFetch(() => ({
+      status: 200,
+      body: {
+        plugins: [
+          {
+            id: 'aokie',
+            state: 'running',
+            dir: 'C:/Users/secret/plugins/aokie',
+            manifest: { name: 'Aokie Phone', version: '1.2.0' },
+          },
+          { id: 'bare', state: 'crashed', reason: 'exited 1' },
+        ],
+      },
+    }));
+    setOaiyToken('tok');
+    const rows = await listOaiyPlugins();
+    expect(rows).toEqual([
+      { id: 'aokie', name: 'Aokie Phone', version: '1.2.0', state: 'running', detail: undefined },
+      { id: 'bare', name: undefined, version: undefined, state: 'crashed', detail: 'exited 1' },
+    ]);
+    // No absolute path (OS username) leaks into the summary.
+    expect(JSON.stringify(rows)).not.toContain('secret');
+  });
+
+  it('carries the bearer and returns null when unauthorized', async () => {
+    const { calls } = mockFetch(() => ({ status: 401, body: { error: {} } }));
+    setOaiyToken('tok');
+    expect(await listOaiyPlugins()).toBeNull();
+    expect((calls[0]!.init.headers as Record<string, string>).Authorization).toBe('Bearer tok');
+  });
+
+  it('returns null on a transport failure', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('offline'); }));
+    expect(await listOaiyPlugins()).toBeNull();
   });
 });

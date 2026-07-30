@@ -90,6 +90,7 @@ export function setOaiyToken(token: string | null): void {
     if (typeof sessionStorage !== 'undefined') {
       if (token) sessionStorage.setItem(key, token);
       else sessionStorage.removeItem(key);
+      notifyOaiyPaired();
       return;
     }
   } catch {
@@ -97,6 +98,38 @@ export function setOaiyToken(token: string | null): void {
   }
   if (token) memoryStore.set(key, token);
   else memoryStore.delete(key);
+  notifyOaiyPaired();
+}
+
+/** True when a pairing token is held for the current OAIY instance. */
+export function isOaiyPaired(): boolean {
+  return getOaiyToken() !== null;
+}
+
+// ── Paired-state change notifications ────────────────────────────────────────
+// So the local-runtime panel reacts the moment a token is stored (pairing
+// approved) or dropped (disconnect) — without a reload or a poll. Mirrors
+// desktopPairing.subscribeDesktopPaired.
+type OaiyPairedListener = (paired: boolean) => void;
+const oaiyPairedListeners = new Set<OaiyPairedListener>();
+
+function notifyOaiyPaired(): void {
+  const paired = isOaiyPaired();
+  for (const l of oaiyPairedListeners) {
+    try {
+      l(paired);
+    } catch {
+      /* a listener throwing must not break token storage */
+    }
+  }
+}
+
+/** Subscribe to OAIY pairing-token changes; returns an unsubscribe. Fires on store/clear. */
+export function subscribeOaiyPaired(listener: OaiyPairedListener): () => void {
+  oaiyPairedListeners.add(listener);
+  return () => {
+    oaiyPairedListeners.delete(listener);
+  };
 }
 
 function authHeaders(): Record<string, string> {
@@ -320,6 +353,61 @@ export async function oaiyConnectorAvailable(connectorId: string): Promise<boole
     return (body?.capabilities ?? []).some((c) => c.id.startsWith(prefix) && c.available);
   } catch {
     return false;
+  }
+}
+
+/** A plugin OAIY Desktop hosts, in the shape the local-runtime panel lists —
+ *  the same fields FormLogic Desktop's DesktopPluginSummary exposes, so one panel
+ *  renders either runtime's plugins. Deliberately omits the record's `dir`, which
+ *  is an absolute path leaking the OS username. */
+export interface OaiyPluginSummary {
+  id: string;
+  name?: string;
+  version?: string;
+  /** Lifecycle: running / starting / unhealthy / crashed / disabled / installed. */
+  state: string;
+  /** Present for any non-running state — why it is not serving commands. */
+  detail?: string;
+}
+
+/**
+ * List the plugins OAIY Desktop hosts (GET /api/plugins). Privileged, so it
+ * carries the pairing bearer; returns null when unreachable or unauthorized
+ * (mirrors desktopClient.plugins.list's "no list" outcome — the panel then shows
+ * nothing rather than a stale list). Maps OAIY's PluginRecord to the shared
+ * summary shape, taking name/version from the manifest and dropping `dir`.
+ */
+export async function listOaiyPlugins(): Promise<OaiyPluginSummary[] | null> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const resp = await fetch(`${getOaiyBaseUrl()}/api/plugins`, {
+      method: 'GET',
+      credentials: 'omit',
+      cache: 'no-store',
+      signal: controller.signal,
+      headers: { Accept: 'application/json', ...authHeaders() },
+    });
+    clearTimeout(timer);
+    if (!resp.ok) return null;
+    const body = (await resp.json().catch(() => null)) as {
+      plugins?: Array<{
+        id: string;
+        state?: string;
+        reason?: string;
+        manifest?: { name?: string; version?: string };
+      }>;
+    } | null;
+    if (!Array.isArray(body?.plugins)) return null;
+    return body.plugins.map((p) => ({
+      id: p.id,
+      name: p.manifest?.name,
+      version: p.manifest?.version,
+      state: p.state ?? 'unknown',
+      detail: p.reason,
+    }));
+  } catch {
+    return null;
   }
 }
 

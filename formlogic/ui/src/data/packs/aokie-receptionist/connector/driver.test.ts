@@ -285,7 +285,9 @@ describe('aokie pack connector — status', () => {
   it('Desktop absent without a simulator session: honestly unavailable', async () => {
     const status = await aokie.status();
     expect(status).toMatchObject({ id: 'aokie', available: false, source: 'mock' });
-    expect(status.detail).toContain('not connected');
+    // Honest, actionable detail: no local runtime is connected, connect + pair one.
+    expect(status.detail).toMatch(/no local runtime is connected/i);
+    expect(status.detail).toMatch(/connect and pair/i);
   });
 
   it('reports the simulator status inside an explicit simulator session', async () => {
