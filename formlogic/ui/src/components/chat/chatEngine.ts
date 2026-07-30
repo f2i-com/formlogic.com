@@ -112,6 +112,8 @@ export type ChatTurnOutcome =
 export interface ChatToolActivity {
   id: string;
   name: string;
+  /** Plain-language name for display; `name` stays the wire id. */
+  label?: string;
   /** Raw status word from the wire ('running' | 'done' | 'failed' | …). */
   status: string;
   detail?: string;
@@ -128,6 +130,8 @@ export interface ChatToolProposal {
   /** postInput target — resolved from the proposal frame (see header integration note). */
   requestId: string;
   tool: string;
+  /** Plain-language name for display; `tool` stays the wire id. */
+  toolLabel?: string;
   input: unknown;
   status: 'pending' | 'approved' | 'denied' | 'failed';
   error?: string;
@@ -301,6 +305,55 @@ function toolLinkFromResult(toolName: string, result: unknown): ChatToolActivity
   return null;
 }
 
+/**
+ * What each tool DOES, in the user's words.
+ *
+ * The transcript narrated actions with the raw function name — "create_app_form",
+ * "blueprint_propose_elements" — and confirm mode asked permission the same way, above a
+ * JSON dump of the arguments. Neither is answerable by someone who has never seen an API.
+ * Unknown names fall back to the id, so a tool added server-side still shows something
+ * rather than nothing.
+ */
+const TOOL_LABELS: Record<string, string> = {
+  list_apps: 'Look at your apps',
+  create_app: 'Create an app',
+  update_app: 'Update the app',
+  list_forms: 'Look at your forms',
+  get_form: 'Read a form',
+  create_form: 'Create a form',
+  create_app_form: 'Add a data type to the app',
+  add_form_to_app: 'Attach a form to the app',
+  update_form: 'Update a form',
+  set_app_home: "Design the app's home screen",
+  set_form_screen: "Design a form's screen",
+  list_responses: 'Look at saved records',
+  add_response: 'Save a record',
+  update_response: 'Update a record',
+  delete_response: 'Delete a record',
+  list_flows: 'Look at your automations',
+  get_flow: 'Read an automation',
+  create_flow: 'Create an automation',
+  update_flow: 'Update an automation',
+  delete_flow: 'Delete an automation',
+  list_flow_bindings: 'Check what starts your automations',
+  create_flow_binding: 'Set what starts an automation',
+  update_flow_binding: 'Change what starts an automation',
+  delete_flow_binding: 'Remove an automation trigger',
+  create_report: 'Add a chart',
+  create_document: 'Add a report page',
+  list_blueprints: 'Look at your diagrams',
+  get_blueprint: 'Read a diagram',
+  blueprint_propose_elements: 'Sketch on your diagram',
+  materialize_blueprint: 'Turn your diagram into a real app',
+  connector_command: 'Use a connected device',
+  desktop_status: 'Check FormLogic Desktop',
+};
+
+/** Plain-language name for a tool, falling back to the raw id. */
+export function toolLabel(name: string): string {
+  return TOOL_LABELS[name] ?? name;
+}
+
 /** Normalize a wire object to tool activity, or null when it is not one. */
 export function normalizeToolActivity(raw: Record<string, unknown>): ChatToolActivity | null {
   const type = firstString(raw.type, raw.kind);
@@ -313,6 +366,7 @@ export function normalizeToolActivity(raw: Record<string, unknown>): ChatToolAct
   return {
     id: firstString(raw.id, raw.callId) ?? generateId(),
     name,
+    label: toolLabel(name),
     status,
     ...(firstString(raw.detail, raw.message) && status !== 'failed' ? { detail: firstString(raw.detail, raw.message) } : {}),
     ...(error ? { error } : {}),
@@ -331,6 +385,7 @@ export function normalizeToolProposal(raw: Record<string, unknown>): ChatToolPro
     // callId is the documented fallback (header integration note).
     requestId: firstString(raw.requestId, raw.request_id) ?? callId,
     tool: firstString(raw.tool, raw.name) ?? 'tool',
+    toolLabel: toolLabel(firstString(raw.tool, raw.name) ?? 'tool'),
     input: raw.input ?? raw.arguments ?? null,
     status: 'pending',
   };

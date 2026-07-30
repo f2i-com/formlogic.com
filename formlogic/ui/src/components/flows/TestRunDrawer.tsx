@@ -305,7 +305,7 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
   const hasTimeline = runLog.order.length > 0;
 
   return (
-    <div className="flex h-full min-h-0 w-full max-w-md flex-col border-l border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900">
+    <div className="flex h-full min-h-0 w-full flex-col border-l border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900">
       <PanelHeader
         icon={PlayCircle}
         title="Test run"

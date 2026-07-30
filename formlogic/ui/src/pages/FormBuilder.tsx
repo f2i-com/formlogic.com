@@ -76,6 +76,7 @@ import { useUIStore } from '../stores/uiStore';
 import { SiteChatWidget } from '../components/chat/SiteChatWidget';
 import { useChatDockOffset } from '../components/chat/useChatDockOffset';
 import { FIELD_TYPE_INFO, type FormField, type FieldType, type CustomScreen } from '../types/form';
+import { publicUnfillableFieldLabels } from '../lib/publicForm';
 
 type ModalType = 'script' | 'embed' | 'ai' | 'theme' | 'settings' | 'shortcuts' | 'versions' | 'publishPack' | 'screen' | null;
 
@@ -1582,6 +1583,7 @@ export default function FormBuilder() {
         formId={form.id}
         formTitle={form.title}
         formStatus={form.status}
+        publicUnfillableFields={publicUnfillableFieldLabels(form.fields)}
       />
 
       {activeModal === 'screen' && form.customScreen?.enabled && (
@@ -1643,7 +1645,11 @@ export default function FormBuilder() {
       />
 
       <ConfirmDialog
-        isOpen={pendingDeleteId !== null && !((pendingDeleteUsage ?? 0) > 0)}
+        // Gated on the usage lookup having SETTLED (not `?? 0`): while it was in flight
+        // this simple dialog rendered first and was then swapped for the has-answers
+        // dialog, moving an irreversible confirm button under a cursor already heading
+        // for it. Nothing renders until we know which dialog is the right one.
+        isOpen={pendingDeleteId !== null && pendingDeleteUsage === 0}
         onClose={() => setPendingDeleteId(null)}
         onConfirm={confirmDeleteField}
         title="Delete this field?"
@@ -1654,7 +1660,7 @@ export default function FormBuilder() {
 
       {/* The doomed field has response data — offer keep-as-hidden vs purge. */}
       <DeleteFieldDialog
-        isOpen={pendingDeleteId !== null && (pendingDeleteUsage ?? 0) > 0}
+        isOpen={pendingDeleteId !== null && pendingDeleteUsage !== null && pendingDeleteUsage > 0}
         onClose={() => setPendingDeleteId(null)}
         fieldLabel={form.fields.find((f) => f.id === pendingDeleteId)?.label || 'this field'}
         usageCount={pendingDeleteUsage ?? 0}

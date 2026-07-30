@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, cloneElement, isValidElement, type ReactElement } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Check, ChevronUp, ChevronDown, CheckCircle, ClipboardCheck, Plus } from 'lucide-react';
+import { ArrowLeft, Check, ChevronUp, ChevronDown, CheckCircle, ClipboardCheck, Clock, Plus } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { handleRovingKeys } from '../../lib/a11y';
 import { readableForegroundColor } from '../../lib/color';
@@ -709,6 +709,9 @@ export function AppFormView() {
   const lastFocusedStepRef = useRef(0);
   const [form, setForm] = useState<Record<string, unknown> | null>(null);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
+  // A recoverable draft found in sessionStorage for THIS form — offered, never applied
+  // silently, so nobody is confused by answers they did not just type.
+  const [recoverableDraft, setRecoverableDraft] = useState<Record<string, unknown> | null>(null);
   const [currentStep, setCurrentStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -779,6 +782,31 @@ export function AppFormView() {
     });
   }, []);
 
+  // Tab-scoped so it dies with the tab (sessionStorage, not localStorage): a shared or
+  // kiosk device must not hand the next person someone else's half-typed answers.
+  const draftKey = appSlug && formId ? `formlogic.runtimeDraft.${appSlug}.${formId}` : null;
+
+  useEffect(() => {
+    if (!draftKey || submitted) return;
+    // Write on every change so an in-app navigation (which beforeunload cannot see, and
+    // which resets this component's answers) does not take the answers with it.
+    try {
+      if (Object.keys(answers).length > 0) sessionStorage.setItem(draftKey, JSON.stringify(answers));
+      else sessionStorage.removeItem(draftKey);
+    } catch { /* private mode / quota — a draft is a nicety, never a blocker */ }
+  }, [answers, draftKey, submitted]);
+
+  // Warn before a refresh/close discards a half-filled form. The PUBLIC filler has had
+  // this guard for a while; the member runtime — where staff fill longer forms on phones
+  // that background aggressively — had none, so the same loss happened silently.
+  const hasUnsavedAnswers = Object.keys(answers).length > 0;
+  useEffect(() => {
+    if (submitted || !hasUnsavedAnswers || typeof window === 'undefined') return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [submitted, hasUnsavedAnswers]);
+
   useEffect(() => {
     if (!appSlug || !formId) return;
 
@@ -790,6 +818,14 @@ export function AppFormView() {
     setCurrentStep(0);
     setSubmitted(false);
     setError(null);
+    // Surface (do not apply) any draft left from an earlier visit in this tab.
+    try {
+      const stored = sessionStorage.getItem(`formlogic.runtimeDraft.${appSlug}.${formId}`);
+      const parsed = stored ? (JSON.parse(stored) as Record<string, unknown>) : null;
+      setRecoverableDraft(parsed && Object.keys(parsed).length > 0 ? parsed : null);
+    } catch {
+      setRecoverableDraft(null);
+    }
 
     // Cancellation guard so a slow request for the previous form can't resolve
     // after the new one and render a stale form under the new URL.
@@ -981,6 +1017,10 @@ export function AppFormView() {
       const created = await createResponse(formId, submissionData);
       setSubmittedQueued((created as { queued?: unknown } | null | undefined)?.queued === true);
       setSubmitted(true);
+      setRecoverableDraft(null);
+      try {
+        if (draftKey) sessionStorage.removeItem(draftKey);
+      } catch { /* ignore */ }
       // onAfterSubmit: advisory (success toast / follow-up). Fire-and-forget.
       void runAfterSubmit(submissionData);
       // FormLogic Flows: feed form.submitted through the flow dispatcher (bindings with
@@ -1244,19 +1284,35 @@ export function AppFormView() {
             const m = thankYouField?.properties?.mediaUrl as string | undefined;
             if (!m) return (
               <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6" style={{ backgroundColor: primaryColor }}>
-                <CheckCircle className="h-10 w-10" style={{ color: onPrimaryFor(primaryColor) }} />
+                {submittedQueued
+                  ? <Clock className="h-10 w-10" style={{ color: onPrimaryFor(primaryColor) }} />
+                  : <CheckCircle className="h-10 w-10" style={{ color: onPrimaryFor(primaryColor) }} />}
               </div>
             );
             return (thankYouField?.properties?.mediaType as string | undefined) === 'video'
               ? <video src={m} controls className="w-full rounded-xl max-h-64 mb-6" />
               : <img src={m} alt={(thankYouField?.properties?.mediaAlt as string | undefined) || thankYouField?.label || ''} className="w-full rounded-xl max-h-64 object-contain mb-6" />;
           })()}
-          <h1 className="text-3xl font-bold mb-3 text-gray-900 dark:text-white tracking-tight">{thankYouField?.label?.trim() || 'Thank you!'}</h1>
-          <p className="text-lg text-gray-500 dark:text-slate-400 mb-8 leading-relaxed whitespace-pre-line">{thankYouField?.description?.trim() || 'Your response has been submitted successfully.'}</p>
-          {submittedQueued && (
-            <p className="mb-8 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
-              Saved on this device — it will sync automatically once you're back online.
-            </p>
+          {/* A queued submission is NOT "submitted successfully". Stacking the amber note
+              under that sentence made the screen contradict itself; lead with the truth
+              instead, and keep any owner-authored thank-you text below it rather than
+              suppressing a configured message. */}
+          <h1 className="text-3xl font-bold mb-3 text-gray-900 dark:text-white tracking-tight">
+            {submittedQueued ? 'Saved on this device' : (thankYouField?.label?.trim() || 'Thank you!')}
+          </h1>
+          {submittedQueued ? (
+            <>
+              <p className="text-lg text-gray-500 dark:text-slate-400 mb-4 leading-relaxed">
+                No connection right now — this will send by itself as soon as you&apos;re back online. You can close the app.
+              </p>
+              {thankYouField?.description?.trim() && (
+                <p className="mb-8 text-sm text-gray-500 dark:text-slate-400 whitespace-pre-line">
+                  {thankYouField.description.trim()}
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-lg text-gray-500 dark:text-slate-400 mb-8 leading-relaxed whitespace-pre-line">{thankYouField?.description?.trim() || 'Your response has been submitted successfully.'}</p>
           )}
           <div className="flex flex-wrap gap-3 justify-center">
             {showFormView && (
@@ -1278,7 +1334,7 @@ export function AppFormView() {
                 onClick={() => navigate(`/app/${appSlug}/form/${formId}/responses`)}
                 className={`px-5 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${showFormView ? 'border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800' : 'app-btn-primary'}`}
               >
-                View Responses
+                View records
               </button>
             )}
           </div>
@@ -1403,6 +1459,36 @@ export function AppFormView() {
             className="h-1 transition-all duration-300 rounded-full"
             style={{ width: `${progress}%`, backgroundColor: primaryColor }}
           />
+        </div>
+      )}
+
+      {/* An earlier visit in this tab left answers behind (in-app navigation resets this
+          component, and phones discard backgrounded tabs). Offer them rather than
+          restoring silently — answers appearing on their own are their own confusion. */}
+      {recoverableDraft && Object.keys(answers).length === 0 && (
+        <div className="mx-4 mt-4 flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-sm dark:border-amber-500/30 dark:bg-amber-500/10 sm:flex-row sm:items-center">
+          <p className="min-w-0 flex-1 text-gray-800 dark:text-slate-200">
+            You had started filling this in. Pick up where you left off?
+          </p>
+          <div className="flex flex-none gap-2">
+            <button
+              type="button"
+              onClick={() => { setAnswers(recoverableDraft); setRecoverableDraft(null); }}
+              className="app-btn-primary inline-flex min-h-11 cursor-pointer items-center rounded-lg px-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
+            >
+              Restore my answers
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setRecoverableDraft(null);
+                try { if (draftKey) sessionStorage.removeItem(draftKey); } catch { /* ignore */ }
+              }}
+              className="inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-gray-300 px-4 text-sm font-medium text-gray-700 transition-colors hover:bg-white/60 focus-visible:outline-none focus-visible:ring-2 app-ring-primary dark:border-slate-600 dark:text-slate-200 dark:hover:bg-white/[0.06]"
+            >
+              Start fresh
+            </button>
+          </div>
         </div>
       )}
 

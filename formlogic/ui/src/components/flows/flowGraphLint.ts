@@ -82,10 +82,21 @@ export function lintFlowGraph(graph: WorkflowGraph): string[] {
   return problems;
 }
 
+/**
+ * A shipped placeholder is "not set yet" too.
+ *
+ * Starter templates and imported packs carry values like
+ * `form: 'REPLACE_WITH_CUSTOMERS_FORM_ID'` as an instruction to the person who installs
+ * them. A non-empty string satisfied the required-property lint, so the flow looked
+ * complete and failed only at run time against an id that does not exist. Any
+ * REPLACE_WITH_* value now reports as unset, whatever ships it.
+ */
+const PLACEHOLDER_RE = /^REPLACE_WITH_/;
+
 /** An authored value that reads as "not set yet" for a required-property lint. */
 function isEmptyValue(value: unknown): boolean {
   if (value === undefined || value === null) return true;
-  if (typeof value === 'string') return value.trim() === '';
+  if (typeof value === 'string') return value.trim() === '' || PLACEHOLDER_RE.test(value.trim());
   if (Array.isArray(value)) return value.length === 0;
   if (typeof value === 'object') return Object.keys(value as Record<string, unknown>).length === 0;
   return false;

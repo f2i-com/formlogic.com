@@ -14,6 +14,42 @@ import { runLocationLabel } from './editor/executionLocation';
 import { formatAbsoluteTimeTitle, formatRelativeTime } from './relativeTime';
 import { statusChipStyle } from './runHistoryChip';
 import type { FlowDefinition, FlowRunLog, FlowRunStatus, WorkflowGraphNode } from '../../types/flows';
+import type { FlowRunErrorCode } from '../../types/flows';
+
+/**
+ * Plain-language cause + what to do, for the closed FlowRunErrorCode set.
+ *
+ * A failed run used to report itself as `capability_denied: ...` above a raw JSON dump —
+ * accurate, and useless to the person who has to fix it. The raw code stays visible
+ * beside the sentence so a new, unmapped code is never silently swallowed.
+ */
+const RUN_ERROR_HELP: Record<FlowRunErrorCode, { cause: string; next: string }> = {
+  node_failed: {
+    cause: 'One of the steps failed while it was running.',
+    next: 'Open the automation and check the step named below.',
+  },
+  timeout: {
+    cause: 'It took longer than its time limit and was stopped.',
+    next: 'Either the step it was waiting on is slow, or the limit is too short.',
+  },
+  cancelled: {
+    cause: 'It was stopped before it finished.',
+    next: 'Run it again if that was not deliberate.',
+  },
+  capability_denied: {
+    cause: "A step needed permission this automation doesn't have.",
+    next: 'Open the automation and save it again — saving grants what its steps need.',
+  },
+  invalid_flow: {
+    cause: 'The automation could not be prepared to run.',
+    next: 'Open it and look for steps flagged as needing attention.',
+  },
+  runner_unavailable: {
+    cause: 'Nothing was available to run it.',
+    next: 'If this automation runs on FormLogic Desktop, start Desktop and try again.',
+  },
+};
+
 
 const STATUSES: (FlowRunStatus | 'all')[] = ['all', 'done', 'error', 'timeout', 'queued', 'running', 'cancelled'];
 const PAGE_SIZE = 25;
@@ -302,12 +338,24 @@ function RunRow({ run, nodeLabel, expanded, onToggle }: { run: FlowRunLog; nodeL
             )}
             {run.error && (
               <div className="mb-1.5 text-xs text-red-600 dark:text-red-400">
-                <p>{run.error.code}: {run.error.message}</p>
+                {RUN_ERROR_HELP[run.error.code] ? (
+                  <>
+                    <p className="font-medium">{RUN_ERROR_HELP[run.error.code].cause}</p>
+                    <p className="mt-0.5 text-gray-600 dark:text-slate-400">{RUN_ERROR_HELP[run.error.code].next}</p>
+                  </>
+                ) : (
+                  <p className="font-medium">{run.error.message}</p>
+                )}
                 {run.error.nodeId && (
-                  <p className="mt-0.5">
-                    Node <span className="font-mono">{run.error.nodeId}</span>{nodeLabel ? ` - ${nodeLabel}` : ''}
+                  <p className="mt-0.5 text-gray-600 dark:text-slate-400">
+                    Step: <span className="font-medium">{nodeLabel || run.error.nodeId}</span>
                   </p>
                 )}
+                {/* The raw code and message stay available — they are what a support
+                    conversation needs, and an unmapped code must never vanish. */}
+                <p className="mt-0.5 font-mono text-[11px] text-gray-500 dark:text-slate-500">
+                  {run.error.code}: {run.error.message}
+                </p>
               </div>
             )}
             {(run as { redacted?: boolean }).redacted ? (

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
 import { Modal } from '../components/ui/Modal';
@@ -679,9 +679,11 @@ export function Settings() {
                   <Mail className="h-4 w-4 text-gray-500 dark:text-slate-400" />
                 </div>
                 <p className="text-gray-500 dark:text-slate-400">
-                  Response emails are configured per form. Open a form's{' '}
+                  Response emails are set per form, so they live with the form itself. Open{' '}
+                  <Link to="/forms" className="font-medium text-primary-600 hover:underline dark:text-primary-400">Forms</Link>,
+                  pick a form, then{' '}
                   <span className="font-medium text-gray-700 dark:text-slate-300">Settings → Notifications</span>{' '}
-                  tab to set the recipient address and turn emails on for that form.
+                  to choose who gets an email when someone replies.
                 </p>
               </div>
             </div>

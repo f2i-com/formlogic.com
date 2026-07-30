@@ -147,7 +147,7 @@ describe('SelectionPanel (diagram selection editor)', () => {
       { onSave },
     );
     setValue(byLabel<HTMLInputElement>('Relationship name'), ' places ');
-    setValue(byLabel<HTMLSelectElement>('Relation cardinality'), '1:1');
+    setValue(byLabel<HTMLSelectElement>('How many records link to each other'), '1:1');
     setValue(byLabel<HTMLInputElement>('Relation FK field'), ' customer ');
     clickButton('Save');
     const [props] = onSave.mock.calls[0];

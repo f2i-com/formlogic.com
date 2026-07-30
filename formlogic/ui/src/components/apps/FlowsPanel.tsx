@@ -17,6 +17,7 @@ import { EmptyState } from '../ui/EmptyState';
 import { BindingEditor } from '../flows/bindings/BindingEditor';
 import { deriveFlowConnectors } from '../flows/flowConnectors';
 import type { FlowBinding, FlowDefinition, FlowRunLog } from '../../types/flows';
+import { returnToState } from '../../hooks/useReturnTo';
 
 function statusChip(status: string) {
   const cls =
@@ -65,6 +66,9 @@ function FlowRow({ appId, flow, onSaved }: {
       </span>
       <Link
         to={`/flows?flow=${encodeURIComponent(flow.id)}`}
+        // Carry the origin, so the flow editor's Back returns to this panel rather than
+        // stranding the owner in the automations workspace.
+        state={returnToState(`/apps/${appId}/deploy`, 'Deploy & share')}
         className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-primary-600 hover:bg-primary-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-primary-400 dark:hover:bg-primary-500/10"
       >
         <ExternalLink className="h-3.5 w-3.5" />
@@ -223,7 +227,7 @@ export function FlowsPanel({ appId }: { appId: string; appSlug?: string }) {
   const saveExistingBinding = (binding: FlowBinding) => async (payload: Record<string, unknown>) => {
     const r = await api.updateFlowBinding(appId, binding.id, payload);
     if (r.error || !r.data) {
-      toast.error('Failed to save binding', typeof r.error === 'string' ? r.error : undefined);
+      toast.error('Could not save the trigger', typeof r.error === 'string' ? r.error : undefined);
       return null;
     }
     return r.data.binding;
@@ -232,7 +236,7 @@ export function FlowsPanel({ appId }: { appId: string; appSlug?: string }) {
   const createBinding = async (payload: Record<string, unknown>) => {
     const r = await api.createFlowBinding(appId, payload);
     if (r.error || !r.data) {
-      toast.error('Failed to save binding', typeof r.error === 'string' ? r.error : undefined);
+      toast.error('Could not save the trigger', typeof r.error === 'string' ? r.error : undefined);
       return null;
     }
     return r.data.binding;
@@ -244,7 +248,7 @@ export function FlowsPanel({ appId }: { appId: string; appSlug?: string }) {
     setPendingDeleteBinding(null);
     const r = await api.deleteFlowBinding(appId, binding.id);
     if (r.error) {
-      toast.error('Failed to delete binding', typeof r.error === 'string' ? r.error : undefined);
+      toast.error('Could not delete the trigger', typeof r.error === 'string' ? r.error : undefined);
       return;
     }
     setBindings((list) => list.filter((b) => b.id !== binding.id));
@@ -302,10 +306,10 @@ export function FlowsPanel({ appId }: { appId: string; appSlug?: string }) {
           {flows.length > 0 && (
             <div>
               <div className="mb-2 flex items-center justify-between">
-                <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300">Event bindings</h4>
+                <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300">Triggers</h4>
                 {!showNewBinding && (
                   <Button variant="outline" size="sm" onClick={() => setShowNewBinding(true)} leftIcon={<Plus className="h-3.5 w-3.5" />}>
-                    Add binding
+                    Add trigger
                   </Button>
                 )}
               </div>

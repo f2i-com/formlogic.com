@@ -51,7 +51,12 @@ describe('CapabilityReview', () => {
     // Exactly the two reviewable grants get checkboxes — NOT the flow-declared
     // connector.aokie.call.dial (offering a control that can't be enforced).
     expect(html.match(/type="checkbox"/g)?.length).toBe(2);
-    expect(html).toMatch(/checked[^>]*>\s*<span[^>]*>connector\.aokie\.call\.answer/);
+    // Each grant now leads with a plain-language sentence; the raw id stays visible as
+    // secondary detail, so it must appear either way.
+    expect(html).toContain('Answer incoming calls on your connected phone');
+    expect(html).toContain('connector.aokie.call.answer');
+    // The ticked grant does not repeat its "if you leave this off" consequence.
+    expect(html).not.toContain('Calls will not be answered for you.');
     // Effect permissions are shown but never as approve/deny.
     expect(html).toContain('formlogic.responses.write');
     expect(html).toContain('ui.toast');

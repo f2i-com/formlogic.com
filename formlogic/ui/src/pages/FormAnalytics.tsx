@@ -20,6 +20,7 @@ import { cn, formatDate, sanitizeFilename, parseServerDate } from '../lib/utils'
 import { isEncryptedEnvelope } from '../lib/crypto/envelope';
 import { useFittedColumns } from '../hooks/useFittedColumns';
 import { EmbedModal } from '../components/builder/EmbedModal';
+import { publicUnfillableFieldLabels } from '../lib/publicForm';
 
 interface DailyResponse {
   day: string;
@@ -583,24 +584,34 @@ export default function FormAnalytics() {
               </Button>
               {exportMenuOpen && (
                 <div role="menu" aria-label="Export options" className="absolute right-0 mt-1.5 w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 z-50">
-                  <button
-                    role="menuitem"
-                    type="button"
-                    onClick={handleExportCSV}
-                    className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer"
-                  >
-                    <Download className="h-4 w-4 text-purple-500 dark:text-purple-400" />
-                    Export CSV
-                  </button>
-                  <button
-                    role="menuitem"
-                    type="button"
-                    onClick={handleExportJson}
-                    className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer"
-                  >
-                    <FileJson className="h-4 w-4 text-green-500 dark:text-green-400" />
-                    Export JSON
-                  </button>
+                  {isPrivateForm ? (
+                    <p className="px-3 py-2 text-xs text-gray-500 dark:text-slate-400">
+                      This form is private, so answers can only be exported where they can be decrypted —
+                      open <span className="font-medium">Responses</span> and use the decrypted spreadsheet
+                      export there.
+                    </p>
+                  ) : (
+                    <>
+                      <button
+                        role="menuitem"
+                        type="button"
+                        onClick={handleExportCSV}
+                        className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer"
+                      >
+                        <Download className="h-4 w-4 text-purple-500 dark:text-purple-400" />
+                        Spreadsheet (.csv)
+                      </button>
+                      <button
+                        role="menuitem"
+                        type="button"
+                        onClick={handleExportJson}
+                        className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer"
+                      >
+                        <FileJson className="h-4 w-4 text-green-500 dark:text-green-400" />
+                        Data file (.json) — for developers
+                      </button>
+                    </>
+                  )}
                   <button
                     role="menuitem"
                     type="button"
@@ -642,14 +653,14 @@ export default function FormAnalytics() {
         <Card className="overflow-hidden">
           <div className="grid grid-cols-2 gap-px bg-gray-100 @xl/analytics:grid-cols-3 @4xl/analytics:grid-cols-6 dark:bg-slate-800/80">
             {([
-              { icon: Eye, iconColor: 'text-sky-500', label: 'Views', value: hasServerAnalytics ? totalViews : '—', subtext: hasServerAnalytics ? undefined : 'Cloud only' },
-              ...(typeof totalStarts === 'number' ? [{ icon: MousePointerClick, iconColor: 'text-teal-500', label: 'Starts', value: totalStarts }] : []),
-              { icon: Users, iconColor: 'text-blue-500', label: 'Responses', value: totalResponses },
-              { icon: CheckCircle, iconColor: 'text-green-500', label: 'Completion', value: hasServerAnalytics ? `${Math.round(completionRate)}%` : '—', subtext: hasServerAnalytics ? undefined : 'Cloud only' },
-              { icon: Clock, iconColor: 'text-purple-500', label: 'Avg. time', value: avgCompletionTime > 60 ? `${Math.floor(avgCompletionTime / 60)}m` : `${avgCompletionTime}s` },
-              { icon: TrendingUp, iconColor: 'text-orange-500', label: 'This week', value: weeklyTrend.thisWeek, trend: { pct: weeklyTrend.pct, label: 'vs last' } },
-            ] as Array<{ icon: ElementType; iconColor: string; label: string; value: ReactNode; subtext?: string; trend?: { pct: number | null; label?: string } }>).map((m) => (
-              <div key={m.label} className="bg-white dark:bg-slate-900/50 p-3.5 sm:p-4 min-w-0">
+              { icon: Eye, iconColor: 'text-sky-500', label: 'Views', value: hasServerAnalytics ? totalViews : '—', subtext: hasServerAnalytics ? undefined : 'Cloud only', help: 'Times the form was opened.' },
+              ...(typeof totalStarts === 'number' ? [{ icon: MousePointerClick, iconColor: 'text-teal-500', label: 'Starts', value: totalStarts, help: 'Times someone began answering after opening it.' }] : []),
+              { icon: Users, iconColor: 'text-blue-500', label: 'Responses', value: totalResponses, help: 'Completed submissions you received.' },
+              { icon: CheckCircle, iconColor: 'text-green-500', label: 'Completion', value: hasServerAnalytics ? `${Math.round(completionRate)}%` : '—', subtext: hasServerAnalytics ? undefined : 'Cloud only', help: 'Of the people who started, how many finished.' },
+              { icon: Clock, iconColor: 'text-purple-500', label: 'Avg. time', value: avgCompletionTime > 60 ? `${Math.floor(avgCompletionTime / 60)}m` : `${avgCompletionTime}s`, help: 'How long a submission takes on average.' },
+              { icon: TrendingUp, iconColor: 'text-orange-500', label: 'This week', value: weeklyTrend.thisWeek, trend: { pct: weeklyTrend.pct, label: 'vs last' }, help: 'Responses in the last seven days, compared with the week before.' },
+            ] as Array<{ icon: ElementType; iconColor: string; label: string; value: ReactNode; subtext?: string; help?: string; trend?: { pct: number | null; label?: string } }>).map((m) => (
+              <div key={m.label} className="bg-white dark:bg-slate-900/50 p-3.5 sm:p-4 min-w-0" title={m.help}>
                 <div className="flex items-center gap-1.5 text-gray-400 dark:text-slate-500">
                   <m.icon className={cn('h-3.5 w-3.5 flex-none', m.iconColor)} aria-hidden="true" />
                   <span className="text-[11px] font-medium uppercase tracking-wide truncate">{m.label}</span>
@@ -667,6 +678,9 @@ export default function FormAnalytics() {
                   </span>
                 )}
                 {m.subtext && <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5 truncate">{m.subtext}</p>}
+                {m.help && (
+                  <p className="mt-1 hidden text-[11px] leading-snug text-gray-400 @4xl/analytics:block dark:text-slate-500">{m.help}</p>
+                )}
               </div>
             ))}
           </div>
@@ -940,6 +954,7 @@ export default function FormAnalytics() {
         formId={form.id}
         formTitle={form.title}
         formStatus={form.status}
+        publicUnfillableFields={publicUnfillableFieldLabels(form.fields)}
       />
     </div>
   );

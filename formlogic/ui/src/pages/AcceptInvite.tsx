@@ -90,7 +90,11 @@ export function AcceptInvite() {
               </div>
               <h1 className="text-xl font-semibold text-gray-900 dark:text-white tracking-tight">Couldn't accept the invitation</h1>
               <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">{errorMsg}</p>
-              <p className="text-xs text-gray-400 dark:text-slate-500 mt-2">Make sure you're signed in with the email the invite was sent to ({user.email}).</p>
+              <p className="mt-2 text-xs text-gray-400 dark:text-slate-500">
+                You&apos;re signed in as <span className="font-medium">{user.email}</span>. An invitation only
+                works for the address it was sent to — if that isn&apos;t this one, sign out and sign in with
+                the invited address.
+              </p>
               <div className="flex flex-col gap-2 mt-6">
                 <Button
                   isLoading={signingOut}

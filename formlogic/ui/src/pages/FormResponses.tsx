@@ -59,6 +59,7 @@ import { Badge } from '../components/ui/Badge';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { CsvImportWizard } from '../components/builder';
 import type { Form, LocalFormResponse } from '../types/form';
+import { publicUnfillableFieldLabels } from '../lib/publicForm';
 
 const ITEMS_PER_PAGE = 10;
 
@@ -401,9 +402,20 @@ function FormResponses() {
       const linkText = r._resolved
         ? Object.values(r._resolved).flatMap((v) => asResolvedList(v).map((x) => x.display)).join(' ')
         : '';
-      return { r, hay: (JSON.stringify(r.answers) + ' ' + r.id + ' ' + linkText).toLowerCase() };
+      // Index what the table SHOWS, not only what is stored. Choice fields store
+      // `option_2` while displaying "Needs a callback", and dates store an ISO string
+      // while displaying "28 Jul 2026" — so searching for the words on screen found
+      // nothing. Every field is indexed, not just the columns that happen to fit.
+      const displayText = (form?.fields ?? [])
+        .map((f) => formatValue(r.answers[f.id], f.type, f.properties?.options, displayTz))
+        .join(' ');
+      // The raw JSON stays appended so pasting a stored value still matches.
+      return {
+        r,
+        hay: (displayText + ' ' + JSON.stringify(r.answers) + ' ' + r.id + ' ' + linkText).toLowerCase(),
+      };
     }),
-    [viewResponses]
+    [viewResponses, form, displayTz]
   );
 
   // Filter and sort responses
@@ -827,7 +839,7 @@ function FormResponses() {
                 <ChevronDown className="h-4 w-4 ml-1" />
               </Button>
               {exportMenuOpen && (
-                <div role="menu" aria-label="Export options" className="absolute right-0 mt-1.5 w-56 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 z-50">
+                <div role="menu" aria-label="Export options" className="absolute right-0 mt-1.5 w-72 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 z-50">
                   {/* Private forms: server exports are ciphertext (§9.2 refuses the
                       answer-bearing ones). Offer a full-decrypt CSV instead; SQLite
                       (ciphertext bundle) stays available. */}
@@ -841,7 +853,7 @@ function FormResponses() {
                       className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                     >
                       <Download className="h-4 w-4 text-purple-500 dark:text-purple-400" />
-                      Export CSV (decrypt all)
+                      Spreadsheet (.csv) — every record, decrypted
                     </button>
                   )}
                   {storageMode === 'api' && !isPrivateForm && (
@@ -853,7 +865,7 @@ function FormResponses() {
                         className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer"
                       >
                         <Download className="h-4 w-4 text-purple-500 dark:text-purple-400" />
-                        Export CSV
+                        Spreadsheet (.csv) — opens in Excel or Sheets
                       </button>
                       <button
                         role="menuitem"
@@ -862,7 +874,7 @@ function FormResponses() {
                         className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer"
                       >
                         <FileJson className="h-4 w-4 text-green-500 dark:text-green-400" />
-                        Export JSON
+                        Data file (.json) — for developers
                       </button>
                     </>
                   )}
@@ -874,7 +886,7 @@ function FormResponses() {
                       className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer"
                     >
                       <Database className="h-4 w-4 text-blue-500 dark:text-blue-400" />
-                      Download SQLite{isPrivateForm ? ' (encrypted)' : ''}
+                      Database file (.sqlite){isPrivateForm ? ' — still encrypted' : ''}
                     </button>
                   )}
                   <button
@@ -886,8 +898,14 @@ function FormResponses() {
                     className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                   >
                     <Filter className="h-4 w-4 text-amber-500 dark:text-amber-400" />
-                    CSV (filtered view)
+                    Spreadsheet (.csv) — only what your filters show
                   </button>
+                  {/* Only the last option respects the search/status filters. That was
+                      never stated, so an owner who had filtered to 12 rows could get all
+                      300 and not notice. */}
+                  <p className="border-t border-gray-100 px-3 py-2 text-[11px] text-gray-500 dark:border-slate-800 dark:text-slate-400">
+                    Everything above downloads all records, ignoring your current filters.
+                  </p>
                 </div>
               )}
             </div>
@@ -917,7 +935,7 @@ function FormResponses() {
         {/* E2EE: progressive-fetch cap banner (plan SS10) - never a silent partial. */}
         {isPrivateForm && !vaultLocked && privateCapInfo && (
           <div className="mb-6 rounded-xl border border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 p-3 text-sm text-blue-800 dark:text-blue-200">
-            Searched the first {privateCapInfo.shown.toLocaleString()} of {privateCapInfo.total.toLocaleString()} records. Use "Export CSV (decrypt all)" for the complete set.
+            Searched the first {privateCapInfo.shown.toLocaleString()} of {privateCapInfo.total.toLocaleString()} records. Use the decrypted spreadsheet export for the complete set.
           </div>
         )}
 
@@ -1383,6 +1401,7 @@ function FormResponses() {
         formId={form.id}
         formTitle={form.title}
         formStatus={form.status}
+        publicUnfillableFields={publicUnfillableFieldLabels(form.fields)}
       />
 
       {/* CSV Import Wizard */}

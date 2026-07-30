@@ -14,8 +14,8 @@ const FIELD_CATEGORIES = {
 
 /** Palette-only presets: separate cards that create a PRECONFIGURED base type
  *  (so the whole storage/export/backup pipeline stays the base type's). */
-const FIELD_PRESETS: Array<{ preset: string; type: FieldType; label: string; icon: string; category: string }> = [
-  { preset: 'camera', type: 'file_upload', label: 'Camera', icon: 'Camera', category: 'advanced' },
+const FIELD_PRESETS: Array<{ preset: string; type: FieldType; label: string; icon: string; category: string; description?: string; keywords?: string[] }> = [
+  { preset: 'camera', type: 'file_upload', label: 'Camera', icon: 'Camera', category: 'advanced', description: 'Take a photo with the device camera.', keywords: ['photo', 'picture', 'image', 'scan', 'snap'] },
 ];
 
 // Field types not yet supported on private (E2EE) forms (plan SS9.1): file/camera
@@ -34,16 +34,18 @@ export function FieldPalette({ onAddField, isPrivate = false }: { onAddField: (t
           map[info.category].push({ type: type as FieldType, ...info });
           return map;
         },
-        {} as Record<string, Array<{ type: FieldType; label: string; icon: string; preset?: string }>>
+        {} as Record<string, Array<{ type: FieldType; label: string; icon: string; preset?: string; description?: string; keywords?: string[] }>>
       );
       for (const p of FIELD_PRESETS) {
         if (!acc[p.category]) acc[p.category] = [];
-        acc[p.category].push({ type: p.type, label: p.label, icon: p.icon, preset: p.preset });
+        acc[p.category].push({ type: p.type, label: p.label, icon: p.icon, preset: p.preset, description: p.description, keywords: p.keywords });
       }
       return acc;
     },
     [],
   );
+
+  const searching = query.trim().length > 0;
 
   const grouped = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -53,7 +55,10 @@ export function FieldPalette({ onAddField, isPrivate = false }: { onAddField: (t
       fields: (fieldsByCategory[category] ?? []).filter((field) => (
         q === '' ||
         field.label.toLowerCase().includes(q) ||
-        field.type.toLowerCase().includes(q)
+        field.type.toLowerCase().includes(q) ||
+        // "photo" should find Camera, "total" should find Calculated.
+        (field.keywords ?? []).some((k) => k.includes(q)) ||
+        (field.description ?? '').toLowerCase().includes(q)
       )),
     })).filter((group) => group.fields.length > 0);
   }, [fieldsByCategory, query]);
@@ -78,7 +83,7 @@ export function FieldPalette({ onAddField, isPrivate = false }: { onAddField: (t
           <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider mb-2">
             {title}
           </h3>
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className={searching ? 'grid grid-cols-1 gap-1.5' : 'grid grid-cols-2 gap-1.5'}>
             {fields.map((field) => {
               const IconComponent = ICON_MAP[field.icon] || HelpCircle;
               const blocked = isPrivate && (PRIVATE_BLOCKED_TYPES.has(field.type) || (field.preset ? PRIVATE_BLOCKED_PRESETS.has(field.preset) : false));
@@ -87,7 +92,9 @@ export function FieldPalette({ onAddField, isPrivate = false }: { onAddField: (t
                   key={field.preset ?? field.type}
                   onClick={() => { if (!blocked) onAddField(field.type, field.preset); }}
                   disabled={blocked}
-                  title={blocked ? 'Not yet supported on private forms' : field.label}
+                  title={blocked
+                    ? 'Not yet supported on private forms'
+                    : field.description ? `${field.label} — ${field.description}` : field.label}
                   className={blocked
                     ? 'flex min-w-0 items-center gap-2 p-2.5 sm:p-1.5 text-left text-sm rounded-lg border border-gray-200 dark:border-slate-700 opacity-40 cursor-not-allowed'
                     : 'flex min-w-0 items-center gap-2 p-2.5 sm:p-1.5 text-left text-sm rounded-lg border border-gray-200 dark:border-slate-700 hover:border-primary-500/50 hover:bg-primary-50/60 dark:hover:bg-primary-500/10 active:scale-[0.98] motion-safe:transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500'}
@@ -98,7 +105,18 @@ export function FieldPalette({ onAddField, isPrivate = false }: { onAddField: (t
                   >
                     <IconComponent className="h-4 w-4" />
                   </span>
-                  <span className="min-w-0 text-gray-700 dark:text-slate-300 truncate">{field.label}</span>
+                  {/* The palette is a narrow two-column dock, so descriptions are shown
+                      while SEARCHING — when the list is short and the owner is actively
+                      looking for the right question type. Otherwise they stay in the
+                      tooltip and the density the builder is designed around is kept. */}
+                  <span className="min-w-0">
+                    <span className="block truncate text-gray-700 dark:text-slate-300">{field.label}</span>
+                    {searching && field.description && (
+                      <span className="mt-0.5 block text-[11px] leading-snug text-gray-400 dark:text-slate-500">
+                        {field.description}
+                      </span>
+                    )}
+                  </span>
                 </button>
               );
             })}

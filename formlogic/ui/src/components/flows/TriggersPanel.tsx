@@ -22,6 +22,7 @@ import { FLOW_EVENT_CATALOG } from './flowEventCatalog';
 import { EMPTY_FLOW_EDITOR_CONTEXT, type FlowEditorContext } from './editor/nodeCatalog';
 import type { FlowFormOption } from './editor/NodeProperties';
 import type { FlowBinding, FlowDefinition } from '../../types/flows';
+import { triggerRunSummary } from './bindings/triggerVocabulary';
 
 interface TriggersPanelProps {
   flow: FlowDefinition;
@@ -43,10 +44,8 @@ function eventLabel(event: string): string {
   return entry?.label ?? event.split('.').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
 }
 
-function conditionSummary(binding: FlowBinding): string {
-  const expr = binding.condition?.expr?.trim();
-  return expr ? `if ${expr}` : 'No condition';
-}
+// (conditionSummary retired — triggerRunSummary in bindings/triggerVocabulary composes the
+// mode and the condition into one sentence, shared with the editor's "When it runs" copy.)
 
 function formLabel(binding: FlowBinding, forms: FlowFormOption[]): string | null {
   if (!binding.formId) return null;
@@ -224,8 +223,16 @@ export function TriggersPanel({
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{eventLabel(binding.event)}</p>
                     <p className="truncate font-mono text-[11px] text-gray-500 dark:text-slate-400">{binding.event}</p>
-                    <p className="mt-1 truncate text-xs text-gray-500 dark:text-slate-400">
-                      {binding.mode} - {conditionSummary(binding)}
+                    {/* One sentence about behaviour, from the SAME copy the editor's
+                        "When it runs" select uses, so the row and the editor cannot
+                        disagree. This used to read "async - No condition": the raw enum
+                        plus a double negative, and a paused trigger looked identical to
+                        a live one. */}
+                    <p
+                      className="mt-1 truncate text-xs text-gray-500 dark:text-slate-400"
+                      title={binding.condition?.expr || undefined}
+                    >
+                      {triggerRunSummary(binding.mode, binding.condition?.expr)}
                     </p>
                     {binding.formId && (
                       <button

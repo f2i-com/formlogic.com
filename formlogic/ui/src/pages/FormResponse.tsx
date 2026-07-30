@@ -459,22 +459,31 @@ export function FieldResponse({
         return (
           <div className="space-y-3" tabIndex={-1} role="group" aria-label={field.label} aria-required={required || undefined}>
             {/* Mode toggle */}
+            {/* Switching mode DISCARDS the other form of signature — the answer holds one
+                string, and the canvas is drawn imperatively (it never repaints from the
+                stored data URL), so genuinely preserving both would need the canvas to
+                rehydrate. Until it does, never discard silently: ask first, and only when
+                there is actually something to lose. */}
             <div className="flex gap-2 text-sm">
               <button
                 type="button"
                 onClick={() => {
-                  // Switch to draw mode, clear typed value
+                  if (!isTypedSignature) return;
+                  if (typedName && !window.confirm('Clear the name you typed and draw your signature instead?')) return;
                   onChange(null);
                 }}
-                className={`px-3 py-1.5 rounded-lg border transition-colors cursor-pointer ${!isTypedSignature ? 'border-current font-medium' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400'}`}
+                aria-pressed={!isTypedSignature}
+                className={`inline-flex min-h-11 items-center rounded-lg border px-3 transition-colors cursor-pointer ${!isTypedSignature ? 'border-current font-medium' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400'}`}
                 style={!isTypedSignature ? { borderColor: primaryColor, color: primaryColor } : undefined}
               >
-                Draw
+                Draw it
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  // Switch to type mode
+                  if (isTypedSignature) return;
+                  const hasDrawing = typeof value === 'string' && value.length > 0;
+                  if (hasDrawing && !window.confirm('Clear the signature you drew and type your name instead?')) return;
                   const canvas = document.getElementById(signatureCanvasId) as HTMLCanvasElement;
                   if (canvas) {
                     const ctx = canvas.getContext('2d');
@@ -482,10 +491,11 @@ export function FieldResponse({
                   }
                   onChange('typed:');
                 }}
-                className={`px-3 py-1.5 rounded-lg border transition-colors cursor-pointer ${isTypedSignature ? 'border-current font-medium' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400'}`}
+                aria-pressed={isTypedSignature}
+                className={`inline-flex min-h-11 items-center rounded-lg border px-3 transition-colors cursor-pointer ${isTypedSignature ? 'border-current font-medium' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400'}`}
                 style={isTypedSignature ? { borderColor: primaryColor, color: primaryColor } : undefined}
               >
-                Type
+                Type my name
               </button>
             </div>
 
@@ -742,6 +752,21 @@ export function FieldResponse({
         )}
       </div>
       {fieldEl}
+      {/* The message lives WITH the field, so it is visible wherever the field is and
+          `aria-describedby` above actually resolves. Classic mode used to render the text
+          once, next to the Submit button: the visitor was scrolled up to question 3 while
+          the only explanation sat fifteen screens below, and the field announced itself
+          invalid pointing at an element that did not exist. */}
+      {error && (
+        <p
+          id={errorId}
+          role="alert"
+          aria-live="polite"
+          className="mt-3 text-sm font-medium text-red-600 dark:text-red-400"
+        >
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -810,6 +835,9 @@ export default function FormResponse() {
   const { formId } = useParams<{ formId: string }>();
   // Pre-auth instance flags — carries the admin's maintenance message for embeds.
   const publicConfig = usePublicConfig();
+  // Whether THIS viewer is signed in — a linked_record picker can only be scoped to a
+  // signed-in owner's records, so anonymous visitors never get that step (visibleFields).
+  const viewer = useAuthStore((s) => s.user);
   const { getForm, setFormLocal } = useFormStore();
   const {
     startResponse,
@@ -832,6 +860,9 @@ export default function FormResponse() {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Set when the SERVER refuses the submission as closed/over quota — a permanent
+  // refusal, shown as the closed screen rather than a retryable field error.
+  const [closedAfterSubmit, setClosedAfterSubmit] = useState<string | null>(null);
   // Classic mode: id of the field the current error belongs to, so the per-control
   // aria-invalid/aria-describedby wiring (already supported by FieldResponse) activates
   // and keyboard/SR focus can land on the offending field.
@@ -1048,9 +1079,17 @@ export default function FormResponse() {
       // thank_you is rendered as the post-submit success screen, not an in-form step.
       // welcome_screen IS shown (as a leading content step). hidden fields are never shown.
       if (f.type === 'thank_you' || f.type === 'hidden') return false;
+      // A linked_record picker needs a signed-in owner to scope the lookup to (see the
+      // 'linked_record' case in FieldResponse), so an anonymous visitor got a grey
+      // "available in published apps only" sentence with NO control. If the author also
+      // marked it required, the form became permanently unsubmittable: validation
+      // demanded an answer to a question that rendered no input. Drop it from the steps
+      // entirely rather than showing a question nobody can answer — the owner is warned
+      // about it where they share the form.
+      if (f.type === 'linked_record' && !viewer) return false;
       return isFieldVisible(f.id);
     });
-  }, [form, isFieldVisible]);
+  }, [form, isFieldVisible, viewer]);
 
   // NIGO ("not in good order") dashboard — same wiring as the builder preview/app runtime,
   // gated on the form's showNigoDashboard setting.
@@ -1274,17 +1313,26 @@ export default function FormResponse() {
     );
   }
 
-  if (form.settings.isClosed) {
+  if (form.settings.isClosed || closedAfterSubmit) {
     return (
       <div
-        className="min-h-screen flex items-center justify-center p-4"
+        className="min-h-screen min-h-dvh flex items-center justify-center p-4"
         style={{ backgroundColor: form.theme.backgroundColor }}
       >
-        <div className="text-center" style={{ color: form.theme.textColor }}>
-          <h1 className="text-2xl font-bold mb-2 tracking-tight">Form Closed</h1>
+        <div className="max-w-md text-center" style={{ color: form.theme.textColor }}>
+          <h1 className="text-2xl font-bold mb-2 tracking-tight">
+            {closedAfterSubmit ? 'This form has closed' : 'Form Closed'}
+          </h1>
           <p className="opacity-70">
-            {form.settings.closedMessage || 'This form is no longer accepting responses.'}
+            {closedAfterSubmit || form.settings.closedMessage || 'This form is no longer accepting responses.'}
           </p>
+          {closedAfterSubmit && (
+            // Say it outright: they filled the whole thing in and it was not kept.
+            <p className="mt-4 text-sm opacity-70">
+              Your answers were not saved. If you need to send them, please contact whoever shared this
+              form with you.
+            </p>
+          )}
         </div>
       </div>
     );
@@ -1397,12 +1445,17 @@ export default function FormResponse() {
       return;
     }
 
-    // Server persistence. For a PUBLISHED (server-backed) form while ONLINE, a
-    // server rejection means the response was NOT saved — surface it and keep the
-    // user on the form rather than showing a success screen that lies. For
-    // local-only/draft forms, or when offline (the service worker queues the POST
-    // for retry), keep the best-effort behavior and don't block the user.
-    const serverBacked = form.status === 'published';
+    // Server persistence. A server rejection means the response was NOT saved —
+    // surface it and keep the user on the form rather than showing a success screen
+    // that lies. When offline the service worker queues the POST for retry, which is
+    // handled by the classifier below.
+    //
+    // Keyed on STORAGE MODE, not on `status === 'published'`: a draft (or archived, or
+    // app-scoped) form served over the cloud gets a definitive 403/404 from this
+    // endpoint, and swallowing that showed the visitor "submitted successfully" for a
+    // response the server had refused outright. Only a genuinely local-only form is
+    // allowed to keep answers locally and call that success.
+    const serverBacked = useFormStore.getState().storageMode === 'api' || api.isAdminActing();
     let serverFailed = false;
     let queuedForSync = false;
     try {
@@ -1433,9 +1486,24 @@ export default function FormResponse() {
           });
           if (outcome === 'queued') {
             queuedForSync = true;
+          } else if (result.status === 403) {
+            // The server refuses with 403 when the form has been closed or has hit its
+            // response quota (ResponseController::runCreatePipeline). That is PERMANENT,
+            // so showing the owner's message as a small red validation line beside an
+            // enabled Submit button invited the visitor to keep tapping. Switch to the
+            // closed screen instead, and say plainly that the answers were not saved.
+            setClosedAfterSubmit(
+              typeof result.error === 'string'
+                ? result.error
+                : 'This form has stopped accepting responses.'
+            );
+            return;
           } else {
             serverFailed = true;
-            setSubmitError(typeof result.error === 'string' ? result.error : 'Your response could not be submitted. Please try again.');
+            // The api layer's string can be a raw transport message ("Failed to fetch"),
+            // which means nothing to a visitor. Log it and say something actionable.
+            logger.error('Response submit refused:', result.error);
+            setSubmitError('We couldn’t send your answers just now. Nothing has been lost — check your connection and tap Submit again.');
           }
         } else {
           logger.warn('Response not persisted to server (kept locally):', result.error);
@@ -1445,7 +1513,7 @@ export default function FormResponse() {
       logger.error('Failed to submit response to server', err);
       if (serverBacked) {
         serverFailed = true;
-        setSubmitError('Your response could not be submitted. Please try again.');
+        setSubmitError('We couldn’t send your answers just now. Nothing has been lost — check your connection and tap Submit again.');
       }
     } finally {
       setIsSubmitting(false);
@@ -1672,28 +1740,28 @@ export default function FormResponse() {
       if (f.validation?.length) {
         for (const rule of f.validation) {
           if (rule.type === 'minLength' && typeof answer === 'string' && answer.length < (rule.value as number)) {
-            setSubmitError(`${f.label}: ${rule.message || `Minimum ${rule.value} characters required`}`);
+            failClassic(f.id, `${f.label}: ${rule.message || `Minimum ${rule.value} characters required`}`);
             return;
           }
           if (rule.type === 'maxLength' && typeof answer === 'string' && answer.length > (rule.value as number)) {
-            setSubmitError(`${f.label}: ${rule.message || `Maximum ${rule.value} characters allowed`}`);
+            failClassic(f.id, `${f.label}: ${rule.message || `Maximum ${rule.value} characters allowed`}`);
             return;
           }
           if (rule.type === 'min' && typeof answer === 'number' && answer < (rule.value as number)) {
-            setSubmitError(`${f.label}: ${rule.message || `Minimum value is ${rule.value}`}`);
+            failClassic(f.id, `${f.label}: ${rule.message || `Minimum value is ${rule.value}`}`);
             return;
           }
           if (rule.type === 'max' && typeof answer === 'number' && answer > (rule.value as number)) {
-            setSubmitError(`${f.label}: ${rule.message || `Maximum value is ${rule.value}`}`);
+            failClassic(f.id, `${f.label}: ${rule.message || `Maximum value is ${rule.value}`}`);
             return;
           }
           if (rule.type === 'pattern' && typeof answer === 'string') {
             try {
               const pat = String(rule.value);
-              if (pat.length > 500) { setSubmitError(`${f.label}: ${rule.message || 'Invalid format'}`); return; }
-              if (/(\+|\*|\{[^}]*\})\s*(\+|\*|\{[^}]*\})/.test(pat) || /\([^)]*\|[^)]*\)\+/.test(pat)) { setSubmitError(`${f.label}: ${rule.message || 'Invalid format'}`); return; }
+              if (pat.length > 500) { failClassic(f.id, `${f.label}: ${rule.message || 'Invalid format'}`); return; }
+              if (/(\+|\*|\{[^}]*\})\s*(\+|\*|\{[^}]*\})/.test(pat) || /\([^)]*\|[^)]*\)\+/.test(pat)) { failClassic(f.id, `${f.label}: ${rule.message || 'Invalid format'}`); return; }
               if (!new RegExp(pat).test(answer)) {
-                setSubmitError(`${f.label}: ${rule.message || 'Invalid format'}`);
+                failClassic(f.id, `${f.label}: ${rule.message || 'Invalid format'}`);
                 return;
               }
             } catch {
@@ -1718,7 +1786,7 @@ export default function FormResponse() {
       // Enforce builder-configured number min/max/step (see validateNumberConstraints).
       const numErr = validateNumberConstraints(f, answer);
       if (numErr) {
-        setSubmitError(`${f.label}: ${numErr}`);
+        failClassic(f.id, `${f.label}: ${numErr}`);
         return;
       }
     }
@@ -1729,7 +1797,7 @@ export default function FormResponse() {
   if (isSubmitted) {
     return (
       <div
-        className="min-h-screen flex items-center justify-center p-4"
+        className="min-h-dvh flex flex-col items-center justify-center gap-4 p-4"
         style={{ backgroundColor: form.theme.backgroundColor }}
       >
         {screenTakeover && (
@@ -1750,7 +1818,11 @@ export default function FormResponse() {
             className="mt-4 mx-auto max-w-md text-center text-sm rounded-lg px-4 py-2.5 border"
             style={{ color: form.theme.textColor, borderColor: `${form.theme.textColor}40`, backgroundColor: `${form.theme.textColor}10` }}
           >
-            You're offline — your encrypted response was <strong>queued</strong> on this device and will be sent automatically when you're back online.
+            {/* "encrypted" was shown to every visitor, including on ordinary forms where
+                nothing was encrypted at all. Only say it when it is true. */}
+            You&apos;re offline — your answers are <strong>saved on this device</strong>
+            {form.encryption?.mode === 'private' ? ', sealed so only the owner can read them,' : ''} and will
+            be sent automatically when you&apos;re back online. Please don&apos;t clear your browser data before then.
           </p>
         )}
       </div>
@@ -1760,7 +1832,7 @@ export default function FormResponse() {
   if (visibleFields.length === 0) {
     return (
       <div
-        className="min-h-screen flex items-center justify-center p-4"
+        className="min-h-screen min-h-dvh flex items-center justify-center p-4"
         style={{ backgroundColor: form.theme.backgroundColor }}
       >
         <p style={{ color: form.theme.textColor, opacity: 0.5 }}>This form has no questions.</p>
@@ -1770,7 +1842,7 @@ export default function FormResponse() {
 
   return (
     <div
-      className="min-h-screen flex flex-col bg-cover bg-center bg-fixed"
+      className="min-h-screen min-h-dvh flex flex-col bg-cover bg-center bg-scroll md:bg-fixed"
       style={{
         backgroundColor: form.theme.backgroundColor,
         backgroundImage: form.theme.backgroundImage ? `url(${form.theme.backgroundImage})` : undefined,
@@ -1963,14 +2035,10 @@ export default function FormResponse() {
               error={fieldError || undefined}
             />
 
-            {/* Inline validation error — constrained to the same width as the field
-                (FieldResponse uses max-w-xl mx-auto) so it lines up under it on wide
-                screens instead of sitting at the far left. */}
-            {fieldError && (
-              <div className="w-full max-w-xl mx-auto">
-                <p id={`field-error-${currentField.id}`} role="alert" aria-live="polite" className="mt-3 text-sm font-medium text-red-600 dark:text-red-400">{fieldError}</p>
-              </div>
-            )}
+            {/* (The validation message is rendered by FieldResponse itself, under the
+                field and inside its max-w-xl column, so it is announced via the
+                aria-describedby the component already sets and appears in BOTH
+                presentation modes.) */}
 
             {/* OK Button */}
             <div className="mt-8 flex items-center gap-4 justify-center">
@@ -2002,7 +2070,7 @@ export default function FormResponse() {
 
       {/* Navigation */}
       {form.settings.allowBackNavigation && (
-        <div className="fixed bottom-4 right-4 flex flex-col gap-1">
+        <div className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-30 flex flex-col gap-1">
           <button
             onClick={prevStep}
             disabled={safeCurrentStep === 0}
@@ -2022,8 +2090,11 @@ export default function FormResponse() {
       )}
 
       {/* Step Counter */}
-      <div className="fixed bottom-4 left-4 text-sm opacity-50">
-        {safeCurrentStep + 1} / {visibleFields.length}
+      <div
+        className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-4 text-sm opacity-70"
+        aria-hidden="true"
+      >
+        Question {safeCurrentStep + 1} of {visibleFields.length}
         {isEvaluating && <span className="ml-1 animate-pulse">...</span>}
       </div>
       </>

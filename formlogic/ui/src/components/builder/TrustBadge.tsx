@@ -5,6 +5,7 @@ import type { PackCapabilitySummary, PackVendorSigning } from '../../lib/api';
 // isConnectorGrant/reviewableConnectorGrants moved to lib/packTrust.ts so this
 // file only exports components (react-refresh rule).
 import { isConnectorGrant, reviewableConnectorGrants } from '../../lib/packTrust';
+import { grantLabel } from '../../lib/grantLabels';
 
 /**
  * Trust badge for a marketplace listing / application package. `trust` is ALWAYS server-computed
@@ -152,19 +153,32 @@ export function CapabilityReview({
       )}
       {connectorGrants.length > 0 && interactive && (
         <div className="space-y-1">
-          <span className="text-xs text-gray-500 dark:text-slate-400 inline-flex items-center gap-1"><KeyRound className="h-3 w-3" />Device &amp; connector access — approve what to allow:</span>
-          <div className="space-y-0.5">
-            {connectorGrants.map((p) => (
-              <label key={p} className="flex items-center gap-2 text-[11px] text-gray-700 dark:text-slate-200 cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="h-3.5 w-3.5 rounded border-gray-300 dark:border-slate-600"
-                  checked={selectedGrants!.has(p)}
-                  onChange={(e) => onToggleGrant!(p, e.target.checked)}
-                />
-                <span className="font-mono">{p}</span>
-              </label>
-            ))}
+          <span className="text-xs text-gray-500 dark:text-slate-400 inline-flex items-center gap-1"><KeyRound className="h-3 w-3" />This template is asking to:</span>
+          {/* Sentence first, id second. This list used to be monospace grant ids under the
+              heading "Device & connector access" — the most consequential question in the
+              install flow, asked in a vocabulary the person answering does not have. */}
+          <div className="space-y-1.5">
+            {connectorGrants.map((p) => {
+              const label = grantLabel(p);
+              const allowed = selectedGrants!.has(p);
+              return (
+                <label key={p} className="flex cursor-pointer items-start gap-2 text-[11px] text-gray-700 dark:text-slate-200">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded border-gray-300 dark:border-slate-600"
+                    checked={allowed}
+                    onChange={(e) => onToggleGrant!(p, e.target.checked)}
+                  />
+                  <span className="min-w-0">
+                    <span className="block">{label.sentence}</span>
+                    {!allowed && (
+                      <span className="mt-0.5 block text-gray-500 dark:text-slate-400">{label.ifOff}</span>
+                    )}
+                    <span className="mt-0.5 block font-mono text-[10px] text-gray-400 dark:text-slate-500" title={p}>{p}</span>
+                  </span>
+                </label>
+              );
+            })}
           </div>
         </div>
       )}

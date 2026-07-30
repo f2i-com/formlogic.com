@@ -730,8 +730,8 @@ export function AppResponseDetail() {
         isOpen={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
         onConfirm={handleDelete}
-        title="Delete Response"
-        message="Are you sure you want to delete this response? This action cannot be undone."
+        title="Delete record"
+        message="This permanently removes this record. It cannot be undone."
         confirmLabel="Delete"
         variant="danger"
         isLoading={deleting}

@@ -40,14 +40,26 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
     }
   }, [isOpen, settings]);
 
+  // Whether the edit buffer differs from what is stored — drives the Escape guard and
+  // the Save button's disabled state. (normalizeFormSettings on both sides so a stored
+  // value that merely lacks a default is not counted as an edit.)
+  const dirty = JSON.stringify(editedSettings) !== JSON.stringify(normalizeFormSettings(settings));
+
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key !== 'Escape') return;
+      // Escape used to discard every unsaved edit without a word. Keep the dialog
+      // dismissible by keyboard (an undismissable modal is its own a11y problem) but
+      // make the loss explicit first.
+      if (dirty && !window.confirm('Discard your unsaved changes to these settings?')) return;
+      onClose();
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+    // `dirty` is a dependency so the handler always sees the current buffer —
+    // mirroring it into a ref would mean writing a ref during render.
+  }, [isOpen, onClose, dirty]);
 
   const panelRef = useRef<HTMLDivElement>(null);
   useFocusTrap(panelRef, isOpen);
@@ -74,7 +86,10 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
+      {/* Deliberately NOT click-to-close: this dialog holds unsaved edits (including a
+          long textarea), and a stray backdrop click silently discarded all of them.
+          The X in the header and Cancel are the exits. */}
+      <div className="absolute inset-0" aria-hidden="true" />
       <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="form-settings-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800 focus:outline-none" onMouseDown={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-slate-900 dark:to-slate-800/50">
@@ -207,12 +222,12 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
               </div>
 
               <div className="border-t border-gray-200 dark:border-slate-800 pt-6">
-                <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">Review dashboard</h3>
+                <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">Completeness check</h3>
                 <Switch
                   checked={editedSettings.showNigoDashboard === true}
                   onChange={(checked) => updateSettings({ showNigoDashboard: checked })}
-                  label="Show NIGO dashboard"
-                  description="Display a Not-In-Good-Order checklist summarizing missing required fields"
+                  label="Show a completeness checklist"
+                  description="Lists any required questions still unanswered, so you can see what's missing before accepting a submission. Shown to you, not to the person filling the form in."
                 />
               </div>
             </div>
@@ -378,7 +393,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={handleSave}>
+          <Button onClick={handleSave} disabled={!dirty}>
             Save settings
           </Button>
         </div>

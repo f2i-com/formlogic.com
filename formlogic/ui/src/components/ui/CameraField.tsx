@@ -87,7 +87,9 @@ export function CameraField({ field, value, onChange, primaryColor, formId, appS
 
   const uploadBlob = useCallback(async (blob: Blob) => {
     if (!formId) {
-      toast.error('Upload Error', 'Form ID is not available');
+      // "Form ID is not available" is a developer's sentence; the visitor can only act
+      // on being told to reload.
+      toast.error("Couldn't upload", 'Please reload the page and try again.');
       return;
     }
     setUploading(true);

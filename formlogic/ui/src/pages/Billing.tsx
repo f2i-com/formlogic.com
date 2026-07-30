@@ -187,12 +187,36 @@ export function Billing() {
             <div>
               <p className="font-medium text-gray-900 dark:text-white">Cloud is active</p>
               <p className="text-sm text-gray-600 dark:text-slate-400 mt-0.5">Your cloud access runs until <strong className="text-gray-900 dark:text-white">{cloudUntilLabel}</strong>. Add more time anytime — it stacks onto this date.</p>
+              {/* Say what running out actually does, before it happens. */}
+              {status?.usage?.enforced && (
+                <p className="mt-1.5 text-sm text-gray-600 dark:text-slate-400">
+                  After that date your forms stop accepting responses until you add more time. Your data
+                  stays safe and exportable.
+                </p>
+              )}
             </div>
           </div>
         ) : (
           <div>
-            <p className="font-medium text-gray-900 dark:text-white">You're on the free plan</p>
-            <p className="text-sm text-gray-600 dark:text-slate-400 mt-0.5">Everything still works for free. Add cloud time below for managed hosting and backups.</p>
+            {/* On an instance that ENFORCES limits, "everything still works for free" was
+                said in exactly the state where the server answers writes with 402 — forms
+                stop accepting responses. Match the server's own sentence
+                (CloudWriteGateMiddleware::paymentRequired) so the page and the refusal
+                cannot disagree. Where nothing is gated, the old wording is true. */}
+            {status?.usage?.enforced ? (
+              <>
+                <p className="font-medium text-gray-900 dark:text-white">Cloud access has expired</p>
+                <p className="mt-0.5 text-sm text-gray-600 dark:text-slate-400">
+                  Your forms are not accepting new responses right now. Your data is safe and still
+                  exportable — add cloud time below to publish, accept responses, and upload again.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="font-medium text-gray-900 dark:text-white">You're on the free plan</p>
+                <p className="mt-0.5 text-sm text-gray-600 dark:text-slate-400">Everything still works for free. Add cloud time below for managed hosting and backups.</p>
+              </>
+            )}
           </div>
         )}
       </div>

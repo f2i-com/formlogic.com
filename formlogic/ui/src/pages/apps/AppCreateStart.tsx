@@ -287,8 +287,10 @@ export function AppCreateStart() {
                     </label>
                   </div>
                   {formPrivacy === 'private' && !isDemo && (
-                    <p className="mt-2 text-[11px] leading-5 text-gray-400 dark:text-slate-500">
-                      Existing forms you attach are unchanged. File uploads, camera and linked-record fields are not yet available on private forms.
+                    <p className="mt-2 text-[11px] leading-5 text-amber-700 dark:text-amber-300">
+                      This can&apos;t be undone: once a data type is private it stays private. File uploads,
+                      camera and linked-record questions aren&apos;t available on private forms, and you&apos;ll
+                      need your vault unlocked to read the answers. Existing forms you attach are unchanged.
                     </p>
                   )}
                 </fieldset>

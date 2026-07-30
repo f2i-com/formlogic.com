@@ -62,6 +62,14 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
   };
 
   const handleToggleStorageMode = async () => {
+    // This changes where every future form is stored, and it sat as the FIRST item in the
+    // account menu — one click from the avatar — with no confirmation and a name
+    // ("Switch to Local Storage") that says the mechanism rather than the consequence.
+    const toLocal = storageMode === 'api';
+    const question = toLocal
+      ? 'Keep new forms on this device only?\n\nThey will not be available on your other devices or to anyone you invite, and they are lost if you clear this browser’s data.'
+      : 'Move the forms on this device into your account?\n\nThey will sync to the cloud and become available on your other devices.';
+    if (!window.confirm(question)) return;
     if (storageMode === 'local') {
       // CRITICAL: push local forms to the server BEFORE switching. The persist
       // layer only keeps `forms` in localStorage while in local mode, so flipping
@@ -223,17 +231,17 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
               {isSyncing && storageMode === 'local' ? (
                 <>
                   <RefreshCw className="h-4 w-4 text-gray-400 dark:text-slate-500 animate-spin" />
-                  Switching to Cloud…
+                  Moving forms to your account…
                 </>
               ) : storageMode === 'api' ? (
                 <>
                   <CloudOff className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-                  Switch to Local Storage
+                  Keep new forms on this device
                 </>
               ) : (
                 <>
                   <Cloud className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-                  Switch to Cloud Storage
+                  Save my forms to my account
                 </>
               )}
             </button>

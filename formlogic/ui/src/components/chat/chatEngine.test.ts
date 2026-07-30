@@ -107,7 +107,7 @@ describe('createSiteChatSseParser', () => {
 
     expect(deltas).toEqual(['Hel', 'lo']);
     expect(activities).toEqual([
-      { id: expect.any(String), name: 'create_form', status: 'done', link: { kind: 'form', id: 'f-1' } },
+      { id: expect.any(String), name: 'create_form', label: 'Create a form', status: 'done', link: { kind: 'form', id: 'f-1' } },
     ]);
     expect(done).toEqual([{ content: 'Hello', usage: { in: 3 } }]);
     expect(errors).toEqual([]);
@@ -362,7 +362,7 @@ describe('sendChatTurn — routing', () => {
 
     expect(out.ok).toBe(true);
     expect(proposals).toEqual([
-      { callId: 'call-1', requestId: 'req-9', tool: 'create_form', input: { title: 'Contact' }, status: 'pending' },
+      { callId: 'call-1', requestId: 'req-9', tool: 'create_form', toolLabel: 'Create a form', input: { title: 'Contact' }, status: 'pending' },
     ]);
     expect(activities).toMatchObject([{ name: 'create_form', status: 'done', link: { kind: 'form', id: 'f-1' } }]);
   });
@@ -470,6 +470,8 @@ describe('normalizeToolProposal + answerToolProposal', () => {
       callId: 'c1',
       requestId: 'r1',
       tool: 't',
+      // Unknown tool names fall back to the raw id, so nothing ever renders blank.
+      toolLabel: 't',
       input: 1,
       status: 'pending',
     });

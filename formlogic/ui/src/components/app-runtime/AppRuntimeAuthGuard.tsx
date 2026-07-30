@@ -252,16 +252,33 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
   }
 
   if (error || !config) {
+    // 'Failed to fetch' (or a status-less failure) with no network is a connectivity
+    // problem, not a broken app.
+    const offlineLike =
+      (typeof navigator !== 'undefined' && navigator.onLine === false) ||
+      (!!error && /failed to fetch|networkerror|load failed/i.test(error));
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950">
         <div className="text-center max-w-md mx-auto px-4">
           <div className="w-12 h-12 mx-auto rounded-full bg-red-50 dark:bg-red-500/10 flex items-center justify-center mb-4">
             <AlertCircle className="h-6 w-6 text-red-500 dark:text-red-400" />
           </div>
+          {/* A staff member on a patchy connection was shown the browser's own transport
+              string ("Unable to Load — Failed to fetch"), which reads like the app is
+              broken. Name the connectivity case and say what happens to work already
+              submitted; keep the raw message only for cases that are not connectivity. */}
           <h2 className="text-xl font-semibold mb-2 text-gray-900 dark:text-white tracking-tight">
-            {error?.includes('403') || error?.includes('401') || error?.includes('denied') || error?.includes('permission') ? 'Access Denied' : 'Unable to Load'}
+            {offlineLike
+              ? "You're offline"
+              : error?.includes('403') || error?.includes('401') || error?.includes('denied') || error?.includes('permission')
+                ? 'Access Denied'
+                : 'Unable to Load'}
           </h2>
-          <p className="text-gray-500 dark:text-slate-400 mb-4">{error || 'Unable to load this app. Please try again later.'}</p>
+          <p className="text-gray-500 dark:text-slate-400 mb-4">
+            {offlineLike
+              ? 'This app needs a connection to open. Anything you already submitted is saved and will send by itself once you’re back online.'
+              : error || 'Unable to load this app. Please try again later.'}
+          </p>
           <div className="flex items-center justify-center gap-3">
             <button type="button" onClick={() => window.location.reload()} className="text-sm text-gray-600 dark:text-slate-300 hover:underline cursor-pointer transition-colors">Try Again</button>
             <a href="/" className="text-sm app-text-primary hover:underline">Go to Home</a>

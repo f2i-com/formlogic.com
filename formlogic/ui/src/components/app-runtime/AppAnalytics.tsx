@@ -8,6 +8,7 @@ import { Card } from '../ui/Card';
 import { PageHeader } from '../ui/PageHeader';
 import { EmptyState } from '../ui/EmptyState';
 import { Skeleton } from '../ui/Skeleton';
+import { LoadFailure } from '../ui/LoadFailure';
 
 /**
  * App-runtime analytics view — aggregate stats only (never individual answers).
@@ -20,6 +21,7 @@ export function AppAnalytics() {
   const [data, setData] = useState<FormAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   const runtimeForm = config?.forms.find((f) => f.formId === formId);
   const allowed = formId ? canViewAnalytics(formId) : false;
@@ -41,7 +43,7 @@ export function AppAnalytics() {
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [appSlug, formId, allowed]);
+  }, [appSlug, formId, allowed, reloadKey]);
 
   const maxCount = useMemo(
     () => Math.max(1, ...(data?.responsesByDate ?? []).map((d) => d.count)),
@@ -76,9 +78,10 @@ export function AppAnalytics() {
       />
 
       {error ? (
-        <div className="text-center py-12" role="alert">
-          <p className="text-red-600 dark:text-red-400">{error}</p>
-        </div>
+        <LoadFailure
+          title="We couldn't load these figures"
+          onRetry={() => { setError(null); setLoading(true); setReloadKey((k) => k + 1); }}
+        />
       ) : loading ? (
         // Skeleton mirroring the loaded layout: 4 stat tiles + the chart card.
         <div className="space-y-6" role="status" aria-label="Loading analytics">

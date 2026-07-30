@@ -23,6 +23,7 @@ import {
 } from '../editor/nodeCatalog';
 import type { FlowFormOption } from '../editor/NodeProperties';
 import { declaredInputNames } from '../editor/nodeSummary';
+import { BINDING_MODE_COPY, bindingModeLabel, OUTPUT_ACTION_COPY, outputActionLabel } from './triggerVocabulary';
 import type {
   FlowBinding,
   FlowBindingMode,
@@ -228,7 +229,7 @@ function BindingFormPicker({
         value={options.some((f) => f.id === value) ? value : ''}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        aria-label="Binding form"
+        aria-label="Trigger form"
         className={cn(INPUT_CLS, 'cursor-pointer', disabled && 'cursor-not-allowed opacity-70')}
       >
         <option value="">Select a form...</option>
@@ -378,7 +379,7 @@ export function BindingEditor({
 
   const save = async () => {
     if (!draft.flow) {
-      toast.error('Pick a flow for this binding');
+      toast.error('Pick an automation for this trigger');
       return;
     }
     if ((workspaceFormOnly || draft.event === 'form.submitted') && formOptions.length > 0 && draft.formId.trim() === '') {
@@ -395,10 +396,10 @@ export function BindingEditor({
       setSaving(false);
       if (!saved) return;
       onSaved(saved);
-      toast.success('Binding saved', `${saved.event} -> ${saved.flow}`);
+      toast.success('Trigger saved', `Runs "${saved.flow}" on ${saved.event}`);
     } catch (error) {
       setSaving(false);
-      toast.error('Failed to save binding', error instanceof Error ? error.message : undefined);
+      toast.error('Could not save the trigger', error instanceof Error ? error.message : undefined);
     }
   };
 
@@ -408,7 +409,7 @@ export function BindingEditor({
         <div>
           <label className={LABEL_CLS}>Event</label>
           {workspaceFormOnly ? (
-            <input value="form.submitted" readOnly aria-label="Binding event name" className={cn(MONO_INPUT_CLS, 'cursor-not-allowed opacity-80')} />
+            <input value="form.submitted" readOnly aria-label="Trigger event name" className={cn(MONO_INPUT_CLS, 'cursor-not-allowed opacity-80')} />
           ) : (
             <EventPicker
               value={draft.event}
@@ -418,7 +419,7 @@ export function BindingEditor({
                 ...(next.event === 'form.submitted' && !draft.formId && formOptions[0] ? { formId: formOptions[0].id } : {}),
                 ...(next.presetCondition !== undefined ? { conditionExpr: next.presetCondition } : {}),
               })}
-              aria-label="Binding event name"
+              aria-label="Trigger event name"
               inputClassName={MONO_INPUT_CLS}
             />
           )}
@@ -429,17 +430,28 @@ export function BindingEditor({
             value={draft.flow}
             onChange={(e) => patch({ flow: e.target.value })}
             disabled={lockFlow}
-            aria-label="Binding flow"
+            aria-label="Automation this trigger runs"
             className={cn(INPUT_CLS, 'cursor-pointer', lockFlow && 'cursor-not-allowed opacity-70')}
           >
             {flows.map((f) => <option key={f.id} value={f.slug}>{f.name} ({f.slug})</option>)}
           </select>
         </div>
         <div>
-          <label className={LABEL_CLS}>Mode</label>
-          <select value={draft.mode} onChange={(e) => patch({ mode: e.target.value as FlowBindingMode })} aria-label="Binding mode" className={INPUT_CLS + ' cursor-pointer'}>
-            {MODES.map((m) => <option key={m} value={m}>{m}</option>)}
+          <label className={LABEL_CLS}>When it runs</label>
+          <select value={draft.mode} onChange={(e) => patch({ mode: e.target.value as FlowBindingMode })} aria-label="When this trigger runs" className={INPUT_CLS + ' cursor-pointer'}>
+            {MODES.map((m) => <option key={m} value={m}>{bindingModeLabel(m)}</option>)}
           </select>
+          {/* The consequence is ALWAYS shown, not just for the alarming option: the select
+              used to print the raw enum, so "manual" read as a neutral fourth choice while
+              actually meaning "this never fires on its own". */}
+          <p className={cn(
+            'mt-1 text-[11px] leading-snug',
+            draft.mode === 'manual'
+              ? 'font-medium text-amber-700 dark:text-amber-300'
+              : 'text-gray-500 dark:text-slate-400'
+          )}>
+            {BINDING_MODE_COPY[draft.mode]?.consequence}
+          </p>
         </div>
       </div>
 
@@ -507,7 +519,7 @@ export function BindingEditor({
             value={draft.conditionExpr}
             onChange={(e) => patch({ conditionExpr: e.target.value })}
             placeholder="event.data.direction === 'incoming'"
-            aria-label="Binding condition expression"
+            aria-label="Trigger condition expression"
             className={MONO_INPUT_CLS}
           />
           <ChipRow mode="quickjs" hints={eventHints} onInsert={(formatted) => insertOrCopy(conditionInputRef.current, formatted)} />
@@ -520,7 +532,7 @@ export function BindingEditor({
             max={300000}
             value={draft.timeoutMs}
             onChange={(e) => patch({ timeoutMs: Number(e.target.value) || 30000 })}
-            aria-label="Binding timeout in milliseconds"
+            aria-label="Trigger timeout in milliseconds"
             className={INPUT_CLS}
           />
         </div>
@@ -528,7 +540,7 @@ export function BindingEditor({
 
       <div>
         <div className="mb-1.5 flex items-center justify-between">
-          <span className={LABEL_CLS + ' mb-0'}>Input map (flow input &lt;- selector or literal)</span>
+          <span className={LABEL_CLS + ' mb-0'}>What this trigger passes to the automation</span>
           <Button variant="ghost" size="sm" onClick={() => patch({ inputRows: [...draft.inputRows, { id: generateId(), key: '', value: '' }] })} leftIcon={<Plus className="h-3.5 w-3.5" />}>
             Add input
           </Button>
@@ -587,7 +599,7 @@ export function BindingEditor({
 
       <div>
         <div className="mb-1.5 flex items-center justify-between">
-          <span className={LABEL_CLS + ' mb-0'}>Output actions (applied in order after a successful run)</span>
+          <span className={LABEL_CLS + ' mb-0'}>Then do this — in order, after the automation succeeds</span>
           <Button variant="ghost" size="sm" onClick={() => patch({ actions: [...draft.actions, { type: 'formlogic.toast', message: '' }] })} leftIcon={<Plus className="h-3.5 w-3.5" />}>
             Add action
           </Button>
@@ -600,21 +612,24 @@ export function BindingEditor({
                   value={action.type}
                   onChange={(e) => patchAction(i, { type: e.target.value as FlowOutputActionType })}
                   aria-label={`Action ${i + 1} type`}
-                  className={INPUT_CLS + ' max-w-[16rem] cursor-pointer font-mono text-xs'}
+                  className={INPUT_CLS + ' max-w-[16rem] cursor-pointer text-xs'}
                 >
-                  {ACTION_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                  {ACTION_TYPES.map((t) => <option key={t} value={t}>{outputActionLabel(t)}</option>)}
                 </select>
                 <input
                   value={action.when ?? ''}
                   onChange={(e) => patchAction(i, { when: e.target.value || undefined })}
-                  placeholder="when (e.g. $result.found)"
-                  aria-label={`Action ${i + 1} when gate`}
+                  placeholder="only when… (e.g. $result.found)"
+                  aria-label={`Action ${i + 1} condition`}
                   className={MONO_INPUT_CLS}
                 />
                 <Button variant="ghost" size="sm" onClick={() => patch({ actions: draft.actions.filter((_, j) => j !== i) })} aria-label={`Remove action ${i + 1}`}>
                   <Trash2 className="h-3.5 w-3.5 text-gray-400 hover:text-red-500" />
                 </Button>
               </div>
+              <p className="text-[11px] leading-snug text-gray-500 dark:text-slate-400">
+                {OUTPUT_ACTION_COPY[action.type]?.description}
+              </p>
               {(action.type === 'formlogic.submitResponse' || action.type === 'formlogic.updateResponse') && (
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <input value={action.form ?? ''} onChange={(e) => patchAction(i, { form: e.target.value || undefined })} placeholder="form id" aria-label={`Action ${i + 1} form`} className={MONO_INPUT_CLS} />
@@ -682,11 +697,11 @@ export function BindingEditor({
       <div className="sticky bottom-0 z-10 -mx-4 -mb-4 flex items-center justify-between border-t border-gray-200/80 bg-white/95 px-4 py-3 dark:border-slate-700/60 dark:bg-slate-900/95">
         <div className="flex items-center gap-3">
           <Switch checked={draft.enabled} onChange={(v) => patch({ enabled: v })} label="Enabled" size="sm" />
-          <Button variant="ghost" size="sm" onClick={onDelete} aria-label="Delete binding">
+          <Button variant="ghost" size="sm" onClick={onDelete} aria-label="Delete trigger">
             <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-500" />
           </Button>
         </div>
-        <Button size="sm" onClick={save} isLoading={saving} disabled={saving}>{binding ? 'Save binding' : 'Create binding'}</Button>
+        <Button size="sm" onClick={save} isLoading={saving} disabled={saving}>{binding ? 'Save trigger' : 'Add trigger'}</Button>
       </div>
     </div>
   );

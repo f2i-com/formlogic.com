@@ -94,7 +94,7 @@ function sourcePicker(): HTMLSelectElement | null {
 }
 
 function conditionInput(): HTMLInputElement {
-  const el = host?.querySelector<HTMLInputElement>('input[aria-label="Binding condition expression"]');
+  const el = host?.querySelector<HTMLInputElement>('input[aria-label="Trigger condition expression"]');
   if (!el) throw new Error('condition input not rendered');
   return el;
 }

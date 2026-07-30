@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { api } from '../lib/api';
 import { LoadFailure } from '../components/ui/LoadFailure';
@@ -17,6 +17,7 @@ type PlayField = { id: string; label: string; type: string; properties?: { optio
 export default function CustomScreenPlay() {
   const { formId } = useParams<{ formId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const [loading, setLoading] = useState(true);
   const [screen, setScreen] = useState<CustomScreen | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -60,8 +61,16 @@ export default function CustomScreenPlay() {
   return (
     <div className="h-dvh flex flex-col bg-white dark:bg-slate-950">
       <div className="flex items-center gap-3 px-4 h-12 shrink-0 border-b border-gray-200 dark:border-slate-800">
-        <button onClick={() => navigate(-1)} className="text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white cursor-pointer" aria-label="Back">
+        {/* navigate(-1) does nothing on a fresh deep link (no history entry to go back
+            to), which left the only exit dead. Fall back to /forms rather than the
+            builder: this route is reachable by non-owners, who cannot open a builder. */}
+        <button
+          onClick={() => { if (location.key !== 'default') navigate(-1); else navigate('/forms'); }}
+          className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 text-gray-500 hover:text-gray-900 dark:text-slate-400 dark:hover:text-white"
+          aria-label="Back"
+        >
           <ArrowLeft className="h-5 w-5" />
+          <span className="hidden text-sm sm:inline">Back</span>
         </button>
         <span className="text-sm font-medium text-gray-900 dark:text-white truncate">{title}</span>
       </div>

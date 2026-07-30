@@ -1300,9 +1300,13 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
                 <span className="font-semibold text-gray-600 dark:text-slate-300">Output:</span> {spec.output}
               </p>
             )}
+            {/* Stated as settled fact, not as an instruction: the capability is granted
+                automatically on save, so telling the owner to "declare it in the flow's
+                node capabilities" pointed at a control that does not exist anywhere in
+                the UI. Amber is reserved for things they can actually act on. */}
             {spec.capability && (
-              <p className="rounded-lg bg-amber-50 dark:bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
-                Requires the <span className="font-mono">{spec.capability}</span> capability — declare it in the flow's node capabilities.
+              <p className="rounded-lg bg-gray-50 px-2.5 py-1.5 text-[11px] text-gray-600 dark:bg-white/[0.04] dark:text-slate-400">
+                Uses <span className="font-medium">{spec.capability}</span> — permission is granted automatically when you save this automation.
               </p>
             )}
             {type === 'input' && onOpenTriggers && (

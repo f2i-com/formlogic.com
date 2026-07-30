@@ -42,7 +42,7 @@ import { LoadFailure } from '../components/ui/LoadFailure';
 import { Skeleton } from '../components/ui/Skeleton';
 import { ShowMore } from '../components/ui/ShowMore';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
-import { useFormStore } from '../stores/formStore';
+import { useFormStore, flushFormSaves } from '../stores/formStore';
 import { useAppStore } from '../stores/appStore';
 import { useAuthStore } from '../stores/authStore';
 import { useResponseStore } from '../stores/responseStore';
@@ -189,6 +189,7 @@ const FormCard = memo(function FormCard({
   onEmbed,
   onDelete,
   onStatusChange,
+  onConfirmStatus,
 }: {
   form: Form;
   responseCount: number;
@@ -204,6 +205,8 @@ const FormCard = memo(function FormCard({
   onEmbed: (id: string, title: string, status: Form['status']) => void;
   onDelete: (id: string, title: string) => void;
   onStatusChange: (id: string, status: 'draft' | 'published' | 'archived') => void;
+  /** Availability-reducing changes (unpublish / archive) go through a confirm. */
+  onConfirmStatus: (id: string, title: string, status: 'draft' | 'archived') => void;
 }) {
   const isMenuOpen = activeMenuId === form.id;
   const menuRef = useRef<HTMLDivElement>(null);
@@ -375,7 +378,7 @@ const FormCard = memo(function FormCard({
                   )}
                   {form.status === 'published' && (
                     <button
-                      onClick={() => { onStatusChange(form.id, 'draft'); onMenuClose(); }}
+                      onClick={() => { onConfirmStatus(form.id, form.title || 'Untitled Form', 'draft'); onMenuClose(); }}
                       role="menuitem"
                       className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
                     >
@@ -392,7 +395,7 @@ const FormCard = memo(function FormCard({
                     </button>
                   ) : (
                     <button
-                      onClick={() => { onStatusChange(form.id, 'archived'); onMenuClose(); }}
+                      onClick={() => { onConfirmStatus(form.id, form.title || 'Untitled Form', 'archived'); onMenuClose(); }}
                       role="menuitem"
                       className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
                     >
@@ -579,6 +582,9 @@ export function FormsList() {
   const [activeMenu, setActiveMenu] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string; status: Form['status'] } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
+  // Unpublish and Archive take a live public link offline. They fired straight from a
+  // hover menu, one click, no confirmation and no statement of the consequence.
+  const [pendingStatus, setPendingStatus] = useState<{ id: string; title: string; status: 'draft' | 'archived' } | null>(null);
   const [showPackImport, setShowPackImport] = useState(false);
   const [packFilter, setPackFilter] = useState<string>('all');
   const user = useAuthStore((s) => s.user);
@@ -779,13 +785,28 @@ export function FormsList() {
     setDeleteTarget({ id, title });
   }, []);
 
+  // `updateForm` only SCHEDULES a debounced save, so this used to report "Form
+  // published." before the server had seen it — a failed save then left the owner
+  // believing a link was live when it 404s. Wait for the flush and roll the local status
+  // back if the server refused (the builder already does this; the list did not).
   const handleStatusChange = useCallback(async (id: string, status: 'draft' | 'published' | 'archived') => {
+    const previous = useFormStore.getState().forms.find((f) => f.id === id)?.status;
     try {
       await updateForm(id, { status });
+      const cloud = useFormStore.getState().storageMode === 'api' && !api.isDemoMode();
+      if (cloud) {
+        const { ok } = await flushFormSaves(id);
+        if (!ok) {
+          if (previous) useFormStore.getState().setFormLocal(id, { status: previous });
+          toast.error('Update failed', 'Could not change the form status — nothing has changed.');
+          return;
+        }
+      }
       const label = status === 'published' ? 'published' : status === 'archived' ? 'archived' : 'moved to draft';
       toast.success('Form updated', `Form ${label}.`);
     } catch (error) {
       logger.error('Failed to update form status:', error);
+      if (previous) useFormStore.getState().setFormLocal(id, { status: previous });
       toast.error('Update failed', 'Could not change the form status.');
     }
   }, [updateForm]);
@@ -975,6 +996,7 @@ export function FormsList() {
       onEmbed={handleEmbed}
       onDelete={handleDelete}
       onStatusChange={handleStatusChange}
+      onConfirmStatus={(id, title, status) => setPendingStatus({ id, title, status })}
     />
   );
 
@@ -1369,6 +1391,25 @@ export function FormsList() {
           : `Are you sure you want to delete "${deleteTarget?.title || 'this form'}"? This action cannot be undone and all responses will be lost.`}
         confirmLabel="Delete"
         variant="danger"
+      />
+
+      {/* Taking a form offline — consequence first, in the owner's terms. */}
+      <ConfirmDialog
+        isOpen={!!pendingStatus}
+        onClose={() => setPendingStatus(null)}
+        onConfirm={() => {
+          if (pendingStatus) {
+            void handleStatusChange(pendingStatus.id, pendingStatus.status);
+            setPendingStatus(null);
+          }
+        }}
+        title={pendingStatus?.status === 'archived' ? 'Archive this form?' : 'Take this form offline?'}
+        message={
+          pendingStatus?.status === 'archived'
+            ? `Anyone opening the link or embed for "${pendingStatus?.title}" will see that it isn't available, and it moves out of your main list. Responses already collected are kept, and you can restore it at any time.`
+            : `Anyone opening the link or embed for "${pendingStatus?.title}" will see that it isn't available until you publish it again. Responses already collected are kept.`
+        }
+        confirmLabel={pendingStatus?.status === 'archived' ? 'Archive' : 'Unpublish'}
       />
 
       {/* Preview chooser — shown when a form is published in 2+ apps */}

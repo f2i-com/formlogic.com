@@ -64,10 +64,15 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
   // Payments + complimentary access.
   const [payments, setPayments] = useState<Awaited<ReturnType<typeof api.adminListPayments>>['data'] | null>(null);
   const [payTick, setPayTick] = useState(0);
+  const [paymentsFailed, setPaymentsFailed] = useState(false);
   useEffect(() => {
     let cancelled = false;
     api.adminListPayments(userId).then((r) => {
-      if (!cancelled && r.data) setPayments(r.data);
+      if (cancelled) return;
+      // Without the else branch a failed read left "Loading payments…" up permanently,
+      // which reads as "still working" rather than "this did not load".
+      if (r.data) setPayments(r.data);
+      else setPaymentsFailed(true);
     });
     return () => { cancelled = true; };
   }, [userId, payTick]);
@@ -172,7 +177,14 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
             </Button>
           </div>
           {!payments ? (
-            <p className="px-3 py-3 text-xs text-gray-400 dark:text-slate-500">Loading payments…</p>
+            paymentsFailed ? (
+              <p className="px-3 py-3 text-xs text-amber-700 dark:text-amber-300">
+                Couldn&apos;t load payments.{' '}
+                <button type="button" onClick={() => { setPaymentsFailed(false); setPayTick((n) => n + 1); }} className="cursor-pointer font-medium underline">Try again</button>
+              </p>
+            ) : (
+              <p className="px-3 py-3 text-xs text-gray-400 dark:text-slate-500">Loading payments…</p>
+            )
           ) : payments.payments.length === 0 ? (
             <p className="px-3 py-3 text-xs text-gray-400 dark:text-slate-500">No payments on record.</p>
           ) : (

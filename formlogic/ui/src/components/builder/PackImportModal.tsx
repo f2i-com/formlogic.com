@@ -40,6 +40,7 @@ import { InstalledExtensionDetail } from './InstalledExtensionDetail';
 import { InstallJobProgress } from './InstallJobProgress';
 import { PackDetailView } from './PackDetailView';
 import { PublishPackDialog } from './PublishPackDialog';
+import { formatDate } from '../../lib/utils';
 
 type Tab = 'marketplace' | 'installed' | 'mypacks' | 'upload';
 
@@ -990,7 +991,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                             )}
                             <span className="inline-flex items-center gap-1">
                               <Calendar className="h-3 w-3" />
-                              {new Date(inst.installedAt).toLocaleDateString()}
+                              {formatDate(inst.installedAt)}
                             </span>
                           </div>
                           {inst.formatVersion === 2 && (

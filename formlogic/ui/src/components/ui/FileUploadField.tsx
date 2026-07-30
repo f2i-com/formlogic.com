@@ -42,14 +42,21 @@ export function FileUploadField({ field, value, onChange, primaryColor, formId, 
   // while the builder stores BYTES. Mirror the server heuristic (FileController) so a
   // template form's "5" isn't treated as 5 bytes and rejected before upload: a positive
   // value under 1024 is megabytes.
+  // A blocking, field-level problem with the chosen file(s) — rendered under the
+  // control and persistent, not a transient toast in the opposite corner.
+  const [problem, setProblem] = useState<string | null>(null);
   const rawMax = field.properties.maxFileSize;
   const maxBytes = rawMax && rawMax > 0 && rawMax < 1024 ? rawMax * 1024 * 1024 : (rawMax || 0);
 
   const handleFiles = async (files: File[]) => {
     if (!formId) {
-      toast.error('Upload Error', 'Form ID is not available');
+      // "Form ID is not available" is a developer's sentence; the visitor can only act
+      // on being told to reload.
+      toast.error("Couldn't upload", 'Please reload the page and try again.');
       return;
     }
+
+    setProblem(null);
 
     // Validate accepted types client-side. The native <input accept> only
     // filters the picker — drag-and-dropped files bypass it entirely.
@@ -64,7 +71,7 @@ export function FileUploadField({ field, value, onChange, primaryColor, formId, 
       });
       const rejected = files.filter((f) => !matches(f));
       if (rejected.length > 0) {
-        toast.error('File Type Not Allowed', `${rejected[0].name} is not an accepted file type.`);
+        setProblem(`${rejected[0].name} isn’t a file type this question accepts.`);
         files = files.filter(matches);
         if (files.length === 0) return;
       }
@@ -76,10 +83,7 @@ export function FileUploadField({ field, value, onChange, primaryColor, formId, 
     if (maxSize) {
       const oversizedFiles = files.filter(f => f.size > maxSize);
       if (oversizedFiles.length > 0) {
-        toast.error(
-          'File Too Large',
-          `${oversizedFiles[0].name} exceeds the maximum size of ${formatFileSize(maxSize)}`
-        );
+        setProblem(`${oversizedFiles[0].name} is larger than the ${formatFileSize(maxSize)} limit.`);
         files = files.filter(f => f.size <= maxSize);
         if (files.length === 0) return;
       }
@@ -91,7 +95,7 @@ export function FileUploadField({ field, value, onChange, primaryColor, formId, 
       const maxFiles = field.properties.maxFiles ?? 20;
       const remaining = Math.max(0, maxFiles - uploadedFiles.length);
       if (files.length > remaining) {
-        toast.error('Too Many Files', `You can attach at most ${maxFiles} file${maxFiles === 1 ? '' : 's'}.`);
+        setProblem(`You can attach at most ${maxFiles} file${maxFiles === 1 ? '' : 's'}.`);
         files = files.slice(0, remaining);
         if (files.length === 0) return;
       }
@@ -176,6 +180,11 @@ export function FileUploadField({ field, value, onChange, primaryColor, formId, 
             </>
           )}
         </div>
+        {problem && (
+          <p role="alert" className="mt-2 text-sm font-medium text-red-600 dark:text-red-400">
+            {problem}
+          </p>
+        )}
         <input
           type="file"
           className="sr-only"

@@ -6,6 +6,7 @@ import { Input } from '../components/ui/Input';
 import { PasswordInput } from '../components/ui/PasswordInput';
 import { Logo, LogoWhite } from '../components/ui/Logo';
 import { Mail, Lock, AlertCircle, ShieldCheck, ArrowLeft } from 'lucide-react';
+import { usePublicConfig } from '../hooks/usePublicConfig';
 
 export function Login() {
   const [email, setEmail] = useState('');
@@ -16,6 +17,8 @@ export function Login() {
   const [mfaToken, setMfaToken] = useState<string | null>(null);
   const [mfaCode, setMfaCode] = useState('');
   const [rememberBrowser, setRememberBrowser] = useState(true);
+  // For the two-factor lockout escape hatch below.
+  const { supportEmail } = usePublicConfig();
 
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -182,6 +185,23 @@ export function Login() {
                 >
                   <ArrowLeft className="h-3.5 w-3.5" /> Use a different account
                 </button>
+
+                {/* Lost phone AND lost recovery codes was a dead end: the only two routes
+                    offered both need something the person no longer has. An admin CAN
+                    reset two-factor, so say so rather than leaving them locked out of
+                    their own business data with nothing to try. */}
+                {supportEmail && (
+                  <p className="pt-1 text-center text-xs leading-relaxed text-gray-500 dark:text-slate-400">
+                    Lost your phone and your recovery codes?{' '}
+                    <a
+                      href={`mailto:${supportEmail}?subject=${encodeURIComponent('Two-factor reset request')}`}
+                      className="font-medium text-primary-600 hover:underline dark:text-primary-400"
+                    >
+                      Email {supportEmail}
+                    </a>{' '}
+                    from this address and we&apos;ll verify you and switch two-factor off.
+                  </p>
+                )}
               </form>
             </>
           ) : (

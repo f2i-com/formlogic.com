@@ -284,30 +284,37 @@ export const DEFAULT_FORM_THEME: FormTheme = {
   borderRadius: 'medium',
 };
 
-export const FIELD_TYPE_INFO: Record<FieldType, { label: string; icon: string; category: string }> = {
-  short_text: { label: 'Short Text', icon: 'Type', category: 'text' },
-  long_text: { label: 'Long Text', icon: 'AlignLeft', category: 'text' },
-  email: { label: 'Email', icon: 'Mail', category: 'text' },
-  phone: { label: 'Phone', icon: 'Phone', category: 'text' },
-  number: { label: 'Number', icon: 'Hash', category: 'text' },
-  url: { label: 'URL', icon: 'Link', category: 'text' },
-  date: { label: 'Date', icon: 'Calendar', category: 'datetime' },
-  time: { label: 'Time', icon: 'Clock', category: 'datetime' },
-  datetime: { label: 'Date & Time', icon: 'CalendarClock', category: 'datetime' },
-  dropdown: { label: 'Dropdown', icon: 'ChevronDown', category: 'choice' },
-  multiple_choice: { label: 'Multiple Choice', icon: 'CircleDot', category: 'choice' },
-  checkboxes: { label: 'Checkboxes', icon: 'CheckSquare', category: 'choice' },
-  rating: { label: 'Rating', icon: 'Star', category: 'rating' },
-  scale: { label: 'Scale', icon: 'Sliders', category: 'rating' },
-  file_upload: { label: 'File Upload', icon: 'Paperclip', category: 'advanced' },
-  signature: { label: 'Signature', icon: 'PenTool', category: 'advanced' },
-  calculated: { label: 'Calculated', icon: 'Calculator', category: 'advanced' },
-  linked_record: { label: 'Linked Record', icon: 'Link2', category: 'advanced' },
-  statement: { label: 'Statement', icon: 'MessageSquare', category: 'layout' },
-  location: { label: 'Location', icon: 'MapPin', category: 'advanced' },
-  welcome_screen: { label: 'Welcome Screen', icon: 'PartyPopper', category: 'layout' },
-  thank_you: { label: 'Thank You', icon: 'Heart', category: 'layout' },
-  hidden: { label: 'Hidden Field', icon: 'EyeOff', category: 'advanced' },
+/**
+ * The palette's 23 entries used to be an icon and a name with nothing else — not even a
+ * tooltip beyond a repeat of the name — so "Scale" vs "Rating", or what "Statement" or
+ * "Linked Record" collect, was guesswork for anyone who had not used a form builder
+ * before. `description` says what the QUESTION does; `keywords` lets search find a type
+ * by the word the owner would actually reach for ("photo" → Camera).
+ */
+export const FIELD_TYPE_INFO: Record<FieldType, { label: string; icon: string; category: string; description?: string; keywords?: string[] }> = {
+  short_text: { label: 'Short Text', icon: 'Type', category: 'text', description: 'One line of text, like a name.', keywords: ['name', 'line', 'input'] },
+  long_text: { label: 'Long Text', icon: 'AlignLeft', category: 'text', description: 'A paragraph or more, like a message.', keywords: ['paragraph', 'message', 'comments', 'notes'] },
+  email: { label: 'Email', icon: 'Mail', category: 'text', description: 'An email address, checked for the right shape.', keywords: ['address', 'mail'] },
+  phone: { label: 'Phone', icon: 'Phone', category: 'text', description: 'A phone number.', keywords: ['mobile', 'telephone', 'number', 'contact'] },
+  number: { label: 'Number', icon: 'Hash', category: 'text', description: 'Digits only — quantities, amounts, ages.', keywords: ['quantity', 'amount', 'count', 'price'] },
+  url: { label: 'URL', icon: 'Link', category: 'text', description: 'A web address.', keywords: ['website', 'link', 'address'] },
+  date: { label: 'Date', icon: 'Calendar', category: 'datetime', description: 'A day, chosen from a calendar.', keywords: ['day', 'calendar', 'when', 'birthday'] },
+  time: { label: 'Time', icon: 'Clock', category: 'datetime', description: 'A time of day.', keywords: ['hour', 'clock', 'when'] },
+  datetime: { label: 'Date & Time', icon: 'CalendarClock', category: 'datetime', description: 'A day and a time together.', keywords: ['when', 'appointment', 'booking', 'schedule'] },
+  dropdown: { label: 'Dropdown', icon: 'ChevronDown', category: 'choice', description: 'Pick one from a list that opens.', keywords: ['list', 'select', 'choose', 'options', 'picker'] },
+  multiple_choice: { label: 'Multiple Choice', icon: 'CircleDot', category: 'choice', description: 'Pick exactly one from options shown on screen.', keywords: ['radio', 'one', 'choose', 'options'] },
+  checkboxes: { label: 'Checkboxes', icon: 'CheckSquare', category: 'choice', description: 'Tick as many as apply.', keywords: ['many', 'multi', 'tick', 'select', 'options'] },
+  rating: { label: 'Rating', icon: 'Star', category: 'rating', description: 'Tap a number of stars.', keywords: ['stars', 'score', 'review', 'feedback'] },
+  scale: { label: 'Scale', icon: 'Sliders', category: 'rating', description: 'Rate on a numbered line, e.g. 1 to 10.', keywords: ['nps', 'score', '1-10', 'range', 'slider'] },
+  file_upload: { label: 'File Upload', icon: 'Paperclip', category: 'advanced', description: 'Attach a file or photo.', keywords: ['attach', 'document', 'photo', 'image', 'pdf', 'receipt'] },
+  signature: { label: 'Signature', icon: 'PenTool', category: 'advanced', description: 'Sign by drawing or typing a name.', keywords: ['sign', 'agree', 'consent', 'authorise'] },
+  calculated: { label: 'Calculated', icon: 'Calculator', category: 'advanced', description: 'Works out a value from other answers — nobody types it.', keywords: ['formula', 'total', 'sum', 'maths', 'auto'] },
+  linked_record: { label: 'Linked Record', icon: 'Link2', category: 'advanced', description: 'Point at a record in another form, e.g. which customer. Only fillable inside an app.', keywords: ['relation', 'lookup', 'reference', 'customer', 'link'] },
+  statement: { label: 'Statement', icon: 'MessageSquare', category: 'layout', description: 'A note or instruction — no answer is collected.', keywords: ['text', 'note', 'instruction', 'heading', 'info'] },
+  location: { label: 'Location', icon: 'MapPin', category: 'advanced', description: 'Capture where the person is.', keywords: ['gps', 'map', 'address', 'where', 'place'] },
+  welcome_screen: { label: 'Welcome Screen', icon: 'PartyPopper', category: 'layout', description: 'An opening page before the first question.', keywords: ['intro', 'start', 'cover', 'first'] },
+  thank_you: { label: 'Thank You', icon: 'Heart', category: 'layout', description: 'The message shown after someone submits.', keywords: ['done', 'finish', 'confirmation', 'success', 'end'] },
+  hidden: { label: 'Hidden Field', icon: 'EyeOff', category: 'advanced', description: 'Stored with the response but never shown to the person filling it in.', keywords: ['tracking', 'source', 'meta', 'invisible', 'utm'] },
 };
 
 /**

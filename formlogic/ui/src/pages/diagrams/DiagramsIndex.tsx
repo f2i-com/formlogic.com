@@ -147,7 +147,10 @@ export default function DiagramsIndex() {
                 <Button
                   variant="ghost"
                   size="iconOnly"
-                  className="opacity-0 group-hover:opacity-100"
+                  // opacity-0 until hover is invisible-yet-tappable on touch devices,
+                  // where there is no hover: a destructive control the finger can reach
+                  // but the eye cannot see. Always visible, emphasised on hover.
+                  className="opacity-60 transition-opacity group-hover:opacity-100"
                   onClick={() => setPendingDelete(diagram)}
                   aria-label={`Delete diagram ${diagram.name}`}
                 >

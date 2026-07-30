@@ -16,6 +16,16 @@ export function handleRovingKeys<T extends { value: string }>(
   selectFollowsFocus: boolean,
   onChange?: (value: string) => void,
 ): void {
+  // Enter/Space ACTIVATE the focused option (the browser fires the button's click), so
+  // they must not also reach a page-level handler. On the public form filler the page
+  // listens for Enter to advance a step and calls preventDefault, which cancelled the
+  // tick AND jumped to the next question — one keystroke doing two contradictory things.
+  // Stopping propagation here fixes every roving group without touching the page's
+  // Enter-to-advance behaviour for text inputs.
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.stopPropagation();
+    return;
+  }
   if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
   e.preventDefault();
   e.stopPropagation();

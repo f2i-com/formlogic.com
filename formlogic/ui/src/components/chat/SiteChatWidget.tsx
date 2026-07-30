@@ -109,7 +109,7 @@ function ToolActivityCard({ activity, onOpenLink }: { activity: ChatToolActivity
     >
       {activityIcon(activity.status)}
       <div className="min-w-0 flex-1">
-        <span className="block truncate font-medium text-gray-800 dark:text-slate-200">{activity.name}</span>
+        <span className="block truncate font-medium text-gray-800 dark:text-slate-200" title={activity.name}>{activity.label ?? activity.name}</span>
         {activity.detail && <span className="block break-words text-gray-500 dark:text-slate-400">{activity.detail}</span>}
         {activity.error && <span className="block break-words text-red-600 dark:text-red-400">{activity.error}</span>}
       </div>
@@ -142,11 +142,18 @@ function ToolProposalCard({
       data-testid="chat-tool-proposal"
       className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs dark:border-amber-500/30 dark:bg-amber-500/10"
     >
-      <p className="font-medium text-amber-900 dark:text-amber-200">Allow the assistant to run “{proposal.tool}”?</p>
+      {/* The question is what the assistant is about to DO — the arguments are detail,
+          not the question. It used to read: run "create_app_form"? above a JSON dump. */}
+      <p className="font-medium text-amber-900 dark:text-amber-200" title={proposal.tool}>
+        {proposal.toolLabel ?? proposal.tool}?
+      </p>
       {proposal.input !== null && proposal.input !== undefined && (
-        <pre className="mt-1.5 max-h-24 overflow-auto rounded bg-white/70 p-1.5 text-[11px] text-gray-700 dark:bg-slate-900/50 dark:text-slate-300">
-          {JSON.stringify(proposal.input, null, 2)}
-        </pre>
+        <details className="mt-1.5">
+          <summary className="cursor-pointer text-[11px] text-amber-800/80 dark:text-amber-200/70">Show details</summary>
+          <pre className="mt-1.5 max-h-24 overflow-auto rounded bg-white/70 p-1.5 text-[11px] text-gray-700 dark:bg-slate-900/50 dark:text-slate-300">
+            {JSON.stringify(proposal.input, null, 2)}
+          </pre>
+        </details>
       )}
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <button

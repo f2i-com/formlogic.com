@@ -1,6 +1,7 @@
 // The diagram's selection editor, extracted verbatim from DiagramCanvas.tsx
 // (audit XR-02 — behavior-neutral split behind SelectionPanel.test.tsx).
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { readSelectionDraft, writeSelectionDraft, clearSelectionDraft } from './selectionDraft';
 import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import type { BlueprintElement } from '../../types/blueprints';
@@ -15,6 +16,8 @@ const INPUT_CLS = DIAGRAM_INPUT_CLS;
  * their body; edges edit a relationship NAME (and, for form-form ER relations,
  * cardinality + FK). Everything can be deleted from here too.
  */
+
+
 export function SelectionPanel({
   element,
   busy,
@@ -35,15 +38,26 @@ export function SelectionPanel({
   const isForm = element.elementType === 'form';
   const isTexty = element.elementType === 'note' || element.elementType === 'text';
   const isDrawing = element.elementType === 'ink' || element.elementType === 'image' || element.elementType === 'shape';
-  const [title, setTitle] = useState(String((element.properties as { title?: unknown }).title ?? ''));
-  const [notes, setNotes] = useState(linkedNoteText ?? '');
-  const [bodyText, setBodyText] = useState(String((element.properties as { text?: unknown }).text ?? ''));
-  const [fields, setFields] = useState<SketchField[]>(() => sketchFields(element.properties));
-  const [cardinality, setCardinality] = useState(String(edgeProps.cardinality ?? '1:N'));
-  const [fkField, setFkField] = useState(String(edgeProps.fkField ?? ''));
-  const [edgeLabel, setEdgeLabel] = useState(String(edgeProps.label ?? ''));
+  // Restore an unsaved draft from a previous mount, unless the element itself has moved
+  // on since (see draftCache).
+  const basedOn = JSON.stringify(element.properties ?? {});
+  const restored = readSelectionDraft(element.id, basedOn);
+  const [title, setTitle] = useState(restored?.title ?? String((element.properties as { title?: unknown }).title ?? ''));
+  const [notes, setNotes] = useState(restored?.notes ?? (linkedNoteText ?? ''));
+  const [bodyText, setBodyText] = useState(restored?.bodyText ?? String((element.properties as { text?: unknown }).text ?? ''));
+  const [fields, setFields] = useState<SketchField[]>(() => restored?.fields ?? sketchFields(element.properties));
+  const [cardinality, setCardinality] = useState(restored?.cardinality ?? String(edgeProps.cardinality ?? '1:N'));
+  const [fkField, setFkField] = useState(restored?.fkField ?? String(edgeProps.fkField ?? ''));
+  const [edgeLabel, setEdgeLabel] = useState(restored?.edgeLabel ?? String(edgeProps.label ?? ''));
+
+  // Mirror the buffer into the cache on unmount, so a deselect preserves it.
+  useEffect(() => () => {
+    writeSelectionDraft(element.id, { basedOn, title, notes, bodyText, fields, cardinality, fkField, edgeLabel });
+  }, [element.id, basedOn, title, notes, bodyText, fields, cardinality, fkField, edgeLabel]);
 
   const save = () => {
+    // Committed — the draft is no longer unsaved work.
+    clearSelectionDraft(element.id);
     if (isEdge) {
       const next: Record<string, unknown> = { ...element.properties };
       if (edgeLabel.trim() === '') delete next.label;
@@ -84,7 +98,7 @@ export function SelectionPanel({
             {isErRelation ? 'Relation' : 'Connector'}
           </p>
           <label className="mb-1 block text-[11px] text-gray-400 dark:text-slate-500">
-            Relationship name (shown on the wire)
+            What to call this link (shown on the line)
           </label>
           <input
             value={edgeLabel}
@@ -95,15 +109,15 @@ export function SelectionPanel({
           />
           {isErRelation && (
             <>
-              <label className="mt-3 mb-1 block text-[11px] text-gray-400 dark:text-slate-500">Cardinality</label>
-              <select value={cardinality} onChange={(e) => setCardinality(e.target.value)} aria-label="Relation cardinality" className={INPUT_CLS + ' w-full cursor-pointer'}>
-                <option value="1:N">1:N — one source, many targets</option>
-                <option value="1:1">1:1 — one to one</option>
-                <option value="N:M">N:M — many to many (junction form)</option>
+              <label className="mt-3 mb-1 block text-[11px] text-gray-400 dark:text-slate-500">How many of each?</label>
+              <select value={cardinality} onChange={(e) => setCardinality(e.target.value)} aria-label="How many records link to each other" className={INPUT_CLS + ' w-full cursor-pointer'}>
+                <option value="1:N">One of these has many of those</option>
+                <option value="1:1">Exactly one each way</option>
+                <option value="N:M">Many on both sides</option>
               </select>
               {cardinality !== 'N:M' && (
                 <>
-                  <label className="mt-3 mb-1 block text-[11px] text-gray-400 dark:text-slate-500">FK field (created on the target form)</label>
+                  <label className="mt-3 mb-1 block text-[11px] text-gray-400 dark:text-slate-500">Name of the question added to the other form</label>
                   <input value={fkField} onChange={(e) => setFkField(e.target.value)} placeholder="customer" aria-label="Relation FK field" className={INPUT_CLS + ' w-full font-mono text-xs'} />
                 </>
               )}

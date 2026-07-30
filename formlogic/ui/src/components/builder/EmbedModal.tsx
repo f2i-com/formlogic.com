@@ -17,12 +17,16 @@ interface EmbedModalProps {
   /** When provided and not 'published', shows a draft warning — the generated link/embed/QR
    *  all point at the public form endpoint, which 403s for non-owners until the form is published. */
   formStatus?: Form['status'];
+  /** Labels of fields a public visitor cannot answer (linked_record needs a signed-in
+   *  owner to scope its lookup). The filler skips them, so the owner must know they will
+   *  not be collected on the link they are about to share. */
+  publicUnfillableFields?: string[];
 }
 
 type EmbedType = 'standard' | 'fullpage' | 'popup';
 type ActiveTab = 'link' | 'embed' | 'export' | 'qr';
 
-export function EmbedModal({ isOpen, onClose, formId, formTitle, formStatus }: EmbedModalProps) {
+export function EmbedModal({ isOpen, onClose, formId, formTitle, formStatus, publicUnfillableFields = [] }: EmbedModalProps) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('link');
   const [embedType, setEmbedType] = useState<EmbedType>('standard');
   const [width, setWidth] = useState('100%');
@@ -305,6 +309,18 @@ function closeFormPopup() {
         {/* Draft warning — the link/embed/QR below all resolve to the public form endpoint,
             which only serves published forms to anonymous visitors (the owner's own session
             can still open it, which is what makes this easy to miss while testing). */}
+        {!browserLocalDemo && publicUnfillableFields.length > 0 && (
+          <div className="mx-6 mt-4 flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+            <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
+            <span>
+              {publicUnfillableFields.length === 1
+                ? <>&ldquo;{publicUnfillableFields[0]}&rdquo; can only be answered inside an app, so visitors using this link will not be asked it.</>
+                : <>{publicUnfillableFields.length} questions ({publicUnfillableFields.join(', ')}) can only be answered inside an app, so visitors using this link will not be asked them.</>}
+              {' '}They are skipped rather than shown as questions nobody can fill in.
+            </span>
+          </div>
+        )}
+
         {!browserLocalDemo && formStatus && formStatus !== 'published' && (
           <div className="mx-6 mt-4 flex items-start gap-2.5 text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 p-3 rounded-lg border border-amber-200 dark:border-amber-500/30">
             <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5 text-amber-500" />

@@ -11,7 +11,7 @@
 // websiteAiRouting.resolveDefaultAiSource() for default-source consumers.
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { CODEX_PROVIDER_ID, CODEX_REASONING_EFFORTS } from '../../client-runtime/desktop/desktopTunnel';
-import { Laptop, RefreshCw, Settings2 } from 'lucide-react';
+import { Check, Laptop, Loader2, RefreshCw, Settings2 } from 'lucide-react';
 import {
   api,
   type AiChatToolMode,
@@ -243,6 +243,10 @@ export function AiSourceCard() {
    * free-text inputs keep the explicit Save button. Latest-wins: a newer auto-save
    * supersedes an in-flight one (stale responses are dropped, never applied).
    */
+  // Discrete picks save themselves, but silently — beside a greyed-out "Save AI
+  // settings" button, which reads as "nothing has been saved". Say so instead.
+  const [autoSaved, setAutoSaved] = useState(false);
+
   const autoSave = async (patch: {
     source?: AiSourceSetting;
     desktopProviderId?: string;
@@ -274,6 +278,7 @@ export function AiSourceCard() {
     // Only the baseline updates — never the editable fields (they may already be ahead).
     setLoaded(res.data);
     cacheAiPreferences(res.data);
+    setAutoSaved(true);
   };
 
   const save = async () => {
@@ -664,6 +669,15 @@ export function AiSourceCard() {
         <Button onClick={() => void save()} disabled={!isDirty || saving || readOnly} isLoading={saving}>
           Save AI settings
         </Button>
+        {saving ? (
+          <span className="inline-flex items-center gap-1 text-xs text-gray-500 dark:text-slate-400">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…
+          </span>
+        ) : autoSaved && !isDirty ? (
+          <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+            <Check className="h-3.5 w-3.5" /> Saved
+          </span>
+        ) : null}
         <Button variant="outline" onClick={() => setShowAiServices(true)} leftIcon={<Settings2 className="h-4 w-4" />}>
           Manage AI services
         </Button>

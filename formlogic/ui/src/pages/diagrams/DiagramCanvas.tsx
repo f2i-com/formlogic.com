@@ -32,8 +32,10 @@ import {
   FileText,
   ImagePlus,
   Loader2,
+  Map as MapIcon,
   Monitor,
   Pencil,
+  Plus,
   Plug,
   Sparkles,
   Square,
@@ -54,6 +56,7 @@ import { cn, generateId } from '../../lib/utils';
 import { Button } from '../../components/ui/Button';
 import type { Blueprint, BlueprintElement, BlueprintOperation } from '../../types/blueprints';
 import { SelectionPanel } from './SelectionPanel';
+import { clearSelectionDraft } from './selectionDraft';
 import { sketchFields, type SketchField } from './sketch';
 
 type BlueprintNodeData = {
@@ -973,6 +976,9 @@ export function DiagramCanvas({
 
   const deleteSelected = useCallback(() => {
     if (!selectedId) return;
+    // A deleted element's unsaved panel draft must not linger and reappear if an id is
+    // ever reused (and it is simply dead weight otherwise).
+    clearSelectionDraft(selectedId);
     // Deleting a node deletes its connected edges first (the gateway refuses dangling edges).
     const connectedEdges = elements
       .filter((element) => element.elementType === 'edge')
@@ -1242,8 +1248,8 @@ export function DiagramCanvas({
           />
         </div>
         <span className="h-6 w-px bg-gray-200 dark:bg-slate-700" />
-        <span className="mx-1 hidden text-xs text-gray-400 dark:text-slate-500 sm:inline">
-          Double-click the canvas for a new form entity; drag form→form for a relation, form→flow for a trigger.
+        <span className="mx-1 text-xs text-gray-400 dark:text-slate-500">
+          Double-click the canvas to add a form; drag one card onto another to link them.
         </span>
         <div className="ml-auto flex items-center gap-2">
           {busy && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
@@ -1318,7 +1324,10 @@ export function DiagramCanvas({
                     return;
                   }
                   toast.success('App created from your diagram', `${res.data.createdFormIds.length} form(s), ${res.data.relations} relation(s), ${res.data.createdFlowIds.length} flow(s), ${res.data.bindings} trigger(s), ${res.data.roles} role(s)`);
-                  navigate(`/apps/${res.data.appId}/records`);
+                  // The App Studio, not an empty Records table: the app has just been
+                  // created from a sketch, so the next step is building it out, and a
+                  // table with no records in it reads like nothing happened.
+                  navigate(`/apps/${res.data.appId}/studio`);
                 });
               }}
             >
@@ -1349,6 +1358,26 @@ export function DiagramCanvas({
             }
           }}
         >
+          {nodes.length === 0 && ghost.nodes.length === 0 && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6">
+              <div className="pointer-events-auto max-w-sm rounded-2xl border border-gray-200/80 bg-white/95 p-5 text-center shadow-sm dark:border-slate-700/60 dark:bg-slate-900/95">
+                <MapIcon className="mx-auto h-7 w-7 text-primary-500" aria-hidden="true" />
+                <p className="mt-3 text-sm font-medium text-gray-900 dark:text-white">Sketch the shape of your app</p>
+                <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-slate-400">
+                  The boxes you draw become real forms, and the lines between them become links and
+                  automations. Nothing is built until you choose to create the app.
+                </p>
+                <Button
+                  size="sm"
+                  className="mt-4"
+                  onClick={() => sketchElement('form', 'New form')}
+                  leftIcon={<Plus className="h-3.5 w-3.5" />}
+                >
+                  Add your first form
+                </Button>
+              </div>
+            </div>
+          )}
           <ReactFlow
           nodes={[...nodes, ...ghost.nodes]}
           edges={[...rfEdges, ...ghost.edges]}

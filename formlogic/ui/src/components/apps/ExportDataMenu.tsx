@@ -5,10 +5,14 @@ import { toast } from '../../stores/toastStore';
 
 type ExportFormat = 'sqlite' | 'mysql' | 'mssql';
 
-const EXPORT_OPTIONS: Array<{ format: ExportFormat; label: string; hint: string; icon: typeof FileArchive }> = [
-  { format: 'sqlite', label: 'SQLite bundle (.zip)', hint: 'Per-form databases + schema.json + files', icon: FileArchive },
-  { format: 'mysql', label: 'MySQL dump (.sql)', hint: 'Tables, records + foreign-key relations', icon: FileCode2 },
-  { format: 'mssql', label: 'SQL Server dump (.sql)', hint: 'Same tables + relations in T-SQL', icon: FileCode2 },
+// Described by PURPOSE, not by file format. Every option was named after a database
+// engine, so an owner looking for "my data in a spreadsheet" had three dumps to choose
+// between and no way to tell which one was for them. `developer` groups the two that
+// genuinely are for a developer.
+const EXPORT_OPTIONS: Array<{ format: ExportFormat; label: string; hint: string; icon: typeof FileArchive; developer?: boolean }> = [
+  { format: 'sqlite', label: 'Full backup (.zip)', hint: 'Everything — records and uploaded files. For keeping or moving this app.', icon: FileArchive },
+  { format: 'mysql', label: 'MySQL dump (.sql)', hint: 'Tables, records and relations.', icon: FileCode2, developer: true },
+  { format: 'mssql', label: 'SQL Server dump (.sql)', hint: 'The same tables and relations in T-SQL.', icon: FileCode2, developer: true },
 ];
 
 /**
@@ -66,9 +70,14 @@ export function ExportDataMenu({ appId, appSlug, variant = 'platform' }: { appId
           role="menu"
           className="absolute right-0 top-full mt-1.5 w-72 z-20 rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900 shadow-lg overflow-hidden"
         >
-          {EXPORT_OPTIONS.map(({ format, label, hint, icon: Icon }) => (
+          {EXPORT_OPTIONS.map(({ format, label, hint, icon: Icon, developer }, i) => (
+            <div key={format}>
+            {developer && !EXPORT_OPTIONS[i - 1]?.developer && (
+              <p className="border-t border-gray-100 px-4 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:border-slate-800 dark:text-slate-500">
+                For developers
+              </p>
+            )}
             <button
-              key={format}
               type="button"
               role="menuitem"
               onClick={() => { void run(format); }}
@@ -80,7 +89,12 @@ export function ExportDataMenu({ appId, appSlug, variant = 'platform' }: { appId
                 <span className="block text-xs text-gray-500 dark:text-slate-400">{hint}</span>
               </span>
             </button>
+            </div>
           ))}
+          {/* The thing most owners actually want is not in this menu at all. */}
+          <p className="border-t border-gray-100 px-4 py-2 text-[11px] text-gray-500 dark:border-slate-800 dark:text-slate-400">
+            Want a spreadsheet? Open a form&apos;s records and choose Export there.
+          </p>
         </div>
       )}
     </div>

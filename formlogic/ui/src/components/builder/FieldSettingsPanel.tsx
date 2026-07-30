@@ -465,6 +465,7 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
               onChange={(props) => onUpdate({ properties: props })}
               appId={appId}
               currentFormId={formId}
+              ownFields={allFields.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
             />
           )}
         </TabsContent>

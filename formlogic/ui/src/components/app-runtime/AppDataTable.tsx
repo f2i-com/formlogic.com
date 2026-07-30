@@ -431,7 +431,7 @@ export function AppDataTable() {
       onClick={handleExport}
       disabled={exporting || responses.length === 0}
       className="flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-      aria-label="Export responses as CSV"
+      aria-label="Download records as a spreadsheet"
     >
       <Download className="h-4 w-4" />
       <span className="hidden sm:inline">{exporting ? 'Exporting…' : 'Export'}</span>
@@ -633,8 +633,8 @@ export function AppDataTable() {
         isOpen={deleteId !== null}
         onClose={() => setDeleteId(null)}
         onConfirm={handleDelete}
-        title="Delete Response"
-        message="Are you sure you want to delete this response? This action cannot be undone."
+        title="Delete record"
+        message="This permanently removes this record. It cannot be undone."
         confirmLabel="Delete"
         variant="danger"
         isLoading={deleting}

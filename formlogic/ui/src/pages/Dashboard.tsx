@@ -1738,7 +1738,8 @@ export function Dashboard() {
                     <div>
                       <p className="text-sm font-medium text-amber-800 dark:text-amber-200">Pro tip</p>
                       <p className="text-xs text-amber-600 dark:text-amber-300/70 mt-1">
-                        Use backend scripts to score leads, validate data, and automate workflows on every submission.
+                        Set up an automation to do something every time a form is submitted — send a text,
+                        save a record, or notify someone.
                       </p>
                     </div>
                   </div>

@@ -626,7 +626,7 @@ export function FlowsWorkspace() {
           </div>
         )}
         {rightPanelInline && rightPanel === 'test' && selectedFlow && (
-          <div className="hidden md:flex motion-safe:transition-[width] motion-safe:duration-200">
+          <div className="hidden w-96 flex-none bg-white dark:bg-slate-900 md:flex motion-safe:transition-[width] motion-safe:duration-200">
             <TestRunDrawer
               flow={selectedFlow}
               onClose={() => setRightPanel(null)}

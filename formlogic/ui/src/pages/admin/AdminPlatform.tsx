@@ -30,13 +30,20 @@ export function AdminPlatform() {
   const [backupRuns, setBackupRuns] = useState<ScheduledBackupRun[] | null>(null);
   const [backupLastRun, setBackupLastRun] = useState<string | null>(null);
   const [runningBackup, setRunningBackup] = useState(false);
+  const [backupReadFailed, setBackupReadFailed] = useState(false);
 
   const loadBackups = useCallback(() => {
     api.adminListScheduledBackups().then((r) => {
-      if (r.data) {
-        setBackupRuns(r.data.runs);
-        setBackupLastRun(r.data.lastRun);
+      // A failed read used to leave lastRun null, which renders as "Never run" plus
+      // setup instructions — telling an admin their nightly backups have never happened
+      // when in fact we just could not ask.
+      if (r.error || !r.data) {
+        setBackupReadFailed(true);
+        return;
       }
+      setBackupReadFailed(false);
+      setBackupRuns(r.data.runs);
+      setBackupLastRun(r.data.lastRun);
     });
   }, []);
   useEffect(() => { loadBackups(); }, [loadBackups]);
@@ -222,9 +229,11 @@ export function AdminPlatform() {
             </Button>
           </div>
           <p className="text-xs text-gray-500 dark:text-slate-400">
-            {backupLastRun
-              ? <>Last run {formatDateTimeInZone(backupLastRun, tz)}</>
-              : <>Never run — schedule <code className="fl-mono">bin/backup-accounts.php</code> daily (cron or Task Scheduler), or run one now.</>}
+            {backupReadFailed
+              ? <>Couldn&apos;t read the backup history — this says nothing about whether backups ran. <button type="button" onClick={loadBackups} className="cursor-pointer font-medium text-primary-600 hover:underline dark:text-primary-400">Try again</button></>
+              : backupLastRun
+                ? <>Last run {formatDateTimeInZone(backupLastRun, tz)}</>
+                : <>Never run — schedule <code className="fl-mono">bin/backup-accounts.php</code> daily (cron or Task Scheduler), or run one now.</>}
           </p>
           {backupRuns !== null && backupRuns.length > 0 && (
             <div className="space-y-1.5">

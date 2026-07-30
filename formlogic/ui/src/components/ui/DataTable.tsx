@@ -208,10 +208,17 @@ export function DataTable<T extends Record<string, unknown>>({
                 )}
               >
                 <div className="min-w-0 flex-1 space-y-1">
+                  {/* The LABEL is what may truncate, not the answer. It used to be
+                      `shrink-0` with the value `truncate`, so a question-style column name
+                      ("How would you rate your experience?") took the whole row on a phone
+                      and pushed the actual answer off the card — every row looked
+                      identical. The value now wraps instead. */}
                   {columns.map((col) => (
                     <div key={col.key} className="flex gap-2 text-sm">
-                      <span className="text-gray-400 dark:text-slate-500 shrink-0">{col.label}:</span>
-                      <span className="text-gray-900 dark:text-slate-200 min-w-0 truncate">
+                      <span className="min-w-0 max-w-[45%] truncate text-gray-400 dark:text-slate-500" title={col.label}>
+                        {col.label}:
+                      </span>
+                      <span className="min-w-0 break-words text-gray-900 dark:text-slate-200">
                         {col.render ? col.render(item) : String(item[col.key] ?? '')}
                       </span>
                     </div>

@@ -15,11 +15,14 @@ export function LinkedRecordSettings({
   onChange,
   appId,
   currentFormId,
+  ownFields: ownFieldsProp,
 }: {
   properties: FieldProperties;
   onChange: (props: FieldProperties) => void;
   appId: string | null;
   currentFormId?: string;
+  /** THIS form's own data fields, passed straight from the builder. */
+  ownFields?: Array<{ id: string; label: string; type: string }>;
 }) {
   const [appForms, setAppForms] = useState<AppForm[]>([]);
   const [targetFields, setTargetFields] = useState<Array<{ id: string; label: string; type: string }>>([]);
@@ -30,9 +33,15 @@ export function LinkedRecordSettings({
   const searchFieldIds = properties.searchFieldIds || [];
   const allowMultiple = properties.allowMultiple || false;
   // This form's own data fields (for the match-by-field join key picker).
-  const ownFields = (appForms.find((f) => f.formId === currentFormId)?.fields ?? []).filter(
-    (f) => !['statement', 'welcome_screen', 'thank_you', 'linked_record'].includes(f.type)
-  );
+  //
+  // Previously derived by matching `currentFormId` inside the fetched app-forms list,
+  // where currentFormId came from a `?formId=` query parameter the builder route never
+  // sets — so this was ALWAYS empty and the two settings gated on it (the join-key
+  // picker and the grid column config) could never render at all. The caller passes the
+  // live field list; keep the old derivation only as a fallback for any other caller.
+  const ownFields = (
+    ownFieldsProp ?? appForms.find((f) => f.formId === currentFormId)?.fields ?? []
+  ).filter((f) => !['statement', 'welcome_screen', 'thank_you', 'linked_record'].includes(f.type));
 
   // Load app forms list
   useEffect(() => {

@@ -116,7 +116,7 @@ export function NewFlowDialog({
             <ScopeButton
               active={scopeAppId === null}
               label="Workspace"
-              description="Reusable flows owned by your workspace."
+              description="Runs when one of your forms is submitted, or on demand. Can be reused by any app."
               icon={Workflow}
               onClick={() => { setScopeAppId(null); setScopeEdited(true); }}
             />
@@ -127,13 +127,19 @@ export function NewFlowDialog({
                   key={app.id}
                   active={scopeAppId === app.id}
                   label={app.name}
-                  description={hasAokie ? 'App flow with Aokie connector access.' : 'App-scoped flow for this app.'}
+                  description={hasAokie ? "Can also run on this app's events, like an incoming phone call." : "Can also run on this app's own events."}
                   icon={Plug}
                   onClick={() => { setScopeAppId(app.id); setScopeEdited(true); }}
                 />
               );
             })}
           </div>
+          {/* Re-scoping is not a field flip — triggers live on different routes per scope —
+              so this is a one-way choice. State it here rather than letting the owner
+              discover it when the trigger they want is not offered. */}
+          <p className="mt-2 text-[11px] text-gray-500 dark:text-slate-400">
+            You can&apos;t move an automation between these later — pick the app if you want its events.
+          </p>
           {autoScopeAppId && !scopeEdited && scopeAppId === autoScopeAppId && (
             <p className="mt-2 text-[11px] text-primary-600 dark:text-primary-300">
               Aokie template detected - the only app with Aokie connector access is selected.

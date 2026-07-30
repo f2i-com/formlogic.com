@@ -22,6 +22,7 @@ import { EmbedModal } from '../components/builder/EmbedModal';
 import { NigoDashboard } from '../components/builder/NigoDashboard';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
 import type { FormField } from '../types/form';
+import { publicUnfillableFieldLabels } from '../lib/publicForm';
 
 // Main Preview Component
 export default function FormPreview() {
@@ -334,6 +335,7 @@ export default function FormPreview() {
         formId={form.id}
         formTitle={form.title}
         formStatus={form.status}
+        publicUnfillableFields={publicUnfillableFieldLabels(form.fields)}
       />
 
       {/* Preview Area */}
