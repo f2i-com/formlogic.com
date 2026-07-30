@@ -10,6 +10,8 @@
 import { desktopClient, type DesktopServiceSnapshot } from '../desktop/desktopClient';
 import { getDesktopInfo } from '../desktop/desktopDetection';
 import { getDesktopToken } from '../desktop/desktopPairing';
+import { oaiyRouteAvailable } from '../oaiy/oaiyRuntime';
+import { listOaiyServices } from '../oaiy/oaiyServices';
 
 export interface DesktopLlmEndpoint {
   /** Full OpenAI-compatible chat-completions URL on the local machine. */
@@ -44,10 +46,21 @@ export function pickDesktopLlmService(services: DesktopServiceSnapshot[]): Deskt
 }
 
 /**
- * Resolve a Desktop-managed local AI endpoint, or null when Desktop is undetected,
- * unpaired, unreachable, or runs no suitable service. Never throws.
+ * Resolve a local AI endpoint from whichever runtime is present, or null when
+ * none is / none runs a suitable service. Never throws.
+ *
+ * OAIY Desktop (the successor) is preferred when paired: it hosts local AI
+ * services just like FormLogic Desktop. If OAIY ANSWERS (even with no suitable
+ * service) that answer stands — we do NOT silently fall back to a FormLogic
+ * Desktop model the user didn't pick; only an UNREACHABLE OAIY (null) falls
+ * through to FormLogic Desktop.
  */
 export async function resolveDesktopLlmEndpoint(): Promise<DesktopLlmEndpoint | null> {
+  if (oaiyRouteAvailable()) {
+    const services = await listOaiyServices();
+    if (services !== null) return pickDesktopLlmService(services);
+    // OAIY vanished mid-call — fall through to FormLogic Desktop.
+  }
   if (!getDesktopInfo().available || !getDesktopToken()) return null;
   const res = await desktopClient.services.list();
   if (!res.ok) return null;

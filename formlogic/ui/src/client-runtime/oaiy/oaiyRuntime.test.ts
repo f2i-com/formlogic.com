@@ -10,6 +10,8 @@ import {
   oaiyRouteAvailable,
   probeOaiy,
   setOaiyToken,
+  startOaiyPlugin,
+  stopOaiyPlugin,
   subscribeOaiyPaired,
   unwrapConnectorEnvelope,
   __resetOaiyDetectionForTests,
@@ -245,5 +247,36 @@ describe('listOaiyPlugins', () => {
   it('returns null on a transport failure', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('offline'); }));
     expect(await listOaiyPlugins()).toBeNull();
+  });
+});
+
+describe('plugin lifecycle (start/stop)', () => {
+  it('POSTs to the right route with the bearer and reports ok on success', async () => {
+    // (200 stands in for the real 204 — the Response ctor forbids a 204 body, and
+    // the client only branches on resp.ok, not the status number.)
+    const { calls } = mockFetch(() => ({ status: 200, body: undefined }));
+    setOaiyToken('tok');
+    expect(await startOaiyPlugin('aokie')).toEqual({ ok: true });
+    expect(calls[0]!.url).toContain('/api/plugins/aokie/start');
+    expect((calls[0]!.init.headers as Record<string, string>).Authorization).toBe('Bearer tok');
+    expect(calls[0]!.init.method).toBe('POST');
+  });
+
+  it('stop hits the stop route', async () => {
+    const { calls } = mockFetch(() => ({ status: 200, body: undefined }));
+    await stopOaiyPlugin('aokie');
+    expect(calls[0]!.url).toContain('/api/plugins/aokie/stop');
+  });
+
+  it('surfaces the host refusal message on a non-ok response', async () => {
+    mockFetch(() => ({ status: 409, body: { error: { code: 'capability_unavailable', message: 'missing a DLL' } } }));
+    expect(await startOaiyPlugin('aokie')).toEqual({ ok: false, error: 'missing a DLL' });
+  });
+
+  it('reports an unreachable OAIY, never throwing', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('offline'); }));
+    const res = await startOaiyPlugin('aokie');
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/did not respond/i);
   });
 });

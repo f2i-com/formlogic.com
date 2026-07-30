@@ -7,20 +7,16 @@
 // own loopback ports, so the resolved base is loopback-only by construction; nodes.ts re-checks
 // isLoopbackUrl() before trusting it. No Desktop / not paired / service not running → null, and the
 // node fails with an actionable "install & start the service in FormLogic Desktop" message.
-import { desktopClient, type DesktopAiSource } from '../desktop/desktopClient';
+import { desktopClient, type DesktopAiSource, type DesktopServiceSnapshot } from '../desktop/desktopClient';
 import { getDesktopInfo } from '../desktop/desktopDetection';
 import { getDesktopToken } from '../desktop/desktopPairing';
+import { oaiyRouteAvailable } from '../oaiy/oaiyRuntime';
+import { listOaiyServices } from '../oaiy/oaiyServices';
 
-/**
- * Resolve the loopback base URL (`http://127.0.0.1:<port>`) of a RUNNING FormLogic Desktop
- * service by its id, or null when Desktop is undetected, unpaired, unreachable, or the service
- * isn't running. Never throws.
- */
-export async function resolveDesktopServiceBase(serviceId: string): Promise<string | null> {
-  if (!getDesktopInfo().available || !getDesktopToken()) return null;
-  const res = await desktopClient.services.list();
-  if (!res.ok) return null;
-  for (const s of res.data) {
+/** Loopback base of a RUNNING service by id, from a service listing. Shared by
+ *  the OAIY and FormLogic Desktop paths so both resolve a base identically. */
+function pickServiceBase(services: DesktopServiceSnapshot[], serviceId: string): string | null {
+  for (const s of services) {
     if (s.id !== serviceId) continue;
     if (s.status !== 'running') return null; // present but stopped — the caller surfaces "start it"
     const port = s.port || s.defaultPort || 0;
@@ -28,6 +24,26 @@ export async function resolveDesktopServiceBase(serviceId: string): Promise<stri
     return `http://127.0.0.1:${port}`;
   }
   return null;
+}
+
+/**
+ * Resolve the loopback base URL (`http://127.0.0.1:<port>`) of a RUNNING local
+ * service by its id, or null when no runtime is present / the service isn't
+ * running. Never throws.
+ *
+ * OAIY Desktop (the successor) is preferred when paired; only an UNREACHABLE OAIY
+ * falls through to FormLogic Desktop (an OAIY that answers but lacks the service
+ * is an honest "start it there", not a reason to reach a different runtime).
+ */
+export async function resolveDesktopServiceBase(serviceId: string): Promise<string | null> {
+  if (oaiyRouteAvailable()) {
+    const services = await listOaiyServices();
+    if (services !== null) return pickServiceBase(services, serviceId);
+  }
+  if (!getDesktopInfo().available || !getDesktopToken()) return null;
+  const res = await desktopClient.services.list();
+  if (!res.ok) return null;
+  return pickServiceBase(res.data, serviceId);
 }
 
 /** One Desktop service, shaped for flow logic (the `desktop_services` node). */
@@ -42,18 +58,9 @@ export interface DesktopServiceListing {
   url: string;
 }
 
-/**
- * List the paired Desktop's managed services for flow logic (the
- * `desktop_services` node — source pickers resolve `service:<id>` records to
- * live loopback URLs at CONFIGURE time through this). Desktop undetected /
- * unpaired / unreachable → [] (the flow falls back to its legacy fields).
- * Never throws.
- */
-export async function listDesktopServices(): Promise<DesktopServiceListing[]> {
-  if (!getDesktopInfo().available || !getDesktopToken()) return [];
-  const res = await desktopClient.services.list();
-  if (!res.ok) return [];
-  return res.data.map((s) => {
+/** Map a service listing to the flow-logic shape. Shared by both runtimes. */
+function toServiceListings(services: DesktopServiceSnapshot[]): DesktopServiceListing[] {
+  return services.map((s) => {
     const port = s.port || s.defaultPort || 0;
     return {
       id: s.id,
@@ -64,6 +71,24 @@ export async function listDesktopServices(): Promise<DesktopServiceListing[]> {
       url: s.status === 'running' && port ? `http://127.0.0.1:${port}` : '',
     };
   });
+}
+
+/**
+ * List the local runtime's managed services for flow logic (the
+ * `desktop_services` node — source pickers resolve `service:<id>` records to
+ * live loopback URLs at CONFIGURE time through this). OAIY Desktop is preferred
+ * when paired; no runtime / unreachable → [] (the flow falls back to its legacy
+ * fields). Never throws.
+ */
+export async function listDesktopServices(): Promise<DesktopServiceListing[]> {
+  if (oaiyRouteAvailable()) {
+    const services = await listOaiyServices();
+    if (services !== null) return toServiceListings(services);
+  }
+  if (!getDesktopInfo().available || !getDesktopToken()) return [];
+  const res = await desktopClient.services.list();
+  if (!res.ok) return [];
+  return toServiceListings(res.data);
 }
 
 /**
@@ -92,14 +117,39 @@ export interface AiSourceListing {
   enabled: boolean;
 }
 
+/** Map an OAIY service to a lane-picker source. OAIY has no AI-gateway union, so
+ *  there are no providers and no capability tags — infer the common `chat`
+ *  capability from an `llm` category, else leave it open. */
+function oaiyServiceToSource(s: DesktopServiceSnapshot): AiSourceListing {
+  const port = s.port || s.defaultPort || 0;
+  const capabilities = (s.category ?? '').toLowerCase() === 'llm' ? ['chat'] : [];
+  return {
+    id: `service:${s.id}`,
+    kind: 'service',
+    refId: s.id,
+    name: s.name || s.id,
+    category: s.category ?? '',
+    status: s.status,
+    capabilities,
+    url: s.status === 'running' && port ? `http://127.0.0.1:${port}` : '',
+    model: '',
+    enabled: true,
+  };
+}
+
 /**
  * List everything a receptionist lane picker can point at — the SAME union the
  * desktop's AI-gateway serves (GET /api/ai/sources): managed services with
- * capability tags + configured AI providers. Desktop undetected / unpaired /
- * unreachable / pre-SRC-202 build → [] (callers degrade to listDesktopServices
- * or saved ids). Never throws.
+ * capability tags + configured AI providers. OAIY Desktop is preferred when
+ * paired, degraded to its plain service listing (it has no provider union).
+ * No runtime / unreachable / pre-SRC-202 build → [] (callers degrade to
+ * listDesktopServices or saved ids). Never throws.
  */
 export async function listAiSources(): Promise<AiSourceListing[]> {
+  if (oaiyRouteAvailable()) {
+    const services = await listOaiyServices();
+    if (services !== null) return services.map(oaiyServiceToSource);
+  }
   if (!getDesktopInfo().available || !getDesktopToken()) return [];
   const res = await desktopClient.ai.sources();
   if (!res.ok) return [];

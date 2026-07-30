@@ -411,6 +411,52 @@ export async function listOaiyPlugins(): Promise<OaiyPluginSummary[] | null> {
   }
 }
 
+/** Outcome of a plugin lifecycle action — ok, or an actionable message. */
+export interface OaiyPluginActionResult {
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * Start or stop an OAIY-hosted plugin (POST /api/plugins/{id}/{start|stop}).
+ * Privileged, so it carries the pairing bearer. Starting spawns the plugin
+ * process + handshake, which can take a few seconds — hence the longer timeout.
+ * Never throws: an unreachable OAIY, a 401, or a host refusal all come back as
+ * `{ ok:false, error }` for the caller to surface.
+ */
+async function pluginLifecycle(id: string, action: 'start' | 'stop'): Promise<OaiyPluginActionResult> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20_000);
+    const resp = await fetch(
+      `${getOaiyBaseUrl()}/api/plugins/${encodeURIComponent(id)}/${action}`,
+      {
+        method: 'POST',
+        credentials: 'omit',
+        cache: 'no-store',
+        signal: controller.signal,
+        headers: { Accept: 'application/json', ...authHeaders() },
+      },
+    );
+    clearTimeout(timer);
+    if (resp.ok) return { ok: true };
+    const body = (await resp.json().catch(() => null)) as { error?: { message?: string } } | null;
+    return { ok: false, error: body?.error?.message ?? `OAIY plugin ${action} failed (HTTP ${resp.status})` };
+  } catch {
+    return { ok: false, error: 'OAIY Desktop did not respond.' };
+  }
+}
+
+/** Start an OAIY-hosted plugin. See {@link pluginLifecycle}. */
+export function startOaiyPlugin(id: string): Promise<OaiyPluginActionResult> {
+  return pluginLifecycle(id, 'start');
+}
+
+/** Stop an OAIY-hosted plugin. See {@link pluginLifecycle}. */
+export function stopOaiyPlugin(id: string): Promise<OaiyPluginActionResult> {
+  return pluginLifecycle(id, 'stop');
+}
+
 /** Unwrap a plugin's `{ ok: true, data }` connector-response envelope to its
  *  inner `data`, matching FormLogic Desktop's gateway. A result that is not that
  *  envelope (a bare value, or a shape without the `ok` marker) passes through. */

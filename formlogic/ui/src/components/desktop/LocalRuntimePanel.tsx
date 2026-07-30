@@ -17,7 +17,7 @@
 // (POST /api/desktop-connections, owned by the Flows backend) is updated
 // best-effort: a 404/failed call never blocks pairing.
 import { useCallback, useEffect, useState } from 'react';
-import { HardDrive, Plug, RefreshCw, Unplug } from 'lucide-react';
+import { HardDrive, Loader2, Play, Plug, RefreshCw, Square, Unplug } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Button } from '../ui/Button';
 import { toast } from '../../stores/toastStore';
@@ -47,6 +47,8 @@ import {
   isOaiyPaired,
   listOaiyPlugins,
   setOaiyToken,
+  startOaiyPlugin,
+  stopOaiyPlugin,
   subscribeOaiyPaired,
   type OaiyInfo,
   type OaiyPluginSummary,
@@ -93,6 +95,8 @@ export function LocalRuntimePanel() {
   const [pairCode, setPairCode] = useState<string | null>(null);
   const [plugins, setPlugins] = useState<PluginRow[] | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  /** Plugin ids with an in-flight start/stop, so their button shows a spinner. */
+  const [pluginBusy, setPluginBusy] = useState<Set<string>>(new Set());
 
   // Detection runs only while this panel (or the app runtime) is subscribed.
   useEffect(() => subscribeOaiyStatus(setOaiy), []);
@@ -233,6 +237,26 @@ export function LocalRuntimePanel() {
     setRefreshing(false);
   };
 
+  // Start/stop an OAIY-hosted plugin, then refresh the list so its state badge
+  // reflects the new lifecycle. OAIY only — its routes/shapes are known here; the
+  // FormLogic Desktop panel was always listing-only.
+  const togglePlugin = async (p: PluginRow, start: boolean) => {
+    setPluginBusy((s) => new Set(s).add(p.id));
+    try {
+      const res = start ? await startOaiyPlugin(p.id) : await stopOaiyPlugin(p.id);
+      if (!res.ok) {
+        toast.error(`Could not ${start ? 'start' : 'stop'} ${p.name ?? p.id}`, res.error);
+      }
+      await loadDetails();
+    } finally {
+      setPluginBusy((s) => {
+        const n = new Set(s);
+        n.delete(p.id);
+        return n;
+      });
+    }
+  };
+
   return (
     <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
@@ -321,16 +345,40 @@ export function LocalRuntimePanel() {
               <p className="text-sm text-gray-400 dark:text-slate-500">No plugins installed on this runtime.</p>
             ) : (
               <ul className="space-y-2">
-                {plugins.map((p) => (
-                  <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-gray-200/80 dark:border-slate-700/60 px-3 py-2">
-                    <div className="min-w-0">
-                      <span className="text-sm font-medium text-gray-900 dark:text-white">{p.name ?? p.id}</span>
-                      {p.version && <span className="ml-2 text-xs text-gray-400 dark:text-slate-500 font-mono">v{p.version}</span>}
-                      {p.detail && <p className="text-[11px] text-gray-400 dark:text-slate-500 truncate">{p.detail}</p>}
-                    </div>
-                    <PluginStateBadge state={String(p.state)} />
-                  </li>
-                ))}
+                {plugins.map((p) => {
+                  const running = String(p.state) === 'running';
+                  const busy = pluginBusy.has(p.id);
+                  return (
+                    <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-gray-200/80 dark:border-slate-700/60 px-3 py-2">
+                      <div className="min-w-0">
+                        <span className="text-sm font-medium text-gray-900 dark:text-white">{p.name ?? p.id}</span>
+                        {p.version && <span className="ml-2 text-xs text-gray-400 dark:text-slate-500 font-mono">v{p.version}</span>}
+                        {p.detail && <p className="text-[11px] text-gray-400 dark:text-slate-500 truncate">{p.detail}</p>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <PluginStateBadge state={String(p.state)} />
+                        {active === 'oaiy' && (
+                          <button
+                            type="button"
+                            className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                            disabled={busy}
+                            title={running ? 'Stop this plugin' : 'Start this plugin'}
+                            onClick={() => togglePlugin(p, !running)}
+                          >
+                            {busy ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : running ? (
+                              <Square className="h-3.5 w-3.5" />
+                            ) : (
+                              <Play className="h-3.5 w-3.5" />
+                            )}
+                            {running ? 'Stop' : 'Start'}
+                          </button>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
