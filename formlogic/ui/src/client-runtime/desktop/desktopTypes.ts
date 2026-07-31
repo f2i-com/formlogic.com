@@ -8,6 +8,22 @@
 /** Loopback base URL of FormLogic Desktop (contract §1). */
 export const DESKTOP_BASE_URL = 'http://127.0.0.1:17872';
 
+/**
+ * Every loopback base a supported desktop runtime may answer on, in probe order.
+ *
+ * More than one because a desktop runtime is no longer a single product: OAIY
+ * Desktop implements the same loopback contract on its own port. Detection tries
+ * each until one answers with a recognised `companion`, then pins to it — so a
+ * user running either (or, on a developer box, both) gets the one that is
+ * actually there rather than a hardcoded guess.
+ *
+ * Order is preference: FormLogic's own runtime first.
+ */
+export const DESKTOP_BASE_URL_CANDIDATES = [
+  'http://127.0.0.1:17872',
+  'http://127.0.0.1:17972',
+] as const;
+
 // Overridable for tests (points the whole desktop stack at a mock server / distinct
 // per-test "instance" so pairing-token namespacing is exercisable). Production never calls this.
 let baseUrl = DESKTOP_BASE_URL;
@@ -27,8 +43,24 @@ export function __resetDesktopBaseUrlForTests(): void {
   baseUrl = DESKTOP_BASE_URL;
 }
 
-/** Companion ids accepted by detection (contract §1). */
-export const DESKTOP_COMPANION_IDS = ['formlogic-desktop'] as const;
+/**
+ * Pin the base a probe found a live desktop on.
+ *
+ * Detection calls this; every other module then reads getDesktopBaseUrl() and
+ * needs to know nothing about which runtime is running.
+ */
+export function setDiscoveredDesktopBaseUrl(url: string): void {
+  baseUrl = url.replace(/\/+$/, '');
+}
+
+/**
+ * Companion ids accepted by detection (contract §1).
+ *
+ * A set, not one value: any runtime implementing the loopback contract is a
+ * valid desktop for this app. OAIY Desktop reports `oaiy-desktop` and serves the
+ * same /api/services, /api/plugins and control routes.
+ */
+export const DESKTOP_COMPANION_IDS = ['formlogic-desktop', 'oaiy-desktop'] as const;
 
 /** GET /api/health response (unauthenticated, CORS-open). */
 export interface DesktopHealth {

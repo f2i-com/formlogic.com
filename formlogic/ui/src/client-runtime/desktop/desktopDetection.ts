@@ -9,7 +9,7 @@
 // so pages that never touch Desktop (public forms, marketing) make zero loopback fetches.
 // After repeated consecutive failures the poll backs off from 10s to 30s (a machine
 // without Desktop installed shouldn't burn a fetch every 10s forever).
-import { DESKTOP_COMPANION_IDS, getDesktopBaseUrl, type DesktopHealth } from './desktopTypes';
+import { DESKTOP_BASE_URL_CANDIDATES, DESKTOP_COMPANION_IDS, getDesktopBaseUrl, setDiscoveredDesktopBaseUrl, type DesktopHealth } from './desktopTypes';
 
 const POLL_INTERVAL_MS = 10_000;
 const BACKOFF_INTERVAL_MS = 30_000;
@@ -48,8 +48,14 @@ function isRecognisedCompanion(id: unknown): boolean {
   return typeof id === 'string' && (DESKTOP_COMPANION_IDS as readonly string[]).includes(id);
 }
 
-async function probeOnce(): Promise<void> {
-  const base = getDesktopBaseUrl();
+/**
+ * Probe ONE base. Returns true when a recognised desktop answered.
+ *
+ * Split out of probeOnce so the caller can walk the candidate list: a desktop
+ * runtime is no longer one product on one port, and a fixed base meant a user
+ * running the other one was told there was no desktop at all.
+ */
+async function probeBase(base: string): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -65,25 +71,46 @@ async function probeOnce(): Promise<void> {
     if (resp.ok) {
       const body = (await resp.json().catch(() => null)) as Partial<DesktopHealth> | null;
       const recognised = isRecognisedCompanion(body?.companion);
-      consecutiveFailures = recognised ? 0 : consecutiveFailures + 1;
+      if (!recognised) {
+        // Something answered but is not a desktop we speak to. Keep looking
+        // rather than claiming this base — another candidate may be the one.
+        return false;
+      }
+      consecutiveFailures = 0;
+      // Pin it so every other module (client, pairing, events) talks to the
+      // runtime that actually answered.
+      setDiscoveredDesktopBaseUrl(base);
       publish({
-        available: recognised,
-        companion: recognised ? body?.companion : undefined,
-        version: recognised ? body?.version : undefined,
-        apiVersion: recognised && typeof body?.apiVersion === 'number' ? body.apiVersion : undefined,
+        available: true,
+        companion: body?.companion,
+        version: body?.version,
+        apiVersion: typeof body?.apiVersion === 'number' ? body.apiVersion : undefined,
         pluginApiVersion:
-          recognised && typeof body?.pluginApiVersion === 'number' ? body.pluginApiVersion : undefined,
+          typeof body?.pluginApiVersion === 'number' ? body.pluginApiVersion : undefined,
         baseUrl: base,
         lastChange: Date.now(),
       });
-      return;
+      return true;
     }
   } catch {
-    // Network error, timeout, or CORS rejection — all mean "not available". Never
+    // Network error, timeout, or CORS rejection — all mean "not here". Never
     // logged: this probe runs on a loop and would flood the console.
   }
+  return false;
+}
+
+async function probeOnce(): Promise<void> {
+  // The one that answered last time first, so a settled setup costs a single
+  // request per poll instead of walking the list forever.
+  const pinned = getDesktopBaseUrl();
+  const candidates = [pinned, ...DESKTOP_BASE_URL_CANDIDATES.filter((c) => c !== pinned)];
+  for (const base of candidates) {
+    if (await probeBase(base)) return;
+  }
   consecutiveFailures += 1;
-  publish({ available: false, baseUrl: base, lastChange: Date.now() });
+  // Report the base we would try first next time, not a loop variable that is
+  // out of scope here — nothing answered on any of them.
+  publish({ available: false, baseUrl: pinned, lastChange: Date.now() });
 }
 
 function publish(next: DesktopInfo): void {

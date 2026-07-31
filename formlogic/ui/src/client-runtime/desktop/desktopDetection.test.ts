@@ -6,7 +6,7 @@ import {
   refreshDesktopStatus,
   subscribeDesktopStatus,
 } from './desktopDetection';
-import { DESKTOP_BASE_URL } from './desktopTypes';
+import { DESKTOP_BASE_URL, DESKTOP_BASE_URL_CANDIDATES } from './desktopTypes';
 
 // FormLogic Desktop detection: accepts BOTH companion ids (contract §1), never throws on
 // network failure, and backs off from 10s to 30s polling after repeated failures.
@@ -84,27 +84,72 @@ describe('desktop detection', () => {
     vi.useFakeTimers();
     const fetchMock = setFetch(vi.fn(() => Promise.reject(new Error('ECONNREFUSED'))));
 
+    // A POLL is one pass over the candidate bases, not one request: with no
+    // desktop anywhere, each poll tries every supported runtime's port before
+    // concluding there is none. Counting requests rather than polls would make
+    // this test fail purely because a second runtime became supported.
+    const perPoll = DESKTOP_BASE_URL_CANDIDATES.length;
+
     const unsubscribe = subscribeDesktopStatus(() => {});
     await vi.advanceTimersByTimeAsync(0); // initial immediate probe settles
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(perPoll);
 
     // Failures 2 and 3 arrive on the fast 10s cadence.
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2 * perPoll);
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(3 * perPoll);
+    // Still THREE failures, not three-times-the-candidates: a poll that found
+    // nothing anywhere is one failure, or the backoff would trip early.
     expect(__getConsecutiveFailuresForTests()).toBe(3);
 
     // Backed off: 10s passes with NO probe; the next one fires at 30s.
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(3 * perPoll);
     await vi.advanceTimersByTimeAsync(20_000);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(4 * perPoll);
 
     // Last unsubscribe stops the loop entirely.
     unsubscribe();
     await vi.advanceTimersByTimeAsync(120_000);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(4 * perPoll);
+  });
+
+  it('finds a desktop on a non-default port and then stops walking the list', async () => {
+    // The bug this fixes: OAIY Desktop serves the same loopback contract on its
+    // own port, and a fixed base meant a user running it was told there was no
+    // desktop at all. Once found, the base is pinned so a settled setup costs
+    // one request per poll.
+    vi.useFakeTimers();
+    const [first, second] = DESKTOP_BASE_URL_CANDIDATES;
+    const fetchMock = setFetch(
+      vi.fn((url: string) =>
+        url.startsWith(second)
+          ? Promise.resolve({
+              ok: true,
+              json: () => Promise.resolve({ status: 'ok', companion: 'oaiy-desktop', version: '0.1.0' }),
+            })
+          : Promise.reject(new Error('ECONNREFUSED')),
+      ),
+    );
+
+    let seen: unknown = null;
+    const unsubscribe = subscribeDesktopStatus((info) => {
+      seen = info;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(seen).toMatchObject({ available: true, companion: 'oaiy-desktop', baseUrl: second });
+    expect(fetchMock).toHaveBeenCalledTimes(2); // tried the default, then found it
+    expect(fetchMock.mock.calls[0][0]).toContain(first);
+
+    // Pinned: the next poll goes straight to the runtime that answered.
+    fetchMock.mockClear();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toContain(second);
+
+    unsubscribe();
   });
 
   it('recovering resets the failure count (poll returns to the fast cadence)', async () => {
