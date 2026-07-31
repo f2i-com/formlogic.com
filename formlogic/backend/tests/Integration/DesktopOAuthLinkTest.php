@@ -183,7 +183,7 @@ class DesktopOAuthLinkTest extends TestCase
         // compensation must revoke the key: a failed link must never leave an active,
         // never-disclosed credential consuming the account's key quota.
         $failingFlows = new class(self::$mysql) extends FlowService {
-            public function createOAuthDesktopConnection(string $userId, ?string $deviceLabel, string $apiKeyId): array
+            public function createOAuthDesktopConnection(string $userId, ?string $deviceLabel, string $apiKeyId, ?string $runtimeName = null): array
             {
                 throw new \RuntimeException('injected connection failure');
             }
@@ -231,6 +231,69 @@ class DesktopOAuthLinkTest extends TestCase
     }
 
     // ── the seeded client + consent ──
+
+    public function testEveryDesktopRuntimeIsSeededPublicAndSeparatelyRevocable(): void
+    {
+        // The server must not be tied to one desktop product. Each runtime in
+        // DESKTOP_CLIENTS gets its own seeded public client, so a user can see
+        // which one they approved and revoke it without touching the other.
+        $this->assertArrayHasKey('formlogic-desktop', McpOAuthService::DESKTOP_CLIENTS);
+        $this->assertArrayHasKey('oaiy-desktop', McpOAuthService::DESKTOP_CLIENTS);
+
+        $seenIds = [];
+        foreach (McpOAuthService::DESKTOP_CLIENTS as $clientId => $displayName) {
+            $client = self::$oauth->resolveClient($clientId);
+            $this->assertNotNull($client, "desktop runtime {$clientId} must be seeded");
+            $this->assertSame('none', $client['authMethod'], "{$clientId} is PUBLIC (no secret)");
+            $this->assertSame($displayName, $client['name'], "{$clientId} shows its own name on consent");
+            $this->assertTrue(McpOAuthService::isDesktopClient($clientId));
+            $seenIds[] = $clientId;
+        }
+        $this->assertSame($seenIds, array_unique($seenIds), 'client ids must be distinct');
+
+        // …and a client that is not a desktop runtime must NOT get the desktop
+        // branch, or any registered MCP client could mint an flk_ key.
+        $this->assertFalse(McpOAuthService::isDesktopClient('mcpc_deadbeef'));
+        $this->assertFalse(McpOAuthService::isDesktopClient('aokie-companion'));
+        $this->assertFalse(McpOAuthService::isDesktopClient(''));
+    }
+
+    public function testASecondDesktopRuntimeLinksAndGetsItsOwnKeyAndConnection(): void
+    {
+        // The end-to-end proof that this server serves more than one desktop
+        // product: OAIY links through the same ceremony and receives its own
+        // scoped key and its own connection row.
+        $pk = $this->pkce();
+        $params = $this->authorizeParams($pk['challenge'], [
+            'client_id' => 'oaiy-desktop',
+            'device' => 'OAIY Machine',
+        ]);
+
+        $info = $this->authorizeInfo($params);
+        $this->assertSame(200, $info['status'], json_encode($info['body']));
+        $this->assertTrue($info['body']['isDesktopLink'], 'a second runtime is still a desktop link');
+        $this->assertSame('OAIY Desktop', $info['body']['clientName'], 'consent names the runtime honestly');
+        $this->assertSame('OAIY Machine', $info['body']['device']);
+
+        $code = $this->mintCode($params);
+        $r = $this->token([
+            'grant_type' => 'authorization_code',
+            'code' => $code,
+            'code_verifier' => $pk['verifier'],
+            'redirect_uri' => $params['redirect_uri'],
+            'client_id' => 'oaiy-desktop',
+        ]);
+        $this->assertSame(200, $r['status'], json_encode($r['body']));
+        // The desktop branch, not the MCP session branch: an flk_ key, no expiry.
+        $this->assertStringStartsWith('flk_', (string) $r['body']['formlogic_api_key']);
+        $this->assertSame($r['body']['formlogic_api_key'], $r['body']['access_token']);
+        $this->assertArrayNotHasKey('expires_in', $r['body'], 'desktop keys are long-lived');
+        $this->assertNotSame('', (string) $r['body']['desktop_connection_id']);
+        $this->assertSame('OAIY Desktop on OAIY Machine', (string) $r['body']['device_name'], 'the connection must name the runtime that linked');
+        foreach (McpOAuthService::DESKTOP_SCOPES as $scope) {
+            $this->assertStringContainsString($scope, (string) $r['body']['scope']);
+        }
+    }
 
     public function testDesktopClientIsSeededAndPublic(): void
     {

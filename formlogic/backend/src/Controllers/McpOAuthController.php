@@ -447,11 +447,17 @@ class McpOAuthController
         // The granted scopes are already the DESKTOP_SCOPES subset (validated at authorize time), so
         // every one is a valid ApiKeyService scope. Name the key for the device.
         $scopes = array_values($grant['scopes']);
-        $keyName = substr($device !== null ? "FormLogic Desktop on {$device}" : 'FormLogic Desktop', 0, 255);
+        // Name the key and connection after the runtime that actually linked.
+        // With more than one desktop product, a hardcoded name would label an
+        // OAIY link "FormLogic Desktop on <machine>" — in the exact list a user
+        // reads to decide which desktop to revoke.
+        $runtimeName = McpOAuthService::DESKTOP_CLIENTS[(string) ($grant['clientId'] ?? '')]
+            ?? 'FormLogic Desktop';
+        $keyName = substr($device !== null ? "{$runtimeName} on {$device}" : $runtimeName, 0, 255);
         $key = null;
         try {
             $key = $this->apiKeys->createKey($userId, $keyName, $scopes);
-            $connection = $this->flows->createOAuthDesktopConnection($userId, $device, $key['id']);
+            $connection = $this->flows->createOAuthDesktopConnection($userId, $device, $key['id'], $runtimeName);
         } catch (\Throwable $e) {
             // Compensation (audit FL-19): a failed link must not leave an active,
             // never-disclosed key consuming quota — revoke it and audit the outcome.
@@ -474,7 +480,11 @@ class McpOAuthController
         }
 
         $this->audit($request, 'desktop.oauth.link', $userId, [
-            'clientId' => McpOAuthService::DESKTOP_CLIENT_ID,
+            // The client that ACTUALLY linked, not the first-party default.
+            // With more than one desktop runtime the constant would misreport
+            // an OAIY link as a FormLogic one, in the log an operator reaches
+            // for when asking which machine got a key.
+            'clientId' => (string) ($grant['clientId'] ?? McpOAuthService::DESKTOP_CLIENT_ID),
             'connectionId' => $connection['id'],
             'apiKeyId' => $key['id'],
             'scopes' => $scopes,

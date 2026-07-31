@@ -45,6 +45,25 @@ class McpOAuthService
      */
     public const DESKTOP_CLIENT_ID = 'formlogic-desktop';
 
+    /**
+     * Every first-party desktop runtime allowed to device-link, as
+     * `client_id => display name`.
+     *
+     * A SET rather than one id so this server is not tied to a single desktop
+     * product: OAIY Desktop is a second, independent runtime that speaks the
+     * same connector protocol, and a third would be one more entry here plus
+     * the matching seed row. Nothing in the flow below names any of them.
+     *
+     * They all draw from DESKTOP_SCOPES and all mint an account-wide scoped
+     * flk_ key, which is what makes them interchangeable to this server. Each
+     * gets its OWN client id so a user can see which runtime they approved and
+     * revoke one without revoking the other.
+     */
+    public const DESKTOP_CLIENTS = [
+        'formlogic-desktop' => 'FormLogic Desktop',
+        'oaiy-desktop' => 'OAIY Desktop',
+    ];
+
     /** First-party public native client used by Windows/Android Companion. */
     public const AOKIE_COMPANION_CLIENT_ID = 'aokie-companion';
 
@@ -199,10 +218,10 @@ class McpOAuthService
         );
     }
 
-    /** True for the static first-party FormLogic Desktop client (device-link → scoped API key). */
+    /** True for any first-party desktop runtime client (device-link → scoped API key). */
     public static function isDesktopClient(string $clientId): bool
     {
-        return $clientId === self::DESKTOP_CLIENT_ID;
+        return array_key_exists($clientId, self::DESKTOP_CLIENTS);
     }
 
     public static function isAokieCompanionClient(string $clientId): bool
@@ -577,6 +596,10 @@ class McpOAuthService
         $scopes = json_decode((string) $row['scopes'], true);
         return [
             'ok' => true,
+            // Which client redeemed this code. Needed once more than one
+            // desktop runtime can link: without it the audit log falls back to
+            // a constant and reports every link as the first-party one.
+            'clientId' => (string) $row['client_id'],
             'userId' => (string) $row['user_id'],
             'appId' => $row['app_id'] !== null ? (string) $row['app_id'] : null,
             'scopes' => is_array($scopes) ? $scopes : McpTokenService::DEFAULT_SCOPES,

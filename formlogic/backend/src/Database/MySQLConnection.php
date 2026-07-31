@@ -2805,12 +2805,19 @@ class MySQLConnection
                 client_uri = NULL, redirect_uris = VALUES(redirect_uris),
                 is_cimd = 0, fetched_at = NULL
         ");
-        $clients = [
-            [
-                'id' => \FormLogic\Services\McpOAuthService::DESKTOP_CLIENT_ID,
-                'name' => 'FormLogic Desktop',
+        $clients = [];
+        // Every desktop runtime in the map, so adding one is a single entry in
+        // McpOAuthService::DESKTOP_CLIENTS rather than an edit in two files.
+        // They share the loopback redirect shape because they all catch the
+        // callback on a kernel-assigned 127.0.0.1 port.
+        foreach (\FormLogic\Services\McpOAuthService::DESKTOP_CLIENTS as $desktopId => $desktopName) {
+            $clients[] = [
+                'id' => $desktopId,
+                'name' => $desktopName,
                 'redirects' => ['http://127.0.0.1/callback', 'http://localhost/callback'],
-            ],
+            ];
+        }
+        $clients = array_merge($clients, [
             [
                 'id' => \FormLogic\Services\McpOAuthService::AOKIE_COMPANION_CLIENT_ID,
                 'name' => 'Aokie Companion',
@@ -2820,7 +2827,7 @@ class MySQLConnection
                     'http://localhost/oauth/callback',
                 ],
             ],
-        ];
+        ]);
         foreach ($clients as $client) {
             $stmt->execute([
                 'h' => hash('sha256', $client['id']),

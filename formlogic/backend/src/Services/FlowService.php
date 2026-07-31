@@ -3067,13 +3067,23 @@ class FlowService
      * Register a desktop connection minted by the OAuth device-link flow, tied to the scoped flk_
      * key the token exchange issued. A fresh row per link (unique synthetic instance id): re-linking
      * supersedes nothing implicitly — the caller revokes the previous key/connection. deviceLabel
-     * names the device ("FormLogic Desktop on <device>"); apiKeyId is the minted key's id (revoked
-     * when the connection is deleted).
+     * names the device ("<runtime> on <device>"); apiKeyId is the minted key's id (revoked
+     * when the connection is deleted). runtimeName is the linking desktop product
+     * (McpOAuthService::DESKTOP_CLIENTS) so a second runtime is not mislabelled as the first.
      */
-    public function createOAuthDesktopConnection(string $userId, ?string $deviceLabel, string $apiKeyId): array
-    {
+    public function createOAuthDesktopConnection(
+        string $userId,
+        ?string $deviceLabel,
+        string $apiKeyId,
+        ?string $runtimeName = null
+    ): array {
         $device = $deviceLabel !== null && trim($deviceLabel) !== '' ? trim($deviceLabel) : null;
-        $deviceName = substr($device !== null ? "FormLogic Desktop on {$device}" : 'FormLogic Desktop', 0, 255);
+        // Which desktop product this is, from the client that linked. Defaults
+        // to FormLogic Desktop so existing callers are unchanged.
+        $runtime = $runtimeName !== null && trim($runtimeName) !== ''
+            ? trim($runtimeName)
+            : 'FormLogic Desktop';
+        $deviceName = substr($device !== null ? "{$runtime} on {$device}" : $runtime, 0, 255);
         $instanceId = 'oauth-' . bin2hex(random_bytes(12));
         $id = $this->uuidV4();
         $stmt = $this->mysql->prepare("
