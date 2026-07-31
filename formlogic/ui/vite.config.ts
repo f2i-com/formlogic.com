@@ -15,6 +15,14 @@ import { VitePWA } from 'vite-plugin-pwa'
 // (e.g. http://api.formlogic.local/api) — its origin is then added to
 // connect-src/img-src/media-src or every API call + API-served image breaks.
 // frame-ancestors can't be set via <meta> and must stay a server header.
+/**
+ * Loopback origins the SPA may talk to, one per supported desktop runtime.
+ *
+ * Lives beside the CSP because this list decides whether the browser will even
+ * attempt the request; the client-side candidate list is inert without it.
+ */
+const DESKTOP_LOOPBACK_ORIGINS = ['http://127.0.0.1:17872', 'http://127.0.0.1:17972']
+
 function buildAppShellCsp(apiUrl: string | undefined): string {
   let apiOrigin = ''
   if (apiUrl && /^https?:\/\//.test(apiUrl)) {
@@ -31,11 +39,19 @@ function buildAppShellCsp(apiUrl: string | undefined): string {
     "font-src 'self' data: https://fonts.gstatic.com",
     `img-src 'self' data: blob:${apiOrigin} https://www.paypal.com https://www.paypalobjects.com`,
     `media-src 'self' data: blob:${apiOrigin}`,
-    // http://127.0.0.1:17872 is FormLogic Desktop's loopback bridge (detection
-    // probe, pairing, connector/AI lanes, SSE) — without it every desktop
-    // feature dies from a CSP'd page. The bridge itself still enforces
-    // pairing-token auth (LOCAL-SEC-001); this only lets the browser ask.
-    `connect-src 'self' wss:${apiOrigin} http://127.0.0.1:17872 https://www.paypal.com`,
+    // The loopback bridge of every supported desktop runtime (detection probe,
+    // pairing, connector/AI lanes, SSE) — without these the browser refuses the
+    // fetch BEFORE making it, so a perfectly healthy desktop looks absent and
+    // nothing in the UI can explain why.
+    //
+    // MORE THAN ONE because a desktop runtime is no longer a single product:
+    // 17872 is FormLogic Desktop, 17972 is OAIY Desktop. Must stay in step with
+    // DESKTOP_BASE_URL_CANDIDATES in client-runtime/desktop/desktopTypes.ts — a
+    // runtime probed there but missing here can never connect.
+    //
+    // The bridges still enforce pairing-token auth (LOCAL-SEC-001); this only
+    // lets the browser ask.
+    `connect-src 'self' wss:${apiOrigin} ${DESKTOP_LOOPBACK_ORIGINS.join(' ')} https://www.paypal.com`,
     // Per-app PWA manifests are served by the API (AppRuntimeRoot injects
     // <link rel="manifest"> to /api/app/{slug}/manifest.json), which is a
     // separate origin on split-host installs.
@@ -191,6 +207,21 @@ export default defineConfig(({ mode }) => {
     format: 'es',
   },
   build: {
+    // Do NOT wipe the output directory.
+    //
+    // In the bundle deployment this repo documents, the PHP backend is COPIED
+    // to dist/api and the web root's .htaccess rewrites /api/* into
+    // api/public/index.php — explicitly 404ing every API request when that file
+    // is missing. Vite's default emptyOutDir deletes it (dotfiles like
+    // .htaccess survive, which makes the damage look like nothing happened), so
+    // building the UI on a live install takes the entire API down until someone
+    // re-copies the backend by hand.
+    //
+    // The cost is stale chunks accumulating in dist/ across builds; filenames
+    // are content-hashed so they are inert, and `git clean`/a fresh package run
+    // clears them. That is a far better trade than a build step that silently
+    // breaks the deployment it is building for.
+    emptyOutDir: false,
     rollupOptions: {
       output: {
         // Split large vendor libs out of the main chunk so the initial app
