@@ -52,6 +52,10 @@ lerna-debug.log*
 /backend/storage/tmp/
 # Recycle-bin snapshots (restorable delete captures, purged after 30 days)
 /backend/storage/trash/
+# Signing keys this install mints for itself. Private key material: it is
+# per-install, it is not shared, and a `git add -A` would otherwise stage it —
+# every other runtime path under storage/ is ignored, and this one was not.
+/backend/storage/keys/
 /backend/logs/*.log
 
 # OS files
