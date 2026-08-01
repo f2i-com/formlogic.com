@@ -342,7 +342,7 @@ describe('live-call section screen (TSX)', () => {
 
     // The newest stored call's turns render, oldest-first within the call.
     expect(queryRecords).toHaveBeenCalledWith('transcript-turns', { limit: 60 });
-    expect(root.textContent).not.toContain('No transcript stored yet');
+    expect(root.textContent).not.toContain('none belong to the latest call');
     expect(root.textContent).not.toContain('No call to show a transcript for yet.');
     const texts = Array.from(root.querySelectorAll('.ttext')).map((n) => n.textContent);
     expect(texts).toEqual(['What services do you offer?', 'Have a good day.']);
@@ -420,18 +420,48 @@ describe('live-call section screen (TSX)', () => {
     expect(bare.root.textContent).toContain('No call to show a transcript for yet.');
     expect(bare.root.querySelectorAll('.ttext').length).toBe(0);
 
-    // (b) A call IS identified and simply has no turns stored — a different
-    // fault, and now a different sentence that names the call it searched for.
-    const withCall = await runScreen(AOKIE_LIVE_CALL_SCREEN, baseFL({
+    const recentCall = [
+      { id: 'rec-1', answers: { call_id: 'call_abc123def456' }, submittedAt: '2026-08-01T06:01:20.000Z' },
+    ];
+
+    // (b) A call is identified and NOTHING is visible to read.
+    const empty = await runScreen(AOKIE_LIVE_CALL_SCREEN, baseFL({
       ...remote,
-      records: () => Promise.resolve([
-        { id: 'rec-1', answers: { call_id: 'call_abc123def456' }, submittedAt: '2026-08-01T06:01:20.000Z' },
-      ]),
+      records: () => Promise.resolve(recentCall),
       queryRecords: () => Promise.resolve([]),
     }));
     await flush();
-    expect(withCall.root.textContent).toContain('No transcript stored yet for the latest call');
-    // Names the call, so the next report identifies itself.
-    expect(withCall.root.textContent).toContain('def456');
+    expect(empty.root.textContent).toContain('No stored turns are visible to this console');
+    expect(empty.root.textContent).toContain('def456');
+
+    // (c) Turns ARE readable and none belong to this call — a different fault
+    // again, and the one that distinguishes "not written" from "not matching".
+    const mismatched = await runScreen(AOKIE_LIVE_CALL_SCREEN, baseFL({
+      ...remote,
+      records: () => Promise.resolve(recentCall),
+      queryRecords: (target: string) => Promise.resolve(target === 'transcript-turns'
+        ? [
+          { id: 't-1', answers: { call_id: 'call_SOMEONE_ELSE', turn_index: 1, speaker: 'caller', text: 'hi' } },
+          { id: 't-2', answers: { call_id: 'call_SOMEONE_ELSE', turn_index: 2, speaker: 'aokie', text: 'hello' } },
+        ]
+        : []),
+    }));
+    await flush();
+    expect(mismatched.root.textContent).toContain('Read 2 stored turns');
+    expect(mismatched.root.textContent).toContain('none belong to the latest call');
+    expect(mismatched.root.textContent).toContain('def456');
+
+    // (d) The read FAILED. Previously swallowed, and indistinguishable from
+    // "nothing recorded" — which is most of why this took so long.
+    const broken = await runScreen(AOKIE_LIVE_CALL_SCREEN, baseFL({
+      ...remote,
+      records: () => Promise.resolve(recentCall),
+      queryRecords: (target: string) => (target === 'transcript-turns'
+        ? Promise.reject(new Error('permission denied'))
+        : Promise.resolve([])),
+    }));
+    await flush();
+    expect(broken.root.textContent).toContain('could not be read');
+    expect(broken.root.textContent).toContain('permission denied');
   });
 });

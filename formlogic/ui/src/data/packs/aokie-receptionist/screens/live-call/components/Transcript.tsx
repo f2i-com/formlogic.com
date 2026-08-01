@@ -21,9 +21,14 @@ function turnMeta(speaker: string): { side: 'caller' | 'agent'; label: string; i
  * part of why this took so long to pin down from the outside. Naming the call
  * it searched for makes the next report answer itself.
  */
-function emptyReason(callId: string | null): string {
-  if (!callId) return 'No call to show a transcript for yet.';
-  return `No transcript stored yet for the latest call (…${callId.slice(-6)}).`;
+function emptyReason(s: { turnsCallId: string | null; turnsSeen: number; turnsError: string | null }): string {
+  if (s.turnsError) return `The stored turns could not be read: ${s.turnsError}`;
+  if (!s.turnsCallId) return 'No call to show a transcript for yet.';
+  const call = `…${s.turnsCallId.slice(-6)}`;
+  if (s.turnsSeen === 0) return `No stored turns are visible to this console (looking for ${call}).`;
+  // Turns were readable and none of them belong to this call — a different
+  // fault from having none at all, and the one worth naming precisely.
+  return `Read ${s.turnsSeen} stored turns; none belong to the latest call (${call}).`;
 }
 
 function TurnBubble({ turn }: { turn: Turn }) {
@@ -70,7 +75,7 @@ export function Transcript({ c, call }: { c: ConsoleController; call: CallInfo |
       <div class="thead"><h2>{heading}</h2></div>
       {turns.length === 0 && s.pendingSpeak === null ? (
         <p class="muted tempty">
-          {c.remoteMode() ? emptyReason(s.turnsCallId) : 'Final transcript turns stream in here during a call.'}
+          {c.remoteMode() ? emptyReason(s) : 'Final transcript turns stream in here during a call.'}
         </p>
       ) : (
         <div class="turns" ref={box}>

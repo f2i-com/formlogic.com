@@ -80,6 +80,10 @@ export interface ConsoleState {
    * tell apart from the outside.
    */
   turnsCallId: string | null;
+  /** How many stored turns the last poll actually saw, across all calls. */
+  turnsSeen: number;
+  /** Why the last poll could not read them, if it could not. */
+  turnsError: string | null;
   /** Volatile captions frame (caller partial + bot line + session phase). */
   captions: Record<string, unknown> | null;
   /** queryRecords('customers') cache for the known-caller name lookup. */
@@ -124,6 +128,8 @@ export function createConsole(repaint: () => void): ConsoleController {
     call: null,
     turns: [],
     turnsCallId: null,
+    turnsSeen: 0,
+    turnsError: null,
     captions: null,
     customers: [],
     recent: [],
@@ -290,7 +296,14 @@ export function createConsole(repaint: () => void): ConsoleController {
         return 0;
       });
       state.turns = out;
-    }).catch(() => undefined);
+      state.turnsSeen = list.length;
+      state.turnsError = null;
+    }).catch((e: unknown) => {
+      // NOT swallowed. A read that failed and a call with nothing recorded are
+      // different facts, and reporting them with one sentence is what made this
+      // take so long: the card said "nothing stored yet" either way.
+      state.turnsError = errMessage(e, 'the stored turns could not be read');
+    });
   }
 
   // ---- live event lane (LOCAL bridge only) ---------------------------------
