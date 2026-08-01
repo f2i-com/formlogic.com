@@ -602,6 +602,16 @@ function seedFromSettings(res: Record<string, unknown>): void {
       customDir: false,
       savedEngine: str(s.ttsEngine),
     };
+    // FIRST read only: a record written before this rule existed can hold a
+    // voice the live engine cannot speak. The pocket picker has no option for
+    // a bundle name, so the select would show "Default" while the record still
+    // said Jenny - two different answers to the same question. Normalize the
+    // WORKING draft to what the card actually shows, and leave the saved
+    // baseline alone so the correction is visibly pending until saved (same
+    // treatment enforceCodexTextOnly gives a stale Codex model).
+    if (state.draft && !voiceUsableByEngine(state.engine.engine, d().voice, parseCatalog(res.ttsVoiceCatalog))) {
+      setDraft({ voice: '' });
+    }
   } else {
     // A later read still refreshes what the plugin IS running, without
     // discarding a pending pick the operator has not saved yet.

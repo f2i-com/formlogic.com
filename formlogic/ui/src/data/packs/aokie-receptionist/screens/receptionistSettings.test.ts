@@ -863,12 +863,45 @@ describe('the console never shows a voice the live engine will not speak', () =>
     expect(voice.value).toBe('');
   });
 
-  it('Save & apply pushes a blank voice while the engine pick is still unsaved', async () => {
+  it('a record written before the rule shows Default, pending, rather than a voice it cannot use', async () => {
     const { fl, calls } = makeFl({
-      // The plugin is running POCKET; the record already carries a bundle name.
       records: [{ id: 'r1', answers: { voice: BUNDLE } }],
       settings: { ttsEngine: '' },
       getExtra: { managerPinSet: false },
+    });
+    const res = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
+    await flush(60);
+    const root = res.root;
+
+    expect((root.querySelector('select[data-d="voice"]') as HTMLSelectElement).value).toBe('');
+    // Pending, not silently rewritten: nothing was saved on load.
+    expect(root.querySelector('.savebar .dirty')?.textContent).toBe('Unsaved changes');
+    expect(calls.update.length).toBe(0);
+    expect(calls.submit.length).toBe(0);
+  });
+
+  // The catalog the plugin reports: pocket presets + one installed Piper bundle.
+  const CATALOG = {
+    engines: [
+      { id: 'pocket', label: 'Pocket-TTS', voices: ['alba', 'eponine'] },
+      {
+        id: 'sherpa',
+        label: 'Sherpa',
+        bundles: [{ dir: 'C:\\models\\tts\\' + BUNDLE, name: BUNDLE, kind: 'vits' }],
+      },
+    ],
+  };
+
+  // The exact live sequence: the plugin is running pocket, the operator picks
+  // Sherpa, picks Jenny from the bundle list that then appears, and presses
+  // "Save & apply" - which writes the record and the agent payload but NOT the
+  // engine. Before this rule the plugin received a Piper bundle while still
+  // running pocket, missed the lookup, and spoke its reference sample instead.
+  async function pickSherpaThenJenny() {
+    const { fl, calls } = makeFl({
+      records: [{ id: 'r1', answers: {} }],
+      settings: { ttsEngine: '' },
+      getExtra: { managerPinSet: false, ttsVoiceCatalog: CATALOG },
     });
     const res = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
     await flush(60);
@@ -880,6 +913,18 @@ describe('the console never shows a voice the live engine will not speak', () =>
     engine.value = 'sherpa';
     engine.dispatchEvent(new res.dom.window.Event('change', { bubbles: true }));
     await flush(40);
+
+    const bundle = root.querySelector('select[data-eng="bundle"]') as HTMLSelectElement;
+    expect(bundle, 'the bundle picker appears once sherpa is selected').not.toBe(null);
+    bundle.value = 'C:\\models\\tts\\' + BUNDLE;
+    bundle.dispatchEvent(new res.dom.window.Event('change', { bubbles: true }));
+    await flush(40);
+
+    return { res, root, calls };
+  }
+
+  it('Save & apply pushes a blank voice while the engine pick is still unsaved', async () => {
+    const { root, calls } = await pickSherpaThenJenny();
 
     // The pick is pending, and the card says so instead of implying it is live.
     const pending = root.querySelector('[data-engine-pending]');
@@ -894,19 +939,7 @@ describe('the console never shows a voice the live engine will not speak', () =>
   });
 
   it('once the engine is saved, the matching bundle voice IS pushed', async () => {
-    const { fl, calls } = makeFl({
-      records: [{ id: 'r1', answers: { voice: BUNDLE } }],
-      settings: { ttsEngine: '' },
-      getExtra: { managerPinSet: false },
-    });
-    const res = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
-    await flush(60);
-    const root = res.root;
-
-    const engine = root.querySelector('select[data-eng="engine"]') as HTMLSelectElement;
-    engine.value = 'sherpa';
-    engine.dispatchEvent(new res.dom.window.Event('change', { bubbles: true }));
-    await flush(40);
+    const { root, calls } = await pickSherpaThenJenny();
 
     (root.querySelector('[data-act="save-engine"]') as HTMLButtonElement).click();
     await flush(80);
