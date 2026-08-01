@@ -230,23 +230,46 @@ export function createConsole(repaint: () => void): ConsoleController {
     }).catch(() => undefined);
   }
 
-  /** Remote/demo transcript: stored Transcript Turns for the current call. */
+  /** The newest STORED call's id, from the recent-calls poll (Calls rows come
+   *  back newest-first). This is the call the 'Latest call' transcript belongs
+   *  to when none is in progress. */
+  function latestStoredCallId(): string | undefined {
+    for (let i = 0; i < state.recent.length; i++) {
+      const id = String(rec(state.recent[i].answers).call_id || '');
+      if (id) return id;
+    }
+    return undefined;
+  }
+
+  /** Remote/demo transcript: stored Transcript Turns for the current call, or —
+   *  when the plugin reports no current call — for the most recent stored one.
+   *
+   *  The fallback is the whole point of the 'Latest call' heading. On real
+   *  hardware call.current goes null the moment a call ends, so keying this
+   *  poll on the CURRENT call alone made every finished call unreadable: reload
+   *  the page with no call in progress and the turns were written, stored and
+   *  permitted, but never queried — "No transcript recorded for the latest call
+   *  yet", permanently (live report 2026-08-01). */
   function refreshStoredTurns(): Promise<void> {
-    const c = state.call;
-    if (!c || state.liveEvents) return Promise.resolve();
+    if (state.liveEvents) return Promise.resolve();
+    const callId = (state.call && state.call.callId) || latestStoredCallId();
+    if (!callId) {
+      state.turns = [];
+      return Promise.resolve();
+    }
     return FormLogic.queryRecords('transcript-turns', { limit: 60 }).then((rows) => {
       const list = rows || [];
       const out: Turn[] = [];
       for (let i = 0; i < list.length; i++) {
         const a = rec(list[i].answers);
-        if (String(a.call_id || '') !== c.callId) continue;
+        if (String(a.call_id || '') !== callId) continue;
         const idx = a.turn_index;
         out.push({
           key: list[i].id,
           speaker: typeof a.speaker === 'string' && a.speaker ? a.speaker : 'system',
           text: String(a.text == null ? '' : a.text),
           occurredAt: typeof a.timestamp === 'string' && a.timestamp ? a.timestamp : list[i].submittedAt,
-          callId: c.callId,
+          callId,
           turn: typeof idx === 'number' ? idx : (typeof idx === 'string' && idx !== '' && !isNaN(Number(idx)) ? Number(idx) : null),
           corrected: a.source === 'audio_model',
         });

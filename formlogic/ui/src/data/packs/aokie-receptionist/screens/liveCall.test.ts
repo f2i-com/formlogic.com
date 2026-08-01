@@ -309,4 +309,61 @@ describe('live-call section screen (TSX)', () => {
     expect(root.querySelector('.btn.hangup')).toBeNull();
     expect(root.textContent).toContain('mirrors its calls');
   });
+
+  it("remote mode reads the LATEST stored call's transcript when no call is in progress (live report 2026-08-01)", async () => {
+    // On real hardware call.current goes null the instant a call ends, so keying
+    // the stored-turns poll on the CURRENT call alone made every finished call
+    // unreadable: open the console with no call up and the turns were written,
+    // stored and permitted, but never queried. The card promised 'Latest call'
+    // and said "No transcript recorded for the latest call yet" forever.
+    const connector = vi.fn((_id: string, cmd: string) => (cmd === 'call.current'
+      ? Promise.resolve({ status: 'done', result: { call: null } })
+      : Promise.resolve({ status: 'done', result: {} })));
+    const queryRecords = vi.fn((target: string) => Promise.resolve(target === 'transcript-turns'
+      ? [
+        // Newest-first, and deliberately mixed with an OLDER call's turns.
+        { id: 't-2', answers: { call_id: 'call_bbb', turn_index: 2, speaker: 'aokie', text: 'Have a good day.', timestamp: '2026-08-01T04:55:43.000Z' } },
+        { id: 't-1', answers: { call_id: 'call_bbb', turn_index: 1, speaker: 'caller', text: 'What services do you offer?', timestamp: '2026-08-01T04:55:29.000Z' } },
+        { id: 'old', answers: { call_id: 'call_aaa', turn_index: 1, speaker: 'caller', text: 'A much older call.', timestamp: '2026-07-27T21:53:41.000Z' } },
+      ]
+      : []));
+    const { root } = await runScreen(AOKIE_LIVE_CALL_SCREEN, baseFL({
+      presence: () => Promise.resolve({ kind: 'remote', deviceName: 'DESKTOP-HESQH3A' }),
+      can: () => Promise.resolve(true),
+      connector,
+      // The Calls rows the recent-calls poll returns, newest first.
+      records: () => Promise.resolve([
+        { id: 'rec-2', answers: { call_id: 'call_bbb', status: 'completed' }, submittedAt: '2026-08-01T04:55:13.000Z' },
+        { id: 'rec-1', answers: { call_id: 'call_aaa', status: 'completed' }, submittedAt: '2026-07-27T21:53:00.000Z' },
+      ]),
+      queryRecords,
+    }));
+    await flush();
+
+    // The newest stored call's turns render, oldest-first within the call.
+    expect(queryRecords).toHaveBeenCalledWith('transcript-turns', { limit: 60 });
+    expect(root.textContent).not.toContain('No transcript recorded for the latest call yet.');
+    const texts = Array.from(root.querySelectorAll('.ttext')).map((n) => n.textContent);
+    expect(texts).toEqual(['What services do you offer?', 'Have a good day.']);
+    // Strictly the latest call — an earlier call's turns must not bleed in.
+    expect(root.textContent).not.toContain('A much older call.');
+    // No call is up, so the card reads 'Latest call' and offers no composer.
+    expect(root.querySelector('.thead h2')?.textContent).toBe('Latest call');
+    expect(root.querySelector('#speak')).toBeNull();
+  });
+
+  it('remote mode with no stored call at all still reports the empty transcript honestly', async () => {
+    const connector = vi.fn((_id: string, cmd: string) => (cmd === 'call.current'
+      ? Promise.resolve({ status: 'done', result: { call: null } })
+      : Promise.resolve({ status: 'done', result: {} })));
+    const { root } = await runScreen(AOKIE_LIVE_CALL_SCREEN, baseFL({
+      presence: () => Promise.resolve({ kind: 'remote', deviceName: 'DESKTOP-HESQH3A' }),
+      can: () => Promise.resolve(true),
+      connector,
+      records: () => Promise.resolve([]),
+    }));
+    await flush();
+    expect(root.textContent).toContain('No transcript recorded for the latest call yet.');
+    expect(root.querySelectorAll('.ttext').length).toBe(0);
+  });
 });
