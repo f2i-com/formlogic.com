@@ -72,6 +72,14 @@ export interface ConsoleState {
   call: CallInfo | null;
   /** Live/derived transcript turns for the current call. */
   turns: Turn[];
+  /**
+   * Which call the stored-turns poll last looked for, so an empty conversation
+   * can say WHY it is empty. "No transcript recorded" reads the same whether
+   * the turns are missing, the call is unidentified, or the poll never ran —
+   * three different faults wearing one sentence, which cost a long time to
+   * tell apart from the outside.
+   */
+  turnsCallId: string | null;
   /** Volatile captions frame (caller partial + bot line + session phase). */
   captions: Record<string, unknown> | null;
   /** queryRecords('customers') cache for the known-caller name lookup. */
@@ -115,6 +123,7 @@ export function createConsole(repaint: () => void): ConsoleController {
     demo: false,
     call: null,
     turns: [],
+    turnsCallId: null,
     captions: null,
     customers: [],
     recent: [],
@@ -253,6 +262,7 @@ export function createConsole(repaint: () => void): ConsoleController {
   function refreshStoredTurns(): Promise<void> {
     if (state.liveEvents) return Promise.resolve();
     const callId = (state.call && state.call.callId) || latestStoredCallId();
+    state.turnsCallId = callId || null;
     if (!callId) {
       state.turns = [];
       return Promise.resolve();

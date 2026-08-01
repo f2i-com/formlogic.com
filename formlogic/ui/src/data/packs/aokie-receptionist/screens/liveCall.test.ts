@@ -342,7 +342,8 @@ describe('live-call section screen (TSX)', () => {
 
     // The newest stored call's turns render, oldest-first within the call.
     expect(queryRecords).toHaveBeenCalledWith('transcript-turns', { limit: 60 });
-    expect(root.textContent).not.toContain('No transcript recorded for the latest call yet.');
+    expect(root.textContent).not.toContain('No transcript stored yet');
+    expect(root.textContent).not.toContain('No call to show a transcript for yet.');
     const texts = Array.from(root.querySelectorAll('.ttext')).map((n) => n.textContent);
     expect(texts).toEqual(['What services do you offer?', 'Have a good day.']);
     // Strictly the latest call — an earlier call's turns must not bleed in.
@@ -400,18 +401,37 @@ describe('live-call section screen (TSX)', () => {
     expect(root.querySelector('.btn.hangup')).toBeNull();
   });
 
-  it('remote mode with no stored call at all still reports the empty transcript honestly', async () => {
+  it('an empty transcript says WHICH of its causes it is, rather than one sentence for three', async () => {
+    // The old copy read the same whether no call was identified, the call had
+    // nothing stored, or the poll never ran. Telling those apart from the
+    // outside cost days; the card now names what it looked for.
     const connector = vi.fn((_id: string, cmd: string) => (cmd === 'call.current'
       ? Promise.resolve({ status: 'done', result: { call: null } })
       : Promise.resolve({ status: 'done', result: {} })));
-    const { root } = await runScreen(AOKIE_LIVE_CALL_SCREEN, baseFL({
+    const remote = {
       presence: () => Promise.resolve({ kind: 'remote', deviceName: 'DESKTOP-HESQH3A' }),
       can: () => Promise.resolve(true),
       connector,
-      records: () => Promise.resolve([]),
+    };
+
+    // (a) Nothing to show at all — no call anywhere.
+    const bare = await runScreen(AOKIE_LIVE_CALL_SCREEN, baseFL({ ...remote, records: () => Promise.resolve([]) }));
+    await flush();
+    expect(bare.root.textContent).toContain('No call to show a transcript for yet.');
+    expect(bare.root.querySelectorAll('.ttext').length).toBe(0);
+
+    // (b) A call IS identified and simply has no turns stored — a different
+    // fault, and now a different sentence that names the call it searched for.
+    const withCall = await runScreen(AOKIE_LIVE_CALL_SCREEN, baseFL({
+      ...remote,
+      records: () => Promise.resolve([
+        { id: 'rec-1', answers: { call_id: 'call_abc123def456' }, submittedAt: '2026-08-01T06:01:20.000Z' },
+      ]),
+      queryRecords: () => Promise.resolve([]),
     }));
     await flush();
-    expect(root.textContent).toContain('No transcript recorded for the latest call yet.');
-    expect(root.querySelectorAll('.ttext').length).toBe(0);
+    expect(withCall.root.textContent).toContain('No transcript stored yet for the latest call');
+    // Names the call, so the next report identifies itself.
+    expect(withCall.root.textContent).toContain('def456');
   });
 });

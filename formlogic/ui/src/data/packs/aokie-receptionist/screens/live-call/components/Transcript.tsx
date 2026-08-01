@@ -13,6 +13,19 @@ function turnMeta(speaker: string): { side: 'caller' | 'agent'; label: string; i
   return { side: 'agent', label: 'Aokie', initial: 'A' };
 }
 
+/**
+ * Why the conversation is empty, in remote mode.
+ *
+ * One sentence used to cover three different faults — no call identified, a
+ * call with nothing stored yet, and a poll that never ran — which is a large
+ * part of why this took so long to pin down from the outside. Naming the call
+ * it searched for makes the next report answer itself.
+ */
+function emptyReason(callId: string | null): string {
+  if (!callId) return 'No call to show a transcript for yet.';
+  return `No transcript stored yet for the latest call (…${callId.slice(-6)}).`;
+}
+
 function TurnBubble({ turn }: { turn: Turn }) {
   const mt = turnMeta(turn.speaker);
   const time = clock(turn.occurredAt);
@@ -57,9 +70,7 @@ export function Transcript({ c, call }: { c: ConsoleController; call: CallInfo |
       <div class="thead"><h2>{heading}</h2></div>
       {turns.length === 0 && s.pendingSpeak === null ? (
         <p class="muted tempty">
-          {c.remoteMode()
-            ? 'No transcript recorded for the latest call yet.'
-            : 'Final transcript turns stream in here during a call.'}
+          {c.remoteMode() ? emptyReason(s.turnsCallId) : 'Final transcript turns stream in here during a call.'}
         </p>
       ) : (
         <div class="turns" ref={box}>
