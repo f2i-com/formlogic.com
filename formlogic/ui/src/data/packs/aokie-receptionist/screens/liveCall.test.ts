@@ -358,7 +358,10 @@ describe('live-call section screen (TSX)', () => {
     // up at :46 — inside the window where remote mode has not yet noticed — and
     // got the plugin's raw typed refusal thrown at them.
     let live = true;
-    const toastError = vi.fn(() => Promise.resolve(undefined));
+    // Typed args: an argless `vi.fn(() => ...)` infers a zero-length tuple, so
+    // reading calls[i][0] below is a type error even though the shim always
+    // passes a message.
+    const toastError = vi.fn((..._args: unknown[]) => Promise.resolve(undefined));
     const connector = vi.fn((_id: string, cmd: string) => {
       if (cmd === 'call.current') {
         return Promise.resolve({

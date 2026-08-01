@@ -109,6 +109,46 @@ export function prettifyBundle(name: string): string {
   return meta ? voice + ' (' + meta + ')' : voice;
 }
 
+// -- engine / voice pairing --
+//
+// MIRROR of the plugin's authority in aokie's crates/aokie-plugin/src/voice.rs
+// (normalize_tts_engine + voice_matches_engine). Keep the two in lock-step: the
+// plugin now REFUSES a voice belonging to the other engine and speaks the
+// engine default instead, so a UI that still offers or pushes one is promising
+// something the caller will never hear.
+
+/** Port of normalize_tts_engine: fold a stored ttsEngine value to the engine
+ *  that will actually speak. Unknown values are pocket - never a hard failure,
+ *  because the line must speak. */
+export function normalizeEngine(raw: string | null | undefined): 'pocket' | 'sherpa' {
+  const v = String(raw == null ? '' : raw).trim().toLowerCase();
+  return v === 'sherpa' || v === 'sherpa-onnx' || v === 'piper' ? 'sherpa' : 'pocket';
+}
+
+/**
+ * Port of voice_matches_engine: does this voice belong to the engine that will
+ * be asked to speak it?
+ *
+ * The engines name voices in different vocabularies - pocket-tts has its own
+ * presets ('alba', 'eponine', ...) plus .wav clone paths, while sherpa speaks
+ * through downloaded VITS/Piper/Kokoro BUNDLES ('vits-piper-en_GB-...'). Only
+ * the mismatch that actually happens is refused: a BUNDLE name given to pocket.
+ * Sherpa stays permissive because a bundle may name its speakers anything.
+ */
+export function voiceMatchesEngine(engine: string, voice: string | null | undefined): boolean {
+  const v = String(voice == null ? '' : voice).trim().toLowerCase();
+  if (v === '' || normalizeEngine(engine) !== 'pocket') return true;
+  // A clone path is pocket's own, whatever it is called.
+  if (v.endsWith('.wav') || v.endsWith('.safetensors')) return true;
+  return !(
+    v.startsWith('vits-')
+    || v.startsWith('piper-')
+    || v.startsWith('kokoro-')
+    || v.indexOf('-piper-') >= 0
+    || v.indexOf('-vits-') >= 0
+  );
+}
+
 // -- voice catalog parse (port of parseTtsVoiceCatalog) --
 
 export interface CatalogBundle {
@@ -178,4 +218,24 @@ export function pocketVoices(cat: CatalogEngine[] | null): string[] {
   for (let i = 0; i < vs.length; i++) if (uniq.indexOf(vs[i]) < 0) uniq.push(vs[i]);
   uniq.sort((a, b) => a.localeCompare(b));
   return [''].concat(uniq);
+}
+
+/**
+ * Is this voice usable by this engine, given what is actually INSTALLED?
+ *
+ * Strictly better informed than voiceMatchesEngine, which is the plugin-parity
+ * rule and deliberately cannot see the catalog. The plugin must stay permissive
+ * for sherpa (a bundle may legitimately name a speaker 'alba', and refusing it
+ * would silence a valid pick); here the catalog says whether a name is a POCKET
+ * preset, so switching to sherpa with 'alba' selected is a knowable mismatch
+ * rather than a guess. Used only to clear the record's voice on an explicit
+ * engine change - the worst case is a reset to "Automatic", which is visible
+ * and one click to undo.
+ */
+export function voiceUsableByEngine(engine: string, voice: string, cat: CatalogEngine[] | null): boolean {
+  if (!voiceMatchesEngine(engine, voice)) return false;
+  const v = String(voice == null ? '' : voice).trim();
+  if (v === '' || normalizeEngine(engine) !== 'sherpa') return true;
+  // index 0 is '' (Default); anything at 1+ is a pocket preset.
+  return pocketVoices(cat).indexOf(v) < 1;
 }

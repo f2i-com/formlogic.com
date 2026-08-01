@@ -3,8 +3,17 @@
 // bundle list from the settings.get ttsVoiceCatalog) + the record-side
 // Active and reply-mode selects. The engine + model folder are LIVE plugin
 // settings saved via their own button; the voice pick rides the record.
-import { DEFAULT_ENGINES, pocketVoices, prettifyBundle } from '../helpers';
-import { bundleChange, d, draftInput, engineChange, engineModelDirInput, saveEngine, state } from '../store';
+import { DEFAULT_ENGINES, normalizeEngine, pocketVoices, prettifyBundle } from '../helpers';
+import {
+  bundleChange,
+  d,
+  draftInput,
+  engineChange,
+  engineModelDirInput,
+  engineUnsaved,
+  saveEngine,
+  state,
+} from '../store';
 
 export function VoiceCard() {
   const cat = state.catalog;
@@ -19,6 +28,8 @@ export function VoiceCard() {
   const showCustomDir = isSherpa && state.canSet && (bundles.length === 0 || bundleValue === '__custom__');
   const isKokoro = isSherpa && !!matched && matched.kind === 'kokoro';
   const engineValue = eng.engine === 'pocket' ? '' : eng.engine;
+  const pending = engineUnsaved();
+  const liveEngine = normalizeEngine(eng.savedEngine) === 'sherpa' ? 'Sherpa' : 'Pocket-TTS';
   return (
     <div class="card">
       <h2>{'Voice & replies'}</h2>
@@ -34,6 +45,11 @@ export function VoiceCard() {
                 </option>
               ))}
             </select>
+            {pending ? (
+              <span class="hint dirty" data-engine-pending>
+                {'Not saved yet - the receptionist is still running ' + liveEngine + '. Press "Save speech engine" below, or the voice picked here will not be used.'}
+              </span>
+            ) : null}
           </label>
         ) : null}
         {!isSherpa ? (

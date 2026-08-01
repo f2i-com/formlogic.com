@@ -25,7 +25,18 @@ import {
   type Draft,
   type SourceService,
 } from './agentPayload';
-import { baseName, boolish, parseCatalog, rec, splitList, str, type CatalogEngine } from './helpers';
+import {
+  baseName,
+  boolish,
+  normalizeEngine,
+  parseCatalog,
+  rec,
+  splitList,
+  str,
+  voiceMatchesEngine,
+  voiceUsableByEngine,
+  type CatalogEngine,
+} from './helpers';
 
 // -- state shapes --
 
@@ -65,6 +76,11 @@ export interface EngineState {
   engine: string;
   modelDir: string;
   customDir: boolean;
+  /** The engine the PLUGIN is actually running, as last read/saved.
+   *  `engine` is the operator's pending pick: the two differ until "Save
+   *  speech engine" is pressed, and the voice push must be judged against the
+   *  engine that will really speak, not the one on screen. */
+  savedEngine: string;
 }
 
 export interface AudioState {
@@ -165,7 +181,7 @@ export const state: ScreenState = {
   err: null,
   aiSources: null,
   catalog: null,
-  engine: { loaded: false, engine: '', modelDir: '', customDir: false },
+  engine: { loaded: false, engine: '', modelDir: '', customDir: false, savedEngine: '' },
   audio: { loaded: false, sendAudio: false, audioTranscript: false },
   waiting: { loaded: false, holdAndCallWaiting: false, autoHoldQueue: false, autoConnectPhone: true },
   screening: {
@@ -233,6 +249,14 @@ export function services(): SourceService[] | undefined {
 
 export function dirty(): boolean {
   return JSON.stringify(state.draft) !== JSON.stringify(state.saved);
+}
+
+/** The engine on screen is not the one the plugin is running - the operator
+ *  changed it and has not pressed "Save speech engine". Worth saying out loud:
+ *  every OTHER control in this card (the voice, the bundle) is judged against
+ *  the LIVE engine, so until this is saved the card describes two machines. */
+export function engineUnsaved(): boolean {
+  return state.engine.loaded && normalizeEngine(state.engine.engine) !== normalizeEngine(state.engine.savedEngine);
 }
 
 function setDraft(patch: Partial<Draft>): void {
@@ -361,6 +385,15 @@ function currentAgentPayload(): Record<string, unknown> {
   // this chat-only provider. The Desktop/provider boundary enforces the same
   // rule, but the settings UI must also represent and persist it honestly.
   if (isCodexLiveCallSource(d().llm_source)) payload.sendAudio = false;
+  // Never push a voice the LIVE engine cannot speak. Judged against
+  // savedEngine, not the select on screen: "Save & apply" writes the record and
+  // the agent payload but NOT ttsEngine (that is its own button), so a pending
+  // sherpa pick would otherwise send a Piper bundle to a plugin still running
+  // pocket. Blank rather than omitted - the key must actively reset a stale
+  // live voice, and the plugin reads blank as "the engine default".
+  if (state.engine.loaded && !voiceMatchesEngine(state.engine.savedEngine, str(payload.ttsVoice))) {
+    payload.ttsVoice = '';
+  }
   return payload;
 }
 
@@ -562,7 +595,17 @@ function seedFromSettings(res: Record<string, unknown>): void {
     state.screening.managerPinSet = res.managerPinSet === true;
   }
   if (!state.engine.loaded) {
-    state.engine = { loaded: true, engine: str(s.ttsEngine), modelDir: str(s.ttsModelDir), customDir: false };
+    state.engine = {
+      loaded: true,
+      engine: str(s.ttsEngine),
+      modelDir: str(s.ttsModelDir),
+      customDir: false,
+      savedEngine: str(s.ttsEngine),
+    };
+  } else {
+    // A later read still refreshes what the plugin IS running, without
+    // discarding a pending pick the operator has not saved yet.
+    state.engine.savedEngine = str(s.ttsEngine);
   }
   state.catalog = parseCatalog(res.ttsVoiceCatalog);
   const realtime = str(s.realtimeVoiceMode) === 'desktop_realtime';
@@ -709,6 +752,9 @@ export function saveEngine(): void {
   touch();
   settingsSet({ ttsEngine: state.engine.engine, ttsModelDir: state.engine.modelDir.trim() })
     .then(() => {
+      // The pick is now what the plugin runs, so the voice push is judged
+      // against it from here on.
+      state.engine.savedEngine = state.engine.engine;
       void toastApi().success('Speech engine updated');
     })
     .catch((e: unknown) => {
@@ -986,6 +1032,14 @@ export function audioModeChange(v: string): void {
 
 export function engineChange(v: string): void {
   state.engine.engine = v;
+  // The engine is a LIVE plugin setting and the voice rides the RECORD, saved
+  // by a different button - so the two drift apart the moment one is saved
+  // without the other. Downstream that drift is silent: the plugin now refuses
+  // a voice belonging to the other engine and speaks the engine default, so a
+  // stale pick here would show a voice on screen that no caller ever hears.
+  // Clear it and let the new engine's default stand, which is what the picker
+  // below now offers anyway.
+  if (!voiceUsableByEngine(v, d().voice, state.catalog)) setDraft({ voice: '' });
   touch();
 }
 

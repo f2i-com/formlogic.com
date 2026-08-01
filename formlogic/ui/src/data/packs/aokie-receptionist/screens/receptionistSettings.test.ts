@@ -37,6 +37,7 @@ import {
   composeAgentPayload as screenCompose,
   DEFAULT_PERSONA as SCREEN_PERSONA,
 } from './receptionist-settings/agentPayload';
+import { normalizeEngine, voiceMatchesEngine, voiceUsableByEngine } from './receptionist-settings/helpers';
 
 beforeAll(() => setupScreenTestEsbuild());
 afterAll(() => teardownScreenTestEsbuild());
@@ -782,5 +783,139 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
     expect(calls.update.length).toBe(1);
     expect(calls.update[0].id).toBe('rec-new-1');
     expect(calls.update[0].answers).toEqual({ whitelist_only: 'no', default_country_code: '' });
+  });
+});
+
+// -- engine / voice pairing -------------------------------------------------
+//
+// The engine is a LIVE plugin setting saved by its own button; the voice rides
+// the RECORD and is pushed by Save & apply. Two buttons, so the two values
+// drift - and the drift is inaudible: the plugin refuses a voice belonging to
+// the other engine and speaks the engine default, so the console shows Jenny
+// while every caller hears the pocket reference sample (live report
+// 2026-08-01).
+
+const BUNDLE = 'vits-piper-en_GB-jenny_dioco-medium';
+
+describe('voiceMatchesEngine mirrors the plugin authority', () => {
+  // Case-for-case with crates/aokie-plugin/src/voice.rs mod voice_engine_tests.
+  // A divergence here means the console offers or pushes something the plugin
+  // will refuse, which is exactly the failure this pair of rules exists to stop.
+  it('refuses a bundle voice for pocket and accepts it for sherpa', () => {
+    for (const bundle of [BUNDLE, 'piper-en_US-amy-low', 'kokoro-en-v0_19', 'en_GB-piper-alba']) {
+      expect(voiceMatchesEngine('pocket', bundle), `${bundle} is not a pocket voice`).toBe(false);
+      expect(voiceMatchesEngine('sherpa', bundle), `${bundle} IS a sherpa voice`).toBe(true);
+      expect(voiceMatchesEngine('piper', bundle), 'piper normalises to sherpa').toBe(true);
+    }
+  });
+
+  it("leaves pocket's own vocabulary alone", () => {
+    for (const ok of ['alba', 'eponine', 'javert', '', 'C:\\voices\\me.wav', 'voices/me.safetensors']) {
+      expect(voiceMatchesEngine('pocket', ok), `${JSON.stringify(ok)} is a pocket voice`).toBe(true);
+    }
+  });
+
+  it('normalises the engine name the same way the plugin does', () => {
+    expect(normalizeEngine('')).toBe('pocket');
+    expect(normalizeEngine('piper')).toBe('sherpa');
+    expect(normalizeEngine('sherpa-onnx')).toBe('sherpa');
+    expect(normalizeEngine('nonsense')).toBe('pocket');
+  });
+
+  it('the catalog-aware rule also catches a POCKET preset left on sherpa', () => {
+    const cat = [{ id: 'pocket', label: 'Pocket-TTS', voices: ['alba', 'eponine'] }];
+    // The plugin cannot refuse this (a bundle may name a speaker 'alba'), but
+    // the console knows 'alba' is an installed POCKET preset.
+    expect(voiceMatchesEngine('sherpa', 'alba')).toBe(true);
+    expect(voiceUsableByEngine('sherpa', 'alba', cat)).toBe(false);
+    expect(voiceUsableByEngine('sherpa', BUNDLE, cat)).toBe(true);
+    expect(voiceUsableByEngine('pocket', 'alba', cat)).toBe(true);
+    expect(voiceUsableByEngine('pocket', BUNDLE, cat)).toBe(false);
+    // Blank is every engine's default and must never be "cleared".
+    expect(voiceUsableByEngine('sherpa', '', cat)).toBe(true);
+  });
+});
+
+describe('the console never shows a voice the live engine will not speak', () => {
+  // esbuild setup/teardown is file-level (top of this suite).
+  it('switching the engine to Pocket-TTS drops a Piper bundle off the record', async () => {
+    const { fl } = makeFl({
+      records: [{ id: 'r1', answers: { voice: BUNDLE } }],
+      settings: { ttsEngine: 'sherpa', ttsModelDir: 'C:\\models\\tts\\' + BUNDLE },
+      getExtra: { managerPinSet: false },
+    });
+    const res = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
+    await flush(60);
+    const root = res.root;
+
+    // Sherpa is live, so the bundle picker is shown and there is no Voice select.
+    expect(root.querySelector('select[data-d="voice"]')).toBe(null);
+
+    const engine = root.querySelector('select[data-eng="engine"]') as HTMLSelectElement;
+    engine.value = '';
+    engine.dispatchEvent(new res.dom.window.Event('change', { bubbles: true }));
+    await flush(40);
+
+    // Pocket cannot speak the bundle, so the record's voice reset to Default
+    // rather than staying on a name no caller would ever hear.
+    const voice = root.querySelector('select[data-d="voice"]') as HTMLSelectElement;
+    expect(voice).not.toBe(null);
+    expect(voice.value).toBe('');
+  });
+
+  it('Save & apply pushes a blank voice while the engine pick is still unsaved', async () => {
+    const { fl, calls } = makeFl({
+      // The plugin is running POCKET; the record already carries a bundle name.
+      records: [{ id: 'r1', answers: { voice: BUNDLE } }],
+      settings: { ttsEngine: '' },
+      getExtra: { managerPinSet: false },
+    });
+    const res = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
+    await flush(60);
+    const root = res.root;
+
+    expect(root.querySelector('[data-engine-pending]')).toBe(null);
+
+    const engine = root.querySelector('select[data-eng="engine"]') as HTMLSelectElement;
+    engine.value = 'sherpa';
+    engine.dispatchEvent(new res.dom.window.Event('change', { bubbles: true }));
+    await flush(40);
+
+    // The pick is pending, and the card says so instead of implying it is live.
+    const pending = root.querySelector('[data-engine-pending]');
+    expect(pending).not.toBe(null);
+    expect(pending?.textContent).toContain('still running Pocket-TTS');
+
+    (root.querySelector('[data-act="save-apply"]') as HTMLButtonElement).click();
+    await flush(120);
+
+    const applied = calls.set[calls.set.length - 1];
+    expect(applied.ttsVoice).toBe('');
+  });
+
+  it('once the engine is saved, the matching bundle voice IS pushed', async () => {
+    const { fl, calls } = makeFl({
+      records: [{ id: 'r1', answers: { voice: BUNDLE } }],
+      settings: { ttsEngine: '' },
+      getExtra: { managerPinSet: false },
+    });
+    const res = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
+    await flush(60);
+    const root = res.root;
+
+    const engine = root.querySelector('select[data-eng="engine"]') as HTMLSelectElement;
+    engine.value = 'sherpa';
+    engine.dispatchEvent(new res.dom.window.Event('change', { bubbles: true }));
+    await flush(40);
+
+    (root.querySelector('[data-act="save-engine"]') as HTMLButtonElement).click();
+    await flush(80);
+    expect(root.querySelector('[data-engine-pending]')).toBe(null);
+
+    (root.querySelector('[data-act="save-apply"]') as HTMLButtonElement).click();
+    await flush(120);
+
+    const applied = calls.set[calls.set.length - 1];
+    expect(applied.ttsVoice).toBe(BUNDLE);
   });
 });
