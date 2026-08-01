@@ -391,7 +391,12 @@ export function createConsole(repaint: () => void): ConsoleController {
 
   // ---- actions -------------------------------------------------------------
 
-  function runCommand(command: string, payload?: Record<string, unknown>): Promise<boolean> {
+  /** `quiet` withholds the toast so the caller can explain the failure better. */
+  function runCommand(
+    command: string,
+    payload?: Record<string, unknown>,
+    quiet?: boolean
+  ): Promise<boolean> {
     state.busy = command;
     repaint();
     return FormLogic.connector('aokie', command, payload || {})
@@ -399,13 +404,13 @@ export function createConsole(repaint: () => void): ConsoleController {
         if (out.status !== 'done') {
           let m = errMessage(out.error, out.status);
           if (out.status === 'uncertain') m = 'Sent, but the desktop has not confirmed it yet.';
-          void FormLogic.toast.error(m);
+          if (!quiet) void FormLogic.toast.error(m);
           return false;
         }
         return true;
       })
       .catch((e: unknown) => {
-        void FormLogic.toast.error(errMessage(e, 'Command failed'));
+        if (!quiet) void FormLogic.toast.error(errMessage(e, 'Command failed'));
         return false;
       })
       .then((ok) => {
@@ -414,11 +419,66 @@ export function createConsole(repaint: () => void): ConsoleController {
       });
   }
 
+  /**
+   * Answer / reject / hang up.
+   *
+   * Remote mode has no event lane, so the stage only learns a call ended on the
+   * next poll — and one miss is forgiven before it believes it. That leaves a
+   * window, up to two poll cycles wide, where the call is over and the button
+   * is still up. Pressing it then used to surface the plugin's raw refusal:
+   * `Plugin { code: -32000, message: "callId ... is stale: there is no current
+   * call", typed: Some("stale_call") }` — which is correct, and unreadable, and
+   * blames the operator for a race they cannot see (live report 2026-08-01,
+   * hung up four seconds after the call had ended).
+   *
+   * The plugin is authoritative about what is live, so a failure is answered by
+   * asking it rather than by parsing its message: re-read the current call, and
+   * if there is none, the call had simply already ended — say that plainly and
+   * clear the stage. Any other failure keeps its own message.
+   */
   function callControl(command: 'call.answer' | 'call.reject' | 'call.hangup'): void {
     const c = activeCall();
     if (!c) return;
-    void runCommand(command, { callId: c.callId }).then(() => refreshCall()).then(() => repaint());
+    void runCommand(command, { callId: c.callId }, true)
+      .then((ok) => (ok ? Promise.resolve(null) : pluginHasCall()).then((hasCall) => ({ ok, hasCall })))
+      .then(({ ok, hasCall }) => {
+        if (!ok) {
+          if (hasCall === false) {
+            // Two independent confirmations that the call is over: our control
+            // was refused AND the plugin reports nothing live. That is not a
+            // single racing null, which is what the miss-forgiveness exists to
+            // survive, so the stage clears now instead of after another cycle.
+            void FormLogic.toast.error('That call had already ended.');
+            state.call = null;
+            state.startedAtMs = null;
+            currentMisses = 0;
+            void refreshRecent();
+          } else {
+            void FormLogic.toast.error(`Could not ${VERB[command]} the call.`);
+          }
+        }
+        return refreshCall();
+      })
+      .then(() => repaint());
   }
+
+  /**
+   * Does the plugin report ANY live call right now? `null` when it did not
+   * answer — unknown is not the same as none, and must never clear the stage.
+   */
+  function pluginHasCall(): Promise<boolean | null> {
+    if (!can('connector.aokie.call.current')) return Promise.resolve(null);
+    return FormLogic.connector('aokie', 'call.current', {})
+      .then((out) => (out.status === 'done' ? typeof rec(rec(out.result).call).callId === 'string' : null))
+      .catch(() => null);
+  }
+
+  /** What a failed control was trying to do, for the operator's message. */
+  const VERB: Record<string, string> = {
+    'call.answer': 'answer',
+    'call.reject': 'reject',
+    'call.hangup': 'hang up',
+  };
 
   function setSpeakText(v: string): void {
     state.speakText = v;

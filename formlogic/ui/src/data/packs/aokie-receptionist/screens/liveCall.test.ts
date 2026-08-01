@@ -352,6 +352,54 @@ describe('live-call section screen (TSX)', () => {
     expect(root.querySelector('#speak')).toBeNull();
   });
 
+  it('hanging up a call that already ended explains itself instead of leaking the plugin refusal', async () => {
+    // Live report 2026-08-01: the call ended at :42, the operator pressed Hang
+    // up at :46 — inside the window where remote mode has not yet noticed — and
+    // got the plugin's raw typed refusal thrown at them.
+    let live = true;
+    const toastError = vi.fn(() => Promise.resolve(undefined));
+    const connector = vi.fn((_id: string, cmd: string) => {
+      if (cmd === 'call.current') {
+        return Promise.resolve({
+          status: 'done',
+          result: live
+            ? { call: { callId: 'call_39bc', from: '0421285243', state: 'active', startedAt: '2026-08-01T06:01:22Z' } }
+            : { call: null },
+        });
+      }
+      if (cmd === 'call.hangup') {
+        // The plugin is right: the call is gone. This is what it says.
+        live = false;
+        return Promise.resolve({
+          status: 'failed',
+          error: { message: 'callId "call_39bc" is stale: there is no current call', typed: 'stale_call' },
+        });
+      }
+      return Promise.resolve({ status: 'done', result: {} });
+    });
+    const { root } = await runScreen(AOKIE_LIVE_CALL_SCREEN, baseFL({
+      presence: () => Promise.resolve({ kind: 'remote', deviceName: 'DESKTOP-HESQH3A' }),
+      can: () => Promise.resolve(true),
+      connector,
+      toast: { success: () => Promise.resolve(undefined), error: toastError },
+    }));
+    await flush();
+
+    const hangup = root.querySelector<HTMLButtonElement>('.btn.hangup');
+    expect(hangup).not.toBeNull();
+    hangup!.click();
+    await flush();
+
+    const said = toastError.mock.calls.map((c) => String(c[0])).join(' | ');
+    expect(said).toContain('That call had already ended.');
+    // The operator must never be shown the plugin's internals.
+    expect(said).not.toContain('stale');
+    expect(said).not.toContain('callId');
+    expect(said).not.toContain('-32000');
+    // And the stage clears, rather than keeping a dead call on screen.
+    expect(root.querySelector('.btn.hangup')).toBeNull();
+  });
+
   it('remote mode with no stored call at all still reports the empty transcript honestly', async () => {
     const connector = vi.fn((_id: string, cmd: string) => (cmd === 'call.current'
       ? Promise.resolve({ status: 'done', result: { call: null } })
