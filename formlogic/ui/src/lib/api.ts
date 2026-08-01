@@ -1545,6 +1545,13 @@ class ApiClient {
     return this.requestWithMeta(`/data-nodes/${nodeId}`, { method: 'DELETE' });
   }
 
+  /** DELETE /api/data-nodes/{id}/record — remove a REVOKED node's record.
+   *  Separate from revoking: the server refuses a node that still holds
+   *  authority, so this can only ever tidy up one that is already dead. */
+  async forgetDataNode(nodeId: string): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
+    return this.requestWithMeta(`/data-nodes/${nodeId}/record`, { method: 'DELETE' });
+  }
+
   /** GET /api/forms/{id}/data-placement — signed placement state for a Private form. */
   async getDataPlacement(formId: string): Promise<ApiResponse<import('../types/dataPlacement').DataPlacementState>> {
     const res = await this.requestWithMeta(`/forms/${formId}/data-placement`);

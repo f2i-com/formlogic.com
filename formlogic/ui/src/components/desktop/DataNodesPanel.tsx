@@ -26,6 +26,7 @@ export function DataNodesPanel() {
   const [busy, setBusy] = useState(false);
   const [approveTarget, setApproveTarget] = useState<DataNodeWire | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<DataNodeWire | null>(null);
+  const [forgetTarget, setForgetTarget] = useState<DataNodeWire | null>(null);
   const [showUnlock, setShowUnlock] = useState(false);
 
   const load = useCallback(async () => {
@@ -125,6 +126,13 @@ export function DataNodesPanel() {
                   Revoke
                 </Button>
               )}
+              {/* Only once it is already revoked: removing the record is a
+                  tidy-up, not a way to drop a live node's authority. */}
+              {node.status === 'revoked' && (
+                <Button size="sm" variant="secondary" onClick={() => setForgetTarget(node)} disabled={busy}>
+                  Remove
+                </Button>
+              )}
             </div>
           </li>
         ))}
@@ -169,6 +177,24 @@ export function DataNodesPanel() {
           })();
         }}
         onClose={() => setRevokeTarget(null)}
+      />
+      <ConfirmDialog
+        isOpen={forgetTarget !== null}
+        title={forgetTarget ? `Remove "${forgetTarget.displayName}" from the list?` : ''}
+        message="This only clears the record of a node you already revoked — it has no authority to lose. If that desktop is still installed and linked, it will enrol again as a new pending node."
+        confirmLabel="Remove"
+        variant="danger"
+        onConfirm={() => {
+          if (!forgetTarget) return;
+          void (async () => {
+            const res = await api.forgetDataNode(forgetTarget.id);
+            if (res.ok) toast.success('Data node removed');
+            else toast.error('Remove failed', (res.body as { message?: string })?.message ?? '');
+            setForgetTarget(null);
+            await load();
+          })();
+        }}
+        onClose={() => setForgetTarget(null)}
       />
     </div>
   );

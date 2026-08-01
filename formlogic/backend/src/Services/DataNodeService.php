@@ -291,6 +291,32 @@ final class DataNodeService
         return $this->format($this->rowById($nodeId));
     }
 
+    /**
+     * Delete a REVOKED node's record entirely.
+     *
+     * Deliberately narrow. Revocation is the safety action and stays a state
+     * change, so history is never lost by accident; this is the separate,
+     * explicit tidy-up for a machine that is gone for good, and it refuses
+     * anything still holding authority — deleting an approved node would drop
+     * its authority silently, which is the one thing `revoke` exists to avoid.
+     *
+     * The desktop keeps its signing key, so a machine that registers again
+     * simply enrols afresh as `pending` and can be approved or ignored.
+     */
+    public function forget(string $userId, string $nodeId): void
+    {
+        $row = $this->rowById($nodeId);
+        if ($row === null || $row['owner_user_id'] !== $userId) {
+            throw new \RuntimeException('data_node_not_found');
+        }
+        if (($row['status'] ?? '') !== 'revoked') {
+            throw new \RuntimeException('data_node_not_revoked');
+        }
+        $this->mysql->getConnection()
+            ->prepare('DELETE FROM data_nodes WHERE id = ? AND status = "revoked"')
+            ->execute([$nodeId]);
+    }
+
     private function rowById(string $id): ?array
     {
         $stmt = $this->mysql->getConnection()->prepare('SELECT * FROM data_nodes WHERE id = ?');

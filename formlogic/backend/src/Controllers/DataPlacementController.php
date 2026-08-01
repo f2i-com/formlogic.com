@@ -77,6 +77,28 @@ final class DataPlacementController
         return $this->jsonResponse($response, ['data' => ['node' => $node]]);
     }
 
+    /**
+     * DELETE /api/data-nodes/{id}/record — remove a REVOKED node's record.
+     *
+     * Separate from revocation on purpose. Revoking is the safety action and
+     * stays a state change, so authority is never dropped silently; this is the
+     * explicit tidy-up afterwards, for a machine that is gone. A node still
+     * holding authority is refused rather than quietly demoted.
+     */
+    public function forgetNode(Request $request, Response $response, array $args): Response
+    {
+        if (($gate = $this->gate($request, $response, true)) !== null) {
+            return $gate;
+        }
+        $userId = (string) $request->getAttribute('userId');
+        try {
+            $this->nodes->forget($userId, (string) ($args['id'] ?? ''));
+        } catch (\RuntimeException $e) {
+            return $this->nodeError($response, $e);
+        }
+        return $this->jsonResponse($response, ['data' => ['removed' => true]]);
+    }
+
     public function getPlacement(Request $request, Response $response, array $args): Response
     {
         if (($gate = $this->gate($request, $response)) !== null) {
@@ -128,6 +150,7 @@ final class DataPlacementController
         $map = [
             'data_node_not_found' => [404, 'Data node not found'],
             'data_node_revoked' => [409, 'This node was revoked — re-register it from the desktop first'],
+            'data_node_not_revoked' => [409, 'Revoke this node before removing it'],
             'data_node_cert_signature' => [422, 'The certificate signature does not verify against your vault key'],
             'placement_conflict' => [409, 'A signed placement already exists for this form'],
             'placement_signature_invalid' => [422, 'The placement signature does not verify against your vault key'],

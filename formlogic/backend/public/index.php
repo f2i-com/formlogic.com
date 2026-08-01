@@ -1736,6 +1736,11 @@ $app->post('/api/data-nodes/{id}/approve', function ($request, $response) use ($
 $app->delete('/api/data-nodes/{id}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\DataPlacementController::class)->revokeNode($request, $response, $getArgs($request));
 })->add($authRequired);
+// Removing the record is a SEPARATE action from revoking authority, and only
+// applies once the node is already revoked — see DataNodeService::forget.
+$app->delete('/api/data-nodes/{id}/record', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\DataPlacementController::class)->forgetNode($request, $response, $getArgs($request));
+})->add($authRequired);
 $app->get('/api/forms/{formId}/data-placement', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\DataPlacementController::class)->getPlacement($request, $response, $getArgs($request));
 })->add($authRequired);
