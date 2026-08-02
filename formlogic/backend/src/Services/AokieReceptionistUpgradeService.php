@@ -34,11 +34,6 @@ final class AokieReceptionistUpgradeService
     /** @var string[] */
     private const ADDITIVE_FLOW_SLUGS = [
         'appointment-request-apply',
-        // The approved-draft sweep. Purely additive: it reads Messages rows a
-        // human has already approved and sends them, so an install that does
-        // not have it simply never sends approved drafts — which is the
-        // behaviour it exists to fix.
-        'sms-approved-drain',
     ];
 
     /** @var string[] */
