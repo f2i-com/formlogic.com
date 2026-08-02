@@ -110,6 +110,10 @@ export interface ScreeningState {
   managerPin: string;
   managerPinSet: boolean;
   whitelistOnly: boolean;
+  /** The outbound-SMS kill switch (record field `sms_enabled`). Held here
+   *  rather than on the draft because it is a policy field this card saves,
+   *  like whitelistOnly - the agent payload never carries it. */
+  smsEnabled: boolean;
   defaultCountryCode: string;
 }
 
@@ -197,6 +201,10 @@ export const state: ScreenState = {
     managerPin: '',
     managerPinSet: false,
     whitelistOnly: false,
+    // Absent reads as ON, matching the flows: every install that predates the
+    // field is already texting, and a console that showed it off would be
+    // describing behaviour the receptionist does not have.
+    smsEnabled: true,
     defaultCountryCode: '',
   },
   showAdvanced: false,
@@ -695,6 +703,9 @@ function loadRecord(): Promise<void> {
       state.recordId = newest ? newest.id : null;
       // Record-side screening fields (whitelist mode + country code).
       state.screening.whitelistOnly = String(a.whitelist_only || '') === 'yes';
+      // Only an explicit 'no' switches it off - same rule the flows apply, so
+      // the console and the receptionist can never disagree about it.
+      state.screening.smsEnabled = String(a.sms_enabled || 'yes') !== 'no';
       state.screening.defaultCountryCode = typeof a.default_country_code === 'string' ? a.default_country_code : '';
       state.screening.recordLoaded = true;
     })
@@ -867,7 +878,11 @@ export function saveScreening(): void {
   };
   if (newPin) payload.managerPin = newPin;
   settingsSet(payload)
-    .then(() => writeRecord({ whitelist_only: sc.whitelistOnly ? 'yes' : 'no', default_country_code: sc.defaultCountryCode.trim() }))
+    .then(() => writeRecord({
+      whitelist_only: sc.whitelistOnly ? 'yes' : 'no',
+      default_country_code: sc.defaultCountryCode.trim(),
+      sms_enabled: sc.smsEnabled ? 'yes' : 'no',
+    }))
     .then(() => {
       // whitelist_only / default_country_code live on state.screening, NOT the
       // draft - so a normal screening save persists NO draft keys and must not
@@ -990,7 +1005,7 @@ export function screeningInput(key: ScreeningTextKey, value: string): void {
   touch();
 }
 
-export type ScreeningBoolKey = 'rejectPrivate' | 'autoBlockAbuse' | 'whitelistOnly';
+export type ScreeningBoolKey = 'rejectPrivate' | 'autoBlockAbuse' | 'whitelistOnly' | 'smsEnabled';
 
 export function screeningToggle(key: ScreeningBoolKey, checked: boolean): void {
   state.screening[key] = checked;

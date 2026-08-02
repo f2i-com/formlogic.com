@@ -782,7 +782,58 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
     // The second saver waited for the shared create then updated the SAME record.
     expect(calls.update.length).toBe(1);
     expect(calls.update[0].id).toBe('rec-new-1');
-    expect(calls.update[0].answers).toEqual({ whitelist_only: 'no', default_country_code: '' });
+    // The screening card owns three RECORD policy fields; none of them ride the
+    // draft, so this save writes exactly these and nothing else.
+    expect(calls.update[0].answers).toEqual({
+      whitelist_only: 'no',
+      default_country_code: '',
+      sms_enabled: 'yes',
+    });
+  });
+});
+
+// The outbound-SMS kill switch. It is a RECORD field, saved by the screening
+// card alongside whitelist_only - it never rides the agent payload, because the
+// flows read it from the record and the plugin has no such setting.
+describe('ScreeningCard: the outbound SMS kill switch', () => {
+  const box = (root: HTMLElement) => root.querySelector<HTMLInputElement>('input[data-sc="smsEnabled"]');
+
+  it('reads a record with no sms_enabled as ON, matching the flows', async () => {
+    // Every install that predates the field is already texting; showing it off
+    // would describe behaviour the receptionist does not have.
+    const { fl } = makeFl({ records: [{ id: 'r1', answers: {} }], getExtra: { managerPinSet: false } });
+    const { root } = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
+    await flush(60);
+    expect(box(root)).not.toBeNull();
+    expect(box(root)!.checked).toBe(true);
+  });
+
+  it('reads an explicit no as OFF', async () => {
+    const { fl } = makeFl({
+      records: [{ id: 'r1', answers: { sms_enabled: 'no' } }],
+      getExtra: { managerPinSet: false },
+    });
+    const { root } = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
+    await flush(60);
+    expect(box(root)!.checked).toBe(false);
+  });
+
+  it('turning it off writes sms_enabled no to the record', async () => {
+    const { fl, calls } = makeFl({ records: [{ id: 'r1', answers: {} }], getExtra: { managerPinSet: false } });
+    const res = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
+    await flush(60);
+    const root = res.root;
+
+    const el = box(root)!;
+    el.click();
+    await flush(40);
+    (root.querySelector('[data-act="save-screening"]') as HTMLButtonElement).click();
+    await flush(120);
+
+    expect(calls.update.length).toBe(1);
+    expect((calls.update[0].answers as Record<string, unknown>).sms_enabled).toBe('no');
+    // A kill switch must not quietly change anything else about screening.
+    expect((calls.update[0].answers as Record<string, unknown>).whitelist_only).toBe('no');
   });
 });
 

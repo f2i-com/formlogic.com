@@ -21,6 +21,26 @@ export function ScreeningCard() {
     <div class="card">
       <h2>Call screening</h2>
       <p class="muted">Who gets through. Screened callers hear a short message (or nothing) and the call ends - no greeting, no AI. Changes apply on the next incoming call.</p>
+      {/* First, and not buried: this is the one control that stops every
+          outbound text at once. Outbound DIALLING has had a kill switch since
+          Phase 2; this is its counterpart for SMS. */}
+      <label class="chk">
+        <input
+          type="checkbox"
+          data-sc="smsEnabled"
+          checked={sc.smsEnabled}
+          onChange={(e) => screeningToggle('smsEnabled', e.currentTarget.checked)}
+        />
+        <span>
+          Send text messages
+          <span class="sub">
+            Off stops every outbound text: booking confirmations, follow-up replies, and missed-call
+            and hold apologies. Inbound texts are still received and logged, AI reply drafts are still
+            written for a human, and approved drafts are held rather than dropped. Applies to the next
+            call or text, not to anything already sent.
+          </span>
+        </span>
+      </label>
       <label class="f">
         <span class="lbl">Blocked numbers</span>
         <textarea
