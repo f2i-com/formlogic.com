@@ -369,6 +369,82 @@ const FLOW_SMS_DRAFT_BUILD = `(function () {
   };
 })()`;
 
+/**
+ * Send the AI reply drafts a human has approved.
+ *
+ * Approving a draft used to be a record edit with no side effect: nothing in
+ * the pack was keyed on approval_status, so an approved reply sat in Messages
+ * forever and the operator had no way to tell it apart from one that had gone
+ * out. `approved` appeared in the whole pack exactly once — as a dropdown
+ * option.
+ *
+ * This is a DRAIN rather than a trigger because approving is an UPDATE, and the
+ * host has no update or schedule event to bind to (only connector events and
+ * form.submitted, which fires on creation). So it rides events that happen
+ * anyway — an incoming call, an inbound text — and sweeps whatever is waiting.
+ * The cost is latency: a draft approved on a quiet afternoon waits for the next
+ * call. That is worth saying out loud rather than pretending it is instant.
+ *
+ * Deliberately NOT bound to aokie.sms.sent: its own sends produce that event,
+ * and a drain that fires on its own output is a loop.
+ *
+ * Three slots per sweep, mirroring the multi-booking writes — output actions are
+ * a static list, so "send them all" is not expressible; the rest go next sweep,
+ * and the summary says how many are still waiting.
+ */
+const FLOW_SMS_APPROVED_DRAIN = `(function () {
+  var out = { hasSend1: false, hasSend2: false, hasSend3: false, waiting: 0, summaryLine: '' };
+${SMS_ENABLED_JS}
+  var dNode = nodes.drafts;
+  var rows = dNode && dNode.responses ? dNode.responses : (Array.isArray(dNode) ? dNode : []);
+  var ready = [];
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var a = (r && r.answers) || {};
+    // Re-check every gate here even though the listing filters on them: a
+    // filter this connector could not apply would return the listing
+    // UNFILTERED, and sending an unapproved draft is the one mistake this
+    // whole approval path exists to prevent.
+    if (String(a.direction || '') !== 'outbound') continue;
+    if (String(a.approval_status || '') !== 'approved') continue;
+    if (String(a.status || '') !== 'draft') continue;
+    var to = String(a.phone || '').trim();
+    var body = String(a.body || '').trim();
+    // No recipient or no text is not something to retry forever, but it is also
+    // not ours to delete — skip it and leave it visible.
+    if (to === '' || body === '') continue;
+    ready.push({ id: String(r.id || ''), to: to, body: body, at: String(r.submitted_at || a.at || '') });
+  }
+  // Oldest first, so a queue drains in the order a human worked it.
+  ready.sort(function (x, y) { return x.at < y.at ? -1 : x.at > y.at ? 1 : 0; });
+  out.waiting = ready.length;
+  if (!smsEnabled) {
+    out.summaryLine = ready.length
+      ? ready.length + ' approved draft(s) held - text sending is switched off.'
+      : 'No approved drafts waiting.';
+    return out;
+  }
+  var slots = ready.length < 3 ? ready.length : 3;
+  for (var s = 0; s < slots; s++) {
+    var n = s + 1;
+    var m = ready[s];
+    // Derived from the row id, so a retry of this same sweep re-sends the SAME
+    // messageId rather than minting a second one the delivery ack cannot match.
+    var mid = ('smsappr_' + m.id).slice(0, 128);
+    out['hasSend' + n] = true;
+    out['sendId' + n] = m.id;
+    out['sendUpdate' + n] = { status: 'queued', message_id: mid };
+    out['send' + n] = { to: m.to, body: m.body, messageId: mid };
+  }
+  var woke = String(inputs.sweepReason || 'an event');
+  out.summaryLine = slots === 0
+    ? 'No approved drafts waiting (swept after ' + woke + ').'
+    : ('Sending ' + slots + ' approved draft' + (slots === 1 ? '' : 's')
+       + (ready.length > slots ? ' (' + (ready.length - slots) + ' more on the next sweep)' : '')
+       + ', swept after ' + woke + '.');
+  return out;
+})()`;
+
 // Shared provider selector for the simple SMS-draft graph. More involved
 // background flows already read Receptionist Settings in their own context
 // blocks. Only a provider REFERENCE crosses the flow boundary; Desktop owns
@@ -4660,6 +4736,64 @@ export const aokieReceptionistPack: PackData = {
       },
     },
     {
+      name: 'Send Approved SMS Drafts',
+      slug: 'sms-approved-drain',
+      description:
+        "A sweep, not a trigger: approving a draft is a record UPDATE and this host has no update or schedule event to bind to, so this runs on events that happen anyway (an incoming call, an inbound text) and sends whatever a human has approved since the last sweep. Picks up to three outbound Messages rows with approval_status 'approved' and status 'draft', mints a message_id derived from the row id so the delivery ack can correlate, flips each row to 'queued' BEFORE dispatch, and fires sms.send. Honours the Send text messages switch — with it off the drafts are held, not dropped, and the summary says how many. Deliberately not bound to aokie.sms.sent, which its own sends produce.",
+      nodeCapabilities: ['formlogic.responses.read'],
+      flowJson: {
+        nodes: [
+          // The sweep needs nothing FROM the event, but which event woke it is
+          // worth recording — the same literal-input idiom sms-delivery-status
+          // uses to let one flow serve two triggers.
+          { id: 'in', type: 'input', data: { inputs: [{ name: 'sweepReason', example: 'an incoming call' }] } },
+          {
+            id: 'drafts',
+            type: 'formlogic_list_responses',
+            data: {
+              form: '@pack:sms-messages',
+              return: 'all',
+              limit: 25,
+              filters: [
+                { field: 'approval_status', op: 'eq', value: 'approved' },
+                { field: 'status', op: 'eq', value: 'draft' },
+              ],
+            },
+          },
+          { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
+          { id: 'plan', type: 'logic_block', data: { expr: FLOW_SMS_APPROVED_DRAIN } },
+          {
+            id: 'out',
+            type: 'output',
+            data: {
+              value: {
+                hasSend1: '$nodes.plan.hasSend1',
+                sendId1: '$nodes.plan.sendId1',
+                sendUpdate1: '$nodes.plan.sendUpdate1',
+                send1: '$nodes.plan.send1',
+                hasSend2: '$nodes.plan.hasSend2',
+                sendId2: '$nodes.plan.sendId2',
+                sendUpdate2: '$nodes.plan.sendUpdate2',
+                send2: '$nodes.plan.send2',
+                hasSend3: '$nodes.plan.hasSend3',
+                sendId3: '$nodes.plan.sendId3',
+                sendUpdate3: '$nodes.plan.sendUpdate3',
+                send3: '$nodes.plan.send3',
+                waiting: '$nodes.plan.waiting',
+                summaryLine: '$nodes.plan.summaryLine',
+              },
+            },
+          },
+        ],
+        edges: [
+          { source: 'in', target: 'drafts' },
+          { source: 'drafts', target: 'settings' },
+          { source: 'settings', target: 'plan' },
+          { source: 'plan', target: 'out' },
+        ],
+      },
+    },
+    {
       name: 'Live Reply',
       slug: 'live-reply',
       description:
@@ -5222,6 +5356,52 @@ export const aokieReceptionistPack: PackData = {
       retryPolicy: { maxAttempts: 2, backoff: 'exponential' },
       fallbackPolicy: { onError: 'log_and_continue' },
       sortOrder: 9,
+    },
+    {
+      // The approved-draft sweep, on the two events that happen anyway and are
+      // NOT produced by its own sends (aokie.sms.sent would be a loop). Async so
+      // it never delays answering a call. Both events carry two other bindings
+      // today, leaving headroom under the 5-per-event dispatch cap.
+      flow: 'sms-approved-drain',
+      event: 'aokie.call.incoming',
+      connectorId: 'aokie',
+      mode: 'async',
+      timeoutMs: 30000,
+      inputMap: { sweepReason: 'an incoming call' },
+      outputActions: [
+        // Row first, then dispatch — the same records-before-send order every
+        // other send site follows, so a crash between the two leaves a row
+        // marked queued rather than a text with nothing recording it.
+        { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasSend1', responseId: '$result.sendId1', answers: '$result.sendUpdate1' },
+        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasSend1', payload: { messageId: '$result.send1.messageId', to: '$result.send1.to', body: '$result.send1.body' } },
+        { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasSend2', responseId: '$result.sendId2', answers: '$result.sendUpdate2' },
+        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasSend2', payload: { messageId: '$result.send2.messageId', to: '$result.send2.to', body: '$result.send2.body' } },
+        { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasSend3', responseId: '$result.sendId3', answers: '$result.sendUpdate3' },
+        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasSend3', payload: { messageId: '$result.send3.messageId', to: '$result.send3.to', body: '$result.send3.body' } },
+      ],
+      // No retry: every action here SENDS, and re-running the list after a
+      // partial failure would re-dispatch whatever already went out. The next
+      // sweep picks up anything still marked draft, which is the safe recovery.
+      fallbackPolicy: { onError: 'log_and_continue' },
+      sortOrder: 20,
+    },
+    {
+      flow: 'sms-approved-drain',
+      event: 'aokie.sms.received',
+      connectorId: 'aokie',
+      mode: 'async',
+      timeoutMs: 30000,
+      inputMap: { sweepReason: 'an inbound text' },
+      outputActions: [
+        { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasSend1', responseId: '$result.sendId1', answers: '$result.sendUpdate1' },
+        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasSend1', payload: { messageId: '$result.send1.messageId', to: '$result.send1.to', body: '$result.send1.body' } },
+        { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasSend2', responseId: '$result.sendId2', answers: '$result.sendUpdate2' },
+        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasSend2', payload: { messageId: '$result.send2.messageId', to: '$result.send2.to', body: '$result.send2.body' } },
+        { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasSend3', responseId: '$result.sendId3', answers: '$result.sendUpdate3' },
+        { type: 'connector.request', connectorId: 'aokie', command: 'sms.send', when: '$result.hasSend3', payload: { messageId: '$result.send3.messageId', to: '$result.send3.to', body: '$result.send3.body' } },
+      ],
+      fallbackPolicy: { onError: 'log_and_continue' },
+      sortOrder: 21,
     },
     {
       flow: 'sms-delivery-status',

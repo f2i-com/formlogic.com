@@ -379,6 +379,7 @@ describe('aokieReceptionistPack â€” flows & bindings', () => {
       'missed-call-follow-up',
       'outbound-callback-result',
       'personalize-caller',
+      'sms-approved-drain',
       'sms-auto-reply-draft',
       'sms-delivery-status',
       'sms-followup-conversation',
@@ -408,7 +409,7 @@ describe('aokieReceptionistPack â€” flows & bindings', () => {
   });
 
   it('bindings reference declared flows, contract events, and declared forms', () => {
-    expect(pack.flowBindings?.length).toBe(17);
+    expect(pack.flowBindings?.length).toBe(19);
     for (const binding of pack.flowBindings ?? []) {
       expect(FLOW_SLUGS.has(binding.flow), `binding â†’ flow '${binding.flow}'`).toBe(true);
       expect(AOKIE_EVENTS.has(binding.event), `binding event '${binding.event}'`).toBe(true);
@@ -1183,6 +1184,74 @@ describe('aokieReceptionistPack â€” SMS follow-up loop (logic blocks)', () 
     });
     it('a YES without any appointment goes to the LLM instead of blind-confirming', () => {
       expect(run('YES', { appointments: { responses: [] } }).verdict).toBe('llm');
+    });
+  });
+
+  // Approving a draft used to be a record edit with no side effect: nothing was
+  // keyed on approval_status, so an approved reply sat in Messages forever.
+  describe('sms-approved-drain: sends what a human approved, and nothing else', () => {
+    const planExpr = nodeExpr('sms-approved-drain', 'plan');
+    const row = (over: Record<string, unknown> = {}, id = 'msg-1', at = '2026-08-01 10:00:00') => ({
+      id,
+      submitted_at: at,
+      answers: { direction: 'outbound', approval_status: 'approved', status: 'draft', phone: '+61400000000', body: 'See you then!', ...over },
+    });
+    const sweep = (rows: unknown[], settings: Record<string, unknown> = { active: 'yes' }) =>
+      evalExpr(planExpr, {
+        inputs: { sweepReason: 'an incoming call' },
+        nodes: { drafts: { responses: rows }, settings: { responses: [{ answers: settings }] } },
+      });
+
+    it('sends an approved draft and flips the row to queued BEFORE dispatch', () => {
+      const r = sweep([row()]);
+      expect(r.hasSend1).toBe(true);
+      expect(r.sendId1).toBe('msg-1');
+      expect(r.send1.to).toBe('+61400000000');
+      expect(r.send1.body).toBe('See you then!');
+      // Derived from the row id, so re-running the sweep re-sends the SAME id
+      // rather than minting a second one the delivery ack cannot match.
+      expect(r.send1.messageId).toBe('smsappr_msg-1');
+      expect(r.sendUpdate1.status).toBe('queued');
+      expect(r.sendUpdate1.message_id).toBe('smsappr_msg-1');
+    });
+
+    it('never sends a draft that is not approved, whatever the listing returns', () => {
+      // The listing filters on these, but a filter this connector could not
+      // apply returns the listing UNFILTERED — so the gate is re-checked here.
+      const r = sweep([
+        row({ approval_status: 'pending_approval' }, 'm-pending'),
+        row({ approval_status: 'rejected' }, 'm-rejected'),
+        row({ status: 'sent' }, 'm-already-sent'),
+        row({ direction: 'inbound' }, 'm-inbound'),
+      ]);
+      expect(r.hasSend1).toBe(false);
+      expect(r.waiting).toBe(0);
+      expect(String(r.summaryLine)).toContain('No approved drafts waiting');
+    });
+
+    it('skips a row with no recipient or no text instead of dispatching nothing', () => {
+      const r = sweep([row({ phone: '' }, 'm-nophone'), row({ body: '   ' }, 'm-nobody')]);
+      expect(r.hasSend1).toBe(false);
+    });
+
+    it('the kill switch HOLDS approved drafts rather than dropping them', () => {
+      const r = sweep([row()], { active: 'yes', sms_enabled: 'no' });
+      expect(r.hasSend1).toBe(false);
+      expect(r.waiting).toBe(1);
+      expect(String(r.summaryLine)).toContain('switched off');
+    });
+
+    it('drains oldest first, three at a time, and says how many are still waiting', () => {
+      const r = sweep([
+        row({}, 'm-c', '2026-08-01 12:00:00'),
+        row({}, 'm-a', '2026-08-01 09:00:00'),
+        row({}, 'm-d', '2026-08-01 13:00:00'),
+        row({}, 'm-b', '2026-08-01 10:00:00'),
+      ]);
+      expect([r.sendId1, r.sendId2, r.sendId3]).toEqual(['m-a', 'm-b', 'm-c']);
+      expect(r.hasSend3).toBe(true);
+      expect(r.waiting).toBe(4);
+      expect(String(r.summaryLine)).toContain('1 more on the next sweep');
     });
   });
 
