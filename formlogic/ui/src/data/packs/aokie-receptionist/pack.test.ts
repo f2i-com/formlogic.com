@@ -1041,6 +1041,53 @@ describe('aokieReceptionistPack â€” SMS follow-up loop (logic blocks)', () 
       expect(r.task.sms_state).toBe('active');
     });
 
+    // The kill switch. Outbound DIALLING has had one since Phase 2; texting had
+    // none, so the only way to stop it was to mark every customer sms_capable
+    // No one at a time, or revoke the connector grant and break the pack.
+    it('sms_enabled No stops the kickoff text, and still raises the task', () => {
+      const r = evalExpr(planExpr, {
+        inputs: { callId: 'call_1' },
+        nodes: {
+          ctx: { hasTranscript: true, phone: '+61400000000', customerId: null, customerName: '', today: 'today' },
+          extract: { content: JSON.stringify(booking) },
+          calls: { responses: [{ id: 'resp-call-1', answers: {} }] },
+          settings: { responses: [{ answers: { business_name: 'Pirate Cuts', active: 'yes', sms_enabled: 'no' } }] },
+        },
+      });
+      expect(r.hasKickoffSms).toBe(false);
+      // The work still has to reach a human — silencing the text must not
+      // silently drop the booking.
+      expect(r.hasTask).toBe(true);
+      expect(r.task.sms_state).toBeUndefined();
+    });
+
+    it('an install that predates the switch keeps texting (absent reads as Yes)', () => {
+      // Every existing install is already sending confirmations; defaulting the
+      // missing field to No would stop them without anyone asking.
+      const r = evalExpr(planExpr, scopeFor(booking));
+      expect(r.hasKickoffSms).toBe(true);
+    });
+
+    it('an inactive settings row is not what the switch is read from', () => {
+      // Same rule the rest of the pack follows: the first row with active !== no
+      // wins. A stale archived row must not be able to silence the business.
+      const r = evalExpr(planExpr, {
+        inputs: { callId: 'call_1' },
+        nodes: {
+          ctx: { hasTranscript: true, phone: '+61400000000', customerId: null, customerName: '', today: 'today' },
+          extract: { content: JSON.stringify(booking) },
+          calls: { responses: [{ id: 'resp-call-1', answers: {} }] },
+          settings: {
+            responses: [
+              { answers: { active: 'no', sms_enabled: 'no' } },
+              { answers: { business_name: 'Pirate Cuts', active: 'yes' } },
+            ],
+          },
+        },
+      });
+      expect(r.hasKickoffSms).toBe(true);
+    });
+
     it('withheld caller number â†’ no kickoff, task stays human-only', () => {
       const r = evalExpr(planExpr, scopeFor(booking, { phone: 'unknown' }));
       expect(r.hasKickoffSms).toBe(false);
@@ -1155,6 +1202,28 @@ describe('aokieReceptionistPack â€” SMS follow-up loop (logic blocks)', () 
           ...(decideContent === undefined ? {} : { decide: { content: typeof decideContent === 'string' ? decideContent : JSON.stringify(decideContent) } }),
         },
       });
+
+    // STOP is about the PERSON. Written only to the task it died with it: the
+    // kickoff gates read the Customer's sms_capable and the prior-loop scan only
+    // looks for sms_state 'active', so the sender's next call minted a fresh
+    // confirmation text to someone who had explicitly asked us to stop.
+    it('STOP marks the customer record, not just the task', () => {
+      const r = run({ verdict: 'stop', customerId: 'cust-1' });
+      expect(r.hasCustomerOptOut).toBe(true);
+      expect(r.customerId).toBe('cust-1');
+      expect(r.customerUpdate.sms_capable).toBe('no');
+      expect(r.taskUpdate.sms_state).toBe('opted_out');
+      // And it never replies — texting "you have been unsubscribed" is another
+      // text to someone who just said stop.
+      expect(r.hasReply).toBeFalsy();
+    });
+
+    it('STOP from an unknown sender says it could not be recorded, rather than implying it holds', () => {
+      const r = run({ verdict: 'stop', customerId: null });
+      expect(r.hasCustomerOptOut).toBeFalsy();
+      expect(r.taskUpdate.sms_state).toBe('opted_out');
+      expect(String(r.summaryLine)).toContain('no customer record');
+    });
 
     it('YES verdict: appointment confirmed, task closed, composed (non-model) reply sent', () => {
       const r = run({ verdict: 'yes' });

@@ -255,6 +255,33 @@ const LOGIC_HARDWARE_ERROR = `function run(ctx) {
 
 // ── Flow logic blocks (QuickJS expressions; completion value = node output) ────────────
 
+/**
+ * The outbound-SMS kill switch, as a snippet every send site splices in.
+ *
+ * Declares `smsEnabled` from the active Receptionist Settings row. Outbound
+ * DIALLING has had a kill switch since Phase 2 (the plugin's outboundEnabled,
+ * default OFF); texting had none, so the only way to stop it was to mark every
+ * customer sms_capable No one at a time, or to revoke the connector grant and
+ * break the rest of the pack with it.
+ *
+ * Defaults to ON when the field is absent, because every install that predates
+ * this field is already sending confirmations and a silent stop would be a
+ * worse surprise than a switch that has to be turned off deliberately.
+ *
+ * Every flow that can text already lists the settings form, so the snippet only
+ * needs `nodes.settings` to be in scope.
+ */
+const SMS_ENABLED_JS = `
+  var smsEnabled = (function () {
+    var sN = nodes.settings;
+    var sR = sN && sN.responses ? sN.responses : (Array.isArray(sN) ? sN : []);
+    for (var si = 0; si < sR.length; si++) {
+      var sa = (sR[si] && sR[si].answers) || {};
+      if (String(sa.active || 'yes') !== 'no') return String(sa.sms_enabled || 'yes') !== 'no';
+    }
+    return true;
+  })();`;
+
 const FLOW_MATCH_CUSTOMER = `(function () {
   var phone = String(inputs.callerPhone || inputs.from || '');
   // The customers node pre-filters with the phone_eq op (digits-only last-9
@@ -516,7 +543,8 @@ const FLOW_CALLBACK_RESULT = `(function () {
   var custNode = nodes.customers || {};
   var hit = custNode.first || ((custNode.responses || [])[0] || null);
   var ca = (hit && hit.answers) || {};
-  var smsCapable = String(ca.sms_capable || 'yes') !== 'no' && String(ca.status || '').toLowerCase() !== 'blocked';
+${SMS_ENABLED_JS}
+  var smsCapable = smsEnabled && String(ca.sms_capable || 'yes') !== 'no' && String(ca.status || '').toLowerCase() !== 'blocked';
   var realPhone = /^\\+?[0-9][0-9 ()-]{4,}$/.test(phone);
   var sNode = nodes.settings;
   var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);
@@ -573,7 +601,8 @@ const FLOW_HOLD_LOST = `(function () {
   var hit = custNode.first || ((custNode.responses || [])[0] || null);
   var ca = (hit && hit.answers) || {};
   var blocked = String(ca.status || '').toLowerCase() === 'blocked';
-  var smsCapable = String(ca.sms_capable || 'yes') !== 'no' && !blocked;
+${SMS_ENABLED_JS}
+  var smsCapable = smsEnabled && String(ca.sms_capable || 'yes') !== 'no' && !blocked;
   var name = String(ca.name || '').trim();
   var first = name.split(/\\s+/)[0] || '';
   var sNode = nodes.settings;
@@ -961,7 +990,8 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   // Customer record) default to texting, exactly as before.
   var custRow0 = ((nodes.customers || {}).first) || (((nodes.customers || {}).responses || [])[0] || null);
   var custA0 = (custRow0 && custRow0.answers) || {};
-  var smsCapable = String(custA0.sms_capable || 'yes') !== 'no';
+${SMS_ENABLED_JS}
+  var smsCapable = smsEnabled && String(custA0.sms_capable || 'yes') !== 'no';
   var custBlocked = String(custA0.status || '').toLowerCase() === 'blocked';
   var wantsSms = wantsSmsBase && smsCapable && !custBlocked;
   var smsSuppressed = wantsSmsBase && !wantsSms;
@@ -1949,7 +1979,8 @@ const FLOW_APPOINTMENT_REQUEST_APPLY = `(function () {
   var custRows = rowsOf(nodes.customers);
   var custA = (custRows.length && custRows[0] && custRows[0].answers) || {};
   var custBlocked = String(custA.status || '').trim().toLowerCase() === 'blocked';
-  var smsCapableNo = String(custA.sms_capable || '').trim().toLowerCase() === 'no';
+${SMS_ENABLED_JS}
+  var smsCapableNo = !smsEnabled || String(custA.sms_capable || '').trim().toLowerCase() === 'no';
   var sRows = rowsOf(nodes.settings);
   var business = '';
   var countryCode = '';
@@ -2291,7 +2322,8 @@ const FLOW_SMS_CONVO_CTX = `(function () {
   // the plan hands the task to a human instead of texting.
   var cRow = ((nodes.customers || {}).first) || (((nodes.customers || {}).responses || [])[0] || null);
   var cAns = (cRow && cRow.answers) || {};
-  var noSms = String(cAns.sms_capable || 'yes') === 'no' || String(cAns.status || '').toLowerCase() === 'blocked';
+${SMS_ENABLED_JS}
+  var noSms = !smsEnabled || String(cAns.sms_capable || 'yes') === 'no' || String(cAns.status || '').toLowerCase() === 'blocked';
   var lower = body.toLowerCase().replace(/[\\s.!,]+$/, '');
   var stop = lower === 'stop' || lower === 'unsubscribe' || lower === 'opt out' || lower === 'optout';
   var yes = /^(yes|yep|yeah|y|confirm|confirmed|ok|okay|sounds good|perfect|great)$/.test(lower);
@@ -2334,6 +2366,9 @@ const FLOW_SMS_CONVO_CTX = `(function () {
     taskId: task.id,
     taskCallId: callId,
     taskCustomer: String(ta2.customer_link || ''),
+    // The Customer row this sender matched, so a STOP can be written to the
+    // RECORD and not only to the task it happened to arrive on.
+    customerId: cRow ? cRow.id : null,
     exchanges: exchanges,
     apptId: appt ? appt.id : null,
     apptDate: apptA ? String(apptA.date || '') : '',
@@ -2384,7 +2419,22 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
     out.hasTaskUpdate = true;
     out.taskId = taskId;
     out.taskUpdate = { sms_state: 'opted_out', priority: 'high' };
-    out.summaryLine = 'Customer texted STOP - opted out, task flagged for a human.';
+    // STOP is about the PERSON, not this conversation. Written only to the
+    // task, the opt-out died with it: the kickoff gates read the Customer's
+    // sms_capable and the prior-loop scan only looks for sms_state 'active',
+    // so the sender's very next call minted a fresh confirmation text to
+    // someone who had explicitly asked us to stop. Persisting it to the record
+    // is what makes every other gate honour it.
+    if (c.customerId) {
+      out.hasCustomerOptOut = true;
+      out.customerId = c.customerId;
+      out.customerUpdate = { sms_capable: 'no' };
+      out.summaryLine = 'Customer texted STOP - opted out on their record, task flagged for a human.';
+      return out;
+    }
+    // No Customer record matched this sender, so there is nowhere durable to
+    // record it. Say so rather than implying the opt-out will hold.
+    out.summaryLine = 'Customer texted STOP - task flagged for a human (no customer record to mark).';
     return out;
   }
   if (verdict === 'cap') {
@@ -3569,6 +3619,22 @@ export const aokieReceptionistPack: PackData = {
           // the personalize-caller flow, so it applies from the NEXT call —
           // no reconnect. Distinct from the plugin-level number rules
           // (blockedNumbers / acceptPattern) which live in plugin settings.
+          // The outbound-SMS kill switch. Outbound DIALLING has had one since
+          // Phase 2 (the plugin's outboundEnabled, default OFF); texting had
+          // none, so the only way to stop it was to mark every customer
+          // sms_capable No one at a time, or revoke the connector grant and
+          // break the rest of the pack with it. Defaults to Yes because every
+          // install that predates this field is already texting and a silent
+          // stop would be the worse surprise.
+          id: 'sms_enabled',
+          type: 'dropdown',
+          label: 'Send text messages',
+          required: false,
+          description:
+            'No = this receptionist never sends an outbound text: no booking confirmations, no follow-up replies, no missed-call or hold apologies. Inbound texts are still received and logged, and AI reply drafts are still written for a human to handle. Takes effect on the next call or text, not on anything already queued.',
+          properties: { options: [{ id: 'yes', label: 'Yes (send confirmations and follow-ups)', value: 'yes' }, { id: 'no', label: 'No (never send a text)', value: 'no' }] },
+        },
+        {
           id: 'whitelist_only',
           type: 'dropdown',
           label: 'Whitelist mode (known customers only)',
@@ -5142,6 +5208,11 @@ export const aokieReceptionistPack: PackData = {
         { type: 'formlogic.updateResponse', form: '@pack:appointments', when: '$result.hasApptUpdate3', responseId: '$result.apptResponseId3', answers: '$result.apptUpdate3' },
         { type: 'formlogic.submitResponse', form: '@pack:appointments', when: '$result.hasApptCreate', answers: '$result.newAppointment' },
         { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasTaskUpdate', responseId: '$result.taskId', answers: '$result.taskUpdate' },
+        // STOP marks the PERSON, not just this conversation. Written only to the
+        // task it died with it, and the sender's next call started a fresh
+        // confirmation loop; the kickoff gates all read the Customer's
+        // sms_capable, so this is the write that makes an opt-out stick.
+        { type: 'formlogic.updateResponse', form: '@pack:customers', when: '$result.hasCustomerOptOut', responseId: '$result.customerId', answers: '$result.customerUpdate' },
         // Record updates land BEFORE the reply is sent, so the customer is never
         // told something the records don't yet say.
         { type: 'formlogic.submitResponse', form: '@pack:sms-messages', when: '$result.hasReply', answers: '$result.outboundMessage' },
