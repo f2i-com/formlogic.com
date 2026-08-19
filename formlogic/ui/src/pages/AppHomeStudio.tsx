@@ -291,7 +291,7 @@ export default function AppHomeStudio() {
             <span className="font-semibold text-gray-900 dark:text-white truncate">Custom App</span>
             <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">Beta</span>
           </div>
-          <p className="text-[11px] leading-tight text-gray-400 dark:text-slate-500 truncate hidden sm:block">
+          <p className="text-[11px] leading-tight text-gray-500 dark:text-slate-400 truncate hidden sm:block">
             {name ? `A coded home screen for “${name}”` : 'A coded home screen for this app'} — HTML, CSS &amp; TypeScript over the app SDK
           </p>
         </div>
@@ -314,7 +314,7 @@ export default function AppHomeStudio() {
               <>
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-medium text-gray-500 dark:text-slate-400">Describe the app</label>
-                  <button type="button" onClick={() => setShowAi(false)} className="text-xs text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 cursor-pointer">Hide</button>
+                  <button type="button" onClick={() => setShowAi(false)} className="text-xs text-gray-500 dark:text-slate-400 hover:text-gray-600 dark:hover:text-slate-300 cursor-pointer">Hide</button>
                 </div>
                 <textarea
                   value={prompt}
@@ -323,7 +323,7 @@ export default function AppHomeStudio() {
                   className="w-full h-20 px-3 py-2 text-sm bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 resize-none text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500"
                 />
                 <div className="flex items-center justify-between">
-                  <p className="text-xs text-gray-400 dark:text-slate-500">Spans this app's {forms.length} form{forms.length === 1 ? '' : 's'} via the app SDK (submit/records/navigate).</p>
+                  <p className="text-xs text-gray-500 dark:text-slate-400">Spans this app's {forms.length} form{forms.length === 1 ? '' : 's'} via the app SDK (submit/records/navigate).</p>
                   <Button size="sm" onClick={generate} disabled={!prompt.trim() || generating} leftIcon={generating ? <Loader2 className="h-4 w-4 animate-spin" /> : (hasScreen ? <Wand2 className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />)}>
                     {generating ? 'Generating…' : hasScreen ? 'Regenerate' : 'Generate'}
                   </Button>
@@ -473,7 +473,7 @@ export default function AppHomeStudio() {
                 <AppCustomScreenRuntime key={forms.map((f) => f.formId).join(',')} screen={preview} appSlug={slug} appName={name} forms={forms} className="w-full h-full border-0" />
               ) : (
                 <div className="h-full flex items-center justify-center text-center px-6">
-                  <p className="text-sm text-gray-400 dark:text-slate-500">
+                  <p className="text-sm text-gray-500 dark:text-slate-400">
                     {files.length === 0 ? 'Pick a starting point on the left — the live preview appears here.' : 'Edit the files on the left — the live preview appears here.'}
                   </p>
                 </div>

@@ -283,6 +283,14 @@ class AppUserService
                 ]);
             }
 
+            // Permission changes alter what members can do, so they are an app
+            // change: the studio's publish counter reads apps.updated_at, and without
+            // this a session spent rewriting a role's access showed "no changes to
+            // publish". Inside the transaction, so a rolled-back save leaves no
+            // phantom pending change.
+            $touch = $this->mysql->prepare("UPDATE apps SET updated_at = NOW() WHERE id = :id");
+            $touch->execute(['id' => $appId]);
+
             if (!$inTransaction) {
                 $this->mysql->commit();
             }

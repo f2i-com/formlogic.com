@@ -411,7 +411,7 @@ function AppCard({ app, packName, canManage, onClick, onManage, onDelete }: { ap
 
       {/* mt-auto pins the meta/actions row to the bottom so cards in a row stay footer-aligned. */}
       <div className="mt-auto flex items-center justify-between gap-2 pt-4 border-t border-gray-100 dark:border-slate-700/40">
-        <div className="flex items-center gap-1.5 text-xs text-gray-400 dark:text-slate-500 min-w-0">
+        <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400 min-w-0">
           <FileText className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
           <span className="flex-shrink-0 tabular-nums">{formCount} form{formCount === 1 ? '' : 's'}</span>
           <span aria-hidden="true">·</span>
@@ -472,7 +472,7 @@ function NewAppCard({ onClick }: { onClick: () => void }) {
         <Plus className="h-5 w-5" />
       </span>
       <span className="text-sm font-medium">Create app</span>
-      <span className="text-xs text-gray-400 dark:text-slate-500">Group forms into a deployable app</span>
+      <span className="text-xs text-gray-500 dark:text-slate-400">Group forms into a deployable app</span>
     </button>
   );
 }

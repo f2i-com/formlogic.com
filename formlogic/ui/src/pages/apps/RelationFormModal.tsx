@@ -176,12 +176,12 @@ export function RelationFormModal({ isOpen, onClose, onSave, appForms, defaultSo
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Display Fields</label>
             {loadingTarget ? (
-              <div className="flex items-center gap-2 py-2 text-sm text-gray-400 dark:text-slate-500">
+              <div className="flex items-center gap-2 py-2 text-sm text-gray-500 dark:text-slate-400">
                 <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary-600 border-t-transparent" />
                 Loading fields...
               </div>
             ) : targetFields.length === 0 ? (
-              <p className="text-sm text-gray-400 dark:text-slate-500 py-2">No data fields found on target form.</p>
+              <p className="text-sm text-gray-500 dark:text-slate-400 py-2">No data fields found on target form.</p>
             ) : (
               <div className="space-y-1.5 max-h-48 overflow-y-auto border border-gray-200 dark:border-slate-700 rounded-lg p-3">
                 {targetFields.map((f) => (
@@ -199,7 +199,7 @@ export function RelationFormModal({ isOpen, onClose, onSave, appForms, defaultSo
                       className="rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500"
                     />
                     <span className="text-sm text-gray-700 dark:text-slate-300">{f.label}</span>
-                    <span className="text-xs text-gray-400 dark:text-slate-500">({f.type.replace('_', ' ')})</span>
+                    <span className="text-xs text-gray-500 dark:text-slate-400">({f.type.replace('_', ' ')})</span>
                   </label>
                 ))}
               </div>

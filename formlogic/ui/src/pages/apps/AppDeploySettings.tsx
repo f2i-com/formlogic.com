@@ -279,7 +279,7 @@ export function AppDeploySettings() {
                 placeholder={app.name.slice(0, 12)}
                 className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
               />
-              <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Short label shown under the home-screen icon (max 12 chars).</p>
+              <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Short label shown under the home-screen icon (max 12 chars).</p>
             </div>
             <div>
               <label htmlFor="pwa-theme-color" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Theme color</label>
@@ -287,7 +287,7 @@ export function AppDeploySettings() {
                 <input id="pwa-theme-color" type="color" aria-label="PWA theme color picker" value={pwaThemeColor} onChange={(e) => setPwaThemeColor(e.target.value)} className="h-10 w-12 rounded-lg border border-gray-300 dark:border-slate-600 cursor-pointer" />
                 <input type="text" aria-label="PWA theme color hex value" value={pwaThemeColor} onChange={(e) => setPwaThemeColor(e.target.value)} onBlur={(e) => { if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(e.target.value)) setPwaThemeColor('#6366f1'); }} className="flex-1 px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm font-mono focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all" />
               </div>
-              <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Browser/status-bar color when the app is installed.</p>
+              <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Browser/status-bar color when the app is installed.</p>
             </div>
           </div>
           <div className="flex justify-end mb-4">

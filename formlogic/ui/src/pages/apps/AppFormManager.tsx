@@ -579,7 +579,7 @@ export function AppFormManager() {
           <Layers className="h-4 w-4 text-violet-500 dark:text-violet-400" />
           Create a companion app
         </h3>
-        <p className="text-xs text-gray-400 dark:text-slate-500 mb-3">
+        <p className="text-xs text-gray-500 dark:text-slate-400 mb-3">
           A second app — e.g. an admin console — over these same forms and data. Members and roles stay separate; pick what to bring across below.
         </p>
         <div className="flex flex-wrap gap-x-4 gap-y-1.5 mb-2">
@@ -614,7 +614,7 @@ export function AppFormManager() {
             Copy app logic (custom code)
           </label>
         </div>
-        <p className="text-xs text-gray-400 dark:text-slate-500 mb-3">
+        <p className="text-xs text-gray-500 dark:text-slate-400 mb-3">
           Each app runs its own app-level custom logic and screens; form-level logic travels with the shared forms.
         </p>
         <div className="flex flex-col sm:flex-row gap-2 sm:items-center">

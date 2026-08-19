@@ -421,7 +421,7 @@ function StatTile({
         <span className="block text-lg font-semibold leading-tight text-gray-900 dark:text-white">
           {value} <span className="text-xs font-medium text-gray-500 dark:text-slate-400">{label}</span>
         </span>
-        <span className="mt-0.5 block truncate text-[11px] text-gray-400 dark:text-slate-500" title={detail}>{detail}</span>
+        <span className="mt-0.5 block truncate text-[11px] text-gray-500 dark:text-slate-400" title={detail}>{detail}</span>
       </span>
     </button>
   );

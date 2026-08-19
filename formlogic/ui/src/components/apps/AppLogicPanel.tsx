@@ -306,7 +306,7 @@ export function AppLogicPanel({ appId, initialLogic, onDirtyChange }: {
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-3 text-left">
         <Braces className="h-5 w-5 text-primary-600 dark:text-primary-400" />
         <h3 className="flex-1 font-medium text-gray-900 dark:text-white tracking-tight">App logic (QuickJS)</h3>
-        <span className="text-xs text-gray-400 dark:text-slate-500">{scripts.length} script{scripts.length === 1 ? '' : 's'}</span>
+        <span className="text-xs text-gray-500 dark:text-slate-400">{scripts.length} script{scripts.length === 1 ? '' : 's'}</span>
         {open ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}
       </button>
 
@@ -351,7 +351,7 @@ export function AppLogicPanel({ appId, initialLogic, onDirtyChange }: {
                     placeholder="ui.setValues, ui.toast, connector.device.gps.read, connector.device.*"
                     className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm font-mono focus:ring-2 focus:ring-primary-500"
                   />
-                  <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Comma-separated grants every script receives; add script-only grants on the cards below.</p>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Comma-separated grants every script receives; add script-only grants on the cards below.</p>
                 </div>
                 <div className="sm:pt-9">
                   <Switch checked={strict} onChange={setStrict} label="Strict permissions" size="sm" />
@@ -386,7 +386,7 @@ export function AppLogicPanel({ appId, initialLogic, onDirtyChange }: {
                   </div>
 
                   <div className={`p-4 space-y-3 ${s.enabled === false ? 'opacity-60' : ''}`}>
-                    <p className="text-xs text-gray-400 dark:text-slate-500">{HOOK_INFO[s.hook]}</p>
+                    <p className="text-xs text-gray-500 dark:text-slate-400">{HOOK_INFO[s.hook]}</p>
 
                     {/* Code editor (lazy Monaco, javascript) */}
                     <div className="rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden">
@@ -427,7 +427,7 @@ export function AppLogicPanel({ appId, initialLogic, onDirtyChange }: {
                         aria-label="Script permissions"
                         className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 text-xs font-mono focus:ring-2 focus:ring-primary-500"
                       />
-                      <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">
+                      <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
                         Grants for this script only, added on top of the app-wide list. Effects without a matching grant are denied.
                       </p>
                     </div>
@@ -445,7 +445,7 @@ export function AppLogicPanel({ appId, initialLogic, onDirtyChange }: {
                 </Button>
                 <Button size="sm" onClick={save} isLoading={saving} disabled={saving}>Save app logic</Button>
               </div>
-              <p className="text-xs text-gray-400 dark:text-slate-500">
+              <p className="text-xs text-gray-500 dark:text-slate-400">
                 Test run executes this hook through the real host with a sample ctx (low fuel + a device/vehicle
                 event), showing the applied values, warnings, and any effects <strong>denied</strong> for a missing
                 permission — then the full outcome JSON.

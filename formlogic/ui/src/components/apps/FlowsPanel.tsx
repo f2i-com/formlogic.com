@@ -55,7 +55,7 @@ function FlowRow({ appId, flow, onSaved }: {
     <div className="flex flex-wrap items-center gap-2 rounded-xl border border-gray-200/80 bg-gray-50/70 px-4 py-3 dark:border-slate-700/60 dark:bg-slate-800/40">
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{flow.name}</p>
-        <p className="truncate font-mono text-xs text-gray-400 dark:text-slate-500">{flow.slug} - v{flow.version}</p>
+        <p className="truncate font-mono text-xs text-gray-500 dark:text-slate-400">{flow.slug} - v{flow.version}</p>
       </div>
       {/* `label` wins over `ariaLabel` in Switch, so pass ariaLabel ONLY — otherwise
           every row announces as an identical "Enabled, switch" and pausing the wrong
@@ -259,7 +259,7 @@ export function FlowsPanel({ appId }: { appId: string; appSlug?: string }) {
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-3 text-left">
         <Workflow className="h-5 w-5 text-primary-600 dark:text-primary-400" />
         <h3 className="flex-1 font-medium tracking-tight text-gray-900 dark:text-white">Flows</h3>
-        <span className="text-xs text-gray-400 dark:text-slate-500">
+        <span className="text-xs text-gray-500 dark:text-slate-400">
           {loaded ? `${flows.length} flow${flows.length === 1 ? '' : 's'} - ${bindings.length} binding${bindings.length === 1 ? '' : 's'}` : ''}
         </span>
         {open ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}
@@ -339,7 +339,7 @@ export function FlowsPanel({ appId }: { appId: string; appSlug?: string }) {
                   />
                 )}
                 {bindings.length === 0 && !showNewBinding && (
-                  <p className="text-xs text-gray-400 dark:text-slate-500">
+                  <p className="text-xs text-gray-500 dark:text-slate-400">
                     No bindings - flows only run via workspace test runs or the flow.run app-logic effect until you bind an event.
                   </p>
                 )}

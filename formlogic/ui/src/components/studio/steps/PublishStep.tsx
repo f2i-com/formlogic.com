@@ -11,6 +11,7 @@ import {
   GitBranch,
   Globe2,
   History,
+  Lightbulb,
   Rocket,
   Settings,
   Workflow,
@@ -286,6 +287,7 @@ export function PublishStep({
             <div className="divide-y divide-gray-100 dark:divide-white/[0.06]">
               {checks.map((check) => {
                 const isBlocking = check.state === 'warning' && check.severity === 'blocking';
+                const isOptional = check.state === 'warning' && check.severity === 'optional';
                 return (
                 <div key={check.id} className="flex items-center gap-3 px-4 py-3.5 sm:px-5">
                   <span
@@ -295,10 +297,16 @@ export function PublishStep({
                         ? 'bg-emerald-50 dark:bg-emerald-400/10 text-emerald-600 dark:text-emerald-300'
                         : isBlocking
                           ? 'bg-red-50 dark:bg-red-400/10 text-red-600 dark:text-red-300'
-                          : 'bg-amber-50 dark:bg-amber-400/10 text-amber-600 dark:text-amber-300'
+                          : isOptional
+                            ? 'bg-gray-100 text-gray-500 dark:bg-white/[0.06] dark:text-slate-400'
+                            : 'bg-amber-50 dark:bg-amber-400/10 text-amber-600 dark:text-amber-300'
                     )}
                   >
-                    {check.state === 'complete' ? <Check className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+                    {check.state === 'complete'
+                      ? <Check className="h-4 w-4" />
+                      : isOptional
+                        ? <Lightbulb className="h-4 w-4" />
+                        : <AlertTriangle className="h-4 w-4" />}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-1.5">
@@ -318,7 +326,7 @@ export function PublishStep({
                         </span>
                       )}
                     </span>
-                    <span className="mt-0.5 block text-[10px] text-gray-400 dark:text-slate-500">{check.detail}</span>
+                    <span className="mt-0.5 block text-[10px] text-gray-500 dark:text-slate-400">{check.detail}</span>
                   </span>
                   {check.state === 'warning' && check.step && (
                     <button
@@ -328,8 +336,14 @@ export function PublishStep({
                       // the check so an elements list can tell them apart.
                       aria-label={`${isBlocking ? 'Fix' : 'Set up'}: ${check.title}`}
                       className={cn(
-                        'cursor-pointer text-xs font-bold hover:underline',
-                        isBlocking ? 'text-red-600 dark:text-red-300' : 'text-amber-600 dark:text-amber-300'
+                        // A phone-sized target: these links are the only path from
+                        // "can't publish" to "published", and they were ~24x16px.
+                        'inline-flex cursor-pointer items-center rounded-md text-xs font-bold hover:underline max-sm:-mx-2 max-sm:min-h-11 max-sm:px-2',
+                        isBlocking
+                          ? 'text-red-600 dark:text-red-300'
+                          : isOptional
+                            ? 'text-gray-600 dark:text-slate-300'
+                            : 'text-amber-600 dark:text-amber-300'
                       )}
                     >
                       {isBlocking ? 'Fix' : 'Set up'}
@@ -371,7 +385,7 @@ export function PublishStep({
                     ? `Live version ${currentVersion}`
                     : `Changes in version ${nextVersion}`}
               </h3>
-              <p className="mt-0.5 text-xs text-gray-400 dark:text-slate-500">
+              <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">
                 {legacyPublished
                   ? 'This app is live but predates release history. Future publishes will record versions here.'
                   : changes.everPublished
@@ -474,7 +488,7 @@ export function PublishStep({
               </span>
               <div>
                 <p className="text-sm font-semibold text-gray-900 dark:text-white">{published ? 'Live app' : 'App link'}</p>
-                <p className="mt-0.5 text-xs text-gray-400 dark:text-slate-500">
+                <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">
                   {published ? (currentVersion > 0 ? `Published · version ${currentVersion}` : 'Published') : 'Goes live when you publish'}
                 </p>
               </div>
@@ -505,7 +519,7 @@ export function PublishStep({
                 {browserOnlyDemo ? 'Browser only' : 'Deploy & share'}
               </Button>
             </div>
-            <p className="mt-3 text-[10px] text-gray-400 dark:text-slate-500">
+            <p className="mt-3 text-[10px] text-gray-500 dark:text-slate-400">
               {browserOnlyDemo
                 ? 'This preview is private to this browser. Sign up free when you are ready for sharing, PWA installs and custom domains.'
                 : 'QR code, install-as-app (PWA), custom domains and signed package exports live in Deploy & share.'}
@@ -547,7 +561,7 @@ export function PublishStep({
                       v{version.version}
                       {version.label ? ` · ${version.label}` : ''}
                     </span>
-                    <span className="mt-0.5 block text-[10px] text-gray-400 dark:text-slate-500">
+                    <span className="mt-0.5 block text-[10px] text-gray-500 dark:text-slate-400">
                       {version.createdAt ? formatRelativeTime(version.createdAt) : ''}
                     </span>
                   </span>

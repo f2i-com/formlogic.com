@@ -8,7 +8,7 @@
 // step, companion apps are created from an app's Forms manager.
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Boxes, Check, HardDrive, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Boxes, Check, HardDrive, Package, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -111,7 +111,7 @@ export function AppCreateStart() {
         settings: { defaultFormPrivacy: formPrivacy },
       });
       if (app) {
-        // Brand-new apps land on the studio's Plan step (the /studio redirect).
+        // Brand-new apps land on the studio's Overview (the /studio redirect).
         navigate(`/apps/${app.id}/studio`);
         return;
       }
@@ -302,9 +302,25 @@ export function AppCreateStart() {
               </div>
             </section>
 
-            <p className="mt-4 text-center text-xs text-gray-400 dark:text-slate-500">
-              Already have forms? Attach them in the studio's Data step once the app exists.
-            </p>
+            {/* Starting from a ready-made app was invisible at the moment someone
+                decided to create one — the marketplace was only reachable from the
+                sidebar's Advanced tools or the Apps header's Import button. */}
+            <div className="mt-5 rounded-2xl border border-dashed border-gray-300 p-4 text-center dark:border-white/15">
+              <p className="text-sm font-semibold text-gray-800 dark:text-slate-200">Or start from something that already works</p>
+              <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-gray-500 dark:text-slate-400">
+                Install a ready-made app from the Marketplace and edit it, instead of building from
+                an empty studio. Already have forms? Attach them in Data &amp; forms once the app exists.
+              </p>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="mt-3"
+                onClick={() => navigate('/packs')}
+                leftIcon={<Package className="h-4 w-4" />}
+              >
+                Browse the Marketplace
+              </Button>
+            </div>
           </>
         )}
       </main>

@@ -259,7 +259,7 @@ export function StudioCommandPalette({
           {filtered.length === 0 ? (
             <div className="rounded-xl border border-dashed border-gray-200 px-4 py-10 text-center dark:border-white/10">
               <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">No matches</p>
-              <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Try a step name, form, automation or role.</p>
+              <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Try a step name, form, automation or role.</p>
             </div>
           ) : (
             GROUP_ORDER.map((group) => {

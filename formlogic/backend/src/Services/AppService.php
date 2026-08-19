@@ -1085,6 +1085,27 @@ class AppService
         return array_values($apps);
     }
 
+    /**
+     * Mark the app as changed.
+     *
+     * `apps.updated_at` is the app's modification time and the studio's publish
+     * counter reads it, but the writes that change what MEMBERS see — attaching or
+     * removing a form, renaming or reordering one, hiding it from the menu, changing
+     * a role's permissions — all wrote to `app_forms` / `app_role_permissions` and
+     * left the parent row untouched. So "N changes to publish" was blind to an entire
+     * class of edit, and the Publish button switched itself off after a real session
+     * of work reorganising an app's menu.
+     *
+     * Callers must only invoke this when something ACTUALLY changed (rowCount > 0),
+     * so a no-op save cannot invent a pending change. Creation and import paths are
+     * deliberately excluded — they set the timestamp themselves.
+     */
+    private function touchApp(string $appId): void
+    {
+        $stmt = $this->mysql->prepare("UPDATE apps SET updated_at = NOW() WHERE id = :id");
+        $stmt->execute(['id' => $appId]);
+    }
+
     public function addFormToApp(string $appId, string $formId, ?string $displayName = null): array
     {
         // E2EE §9.1/§9.2 (docs/E2EE_PRIVATE_FORMS_PLAN.md): P3 private forms are
@@ -1139,6 +1160,7 @@ class AppService
             throw $e;
         }
 
+        $this->touchApp($appId);
         return $this->getAppForms($appId);
     }
 
@@ -1161,6 +1183,7 @@ class AppService
                 );
                 $cleanup->execute(['fid' => $formId, 'fid2' => $formId]);
             }
+            $this->touchApp($appId);
         }
 
         return $removed;
@@ -1222,7 +1245,11 @@ class AppService
         $sql = "UPDATE app_forms SET " . implode(', ', $updates) . " WHERE app_id = :app_id AND form_id = :form_id";
         $stmt = $this->mysql->prepare($sql);
         $stmt->execute($params);
-        return $stmt->rowCount() > 0;
+        $changed = $stmt->rowCount() > 0;
+        if ($changed) {
+            $this->touchApp($appId);
+        }
+        return $changed;
     }
 
     public function reorderAppForms(string $appId, array $formIds): bool
@@ -1260,6 +1287,9 @@ class AppService
                     'form_id' => $formId,
                 ]);
             }
+            // Inside the same transaction, so a rolled-back reorder leaves no
+            // phantom "unpublished change" behind.
+            $this->touchApp($appId);
             $this->mysql->commit();
             return true;
         } catch (\Exception $e) {

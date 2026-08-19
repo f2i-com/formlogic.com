@@ -196,7 +196,7 @@ export function AppRelationsManager() {
 
                   {/* Display fields badge */}
                   {(rel.field.properties.displayFieldIds?.length ?? 0) > 0 && (
-                    <p className="text-xs text-gray-400 dark:text-slate-500 mb-3">
+                    <p className="text-xs text-gray-500 dark:text-slate-400 mb-3">
                       {rel.field.properties.displayFieldIds!.length} display field{rel.field.properties.displayFieldIds!.length !== 1 ? 's' : ''} configured
                     </p>
                   )}

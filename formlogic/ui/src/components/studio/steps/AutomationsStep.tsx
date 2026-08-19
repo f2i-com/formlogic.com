@@ -167,7 +167,7 @@ export function AutomationsStep({
           <section className="overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 shadow-sm h-fit">
             <div className="border-b border-gray-200/80 dark:border-white/[0.06] p-4">
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Automations</h3>
-              <p className="mt-0.5 text-xs text-gray-400 dark:text-slate-500">Plain-language rules behind this app.</p>
+              <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">Plain-language rules behind this app.</p>
             </div>
             <div className="scrollbar-thin max-h-none @3xl/studio:max-h-[560px] space-y-2 overflow-y-auto p-2.5">
               {flows.map((flow) => {
@@ -212,7 +212,7 @@ export function AutomationsStep({
                               ? flowBindings.map((b) => eventLabel(b.event)).join(' · ')
                               : 'No trigger yet — runs manually or from other flows'}
                           </span>
-                          <span className="mt-1.5 block text-[9px] font-bold uppercase tracking-wider text-gray-400 dark:text-slate-500">
+                          <span className="mt-1.5 block text-[9px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">
                             {stepCount} {stepCount === 1 ? 'step' : 'steps'} · updated {formatRelativeTime(flow.updatedAt)}
                           </span>
                         </span>
@@ -321,7 +321,7 @@ export function AutomationsStep({
                 </button>
               </div>
 
-              <div className="flex items-center justify-between border-t border-gray-200/80 dark:border-white/[0.06] bg-gray-50/70 dark:bg-white/[0.02] px-5 py-3 text-[10px] text-gray-400 dark:text-slate-500">
+              <div className="flex items-center justify-between border-t border-gray-200/80 dark:border-white/[0.06] bg-gray-50/70 dark:bg-white/[0.02] px-5 py-3 text-[10px] text-gray-500 dark:text-slate-400">
                 <span>Runs {selected.executionLocation === 'desktop' ? 'on your Desktop' : selected.executionLocation === 'cloud' ? 'in FormLogic Cloud' : 'automatically (Cloud or Desktop)'}</span>
                 <button
                   type="button"
@@ -376,7 +376,7 @@ function RuleCard({
         <Icon className="h-4 w-4" />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block text-[9px] font-bold uppercase tracking-[0.12em] text-gray-400 dark:text-slate-500">{eyebrow}</span>
+        <span className="block text-[9px] font-bold uppercase tracking-[0.12em] text-gray-500 dark:text-slate-400">{eyebrow}</span>
         <span className="mt-1 block text-xs font-bold text-gray-800 dark:text-slate-200">{title}</span>
         {subtitle && (
           <span className="mt-0.5 block text-[10px] leading-4 text-gray-500 dark:text-slate-400">{subtitle}</span>

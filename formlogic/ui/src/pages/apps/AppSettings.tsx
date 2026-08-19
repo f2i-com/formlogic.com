@@ -325,7 +325,7 @@ export function AppSettings() {
               {app.status}
             </span>
           </div>
-          <p className="truncate font-mono text-xs text-gray-400 dark:text-slate-500">/app/{app.slug}</p>
+          <p className="truncate font-mono text-xs text-gray-500 dark:text-slate-400">/app/{app.slug}</p>
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-none">
           {!acting && (
@@ -417,7 +417,7 @@ export function AppSettings() {
               />
               {slugError
                 ? <p id="app-slug-error" className="mt-1 text-sm text-red-600 dark:text-red-400">{slugError}</p>
-                : <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Your app is served at <span className="font-mono">/app/{app.slug || '…'}</span>. Must be unique — changing it breaks old links.</p>}
+                : <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Your app is served at <span className="font-mono">/app/{app.slug || '…'}</span>. Must be unique — changing it breaks old links.</p>}
             </div>
             <div>
               <label htmlFor="app-description" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Description</label>
@@ -483,7 +483,7 @@ export function AppSettings() {
                   );
                 })()}
                 <IconPicker value={app.settings?.icon} onChange={(name) => updateSetting('icon', name ?? undefined)} />
-                <p className="text-xs text-gray-400 dark:text-slate-500 min-w-0">Shown on the app card and tiles when there's no logo.</p>
+                <p className="text-xs text-gray-500 dark:text-slate-400 min-w-0">Shown on the app card and tiles when there's no logo.</p>
               </div>
             </div>
             <div>
@@ -499,7 +499,7 @@ export function AppSettings() {
                   <option key={k} value={k}>{KIND_LABELS[k]}</option>
                 ))}
               </select>
-              <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Used for dashboard templates and labels — apps of any type can share the same forms.</p>
+              <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Used for dashboard templates and labels — apps of any type can share the same forms.</p>
             </div>
 
             {/* Membership */}
@@ -550,7 +550,7 @@ export function AppSettings() {
                     <option key={f.formId} value={f.formId}>{f.displayName}</option>
                   ))}
                 </select>
-                <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Where members land when they open the app.</p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Where members land when they open the app.</p>
               </div>
               <div>
                 <label htmlFor="app-timezone" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Timezone</label>
@@ -561,7 +561,7 @@ export function AppSettings() {
                   emptyLabel="UTC (default)"
                   className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
-                <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Record times (call logs, submissions) display in this zone for members without their own timezone set. Also used for report date grouping.</p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Record times (call logs, submissions) display in this zone for members without their own timezone set. Also used for report date grouping.</p>
               </div>
             </div>
 
@@ -582,7 +582,7 @@ export function AppSettings() {
             {app.settings?.services && Object.keys(app.settings.services).length > 0 && (
               <div className="pt-2 border-t border-gray-100 dark:border-slate-800 space-y-4">
                 <h3 className="text-sm font-medium text-gray-900 dark:text-white">Included services</h3>
-                <p className="text-xs text-gray-400 dark:text-slate-500">
+                <p className="text-xs text-gray-500 dark:text-slate-400">
                   Services this app's pack ships. Turning one off blocks its connections as soon as you save.
                 </p>
                 {Object.entries(app.settings.services).map(([id, svc]) => (
@@ -629,7 +629,7 @@ export function AppSettings() {
                     onBlur={(e) => { if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(e.target.value)) setApp({ ...app, theme: { ...app.theme, primaryColor: '#6366f1' } }); }}
                     className="flex-1 px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm font-mono focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200" />
                 </div>
-                <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Buttons, links and highlights inside the app.</p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Buttons, links and highlights inside the app.</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Background color</label>
@@ -734,7 +734,7 @@ export function AppSettings() {
                     </p>
                   </div>
                   {navLinks.length === 0 && (
-                    <p className="text-sm text-gray-400 dark:text-slate-500">No custom links yet.</p>
+                    <p className="text-sm text-gray-500 dark:text-slate-400">No custom links yet.</p>
                   )}
                   <div className="space-y-3">
                     {navLinks.map((l) => (
@@ -799,7 +799,7 @@ export function AppSettings() {
                   >
                     Add link
                   </Button>
-                  <p className="text-xs text-gray-400 dark:text-slate-500">
+                  <p className="text-xs text-gray-500 dark:text-slate-400">
                     Only <code className="font-mono">https://</code> sites and in-app targets ever render — anything else is
                     ignored by the menu. Save with the button above.
                   </p>

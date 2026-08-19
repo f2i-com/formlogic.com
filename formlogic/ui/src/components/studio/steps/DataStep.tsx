@@ -30,6 +30,8 @@ import { VaultSetupWizard } from '../../vault/VaultSetupWizard';
 import { VaultUnlockDialog } from '../../vault/VaultUnlockDialog';
 import { RelationFormModal } from '../../../pages/apps/RelationFormModal';
 import { trackStudioSave } from '../studioSaveState';
+import { ExportDataMenu } from '../../apps/ExportDataMenu';
+import { useAdminActing } from '../../admin/AdminActingContext';
 import { saveFormFields } from '../../../lib/formFields';
 import type { App, AppForm } from '../../../types/app';
 import type { FieldType, Form, FormField } from '../../../types/form';
@@ -112,6 +114,7 @@ export function DataStep({
   onReloadForms: () => Promise<void>;
 }) {
   const navigate = useNavigate();
+  const acting = useAdminActing();
   // Deep surfaces opened from this section return here via their Back buttons.
   const studioReturn = returnToState(`/apps/${app.id}/studio/data`, 'App Studio');
   const fetchFormAppUsage = useAppStore((s) => s.fetchFormAppUsage);
@@ -379,14 +382,29 @@ export function DataStep({
       <section className="h-fit overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
         <div className="flex items-center justify-between border-b border-gray-200/80 p-4 dark:border-white/[0.06]">
           <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Data types</h3>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate(`/apps/${app.id}/forms`, { state: studioReturn })}
-            title="Attach existing forms, reorder and set visibility"
-          >
-            Manage
-          </Button>
+          <div className="flex items-center gap-1">
+            {/* The section that owns the app's data is where an owner looks for the
+                data itself. Exporting it was four hops away, under App settings →
+                Manage → Records. Acting admins keep their own export gate on that
+                page and do not get it here. */}
+            {!acting && <ExportDataMenu appId={app.id} appSlug={app.slug} />}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate(`/apps/${app.id}/records`, { state: studioReturn })}
+              title="Record counts, per-form responses and analytics"
+            >
+              Records
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate(`/apps/${app.id}/forms`, { state: studioReturn })}
+              title="Attach existing forms, reorder and set visibility"
+            >
+              Attach
+            </Button>
+          </div>
         </div>
         <div className="scrollbar-thin grid max-h-none @2xl/studio:max-h-[560px] grid-cols-1 gap-1 overflow-y-auto p-2 @xl/studio:grid-cols-2 @2xl/studio:grid-cols-1">
           {appForms.map((af) => {

@@ -333,7 +333,7 @@ function NativeConfigEditor({ appId, domain, onSaved }: { appId: string; domain:
             {errors.fingerprints ? (
               <FieldError msg={errors.fingerprints} />
             ) : (
-              <span className="block text-[11px] text-gray-400 dark:text-slate-500 mt-1">One fingerprint per line (or comma-separated).</span>
+              <span className="block text-[11px] text-gray-500 dark:text-slate-400 mt-1">One fingerprint per line (or comma-separated).</span>
             )}
           </label>
           <label className="block min-w-0">
@@ -515,9 +515,9 @@ export function CustomDomainsPanel({ appId, published = true }: { appId: string;
 
       {/* List */}
       {loading ? (
-        <p className="text-sm text-gray-400 dark:text-slate-500">Loading…</p>
+        <p className="text-sm text-gray-500 dark:text-slate-400">Loading…</p>
       ) : domains.length === 0 ? (
-        <p className="text-sm text-gray-400 dark:text-slate-500">No custom domains yet.</p>
+        <p className="text-sm text-gray-500 dark:text-slate-400">No custom domains yet.</p>
       ) : (
         <ul className="space-y-3">
           {domains.map((d) => (

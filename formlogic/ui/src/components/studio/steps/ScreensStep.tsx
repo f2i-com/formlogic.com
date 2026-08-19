@@ -4,8 +4,10 @@ import {
   AlertTriangle,
   BarChart3,
   ChevronRight,
+  CircleSlash,
   Code2,
   ExternalLink,
+  EyeOff,
   FileText,
   GitBranch,
   GitCompareArrows,
@@ -20,8 +22,8 @@ import {
   Settings2,
   Smartphone,
   Sparkles,
-  Tablet,
   Table2,
+  Tablet,
   WandSparkles,
 } from 'lucide-react';
 import { Badge } from '../../ui/Badge';
@@ -45,6 +47,21 @@ import type { App, AppForm, AppRole, AppRuntimeForm, PermissionAction } from '..
 import type { CustomScreen, Form } from '../../../types/form';
 
 type ScreenSelection = { kind: 'home' } | { kind: 'form'; formId: string };
+
+/**
+ * The four states an attached form can be in, in the app's own words. The same four
+ * states were previously spelled differently in two places — "Shown/Unlisted/
+ * Data-only/Off" on the Forms manager page and a single "Show in app navigation"
+ * switch here — and two of them could only be reached from the other page.
+ */
+type NavStateId = 'listed' | 'unlisted' | 'data-only' | 'off';
+
+const NAV_STATES: Array<{ id: NavStateId; label: string; detail: string; icon: typeof Home }> = [
+  { id: 'listed', label: 'In the app menu', detail: 'Members can open it from anywhere', icon: List },
+  { id: 'unlisted', label: 'Unlisted', detail: 'Reachable from other screens and by link, but not in the menu', icon: EyeOff },
+  { id: 'data-only', label: 'Data only', detail: 'Stores records but renders no screens', icon: Table2 },
+  { id: 'off', label: 'Not in this app', detail: 'Withdrawn from the app entirely — records are kept', icon: CircleSlash },
+];
 type HomeKind = 'sdk' | 'code' | 'dashboard' | 'default';
 type PreviewNavItem = { key: string; label: string; icon: string | null; active: boolean };
 
@@ -286,37 +303,6 @@ export function ScreensStep({
   const activeScreenKind = selection.kind === 'home' ? homeKind : selectedScreenKind;
 
   /**
-   * Nav visibility. `isVisible: false` ("Off" in the Forms manager) is a THIRD state
-   * this switch does not own — flipping it here would quietly re-admit a withdrawn
-   * form to the runtime, so those attachments keep their state and the switch says so.
-   */
-  const setMenuVisible = async (af: AppForm, visible: boolean, opts: { silent?: boolean } = {}) => {
-    setBusy(true);
-    const settings = { ...(af.settings ?? {}) } as Record<string, unknown>;
-    delete settings.menuHidden;
-    if (!visible) settings.menuHidden = true;
-    const name = af.displayName || formsById[af.formId]?.title || 'Screen';
-    const res = await trackStudioSave(
-      `${name} menu visibility`,
-      async () => {
-        const result = await api.updateAppForm(app.id, af.formId, { settings });
-        if (!result.error) await onReloadForms();
-        return result;
-      },
-      (result) => !result.error
-    );
-    setBusy(false);
-    if (res.error) {
-      toast.error('Could not update the menu', typeof res.error === 'string' ? res.error : undefined);
-      return;
-    }
-    // Hiding a nav item is easy to fat-finger — offer a one-tap way back.
-    if (!visible && !opts.silent) {
-      toast.undo(`${name} hidden from the menu`, () => { void setMenuVisible(af, true, { silent: true }); });
-    }
-  };
-
-  /**
    * Landing screen. Undo re-reads the CURRENT settings and swaps only landingPage:
    * replaying a whole settings snapshot reverted whatever else had been saved in the
    * meantime (sign-up settings, a theme change, a chat tool's write).
@@ -337,6 +323,44 @@ export function ScreensStep({
         void trackStudioSave('Landing screen', () => write(previous), (saved) => !!saved);
       });
     }
+  };
+
+  /**
+   * Write one of the four attachment states. Off (`isVisible: false`) is a genuinely
+   * different thing from hidden-from-the-menu — it withdraws the form from the app —
+   * so it is an explicit choice here rather than a switch position you could reach by
+   * accident, and it is the only one that changes `isVisible`.
+   */
+  const setNavState = async (af: AppForm, next: NavStateId) => {
+    if (attachmentState(af) === next) return;
+    setBusy(true);
+    const settings = { ...(af.settings ?? {}) } as Record<string, unknown>;
+    delete settings.menuHidden;
+    delete settings.hidden;
+    if (next === 'unlisted') settings.menuHidden = true;
+    if (next === 'data-only') settings.hidden = true;
+    const name = af.displayName || formsById[af.formId]?.title || 'Screen';
+    const previous = attachmentState(af);
+    const res = await trackStudioSave(
+      `${name} placement`,
+      async () => {
+        const result = await api.updateAppForm(app.id, af.formId, {
+          settings,
+          isVisible: next !== 'off',
+        });
+        if (!result.error) await onReloadForms();
+        return result;
+      },
+      (result) => !result.error
+    );
+    setBusy(false);
+    if (res.error) {
+      toast.error('Could not update where this appears', typeof res.error === 'string' ? res.error : undefined);
+      return;
+    }
+    toast.undo(`${name}: ${NAV_STATES.find((n) => n.id === next)?.label ?? next}`, () => {
+      void setNavState({ ...af }, previous);
+    });
   };
 
   const customiseScreen = () => {
@@ -478,46 +502,58 @@ export function ScreensStep({
               </>
             ) : selectedAttachment && selectedForm ? (
               <>
-                {hideNav ? (
-                  <p className="rounded-xl bg-gray-50 p-3 text-[11px] leading-5 text-gray-600 dark:bg-white/[0.04] dark:text-slate-300">
-                    This app runs without navigation, so menu settings have no effect. Members reach
-                    records from the floating Records button. Turn the menu back on in{' '}
-                    <button type="button" onClick={() => navigate(`/apps/${app.id}/settings?tab=general`, { state: studioReturn })} className="cursor-pointer font-semibold text-primary-600 hover:underline dark:text-primary-400">
-                      App settings
-                    </button>.
+                {/* One control for all FOUR states this attachment can be in. It used
+                    to be a two-state switch plus two paragraphs telling the owner to
+                    go to the Forms manager — for settings that are one field each. */}
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">
+                    Where this appears
                   </p>
-                ) : attachmentState(selectedAttachment) === 'off' ? (
-                  <p className="rounded-xl bg-amber-50 p-3 text-[11px] leading-5 text-amber-800 dark:bg-amber-400/10 dark:text-amber-200">
-                    This form is switched off for the app entirely — not just hidden from the menu.
-                    Turn it back on in the{' '}
-                    <button type="button" onClick={() => navigate(`/apps/${app.id}/forms`, { state: studioReturn })} className="cursor-pointer font-semibold underline">
-                      Forms manager
-                    </button>.
-                  </p>
-                ) : attachmentState(selectedAttachment) === 'data-only' ? (
-                  <p className="rounded-xl bg-gray-50 p-3 text-[11px] leading-5 text-gray-600 dark:bg-white/[0.04] dark:text-slate-300">
-                    This is a data-only form: it stores records but renders no screens. Change that in the{' '}
-                    <button type="button" onClick={() => navigate(`/apps/${app.id}/forms`, { state: studioReturn })} className="cursor-pointer font-semibold text-primary-600 hover:underline dark:text-primary-400">
-                      Forms manager
-                    </button>.
-                  </p>
-                ) : (
-                  <>
-                    <Switch
-                      label="Show in app navigation"
-                      description="Unlisted screens stay reachable from other screens and by link"
-                      checked={attachmentState(selectedAttachment) === 'listed'}
-                      onChange={(v) => void setMenuVisible(selectedAttachment, v)}
-                      disabled={busy}
-                    />
-                    <Switch
-                      label="Landing screen"
-                      description="Members land here when they open the app"
-                      checked={app.settings?.landingPage === selectedAttachment.formId}
-                      onChange={(v) => void setLanding(v ? selectedAttachment.formId : 'dashboard')}
-                      disabled={busy}
-                    />
-                  </>
+                  <div className="mt-2 space-y-1.5">
+                    {NAV_STATES.map((state) => {
+                      const current = attachmentState(selectedAttachment);
+                      return (
+                        <button
+                          key={state.id}
+                          type="button"
+                          disabled={busy || current === state.id}
+                          onClick={() => void setNavState(selectedAttachment, state.id)}
+                          aria-current={current === state.id ? 'true' : undefined}
+                          className={cn(
+                            'flex min-h-11 w-full items-start gap-2.5 rounded-xl border p-2.5 text-left transition',
+                            current === state.id
+                              ? 'border-primary-300 bg-primary-50 dark:border-primary-500/30 dark:bg-primary-500/[0.09]'
+                              : 'cursor-pointer border-gray-200 hover:border-primary-300 hover:bg-gray-50 dark:border-white/10 dark:hover:border-primary-500/30 dark:hover:bg-white/[0.03]'
+                          )}
+                        >
+                          <state.icon className={cn(
+                            'mt-0.5 h-4 w-4 shrink-0',
+                            current === state.id ? 'text-primary-600 dark:text-primary-400' : 'text-gray-400 dark:text-slate-500'
+                          )} />
+                          <span className="min-w-0">
+                            <span className="block text-xs font-semibold text-gray-800 dark:text-slate-200">{state.label}</span>
+                            <span className="mt-0.5 block text-[11px] leading-4 text-gray-500 dark:text-slate-400">{state.detail}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {hideNav && (
+                    <p className="mt-2 rounded-xl bg-gray-50 p-2.5 text-[11px] leading-4 text-gray-600 dark:bg-white/[0.04] dark:text-slate-300">
+                      This app runs full-screen, so menu placement has no effect — members reach
+                      records from the floating Records button. Turn the menu back on under
+                      Look &amp; feel.
+                    </p>
+                  )}
+                </div>
+                {attachmentState(selectedAttachment) !== 'off' && attachmentState(selectedAttachment) !== 'data-only' && (
+                  <Switch
+                    label="Landing screen"
+                    description="Members land here when they open the app"
+                    checked={app.settings?.landingPage === selectedAttachment.formId}
+                    onChange={(v) => void setLanding(v ? selectedAttachment.formId : 'dashboard')}
+                    disabled={busy}
+                  />
                 )}
                 <div className="rounded-xl border border-gray-200 p-3 dark:border-white/10">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">Generated views</p>
@@ -919,7 +955,7 @@ function AppPreview({
             </div>
             {groups.map((group) => (
               <div key={group.label} className="mb-2">
-                <p className="px-1.5 pb-1 text-[8px] font-bold uppercase tracking-wider text-gray-400 dark:text-slate-500">{group.label}</p>
+                <p className="px-1.5 pb-1 text-[8px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">{group.label}</p>
                 {group.items.map((item) => (
                   <div
                     key={item.key}
