@@ -202,7 +202,7 @@ export function OverviewStep({
               onKeyDown={(e) => { if (e.key === 'Escape') { setDescDraft(null); e.currentTarget.blur(); } }}
               rows={2}
               placeholder="Say what this app is for — members see it, and the AI uses it when planning."
-              className="scrollbar-thin -mx-2 mt-1 w-[calc(100%+1rem)] min-w-0 resize-none rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm leading-6 text-gray-600 outline-none transition hover:border-gray-200 focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/15 dark:text-slate-300 dark:hover:border-white/10 dark:focus:border-primary-500/50 dark:focus:bg-slate-950/60"
+              className="scrollbar-thin -mx-2 mt-1 w-[calc(100%+1rem)] min-w-0 resize-none rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm leading-6 text-gray-600 outline-none transition hover:border-gray-200 focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/15 max-sm:min-h-[5.5rem] dark:text-slate-300 dark:hover:border-white/10 dark:focus:border-primary-500/50 dark:focus:bg-slate-950/60"
             />
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <span className="hidden @2xl/studio:inline-flex">
