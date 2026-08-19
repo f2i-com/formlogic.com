@@ -40,6 +40,17 @@ lerna-debug.log*
 /backend/vendor/
 /backend/storage/forms/*.db
 /backend/storage/forms/*.sqlite
+# SQLite runs these databases in WAL mode, so each one carries a -wal and a
+# -shm sidecar. Ignoring only the .sqlite left 468 untracked runtime files in
+# `git status`, which both buries real changes and invites committing live
+# response data.
+/backend/storage/forms/*.sqlite-wal
+/backend/storage/forms/*.sqlite-shm
+/backend/storage/forms/*.db-wal
+/backend/storage/forms/*.db-shm
+# Ad-hoc safety copies taken before a schema or data change. Same live response
+# data as the originals, so they are ignored for the same reason.
+/backend/storage/forms/*.bak-*
 /backend/storage/uploads/
 /backend/storage/packs/
 /backend/storage/pack-screenshots/
