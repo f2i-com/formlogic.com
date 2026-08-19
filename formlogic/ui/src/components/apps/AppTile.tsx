@@ -10,15 +10,15 @@ const isHexColor = (v: string | null | undefined): v is string => !!v && /^#[0-9
  * the Apps dashboard, the app-first sidebar, and the App Studio top bar so an app
  * looks the same everywhere it appears.
  */
-export function AppTile({ app, size = 'md', className }: { app: App; size?: 'sm' | 'md'; className?: string }) {
+export function AppTile({ app, size = 'md', className }: { app: App; size?: 'sm' | 'md' | 'lg'; className?: string }) {
   const [imgFailed, setImgFailed] = useState(false);
   const showLogo = Boolean(app.logoUrl) && !imgFailed;
   const icon = app.settings?.icon;
   const accent = app.theme?.primaryColor;
   const accented = !showLogo && isHexColor(accent);
   const monogram = (app.name?.trim().charAt(0) || '?').toUpperCase();
-  const box = size === 'sm' ? 'w-9 h-9 rounded-lg' : 'w-10 h-10 rounded-xl';
-  const glyph = size === 'sm' ? 'h-4.5 w-4.5' : 'h-5 w-5';
+  const box = size === 'sm' ? 'w-9 h-9 rounded-lg' : size === 'lg' ? 'w-14 h-14 rounded-2xl' : 'w-10 h-10 rounded-xl';
+  const glyph = size === 'sm' ? 'h-4.5 w-4.5' : size === 'lg' ? 'h-7 w-7' : 'h-5 w-5';
   return (
     <div
       style={accented ? ({ '--fl-a': accent } as CSSProperties) : undefined}

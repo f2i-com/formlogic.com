@@ -29,6 +29,7 @@ import { Button } from '../ui/Button';
 import { Logo } from '../ui/Logo';
 import { AppTile } from '../apps/AppTile';
 import { appClickPath } from '../../lib/appNavigation';
+import { statusLabel } from '../../lib/appStatus';
 import type { AppListItem } from '../../types/app';
 
 const TOOLS_OPEN_KEY = 'formlogic.sidebar.toolsOpen';
@@ -248,9 +249,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
                         )}
                         aria-hidden="true"
                       />
-                      {app.status === 'published'
-                        ? `Published${app.publishedVersion ? ` · v${app.publishedVersion}` : ''}`
-                        : 'Draft'}
+                      {statusLabel(app)}
                     </span>
                   </span>
                   {active && <ChevronRight className="h-4 w-4 shrink-0 text-primary-500 dark:text-primary-400" />}

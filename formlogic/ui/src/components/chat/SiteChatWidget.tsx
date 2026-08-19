@@ -41,6 +41,7 @@ import { api } from '../../lib/api';
 import { cn, generateId } from '../../lib/utils';
 import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
+import { pathClaimsBottomEdge } from '../../lib/bottomEdgeClaim';
 import { toast } from '../../stores/toastStore';
 import {
   getAiPreferences,
@@ -207,7 +208,6 @@ export function SiteChatWidget() {
   const setChatOpen = useUIStore((s) => s.setChatOpen);
   const setChatMinimized = useUIStore((s) => s.setChatMinimized);
   const setChatPosition = useUIStore((s) => s.setChatPosition);
-  const fixedBottomBar = useUIStore((s) => s.fixedBottomBar);
   const navigate = useNavigate();
   // §11B O5a: what the user is looking at rides each chat turn, so "this form" just
   // works — the builder's chat button counts on this.
@@ -1170,7 +1170,11 @@ export function SiteChatWidget() {
 
   return (
     <>
-      {!panelVisible && !fixedBottomBar && (
+      {/* On a phone the studio owns its bottom edge: the launcher, the desktop chip
+          and the mobile nav used to stack there, over whatever control the section
+          ended with. Chat is still reachable inside the studio — from its app menu
+          and from the command palette — and the chat PANEL still opens normally. */}
+      {!panelVisible && !(isMobile && pathClaimsBottomEdge(location.pathname)) && (
         <button
           type="button"
           aria-label={chatOpen ? 'Restore chat' : 'Open chat'}

@@ -99,7 +99,9 @@ describe('Sidebar (app-first)', () => {
     await renderSidebar();
     expect(container.textContent).toContain('Apps');
     expect(container.textContent).toContain('Plumbing Operations');
-    expect(container.textContent).toContain('Published · v3');
+    // One vocabulary for app state everywhere (lib/appStatus): 'Live v3', not one
+    // of the five spellings the section used to carry.
+    expect(container.textContent).toContain('Live v3');
     expect(container.textContent).toContain('Customer Portal');
     expect(container.textContent).toContain('Draft');
   });

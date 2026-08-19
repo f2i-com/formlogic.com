@@ -17,6 +17,7 @@ import { cn, formatRelativeTime } from '../../../lib/utils';
 import { FLOW_EVENT_CATALOG } from '../../flows/flowEventCatalog';
 import { getNodeSpec } from '../../flows/editor/nodeCatalog';
 import { FLOW_STARTER_TEMPLATES } from '../../flows/starterTemplates';
+import { triggerRunSummary } from '../../flows/bindings/triggerVocabulary';
 import { returnToState } from '../../../hooks/useReturnTo';
 import { trackStudioSave } from '../studioSaveState';
 import type { App, AppForm } from '../../../types/app';
@@ -57,7 +58,6 @@ export function AutomationsStep({
   const studioReturn = returnToState(`/apps/${app.id}/studio/automations`, 'App Studio');
   const [selectedFlowId, setSelectedFlowId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [testingId, setTestingId] = useState<string | null>(null);
 
   const selected = flows.find((f) => f.id === selectedFlowId) ?? flows[0] ?? null;
   const selectedBindings = useMemo(
@@ -91,24 +91,13 @@ export function AutomationsStep({
     }
   };
 
-  const testFlow = async (flow: FlowDefinition) => {
-    if (testingId) return;
-    setTestingId(flow.id);
-    try {
-      const res = await api.testRunFlow(app.id, flow.id);
-      if (res.error) {
-        toast.error('Test run failed', typeof res.error === 'string' ? res.error : undefined);
-      } else {
-        toast.success('Test run finished', 'Open run history to see what each step did.', {
-          action: {
-            label: 'Run history',
-            onClick: () => navigate(`/flows?flow=${flow.id}&panel=history`, { state: studioReturn }),
-          },
-        });
-      }
-    } finally {
-      setTestingId(null);
-    }
+  const testFlow = (flow: FlowDefinition) => {
+    // The studio used to POST a "test run" and report success on transport alone. The
+    // server only INSERTS a 'running' row — no executor claims one (claimRun takes
+    // 'queued'), so the reclaim sweep later marks it failed. It reported a finished
+    // test for a run that never started. The real executor lives in the flows
+    // workspace's test drawer, so open that.
+    navigate(`/flows?flow=${flow.id}&panel=test`, { state: studioReturn });
   };
 
   const newAutomation = async () => {
@@ -180,7 +169,7 @@ export function AutomationsStep({
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Automations</h3>
               <p className="mt-0.5 text-xs text-gray-400 dark:text-slate-500">Plain-language rules behind this app.</p>
             </div>
-            <div className="scrollbar-thin max-h-[560px] space-y-2 overflow-y-auto p-2.5">
+            <div className="scrollbar-thin max-h-none @3xl/studio:max-h-[560px] space-y-2 overflow-y-auto p-2.5">
               {flows.map((flow) => {
                 const isSelected = selected?.id === flow.id;
                 const flowBindings = bindings.filter((b) => b.flowDefinitionId === flow.id || b.flow === flow.slug);
@@ -264,8 +253,7 @@ export function AutomationsStep({
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={() => void testFlow(selected)}
-                    isLoading={testingId === selected.id}
+                    onClick={() => testFlow(selected)}
                     leftIcon={<Play className="h-4 w-4" />}
                   >
                     Test
@@ -288,8 +276,13 @@ export function AutomationsStep({
                         title={[
                           eventLabel(binding.event),
                           formName(binding.formId) ? `on ${formName(binding.formId)}` : null,
-                          binding.condition ? '(with a condition)' : null,
                         ].filter(Boolean).join(' ')}
+                        // The shared trigger vocabulary, so the studio and the trigger
+                        // editor cannot describe the same binding differently. It also
+                        // states the condition, so the old "(with a condition)"
+                        // fragment would now say the same thing twice.
+                        subtitle={triggerRunSummary(binding.mode, binding.condition?.expr)}
+                        chip={binding.enabled ? undefined : 'Turned off'}
                         tone="primary"
                         muted={!binding.enabled}
                       />
@@ -351,6 +344,8 @@ function RuleCard({
   icon: Icon,
   eyebrow,
   title,
+  subtitle,
+  chip,
   tone,
   muted,
 }: {
@@ -358,6 +353,11 @@ function RuleCard({
   icon: typeof Zap;
   eyebrow: string;
   title: string;
+  /** What actually happens when the event fires — the binding's mode in consequence
+   *  terms. Without it a PAUSED trigger read exactly like a live one. */
+  subtitle?: string;
+  /** Explicit state word, so "off" is not signalled by opacity alone. */
+  chip?: string;
   tone: 'primary' | 'sky' | 'amber' | 'emerald';
   muted?: boolean;
 }) {
@@ -378,7 +378,15 @@ function RuleCard({
       <span className="min-w-0 flex-1">
         <span className="block text-[9px] font-bold uppercase tracking-[0.12em] text-gray-400 dark:text-slate-500">{eyebrow}</span>
         <span className="mt-1 block text-xs font-bold text-gray-800 dark:text-slate-200">{title}</span>
+        {subtitle && (
+          <span className="mt-0.5 block text-[10px] leading-4 text-gray-500 dark:text-slate-400">{subtitle}</span>
+        )}
       </span>
+      {chip && (
+        <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold text-gray-600 dark:bg-white/[0.07] dark:text-slate-300">
+          {chip}
+        </span>
+      )}
       <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 dark:bg-white/[0.06] text-[9px] font-bold text-gray-400">
         {index}
       </span>

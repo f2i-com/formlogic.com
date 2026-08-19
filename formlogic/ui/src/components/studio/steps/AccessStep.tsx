@@ -13,6 +13,7 @@ import {
   Settings2,
   Shield,
   ShieldCheck,
+  Trash2,
   UserPlus,
   Users,
   X,
@@ -23,6 +24,7 @@ import { Input } from '../../ui/Input';
 import { Modal } from '../../ui/Modal';
 import { ConfirmDialog } from '../../ui/ConfirmDialog';
 import { Switch } from '../../ui/Switch';
+import { LoadFailure } from '../../ui/LoadFailure';
 import { PermissionMatrix } from '../../ui/PermissionMatrix';
 import { api } from '../../../lib/api';
 import { isDemoLocalId } from '../../../lib/demoLocal';
@@ -31,7 +33,7 @@ import { useAppStore } from '../../../stores/appStore';
 import { useAppUserStore } from '../../../stores/appUserStore';
 import { returnToState } from '../../../hooks/useReturnTo';
 import { trackStudioSave } from '../studioSaveState';
-import { cn, formatRelativeTime } from '../../../lib/utils';
+import { cn, copyToClipboard, formatRelativeTime } from '../../../lib/utils';
 import { APP_LEVEL_PERMISSIONS, APP_PERMISSION_LABELS } from '../../../types/app';
 import type { App, AppForm, AppRole, PermissionAction } from '../../../types/app';
 import type { Form } from '../../../types/form';
@@ -93,7 +95,7 @@ export function AccessStep({
               aria-label={item.label}
               onClick={() => setTab(item.id)}
               className={cn(
-                'flex h-9 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-bold transition sm:gap-2 sm:px-3',
+                'flex h-9 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-bold transition max-sm:h-11 sm:gap-2 sm:px-3',
                 tab === item.id
                   ? 'bg-white text-gray-900 shadow-sm dark:bg-slate-800 dark:text-white'
                   : 'text-gray-500 hover:text-gray-900 dark:text-slate-400 dark:hover:text-white'
@@ -105,7 +107,7 @@ export function AccessStep({
             </button>
           ))}
         </div>
-        <Badge variant="success" size="sm" className="self-start sm:self-auto">
+        <Badge variant="success" size="sm" className="self-start max-sm:hidden sm:self-auto">
           <Check className="mr-1 inline h-3 w-3" /> {roles.length} {roles.length === 1 ? 'role' : 'roles'} configured
         </Badge>
       </div>
@@ -255,6 +257,7 @@ function RolesView({
         edit: 'Everything, plus app settings',
         visibility: 'All records',
         admin: ['Full control of the app'],
+        destructive: ['Delete and export everywhere'],
       };
     }
     // A row with formId === null is an APP-WIDE grant: reading it as "0 forms"
@@ -271,12 +274,22 @@ function RolesView({
     const submit = scope('submit_responses');
     const edit = scope('edit_responses');
     const admin = APP_LEVEL_PERMISSIONS.filter((perm) => appWide(perm)).map((perm) => APP_PERMISSION_LABELS[perm]);
+    // Delete and Export are togglable in the matrix directly below, and both take
+    // data out of the owner's control — a summary that lists View/Create/Edit and
+    // silently omits them describes a role as safer than it is.
+    const remove = scope('delete_responses');
+    const takeOut = scope('export_responses');
+    const destructive = [
+      remove ? `Delete records on ${remove}` : null,
+      takeOut ? `Export records from ${takeOut}` : null,
+    ].filter((v): v is string => v !== null);
     return {
       view: viewAll ? `All records on ${viewAll}` : viewOwn ? `Their own records on ${viewOwn}` : 'Nothing yet',
       create: submit ? `Submit on ${submit}` : 'Nothing yet',
       edit: edit ? `Edit on ${edit}` : 'No editing',
       visibility: viewAll ? 'All records' : viewOwn ? 'Only their own records' : 'No record access',
       admin,
+      destructive,
     };
   }, [permissions, isOwnerRole]);
 
@@ -377,13 +390,18 @@ function RolesView({
             </div>
           ) : (
             <>
-              <div className="grid gap-3 border-b border-gray-200/80 p-4 dark:border-white/[0.06] sm:p-5 lg:grid-cols-2">
+              <div className="grid gap-3 border-b border-gray-200/80 p-4 dark:border-white/[0.06] sm:p-5 @2xl/studio:grid-cols-2">
                 <PermissionCard icon={Eye} title="Can view" body={summary.view} tone="primary" />
                 <PermissionCard icon={FileInput} title="Can create" body={summary.create} tone="sky" />
                 <PermissionCard icon={Settings2} title="Can edit" body={summary.edit} tone="amber" />
                 <PermissionCard icon={LockKeyhole} title="Record visibility" body={summary.visibility} tone="emerald" />
+                {summary.destructive.length > 0 && (
+                  <div className="@2xl/studio:col-span-2">
+                    <PermissionCard icon={Trash2} title="Can remove or take data out" body={summary.destructive.join(' · ')} tone="rose" />
+                  </div>
+                )}
                 {summary.admin.length > 0 && (
-                  <div className="lg:col-span-2">
+                  <div className="@2xl/studio:col-span-2">
                     <PermissionCard icon={ShieldCheck} title="Admin abilities" body={summary.admin.join(' · ')} tone="rose" />
                   </div>
                 )}
@@ -481,6 +499,10 @@ function PermissionCard({
 // ── People & invites ─────────────────────────────────────────────────────────
 
 function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
+  // The server refuses to invite into, or assign, the Owner role
+  // ("Cannot invite users to the Owner role" / "Cannot assign the Owner role"), so
+  // offering it here is a choice that can only ever fail.
+  const assignableRoles = roles.filter((r) => !(r.isSystem && r.name === 'Owner'));
   const navigate = useNavigate();
   const location = useLocation();
   const { fetchUsers, fetchInvitations, inviteUser, revokeInvitation, removeUser, updateUser } = useAppUserStore();
@@ -501,15 +523,21 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
   >(null);
   const browserOnlyDemo = isDemoLocalId(app.id);
 
+  // A failed read is not "no members". The store slice stays undefined on failure,
+  // so `users.length` was 0 and the panel confidently reported an empty app — with an
+  // invitation to add the people who are already there.
+  const [membersFailed, setMembersFailed] = useState(false);
+  const [membersReloadToken, setMembersReloadToken] = useState(0);
   useEffect(() => {
     // The store methods throw on API failure (for Promise.allSettled consumers) —
-    // surface that as a toast here instead of an unhandled rejection.
+    // record it here instead of leaving an unhandled rejection. setState inside the
+    // async callback, not the effect body, keeps react-hooks happy.
     Promise.allSettled([fetchUsers(app.id), fetchInvitations(app.id)]).then((results) => {
-      if (results.some((r) => r.status === 'rejected')) {
-        toast.error('Some member data could not be loaded');
-      }
+      const failed = results.some((r) => r.status === 'rejected');
+      setMembersFailed(failed);
+      if (failed) toast.error('Some member data could not be loaded');
     });
-  }, [app.id, fetchUsers, fetchInvitations]);
+  }, [app.id, fetchUsers, fetchInvitations, membersReloadToken]);
 
   const pendingInvites = invitations.filter((i) => i.status === 'pending');
   const defaultInviteRole = roles.find((r) => !r.isSystem) ?? roles.find((r) => r.name !== 'Owner') ?? roles[0];
@@ -562,12 +590,13 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
 
   const copyInviteLink = async () => {
     if (!inviteLink) return;
-    try {
-      await navigator.clipboard.writeText(inviteLink);
+    // See copyToClipboard: the async Clipboard API needs a secure context, and
+    // this deployment is plain HTTP.
+    if (await copyToClipboard(inviteLink)) {
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 2000);
-    } catch {
-      toast.error('Copy failed', 'Could not copy to clipboard');
+    } else {
+      toast.error('Copy failed', 'Select the link and copy it manually.');
     }
   };
 
@@ -577,7 +606,7 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
         <div>
           <h3 className="text-sm font-semibold text-gray-900 dark:text-white">People with access</h3>
           <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">
-            {users.length} {users.length === 1 ? 'member' : 'members'}
+            {membersFailed ? 'Members not loaded' : `${users.length} ${users.length === 1 ? 'member' : 'members'}`}
             {pendingInvites.length > 0 ? ` · ${pendingInvites.length} pending ${pendingInvites.length === 1 ? 'invite' : 'invites'}` : ''}
           </p>
         </div>
@@ -627,12 +656,14 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
                   onChange={(e) => void changeRole(member.id, e.target.value, name)}
                   disabled={busyId === member.id}
                   aria-label={`Role for ${name}`}
-                  className="h-8 min-w-0 max-w-[9rem] cursor-pointer rounded-lg border border-gray-200 bg-white px-2 text-[11px] font-semibold text-gray-700 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-200"
+                  className="h-8 min-w-0 max-w-[9rem] cursor-pointer rounded-lg border border-gray-200 bg-white px-2 text-[11px] font-semibold text-gray-700 outline-none max-sm:h-11 max-sm:max-w-none max-sm:flex-1 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200"
                 >
                   {/* A role the studio can't see (e.g. still loading) stays selected rather
                       than silently re-assigning the member to the first one in the list. */}
-                  {!roles.some((r) => r.id === member.roleId) && <option value="">{member.roleName ?? 'No role'}</option>}
-                  {roles.map((role) => (
+                  {!assignableRoles.some((r) => r.id === member.roleId) && (
+                    <option value="">{member.roleName ?? 'No role'}</option>
+                  )}
+                  {assignableRoles.map((role) => (
                     <option key={role.id} value={role.id}>{role.name}</option>
                   ))}
                 </select>
@@ -653,7 +684,7 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
                 onClick={() => setConfirm({ kind: 'member', id: member.id, label: name })}
                 aria-label={`Remove ${name}`}
                 title="Remove from app"
-                className="cursor-pointer rounded-lg p-2 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-red-500/10 dark:hover:text-red-400"
+                className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 max-sm:ml-auto max-sm:h-11 max-sm:w-11 dark:text-slate-400 dark:hover:bg-red-500/10 dark:hover:text-red-400"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -683,13 +714,21 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
             </button>
           </div>
         ))}
-        {users.length === 0 && pendingInvites.length === 0 && (
+        {membersFailed ? (
+          <div className="p-4">
+            <LoadFailure
+              title="Couldn't load this app's members"
+              message="The request failed. This does not mean the app has none — nothing has been changed."
+              onRetry={() => setMembersReloadToken((n) => n + 1)}
+            />
+          </div>
+        ) : users.length === 0 && pendingInvites.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-gray-500 dark:text-slate-400">
             {browserOnlyDemo
               ? 'This app is private to this browser. Sign up free when you are ready to invite real people.'
               : 'No members yet — invite people or share the app link.'}
           </p>
-        )}
+        ) : null}
       </div>
 
       <Modal isOpen={showInvite} onClose={() => setShowInvite(false)} title="Invite people" size="sm">
@@ -730,10 +769,13 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
                   onChange={(e) => setInviteRoleId(e.target.value)}
                   className="h-10 w-full cursor-pointer rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
                 >
-                  {roles.map((role) => (
+                  {assignableRoles.map((role) => (
                     <option key={role.id} value={role.id}>{role.name}</option>
                   ))}
                 </select>
+                <p className="mt-1.5 text-xs text-gray-500 dark:text-slate-400">
+                  Ownership isn&apos;t transferred from here.
+                </p>
               </div>
               <div className="flex justify-end">
                 <Button onClick={sendInvite} isLoading={inviting} disabled={!inviteEmail.trim()}>
@@ -800,12 +842,14 @@ function SignupView({ app, roles, onReloadApp }: { app: App; roles: AppRole[]; o
   };
 
   const copyLink = async () => {
-    try {
-      await navigator.clipboard.writeText(appUrl);
+    // copyToClipboard, not navigator.clipboard: the async Clipboard API is a
+    // secure-context API, so on a plain-HTTP deployment the hand-rolled call
+    // rejected and the button did nothing but flash an error.
+    if (await copyToClipboard(appUrl)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
-      toast.error('Copy failed', 'Could not copy to clipboard');
+    } else {
+      toast.error('Copy failed', 'Select the link and copy it manually.');
     }
   };
 

@@ -103,13 +103,15 @@ async function renderAt(initialEntry: string, element: React.ReactNode) {
 }
 
 describe('app management navigation', () => {
-  it('shows a cog action on app cards and opens the Manage app tab', async () => {
+  // The gear opens the app's own settings. It used to open `?tab=manage`, a grid of
+  // nine links — so the only per-app control on the card opened a directory.
+  it('shows a cog action on app cards and opens App settings', async () => {
     await renderAt('/apps', <AppsDashboard />);
     const manage = container.querySelector<HTMLButtonElement>('button[aria-label="Manage Plumbing Operations"]');
     expect(manage).not.toBeNull();
 
     await act(async () => { manage!.click(); });
-    expect(routeRef.current).toBe('/apps/app-1/settings?tab=manage');
+    expect(routeRef.current).toBe('/apps/app-1/settings');
   });
 
   it('organizes the Manage page and links back to the App Studio', async () => {

@@ -164,6 +164,17 @@
 }
 
 @layer utilities {
+  /* No scrollbar at all — for rows that are DISTRIBUTED rather than scrolled at
+     narrow widths (the App Studio section nav), where a scrollbar gutter would
+     steal height from an already tight 44px row. */
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
   .scrollbar-thin {
     scrollbar-width: thin;
     scrollbar-color: rgba(0, 0, 0, 0.1) transparent;

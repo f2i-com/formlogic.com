@@ -62,23 +62,25 @@ export function PermissionMatrix({ permissions, forms, onChange, disabled = fals
     return { all: count === FORM_LEVEL_PERMISSIONS.length, some: count > 0 };
   };
 
+  // 16px is not a touch target, and a mis-tap here grants or revokes access to
+  // real records. 20px painted, inside a padded cell.
   const checkboxClass =
-    'h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-primary-600 accent-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-slate-900 cursor-pointer disabled:cursor-not-allowed';
+    'h-4 w-4 max-sm:h-5 max-sm:w-5 rounded border-gray-300 dark:border-slate-600 text-primary-600 accent-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-slate-900 cursor-pointer disabled:cursor-not-allowed';
 
   return (
-    <div className="space-y-6">
+    <div className="@container/perms space-y-6">
       {/* App-level permissions */}
       <div>
         <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-3">
           App-level permissions
           {appLevelDisabled && <span className="ml-2 text-xs font-normal text-gray-400 dark:text-slate-500">(Owner only)</span>}
         </h4>
-        <div className="@container/perms grid grid-cols-1 @sm/perms:grid-cols-2 @2xl/perms:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 gap-3 @sm/perms:grid-cols-2 @2xl/perms:grid-cols-4">
           {APP_LEVEL_PERMISSIONS.map((perm) => (
             <label
               key={perm}
               className={cn(
-                'flex items-center gap-2 p-2.5 rounded-xl border border-gray-200/80 dark:border-slate-700/60 text-sm transition-all duration-200',
+                'flex min-h-11 items-center gap-2.5 rounded-xl border border-gray-200/80 p-2.5 text-sm transition-all duration-200 dark:border-slate-700/60',
                 !disabled && !appLevelDisabled && 'cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800',
                 appLevelDisabled && 'opacity-60',
                 hasPermission(null, perm) && 'bg-primary-50 dark:bg-primary-500/10 border-primary-300 dark:border-primary-500/30'
@@ -90,7 +92,7 @@ export function PermissionMatrix({ permissions, forms, onChange, disabled = fals
                 onChange={() => { if (!appLevelDisabled) togglePermission(null, perm); }}
                 disabled={disabled || appLevelDisabled}
                 aria-label={APP_PERMISSION_LABELS[perm]}
-                className="rounded border-gray-300 text-primary-600 accent-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-slate-900"
+                className="h-4 w-4 rounded border-gray-300 text-primary-600 accent-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1 max-sm:h-5 max-sm:w-5 dark:focus-visible:ring-offset-slate-900"
               />
               <span className="text-gray-700 dark:text-slate-300">{APP_PERMISSION_LABELS[perm]}</span>
             </label>
@@ -102,7 +104,58 @@ export function PermissionMatrix({ permissions, forms, onChange, disabled = fals
       {forms.length > 0 && (
         <div>
           <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-3">Per-form permissions</h4>
-          <div className="overflow-x-auto rounded-xl border border-gray-200/80 dark:border-slate-700/60">
+
+          {/* Narrow form: one card per form, permissions as full-width rows. The
+              table below needs ~620px for eight columns; under that it scrolled
+              sideways and took the form-name column with it, leaving unlabelled
+              checkboxes that grant access to real records. Same handlers, same
+              state — only the presentation differs. */}
+          <div className="space-y-3 @2xl/perms:hidden">
+            {forms.map((form) => {
+              const row = rowState(form.formId);
+              return (
+                <div key={form.formId} className="overflow-hidden rounded-xl border border-gray-200/80 dark:border-slate-700/60">
+                  <div className="flex min-h-12 items-center justify-between gap-3 border-b border-gray-200/80 bg-gray-50/80 px-3 dark:border-slate-700/60 dark:bg-slate-800/60">
+                    <span className="min-w-0 truncate text-sm font-semibold text-gray-900 dark:text-slate-100">{form.displayName}</span>
+                    <label className="flex min-h-11 shrink-0 cursor-pointer items-center gap-2 text-xs font-medium text-gray-600 dark:text-slate-300">
+                      All
+                      <TriStateCheckbox
+                        checked={row.all}
+                        indeterminate={row.some && !row.all}
+                        onChange={() => setMany(FORM_LEVEL_PERMISSIONS.map((permission) => ({ formId: form.formId, permission })), !row.all)}
+                        disabled={disabled}
+                        aria-label={`All permissions for ${form.displayName}`}
+                        className={checkboxClass}
+                      />
+                    </label>
+                  </div>
+                  <div className="divide-y divide-gray-100 dark:divide-slate-700/40">
+                    {FORM_LEVEL_PERMISSIONS.map((perm) => (
+                      <label
+                        key={perm}
+                        className={cn(
+                          'flex min-h-11 items-center justify-between gap-3 px-3 text-sm text-gray-700 dark:text-slate-300',
+                          !disabled && 'cursor-pointer'
+                        )}
+                      >
+                        {APP_PERMISSION_LABELS[perm]}
+                        <input
+                          type="checkbox"
+                          checked={hasPermission(form.formId, perm)}
+                          onChange={() => togglePermission(form.formId, perm)}
+                          disabled={disabled}
+                          aria-label={`${APP_PERMISSION_LABELS[perm]} for ${form.displayName}`}
+                          className={checkboxClass}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="hidden overflow-x-auto rounded-xl border border-gray-200/80 @2xl/perms:block dark:border-slate-700/60">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50/80 dark:bg-slate-800/80 border-b border-gray-200/80 dark:border-slate-700/60">

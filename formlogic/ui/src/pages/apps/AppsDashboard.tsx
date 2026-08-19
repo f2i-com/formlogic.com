@@ -18,6 +18,7 @@ import { isDemoLocalId } from '../../lib/demoLocal';
 import type { PackInstallation } from '../../lib/api';
 import { cn, formatRelativeTime } from '../../lib/utils';
 import { KIND_LABELS } from '../../types/app';
+import { statusLabel, statusTone } from '../../lib/appStatus';
 import type { App } from '../../types/app';
 
 const APPS_PAGE = 9;
@@ -198,7 +199,7 @@ export function AppsDashboard() {
                     // A member goes straight to the runtime; the studio would only
                     // bounce them there anyway.
                     onClick={() => navigate(canManageApp(app) ? `/apps/${app.id}/studio` : `/app/${app.slug}`)}
-                    onManage={() => navigate(`/apps/${app.id}/settings?tab=manage`)}
+                    onManage={() => navigate(`/apps/${app.id}/settings`)}
                     onDelete={() => setDeleteTarget(app)}
                   />
                 ))}
@@ -214,7 +215,7 @@ export function AppsDashboard() {
                     packName={appPackMap[app.id] ?? null}
                     canManage={canManageApp(app)}
                     onManage={() => navigate(canManageApp(app) ? `/apps/${app.id}/studio` : `/app/${app.slug}`)}
-                    onSettings={() => navigate(`/apps/${app.id}/settings?tab=manage`)}
+                    onSettings={() => navigate(`/apps/${app.id}/settings`)}
                     onDelete={() => setDeleteTarget(app)}
                   />
                 ))}
@@ -295,11 +296,11 @@ function AppRow({ app, packName, canManage, onManage, onSettings, onDelete }: { 
         </div>
       </div>
       <Badge
-        variant={app.status === 'published' ? 'success' : app.status === 'draft' ? 'warning' : 'default'}
+        variant={statusTone(app)}
         size="sm"
-        className="capitalize flex-none hidden sm:inline-flex"
+        className="flex-none whitespace-nowrap"
       >
-        {app.status}
+        {statusLabel(app)}
       </Badge>
       <div className="flex items-center gap-0.5 flex-none" onClick={(e) => e.stopPropagation()}>
         {app.status === 'published' && (
@@ -320,7 +321,7 @@ function AppRow({ app, packName, canManage, onManage, onSettings, onDelete }: { 
             <button
               type="button"
               onClick={onSettings}
-              title="Manage app"
+              title="App settings"
               aria-label={`Manage ${app.name}`}
               className="cursor-pointer rounded-lg p-2 text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-600 dark:text-slate-400 dark:hover:bg-primary-500/10 dark:hover:text-primary-400"
             >
@@ -395,11 +396,11 @@ function AppCard({ app, packName, canManage, onClick, onManage, onDelete }: { ap
             </Badge>
           )}
           <Badge
-            variant={app.status === 'published' ? 'success' : app.status === 'draft' ? 'warning' : 'default'}
+            variant={statusTone(app)}
             size="sm"
-            className="capitalize"
+            className="whitespace-nowrap"
           >
-            {app.status}
+            {statusLabel(app)}
           </Badge>
         </div>
       </div>
@@ -431,7 +432,7 @@ function AppCard({ app, packName, canManage, onClick, onManage, onDelete }: { ap
               <button
                 type="button"
                 onClick={onManage}
-                title="Manage app"
+                title="App settings"
                 aria-label={`Manage ${app.name}`}
                 className="cursor-pointer rounded-lg p-2.5 text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-600 dark:text-slate-400 dark:hover:bg-primary-500/10 dark:hover:text-primary-400"
               >

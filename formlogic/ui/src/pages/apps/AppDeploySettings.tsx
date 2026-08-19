@@ -10,6 +10,7 @@ import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { CustomDomainsPanel } from '../../components/apps/CustomDomainsPanel';
+import { statusLabel } from '../../lib/appStatus';
 import { ShareQrCode } from '../../components/ui/ShareQrCode';
 import { AppLogicPanel } from '../../components/apps/AppLogicPanel';
 import { FlowsPanel } from '../../components/apps/FlowsPanel';
@@ -196,11 +197,11 @@ export function AppDeploySettings() {
               <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400 flex-shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
                 <h3 className="font-medium text-emerald-800 dark:text-emerald-400 tracking-tight">
-                  App is live{app.publishedVersion ? ` — version ${app.publishedVersion}` : ''}
+                  {statusLabel(app)}
                 </h3>
                 <p className="text-sm text-emerald-700 dark:text-emerald-300/70 mt-1 mb-4">
                   Anyone with access can use this app at its share link below.
-                  {acting ? '' : ' Releases, version history and taking the app offline live in Review & publish.'}
+                  {acting ? '' : ' Releases, the release log and taking the app offline live in Review & publish.'}
                 </p>
                 {acting ? (
                   <Button variant="outline" onClick={() => setShowUnpublish(true)} disabled={publishing} isLoading={publishing}>Unpublish</Button>

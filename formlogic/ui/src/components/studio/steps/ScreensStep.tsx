@@ -31,12 +31,15 @@ import { Switch } from '../../ui/Switch';
 import { api } from '../../../lib/api';
 import { toast } from '../../../stores/toastStore';
 import { useAppStore } from '../../../stores/appStore';
+import { useUIStore } from '../../../stores/uiStore';
 import { cn, formatRelativeTime } from '../../../lib/utils';
 import { readableForegroundColor } from '../../../lib/color';
 import { returnToState } from '../../../hooks/useReturnTo';
 import { interleaveMenu, menuForms, menuLinks, roleCanSeeForm } from '../../app-runtime/appMenu';
 import { DynamicIcon } from '../../ui/DynamicIcon';
 import { trackStudioSave } from '../studioSaveState';
+import { statusLabel } from '../../../lib/appStatus';
+import { AppLookPanel } from './AppLookPanel';
 import type { UnpublishedChanges } from '../studioSteps';
 import type { App, AppForm, AppRole, AppRuntimeForm, PermissionAction } from '../../../types/app';
 import type { CustomScreen, Form } from '../../../types/form';
@@ -109,7 +112,13 @@ export function ScreensStep({
   const studioReturn = returnToState(`/apps/${app.id}/studio/screens`, 'App Studio');
   const updateApp = useAppStore((s) => s.updateApp);
   const [selection, setSelection] = useState<ScreenSelection>({ kind: 'home' });
-  const [device, setDevice] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
+  // A phone user's first sight of their app should not be a 520px desktop mock
+  // inside a horizontal scroller. Lazy initialiser, so an explicit later choice
+  // wins and no effect re-derives it. (uiStore defaults isMobile:false, so jsdom
+  // keeps the desktop default.)
+  const [device, setDevice] = useState<'desktop' | 'tablet' | 'mobile'>(
+    () => (useUIStore.getState().isMobile ? 'mobile' : 'desktop')
+  );
   const [previewData, setPreviewData] = useState<'sample' | 'real'>('sample');
   const [roleId, setRoleId] = useState<string | null>(null);
   const [fetchedPerms, setFetchedPerms] = useState<{
@@ -355,13 +364,17 @@ export function ScreensStep({
     <div className="grid gap-4 @3xl/studio:grid-cols-[minmax(0,18rem)_minmax(0,1fr)] @5xl/studio:grid-cols-[minmax(0,19.5rem)_minmax(0,1fr)]">
       {/* Screens + their settings share one rail, so the controls for the selected
           screen are never a preview-height below the fold at laptop widths. In the
-          middle band they sit side by side rather than as one tall stacked column. */}
-      <div className="grid gap-4 @xl/studio:grid-cols-2 @3xl/studio:grid-cols-1 @3xl/studio:content-start">
+          middle band they sit side by side rather than as one tall stacked column.
+          Below @3xl the column goes LAST: stacked, the rail put the screen list, the
+          settings card and the appearance panel all above the preview, so the point
+          of the section sat about two screens down. (PublishStep uses the same
+          order-first/order-none idiom.) */}
+      <div className="order-last grid gap-4 @xl/studio:grid-cols-2 @3xl/studio:order-none @3xl/studio:grid-cols-1 @3xl/studio:content-start">
         <section className="overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
           <div className="border-b border-gray-200/80 p-4 dark:border-white/[0.06]">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">App screens</h3>
           </div>
-          <div className="scrollbar-thin max-h-[340px] space-y-1 overflow-y-auto p-2.5">
+          <div className="scrollbar-thin flex snap-x gap-1.5 overflow-x-auto p-2.5 @xl/studio:block @xl/studio:max-h-[340px] @xl/studio:space-y-1 @xl/studio:overflow-x-visible @xl/studio:overflow-y-auto">
             <ScreenItem
               icon={Home}
               label="App home"
@@ -397,7 +410,7 @@ export function ScreensStep({
             <button
               type="button"
               onClick={() => navigate(`/apps/${app.id}/studio/data`)}
-              className="flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-gray-300 text-xs font-semibold text-gray-600 hover:border-primary-400 hover:text-primary-700 dark:border-white/15 dark:text-slate-300 dark:hover:border-primary-500/40 dark:hover:text-primary-300"
+              className="flex min-h-11 w-auto shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-dashed border-gray-300 px-3 text-xs font-semibold text-gray-600 hover:border-primary-400 hover:text-primary-700 @xl/studio:w-full @xl/studio:px-0 dark:border-white/15 dark:text-slate-300 dark:hover:border-primary-500/40 dark:hover:text-primary-300"
             >
               <Plus className="h-3.5 w-3.5" /> Add a data type
             </button>
@@ -438,7 +451,7 @@ export function ScreensStep({
                     value={app.settings?.landingPage ?? 'dashboard'}
                     onChange={(e) => void setLanding(e.target.value)}
                     disabled={busy}
-                    className="mt-1.5 h-10 w-full min-w-0 cursor-pointer rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-200"
+                    className="mt-1.5 h-10 w-full min-w-0 cursor-pointer rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700 outline-none max-sm:h-11 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200"
                   >
                     <option value="dashboard">App home</option>
                     {appForms.map((af) => {
@@ -526,10 +539,14 @@ export function ScreensStep({
             )}
           </div>
         </section>
+
+        {/* The app's look lives beside the preview that draws it, not on a settings
+            tab whose only preview was a white card with a sample button. */}
+        <AppLookPanel app={app} onReloadApp={onReloadApp} />
       </div>
 
-      {/* Preview */}
-      <section className="overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
+      {/* Preview — first on a phone, where it is the whole point of the section. */}
+      <section className="order-first overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm @3xl/studio:order-none dark:border-white/[0.06] dark:bg-slate-900/50">
         <div className="space-y-3 border-b border-gray-200/80 p-3 dark:border-white/[0.06]">
           <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
             <span className="flex min-w-0 items-center gap-2">
@@ -551,7 +568,7 @@ export function ScreensStep({
               value={selectedRole?.id ?? ''}
               onChange={(e) => setRoleId(e.target.value)}
               aria-label="Preview as role"
-              className="h-9 min-w-0 max-w-full cursor-pointer rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-semibold text-gray-700 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-200"
+              className="h-9 min-w-0 max-w-full cursor-pointer rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-semibold text-gray-700 outline-none max-sm:h-11 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200"
             >
               {roles.map((role) => (
                 <option key={role.id} value={role.id}>Preview as {role.name}</option>
@@ -561,12 +578,12 @@ export function ScreensStep({
               value={previewData}
               onChange={(e) => setPreviewData(e.target.value as 'sample' | 'real')}
               aria-label="Preview data"
-              className="h-9 min-w-0 max-w-full cursor-pointer rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-semibold text-gray-700 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-200"
+              className="h-9 min-w-0 max-w-full cursor-pointer rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-semibold text-gray-700 outline-none max-sm:h-11 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200"
             >
               <option value="sample">Sample content</option>
               <option value="real">Real records (your view)</option>
             </select>
-            <div className="flex rounded-lg border border-gray-200 bg-gray-50 p-0.5 dark:border-white/10 dark:bg-white/[0.04]">
+            <div className="flex rounded-lg border border-gray-200 bg-gray-50 p-0.5 max-sm:gap-1 max-sm:p-1 dark:border-white/10 dark:bg-white/[0.04]">
               <DeviceButton active={device === 'desktop'} label="Desktop preview" icon={Monitor} onClick={() => setDevice('desktop')} />
               <DeviceButton active={device === 'tablet'} label="Tablet preview" icon={Tablet} onClick={() => setDevice('tablet')} />
               <DeviceButton active={device === 'mobile'} label="Mobile preview" icon={Smartphone} onClick={() => setDevice('mobile')} />
@@ -585,7 +602,7 @@ export function ScreensStep({
         {changes.everPublished && changes.count > 0 && (
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200/70 bg-amber-50/75 px-4 py-2.5 text-[11px] text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/[0.07] dark:text-amber-200">
             <span>
-              <strong>Previewing unpublished changes.</strong> The public app still serves v{app.publishedVersion ?? 1}.
+              <strong>{changes.count} {changes.count === 1 ? 'change' : 'changes'} since the last release.</strong> Saved edits are already live for members — publishing records them as a version.
             </span>
             <button type="button" onClick={() => setCompareOpen(true)} className="cursor-pointer font-bold hover:underline">
               See what differs
@@ -645,7 +662,7 @@ export function ScreensStep({
         isOpen={compareOpen}
         onClose={() => setCompareOpen(false)}
         title="Compare draft with live"
-        description={`The public app stays on v${app.publishedVersion ?? 1} until you publish again.`}
+        description={`Saved edits are already live. Publishing records them as ${statusLabel(app) === 'Live' ? 'the next version' : `version ${(app.publishedVersion ?? 0) + 1}`}.`}
         size="lg"
       >
         <div className="space-y-4 p-4 sm:p-5">
@@ -657,7 +674,7 @@ export function ScreensStep({
                 </span>
                 <span>
                   <span className="block text-[10px] font-bold uppercase tracking-wider">Published</span>
-                  <span className="block text-sm font-semibold">Live v{app.publishedVersion ?? 1}</span>
+                  <span className="block text-sm font-semibold">{statusLabel(app)}</span>
                 </span>
               </div>
               <p className="mt-3 text-xs leading-5 text-emerald-800/80 dark:text-emerald-200/80">
@@ -738,7 +755,9 @@ function ScreenItem({
       onClick={onClick}
       aria-current={selected ? 'true' : undefined}
       className={cn(
-        'flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left transition',
+        // Below @xl the list is a horizontal chip strip: shrink-0 so chips keep their
+        // width, snap-start so a flick lands on a whole item.
+        'flex min-h-11 w-auto max-w-[11rem] shrink-0 snap-start cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left transition @xl/studio:w-full @xl/studio:max-w-none @xl/studio:shrink',
         selected
           ? 'bg-primary-50 text-primary-800 dark:bg-primary-500/[0.09] dark:text-white'
           : 'text-gray-700 hover:bg-gray-50 dark:text-slate-300 dark:hover:bg-white/[0.035]'
@@ -781,7 +800,7 @@ function DeviceButton({ active, label, icon: Icon, onClick }: { active: boolean;
       aria-label={label}
       aria-pressed={active}
       className={cn(
-        'flex h-8 w-8 cursor-pointer items-center justify-center rounded-md transition',
+        'flex h-8 w-8 cursor-pointer items-center justify-center rounded-md transition max-sm:h-11 max-sm:w-11',
         active ? 'bg-white text-primary-600 shadow-sm dark:bg-slate-800 dark:text-primary-400' : 'text-gray-500 dark:text-slate-400'
       )}
     >

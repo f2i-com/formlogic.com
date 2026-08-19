@@ -30,10 +30,13 @@ const tabs = [
 const TAB_VALUES = tabs.map((t) => t.value);
 
 /**
- * The `settings` keys this page has controls for. Save replays ONLY these over the
- * server's current settings, so a key another surface owns (landingPage from the
- * Studio's Screens section, the sign-up keys from its Access section, the PWA keys
- * from Deploy) can never be reverted by a stale snapshot from this page.
+ * The `settings` keys this page has controls for. Save sends only the ones whose value
+ * actually CHANGED here, merged onto a fresh read — so a key another surface owns
+ * (landingPage from the Studio's Screens section, the sign-up keys from its Access
+ * section, the PWA keys from Deploy) is never in the payload unless this page edited it.
+ *
+ * The previous version replayed every key in this list on every save, which reverted
+ * exactly the keys the comment claimed were safe.
  */
 const EDITED_SETTING_KEYS = [
   'icon',
@@ -163,37 +166,51 @@ export function AppSettings() {
     setSaving(true);
     setSaveSuccess(false);
 
-    // Send ONLY what this page edits, merged against a fresh read.
+    // Send ONLY WHAT CHANGED ON THIS PAGE, diffed against the snapshot this page
+    // loaded, merged onto a fresh read.
     //
-    // The old save PUT the whole app object captured at mount, and the server writes
-    // each present key wholesale with no merge. Two consequences, both silent:
-    //  - `status` from the stale snapshot un-published an app the Studio (or a second
-    //    tab, or the AI chat) had published since, while published_version survived —
-    //    leaving "Published v1" on a draft that members get 404s from.
-    //  - `customScreen` was always in the payload, and the server re-stamps
-    //    custom_screen_trust = 'owner' whenever that key is present. So renaming an app
-    //    silently promoted an imported, unreviewed pack screen to full data/hardware
-    //    bridge access. This page has no screen editor and must never send that key.
+    // The server writes each present key wholesale with no merge, so anything this
+    // page sends and did not itself change reverts whatever another surface saved in
+    // the meantime. Replaying a fixed key list was not enough: the list included
+    // `landingPage` (owned by the Studio's Screens section) and the three sign-up keys
+    // (owned by its Access section), so saving a rename here silently reverted a
+    // landing screen or a sign-up policy changed minutes earlier — and `status` was
+    // replayed from the mount snapshot, which could un-publish an app published since.
+    //
+    // A diff has the property the key list was reaching for: a value this page did not
+    // touch is never in the payload at all.
     await fetchApps();
     const server = useAppStore.getState().getApp(appId);
-    // Only the settings keys this page has controls for are replayed; everything else
-    // (landingPage from the Studio's Screens section, sign-up keys from its Access
-    // section, PWA keys from Deploy) keeps whatever the server currently holds.
-    const edited = app.settings as unknown as Record<string, unknown> | undefined;
-    const ownedSettings = { ...(server?.settings ?? {}) } as unknown as Record<string, unknown>;
-    for (const key of EDITED_SETTING_KEYS) {
-      ownedSettings[key] = edited?.[key];
+    const before = initialSnapshot ? (JSON.parse(initialSnapshot) as App) : null;
+    const payload: Record<string, unknown> = {};
+    // `customScreen` is deliberately absent: the server re-stamps
+    // custom_screen_trust = 'owner' whenever that key is present, and this page has no
+    // screen editor — sending it promoted unreviewed pack screens to full bridge access.
+    const TOP_LEVEL = ['name', 'slug', 'description', 'logoUrl', 'status', 'theme', 'navConfig'] as const;
+    const current = app as unknown as Record<string, unknown>;
+    const mounted = (before ?? {}) as unknown as Record<string, unknown>;
+    for (const key of TOP_LEVEL) {
+      if (!before || JSON.stringify(current[key]) !== JSON.stringify(mounted[key])) payload[key] = current[key];
     }
-    const ok = await updateApp(appId, {
-      name: app.name,
-      slug: app.slug,
-      description: app.description,
-      logoUrl: app.logoUrl,
-      status: app.status,
-      theme: app.theme,
-      navConfig: app.navConfig,
-      settings: ownedSettings as unknown as App['settings'],
-    });
+    // Settings: merge the CHANGED keys onto the server's current map, so keys other
+    // surfaces own survive untouched.
+    const edited = app.settings as unknown as Record<string, unknown> | undefined;
+    const mountedSettings = (before?.settings ?? {}) as unknown as Record<string, unknown>;
+    const changedSettingKeys = EDITED_SETTING_KEYS.filter(
+      (key) => !before || JSON.stringify(edited?.[key]) !== JSON.stringify(mountedSettings[key])
+    );
+    if (changedSettingKeys.length > 0) {
+      const merged = { ...(server?.settings ?? {}) } as unknown as Record<string, unknown>;
+      for (const key of changedSettingKeys) merged[key] = edited?.[key];
+      payload.settings = merged;
+    }
+    if (Object.keys(payload).length === 0) {
+      setSaving(false);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+      return;
+    }
+    const ok = await updateApp(appId, payload);
     setSaving(false);
     // Only show the success state when the update actually persisted; updateApp
     // already surfaces an error toast on failure.

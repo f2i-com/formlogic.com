@@ -30,8 +30,8 @@ import { VaultSetupWizard } from '../../vault/VaultSetupWizard';
 import { VaultUnlockDialog } from '../../vault/VaultUnlockDialog';
 import { RelationFormModal } from '../../../pages/apps/RelationFormModal';
 import { trackStudioSave } from '../studioSaveState';
+import { saveFormFields } from '../../../lib/formFields';
 import type { App, AppForm } from '../../../types/app';
-import type { PublishSchemaPayload } from '../../../types/e2ee';
 import type { FieldType, Form, FormField } from '../../../types/form';
 
 const FIELD_TYPE_LABELS: Record<string, string> = {
@@ -128,6 +128,8 @@ export function DataStep({
   const [newFieldLabel, setNewFieldLabel] = useState('');
   const [newFieldType, setNewFieldType] = useState<FieldType>('short_text');
   const [savingField, setSavingField] = useState(false);
+  // `null` = not editing, so the heading always shows the stored name.
+  const [typeNameDraft, setTypeNameDraft] = useState<string | null>(null);
   const [showRelation, setShowRelation] = useState(false);
   const [vaultAction, setVaultAction] = useState<'create-type' | 'add-field' | null>(null);
   const [showVaultSetup, setShowVaultSetup] = useState(false);
@@ -239,6 +241,70 @@ export function DataStep({
     }
   };
 
+  /**
+   * The one field write in this section. Quick-add and the Required toggle both go
+   * through it, so the private-form signing rule and the store re-seed can never be
+   * implemented once and forgotten the second time.
+   */
+  const writeFields = async (nextFields: FormField[], label: string) => {
+    const form = selected?.form;
+    if (!form) return false;
+    const res = await trackStudioSave(
+      label,
+      async () => {
+        const result = await saveFormFields(form.id, nextFields, { isPrivate: form.isPrivate });
+        if (result.ok) await onReloadForms();
+        return result;
+      },
+      (r) => r.ok
+    );
+    if (!res.ok) {
+      if (res.needsVault) void ensurePrivateReady('add-field');
+      else toast.error('Could not save the change', res.error);
+      return false;
+    }
+    return true;
+  };
+
+  /** Required is the one field property worth finishing inline — it is reversible
+   *  and carries no data contract. Deletion stays in the builder, which runs the
+   *  usage lookup and the keep-data-vs-purge dialog. */
+  const toggleRequired = async (field: FormField, required: boolean) => {
+    if (!selected?.form || savingField) return;
+    if (selected.form.isPrivate && !(await ensurePrivateReady('add-field'))) return;
+    setSavingField(true);
+    try {
+      const nextFields = selected.form.fields.map((f) => (f.id === field.id ? { ...f, required } : f));
+      await writeFields(nextFields, `${formNameById[selected.form.id]} fields`);
+    } finally {
+      setSavingField(false);
+    }
+  };
+
+  /** Rename the data type. `displayName` is this app's label for the attachment and is
+   *  always safe to write. The underlying `forms.title` is respondent-facing and GLOBAL,
+   *  so it is only renamed when no other app shows this form. */
+  const renameDataType = async (nextName: string) => {
+    const form = selected?.form;
+    const attachment = selected?.attachment;
+    if (!form || !attachment) return;
+    const trimmed = nextName.trim();
+    if (!trimmed || trimmed === (attachment.displayName || form.title)) return;
+    const alsoUsed = (sharedWith[form.id]?.length ?? 0) > 0;
+    const ok = await trackStudioSave(
+      'Data type name',
+      async () => {
+        const res = await api.updateAppForm(app.id, form.id, { displayName: trimmed });
+        if (res.error) return res;
+        if (!alsoUsed) await api.updateForm(form.id, { title: trimmed });
+        await onReloadForms();
+        return res;
+      },
+      (r) => !r.error
+    );
+    if (ok.error) toast.error('Could not rename', typeof ok.error === 'string' ? ok.error : undefined);
+  };
+
   const addField = async () => {
     if (!selected?.form || savingField) return;
     const label = newFieldLabel.trim();
@@ -260,21 +326,14 @@ export function DataStep({
         order: selected.form.fields.length,
       };
       const nextFields = [...selected.form.fields, field];
-      let encryptionSchema: PublishSchemaPayload | undefined;
-      if (selected.form.isPrivate) {
-        const { signPrivateFormSchema } = await import('../../../lib/crypto/formCrypto');
-        const signed = await signPrivateFormSchema(selected.form.id, JSON.stringify(nextFields));
-        if (!signed) throw new Error('The private form schema could not be updated.');
-        encryptionSchema = signed.encryptionSchema;
-      }
+      // saveFormFields signs private schemas AND re-seeds useFormStore. Writing the
+      // array straight through api.updateForm left the builder holding the pre-edit
+      // copy, which its next debounced save then wrote back — deleting this field.
       const res = await trackStudioSave(
         `${formNameById[selected.form.id]} fields`,
         async () => {
-          const result = await api.updateForm(selected.form!.id, {
-            fields: nextFields,
-            ...(encryptionSchema ? { encryptionSchema } : {}),
-          });
-          if (!result.error) {
+          const result = await saveFormFields(selected.form!.id, nextFields, { isPrivate: selected.form!.isPrivate });
+          if (result.ok) {
             // The row STAYS open: adding fields is a run of small edits, and
             // re-opening it per field made a six-field form six extra clicks.
             setNewFieldLabel('');
@@ -283,10 +342,10 @@ export function DataStep({
           }
           return result;
         },
-        (r) => !r.error
+        (r) => r.ok
       );
-      if (res.error) {
-        toast.error('Could not add the field', typeof res.error === 'string' ? res.error : undefined);
+      if (!res.ok) {
+        toast.error('Could not add the field', res.error);
         return;
       }
       toast.success('Field added', `"${label}" was added to ${formNameById[selected.form.id]}.`);
@@ -329,7 +388,7 @@ export function DataStep({
             Manage
           </Button>
         </div>
-        <div className="scrollbar-thin grid max-h-[560px] grid-cols-1 gap-1 overflow-y-auto p-2 @xl/studio:grid-cols-2 @2xl/studio:grid-cols-1">
+        <div className="scrollbar-thin grid max-h-none @2xl/studio:max-h-[560px] grid-cols-1 gap-1 overflow-y-auto p-2 @xl/studio:grid-cols-2 @2xl/studio:grid-cols-1">
           {appForms.map((af) => {
             const form = formsById[af.formId];
             const isSelected = selected?.id === af.formId;
@@ -412,16 +471,29 @@ export function DataStep({
         </section>
       ) : selected?.form ? (
         <section className="overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
-          <div className="flex flex-col gap-4 border-b border-gray-200/80 p-5 dark:border-white/[0.06] sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex flex-col gap-4 border-b border-gray-200/80 p-5 @xl/studio:flex-row @xl/studio:items-start @xl/studio:justify-between dark:border-white/[0.06]">
             <div className="flex min-w-0 items-start gap-3">
               <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400">
                 <Database className="h-5 w-5" />
               </span>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="min-w-0 truncate text-lg font-semibold text-gray-900 dark:text-white">
-                    {selected.attachment?.displayName || selected.form.title}
-                  </h3>
+                  {/* Renaming a data type used to be impossible from the studio, and
+                      renaming its form in the builder appeared to do nothing (the app
+                      shows `displayName`). Editing the title here writes the name the
+                      app actually renders. */}
+                  <label htmlFor="studio-type-name" className="sr-only">Data type name</label>
+                  <input
+                    id="studio-type-name"
+                    value={typeNameDraft ?? (selected.attachment?.displayName || selected.form.title)}
+                    onChange={(e) => setTypeNameDraft(e.target.value)}
+                    onBlur={() => { const v = typeNameDraft; setTypeNameDraft(null); if (v !== null) void renameDataType(v); }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+                      if (e.key === 'Escape') { setTypeNameDraft(null); e.currentTarget.blur(); }
+                    }}
+                    className="-mx-2 min-w-0 max-w-full flex-1 rounded-lg border border-transparent bg-transparent px-2 py-0.5 text-lg font-semibold text-gray-900 outline-none transition hover:border-gray-200 focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/15 dark:text-white dark:hover:border-white/10 dark:focus:border-primary-500/50 dark:focus:bg-slate-950/60"
+                  />
                   {sharedWith[selected.form.id]?.length > 0 && (
                     <Badge variant="info" size="sm">
                       <Share2 className="mr-1 inline h-3 w-3" /> Shared
@@ -524,7 +596,7 @@ export function DataStep({
                     value={newFieldType}
                     onChange={(e) => setNewFieldType(e.target.value as FieldType)}
                     aria-label="New field type"
-                    className="h-10 min-w-0 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                    className="h-10 min-w-0 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-primary-500 max-sm:h-11 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
                   >
                     {QUICK_ADD_TYPES.filter((t) => !selected.form!.isPrivate || t.type !== 'file_upload').map((t) => (
                       <option key={t.type} value={t.type}>{t.label}</option>
@@ -544,44 +616,58 @@ export function DataStep({
                   No fields yet — add one above or open the builder.
                 </div>
               ) : (
-                <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-white/[0.08]">
-                  <div className="hidden grid-cols-[minmax(160px,1fr)_150px_90px_40px] bg-gray-50 px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:bg-white/[0.03] dark:text-slate-400 sm:grid">
+                /* @container/fields, not a viewport tier: this panel is NARROWEST when
+                   the studio is widest (the 17rem data-type rail appears at @2xl), so a
+                   `sm:` grid switched the four columns on exactly when there was no room
+                   and the overflow-hidden panel silently ate Type and Required. */
+                <div className="@container/fields overflow-hidden rounded-xl border border-gray-200 dark:border-white/[0.08]">
+                  <div className="hidden grid-cols-[minmax(160px,1fr)_140px_104px] bg-gray-50 px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:bg-white/[0.03] dark:text-slate-400 @lg/fields:grid">
                     <span>Field</span>
                     <span>Type</span>
                     <span>Required</span>
-                    <span />
                   </div>
                   <div className="divide-y divide-gray-100 dark:divide-white/[0.06]">
                     {selected.form.fields.map((field) => (
-                      <button
+                      <div
                         key={field.id}
-                        type="button"
-                        onClick={() => openFieldInBuilder(selected.form!.id, field)}
-                        title={`Edit ${field.label} in the form builder`}
-                        className="grid min-h-12 w-full cursor-pointer grid-cols-[minmax(0,1fr)_32px] items-center gap-2 px-3 text-left transition hover:bg-gray-50 dark:hover:bg-white/[0.025] sm:grid-cols-[minmax(160px,1fr)_150px_90px_40px] sm:gap-0"
+                        className="grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 transition hover:bg-gray-50 dark:hover:bg-white/[0.025] @lg/fields:grid-cols-[minmax(160px,1fr)_140px_104px] @lg/fields:gap-0"
                       >
-                        <span className="min-w-0">
-                          <span className="block truncate text-xs font-semibold text-gray-800 dark:text-slate-200">{field.label}</span>
-                          <span className="mt-0.5 block text-[10px] text-gray-500 dark:text-slate-400 sm:hidden">
-                            {FIELD_TYPE_LABELS[field.type] ?? field.type}{field.required ? ' · Required' : ''}
+                        {/* Only the label/type cells navigate, so the Required cell can
+                            hold a real control instead of a read-only badge. */}
+                        <button
+                          type="button"
+                          onClick={() => openFieldInBuilder(selected.form!.id, field)}
+                          title={`Edit ${field.label} in the form builder`}
+                          className="flex min-w-0 cursor-pointer items-center gap-1.5 py-2 text-left"
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate text-xs font-semibold text-gray-800 dark:text-slate-200">{field.label}</span>
+                            <span className="mt-0.5 block text-[10px] text-gray-500 dark:text-slate-400 @lg/fields:hidden">
+                              {FIELD_TYPE_LABELS[field.type] ?? field.type}
+                            </span>
                           </span>
-                        </span>
-                        <span className="hidden text-xs text-gray-600 dark:text-slate-300 sm:block">
+                          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-gray-400 dark:text-slate-500" aria-hidden="true" />
+                        </button>
+                        <span className="hidden text-xs text-gray-600 dark:text-slate-300 @lg/fields:block">
                           {FIELD_TYPE_LABELS[field.type] ?? field.type}
                         </span>
-                        <span className="hidden sm:block">
-                          {field.required
-                            ? <Badge variant="primary" size="sm">Yes</Badge>
-                            : <span className="text-xs text-gray-500 dark:text-slate-400">Optional</span>}
-                        </span>
-                        <ChevronRight className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-                      </button>
+                        <label className="flex min-h-11 cursor-pointer items-center gap-2 justify-self-end @lg/fields:justify-self-start">
+                          <input
+                            type="checkbox"
+                            checked={field.required === true}
+                            disabled={savingField}
+                            onChange={(e) => void toggleRequired(field, e.target.checked)}
+                            className="h-4 w-4 cursor-pointer rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800"
+                          />
+                          <span className="text-[11px] font-medium text-gray-600 dark:text-slate-300">Required</span>
+                        </label>
+                      </div>
                     ))}
                   </div>
                 </div>
               )}
 
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="mt-4 grid gap-3 @xl/studio:grid-cols-2">
                 <MiniSummary
                   icon={Link2}
                   label={(() => {

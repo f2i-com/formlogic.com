@@ -25,7 +25,7 @@ import { toast } from '../../../stores/toastStore';
 import { useAppStore } from '../../../stores/appStore';
 import { useAuthStore } from '../../../stores/authStore';
 import { isDemoLocalId } from '../../../lib/demoLocal';
-import { cn, formatRelativeTime } from '../../../lib/utils';
+import { cn, copyToClipboard, formatRelativeTime } from '../../../lib/utils';
 import { buildPreflightChecks, summarizePreflight, type StudioStepId, type UnpublishedChanges } from '../studioSteps';
 import { returnToState } from '../../../hooks/useReturnTo';
 import type { App, AppForm, AppRole, AppVersion } from '../../../types/app';
@@ -48,6 +48,7 @@ export function PublishStep({
   versions,
   memberCount,
   memberCountKnown = true,
+  versionsKnown = true,
   formCountKnown = true,
   changes,
   onStepChange,
@@ -63,6 +64,8 @@ export function PublishStep({
   memberCount: number;
   /** False when the member fetch failed — the count is unknown, not zero. */
   memberCountKnown?: boolean;
+  /** False when the release-log read failed — an empty list is unknown, not a fact. */
+  versionsKnown?: boolean;
   /** False when the form list failed to load — never block publish on an unread list. */
   formCountKnown?: boolean;
   changes: UnpublishedChanges;
@@ -208,12 +211,14 @@ export function PublishStep({
   };
 
   const copyLink = async () => {
-    try {
-      await navigator.clipboard.writeText(appUrl);
+    // copyToClipboard, not navigator.clipboard: the async Clipboard API is a
+    // secure-context API, so on a plain-HTTP deployment the hand-rolled call
+    // rejected and the button did nothing but flash an error.
+    if (await copyToClipboard(appUrl)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
-      toast.error('Copy failed', 'Could not copy to clipboard');
+    } else {
+      toast.error('Copy failed', 'Select the link and copy it manually.');
     }
   };
 
@@ -403,7 +408,7 @@ export function PublishStep({
                 {hasChanges ? <Rocket className="h-5 w-5" /> : <Check className="h-5 w-5" />}
               </span>
               <Badge variant={hasChanges ? 'warning' : 'success'} size="sm">
-                {!published ? 'Draft' : changes.count > 0 ? `${changes.count} changes` : 'Published'}
+                {!published ? 'Draft' : changes.count > 0 ? `${changes.count} changes` : 'Live'}
               </Badge>
             </div>
             <h3 className="mt-5 text-lg font-semibold text-gray-900 dark:text-white">
@@ -419,8 +424,8 @@ export function PublishStep({
                 : legacyPublished
                   ? 'This app went live before release history existed. Publishing now records version 1 and starts the history.'
                   : changes.count > 0
-                    ? `Update the live app for everyone. Version ${currentVersion} stays in the history.`
-                    : 'Every saved change is live. Make another edit and it will appear here for review.'}
+                    ? `Record what changed as version ${nextVersion}. Saved edits are already live; this writes the release note and the log entry.`
+                    : 'Everything saved is live. Make another edit and it will appear here for review.'}
             </p>
             <Button
               className="mt-5 w-full"
@@ -511,17 +516,22 @@ export function PublishStep({
           <section className="rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 p-5 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-semibold text-gray-900 dark:text-white">Version history</p>
-                <p className="mt-0.5 text-xs text-gray-400 dark:text-slate-500">One entry per publish</p>
+                <p className="text-sm font-semibold text-gray-900 dark:text-white">Release log</p>
+                <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">A dated record of each publish — apps roll forward, not back</p>
               </div>
               <History className="h-4 w-4 text-gray-400" />
             </div>
             <div className="mt-4 space-y-3">
-              {versions.length === 0 && (
-                <p className="text-xs text-gray-400 dark:text-slate-500">
+              {versions.length === 0 && versionsKnown === false && (
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  The release log could not be read — this is not "no releases". Reload to try again.
+                </p>
+              )}
+              {versions.length === 0 && versionsKnown !== false && (
+                <p className="text-xs text-gray-500 dark:text-slate-400">
                   {published
                     ? 'No recorded releases yet — future publishes will appear here.'
-                    : 'No versions yet — the first publish starts the history.'}
+                    : 'No versions yet — the first publish starts the log.'}
                 </p>
               )}
               {(showAllVersions ? versions : versions.slice(0, 6)).map((version, index) => (
@@ -621,11 +631,11 @@ function PublishDialog({
       <div className="p-4 sm:p-5 space-y-4">
         <p className="text-sm leading-6 text-gray-500 dark:text-slate-400">
           {browserOnly
-            ? `Version ${nextVersion} becomes the preview served from this browser for ${appName}. Existing records are unchanged.`
-            : `Version ${nextVersion} replaces the live app for everyone using ${appName}. Existing records are unchanged.`}
+            ? `Records version ${nextVersion} of ${appName} in this browser's preview. Existing records are unchanged.`
+            : `Records version ${nextVersion} for ${appName}, with the changes below as its release note. Saved edits are already live; existing records are unchanged.`}
         </p>
         <div className="rounded-xl bg-gray-50 dark:bg-white/[0.04] p-3">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-slate-500">Included in this release</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">Changed since the last release</p>
           <ul className="mt-2 space-y-1.5 text-xs text-gray-600 dark:text-slate-300">
             {releaseSummary.length > 0 ? (
               releaseSummary.slice(0, 5).map((item) => (

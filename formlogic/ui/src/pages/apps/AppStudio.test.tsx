@@ -151,14 +151,14 @@ describe('AppStudio', () => {
   it('shows unpublished changes derived from resource timestamps', async () => {
     // form updatedAt (07-22) and flow updatedAt (07-19 → NOT counted) vs publish (07-20)
     await renderStudio('/apps/a1/studio/data');
-    expect(container.textContent).toContain('1 unpublished change');
+    expect(container.textContent).toContain('1 change to publish');
   });
 
   it('renders the Publish step with preflight and version history', async () => {
     await renderStudio('/apps/a1/studio/publish');
     expect(container.textContent).toContain('Review & publish');
     expect(container.textContent).toContain('1 data type configured');
-    expect(container.textContent).toContain('Version history');
+    expect(container.textContent).toContain('Release log');
     expect(container.textContent).toContain('First release');
     expect(container.textContent).toContain('Publish version 3');
     expect(container.textContent).toContain('Changes in version 3');
@@ -168,8 +168,7 @@ describe('AppStudio', () => {
   it('makes draft preview state explicit and compares it with the live release', async () => {
     await renderStudio('/apps/a1/studio/screens');
 
-    expect(container.textContent).toContain('Previewing unpublished changes');
-    expect(container.textContent).toContain('The public app still serves v2');
+    expect(container.textContent).toContain('Saved edits are already live for members');
     expect(container.textContent).toContain('Open draft');
     expect(container.querySelector('button[aria-label="Tablet preview"]')).toBeTruthy();
     expect(container.querySelector('select[aria-label="Preview data"]')).toBeTruthy();
@@ -242,7 +241,11 @@ describe('AppStudio', () => {
     expect(nav).toBeTruthy();
     // Counts, not completion ticks: 1 data type, 2 screens (form + home), 1 automation.
     const dataTab = Array.from(nav.querySelectorAll('button')).find((b) => b.textContent?.startsWith('Data'))!;
-    expect(dataTab.textContent).toBe('Data1');
+    // The badge number carries an sr-only expansion, so its meaning is not
+    // trapped in a hover title on a touch screen.
+    expect(dataTab.textContent).toBe('Data11 data type');
+    expect(dataTab.querySelector('.sr-only')!.textContent).toBe('1 data type');
+    expect(dataTab.getAttribute('aria-label')).toBe('Data & forms');
     expect(dataTab.getAttribute('aria-current')).toBe('page');
     const publishBtn = Array.from(nav.querySelectorAll('button')).find((b) => b.textContent?.includes('Publish'))!;
     await act(async () => { publishBtn.click(); });
@@ -283,11 +286,13 @@ describe('AppStudio', () => {
     expect(container.textContent).toContain('Owner');
   });
 
-  it('links directly from the Studio to the Manage app page', async () => {
+  // The top-bar control opens real settings, not the directory of tiles: a button
+  // labelled "Manage app" that landed on a nine-tile menu never opened a setting.
+  it('opens App settings from the Studio top bar', async () => {
     await renderStudio('/apps/a1/studio/data');
-    const manage = container.querySelector<HTMLButtonElement>('button[aria-label="Manage app"]')!;
-    expect(manage).toBeTruthy();
-    await act(async () => { manage.click(); });
-    expect(pathRef.current).toBe('/apps/a1/settings?tab=manage');
+    const settings = container.querySelector<HTMLButtonElement>('button[aria-label="App settings"]')!;
+    expect(settings).toBeTruthy();
+    await act(async () => { settings.click(); });
+    expect(pathRef.current).toBe('/apps/a1/settings');
   });
 });

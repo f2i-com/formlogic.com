@@ -109,11 +109,11 @@ export function StudioCommandPalette({
       {
         id: 'manage',
         group: 'Actions',
-        label: 'Manage app',
-        detail: 'Identity, services and lifecycle settings',
-        keywords: 'settings configure archive delete',
+        label: 'App settings',
+        detail: 'Name, address, icon, timezone, services and deletion',
+        keywords: 'settings configure rename name slug url icon logo timezone archive delete manage',
         icon: Settings,
-        action: () => navigate(`/apps/${app.id}/settings?tab=manage`, { state: studioReturn }),
+        action: () => navigate(`/apps/${app.id}/settings`, { state: studioReturn }),
       },
     ];
     if (aiAvailable) {

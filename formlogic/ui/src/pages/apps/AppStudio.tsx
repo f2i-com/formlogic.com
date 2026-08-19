@@ -5,6 +5,8 @@ import { Button } from '../../components/ui/Button';
 import { StudioTopBar } from '../../components/studio/StudioTopBar';
 import { StudioRail } from '../../components/studio/StudioRail';
 import { StudioCommandPalette } from '../../components/studio/StudioCommandPalette';
+import { StudioAppMenu } from '../../components/studio/StudioAppMenu';
+import { StudioSaveErrorStrip } from '../../components/studio/StudioSaveErrorStrip';
 import { useStudioData } from '../../components/studio/useStudioData';
 import {
   STUDIO_STEPS,
@@ -15,7 +17,7 @@ import {
   type StudioStepId,
 } from '../../components/studio/studioSteps';
 import { useStudioSaveState } from '../../components/studio/studioSaveState';
-import { PlanStep } from '../../components/studio/steps/PlanStep';
+import { OverviewStep } from '../../components/studio/steps/OverviewStep';
 import { DataStep } from '../../components/studio/steps/DataStep';
 import { ScreensStep } from '../../components/studio/steps/ScreensStep';
 import { AutomationsStep } from '../../components/studio/steps/AutomationsStep';
@@ -27,6 +29,7 @@ import { returnToState } from '../../hooks/useReturnTo';
 import { getAiReadiness } from '../../client-runtime/flows/aiDefault';
 import { isDemoLocalId } from '../../lib/demoLocal';
 import { useKeyboardShortcuts, type KeyboardShortcut } from '../../hooks/useKeyboardShortcuts';
+import { cn } from '../../lib/utils';
 
 /** One suggestion per section, offered only when a default AI can actually run. */
 const STEP_PROMPTS: Record<StudioStepId, string> = {
@@ -58,6 +61,8 @@ export function AppStudio() {
   const setChatOpen = useUIStore((s) => s.setChatOpen);
   const setChatMinimized = useUIStore((s) => s.setChatMinimized);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [appMenuOpen, setAppMenuOpen] = useState(false);
+  const isMobile = useUIStore((s) => s.isMobile);
 
   const askAi = (prompt?: string) => {
     if (prompt) setChatSeed(prompt);
@@ -87,9 +92,10 @@ export function AppStudio() {
     return () => { cancelled = true; };
   }, []);
 
-  // /studio (no section) → the natural entry: brand-new apps start at Plan,
-  // existing apps at Data. An unknown section in the URL is corrected too, so
-  // the address bar can never disagree with what is on screen.
+  // /studio (no section) → the natural entry: a brand-new app opens on Overview
+  // (identity, then the planning tools), an app that already has data opens on
+  // Data. An unknown section in the URL is corrected too, so the address bar can
+  // never disagree with what is on screen.
   useEffect(() => {
     if (!appId) return;
     if (stepParam === undefined) {
@@ -116,8 +122,6 @@ export function AppStudio() {
     () =>
       deriveSectionBadges({
         formCount: data.appForms.length,
-        hasBlueprint: data.blueprint !== null,
-        hasHomeScreen: !!(data.app?.customScreen as { kind?: string } | undefined)?.kind,
         flowCount: data.flows.length,
         activeFlowCount: data.flows.filter((f) => f.enabled).length,
         roleCount: data.roles.length,
@@ -125,7 +129,7 @@ export function AppStudio() {
         publishedVersion: data.app?.publishedVersion ?? 0,
         unpublishedCount: changes.everPublished ? changes.count : 0,
       }),
-    [data.appForms.length, data.blueprint, data.app, data.flows, data.roles.length, changes]
+    [data.appForms.length, data.app, data.flows, data.roles.length, changes]
   );
 
   const setStep = useCallback((step: StudioStepId) => {
@@ -196,11 +200,11 @@ export function AppStudio() {
       // Browser-only demo apps cannot send real invitations, so do not point
       // their recommendation at an unavailable cloud operation.
       memberCount: isDemoLocalId(data.app.id) ? 2 : data.memberCount,
-      memberCountKnown: !data.auxFailed,
+      memberCountKnown: !data.membersFailed,
       published: data.app.status === 'published',
       unpublishedCount: changes.everPublished ? changes.count : 0,
     });
-  }, [data.app, data.loading, data.appForms, data.formsById, data.flows.length, data.memberCount, data.auxFailed, changes]);
+  }, [data.app, data.loading, data.appForms, data.formsById, data.flows.length, data.memberCount, data.membersFailed, changes]);
 
   if (!appId) return <Navigate to="/apps" replace />;
 
@@ -246,14 +250,55 @@ export function AppStudio() {
 
   return (
     <div className="min-h-screen">
-      <StudioTopBar
-        app={data.app}
-        changes={changes}
-        aiAvailable={aiAvailable}
-        onOpenPublish={() => setStep('publish')}
-        onOpenCommandPalette={() => setCommandPaletteOpen(true)}
-      />
-      <StudioRail activeStep={activeStep} badges={badges} isOnline={isOnline} onStepChange={setStep} />
+      {/*
+        ONE sticky wrapper for both rows, instead of two that each recomputed the
+        banner/offline offset by hand (which had already drifted once and let the top
+        bar paint over the nav).
+
+        On a phone the wrapper's top is pulled up by exactly the identity row's height
+        (h-12 = 3rem), so that row scrolls out of the scrollport while the section nav
+        pins at y=0 — 101px of permanently-nailed chrome becomes 45px while you work,
+        with no scroll listener, no state and no jank. It returns the moment you scroll
+        back to the top. No `overflow` here: UserMenu's dropdown is absolutely
+        positioned inside the header and would be clipped.
+      */}
+      <div
+        className={cn(
+          '@container/topbar sticky z-30 border-b border-gray-200/60 bg-white/95 backdrop-blur-xl dark:border-white/[0.06] dark:bg-slate-900/80',
+          isMobile
+            ? (isOnline
+                ? 'top-[calc(var(--fl-demo-banner-h,0px)-3rem)]'
+                : 'top-[calc(2rem+var(--fl-demo-banner-h,0px)-3rem)]')
+            : (isOnline
+                ? 'top-[var(--fl-demo-banner-h,0px)]'
+                : 'top-[calc(2rem+var(--fl-demo-banner-h,0px))]')
+        )}
+      >
+        <StudioTopBar
+          app={data.app}
+          changes={changes}
+          aiAvailable={aiAvailable}
+          onOpenPublish={() => setStep('publish')}
+          onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+          onOpenAppMenu={() => setAppMenuOpen(true)}
+        />
+        <StudioRail activeStep={activeStep} badges={badges} onStepChange={setStep} />
+        {/* A transient success may scroll away; a failure never may. */}
+        <StudioSaveErrorStrip />
+      </div>
+
+      {appMenuOpen && (
+        <StudioAppMenu
+          app={data.app}
+          changes={changes}
+          aiAvailable={aiAvailable}
+          aiPrompt={STEP_PROMPTS[activeStep]}
+          onClose={() => setAppMenuOpen(false)}
+          onOpenSearch={() => setCommandPaletteOpen(true)}
+          onOpenPublish={() => setStep('publish')}
+          onAskAi={openContextualChat}
+        />
+      )}
 
       {commandPaletteOpen && (
         <StudioCommandPalette
@@ -272,63 +317,64 @@ export function AppStudio() {
         />
       )}
 
-      {/* One guidance line: the recommendation when there is one, the section's own
-          purpose when there isn't. AppShell already provides the main landmark. */}
-      <div className="border-b border-gray-200/60 px-4 py-2 dark:border-white/[0.06] sm:px-6 lg:px-7">
-        <div className="mx-auto flex max-w-[1540px] flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
-          {nextAction ? (
-            <p className="flex min-w-0 items-center gap-2 text-xs text-gray-600 dark:text-slate-300">
-              <Compass className="h-4 w-4 shrink-0 text-primary-600 dark:text-primary-400" aria-hidden="true" />
-              <span className="min-w-0">
-                <span className="font-semibold text-gray-900 dark:text-white">{nextAction.title}</span>
-                <span className="hidden sm:inline"> — {nextAction.detail}</span>
-              </span>
-              {nextAction.step !== activeStep && (
-                <button
-                  type="button"
-                  onClick={() => setStep(nextAction.step)}
-                  className="shrink-0 cursor-pointer font-bold text-primary-600 hover:underline dark:text-primary-400"
-                >
-                  {nextAction.cta}
-                </button>
-              )}
-            </p>
-          ) : (
-            <p className="min-w-0 truncate text-xs text-gray-500 dark:text-slate-400">{active.description}</p>
-          )}
+      {/*
+        A query CONTAINER, not a viewport breakpoint: the studio's usable width is the
+        viewport minus the app sidebar (0 / 64 / 256px) minus the docked chat rail
+        (384px), so a viewport-based layout is wrong for half of those combinations.
+        Sections size themselves off `@container/studio` and stay right at every width.
+        On a phone the bottom padding is just a gutter: AppShell already reserves the
+        mobile nav, and the studio no longer carries floating furniture. On desktop the
+        chat launcher is positioned by VIEWPORT, so `sm:` really is the right unit for
+        its clearance.
+      */}
+      <div className="@container/studio mx-auto max-w-[1540px] p-4 pb-6 sm:p-6 sm:pb-28 lg:p-7 lg:pb-28">
+        {/* The section's own name, painted. It was `sr-only`, so the studio had no
+            visible page title at all and the flattest type hierarchy in the app. */}
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <div className="min-w-0">
+            <h2 className="truncate text-xl font-semibold tracking-tight text-gray-900 dark:text-white">{active.label}</h2>
+            <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">{active.description}</p>
+          </div>
           {aiAvailable && (
             <button
               type="button"
               onClick={() => askAi(STEP_PROMPTS[activeStep])}
-              className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-600 transition hover:border-primary-300 hover:text-primary-700 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:hover:border-primary-500/40 dark:hover:text-primary-300"
+              className="inline-flex min-h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 text-[11px] font-medium text-gray-600 transition hover:border-primary-300 hover:text-primary-700 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:hover:border-primary-500/40 dark:hover:text-primary-300"
             >
               <Sparkles className="h-3.5 w-3.5 text-primary-500 dark:text-primary-400" aria-hidden="true" />
               {STEP_PROMPTS[activeStep]}
             </button>
           )}
         </div>
-      </div>
 
-      {/*
-        A query CONTAINER, not a viewport breakpoint: the studio's usable width is the
-        viewport minus the app sidebar (0 / 64 / 256px) minus the docked chat rail
-        (384px), so a viewport-based layout is wrong for half of those combinations.
-        Sections size themselves off `@container/studio` and stay right at every width.
-        The bottom padding clears the floating chat launcher and desktop chip so the
-        trailing "Next" control is never underneath them.
-      */}
-      <div className="@container/studio mx-auto max-w-[1540px] p-4 pb-24 sm:p-6 sm:pb-28 lg:p-7 lg:pb-28">
-        <h2 className="sr-only">{active.label}</h2>
+        {/* ONE recommendation, and only when it is about THIS section. It used to be a
+            permanent two-row strip that showed the same section-agnostic advice on all
+            six sections — measured as "Connect an automation" on Plan, Data, Screens,
+            Automations, Access AND Publish. A card you scroll past reads as advice; a
+            pinned strip reads as an unresolved error. */}
+        {nextAction && nextAction.step === activeStep && (
+          <section className="mb-4 flex flex-col gap-2 rounded-xl border border-primary-200/70 bg-primary-50/60 p-3 dark:border-primary-500/20 dark:bg-primary-500/[0.07] @xl/studio:flex-row @xl/studio:items-center @xl/studio:gap-4">
+            <Compass className="h-5 w-5 shrink-0 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-gray-900 dark:text-white">{nextAction.title}</p>
+              <p className="mt-0.5 text-xs text-gray-600 dark:text-slate-300">{nextAction.detail}</p>
+            </div>
+          </section>
+        )}
 
         {activeStep === 'plan' && (
-          <PlanStep
+          <OverviewStep
             app={data.app}
-            blueprint={data.blueprint}
             appForms={data.appForms}
             formsById={data.formsById}
             roles={data.roles}
+            flows={data.flows}
+            blueprint={data.blueprint}
+            memberCount={isDemoLocalId(data.app.id) ? 1 : data.memberCount}
+            memberCountKnown={isDemoLocalId(data.app.id) || !data.membersFailed}
             aiAvailable={aiAvailable}
-            onGoToData={() => setStep('data')}
+            onStepChange={setStep}
+            onReloadApp={data.reloadApp}
           />
         )}
         {activeStep === 'data' && (
@@ -384,8 +430,9 @@ export function AppStudio() {
             domains={data.domains}
             versions={data.versions}
             memberCount={data.memberCount}
-            memberCountKnown={!data.auxFailed}
+            memberCountKnown={!data.membersFailed}
             formCountKnown={!data.formsFailed}
+            versionsKnown={!data.versionsFailed}
             changes={changes}
             onStepChange={setStep}
             onPublished={data.reload}
@@ -395,8 +442,8 @@ export function AppStudio() {
         {/* Forward movement lives at the END of the content, where a reader
             actually finishes — not pinned over it in a fixed bar. */}
         {next && (
-          <div className="mt-6 flex justify-end border-t border-gray-200/70 pt-4 dark:border-white/[0.06]">
-            <Button variant="ghost" size="sm" onClick={() => setStep(next.id)}>
+          <div className="mt-6 flex justify-stretch border-t border-gray-200/70 pt-4 dark:border-white/[0.06] @xl/studio:justify-end">
+            <Button variant="ghost" size="sm" onClick={() => setStep(next.id)} className="w-full @xl/studio:w-auto">
               Next: {next.label}
               <ArrowRight className="ml-1.5 h-4 w-4" />
             </Button>

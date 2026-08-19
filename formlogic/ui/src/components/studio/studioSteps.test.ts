@@ -31,8 +31,6 @@ describe('studioSteps', () => {
   describe('deriveSectionBadges', () => {
     const empty = {
       formCount: 0,
-      hasBlueprint: false,
-      hasHomeScreen: false,
       flowCount: 0,
       activeFlowCount: 0,
       roleCount: 0,
@@ -46,20 +44,20 @@ describe('studioSteps', () => {
       expect(badges.data).toMatchObject({ text: '0', tone: 'attention' });
       // Screens always include the app home, so an empty app still has one.
       expect(badges.screens?.text).toBe('1');
-      // Nothing to say yet — an empty badge is quieter than a zero.
+      // Overview describes the app; it never carries a count of its own.
       expect(badges.plan).toBeNull();
       expect(badges.automations).toBeNull();
       expect(badges.access).toBeNull();
     });
 
     it('counts real content once the app has some', () => {
-      const badges = deriveSectionBadges({ ...empty, formCount: 3, flowCount: 2, activeFlowCount: 1, roleCount: 4, hasBlueprint: true });
+      const badges = deriveSectionBadges({ ...empty, formCount: 3, flowCount: 2, activeFlowCount: 1, roleCount: 4 });
       expect(badges.data).toMatchObject({ text: '3', tone: 'muted' });
       expect(badges.screens?.text).toBe('4');
       expect(badges.automations).toMatchObject({ text: '2' });
       expect(badges.automations?.title).toContain('1 active');
       expect(badges.access?.text).toBe('4');
-      expect(badges.plan?.text).toBe('Linked');
+      expect(badges.plan).toBeNull();
     });
 
     it('publish reports the live version, pending changes, or an unpublished draft', () => {

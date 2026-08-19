@@ -44,6 +44,12 @@ export interface StudioData {
    * from them are unknown rather than zero. Steps say "not loaded" instead of asserting 0.
    */
   auxFailed: boolean;
+  /** The release-log read failed — an empty list is unknown, not "no releases". */
+  versionsFailed: boolean;
+  /** The custom-domain read failed — absence is unknown, not "no domain". */
+  domainsFailed: boolean;
+  /** The member read failed — the count is unknown, not zero. */
+  membersFailed: boolean;
   loading: boolean;
   reload: () => Promise<void>;
   reloadFlows: () => Promise<void>;
@@ -82,6 +88,9 @@ export function useStudioData(appId: string | undefined): StudioData {
   const [domains, setDomains] = useState<AppDomain[]>([]);
   const [memberCount, setMemberCount] = useState(0);
   const [auxFailed, setAuxFailed] = useState(false);
+  const [versionsFailed, setVersionsFailed] = useState(false);
+  const [domainsFailed, setDomainsFailed] = useState(false);
+  const [membersFailed, setMembersFailed] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const reloadApp = useCallback(async () => {
@@ -199,6 +208,12 @@ export function useStudioData(appId: string | undefined): StudioData {
     if (!blueprintsRes.error) {
       setBlueprint((blueprintsRes.data?.blueprints ?? []).find((b) => b.appId === appId) ?? null);
     }
+    // Tracked separately: one coarse flag meant a dropped VERSIONS request surfaced
+    // to the user as "Members not loaded", and an empty release log looked like a
+    // fact rather than a failure.
+    setVersionsFailed(!!versionsRes.error);
+    setDomainsFailed(!!domainsRes.error);
+    setMembersFailed(!!usersRes.error);
     if (versionsRes.error) failed = true;
     else setVersions(versionsRes.data?.versions ?? []);
     if (domainsRes.error) failed = true;
@@ -262,6 +277,9 @@ export function useStudioData(appId: string | undefined): StudioData {
       domains,
       memberCount,
       auxFailed,
+      versionsFailed,
+      domainsFailed,
+      membersFailed,
       loading,
       reload,
       reloadFlows,
@@ -269,6 +287,6 @@ export function useStudioData(appId: string | undefined): StudioData {
       reloadApp,
       reloadRoles,
     }),
-    [app, appLoaded, appError, appForms, formsById, unreadableFormIds, formsResolving, formsFailed, flows, bindings, roles, blueprint, versions, domains, memberCount, auxFailed, loading, reload, reloadFlows, reloadForms, reloadApp, reloadRoles]
+    [app, appLoaded, appError, appForms, formsById, unreadableFormIds, formsResolving, formsFailed, flows, bindings, roles, blueprint, versions, domains, memberCount, auxFailed, versionsFailed, domainsFailed, membersFailed, loading, reload, reloadFlows, reloadForms, reloadApp, reloadRoles]
   );
 }

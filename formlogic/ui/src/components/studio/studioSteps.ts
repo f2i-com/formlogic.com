@@ -1,7 +1,7 @@
 import type { App } from '../../types/app';
 
 /**
- * App Studio: one workspace per app, divided into six sections — Plan, Data,
+ * App Studio: one workspace per app, divided into six sections — Overview, Data,
  * Screens, Automations, Access, Publish. They are sections, not wizard steps:
  * every one is always available, everything saves as you go, and an app is
  * never "part-way through" them. Pure derivations live here so the section
@@ -17,7 +17,10 @@ export interface StudioStep {
 }
 
 export const STUDIO_STEPS: StudioStep[] = [
-  { id: 'plan', label: 'Plan', shortLabel: 'Plan', description: 'Sketch the app as a diagram, or plan it with AI' },
+  // `plan` keeps its id so existing /studio/plan links, shortcuts and tests still
+  // resolve; the section itself is now the app's Overview (identity, contents and
+  // the planning tools that used to fill the slot on their own).
+  { id: 'plan', label: 'Overview', shortLabel: 'Overview', description: 'What this app is, what it holds, and how to plan it' },
   { id: 'data', label: 'Data & forms', shortLabel: 'Data', description: 'The forms behind the app: fields and relationships' },
   { id: 'screens', label: 'Screens', shortLabel: 'Screens', description: 'Home, navigation and the views members get' },
   { id: 'automations', label: 'Automations', shortLabel: 'Automations', description: 'What happens when records arrive' },
@@ -32,8 +35,6 @@ export function isStudioStep(value: string | undefined | null): value is StudioS
 /** What the app actually contains — the source for every section badge. */
 export interface StudioSnapshot {
   formCount: number;
-  hasBlueprint: boolean;
-  hasHomeScreen: boolean;
   flowCount: number;
   activeFlowCount: number;
   roleCount: number;
@@ -61,7 +62,10 @@ export interface SectionBadge {
 export function deriveSectionBadges(s: StudioSnapshot): Record<StudioStepId, SectionBadge | null> {
   const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
   return {
-    plan: s.hasBlueprint ? { text: 'Linked', tone: 'muted', title: 'A diagram is linked to this app' } : null,
+    // Overview describes the app rather than holding a countable thing, so it
+    // carries no badge — a number here would compete with the ones that mean
+    // something.
+    plan: null,
     data: {
       text: String(s.formCount),
       tone: s.formCount === 0 ? 'attention' : 'muted',
@@ -180,6 +184,7 @@ export function buildPreflightChecks(input: {
   formCountKnown?: boolean;
 }): PreflightCheck[] {
   const checks: PreflightCheck[] = [];
+  const facts: PreflightCheck[] = [];
 
   if (input.formCountKnown === false) {
     // A failed read is not "no data types": blocking publish on it would stop an
@@ -254,7 +259,10 @@ export function buildPreflightChecks(input: {
     step: 'screens',
   });
 
-  checks.push({
+  // `automations` and `members` are FACTS, not checks: both are hardcoded
+  // 'complete', so they can never fail and only inflate "N/M checks". They render
+  // above the list as a muted facts line instead (see `preflightFacts`).
+  facts.push({
     id: 'automations',
     state: 'complete',
     title: `${input.flowCount} ${input.flowCount === 1 ? 'automation' : 'automations'}`,
@@ -274,7 +282,7 @@ export function buildPreflightChecks(input: {
     step: 'access',
   });
 
-  checks.push({
+  facts.push({
     id: 'members',
     state: 'complete',
     title: input.memberCountKnown === false
@@ -306,8 +314,13 @@ export function buildPreflightChecks(input: {
     detail: input.hasCustomDomain ? 'Your app answers on its own domain' : 'Using the FormLogic URL for now',
   });
 
-  return checks;
+  // Facts trail the real checks so the list still shows them, but
+  // `summarizePreflight` scores only what can actually fail.
+  return [...checks, ...facts];
 }
+
+/** Rows that state a number rather than a verdict — never scored. */
+export const PREFLIGHT_FACT_IDS = new Set(['automations', 'members']);
 
 export interface PreflightSummary {
   blocking: PreflightCheck[];
@@ -328,7 +341,8 @@ export interface PreflightSummary {
  * a healthy app sat permanently on an amber "6/8", which teaches owners to ignore
  * amber — including when it means something.
  */
-export function summarizePreflight(checks: PreflightCheck[]): PreflightSummary {
+export function summarizePreflight(all: PreflightCheck[]): PreflightSummary {
+  const checks = all.filter((c) => !PREFLIGHT_FACT_IDS.has(c.id));
   const warnings = checks.filter((c) => c.state === 'warning');
   const blocking = warnings.filter((c) => c.severity === 'blocking');
   const recommended = warnings.filter((c) => c.severity === 'recommended');
@@ -396,7 +410,7 @@ export function deriveNextAction(s: {
     return {
       step: 'publish',
       title: `Publish ${s.unpublishedCount} pending ${s.unpublishedCount === 1 ? 'change' : 'changes'}`,
-      detail: 'The live app still serves the previous version until you publish again.',
+      detail: 'Saved edits are already live. Publishing records a version with a note, so you have a dated record of what shipped.',
       cta: 'Review changes',
     };
   }

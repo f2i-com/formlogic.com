@@ -13,31 +13,35 @@ const STEP_ICONS: Record<StudioStepId, typeof Map> = {
 };
 
 /**
- * The App Studio section nav: one scrollable row of the app's six sections, each
- * carrying a fact about what it holds (data types, automations, roles, pending
- * changes). It is a nav, not a progress tracker — the studio is a workspace an
- * owner returns to, not a wizard they finish once.
+ * The App Studio section nav: the app's six sections, each carrying a fact about
+ * what it holds (data types, automations, roles, pending changes). It is a nav,
+ * not a progress tracker — the studio is a workspace an owner returns to, not a
+ * wizard they finish once.
  *
- * The sticky offset mirrors the top bar's exactly, including the demo /
- * acting-as banner variable and the offline strip; a hard-coded offset here let
- * the top bar paint over the nav for every banner-carrying session.
+ * On a phone the six labelled tabs needed ~500px in a silent horizontal scroller,
+ * so at 320-412px the last sections — including Publish, the one people go looking
+ * for — were off-screen with no affordance saying so. They are DISTRIBUTED with
+ * flex instead: inactive tabs shrink to their icon (plus an attention dot), the
+ * active tab keeps its label and badge, and nothing overflows at any phone width.
+ * Above `@2xl/rail` every tab is labelled exactly as before.
+ *
+ * The sticky offset lives on AppStudio's chrome wrapper, not here — the two rows
+ * used to compute it independently and had already drifted once, letting the top
+ * bar paint over this nav.
  */
 export function StudioRail({
   activeStep,
   badges,
-  isOnline = true,
   onStepChange,
 }: {
   activeStep: StudioStepId;
   badges: Record<StudioStepId, SectionBadge | null>;
-  /** Offline adds the shell's 2rem status strip above the top bar. */
-  isOnline?: boolean;
   onStepChange: (step: StudioStepId) => void;
 }) {
-  // On narrow widths the row scrolls; the current section has to be the one you can
-  // see, whether you arrived by tab, by shortcut or on a deep link. The scroll offset
-  // is computed rather than delegated to scrollIntoView, which under-scrolled the last
-  // tab and also scrolled the PAGE while trying to reach it.
+  // Above @2xl the row can still exceed its box, so keep the active tab in view.
+  // Computed rather than scrollIntoView, which under-scrolled the last tab and
+  // scrolled the PAGE while trying to reach it. At phone widths nothing overflows,
+  // so this clamps to 0 and is a harmless no-op.
   const scrollerRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -49,18 +53,13 @@ export function StudioRail({
   }, [activeStep, badges]);
 
   return (
-    <nav
-      aria-label="App Studio sections"
-      className={cn(
-        'sticky z-20 border-b border-gray-200/60 dark:border-white/[0.06] bg-white/90 dark:bg-slate-900/85 backdrop-blur-xl',
-        isOnline
-          ? 'top-[calc(3.5rem+var(--fl-demo-banner-h,0px))] sm:top-[calc(4rem+var(--fl-demo-banner-h,0px))]'
-          : 'top-[calc(5.5rem+var(--fl-demo-banner-h,0px))] sm:top-[calc(6rem+var(--fl-demo-banner-h,0px))]'
-      )}
-    >
+    <nav aria-label="App Studio sections" className="@container/rail">
       {/* `relative` makes this the offsetParent, so the tabs' offsetLeft is measured
           against the scroller rather than some ancestor. */}
-      <div ref={scrollerRef} className="scrollbar-thin relative mx-auto flex max-w-[1540px] gap-0.5 overflow-x-auto px-2 sm:px-4 lg:px-6">
+      <div
+        ref={scrollerRef}
+        className="scrollbar-none relative mx-auto flex max-w-[1540px] gap-0.5 overflow-x-auto px-1.5 py-0.5 @2xl/rail:px-4 @4xl/rail:px-6"
+      >
         {STUDIO_STEPS.map((step) => {
           const Icon = STEP_ICONS[step.id];
           const active = step.id === activeStep;
@@ -72,20 +71,24 @@ export function StudioRail({
               type="button"
               onClick={() => onStepChange(step.id)}
               aria-current={active ? 'page' : undefined}
+              // The FULL label, so an icon-only tab is never anonymous to a screen
+              // reader or to voice control.
+              aria-label={step.label}
               title={badge?.title ?? step.description}
               className={cn(
-                'relative flex min-h-11 shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap px-2.5 py-2.5 text-xs font-semibold transition-colors sm:px-3',
+                'relative flex min-h-11 min-w-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap px-1 text-[11px] font-semibold transition-colors @2xl/rail:justify-start @2xl/rail:gap-2 @2xl/rail:px-3 @2xl/rail:text-xs',
                 active
-                  ? 'text-primary-700 dark:text-primary-300 after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary-600 dark:after:bg-primary-400'
-                  : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'
+                  ? 'flex-[2] text-primary-700 after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary-600 @2xl/rail:flex-none dark:text-primary-300 dark:after:bg-primary-400'
+                  : 'flex-1 text-gray-500 hover:text-gray-900 @2xl/rail:flex-none dark:text-slate-400 dark:hover:text-white'
               )}
             >
               <Icon className={cn('h-4 w-4 shrink-0', active ? 'text-primary-600 dark:text-primary-400' : 'text-gray-400 dark:text-slate-500')} />
-              {step.shortLabel}
+              <span className={cn('truncate', active ? 'inline' : 'hidden @2xl/rail:inline')}>{step.shortLabel}</span>
               {badge && (
                 <span
                   className={cn(
                     'rounded-full px-1.5 py-px text-[10px] font-bold leading-4',
+                    active ? 'inline-flex' : 'hidden @2xl/rail:inline-flex',
                     badge.tone === 'attention'
                       ? 'bg-amber-100 text-amber-700 dark:bg-amber-400/15 dark:text-amber-200'
                       : active
@@ -93,8 +96,15 @@ export function StudioRail({
                         : 'bg-gray-100 text-gray-600 dark:bg-white/[0.07] dark:text-slate-300'
                   )}
                 >
-                  {badge.text}
+                  {/* The number alone is not the meaning; a hover title cannot be the
+                      sole carrier of it on a touch screen. */}
+                  <span aria-hidden="true">{badge.text}</span>
+                  <span className="sr-only">{badge.title}</span>
                 </span>
+              )}
+              {/* An unlabelled tab still has to be able to ask for attention. */}
+              {!active && badge?.tone === 'attention' && (
+                <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-amber-500 @2xl/rail:hidden" aria-hidden="true" />
               )}
             </button>
           );

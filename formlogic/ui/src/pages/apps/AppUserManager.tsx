@@ -13,7 +13,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { Modal } from '../../components/ui/Modal';
 import { DataTable, type Column } from '../../components/ui/DataTable';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
-import { statusBadgeVariant, formatStatusLabel, formatDate, parseServerDate } from '../../lib/utils';
+import { statusBadgeVariant, formatStatusLabel, formatDate, parseServerDate, copyToClipboard } from '../../lib/utils';
 import { Badge } from '../../components/ui/Badge';
 import type { AppUser, AppInvitation, AppRole, AppUserGroup } from '../../types/app';
 
@@ -183,11 +183,11 @@ export function AppUserManager() {
 
   const copyInviteLink = async () => {
     if (!inviteLink) return;
-    try {
-      await navigator.clipboard.writeText(inviteLink);
+    // Secure-context-safe copy (this deployment is plain HTTP).
+    if (await copyToClipboard(inviteLink)) {
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 2000);
-    } catch {
+    } else {
       toast.error('Copy failed', 'Select and copy the link manually.');
     }
   };

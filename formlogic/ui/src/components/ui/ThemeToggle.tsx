@@ -10,7 +10,9 @@ export function ThemeToggle() {
             variant="ghost"
             size="iconOnly"
             onClick={toggleTheme}
-            className="group"
+            // 40px is under the 44px touch minimum; grown on phones only, so the
+            // desktop chrome keeps its compact icon button.
+            className="group max-sm:h-11 max-sm:w-11"
             title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
         >
             {theme === 'dark' ? (

@@ -65,13 +65,13 @@ function LocationProbe() {
   return null;
 }
 
-async function renderPopover() {
+async function renderPopover(initialPath = '/flows') {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => {
     root.render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[initialPath]}>
         <LocationProbe />
         <DesktopConnectionPopover />
       </MemoryRouter>
@@ -111,7 +111,7 @@ beforeEach(() => {
   h.presence = { kind: 'local' };
   h.lastLocation = '';
   useAuthStore.setState({ user: { id: 'u1', email: 'u1@example.com' }, isLoading: false, isInitialized: true, error: null });
-  useUIStore.setState({ isMobile: false, sidebarCollapsed: false, fixedBottomBar: false });
+  useUIStore.setState({ isMobile: false, sidebarCollapsed: false });
   useToastStore.getState().clearToasts();
   h.desktopClient.services.list.mockResolvedValue({ ok: true, data: SERVICES });
   h.desktopClient.plugins.list.mockResolvedValue({ ok: true, data: PLUGINS });
@@ -175,9 +175,9 @@ describe('extractListResult', () => {
 });
 
 describe('DesktopConnectionPopover — local presence', () => {
-  it('stays out of compact fixed-footer workspaces', async () => {
-    useUIStore.setState({ isMobile: true, fixedBottomBar: true });
-    await renderPopover();
+  it('stays out of the App Studio on a phone, where the section owns the bottom edge', async () => {
+    useUIStore.setState({ isMobile: true });
+    await renderPopover('/apps/a1/studio/automations');
     expect(container.querySelector('button[aria-haspopup="dialog"]')).toBeNull();
   });
 

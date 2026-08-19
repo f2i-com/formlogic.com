@@ -15,7 +15,7 @@
 // unreported action says "outcome uncertain", never a fake failure (see desktopOps.ts).
 // The pure view-model helpers live in ./desktopConnection.ts (components-only export here).
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Link2, Loader2, Monitor, Play, RotateCcw, Sparkles, Square, Wrench } from 'lucide-react';
 import { Popover } from '../ui/Popover';
 import { desktopClient, type DesktopServiceSnapshot } from '../../client-runtime/desktop/desktopClient';
@@ -25,6 +25,7 @@ import { useFlowsDesktopPresence } from '../flows/useFlowsDesktopPresence';
 import { useAuthStore } from '../../stores/authStore';
 import { useToastStore } from '../../stores/toastStore';
 import { useUIStore } from '../../stores/uiStore';
+import { pathClaimsBottomEdge } from '../../lib/bottomEdgeClaim';
 import { cn } from '../../lib/utils';
 import {
   AI_SOURCE_OPTIONS,
@@ -93,9 +94,9 @@ export function DesktopConnectionPopover() {
   const view = deriveConnectionView(presence, isDemo);
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const isMobile = useUIStore((s) => s.isMobile);
-  const fixedBottomBar = useUIStore((s) => s.fixedBottomBar);
   const addToast = useToastStore((s) => s.addToast);
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -226,11 +227,10 @@ export function DesktopConnectionPopover() {
 
   const showControls = view.kind === 'local' || view.kind === 'remote';
 
-  // App Studio already dedicates the compact screen's bottom edge to its
-  // persistent step navigator. Removing this non-essential floating chip there
-  // keeps form and planning actions fully tappable; the Desktop surfaces remain
-  // available from Flows and Settings.
-  if (isMobile && fixedBottomBar) return null;
+  // Inside the App Studio a phone's bottom edge belongs to the section's own
+  // content and the global nav. This chip is not essential there — Desktop status
+  // stays available on Flows and in Settings.
+  if (isMobile && pathClaimsBottomEdge(location.pathname)) return null;
 
   return (
     <>
@@ -245,16 +245,9 @@ export function DesktopConnectionPopover() {
           'fixed z-40 flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium shadow-lg backdrop-blur',
           'border-gray-200 bg-white/95 text-gray-700 transition-colors hover:bg-gray-50',
           'dark:border-slate-700 dark:bg-slate-900/90 dark:text-slate-200 dark:hover:bg-slate-800',
-          // A page-level fixed bottom bar (studio footer / wizard nav, ~4.25rem tall)
-          // lifts the chip above the bar so it never sits on its buttons.
           isMobile
-            ? fixedBottomBar
-              ? 'left-4 bottom-[calc(8.25rem+env(safe-area-inset-bottom)+0.75rem)]'
-              : 'left-4 bottom-[var(--fl-mobile-float)]'
-            : cn(
-                fixedBottomBar ? 'bottom-[5.25rem]' : 'bottom-4',
-                sidebarCollapsed ? 'left-[4.75rem]' : 'left-[16.75rem]'
-              )
+            ? 'left-4 bottom-[var(--fl-mobile-float)]'
+            : cn('bottom-4', sidebarCollapsed ? 'left-[4.75rem]' : 'left-[16.75rem]')
         )}
       >
         <span className={cn('h-2 w-2 flex-shrink-0 rounded-full', connectionDotClass(view.kind))} aria-hidden="true" />

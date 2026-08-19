@@ -179,7 +179,6 @@ beforeEach(() => {
     chatPosition: null,
     chatSeed: null,
     chatLaunch: null,
-    fixedBottomBar: false,
   });
   h.getAiPreferences.mockResolvedValue({ ok: true, data: { ...PREFS } });
   h.answerToolProposal.mockResolvedValue({ ok: true });
@@ -248,10 +247,18 @@ describe('mounting', () => {
     expect(panel()!.querySelector('[data-testid="chat-privacy-badge"]')!.textContent).toContain('Hosted — processed by FormLogic Cloud');
   });
 
-  it('yields the floating launcher to pages with their own fixed action bar', async () => {
-    useUIStore.setState({ fixedBottomBar: true });
-    await renderWidget();
+  // The App Studio owns the bottom edge of a phone screen, so the floating
+  // launcher stands down there — chat is reached from the studio's own controls.
+  it('yields the floating launcher inside the App Studio on a phone', async () => {
+    useUIStore.setState({ isMobile: true });
+    await renderWidget('/apps/a1/studio/data');
     expect(launcher()).toBeNull();
+  });
+
+  it('keeps the launcher in the studio on desktop, where nothing collides', async () => {
+    useUIStore.setState({ isMobile: false });
+    await renderWidget('/apps/a1/studio/data');
+    expect(launcher()).not.toBeNull();
   });
 
   it('minimize brings the launcher back; close resets open state', async () => {

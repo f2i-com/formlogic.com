@@ -1,5 +1,6 @@
 import { useEffect, useRef, Suspense } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
+import { pathClaimsBottomEdge } from '../../lib/bottomEdgeClaim';
 import { Wrench, WifiOff } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { MobileNav } from './MobileNav';
@@ -121,9 +122,13 @@ export function AppShell() {
           // §11B O5: a DOCKED chat is a sibling surface, not an overlay — the
           // workspace narrows so both stay fully visible (the co-creation shell).
           !isMobile && chatDockedVisible && 'mr-96',
-          // Clear the fixed bottom nav PLUS the home-indicator safe-area inset on
-          // notched phones, so trailing content isn't hidden behind the nav.
-          isMobile && 'pb-[var(--fl-mobile-reserve)]',
+          // Clear the fixed bottom nav plus the home-indicator inset. Routes that
+          // claim the bottom edge (the studio) carry no floating furniture, so they
+          // reserve the nav only — the extra 4rem was padding for controls that are
+          // no longer there, and it left ~14rem of dead scroll under every section.
+          isMobile && (pathClaimsBottomEdge(location.pathname)
+            ? 'pb-[var(--fl-mobile-nav-h)]'
+            : 'pb-[var(--fl-mobile-reserve)]'),
           (!isOnline || (maintenance.active && isAdmin)) && 'pt-8'
         )}
       >

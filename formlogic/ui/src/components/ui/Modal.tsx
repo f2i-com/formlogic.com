@@ -135,7 +135,7 @@ export function Modal({
   const content = (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 max-sm:items-end max-sm:p-0">
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -163,6 +163,11 @@ export function Modal({
               // dvh (not vh) so the popup caps to the VISIBLE viewport on mobile toolbars; the body
               // scrolls internally, so any popup stays fully on-screen and flexes to any window height.
               'max-h-[90dvh] overflow-hidden flex flex-col',
+              // Bottom-anchored on phones: a centred dialog capped at 90dvh leaves ~5dvh
+              // under it, so its confirm button lands in the home-indicator swipe zone —
+              // and the studio's dialogs (Add a data type, Add a role, Invite people,
+              // Publish) all end in a confirm button.
+              'max-sm:max-h-[85dvh] max-sm:w-full max-sm:rounded-b-none max-sm:pb-[env(safe-area-inset-bottom)]',
               'ring-1 ring-black/5 dark:ring-white/[0.06] border border-gray-200/50 dark:border-slate-800',
               sizes[size]
             )}
