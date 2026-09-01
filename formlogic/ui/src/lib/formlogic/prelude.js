@@ -1,6 +1,6 @@
 // CANONICAL FORMLOGIC PRELUDE — single source of truth.
 // This plain-JS standard library is evaluated inside the QuickJS sandbox on
-// BOTH the browser (quickjs-emscripten) and the backend (qjs harness) before
+// BOTH the browser (zipp wasm) and the backend (the zipp sandbox child) before
 // every user expression/script, so helper builtins resolve identically on
 // each side. It is imported as raw text in the browser and read from disk by
 // the backend; the backend copy at backend/resources/formlogic-prelude.js is

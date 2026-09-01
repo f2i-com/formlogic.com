@@ -1,0 +1,2165 @@
+{
+    "version": 1,
+    "cases": [
+        {
+            "id": "stored-0",
+            "kind": "expression",
+            "source": "marketplace-packs:customer-service",
+            "expression": "nps_score >= 9 ? \"Promoter\" : nps_score >= 7 ? \"Passive\" : \"Detractor\"",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open"
+            },
+            "expect": {
+                "ok": true,
+                "value": "Passive"
+            }
+        },
+        {
+            "id": "stored-1",
+            "kind": "expression",
+            "source": "marketplace-packs:event-management",
+            "expression": "Math.round((estimated_cost - (actual_cost || 0)) * 100) / 100",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open"
+            },
+            "expect": {
+                "ok": true,
+                "value": 100.5
+            }
+        },
+        {
+            "id": "stored-2",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-au",
+            "expression": "Math.round((risk_tolerance * 5) + (time_horizon * 2) + ((120 - age) / 2))",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open"
+            },
+            "expect": {
+                "ok": true,
+                "value": 63
+            }
+        },
+        {
+            "id": "stored-3",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-au",
+            "expression": "annual_income >= 250000 || net_assets >= 2500000 ? \"Yes\" : \"No\"",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open"
+            },
+            "expect": {
+                "ok": true,
+                "value": "No"
+            }
+        },
+        {
+            "id": "stored-4",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-au",
+            "expression": "Math.round((loss_capacity * 5) + (time_horizon * 2) + ((120 - client_age) / 2))",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open"
+            },
+            "expect": {
+                "ok": true,
+                "value": 58
+            }
+        },
+        {
+            "id": "stored-5",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-au",
+            "expression": "transfer_type == \"partial\"",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open"
+            },
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "stored-6",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-au",
+            "expression": "54.50",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open"
+            },
+            "expect": {
+                "ok": true,
+                "value": 54.5
+            }
+        },
+        {
+            "id": "stored-7",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-au",
+            "expression": "current_portfolio_value <= 500000 ? (current_portfolio_value * 0.011) : current_portfolio_value <= 1000000 ? (current_portfolio_value * 0.0088) : (current_portfolio_value * 0.0077)",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open"
+            },
+            "expect": {
+                "ok": true,
+                "value": 6600
+            }
+        },
+        {
+            "id": "stored-8",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-au",
+            "expression": "portfolio_value <= 500000 ? (portfolio_value * 0.011) : portfolio_value <= 1000000 ? (portfolio_value * 0.0088) : (portfolio_value * 0.0077)",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open"
+            },
+            "expect": {
+                "ok": true,
+                "value": 6600
+            }
+        },
+        {
+            "id": "stored-9",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-au",
+            "expression": "document_type == \"insurance\" || document_type == \"pds\" || document_type == \"soa\"",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open"
+            },
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "stored-10",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-au",
+            "expression": "tfn_exemption == \"not_quoted\"",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open",
+                "tfn_exemption": "not_quoted"
+            },
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "stored-11",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-au",
+            "expression": "rollover_type == \"partial\"",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open",
+                "rollover_type": "partial"
+            },
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "stored-12",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-us",
+            "expression": "annual_income > 200000 || net_worth > 1000000 ? \"Yes\" : \"No\"",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open"
+            },
+            "expect": {
+                "ok": true,
+                "value": "No"
+            }
+        },
+        {
+            "id": "stored-13",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-us",
+            "expression": "risk_score >= 70 ? \"80/15/5\" : risk_score >= 40 ? \"60/30/10\" : \"30/50/20\"",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open",
+                "risk_score": 3
+            },
+            "expect": {
+                "ok": true,
+                "value": "30/50/20"
+            }
+        },
+        {
+            "id": "stored-14",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-us",
+            "expression": "risk_profile_score >= 70 && (portfolio_type == \"conservative\" || portfolio_type == \"moderate\") ? \"Review needed\" : risk_profile_score < 30 && (portfolio_type == \"aggressive\" || portfolio_type == \"speculative\") ? \"Review needed\" : \"Suitable\"",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open",
+                "risk_profile_score": 3,
+                "portfolio_type": "conservative"
+            },
+            "expect": {
+                "ok": true,
+                "value": "Suitable"
+            }
+        },
+        {
+            "id": "stored-15",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-us",
+            "expression": "75",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open"
+            },
+            "expect": {
+                "ok": true,
+                "value": 75
+            }
+        },
+        {
+            "id": "stored-16",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-us",
+            "expression": "current_aum <= 500000 ? (current_aum * 0.01) : current_aum <= 1000000 ? (current_aum * 0.0085) : (current_aum * 0.007)",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open",
+                "current_aum": 3
+            },
+            "expect": {
+                "ok": true,
+                "value": 0.03
+            }
+        },
+        {
+            "id": "stored-17",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-us",
+            "expression": "account_value <= 500000 ? (account_value * 0.01) : account_value <= 1000000 ? (account_value * 0.0085) : (account_value * 0.007)",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open",
+                "account_value": 3
+            },
+            "expect": {
+                "ok": true,
+                "value": 0.03
+            }
+        },
+        {
+            "id": "stored-18",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-us",
+            "expression": "document_type == \"insurance\" || document_type == \"legal_document\"",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open"
+            },
+            "expect": {
+                "ok": true,
+                "value": false
+            }
+        },
+        {
+            "id": "stored-19",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-us",
+            "expression": "has_surrender_charges == \"yes\"",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open",
+                "has_surrender_charges": "yes"
+            },
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "stored-20",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-us",
+            "expression": "rollover_type == \"traditional_to_roth\"",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open",
+                "rollover_type": "traditional_to_roth"
+            },
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "stored-21",
+            "kind": "expression",
+            "source": "marketplace-packs:finance-os-us",
+            "expression": "direct_or_indirect == \"indirect\"",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open",
+                "direct_or_indirect": "indirect"
+            },
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "stored-22",
+            "kind": "expression",
+            "source": "marketplace-packs:hr-people",
+            "expression": "Math.round(((technical_skills + communication + culture_fit + problem_solving) / 4) * 10) / 10",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open",
+                "technical_skills": 3,
+                "communication": 3,
+                "culture_fit": 3,
+                "problem_solving": 3
+            },
+            "expect": {
+                "ok": true,
+                "value": 3
+            }
+        },
+        {
+            "id": "stored-23",
+            "kind": "expression",
+            "source": "marketplace-packs:hr-people",
+            "expression": "leave_type == \"sick\"",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open",
+                "leave_type": "sick"
+            },
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "stored-24",
+            "kind": "expression",
+            "source": "marketplace-packs:hr-people",
+            "expression": "Math.round(((job_knowledge + quality_of_work + productivity + teamwork + initiative) / 5) * 10) / 10",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open",
+                "job_knowledge": 3,
+                "quality_of_work": 3,
+                "productivity": 3,
+                "teamwork": 3,
+                "initiative": 3
+            },
+            "expect": {
+                "ok": true,
+                "value": 3
+            }
+        },
+        {
+            "id": "stored-25",
+            "kind": "expression",
+            "source": "marketplace-packs:ohs-qms",
+            "expression": "lost_time == \"yes\"",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open",
+                "lost_time": "yes"
+            },
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "stored-26",
+            "kind": "expression",
+            "source": "marketplace-packs:ohs-qms",
+            "expression": "likelihood * consequence",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open",
+                "likelihood": 3,
+                "consequence": 3
+            },
+            "expect": {
+                "ok": true,
+                "value": 9
+            }
+        },
+        {
+            "id": "stored-27",
+            "kind": "expression",
+            "source": "marketplace-packs:ohs-qms",
+            "expression": "risk_score >= 20 ? \"Critical\" : risk_score >= 12 ? \"High\" : risk_score >= 6 ? \"Medium\" : \"Low\"",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open",
+                "risk_score": 3
+            },
+            "expect": {
+                "ok": true,
+                "value": "Low"
+            }
+        },
+        {
+            "id": "stored-28",
+            "kind": "expression",
+            "source": "marketplace-packs:ohs-qms",
+            "expression": "control_type == \"elimination\" ? 0 : control_type == \"substitution\" ? Math.round(risk_score * 0.3) : control_type == \"engineering\" ? Math.round(risk_score * 0.4) : control_type == \"administrative\" ? Math.round(risk_score * 0.6) : Math.round(risk_score * 0.8)",
+            "context": {
+                "nps_score": 8,
+                "estimated_cost": 120.5,
+                "actual_cost": 20,
+                "risk_tolerance": 3,
+                "time_horizon": 4,
+                "age": 40,
+                "client_age": 40,
+                "annual_income": 100000,
+                "net_assets": 500000,
+                "net_worth": 750000,
+                "loss_capacity": 2,
+                "transfer_type": "partial",
+                "document_type": "pds",
+                "current_portfolio_value": 750000,
+                "portfolio_value": 750000,
+                "amount": 15000,
+                "frequency": 3,
+                "quantity": 2,
+                "unit_price": 49.5,
+                "email": "a@b.co",
+                "status": "open",
+                "control_type": "elimination",
+                "risk_score": 3
+            },
+            "expect": {
+                "ok": true,
+                "value": 0
+            }
+        },
+        {
+            "id": "prelude-0",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "validators.email(\"a@b.co\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "prelude-1",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "validators.email(\"nope\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": false
+            }
+        },
+        {
+            "id": "prelude-2",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "validators.phone(\"+61400000000\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "prelude-3",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "validators.phone(\"abc\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": false
+            }
+        },
+        {
+            "id": "prelude-4",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "validators.url(\"https://example.com/x\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "prelude-5",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "validators.url(\"ftp://x\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": false
+            }
+        },
+        {
+            "id": "prelude-6",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "validators.minLength(\"abcd\", 3)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "prelude-7",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "validators.maxLength(\"abcd\", 3)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": false
+            }
+        },
+        {
+            "id": "prelude-8",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "validators.pattern(\"abc\", \"^a\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "prelude-9",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "validators.pattern(\"abc\", \"^z\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": false
+            }
+        },
+        {
+            "id": "prelude-10",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "validators.required(\"x\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "prelude-11",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "validators.required(\"\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": false
+            }
+        },
+        {
+            "id": "prelude-12",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "validators.min(5, 3)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "prelude-13",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "validators.max(5, 3)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": false
+            }
+        },
+        {
+            "id": "prelude-14",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "format.currency(1234.5, \"AUD\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "A$1,234.50"
+            }
+        },
+        {
+            "id": "prelude-15",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "format.currency(1234.5, \"USD\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "$1,234.50"
+            }
+        },
+        {
+            "id": "prelude-16",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "format.number(1234.5678, 2)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "1234.57"
+            }
+        },
+        {
+            "id": "prelude-17",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "format.date(\"2024-03-05\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "2024-03-05"
+            }
+        },
+        {
+            "id": "prelude-18",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "format.uppercase(\"abc\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "ABC"
+            }
+        },
+        {
+            "id": "prelude-19",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "format.lowercase(\"ABC\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "abc"
+            }
+        },
+        {
+            "id": "prelude-20",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "compliance.regBICheck(3, \"growth\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": false
+            }
+        },
+        {
+            "id": "prelude-21",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "compliance.suitabilityScore(40, 100000, 750000, 3, 4)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 28
+            }
+        },
+        {
+            "id": "prelude-22",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "compliance.amlFlag(15000, 3)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "prelude-23",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "compliance.accreditedInvestor(300000, 1500000)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "prelude-24",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "compliance.wholesaleClient(300000, 3000000)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "prelude-25",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "compliance.austracFlag(15000, 3)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "prelude-26",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "compliance.tfnValid(\"123456782\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "prelude-27",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "compliance.tfnValid(\"111111111\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "prelude-28",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "finance.compoundInterest(1000, 0.05, 10)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 1628.89
+            }
+        },
+        {
+            "id": "prelude-29",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "finance.aumFee(750000)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 7500
+            }
+        },
+        {
+            "id": "prelude-30",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "finance.auAumFee(750000)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 7700
+            }
+        },
+        {
+            "id": "prelude-31",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "finance.riskScore(40, 4, 3)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 34
+            }
+        },
+        {
+            "id": "prelude-32",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "finance.portfolioAllocation(50)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "55:29:16"
+            }
+        },
+        {
+            "id": "prelude-33",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "finance.transferFee(15000, \"custodianA\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 75
+            }
+        },
+        {
+            "id": "prelude-34",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "finance.auTransferFee(15000, \"platformA\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 55
+            }
+        },
+        {
+            "id": "prelude-35",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "safety.riskMatrix(3, 4)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 12
+            }
+        },
+        {
+            "id": "prelude-36",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "safety.riskLevel(12)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "High"
+            }
+        },
+        {
+            "id": "prelude-37",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "safety.controlEffectiveness(\"engineering\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 3
+            }
+        },
+        {
+            "id": "prelude-38",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "safety.residualRisk(12, \"engineering\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 5
+            }
+        },
+        {
+            "id": "prelude-39",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "isEmpty(\"\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "prelude-40",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "isEmpty(\"x\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": false
+            }
+        },
+        {
+            "id": "prelude-41",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "isNotEmpty(\"x\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "prelude-42",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "contains([1,2,3], 2)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "prelude-43",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "contains([1,2,3], 9)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": false
+            }
+        },
+        {
+            "id": "prelude-44",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "sum([1,2,3])",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 6
+            }
+        },
+        {
+            "id": "prelude-45",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "avg([1,2,3])",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 2
+            }
+        },
+        {
+            "id": "prelude-46",
+            "kind": "expression",
+            "source": "probe:prelude",
+            "expression": "count([1,2,3])",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 3
+            }
+        },
+        {
+            "id": "lang-0",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "1 + 1",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 2
+            }
+        },
+        {
+            "id": "lang-1",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "\"a\" + \"b\"",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "ab"
+            }
+        },
+        {
+            "id": "lang-2",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "Math.round(2.5)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 3
+            }
+        },
+        {
+            "id": "lang-3",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "Math.max(1, 2, 3)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 3
+            }
+        },
+        {
+            "id": "lang-4",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "Math.abs(-3)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 3
+            }
+        },
+        {
+            "id": "lang-5",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "[1,2,3].map(function(x){ return x * 2; }).join(\",\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "2,4,6"
+            }
+        },
+        {
+            "id": "lang-6",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "[3,1,2].sort().join(\"\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "123"
+            }
+        },
+        {
+            "id": "lang-7",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "[1,2,3].filter(function(n){ return n > 1; }).length",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 2
+            }
+        },
+        {
+            "id": "lang-8",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "[1,2,3].reduce(function(a,b){ return a + b; }, 0)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 6
+            }
+        },
+        {
+            "id": "lang-9",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "JSON.stringify({a: 1, b: [1,2]})",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "{\"a\":1,\"b\":[1,2]}"
+            }
+        },
+        {
+            "id": "lang-10",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "JSON.parse(\"{\\\"a\\\":1}\").a",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 1
+            }
+        },
+        {
+            "id": "lang-11",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "\"Hello\".toUpperCase()",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "HELLO"
+            }
+        },
+        {
+            "id": "lang-12",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "\"  pad  \".trim()",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "pad"
+            }
+        },
+        {
+            "id": "lang-13",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "\"a,b,c\".split(\",\").length",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 3
+            }
+        },
+        {
+            "id": "lang-14",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "\"abc\".indexOf(\"b\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 1
+            }
+        },
+        {
+            "id": "lang-15",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "\"abc\".slice(1)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "bc"
+            }
+        },
+        {
+            "id": "lang-16",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "\"a-b\".replace(\"-\", \"+\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "a+b"
+            }
+        },
+        {
+            "id": "lang-17",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "(function(){ var s = 0; for (var i = 0; i < 10; i++) s += i; return s; })()",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 45
+            }
+        },
+        {
+            "id": "lang-18",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "typeof undefinedThing",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "undefined"
+            }
+        },
+        {
+            "id": "lang-19",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "null ?? \"fallback\"",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "fallback"
+            }
+        },
+        {
+            "id": "lang-20",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "({a: {b: 1}}).a?.b",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 1
+            }
+        },
+        {
+            "id": "lang-21",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "/^[a-z]+$/.test(\"abc\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "lang-22",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "\"2024-01-05\".replace(/-/g, \"/\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "2024/01/05"
+            }
+        },
+        {
+            "id": "lang-23",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "\"x1y2\".match(/\\d/g).join(\"\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "12"
+            }
+        },
+        {
+            "id": "lang-24",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "RegExp(\"^a\").test(\"abc\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "lang-25",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "(1234.5678).toFixed(2)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "1234.57"
+            }
+        },
+        {
+            "id": "lang-26",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "String(0.1 + 0.2)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "0.30000000000000004"
+            }
+        },
+        {
+            "id": "lang-27",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "parseInt(\"42px\", 10)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 42
+            }
+        },
+        {
+            "id": "lang-28",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "parseFloat(\"3.5x\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 3.5
+            }
+        },
+        {
+            "id": "lang-29",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "Number(\"3.5\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 3.5
+            }
+        },
+        {
+            "id": "lang-30",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "isNaN(Number(\"x\"))",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "lang-31",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "Array.isArray([])",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "lang-32",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "Object.keys({a:1,b:2}).join(\",\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "a,b"
+            }
+        },
+        {
+            "id": "lang-33",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "true ? \"y\" : \"n\"",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "y"
+            }
+        },
+        {
+            "id": "lang-34",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "(0 || \"\") || \"last\"",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "last"
+            }
+        },
+        {
+            "id": "lang-35",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "[...\"abc\"].length",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 3
+            }
+        },
+        {
+            "id": "lang-36",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "(() => 42)()",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 42
+            }
+        },
+        {
+            "id": "lang-37",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "Boolean(0)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": false
+            }
+        },
+        {
+            "id": "lang-38",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "String(null)",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "null"
+            }
+        },
+        {
+            "id": "lang-39",
+            "kind": "expression",
+            "source": "probe:language",
+            "expression": "[1,2].concat([3]).length",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 3
+            }
+        },
+        {
+            "id": "divergent-tz-offset",
+            "kind": "expression",
+            "source": "probe:divergence",
+            "expression": "new Date(0).getTimezoneOffset()",
+            "context": {},
+            "expect": {
+                "agree": true
+            }
+        },
+        {
+            "id": "divergent-tz-hours-epoch",
+            "kind": "expression",
+            "source": "probe:divergence",
+            "expression": "new Date(0).getHours()",
+            "context": {},
+            "expect": {
+                "agree": true
+            }
+        },
+        {
+            "id": "divergent-tz-date-epoch",
+            "kind": "expression",
+            "source": "probe:divergence",
+            "expression": "new Date(0).getDate()",
+            "context": {},
+            "expect": {
+                "agree": true
+            }
+        },
+        {
+            "id": "divergent-tz-day-epoch",
+            "kind": "expression",
+            "source": "probe:divergence",
+            "expression": "new Date(0).getDay()",
+            "context": {},
+            "expect": {
+                "agree": true
+            }
+        },
+        {
+            "id": "divergent-tz-hours-parsed",
+            "kind": "expression",
+            "source": "probe:divergence",
+            "expression": "new Date(\"2024-03-05T10:30:00Z\").getHours()",
+            "context": {},
+            "expect": {
+                "agree": true
+            }
+        },
+        {
+            "id": "divergent-locale-date",
+            "kind": "expression",
+            "source": "probe:divergence",
+            "expression": "new Date(0).toLocaleDateString(\"en-US\", {timeZone:\"UTC\"})",
+            "context": {},
+            "expect": {
+                "agree": true
+            }
+        },
+        {
+            "id": "divergent-locale-number",
+            "kind": "expression",
+            "source": "probe:divergence",
+            "expression": "(1234567.891).toLocaleString(\"en-US\")",
+            "context": {},
+            "expect": {
+                "agree": true
+            }
+        },
+        {
+            "id": "divergent-locale-compare",
+            "kind": "expression",
+            "source": "probe:divergence",
+            "expression": "\"a\".localeCompare(\"b\")",
+            "context": {},
+            "expect": {
+                "agree": true
+            }
+        },
+        {
+            "id": "divergent-has-intl",
+            "kind": "expression",
+            "source": "probe:divergence",
+            "expression": "typeof Intl",
+            "context": {},
+            "expect": {
+                "agree": true
+            }
+        },
+        {
+            "id": "date-stable-0",
+            "kind": "expression",
+            "source": "probe:date",
+            "expression": "new Date(2024, 2, 5, 17, 30).getHours()",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 17
+            }
+        },
+        {
+            "id": "date-stable-1",
+            "kind": "expression",
+            "source": "probe:date",
+            "expression": "new Date(2024, 2, 5, 17, 30).getHours() >= 17",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "date-stable-2",
+            "kind": "expression",
+            "source": "probe:date",
+            "expression": "new Date(2024, 2, 5).getFullYear()",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 2024
+            }
+        },
+        {
+            "id": "date-stable-3",
+            "kind": "expression",
+            "source": "probe:date",
+            "expression": "new Date(0).toISOString()",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "1970-01-01T00:00:00.000Z"
+            }
+        },
+        {
+            "id": "date-stable-4",
+            "kind": "expression",
+            "source": "probe:date",
+            "expression": "Date.parse(\"2024-03-05T10:30:00Z\")",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 1709634600000
+            }
+        },
+        {
+            "id": "date-stable-5",
+            "kind": "expression",
+            "source": "probe:date",
+            "expression": "new Date(Date.UTC(2024, 2, 5, 10, 30)).getUTCHours()",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": 10
+            }
+        },
+        {
+            "id": "throws-syntax",
+            "kind": "expression",
+            "source": "probe:error",
+            "expression": "this is not javascript (",
+            "context": {},
+            "expect": {
+                "agree": true
+            }
+        },
+        {
+            "id": "throws-reference",
+            "kind": "expression",
+            "source": "probe:error",
+            "expression": "definitelyNotDefined.property",
+            "context": {},
+            "expect": {
+                "agree": true
+            }
+        },
+        {
+            "id": "throws-type-call",
+            "kind": "expression",
+            "source": "probe:error",
+            "expression": "(42)()",
+            "context": {},
+            "expect": {
+                "agree": true
+            }
+        },
+        {
+            "id": "throws-throw-explicit",
+            "kind": "expression",
+            "source": "probe:error",
+            "expression": "(function(){ throw new Error(\"boom\"); })()",
+            "context": {},
+            "expect": {
+                "agree": true
+            }
+        },
+        {
+            "id": "pollution-proto",
+            "kind": "expression",
+            "source": "probe:security",
+            "expression": "JSON.stringify(Object.keys(JSON.parse('{\"__proto__\":{\"x\":1},\"safe\":2}')))",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": "[\"__proto__\",\"safe\"]"
+            }
+        },
+        {
+            "id": "pollution-returned",
+            "kind": "expression",
+            "source": "probe:security",
+            "expression": "({ \"__proto__\": { \"polluted\": true }, ok: 1 })",
+            "context": {},
+            "expect": {
+                "ok": true,
+                "value": {
+                    "ok": 1
+                }
+            }
+        }
+    ]
+}

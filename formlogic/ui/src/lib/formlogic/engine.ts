@@ -1,12 +1,12 @@
 import { logger } from '../logger';
-import type { EvalKind } from './quickjs-host';
+import type { EvalKind } from './zipp-host';
 import type { WorkerRequest, WorkerResponse } from './formlogic.worker';
 
 // ---------------------------------------------------------------------------
 // FormLogic evaluation engine (browser).
 //
 // User-authored expressions/formulas run inside a QuickJS WASM sandbox hosted in
-// a dedicated Web Worker (see quickjs-host.ts / formlogic.worker.ts). This module
+// a dedicated Web Worker (see zipp-host.ts / formlogic.worker.ts). This module
 // is a thin, stable client: it owns the worker lifecycle and a hard wall-clock
 // watchdog that terminates+respawns the worker if an evaluation overruns (the
 // backstop for the rare expression QuickJS can't interrupt in-VM, e.g. a

@@ -48,13 +48,13 @@ const backendDir = path.join(repoRoot, 'formlogic', 'backend');
 //
 // COPY (allowlist) — everything the app needs at runtime:
 //   bin/        maintenance CLIs (upgrade.php, idempotency-cleanup.php, webhook-worker.php,
-//               reconcile.php) + the vendored static qjs binaries (bin/qjs/) the QuickJS
+//               reconcile.php) + the vendored sandbox binaries (bin/runtime/) the script
 //               script runtime shells out to.
 //   config/     settings.php
 //   database/   schema.sql + migrate.php (schema files only — no runtime SQLite lives here;
 //               per-form SQLite DBs live under storage/forms which ships EMPTY)
 //   public/     the front controller (api/public/index.php) + .htaccess
-//   resources/  formlogic prelude/harness JS, cacert.pem, marketplace packs, sample apps
+//   resources/  formlogic prelude JS, cacert.pem, marketplace packs, sample apps
 //   src/        the application
 //   composer.json + composer.lock (vendor/ is installed FRESH with --no-dev in staging)
 //   .env.example (shipped; the real .env is created by the installer, never shipped)
@@ -214,7 +214,7 @@ EASIEST: the install wizard
 3. The wizard automates the whole setup: it checks the PHP version and
    extensions, checks + fixes file permissions where it can (api/storage/*,
    api/logs — printing the exact chown/chmod commands for anything it
-   can't), verifies the qjs script-runtime binary is executable on Linux
+   can't), verifies the sandbox binary is executable on Linux
    (restoring the execute bit that zip extraction drops), tests your MySQL
    connection, writes api/.env with generated secrets, creates the database
    + schema, verifies api/.env is not web-readable, and finishes with
@@ -237,9 +237,9 @@ Manual install (no wizard)
    the schema is created automatically on first run).
 4. Make api/storage/ and api/logs/ writable by the web server user
    (e.g. on Linux: chown -R www-data:www-data api/storage api/logs).
-5. On Linux, make sure the qjs script-runtime binary is executable (zip
+5. On Linux, make sure the sandbox binary is executable (zip
    extraction often drops the execute bit):
-     chmod +x api/bin/qjs/qjs-linux-x86_64
+     chmod +x api/bin/runtime/formlogic-runtime-linux-x86_64
 6. Visit the site in a browser — the backend creates/updates its schema on the
    first request. (Or, from a shell on the server: php api/bin/upgrade.php)
 7. Verify: https://your-domain/api/health reports status + storage checks.
@@ -269,7 +269,7 @@ Troubleshooting
   Auth cookies are Secure-only — serve the site over HTTPS.
 - Uploads or app installs fail: api/storage/ is not writable by the web
   server user (see manual step 4 — the wizard reports the exact commands).
-- Form logic / scripts do nothing on Linux: the qjs binary lost its execute
+- Form logic / scripts do nothing on Linux: the sandbox binary lost its execute
   bit (see manual step 5 — the wizard fixes this automatically).
 - Blank white page: the zip contents were uploaded into a subfolder. The
   app expects to live at the domain root (index.html next to .htaccess).
@@ -312,7 +312,7 @@ Manual path:
    EASIEST — the wizard: open https://your-domain/install.php and choose
    "Upgrade existing installation". It runs the same guarded, idempotent
    schema migrations the CLI runs, verifies the core tables, stamps the
-   version, re-checks file permissions + the qjs execute bit, and reminds
+   version, re-checks file permissions + the sandbox execute bit, and reminds
    you of the cron lines. Once installed the wizard locks itself — allow
    this one run by adding this line at the TOP of the web-root .htaccess:
      SetEnv INSTALL_ENABLE 1
@@ -455,7 +455,7 @@ const mustExist = [
   'api/.env.example',
   'api/config/settings.php',
   'api/database/schema.sql',
-  'api/bin/qjs/qjs-linux-x86_64',
+  'api/bin/runtime/formlogic-runtime-linux-x86_64',
   'api/resources/formlogic-prelude.js',
   'VERSION',
   'api/VERSION',

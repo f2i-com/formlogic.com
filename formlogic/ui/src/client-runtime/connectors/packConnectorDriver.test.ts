@@ -12,14 +12,14 @@ import { __resetDesktopDetectionForTests } from '../desktop/desktopDetection';
 import { __resetDesktopEventsForTests, subscribeDesktopEvents } from '../desktop/desktopEvents';
 import type { DesktopEventEnvelope } from '../desktop/desktopTypes';
 import type { ConnectorDriverManifest } from '../../types/customAppLogic';
-import { runEval } from '../../lib/formlogic/quickjs-host';
+import { runEval } from '../../lib/formlogic/zipp-host';
 import { api } from '../../lib/api';
 
 // Broker rules for pack-embedded connector drivers (packConnectorDriver.ts):
 // the demo driver is grant-gated, its events are allowlisted + host-stamped,
 // its error codes fold to a demo-safe set, and its state threads between runs.
 // Exercised with a MINIMAL synthetic driver against the REAL QuickJS sandbox
-// (quickjs-host runEval — same PRELUDE/JSON-ctx/budget semantics as production,
+// (zipp-host runEval — same PRELUDE/JSON-ctx/budget semantics as production,
 // minus the Worker Vitest doesn't have).
 
 const MANIFEST: ConnectorDriverManifest = {

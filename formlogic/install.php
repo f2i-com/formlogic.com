@@ -9,7 +9,7 @@
  *     https://your-domain/install.php
  *
  * Fresh install: checks requirements and file permissions (fixing what it can and printing the
- * exact commands for what it can't — including the execute bit on the Linux qjs binary, which zip
+ * exact commands for what it can't — including the execute bit on the Linux sandbox binary, which zip
  * extraction commonly drops), writes the backend .env with generated secrets, creates the database
  * + schema, and finishes with copy-paste cron lines for the maintenance CLIs.
  *
@@ -307,12 +307,12 @@ function checkRequirements(): array
         ];
     }
 
-    // FormLogic qjs sandbox binary (server-side script runtime). Presence on every platform; on
+    // FormLogic sandbox binary (the server-side script runtime). Presence on every platform; on
     // Linux/macOS ALSO the execute bit — zip extraction commonly drops it — with a chmod attempt
     // before asking the operator to do it.
     $qjsBin = $isWin
-        ? flBackendDir() . '/bin/qjs/qjs-windows-x86_64.exe'
-        : flBackendDir() . '/bin/qjs/qjs-linux-x86_64';
+        ? flBackendDir() . '/bin/runtime/formlogic-runtime-windows-x86_64.exe'
+        : flBackendDir() . '/bin/runtime/formlogic-runtime-linux-x86_64';
     $qjsExists = file_exists($qjsBin);
     $qjsFixed = false;
     if ($qjsExists && !$isWin && !is_executable($qjsBin)) {
@@ -321,14 +321,14 @@ function checkRequirements(): array
     }
     $qjsOk = $qjsExists && ($isWin || is_executable($qjsBin));
     $checks['qjs'] = [
-        'label' => 'FormLogic qjs Runtime',
+        'label' => 'FormLogic Script Runtime',
         'required' => $isWin ? 'Present' : 'Present & executable',
         'current' => !$qjsExists
             ? 'Missing'
             : ($qjsOk ? ($qjsFixed ? 'Executable (execute bit restored by the wizard)' : 'Present') : 'Present but NOT executable'),
         'pass' => $qjsOk,
         'help' => !$qjsExists
-            ? 'Vendored under ' . $backendRel . '/bin/qjs; re-clone the repo or fetch qjs from github.com/quickjs-ng/quickjs'
+            ? 'Vendored under ' . $backendRel . '/bin/runtime; re-clone the repo or rebuild it from formlogic/runtime'
             : ($qjsOk ? '' : 'Zip extraction drops the execute bit — run on the server: chmod +x "' . $qjsBin . '"'),
     ];
 
@@ -625,7 +625,7 @@ function runInstall(array $data): array
     }
 
     // 8. Check FormLogic qjs runtime binary (on Linux: also fix/report the execute bit)
-    $steps[] = flQjsStep();
+    $steps[] = flScriptRuntimeStep();
 
     // 9. Optionally set up the demo + marketplace catalog (installable sample app packs + example
     //    data) by running the idempotent provisioning script. Best-effort: it needs a ready schema,
@@ -692,21 +692,21 @@ function runInstall(array $data): array
  * FormLogic qjs runtime step: presence on every platform, plus the execute bit on Linux/macOS —
  * zip extraction commonly drops it, so try chmod +x first and only then ask the operator to.
  */
-function flQjsStep(): array
+function flScriptRuntimeStep(): array
 {
     $backendDir = flBackendDir();
     $isWin = stripos(PHP_OS, 'WIN') === 0;
     $qjsBin = $isWin
-        ? $backendDir . '/bin/qjs/qjs-windows-x86_64.exe'
-        : $backendDir . '/bin/qjs/qjs-linux-x86_64';
+        ? $backendDir . '/bin/runtime/formlogic-runtime-windows-x86_64.exe'
+        : $backendDir . '/bin/runtime/formlogic-runtime-linux-x86_64';
     if (!file_exists($qjsBin)) {
-        return ['label' => 'FormLogic qjs runtime', 'status' => 'warn',
-            'message' => 'Binary not present at ' . basename($backendDir) . '/bin/qjs — form logic & scripts will be disabled'];
+        return ['label' => 'FormLogic script runtime', 'status' => 'warn',
+            'message' => 'Binary not present at ' . basename($backendDir) . '/bin/runtime — form logic & scripts will be disabled'];
     }
     if (!$isWin && !is_executable($qjsBin)) {
         @chmod($qjsBin, 0755); // zip extraction drops the exec bit
         if (!is_executable($qjsBin)) {
-            return ['label' => 'FormLogic qjs runtime', 'status' => 'warn',
+            return ['label' => 'FormLogic script runtime', 'status' => 'warn',
                 'message' => 'Present but not executable (and chmod from PHP failed) — run on the server: chmod +x "' . $qjsBin . '"'];
         }
         return ['label' => 'FormLogic qjs runtime', 'status' => 'ok', 'message' => 'Execute bit was missing — fixed with chmod +x'];
@@ -1021,7 +1021,7 @@ function runUpgrade(): array
     }
 
     // Post-upgrade permission/security checks (a new zip's files may have reset them).
-    $steps[] = flQjsStep();
+    $steps[] = flScriptRuntimeStep();
     $steps[] = flCheckEnvExposure();
 
     $hasErrors = false;
@@ -1285,10 +1285,10 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
           <code>cd <?= $backendRelHtml ?> && php scripts/provision-demo.php</code>
         </li>
         <li id="ns-wasm" class="hidden">
-          The FormLogic qjs runtime binary is missing. It is vendored
-          under <code><?= $backendRelHtml ?>/bin/qjs/</code> — re-upload the release files
-          (or re-clone the repository), or fetch a static <code>qjs</code> build from
-          <code>github.com/quickjs-ng/quickjs</code> for your platform.
+          The FormLogic script runtime binary is missing. It is vendored
+          under <code><?= $backendRelHtml ?>/bin/runtime/</code> — re-upload the release
+          files (or re-clone the repository), or rebuild it for your platform from
+          <code>formlogic/runtime</code>.
         </li>
         <?php if ($isBundle): ?>
         <li>

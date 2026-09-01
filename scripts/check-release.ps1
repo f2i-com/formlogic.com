@@ -86,6 +86,16 @@ Invoke-Gate 'contracts: cross-repo digest (FL-34)' $repo {
     node scripts/check-contracts.mjs
 }
 
+# ── Cross-runtime expression parity. Compares the artifacts the three parity
+# suites write; only meaningful once all three have run, so it rides -Desktop
+# (the backend + browser legs run in the gates above, the desktop leg does not).
+# Without it, the 13 engine-defined corpus cases are recorded and never checked. ──
+if ($Desktop) {
+    Invoke-Gate 'contracts: expression parity across runtimes' $repo {
+        node scripts/check-expression-parity.mjs
+    }
+}
+
 # ── Desktop (Rust) — opt-in: multi-minute build ──
 if ($Desktop) {
     Invoke-Gate 'desktop: cargo clippy (gui features, audit FL-31)' (Join-Path $repo 'formlogic/desktop/src-tauri') {

@@ -1,6 +1,11 @@
 # Dependencies
 node_modules/
 vendor/
+# ...except the vendored expression engine. `vendor/` above is a broad net aimed at
+# Composer (see /backend/vendor/ below), and it silently swallowed ui/vendor/ —
+# which holds the zipp wasm build the browser sandbox needs. Without this the tree
+# clones without an engine and every form with logic fails at runtime.
+!ui/vendor/
 
 # PHPUnit cache
 .phpunit.cache/

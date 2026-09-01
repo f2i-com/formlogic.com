@@ -4,7 +4,7 @@
 // freeze the UI), and lets engine.ts enforce a hard worker.terminate() watchdog
 // as a backstop to the in-VM interrupt deadline.
 /// <reference lib="webworker" />
-import { runEval, type EvalKind } from './quickjs-host';
+import { runEval, type EvalKind } from './zipp-host';
 
 export interface WorkerRequest {
   id: number;

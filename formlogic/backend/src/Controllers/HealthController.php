@@ -8,7 +8,7 @@ use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\ReconcileService;
 use FormLogic\Services\AIService;
-use FormLogic\Services\QuickJsRunner;
+use FormLogic\Services\SandboxRunner;
 use FormLogic\Services\PayPalService;
 use FormLogic\Services\DocumentConverter;
 use FormLogic\Services\FlowService;
@@ -109,7 +109,7 @@ class HealthController
         }
 
         // QuickJS runtime — required for scripts + calculated fields.
-        $qjs = new QuickJsRunner();
+        $qjs = new SandboxRunner();
         $qjsOk = $qjs->isAvailable();
         $checks['quickjs'] = [
             'ok' => $qjsOk,

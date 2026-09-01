@@ -26,7 +26,7 @@ use serde::Serialize;
 use serde_json::{json, Map, Value};
 
 use crate::flows::applogic::{self, AppLogicApp};
-use crate::flows::quickjs;
+use crate::flows::zipp;
 use crate::flows::relay;
 use crate::flows::runner::{self, FlowOutcome, RunDeps, RunOptions};
 use crate::flows::work_ledger::{
@@ -1763,7 +1763,7 @@ impl FlowRuntime {
         // Condition (fail-safe: absent → true; error/false → skip).
         if let Some(expr) = binding.get("condition").and_then(|c| c.get("expr")).and_then(Value::as_str) {
             let ctx = json!({ "event": event });
-            match quickjs::eval_bool(expr, &ctx).await {
+            match zipp::eval_bool(expr, &ctx).await {
                 Ok(true) => {}
                 _ => return BindingRunOutcome::Skipped("condition not met".into()),
             }
@@ -2132,7 +2132,7 @@ impl FlowRuntime {
         // Condition re-check at claim time (it never ran server-side).
         if let (Some(b), Some(ev)) = (&binding, &event) {
             if let Some(expr) = b.get("condition").and_then(|c| c.get("expr")).and_then(Value::as_str) {
-                let passes = matches!(quickjs::eval_bool(expr, &json!({ "event": ev })).await, Ok(true));
+                let passes = matches!(zipp::eval_bool(expr, &json!({ "event": ev })).await, Ok(true));
                 if !passes {
                     let e = runner::FlowError { code: runner::FlowErrorCode::Cancelled, message: "Binding condition evaluated false at claim time".into(), node_id: None };
                     self.complete(client, run_id, &FlowOutcome { status: "cancelled", result: None, error: Some(e), nodes_executed: 0 }, &[]).await;

@@ -20,7 +20,7 @@ namespace FormLogic\Services;
  * - { reject: true, message: 'reason' } to reject the submission
  * - Any other value as the computed result
  *
- * Execution happens inside the QuickJS sandbox (via {@see QuickJsRunner} and the
+ * Execution happens inside the QuickJS sandbox (via {@see SandboxRunner} and the
  * vendored static qjs binary) — the SAME engine + prelude the browser uses. The
  * untrusted script runs with no host bindings; ctx.db/ctx.http/ctx.utils are
  * synchronous RPC callbacks handled here in PHP, so all side effects and the
@@ -35,12 +35,12 @@ class FormLogicRuntime
     private int $maxCallDepth;
     private int $httpRequestCount = 0;
     private float $httpDeadline = 0.0;
-    private QuickJsRunner $runner;
+    private SandboxRunner $runner;
 
     private const MAX_HTTP_REQUESTS = 10;
     private const MAX_RESPONSE_SIZE = 1 * 1024 * 1024; // 1MB
 
-    public function __construct(array $config = [], ?QuickJsRunner $runner = null)
+    public function __construct(array $config = [], ?SandboxRunner $runner = null)
     {
         $this->maxInstructions = $config['maxInstructions'] ?? 50000;
         $this->maxWallTimeMs = $config['maxWallTimeMs'] ?? 2000;
@@ -48,7 +48,7 @@ class FormLogicRuntime
         // onSubmit scripts can do more than a field expression, so give them more
         // memory/stack headroom than the field-expression default (which matches
         // the browser VM). Field-expression parity is handled by FormLogicService.
-        $this->runner = $runner ?? new QuickJsRunner(null, 131072, 1024);
+        $this->runner = $runner ?? new SandboxRunner(null, 131072, 1024);
     }
 
     /**

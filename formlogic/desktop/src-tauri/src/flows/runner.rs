@@ -3,7 +3,7 @@
 //! FORMLOGIC_FLOWS.md §4). Interprets a WorkflowGraph with the SAME node
 //! semantics: topological execution, a 50-node budget, a per-run wall-clock
 //! deadline, and the restricted node set. USER CODE (condition / logic_block)
-//! runs in QuickJS (`quickjs.rs`); selectors/templates are pure Rust
+//! runs in the zipp sandbox (`zipp.rs`); selectors/templates are pure Rust
 //! (`selectors.rs`). `formlogic_*` writes go through the authenticated `/api/v1`
 //! pipeline (`FormLogicClient`), `connector_request` through the local plugin
 //! gateway (`connectors::dispatch`, synthetic internal origin), and
@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Map, Value};
 
 use crate::connectors::{self, ConnectorRequestBody};
-use crate::flows::quickjs;
+use crate::flows::zipp;
 use crate::flows::selectors::{
     interpolate_template, resolve_deep, resolve_selector, scope_to_context, SelectorScope,
 };
@@ -717,7 +717,7 @@ fn clamp_list_limit(raw: Option<&Value>) -> u32 {
 
 /// Clamp a `condition`/`logic_block` node's declared `data.timeoutMs` into
 /// `[NODE_TIMEOUT_MIN_MS, NODE_TIMEOUT_MAX_MS]`, or `None` when absent/not a
-/// finite number — callers then fall back to `quickjs::QJS_TIMEOUT`, preserving
+/// finite number — callers then fall back to `zipp::QJS_TIMEOUT`, preserving
 /// today's behavior for nodes that don't declare an override (mirrors
 /// `clampDeclaredTimeoutMs` in nodes.ts).
 fn clamp_declared_timeout(data: &Value) -> Option<Duration> {
@@ -1028,8 +1028,8 @@ async fn execute_node(
             // deadline; when absent, eval_bool's QJS_TIMEOUT default applies, exactly as
             // before.
             let result = match clamp_declared_timeout(&data) {
-                Some(timeout) => quickjs::eval_bool_with_timeout(&expr, &expr_context(scope), timeout).await,
-                None => quickjs::eval_bool(&expr, &expr_context(scope)).await,
+                Some(timeout) => zipp::eval_bool_with_timeout(&expr, &expr_context(scope), timeout).await,
+                None => zipp::eval_bool(&expr, &expr_context(scope)).await,
             };
             result
                 .map(Value::Bool)
@@ -1058,8 +1058,8 @@ async fn execute_node(
             // deadline now matches the node's declared budget instead of always the fixed
             // QJS_TIMEOUT default.
             let result = match clamp_declared_timeout(&data) {
-                Some(timeout) => quickjs::eval_expr_with_timeout(&expr, &ctx, timeout).await,
-                None => quickjs::eval_expr(&expr, &ctx).await,
+                Some(timeout) => zipp::eval_expr_with_timeout(&expr, &ctx, timeout).await,
+                None => zipp::eval_expr(&expr, &ctx).await,
             };
             result.map_err(|e| FlowError::new(FlowErrorCode::NodeFailed, format!("Node '{}': {e}", node.id), Some(node.id.clone())))
         }

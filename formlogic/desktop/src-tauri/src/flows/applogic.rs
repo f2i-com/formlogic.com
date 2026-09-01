@@ -2,7 +2,7 @@
 //! normally runs in the browser, applied here in FormLogic Desktop so the
 //! receptionist writes its raw Calls / Transcript / SMS records WITHOUT any
 //! browser open (mission deliverable 6, docs FORMLOGIC_FLOWS.md §14 remote
-//! viewer). Each script runs in the QuickJS sandbox (`quickjs::run_applogic`)
+//! viewer). Each script runs in the QuickJS sandbox (`zipp::run_applogic`)
 //! and returns effects; the trusted side here applies the EFFECT SUBSET a
 //! headless runtime supports:
 //!
@@ -20,8 +20,19 @@
 use serde_json::{json, Map, Value};
 use std::sync::Mutex;
 
-use crate::flows::quickjs;
+use crate::flows::zipp;
 use crate::formlogic_client::FormLogicClient;
+
+/// Which `customLogic` scripts this desktop will run.
+///
+/// The `runtime` field is PERSISTED — it is written into `apps.custom_logic` and
+/// into pack manifests, so installed apps in the wild carry `"quickjs"`. It names
+/// the contract (a sandboxed JS hook with no host access), not the engine behind
+/// it, so the historical value keeps working now that zipp provides that sandbox.
+/// New content may declare `"zipp"`. An absent field means the original default.
+fn is_supported_runtime(runtime: Option<&str>) -> bool {
+    matches!(runtime.unwrap_or("quickjs"), "quickjs" | "zipp")
+}
 
 /// How many responses to scan when resolving an update `match`.
 const RESPONSE_SCAN_LIMIT: u32 = 100;
@@ -105,7 +116,7 @@ impl AppLogicApp {
                     .filter(|s| {
                         s.get("hook").and_then(Value::as_str) == Some("onConnectorEvent")
                             && s.get("enabled").and_then(Value::as_bool) != Some(false)
-                            && s.get("runtime").and_then(Value::as_str).unwrap_or("quickjs") == "quickjs"
+                            && is_supported_runtime(s.get("runtime").and_then(Value::as_str))
                     })
                     .filter_map(|s| s.get("source").and_then(Value::as_str).map(str::to_string))
                     .collect()
@@ -154,7 +165,7 @@ pub async fn run_onconnector_event(
             "params": {},
             "meta": { "appSlug": app.app_slug, "appId": app.app_id, "nativeAvailable": true },
         });
-        let result = match quickjs::run_applogic(&source, &ctx).await {
+        let result = match zipp::run_applogic(&source, &ctx).await {
             Ok(v) => v,
             Err(e) => {
                 report.errors.push(format!("script error: {e}"));

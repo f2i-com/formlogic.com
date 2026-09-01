@@ -5,22 +5,31 @@ declare(strict_types=1);
 namespace FormLogic\Services;
 
 /**
- * Runs FormLogic user code inside the QuickJS sandbox via the vendored static
- * `qjs` binary (no Node runtime required). This is the backend half of the
- * unified QuickJS runtime — the browser runs the SAME engine + the SAME prelude
- * (quickjs-emscripten), so client and server results match by construction.
+ * Runs FormLogic user code inside the zipp sandbox, via the vendored
+ * `formlogic-runtime` child (no Node runtime required). The desktop flow runner
+ * embeds the same engine and the same prelude, so an expression means the same
+ * thing wherever it runs.
  *
- * Two modes, both speaking newline-delimited JSON over the qjs process's stdio
- * (see resources/formlogic-harness.js):
+ * The engine replaced a QuickJS build whose harness had to capture `std`/`os`
+ * — filesystem, `popen`, `getenv`, `urlGet` — and then delete them from the
+ * global object before a guest ran. zipp's interpreter-only `safe-sandbox`
+ * profile ships no host modules at all, so there is no list to keep in step, and
+ * a runaway guest is stopped by an instruction budget inside the interpreter
+ * rather than only by an external kill.
+ *
+ * Two modes, both speaking newline-delimited JSON over the child's stdio
+ * (the protocol is unchanged; the child implements it in Rust):
  *
  *  - evaluateBatch(): pure field expressions (conditions / calculated fields /
  *    validation). One round-trip, no host callbacks.
  *  - runScript(): a user onSubmit(ctx) script. ctx.db/ctx.http/ctx.utils are
  *    dispatched back to a PHP host handler via synchronous RPC, so all IO and its
- *    SSRF/DNS-pinning guards stay in PHP.
+ *    SSRF/DNS-pinning guards stay in PHP. The RPC is now a host-side Rust closure
+ *    rather than the guest reading its own stdin, so the guest has no way to
+ *    reach the transport.
  *
  * IO model: stdio pipes are left BLOCKING. The NDJSON protocol is strictly
- * turn-based (qjs writes exactly one line then blocks reading our reply), so
+ * turn-based (the child writes exactly one line then blocks reading our reply), so
  * blocking fgets cannot deadlock. A runaway/looping guest is hard-killed by an
  * EXTERNAL watchdog process (ping+taskkill on Windows / sleep+kill on POSIX, see
  * spawnWatchdog) when a single compute window overruns the CPU budget; that
@@ -30,22 +39,20 @@ namespace FormLogic\Services;
  * The watchdog is paused around host calls so handler latency (e.g. a slow HTTP
  * request, bounded separately) doesn't count against the guest's compute budget.
  */
-class QuickJsRunner
+class SandboxRunner
 {
     private string $binary;
-    private string $harness;
     private string $prelude;
     private int $memoryLimitKb;
     private int $stackSizeKb;
 
     public function __construct(
         ?string $binary = null,
-        int $memoryLimitKb = 65536, // 64 MiB — matches the browser VM (quickjs-host.ts)
+        int $memoryLimitKb = 65536, // 64 MiB — matches the browser VM (zipp-host.ts)
         int $stackSizeKb = 512
     ) {
         $base = dirname(__DIR__, 2); // .../backend
         $this->binary = $binary ?? $this->detectBinary($base);
-        $this->harness = $base . '/resources/formlogic-harness.js';
         $this->prelude = $base . '/resources/formlogic-prelude.js';
         $this->memoryLimitKb = $memoryLimitKb;
         $this->stackSizeKb = $stackSizeKb;
@@ -53,15 +60,21 @@ class QuickJsRunner
 
     private function detectBinary(string $base): string
     {
-        $override = getenv('FORMLOGIC_QJS_BIN') ?: ($_ENV['FORMLOGIC_QJS_BIN'] ?? '');
-        if (is_string($override) && $override !== '' && is_file($override)) {
-            return $override;
+        // FORMLOGIC_QJS_BIN is still honoured: it is documented, it is set in
+        // existing deployments, and its job (point at a runtime somewhere else)
+        // has not changed. FORMLOGIC_RUNTIME_BIN is the name that matches what it
+        // now points at.
+        foreach (['FORMLOGIC_RUNTIME_BIN', 'FORMLOGIC_QJS_BIN'] as $var) {
+            $override = getenv($var) ?: ($_ENV[$var] ?? '');
+            if (is_string($override) && $override !== '' && is_file($override)) {
+                return $override;
+            }
         }
-        $dir = $base . '/bin/qjs';
+        $dir = $base . '/bin/runtime';
         if (PHP_OS_FAMILY === 'Windows') {
-            return $dir . '/qjs-windows-x86_64.exe';
+            return $dir . '/formlogic-runtime-windows-x86_64.exe';
         }
-        return $dir . '/qjs-linux-x86_64';
+        return $dir . '/formlogic-runtime-linux-x86_64';
     }
 
     /**
@@ -71,7 +84,7 @@ class QuickJsRunner
      */
     public function isAvailable(): bool
     {
-        return is_file($this->binary) && is_file($this->harness) && is_file($this->prelude);
+        return is_file($this->binary) && is_file($this->prelude);
     }
 
     /**
@@ -82,7 +95,7 @@ class QuickJsRunner
      */
     public function evaluateBatch(array $jobs, array $context = [], int $cpuBudgetMs = 1000): array
     {
-        // Shared context sent ONCE at the payload top level (the harness applies it
+        // Shared context sent ONCE at the payload top level (the runtime applies it
         // to all jobs) instead of duplicated into every job — see FormLogicService.
         $payload = ['mode' => 'eval', 'jobs' => array_values($jobs), 'context' => (object) $context];
         $done = $this->run($payload, null, $cpuBudgetMs);
@@ -119,7 +132,7 @@ class QuickJsRunner
      * It may throw to surface an error into the guest.
      *
      * @param array{answers?: array, meta?: array} $context
-     * @return array  The harness "done" message: {result?, reject?, message?, error?}
+     * @return array  The runtime's "done" message: {result?, reject?, message?, error?}
      */
     public function runScript(string $script, array $context, callable $hostHandler, int $cpuBudgetMs = 2500): array
     {
@@ -135,7 +148,7 @@ class QuickJsRunner
     }
 
     /**
-     * Core process driver. Spawns qjs, writes the job, pumps the NDJSON protocol
+     * Core process driver. Spawns the child, writes the job, pumps the NDJSON protocol
      * until a "done" message (or deadline/crash), and returns the done payload.
      *
      * @return array  Always returns a "done"-shaped array; on failure it carries
@@ -149,11 +162,8 @@ class QuickJsRunner
 
         $cmd = [
             $this->binary,
-            '--std',
-            '--memory-limit', (string) $this->memoryLimitKb,
-            '--stack-size', (string) $this->stackSizeKb,
-            $this->harness,
-            $this->prelude,
+            '--prelude', $this->prelude,
+            '--heap-mb', (string) max(1, intdiv($this->memoryLimitKb, 1024)),
         ];
 
         $descriptors = [
@@ -228,7 +238,7 @@ class QuickJsRunner
                 // also closes the kill-mid-dispatch race for db/utils calls.
                 $this->stopWatchdog($watchdog);
                 $reply = $this->dispatchHostCall($hostHandler, $msg);
-                // qjs may have been killed (or the pipe broken) meanwhile; stop if so.
+                // the child may have been killed (or the pipe broken) meanwhile; stop if so.
                 $st = proc_get_status($proc);
                 if (empty($st['running']) || @fwrite($pipes[0], $this->encodeLine($reply)) === false) {
                     break;
@@ -276,7 +286,7 @@ class QuickJsRunner
     }
 
     /**
-     * Terminate (if still running) and fully release a qjs process and its pipes.
+     * Terminate (if still running) and fully release the child process and its pipes.
      *
      * @param resource $proc
      * @param array<int, resource> $pipes
@@ -300,7 +310,7 @@ class QuickJsRunner
     }
 
     /**
-     * Spawn a detached watchdog that hard-kills the qjs process after $secs.
+     * Spawn a detached watchdog that hard-kills the child process after $secs.
      * Returns an opaque handle (or null) for {@see stopWatchdog}.
      */
     private function spawnWatchdog(int $pid, int $secs): mixed

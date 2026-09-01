@@ -49,7 +49,7 @@ const CEREMONY_DELAY_MAX_MS = 8000;
 const CONNECTOR_ID_RE = /^[a-z][a-z0-9_-]{0,63}$/;
 
 // The sandbox evaluator. Production = runAppLogic (engine.ts → the browser
-// Worker → the QuickJS WASM VM). Tests inject quickjs-host's runEval directly
+// Worker → the zipp WASM VM). Tests inject zipp-host's runEval directly
 // (same PRELUDE/JSON-ctx/budget semantics, no Worker — Vitest has none).
 type DriverEvaluator = (source: string, ctx: Record<string, unknown>, budgetMs: number) => Promise<unknown>;
 let driverEvaluator: DriverEvaluator = runAppLogic;

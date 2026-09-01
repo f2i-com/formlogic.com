@@ -17,6 +17,14 @@ class E2eePrivacySweepTest extends E2eeTestCase
         $this->enablePrivateForm((string) $private['id']);
         $plain = $this->makeDraftForm();
 
+        // runPrivacySweep counts across the WHOLE database, so an absolute count here
+        // asserts something this test does not own: any leftover private-form metadata
+        // row anywhere becomes sweep-eligible the moment it ages past the window, and
+        // the assertion fails for a reason unrelated to the behaviour under test. (It
+        // did: 672 rows leaked by other E2EE tests crossed the 30-day line and turned
+        // the expected 1 into 673.) Measure the DELTA this test is responsible for.
+        $before = self::$encryption->runPrivacySweep(30, true);
+
         $old = date('Y-m-d H:i:s', time() - 40 * 86400);
         $now = date('Y-m-d H:i:s');
         $ins = self::$pdo->prepare('INSERT INTO response_metadata (id, form_id, status, submitted_at, ip_address) VALUES (?, ?, ?, ?, ?)');
@@ -27,10 +35,10 @@ class E2eePrivacySweepTest extends E2eeTestCase
         $ins->execute([$plainId, $plain['id'], 'submitted', $old, '203.0.113.3']);              // old PLAIN → kept
 
         // Dry run reports without touching anything.
-        $this->assertSame(1, self::$encryption->runPrivacySweep(30, true));
+        $this->assertSame($before + 1, self::$encryption->runPrivacySweep(30, true));
         $this->assertSame('203.0.113.1', $this->row('SELECT ip_address FROM response_metadata WHERE submitted_at = ? AND form_id = ?', [$old, $private['id']])['ip_address']);
 
-        $this->assertSame(1, self::$encryption->runPrivacySweep(30));
+        $this->assertSame($before + 1, self::$encryption->runPrivacySweep(30));
         $this->assertNull($this->row('SELECT ip_address FROM response_metadata WHERE submitted_at = ? AND form_id = ?', [$old, $private['id']])['ip_address']);
         $this->assertSame('203.0.113.2', $this->row('SELECT ip_address FROM response_metadata WHERE id = ?', [$recentId])['ip_address']);
         $this->assertSame('203.0.113.3', $this->row('SELECT ip_address FROM response_metadata WHERE id = ?', [$plainId])['ip_address']);

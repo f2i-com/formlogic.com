@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkerRequest, WorkerResponse } from './formlogic.worker';
 
-// engine.ts spawns a real browser Worker (formlogic.worker.ts -> quickjs-host.ts, a real WASM
+// engine.ts spawns a real browser Worker (formlogic.worker.ts -> zipp-host.ts, a real WASM
 // QuickJS VM) — we can't and shouldn't run that under Vitest. This fake simulates the SAME
 // postMessage/onmessage protocol so the budget plumbing this suite exists to pin down
 // (docs/FORMLOGIC_FLOWS.md §4: a node's declared `timeoutMs` must become the sandbox's REAL

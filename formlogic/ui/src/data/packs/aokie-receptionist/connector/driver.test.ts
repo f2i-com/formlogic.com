@@ -25,7 +25,7 @@ import {
 } from '../../../../client-runtime/desktop/desktopEvents';
 import type { DesktopEventEnvelope } from '../../../../client-runtime/desktop/desktopTypes';
 import { setConnectorCapabilityContext } from '../../../../client-runtime/desktop/desktopClient';
-import { runEval } from '../../../../lib/formlogic/quickjs-host';
+import { runEval } from '../../../../lib/formlogic/zipp-host';
 import { api } from '../../../../lib/api';
 
 // The pack-embedded aokie DEMO driver (connector/driver.js), ported from the retired

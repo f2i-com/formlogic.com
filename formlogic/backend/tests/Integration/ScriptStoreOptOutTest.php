@@ -8,7 +8,7 @@ use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\FormLogicRuntime;
 use FormLogic\Services\FormService;
-use FormLogic\Services\QuickJsRunner;
+use FormLogic\Services\SandboxRunner;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\ScriptRejection;
 use PDO;
@@ -39,8 +39,8 @@ class ScriptStoreOptOutTest extends TestCase
 
     public static function setUpBeforeClass(): void
     {
-        if (!(new QuickJsRunner())->isAvailable()) {
-            self::markTestSkipped('QuickJS runtime unavailable');
+        if (!(new SandboxRunner())->isAvailable()) {
+            self::markTestSkipped('FormLogic script runtime unavailable');
         }
         $root = dirname(__DIR__, 2);
         if (is_file($root . '/.env')) {

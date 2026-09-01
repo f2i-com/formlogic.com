@@ -8,7 +8,7 @@ namespace FormLogic\Services;
  * Evaluates FormLogic field expressions (conditional visibility, calculated
  * fields, validation rules) server-side.
  *
- * Expressions run inside the QuickJS sandbox via {@see QuickJsRunner} — the exact
+ * Expressions run inside the QuickJS sandbox via {@see SandboxRunner} — the exact
  * same engine and standard-library prelude the browser uses — so server results
  * match the client by construction. Each method throws on evaluation error; the
  * callers (ResponseService) decide the failure policy (visibility fails open,
@@ -16,11 +16,11 @@ namespace FormLogic\Services;
  */
 class FormLogicService
 {
-    private QuickJsRunner $runner;
+    private SandboxRunner $runner;
 
-    public function __construct(?QuickJsRunner $runner = null)
+    public function __construct(?SandboxRunner $runner = null)
     {
-        $this->runner = $runner ?? new QuickJsRunner();
+        $this->runner = $runner ?? new SandboxRunner();
     }
 
     /**

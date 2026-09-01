@@ -1,0 +1,3 @@
+# Build artefacts. The shipped binaries are vendored under
+# backend/bin/runtime/ instead — see this crate's README.
+target/
