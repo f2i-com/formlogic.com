@@ -135,28 +135,37 @@ Options -Indexes
 # for anyone who opens a form with a calculated field, a conditional rule or a
 # validation rule.
 #
-# Both blocks are guarded, so this file stays valid on a server that has neither
-# module. Brotli is listed first: where both are enabled Apache honours the
-# client's Accept-Encoding preference, and every browser that offers `br` offers
-# it ahead of gzip.
+# EVERY block is guarded, and the guard that matters most is the OUTER one:
+# `AddOutputFilterByType` is provided by mod_filter, NOT by mod_deflate or
+# mod_brotli. Guarding only on the compressor would let this file parse on a
+# server that has deflate but not filter — and an unknown directive in .htaccess
+# is a 500 on every request, not a warning. (WAMP ships all three modules
+# commented out, so this is a real configuration, not a hypothetical one.)
 #
-# What is deliberately NOT compressed: images, video, audio, woff2 fonts and
-# archives are already compressed formats. Running them through the compressor
-# again costs CPU per request and typically makes them slightly larger.
+# Brotli is listed first: where both are enabled Apache honours the client's
+# Accept-Encoding preference, and every browser that offers `br` prefers it.
+#
+# Deliberately NOT compressed: images, video, audio, woff2 fonts and archives are
+# already compressed. Running them through again costs CPU per request and
+# usually makes them slightly larger.
 # ============================================================================
-<IfModule mod_brotli.c>
-  AddOutputFilterByType BROTLI_COMPRESS \
-    text/html text/plain text/css text/xml text/csv \
-    application/javascript application/json application/manifest+json \
-    application/wasm application/xml image/svg+xml
+<IfModule mod_filter.c>
+  <IfModule mod_brotli.c>
+    AddOutputFilterByType BROTLI_COMPRESS \
+      text/html text/plain text/css text/xml text/csv \
+      application/javascript application/json application/manifest+json \
+      application/wasm application/xml image/svg+xml
+  </IfModule>
+
+  <IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE \
+      text/html text/plain text/css text/xml text/csv \
+      application/javascript application/json application/manifest+json \
+      application/wasm application/xml image/svg+xml
+  </IfModule>
 </IfModule>
 
-<IfModule mod_deflate.c>
-  AddOutputFilterByType DEFLATE \
-    text/html text/plain text/css text/xml text/csv \
-    application/javascript application/json application/manifest+json \
-    application/wasm application/xml image/svg+xml
-
+<IfModule mod_setenvif.c>
   # Belt and braces for the already-compressed formats: a proxy or an earlier
   # directive can still route them here, and re-deflating them is pure waste.
   SetEnvIfNoCase Request_URI \.(?:gif|jpe?g|png|webp|avif|ico|mp4|webm|mp3|zip|gz|br|woff2?)$ no-gzip dont-vary
