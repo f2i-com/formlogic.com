@@ -148,7 +148,12 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
 
   useEffect(() => {
     return () => {
+      // Reading .current AT CLEANUP is the point here: these hold whichever
+      // timeout is outstanding at unmount. The rule's usual remedy — copy the
+      // ref into a local inside the effect — would capture the value at MOUNT,
+      // which is null, and clear nothing.
       if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     };
   }, []);

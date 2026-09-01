@@ -265,7 +265,11 @@ class PackFlowImportTest extends TestCase
         $this->assertCount(1, $result['apps']);
         $appId = $result['apps'][0]['id'];
 
-        // 18 flows / 17 bindings: deterministic Realtime appointment apply
+        // 19 flows / 19 bindings: sms-approved-drain (2026-07-xx, "Send the SMS
+        // drafts a human approved") binds TWICE — aokie.call.incoming AND
+        // aokie.sms.received — because either event is a chance to notice that a
+        // draft has been approved and send it. It joined deterministic Realtime
+        // appointment apply
         // (no LLM, requested-not-confirmed) plus callback-drain (2026-07-15 — dials the oldest
         // queued callback whenever an inbound call ends and the line is free)
         // and hold-lost-apology (2026-07-15 Phase 4
@@ -282,9 +286,36 @@ class PackFlowImportTest extends TestCase
         // eight. The live-reply binding ships DISABLED (the in-plugin
         // receptionist owns replies) but still imports as a row.
         $flows = self::$flows->listFlows($appId);
-        $this->assertCount(18, $flows);
+        $this->assertCount(19, $flows);
         $bindings = self::$flows->listBindings($appId);
-        $this->assertCount(17, $bindings);
+        $this->assertCount(19, $bindings);
+        // Counts alone drift silently — this assertion sat one flow behind for a
+        // while and only said "18 != 19", which does not tell you what changed.
+        // Name them, so adding or losing a flow reports ITSELF.
+        $slugs = array_map(static fn (array $f): string => (string) $f['slug'], $flows);
+        sort($slugs);
+        $this->assertSame([
+            'after-call-actions',
+            'appointment-request-apply',
+            'business-lookup',
+            'call-summary-follow-up',
+            'callback-drain',
+            'configure-receptionist',
+            'hardware-error-alert',
+            'hold-lost-apology',
+            'incoming-caller-lookup',
+            'live-reply',
+            'manager-action-apply',
+            'manager-action-plan',
+            'missed-call-follow-up',
+            'outbound-callback-result',
+            'personalize-caller',
+            'sms-approved-drain',
+            'sms-auto-reply-draft',
+            'sms-delivery-status',
+            'sms-followup-conversation',
+        ], $slugs);
+
         $this->assertStringNotContainsString('@pack:', json_encode($flows));
         $this->assertStringNotContainsString('@pack:', json_encode($bindings));
 

@@ -142,7 +142,6 @@ export function LocalRuntimePanel() {
   useEffect(() => {
     // Deliberate load-on-mount/-on-change: loadDetails only clears stale state
     // before the async fetch.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadDetails();
   }, [active, oaiyPaired, desktopPaired, loadDetails]);
 

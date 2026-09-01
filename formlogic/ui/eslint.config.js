@@ -34,6 +34,16 @@ export default defineConfig([
       'react-refresh/only-export-components': 'off',
       'react-hooks/purity': 'off',
       'react-hooks/immutability': 'off',
+      // The codebase already uses a leading underscore to mean "declared on
+      // purpose, deliberately unused" — 55 parameters say so, most of them
+      // positional placeholders in callbacks and test shims where the argument
+      // cannot simply be dropped. Honour that convention instead of leaving the
+      // marker decorative; without it the rule fires on exactly the parameters
+      // whose name already documents the intent.
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+      ],
     },
   },
 ])
