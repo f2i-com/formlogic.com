@@ -3363,7 +3363,7 @@ class FlowService
 
         $stmt = $this->mysql->prepare("
             SELECT DISTINCT SUBSTRING_INDEX(SUBSTRING(arp.permission, 11), '.', 1) AS connector_id,
-                   ar.app_id, a.name AS app_name
+                   ar.app_id, a.name AS app_name, a.created_at AS app_created_at
             FROM app_role_permissions arp
             JOIN app_roles ar ON ar.id = arp.role_id
             JOIN apps a ON a.id = ar.app_id

@@ -126,9 +126,12 @@ class InstallJobService
     {
         $stmt = $this->mysql->prepare("
             UPDATE package_install_jobs
-            SET state = ?, progress = ?, error_code = ?, error_text = ?
+            SET state = ?, progress = COALESCE(?, progress), error_code = ?, error_text = ?
             WHERE id = ? AND device_id = ? AND claim_token = ? AND state = '" . self::STATE_RUNNING . "'
         ");
+        // progress is NOT NULL: success pins 100, failure keeps the last reported figure
+        // (where the install got to before it failed is exactly what the UI should show).
+        // A literal NULL here was a strict-mode 1048 on MySQL 8 — the local server coerced it.
         $stmt->execute([
             $ok ? self::STATE_SUCCEEDED : self::STATE_FAILED,
             $ok ? 100 : null,
