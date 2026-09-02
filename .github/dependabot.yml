@@ -9,6 +9,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # 7.1's stricter effect analysis flags ~100 sites that pass under 7.0 (see the
+      # 2026-09-02 dependency sweep). Pinned at 7.0.1 until that refactor lands.
+      - dependency-name: eslint-plugin-react-hooks
+        versions: [">=7.1.0"]
     groups:
       # Dev tooling (linters, types, build) churns often and is low-risk — one PR.
       dev-tooling:
