@@ -129,7 +129,11 @@ test.describe('aokie receptionist (mock desktop path)', () => {
       });
 
       // No Desktop installed → the SDK screen runs against the simulated bridge.
-      const simulate = page.getByRole('button', { name: /simulate incoming call/i });
+      // The Live Call screen is a sandboxed custom screen: it renders inside the
+      // /screen-host.html iframe (CustomScreenRuntime), and Playwright locators do
+      // not pierce frames — address the frame explicitly.
+      const screen = page.frameLocator('iframe[title="Custom screen"]');
+      const simulate = screen.getByRole('button', { name: /simulate incoming call/i });
       await expect(simulate).toBeVisible({ timeout: 30_000 });
       await simulate.click();
 

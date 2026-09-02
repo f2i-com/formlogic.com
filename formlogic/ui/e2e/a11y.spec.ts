@@ -100,7 +100,8 @@ test.describe('accessibility smoke (axe)', () => {
     await login(page);
     await page.goto('/');
     await page.getByRole('main').waitFor();
-    await page.getByRole('button', { name: /import pack/i }).first().click();
+    // The dashboard's template entry was renamed from "Import pack" to "Start from a template".
+    await page.getByRole('button', { name: /start from a template/i }).first().click();
     // The catalog grid is a list of buttons; scan it before switching tabs.
     await page.getByRole('button', { name: /^Installed/ }).first().waitFor({ timeout: 20_000 });
     await expectNoSeriousViolations(page, 'packs modal (marketplace)', '[role="dialog"]');

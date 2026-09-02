@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, memo, type CSSProperties } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { logger } from '../lib/logger';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useCreateFormFlow } from '../hooks/useCreateFormFlow';
@@ -227,19 +227,11 @@ const FormCard = memo(function FormCard({
 
   return (
     <Card
-      role="button"
-      tabIndex={0}
-      aria-label={`Open ${form.title || 'Untitled Form'} in the builder`}
+      // Mouse convenience only — see Dashboard: a role="button" wrapper around the
+      // card's own buttons is a nested-interactive violation. The title link is
+      // the accessible action.
       onClick={() => onNavigate(`/builder/${form.id}`)}
-      onKeyDown={(e) => {
-        // Only act on the card itself — inner buttons handle their own keys.
-        if (e.target !== e.currentTarget) return;
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onNavigate(`/builder/${form.id}`);
-        }
-      }}
-      className="group cursor-pointer transition-colors duration-200 hover:bg-gray-50/70 dark:hover:bg-slate-800/40 hover:border-gray-300 dark:hover:border-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
+      className="group cursor-pointer transition-colors duration-200 hover:bg-gray-50/70 dark:hover:bg-slate-800/40 hover:border-gray-300 dark:hover:border-slate-600 focus-within:ring-2 focus-within:ring-primary-500 focus-within:ring-offset-2 dark:focus-within:ring-offset-slate-950"
     >
       <CardContent className="p-4 sm:p-5">
         <div className="flex items-start gap-3">
@@ -248,7 +240,11 @@ const FormCard = memo(function FormCard({
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 min-w-0">
-              <h3 className="text-[15px] font-semibold leading-snug text-gray-900 dark:text-slate-100 truncate" title={form.title || 'Untitled Form'}>{form.title || 'Untitled Form'}</h3>
+              <h3 className="text-[15px] font-semibold leading-snug text-gray-900 dark:text-slate-100 truncate" title={form.title || 'Untitled Form'}>
+                <Link to={`/builder/${form.id}`} aria-label={`Open ${form.title || 'Untitled Form'} in the builder`} onClick={(e) => e.stopPropagation()} className="focus-visible:outline-none">
+                  {form.title || 'Untitled Form'}
+                </Link>
+              </h3>
               {form.isPrivate && <PrivateLockBadge />}
             </div>
             <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">

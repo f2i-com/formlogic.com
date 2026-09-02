@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback, type CSSProperties } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 
 import { logger } from '../lib/logger';
@@ -1464,19 +1464,13 @@ export function Dashboard() {
                   return (
                     <Card
                       key={form.id}
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`Open ${form.title || 'Untitled Form'} in the builder`}
+                      // The whole card stays clickable for the mouse, but it is NOT a
+                      // control: a role="button" wrapper around the card's own buttons
+                      // (menu, actions) is a nested-interactive violation, and a screen
+                      // reader announced one giant button whose inner controls were
+                      // unreachable. The title link below is the accessible action.
                       onClick={() => navigate(`/builder/${form.id}`)}
-                      onKeyDown={(e) => {
-                        // Only act on the card itself — inner buttons handle their own keys.
-                        if (e.target !== e.currentTarget) return;
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          navigate(`/builder/${form.id}`);
-                        }
-                      }}
-                      className="group cursor-pointer overflow-hidden transition-all duration-300 hover:border-primary-300/80 hover:shadow-md hover:shadow-gray-900/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:hover:border-primary-500/30 dark:hover:shadow-black/20 dark:focus-visible:ring-offset-slate-950"
+                      className="group cursor-pointer overflow-hidden transition-all duration-300 hover:border-primary-300/80 hover:shadow-md hover:shadow-gray-900/[0.05] focus-within:ring-2 focus-within:ring-primary-500 focus-within:ring-offset-2 dark:hover:border-primary-500/30 dark:hover:shadow-black/20 dark:focus-within:ring-offset-slate-950"
                     >
                       <CardContent className="p-0">
                         <div className="p-4 sm:p-5">
@@ -1488,7 +1482,14 @@ export function Dashboard() {
                             <div className="min-w-0 flex-1">
                               <div className="flex min-w-0 flex-wrap items-center gap-2">
                                 <h4 className="min-w-0 max-w-full truncate font-semibold text-gray-900 motion-safe:transition-colors group-hover:text-primary-600 dark:text-white dark:group-hover:text-primary-400" title={form.title || 'Untitled Form'}>
-                                  {form.title || 'Untitled Form'}
+                                  <Link
+                                    to={`/builder/${form.id}`}
+                                    aria-label={`Open ${form.title || 'Untitled Form'} in the builder`}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="focus-visible:outline-none"
+                                  >
+                                    {form.title || 'Untitled Form'}
+                                  </Link>
                                 </h4>
                                 <Badge
                                   variant={form.status === 'published' ? 'success' : 'default'}

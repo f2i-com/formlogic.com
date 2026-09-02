@@ -140,7 +140,7 @@ export function EventPicker({
                       <span className="min-w-0 flex-1">
                         <span className="flex min-w-0 items-baseline gap-2">
                           <span className="text-sm font-medium text-gray-900 dark:text-white">{entry.label}</span>
-                          <span className="truncate font-mono text-[10px] text-gray-400 dark:text-slate-500">{entry.event}</span>
+                          <span className="truncate font-mono text-[10px] text-gray-500 dark:text-slate-400">{entry.event}</span>
                         </span>
                         <span className="mt-0.5 block text-xs leading-snug text-gray-500 dark:text-slate-400">{entry.description}</span>
                         {entry.payloadHints.length > 0 && (

@@ -378,7 +378,7 @@ function FlowListCard({
             <div key={g.app?.id ?? 'workspace'}>
               <div className="mb-1.5 flex items-center gap-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">
                 <p className="min-w-0 flex-1 truncate">{g.app ? g.app.name : 'Workspace'}</p>
-                <span className="flex-none text-gray-400 dark:text-slate-500">· {g.flows.length}</span>
+                <span className="flex-none text-gray-500 dark:text-slate-400">· {g.flows.length}</span>
               </div>
               <div className="space-y-1">
                 {g.flows.map((flow) => (
@@ -530,7 +530,7 @@ function FlowRow({ flow, onSelect, onDuplicate, onRename, onRequestToggleEnabled
                 </span>
               )}
             </span>
-            <p className={cn('truncate font-mono text-[10px] text-gray-400 dark:text-slate-500', !flow.enabled && 'opacity-60')}>
+            <p className={cn('truncate font-mono text-[10px] text-gray-500 dark:text-slate-400', !flow.enabled && 'opacity-60')}>
               {flow.slug} · v{flow.version}
             </p>
           </button>

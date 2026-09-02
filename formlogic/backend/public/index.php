@@ -1481,7 +1481,12 @@ $rateLimiter = new \FormLogic\Services\RateLimiter($container->get(MySQLConnecti
 // used to share one 10/60s IP counter, so a user who fumbled login a few times could find
 // their password-reset attempt already throttled by budget login spent. Two independent
 // buckets (distinct keyPrefixes) fix that while keeping the same IP-keyed 10/60s strictness.
-$authRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'auth_login', false, true); // fail closed: login is high-risk (RATE-001)
+// AUTH_LOGIN_RATE_LIMIT raises the per-IP login/register budget for environments where
+// one address stands for many clients — the e2e suite logs in dozens of times a minute
+// from a single runner and was tripping this fail-closed limiter mid-run. Production
+// leaves it unset (10/min).
+$authLoginLimit = max(1, min(10000, (int) ((getenv('AUTH_LOGIN_RATE_LIMIT') ?: ($_ENV['AUTH_LOGIN_RATE_LIMIT'] ?? 0)) ?: 10)));
+$authRateLimiter = new RateLimitMiddleware($rateLimiter, $authLoginLimit, 60, 'auth_login', false, true); // fail closed: login is high-risk (RATE-001)
 $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->post('/register', [AuthController::class, 'register']);
     $group->post('/login', [AuthController::class, 'login']);
