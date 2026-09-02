@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { desktopClient, setConnectorCapabilityContext } from './desktopClient';
 import { clearDesktopToken, getDesktopToken, storeDesktopToken } from './desktopPairing';
+import { API_BASE_URL } from '../../lib/apiBase';
+
+// The client builds its cloud URLs from VITE_API_URL — absolute on a dev box with a
+// separate API vhost, the relative '/api' in CI and production. Assert against the same
+// base so the test pins the PATH, not one developer's .env.
+const API = API_BASE_URL.replace(/\/+$/, '');
 
 // Desktop client error mapping: network failure → connector_unavailable (flagged as a
 // transport failure), HTTP 401 → auth_required + the stored token is dropped, and a
@@ -198,7 +204,7 @@ describe('desktopClient.ai gateway', () => {
     );
 
     expect(res).toEqual({ ok: true, data: completion });
-    expect(fetchMock.mock.calls[0][0]).toBe('http://api.formlogic.local/api/app/owner-app/service-capability');
+    expect(fetchMock.mock.calls[0][0]).toBe(`${API}/app/owner-app/service-capability`);
     const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(url).toBe('http://127.0.0.1:17872/api/ai/providers/chat%2Fprovider/v1/chat/completions');
     expect(init.method).toBe('POST');
@@ -525,7 +531,7 @@ describe('desktopClient.servicePlatform', () => {
     expect(models.ok && models.data[0].model).toBe('model-slug');
     expect(chat).toEqual({ ok: true, data: { threadId: 'thread-1', turnId: 'turn-1', text: 'Hello' } });
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
-      'http://api.formlogic.local/api/app/owner-app/service-capability',
+      `${API}/app/owner-app/service-capability`,
       'http://127.0.0.1:17872/api/services/codex/status',
       'http://127.0.0.1:17872/api/services/codex/models',
       'http://127.0.0.1:17872/api/services/codex/actions/assistant.chat',
@@ -613,7 +619,7 @@ describe('desktopClient.servicePlatform', () => {
     storeDesktopToken('pair_tok');
     setConnectorCapabilityContext(null);
     const fetchMock = setFetch(vi.fn((url: string) => {
-      if (url === 'http://api.formlogic.local/api/service-capability') {
+      if (url === `${API}/service-capability`) {
         return jsonResponse({
           token: 'workspace_capability',
           serviceId: 'openai-codex-agent',
@@ -637,7 +643,7 @@ describe('desktopClient.servicePlatform', () => {
     const result = await desktopClient.servicePlatform.codex.status();
     expect(result.ok).toBe(true);
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
-      'http://api.formlogic.local/api/service-capability',
+      `${API}/service-capability`,
       'http://127.0.0.1:17872/api/services/codex/status',
     ]);
     const desktopHeaders = (fetchMock.mock.calls[1][1] as RequestInit).headers as Record<string, string>;
