@@ -24,7 +24,25 @@ async function expectNoSeriousViolations(page: Page, surface: string, scope?: st
   // scan attributes that page's pre-existing findings to the modal — which both blames the
   // wrong surface and lets a real modal defect hide in the noise.
   let builder = new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']);
-  if (scope) builder = builder.include(scope);
+  if (scope) {
+    builder = builder.include(scope);
+    // Modals fade in (Modal.tsx: opacity 0 → 1 over 150 ms). A scan that starts mid-fade
+    // measures text blended with the backdrop and reports colour-contrast failures that do
+    // not exist at rest — seen on a slow CI runner, never locally. Wait until the scoped
+    // region and every ancestor are fully opaque before measuring.
+    await page.waitForFunction(
+      (selector) => {
+        let el = document.querySelector(selector) as HTMLElement | null;
+        if (!el) return false;
+        for (; el; el = el.parentElement) {
+          if (getComputedStyle(el).opacity !== '1') return false;
+        }
+        return true;
+      },
+      scope,
+      { timeout: 10_000 }
+    );
+  }
   const results = await builder.analyze();
   const blocking = results.violations.filter(
     (violation) => violation.impact === 'serious' || violation.impact === 'critical'
