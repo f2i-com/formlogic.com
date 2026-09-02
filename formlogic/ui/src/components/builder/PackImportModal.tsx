@@ -796,7 +796,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                   <Button variant="outline" size="sm" className="mt-4" onClick={browse.retry}>Try again</Button>
                 </div>
               ) : catalogPacks.length === 0 ? (
-                <div className="text-center py-16 text-gray-400 dark:text-slate-500">
+                <div className="text-center py-16 text-gray-500 dark:text-slate-400">
                   <Package className="h-10 w-10 mx-auto mb-3 opacity-40" />
                   {storageMode !== 'api' ? (
                     <>
@@ -836,7 +836,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                             <p className="truncate text-sm font-semibold text-gray-900 dark:text-white transition-colors group-hover:text-primary-700 dark:group-hover:text-primary-300">
                               {pack.name}
                             </p>
-                            <p className="truncate text-xs text-gray-400 dark:text-slate-500">
+                            <p className="truncate text-xs text-gray-500 dark:text-slate-400">
                               {pack.publisherName || 'FormLogic'}
                             </p>
                           </div>
@@ -870,12 +870,12 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                               .map(([label, n]) => (
                                 <div key={label} className="flex items-baseline gap-1">
                                   <dd className="fl-mono text-sm font-semibold tabular-nums text-gray-900 dark:text-white">{n}</dd>
-                                  <dt className="text-[11px] text-gray-400 dark:text-slate-500">{n === 1 ? label.replace(/s$/, '') : label}</dt>
+                                  <dt className="text-[11px] text-gray-500 dark:text-slate-400">{n === 1 ? label.replace(/s$/, '') : label}</dt>
                                 </div>
                               ))}
                           </dl>
                           {/* Social proof is context, not substance — quieter, and below. */}
-                          <div className="mt-1.5 flex items-center gap-2 text-[11px] text-gray-400 dark:text-slate-500">
+                          <div className="mt-1.5 flex items-center gap-2 text-[11px] text-gray-500 dark:text-slate-400">
                             <span className="inline-flex items-center gap-1">
                               {renderStars(pack.avgRating)}
                               {pack.ratingCount > 0 && <span className="ml-0.5">({pack.ratingCount})</span>}
@@ -898,7 +898,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                               </span>
                             ))}
                             {pack.tags.length > 3 && (
-                              <span className="text-[10px] text-gray-400 dark:text-slate-500 self-center">+{pack.tags.length - 3}</span>
+                              <span className="text-[10px] text-gray-500 dark:text-slate-400 self-center">+{pack.tags.length - 3}</span>
                             )}
                           </div>
                         )}
@@ -1063,7 +1063,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                       )}
 
                       {(inst.existingFormCount < inst.formCount || inst.existingAppCount < inst.appCount) && (
-                        <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                        <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
                           <AlertTriangle className="h-3 w-3 flex-shrink-0" />
                           <span>
                             Some resources were manually deleted ({inst.formCount - inst.existingFormCount} form{inst.formCount - inst.existingFormCount !== 1 ? 's' : ''}, {inst.appCount - inst.existingAppCount} app{inst.appCount - inst.existingAppCount !== 1 ? 's' : ''})
@@ -1228,7 +1228,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                     <p className="text-sm font-medium text-gray-700 dark:text-slate-300">
                       Drop your pack file here
                     </p>
-                    <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
+                    <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
                       or <span className="text-primary-600 dark:text-primary-400 font-medium">click to browse</span>
                     </p>
                     <div className="flex items-center gap-2 mt-3">
@@ -1317,13 +1317,13 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                   say what to install first, and the import is refused until they are met. */}
               {v2Plan?.resolution && (v2Plan.resolution.resolved.length > 0 || v2Plan.resolution.problems.length > 0) && (
                 <div className="rounded-lg border border-gray-200 dark:border-slate-800 p-3 text-sm">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Requires</p>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">Requires</p>
                   <ul className="mt-1.5 space-y-1">
                     {v2Plan.resolution.resolved.map((dep, i) => (
                       <li key={`ok-${i}`} className="flex flex-wrap items-baseline gap-x-2 text-gray-600 dark:text-slate-300">
                         <CheckCircle className="h-3.5 w-3.5 shrink-0 text-green-600 dark:text-green-400" aria-hidden="true" />
                         <span className="font-mono text-[11px] break-all">{String(dep.id ?? '')}</span>
-                        <span className="text-[11px] text-gray-400 dark:text-slate-500">
+                        <span className="text-[11px] text-gray-500 dark:text-slate-400">
                           {String(dep.range ?? '')} → v{String(dep.resolvedVersion ?? '')}
                           {dep.required === false ? ' (optional)' : ''}
                         </span>
@@ -1419,7 +1419,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                               <li key={i} className="flex items-center gap-2 py-1.5 px-3 rounded-md bg-gray-50 dark:bg-slate-800/50 text-xs">
                                 <FileJson className="h-3.5 w-3.5 flex-shrink-0 text-primary-400 dark:text-primary-500" />
                                 <span className="truncate text-gray-700 dark:text-slate-300 font-medium">{title}</span>
-                                <span className="ml-auto flex-shrink-0 text-gray-400 dark:text-slate-500">{fields} fields</span>
+                                <span className="ml-auto flex-shrink-0 text-gray-500 dark:text-slate-400">{fields} fields</span>
                               </li>
                             );
                           })}

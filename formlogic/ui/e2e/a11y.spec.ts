@@ -18,6 +18,19 @@ const PASSWORD = process.env.E2E_PASSWORD || 'password123';
 // precondition explicit instead of depending on which sibling spec created a form first
 // (with two workers that ordering is a coin toss — the button was "detached" one run and
 // "not found" the next).
+// The app's theme is the persisted uiStore value (default 'dark'); nothing derives it from
+// prefers-color-scheme. Seed the store so a surface can be scanned under BOTH palettes —
+// a dark-only scan let gray-400-on-white copy through for weeks.
+async function setTheme(page: Page, theme: 'light' | 'dark') {
+  await page.evaluate((t) => {
+    const key = 'formlogic-ui-storage';
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : { state: {}, version: 0 };
+    parsed.state = { ...(parsed.state ?? {}), theme: t };
+    localStorage.setItem(key, JSON.stringify(parsed));
+  }, theme);
+}
+
 async function ensureOwnsAForm(page: Page) {
   await page.evaluate(async ({ API }) => {
     const m = document.cookie.match(/(?:^|;\s*)formlogic_csrf=([^;]*)/);
@@ -54,6 +67,16 @@ async function expectNoSeriousViolations(page: Page, surface: string, scope?: st
   // `scope` limits the scan to one region. A modal opens ON TOP of a page, so an unscoped
   // scan attributes that page's pre-existing findings to the modal — which both blames the
   // wrong surface and lets a real modal defect hide in the noise.
+  // Measure the AT-REST page. Buttons and cards carry `transition-all`, the theme class is
+  // applied after first paint, and lists fade in — axe sampling mid-transition reads an
+  // intermediate colour and reports a contrast failure that does not exist at rest (a
+  // one-in-N flake on the forms list, reliably on a slow CI runner). Freeze CSS transitions
+  // and animations, then let two frames settle. framer-motion animates inline styles, so
+  // the opacity wait below still covers modal fade-ins.
+  await page.addStyleTag({
+    content: '*, *::before, *::after { transition: none !important; animation: none !important; }',
+  });
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   let builder = new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']);
   if (scope) {
     builder = builder.include(scope);
@@ -91,7 +114,9 @@ async function expectNoSeriousViolations(page: Page, surface: string, scope?: st
       id: violation.id,
       impact: violation.impact,
       help: violation.help,
-      nodes: violation.nodes.slice(0, 3).map((node) => node.target),
+      // failureSummary names the measured colours and ratio — without it a contrast
+      // finding costs a CI round-trip per node to understand.
+      nodes: violation.nodes.slice(0, 3).map((node) => ({ target: node.target, why: node.failureSummary })),
     })),
     `${surface} must have no serious/critical WCAG A/AA violations`
   ).toEqual([]);
@@ -144,10 +169,12 @@ test.describe('accessibility smoke (axe)', () => {
     await expectNoSeriousViolations(page, 'marketplace gallery');
   });
 
-  test('packs modal — marketplace and installed tabs', async ({ page }) => {
+  for (const theme of ['dark', 'light'] as const) {
+  test(`packs modal — marketplace and installed tabs (${theme})`, async ({ page }) => {
     test.setTimeout(90_000);
     await login(page);
     await ensureOwnsAForm(page);
+    await setTheme(page, theme);
     await page.goto('/');
     await page.getByRole('main').waitFor();
     // The dashboard fills in AFTER mount: the headline's counts, the CreateBand above the
@@ -161,18 +188,19 @@ test.describe('accessibility smoke (axe)', () => {
     await templateButton.click();
     // The catalog grid is a list of buttons; scan it before switching tabs.
     await page.getByRole('button', { name: /^Installed/ }).first().waitFor({ timeout: 20_000 });
-    await expectNoSeriousViolations(page, 'packs modal (marketplace)', '[role="dialog"]');
+    await expectNoSeriousViolations(page, `packs modal (marketplace, ${theme})`, '[role="dialog"]');
 
     await page.getByRole('button', { name: /^Installed/ }).first().click();
     await page.waitForTimeout(600);
-    await expectNoSeriousViolations(page, 'packs modal (installed)', '[role="dialog"]');
+    await expectNoSeriousViolations(page, `packs modal (installed, ${theme})`, '[role="dialog"]');
 
     // The extension detail panel carries the review content — slots, grants, dependencies.
     const details = page.getByRole('button', { name: /^Details$/ });
     if ((await details.count()) > 0) {
       await details.first().click();
       await page.getByText('Contributed flow nodes').first().waitFor({ timeout: 10_000 });
-      await expectNoSeriousViolations(page, 'packs modal (extension details)', '[role="dialog"]');
+      await expectNoSeriousViolations(page, `packs modal (extension details, ${theme})`, '[role="dialog"]');
     }
   });
+  }
 });

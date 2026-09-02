@@ -170,7 +170,7 @@ export function InstalledExtensionDetail({ installationId }: { installationId: s
           </ul>
           {/* Name the blocker: "this package" read as if it meant the extension itself. */}
           {blockingDependents.length > 0 && (
-            <p className="mt-1 text-amber-600 dark:text-amber-400">
+            <p className="mt-1 text-amber-700 dark:text-amber-400">
               {blockingDependents.length === 1
                 ? `Uninstall is blocked while “${blockingDependents[0].displayName}” still requires this extension, and updates must stay inside the range above.`
                 : `Uninstall is blocked while ${blockingDependents.length} installed packages still require this extension, and updates must stay inside the ranges above.`}
