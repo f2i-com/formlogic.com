@@ -29,7 +29,7 @@
     "esbuild-wasm": "^0.25.12",
     "framer-motion": "^12.23.26",
     "libsodium-wrappers-sumo": "^0.8.4",
-    "lucide-react": "^0.562.0",
+    "lucide-react": "^1.39.0",
     "monaco-editor": "^0.52.2",
     "preact": "^10.29.7",
     "qrcode.react": "^4.2.0",
@@ -39,7 +39,7 @@
     "recharts": "^3.9.1",
     "tailwind-merge": "^3.4.0",
     "tweetnacl": "^1.0.3",
-    "uuid": "^13.0.0",
+    "uuid": "^14.0.2",
     "zustand": "^5.0.9"
   },
   "devDependencies": {
