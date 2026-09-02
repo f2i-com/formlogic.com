@@ -209,7 +209,7 @@ function envEncode(string $value): string
  * development install mode — so a deployment can never silently inherit
  * .env.example's development defaults.
  *
- * @param array{devMode:bool,dbHost:string,dbPort:string,dbName:string,dbUser:string,dbPass:string,corsOrigin:string,jwtSecret:string,auditKey:string} $values
+ * @param array{devMode:bool,betaMode?:bool,dbHost:string,dbPort:string,dbName:string,dbUser:string,dbPass:string,corsOrigin:string,jwtSecret:string,auditKey:string} $values
  */
 function flRenderEnvContent(string $template, array $values): string
 {
@@ -224,6 +224,9 @@ function flRenderEnvContent(string $template, array $values): string
         '/^JWT_SECRET=.*/m' => 'JWT_SECRET=' . $values['jwtSecret'],    // generated hex
         '/^CORS_ORIGIN=.*/m' => 'CORS_ORIGIN=' . envEncode($values['corsOrigin']),
         '/^# AUDIT_HMAC_KEY=.*/m' => 'AUDIT_HMAC_KEY=' . $values['auditKey'], // generated hex
+        // .env.example ships the key commented out; write it explicitly either way so the
+        // deployment's sign-up policy is visible in .env rather than inherited from a default.
+        '/^# BETA_MODE=.*/m' => 'BETA_MODE=' . (!empty($values['betaMode']) ? 'true' : 'false'),
     ];
     foreach ($replacements as $pattern => $replacement) {
         $template = preg_replace_callback($pattern, static fn () => $replacement, $template, 1);
@@ -485,6 +488,9 @@ function runInstall(array $data): array
     // destination validation), so a generated deployment must never inherit it
     // from .env.example silently.
     $devMode = !empty($data['dev_mode']);
+    // Free public beta: sign-ups open, new accounts get BETA_FREE_DAYS of Cloud, billing stays
+    // off. The operator flips BETA_MODE=false in .env when they are ready to charge.
+    $betaMode = !empty($data['beta_mode']);
 
     if (!ctype_digit((string) $dbPort) || (int) $dbPort < 1 || (int) $dbPort > 65535) {
         $dbPort = '3306';
@@ -503,6 +509,7 @@ function runInstall(array $data): array
 
     $envContent = flRenderEnvContent($envContent, [
         'devMode' => $devMode,
+        'betaMode' => $betaMode,
         'dbHost' => $dbHost,
         'dbPort' => $dbPort,
         'dbName' => $dbName,
@@ -516,6 +523,9 @@ function runInstall(array $data): array
         ? ['label' => 'Application mode', 'status' => 'warn',
             'message' => 'DEVELOPMENT mode selected — verbose errors and relaxed security policy. Never use this for a public site; edit APP_ENV=production in ' . basename($backendDir) . '/.env before going live.']
         : ['label' => 'Application mode', 'status' => 'ok', 'message' => 'Production (APP_ENV=production, APP_DEBUG=false)'];
+    $steps[] = $betaMode
+        ? ['label' => 'Sign-ups', 'status' => 'ok', 'message' => 'Free public beta (BETA_MODE=true): anyone can register, new accounts get BETA_FREE_DAYS of Cloud (default 90), the payment gateway stays off. Set BETA_MODE=false in ' . basename($backendDir) . '/.env when you are ready to charge.']
+        : ['label' => 'Sign-ups', 'status' => 'ok', 'message' => 'Standard mode (BETA_MODE=false): sign-ups open; plan limits apply only when CLOUD_PLAN_ENFORCED=true (off by default for self-hosting).'];
 
     $envPath = $backendDir . '/.env';
     $envExists = file_exists($envPath);
@@ -632,7 +642,7 @@ function runInstall(array $data): array
     //    Composer deps, and exec(); when any is missing we surface the manual command in Next steps.
     $demoManual = false;
     if (!empty($data['seed_demo'])) {
-        $provision = $backendDir . '/scripts/provision-demo.php';
+        $provision = $backendDir . '/bin/provision-demo.php';
         $disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
         $canExec = function_exists('exec') && !in_array('exec', $disabled, true);
         if (!$dbSchemaReady) {
@@ -642,7 +652,7 @@ function runInstall(array $data): array
             $steps[] = ['label' => 'Demo & marketplace', 'status' => 'skip', 'message' => 'Composer dependencies not installed yet — seed it after `composer install` (see next steps)'];
             $demoManual = true;
         } elseif (!file_exists($provision)) {
-            $steps[] = ['label' => 'Demo & marketplace', 'status' => 'warn', 'message' => 'scripts/provision-demo.php not found — cannot seed the marketplace'];
+            $steps[] = ['label' => 'Demo & marketplace', 'status' => 'warn', 'message' => 'bin/provision-demo.php not found — cannot seed the marketplace'];
         } elseif (!$canExec) {
             $steps[] = ['label' => 'Demo & marketplace', 'status' => 'skip', 'message' => 'PHP exec() is disabled here — seed it from a shell (see next steps)'];
             $demoManual = true;
@@ -1048,7 +1058,7 @@ function runUpgrade(): array
 $backendRelHtml = htmlspecialchars(basename(flBackendDir()), ENT_QUOTES);
 $backendAbsHtml = htmlspecialchars(str_replace('\\', '/', flBackendDir()), ENT_QUOTES);
 $isBundle = (flUiDir() === null); // deployed release zip (prebuilt SPA at the web root, backend at api/)
-$canSeedDemo = file_exists(flBackendDir() . '/scripts/provision-demo.php'); // not shipped in the release zip
+$canSeedDemo = file_exists(flBackendDir() . '/bin/provision-demo.php'); // ships in bin/ (release zip included) since v0.0.1
 $defaultCors = 'http://localhost:5173';
 if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
     // Single-domain deploy: the SPA calls /api on the SAME origin — default CORS to this site.
@@ -1234,6 +1244,11 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
     <p class="help-text" style="margin-top:6px;">Recommended. Populates the marketplace with installable apps and a no-signup live demo. Needs Composer dependencies installed first; if it can't run now, you'll get a one-line command to do it later.</p>
     <?php endif; ?>
     <div class="checkbox-group" style="margin-top:10px;">
+      <input type="checkbox" id="beta_mode" checked />
+      <label for="beta_mode" style="font-size:13px;">Free public beta — sign-ups are open and free, the payment gateway stays off</label>
+    </div>
+    <p class="help-text" style="margin-top:6px;">Writes <code>BETA_MODE=true</code>: new accounts get 90 days of Cloud (<code>BETA_FREE_DAYS</code>), plan limits are never enforced, and the sign-up page says "free public beta — no card required". Uncheck for a paid hosted deployment (then configure PayPal + <code>CLOUD_PLAN_ENFORCED=true</code> in <code>.env</code>). Self-hosting has no limits either way.</p>
+    <div class="checkbox-group" style="margin-top:10px;">
       <input type="checkbox" id="dev_mode" />
       <label for="dev_mode" style="font-size:13px;">Local <strong>development</strong> install — enables debug mode and relaxed security policy</label>
     </div>
@@ -1282,7 +1297,7 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
         </li>
         <li id="ns-demo" class="hidden">
           Set up the demo &amp; marketplace (installs the sample app packs and seeds example data):<br>
-          <code>cd <?= $backendRelHtml ?> && php scripts/provision-demo.php</code>
+          <code>cd <?= $backendRelHtml ?> && php bin/provision-demo.php</code>
         </li>
         <li id="ns-wasm" class="hidden">
           The FormLogic script runtime binary is missing. It is vendored
@@ -1591,6 +1606,7 @@ function runInstall() {
     overwrite_env: overwriteEl && overwriteEl.checked ? '1' : '',
     seed_demo: document.getElementById('seed_demo') && document.getElementById('seed_demo').checked ? '1' : '',
     dev_mode: document.getElementById('dev_mode') && document.getElementById('dev_mode').checked ? '1' : '',
+    beta_mode: document.getElementById('beta_mode') && document.getElementById('beta_mode').checked ? '1' : '',
   }).then(result => {
     btn.disabled = false;
     btn.innerHTML = 'Run Installation';

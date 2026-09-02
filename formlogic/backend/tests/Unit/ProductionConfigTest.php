@@ -82,6 +82,24 @@ class ProductionConfigTest extends TestCase
         $this->assertMatchesRegularExpression('/^AUDIT_HMAC_KEY=b{64}$/m', $env);
     }
 
+    public function testInstallerWritesTheSignupPolicyExplicitly(): void
+    {
+        self::loadInstallerFunctions();
+        $template = (string) file_get_contents(dirname(__DIR__, 2) . '/.env.example');
+        $this->assertMatchesRegularExpression('/^# BETA_MODE=/m', $template, 'precondition: template ships the key commented out');
+
+        // Default (no betaMode in the values): written as an explicit false, never left to
+        // the commented-out template default.
+        $env = \flRenderEnvContent($template, self::installerValues(false));
+        $this->assertMatchesRegularExpression('/^BETA_MODE=false$/m', $env);
+        $this->assertDoesNotMatchRegularExpression('/^# BETA_MODE=/m', $env);
+
+        // The wizard's "Free public beta" option: sign-ups open + free, billing off.
+        $env = \flRenderEnvContent($template, self::installerValues(false) + ['betaMode' => true]);
+        $this->assertMatchesRegularExpression('/^BETA_MODE=true$/m', $env);
+        $this->assertMatchesRegularExpression('/^APP_ENV=production$/m', $env, 'beta mode never implies development mode');
+    }
+
     public function testInstallerKeepsDevelopmentOnlyWhenExplicitlySelected(): void
     {
         self::loadInstallerFunctions();

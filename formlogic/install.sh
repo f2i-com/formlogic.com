@@ -152,10 +152,10 @@ else
     # Idempotent — safe to re-run. Skip with SEED_DEMO=0 ./install.sh for a clean/empty instance.
     if [[ "${SEED_DEMO:-1}" != "0" ]]; then
         info "Setting up demo + marketplace (sample app packs + example data)..."
-        if php scripts/provision-demo.php; then
+        if php bin/provision-demo.php; then
             ok "Demo + marketplace seeded"
         else
-            warn "Demo/marketplace seeding failed — retry later with: cd backend && php scripts/provision-demo.php"
+            warn "Demo/marketplace seeding failed — retry later with: cd backend && php bin/provision-demo.php"
         fi
     fi
 fi

@@ -4,9 +4,9 @@
  * Renders each demo app headlessly and snaps the FULL 16:10 app frame — sidebar, navigation and
  * dashboard together — so the marketplace shows the real product you'd install, not just charts.
  *
- * Pipeline:  php scripts/provision-demo.php   (emits the manifest)
+ * Pipeline:  php bin/provision-demo.php   (emits the manifest)
  *         →  node scripts/capture-pack-shots.mjs
- *         →  php scripts/provision-demo.php   (links the images onto the catalog)
+ *         →  php bin/provision-demo.php   (links the images onto the catalog)
  *
  * Reads the manifest at backend/storage/pack-screenshots/manifest.json (catalogSlug → demo appSlug),
  * writes <catalogSlug>.png. By default images land in resources/pack-screenshots (committed so a
@@ -36,7 +36,7 @@ function log(m) { process.stdout.write(m + '\n'); }
 
 async function main() {
   if (!existsSync(MANIFEST)) {
-    log(`No manifest at ${MANIFEST}. Run: php scripts/provision-demo.php`);
+    log(`No manifest at ${MANIFEST}. Run: php bin/provision-demo.php`);
     process.exit(1);
   }
   let manifest = JSON.parse(readFileSync(MANIFEST, 'utf8'));
@@ -121,7 +121,7 @@ async function main() {
 
   await browser.close();
   log(`\nCaptured ${ok}/${manifest.length} → ${OUT_DIR}`);
-  log('Now run: php scripts/provision-demo.php   (to link the images onto the catalog)');
+  log('Now run: php bin/provision-demo.php   (to link the images onto the catalog)');
 }
 
 main().catch((e) => { log('Fatal: ' + e.message); process.exit(1); });

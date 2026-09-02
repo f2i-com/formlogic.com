@@ -63,7 +63,8 @@ const backendDir = path.join(repoRoot, 'formlogic', 'backend');
 //   tests/ phpunit.xml .phpunit.cache  — dev/test only
 //   .env                               — secrets
 //   logs/* storage/*                   — runtime data (the empty skeleton IS recreated below)
-//   scripts/                           — dev/demo provisioning (provision-demo.php)
+//   scripts/                           — dev-only tooling (build-expression-corpus.php);
+//                                        provision-demo.php lives in bin/ so it SHIPS
 //   vendor/                            — dev vendor may contain dev deps; replaced by a fresh
 //                                        `composer install --no-dev --optimize-autoloader`
 //   README.md                          — developer doc, not needed at runtime
@@ -246,6 +247,17 @@ Manual install (no wizard)
 8. Create your account: the sign-up page registers the first user. You can
    start from a blank workspace or install a ready-made app from the
    marketplace (Apps -> Create app / Import).
+9. Marketplace + demo (optional, recommended): the wizard offers "Set up the
+   demo & marketplace"; from a shell it is
+     cd api && php bin/provision-demo.php
+   It publishes the 29 bundled app packs to the marketplace, creates the
+   shared no-signup "Demo" account with every pack installed and example
+   data, and is safe to re-run. Without it, the marketplace fills itself
+   with the bundled packs the first time a signed-in user opens
+   Apps -> Import, but there is no demo account.
+10. Free sign-ups: the wizard's "Free public beta" option writes
+   BETA_MODE=true (sign-ups open, 90 days of Cloud per account, billing
+   off). To change it later, edit BETA_MODE in api/.env.
 
 Scheduled tasks (optional but recommended)
 ------------------------------------------
@@ -452,6 +464,7 @@ const mustExist = [
   'api/public/index.php',
   'api/public/.htaccess',
   'api/vendor/autoload.php',
+  'api/bin/provision-demo.php',
   'api/.env.example',
   'api/config/settings.php',
   'api/database/schema.sql',

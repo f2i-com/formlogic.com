@@ -175,7 +175,7 @@ async function main() {
       'manifest.json',
       'api/public/index.php', 'api/public/.htaccess', 'api/config/settings.php',
       'api/database/schema.sql', 'api/database/migrate.php', 'api/composer.json',
-      'api/vendor/autoload.php', 'api/.env.example', 'api/bin/upgrade.php', 'api/VERSION',
+      'api/vendor/autoload.php', 'api/.env.example', 'api/bin/upgrade.php', 'api/bin/provision-demo.php', 'api/VERSION',
       // The sandbox runtime: both launchers (the zip serves either platform) and
       // the prelude they load. Their ABSENCE is not a boot failure — the API fails
       // open without them — which is exactly why they are listed here.

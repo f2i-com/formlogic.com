@@ -340,9 +340,9 @@ formlogic/
 │   ├── public/index.php           # All routes, DI container, middleware wiring
 │   ├── config/settings.php        # Environment config
 │   ├── database/schema.sql        # MySQL schema export (+ migrate.php)
-│   ├── bin/qjs/                   # Vendored static qjs binaries (server-side sandbox)
+│   ├── bin/                       # Maintenance CLIs (upgrade, provision-demo, workers) + runtime/ sandbox launchers
 │   ├── resources/                 # Synced prelude + bundled sample apps
-│   ├── scripts/                   # provision-demo.php (demo account seeder)
+│   ├── scripts/                   # dev-only: build-expression-corpus.php (provision-demo.php lives in bin/ so it ships)
 │   ├── .env.example               # Annotated backend environment template
 │   ├── tests/                     # PHPUnit (Unit/ + Integration/)
 │   └── src/

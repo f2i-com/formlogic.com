@@ -147,7 +147,7 @@ jobs:
       # Required by app-dashboard.spec.ts (which drives the Live Demo).
       - name: Provision marketplace + demo data
         working-directory: formlogic/backend
-        run: php scripts/provision-demo.php
+        run: php bin/provision-demo.php
 
       - name: Install Playwright Chrome
         working-directory: formlogic/ui

@@ -65,6 +65,6 @@ Each widget has `{ id, title?, layout: {x,y,w,h}, kind, … }`. Kinds:
 ## Authoring / QA pipeline
 
 Pack dashboards are authored in the pack `.ts` files, then:
-`node scripts/emit-marketplace.mjs` → `php scripts/provision-demo.php`, followed by the screenshot
+`node scripts/emit-marketplace.mjs` → `php bin/provision-demo.php`, followed by the screenshot
 vision-QA sweep (capture light+dark → route fixes to the pack `.ts` / seeder). No sandboxed code, so
 the CSP/egress concerns of the legacy kit do not apply here.

@@ -39,7 +39,7 @@ Anything unchecked is a launch blocker.
 
 - [ ] Marketplace + demo seeded/refreshed:
       `cd formlogic/ui && node scripts/emit-marketplace.mjs` →
-      `cd formlogic/backend && php scripts/provision-demo.php`.
+      `cd formlogic/backend && php bin/provision-demo.php`.
 - [ ] `GET /api/health/deep` returns healthy (DB, SQLite storage, writable dirs, migrations).
 - [ ] Webhook retry worker cron is scheduled and its last-run heartbeat is recent (see DEPLOYMENT.md).
 - [ ] Email verified: Doctor → **Email** check is green (or explicitly acknowledged as link-only).

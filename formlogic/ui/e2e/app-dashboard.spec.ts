@@ -4,7 +4,7 @@ import { test, expect, type Page } from '@playwright/test';
  * Product-differentiator golden paths (launch-review #9, priority 1-2): a marketplace app's dashboard
  * renders POPULATED widgets, and an app's records grid shows seeded data. Runs against the public Live
  * Demo (server-read-only; per-browser overlay), which has the marketplace pre-installed and seeded, so
- * the widgets have real data. Needs the demo provisioned (php scripts/provision-demo.php); the whole
+ * the widgets have real data. Needs the demo provisioned (php bin/provision-demo.php); the whole
  * suite is the release gate (e2e.yml).
  */
 const API = process.env.E2E_API_URL || 'http://api.formlogic.local';

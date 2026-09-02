@@ -26,7 +26,7 @@ if ($isProduction && (strlen($jwtSecret) < 32 || $isPlaceholderSecret)) {
 }
 
 // Get DB password - fail hard in production if using default
-// $_ENV first, real process env second. PHP CLIs (bin/upgrade.php, scripts/provision-demo.php)
+// $_ENV first, real process env second. PHP CLIs (bin/upgrade.php, bin/provision-demo.php)
 // and `php -S` can run with a variables_order that omits E, leaving $_ENV empty even when the
 // process environment (CI job env, docker -e, systemd Environment=) carries the value — and
 // IMMUTABLE Dotenv skips writing a var into $_ENV when it already exists in the environment
