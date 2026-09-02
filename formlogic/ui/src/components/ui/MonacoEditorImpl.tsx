@@ -1,8 +1,8 @@
 import { useCallback } from 'react';
 import Editor, { loader, type OnMount } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
-import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
-import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
+import editorWorker from 'monaco-editor/editor/editor.worker?worker';
+import tsWorker from 'monaco-editor/language/typescript/ts.worker?worker';
 import type { CodeEditorProps } from './CodeEditor';
 
 // Use the BUNDLED monaco (no CDN — works offline / self-hosted) and wire its web workers for Vite.
