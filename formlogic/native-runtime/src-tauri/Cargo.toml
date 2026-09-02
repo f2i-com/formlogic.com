@@ -37,6 +37,6 @@ base64 = "0.22"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "native-tls"] }
 # NATIVE-SEC-001: offline queue sealed at rest + signing-key fingerprints for the TOFU prompt.
 chacha20poly1305 = "0.10"
-getrandom = "0.2"
+getrandom = "0.4"
 sha2 = "0.11"
 
