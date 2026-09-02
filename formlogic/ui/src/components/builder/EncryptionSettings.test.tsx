@@ -74,13 +74,13 @@ async function flush(): Promise<void> {
 describe('EncryptionSettings', () => {
   let container: HTMLDivElement;
   let root: Root;
-  let onEnabled: ReturnType<typeof vi.fn>;
+  let onEnabled: ReturnType<typeof vi.fn<() => void>>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     useFormStore.setState({ forms: [makeForm()] } as never);
     useVaultStore.setState({ status: 'unlocked', vault: null, generation: 0 });
-    onEnabled = vi.fn();
+    onEnabled = vi.fn<() => void>();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
