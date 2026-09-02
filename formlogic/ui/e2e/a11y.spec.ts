@@ -118,8 +118,15 @@ test.describe('accessibility smoke (axe)', () => {
     await login(page);
     await page.goto('/');
     await page.getByRole('main').waitFor();
+    // The dashboard fills in AFTER mount: the headline's counts, the CreateBand above the
+    // action row (AI-availability probe) and the forms list all land from separate API
+    // calls, each shifting the action row. On a slow runner Playwright saw the button as
+    // "not stable" / detached for the whole click timeout. Let the page go quiet first.
+    await page.waitForLoadState('networkidle');
     // The dashboard's template entry was renamed from "Import pack" to "Start from a template".
-    await page.getByRole('button', { name: /start from a template/i }).first().click();
+    const templateButton = page.getByRole('button', { name: /start from a template/i }).first();
+    await expect(templateButton).toBeVisible();
+    await templateButton.click();
     // The catalog grid is a list of buttons; scan it before switching tabs.
     await page.getByRole('button', { name: /^Installed/ }).first().waitFor({ timeout: 20_000 });
     await expectNoSeriousViolations(page, 'packs modal (marketplace)', '[role="dialog"]');
