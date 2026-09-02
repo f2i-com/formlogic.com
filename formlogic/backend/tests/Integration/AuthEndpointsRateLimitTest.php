@@ -391,8 +391,15 @@ class AuthEndpointsRateLimitTest extends TestCase
         $this->assertStringNotContainsString('$authRateLimiter', $resetBlock);
         // RATE-001: the auth buckets are IP-keyed AND fail CLOSED — a limiter-store
         // outage must refuse these high-risk actions, not un-throttle them.
+        // The login limit is the AUTH_LOGIN_RATE_LIMIT knob (an e2e run logs in from one
+        // address hundreds of times) — pin that it defaults to 10 and is bounded, and that
+        // the limiter is built from it with the fail-closed flags intact.
         $this->assertMatchesRegularExpression(
-            '/\$authRateLimiter\s*=\s*new RateLimitMiddleware\(\$rateLimiter,\s*\d+,\s*\d+,\s*\'auth_login\',\s*false,\s*true\)/',
+            '/\$authLoginLimit\s*=\s*max\(1,\s*min\(10000,.*AUTH_LOGIN_RATE_LIMIT.*\?: 10\)\)\);/',
+            $section
+        );
+        $this->assertMatchesRegularExpression(
+            '/\$authRateLimiter\s*=\s*new RateLimitMiddleware\(\$rateLimiter,\s*\$authLoginLimit,\s*\d+,\s*\'auth_login\',\s*false,\s*true\)/',
             $section
         );
         $this->assertMatchesRegularExpression(
