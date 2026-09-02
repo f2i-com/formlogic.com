@@ -56,6 +56,9 @@ const APP_SDK_SHIM = `
 })();
 `;
 
+/** The sandboxed host document (see CustomScreenRuntime for why not srcDoc). */
+const SCREEN_HOST_URL = '/screen-host.html';
+
 export function AppCustomScreenRuntime({
   screen,
   appSlug,
@@ -125,6 +128,28 @@ export function AppCustomScreenRuntime({
   useEffect(() => {
     rateRef.current = createSdkRateLimiter();
   }, [srcDoc]);
+
+  // Hand the composed document to the sandbox host (parity with
+  // CustomScreenRuntime, which moved off `srcDoc` in the CSP repair). A srcdoc
+  // document INHERITS the embedding page's Content-Security-Policy, and the
+  // production shell's script-src blocks the inline SDK shim and the author's
+  // script — so every app home code screen was blank in a production build
+  // while working in dev, where no CSP is injected. /screen-host.html is a real
+  // same-origin document with its own CSP; it accepts exactly one init.
+  const sendDoc = () => {
+    iframeRef.current?.contentWindow?.postMessage({ __flScreenDoc: srcDoc }, '*');
+  };
+  const sendDocRef = useRef(sendDoc);
+  sendDocRef.current = sendDoc;
+  useEffect(() => {
+    const onReady = (e: MessageEvent) => {
+      if (!e.data || !(e.data as { __flScreenHostReady?: boolean }).__flScreenHostReady) return;
+      if (!iframeRef.current || e.source !== iframeRef.current.contentWindow) return;
+      sendDocRef.current();
+    };
+    window.addEventListener('message', onReady);
+    return () => window.removeEventListener('message', onReady);
+  }, []);
 
   // Push theme changes into the already-loaded iframe (instant, no reload).
   useEffect(() => {
@@ -224,7 +249,8 @@ export function AppCustomScreenRuntime({
       ref={iframeRef}
       title="App home"
       sandbox="allow-scripts"
-      srcDoc={srcDoc}
+      src={SCREEN_HOST_URL}
+      onLoad={() => sendDocRef.current()}
       className={className || 'w-full h-full border-0'}
     />
   );

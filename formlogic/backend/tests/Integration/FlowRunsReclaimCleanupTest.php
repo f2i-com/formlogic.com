@@ -58,9 +58,12 @@ class FlowRunsReclaimCleanupTest extends TestCase
         $this->assertSame(600, flowRunStaleSeconds([], ['FLOW_RUN_STALE_SECONDS' => '']));
     }
 
-    public function testZeroIsClampedToOneSecond(): void
+    public function testZeroFallsBackToTheDefaultRatherThanOneSecond(): void
     {
-        // A 0-second window would reclaim runs that only just started — clamp to a safe minimum.
-        $this->assertSame(1, flowRunStaleSeconds(['--seconds=0'], []));
+        // Clamping 0 to 1 turned a typo into "reclaim every run older than a
+        // second": every in-flight run flipped to error on each cron tick and
+        // every later completion 409ed. A nonsensical threshold is ignored.
+        $this->assertSame(600, flowRunStaleSeconds(['--seconds=0'], []));
+        $this->assertSame(600, flowRunStaleSeconds([], ['FLOW_RUN_STALE_SECONDS' => '0']));
     }
 }

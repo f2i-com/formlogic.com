@@ -4,7 +4,6 @@
 
 - `formlogic/backend` — PHP (Slim) API. PHP **8.2+**, `composer install`.
 - `formlogic/ui` — React + TypeScript + Vite web app.
-- `formlogic/desktop` — FormLogic Desktop (Tauri v2, Rust).
 - `docs/` — architecture decisions, plugin SDK, cross-repo contract fixtures.
 
 The Aokie phone-bridge plugin lives in its own repository
@@ -29,12 +28,6 @@ Frontend (`formlogic/ui`):
 npm run lint && npm test && npm run build
 node scripts/check-pack-screens.mjs
 node scripts/check-security-invariants.mjs
-```
-
-Desktop (`formlogic/desktop/src-tauri`):
-
-```bash
-cargo test --lib
 ```
 
 End-to-end golden paths (`formlogic/ui`, needs the local stack):

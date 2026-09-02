@@ -266,6 +266,10 @@ async function invokeDesktopServiceAction(
 
 export function buildDefaultExecutorDeps(): FlowExecutorDeps {
   return {
+    // Read live, not captured: the runtime app can change after these deps are built.
+    get appSlug(): string | undefined {
+      return currentSlug ?? undefined;
+    },
     // NOTE: these forward the node's clamped `timeoutMs` (nodes.ts) as `budgetMs` — the
     // BINDING-level `defaultEvaluateCondition` above is a separate, 2-arg-only evaluator
     // and is NOT reused here for exactly that reason.

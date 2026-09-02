@@ -455,6 +455,17 @@ class ChatToolsService
                 if ($blueprintId === '') {
                     throw new \InvalidArgumentException('blueprintId is required');
                 }
+                if ($creatorMode) {
+                    // Creator tokens are confined to what they made. Delta mode
+                    // materialises into the app a diagram is ALREADY linked to —
+                    // recording that app as "created" would hand the token the
+                    // owner's pre-existing app (publish, slug, home screen, records).
+                    // Check before materialising: delta mode has side effects.
+                    $linked = $this->blueprintService?->getBlueprint($userId, $blueprintId);
+                    if (!empty($linked['appId'])) {
+                        throw new \Exception('This token can only materialise a diagram into a new app; this diagram is already linked to an existing app');
+                    }
+                }
                 $data = $materializer->materialize($userId, $blueprintId);
                 if ($creatorMode) {
                     // Creator tokens stay confined to what they made — the materialised

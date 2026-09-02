@@ -10,7 +10,8 @@ namespace FormLogic\Support;
  * (docs/FORMLOGIC_DATA_NODES.md §1-§3).
  *
  * Mirrored byte-for-byte by ui/src/lib/data/canonical.ts and
- * desktop/src-tauri/src/data/canonical.rs; all three assert
+ * the paired desktop's Rust mirror (formerly desktop/src-tauri/src/data/canonical.rs,
+ * now maintained with OAIY); all three assert
  * docs/contracts/data-sync-vectors.json (backend/tests/Unit/DataSyncVectorsTest.php).
  *
  * Objects are stdClass (json_decode default) or non-list PHP arrays; JSON arrays are

@@ -127,7 +127,7 @@ The node palette is **context-aware** (`isNodeAvailableInContext` in `nodeCatalo
 
 ### 4.3 Desktop-service-backed nodes (real, executable)
 
-`browser_action` / `image_gen` / `stt_transcribe` / `tts_speak` drive a **local FormLogic Desktop service** over its loopback HTTP API. They are implemented **identically** in the browser executor (`client-runtime/flows/nodes.ts`) and the desktop Rust runner (`desktop/src-tauri/src/flows/runner.rs`); the `nodeCatalog.ts` ↔ executor parity test keeps the executable set in lock-step across both.
+`browser_action` / `image_gen` / `stt_transcribe` / `tts_speak` drive a **local paired-desktop service (OAIY)** over its loopback HTTP API. They are implemented in the browser executor (`client-runtime/flows/nodes.ts`) and, identically, in the paired desktop's Rust runner (maintained with OAIY since FormLogic Desktop was retired); the `nodeCatalog.ts` ↔ executor parity test keeps the executable set in lock-step.
 
 **Service resolution** (in order): (1) the node's own `endpoint` — a full URL for `image_gen`/`stt`/`tts`, or the service base for `browser_action` — allow-listed to a local loopback service / the FormLogic API; (2) the running Desktop service by id — the **browser** asks the paired Desktop's `GET /api/services` (`resolveDesktopServiceBase`), the **desktop runner** resolves the port from its services registry and **best-effort auto-starts** it (`ensure_by_port`). No candidate, or the service unreachable (Desktop absent/unpaired, service stopped, CORS, connection refused) → an **actionable** `node_failed`: *"This step runs on FormLogic Desktop. Install and start the &lt;service&gt; service in FormLogic Desktop → Services, then run the flow there."* — never "coming soon".
 

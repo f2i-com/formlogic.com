@@ -184,7 +184,11 @@ class CloudFlowRunner
         try {
             $outcome = $this->execute($flow, $userId, $inputs, null, [(string) $flow['id']], $runId);
         } catch (CloudFlowNodeError $e) {
-            $this->finalizeRun($runId, 'error', null, [
+            // 'timeout' is its own terminal status: FlowService maps it to
+            // flow.timed_out, and recording it as a generic error meant a binding on
+            // that event never fired for a cloud run.
+            $status = $e->flowErrorCode === 'timeout' ? 'timeout' : 'error';
+            $this->finalizeRun($runId, $status, null, [
                 'code' => $e->flowErrorCode,
                 'message' => $e->getMessage(),
                 'nodeId' => $e->nodeId,
@@ -192,7 +196,7 @@ class CloudFlowRunner
             return [
                 'ok' => true,
                 'runId' => $runId,
-                'status' => 'error',
+                'status' => $status,
                 'error' => ['code' => $e->flowErrorCode, 'message' => $e->getMessage(), 'nodeId' => $e->nodeId],
             ];
         } catch (\Throwable $e) {
@@ -507,13 +511,13 @@ class CloudFlowRunner
                 return $this->interpolateTemplate($template, $this->scopeToContext($scope));
 
             case 'formlogic_list_responses':
-                return $this->runListResponses($node, $data, $scope);
+                return $this->runListResponses($node, $data, $scope, $flow, $userId);
 
             case 'formlogic_submit_response':
-                return $this->runSubmitResponse($node, $data, $scope);
+                return $this->runSubmitResponse($node, $data, $scope, $flow, $userId);
 
             case 'formlogic_update_response':
-                return $this->runUpdateResponse($node, $data, $scope);
+                return $this->runUpdateResponse($node, $data, $scope, $flow, $userId);
 
             case 'llm_chat':
                 return $this->runLlmChat($node, $data, $scope, $userId);
@@ -546,6 +550,47 @@ class CloudFlowRunner
      *
      * @throws CloudFlowNodeError
      */
+    /**
+     * A cloud record node may only touch a form the flow's owner owns, or a form
+     * attached to the flow's own app. The form id arrives from node data or a
+     * selector, and every service underneath (getFormResponses / createResponse /
+     * updateResponse) is ownership-agnostic — so without this check any
+     * authenticated user could run a workspace flow that listed, inserted into or
+     * rewrote any form on the platform by id. Every other runner surface is
+     * owner-gated; this made cloud the outlier.
+     *
+     * @throws CloudFlowNodeError
+     */
+    private function assertFormAccessible(array $node, string $formId, array $flow, string $userId): void
+    {
+        $nodeId = is_string($node['id'] ?? null) ? $node['id'] : null;
+        $owner = (string) ($flow['ownerUserId'] ?? $userId);
+        $refuse = fn () => throw new CloudFlowNodeError(
+            'node_failed',
+            "Node '{$node['id']}': form not found or not accessible to this flow (form_not_accessible)",
+            $nodeId
+        );
+
+        $stmt = $this->mysql->prepare('SELECT user_id FROM forms WHERE id = :id LIMIT 1');
+        $stmt->execute(['id' => $formId]);
+        $formOwner = $stmt->fetchColumn();
+        if ($formOwner === false) {
+            $refuse();
+        }
+        if ((string) $formOwner === $owner) {
+            return;
+        }
+        $appId = $flow['appId'] ?? null;
+        if (is_string($appId) && $appId !== '') {
+            $stmt = $this->mysql->prepare('SELECT 1 FROM app_forms WHERE app_id = :app AND form_id = :form LIMIT 1');
+            $stmt->execute(['app' => $appId, 'form' => $formId]);
+            if ($stmt->fetchColumn() !== false) {
+                return;
+            }
+        }
+        $refuse();
+    }
+
     private function assertNotPrivateForm(array $node, string $formId): void
     {
         $this->formEncryption ??= new FormEncryptionService($this->mysql);
@@ -559,9 +604,10 @@ class CloudFlowRunner
     }
 
     /** FROZEN CONTRACT (docs §4): fetch up to `limit` rows, normalize, apply ANDed filters, return {responses, count, first, found}. */
-    private function runListResponses(array $node, array $data, array $scope): array
+    private function runListResponses(array $node, array $data, array $scope, array $flow, string $userId): array
     {
         $formId = $this->resolveFormRef($node, $data, $scope);
+        $this->assertFormAccessible($node, $formId, $flow, $userId);
         $this->assertNotPrivateForm($node, $formId);
         $limit = $this->clampListLimit($data['limit'] ?? null);
         $filters = $this->parseResponseFilters($data['filters'] ?? null);
@@ -613,9 +659,10 @@ class CloudFlowRunner
         ];
     }
 
-    private function runSubmitResponse(array $node, array $data, array $scope): array
+    private function runSubmitResponse(array $node, array $data, array $scope, array $flow, string $userId): array
     {
         $formId = $this->resolveFormRef($node, $data, $scope);
+        $this->assertFormAccessible($node, $formId, $flow, $userId);
         $this->assertNotPrivateForm($node, $formId);
         $answers = $this->resolveDeep($data['answers'] ?? null, $scope);
         $this->requireObject($node, $answers);
@@ -630,9 +677,10 @@ class CloudFlowRunner
         return $this->normalizeResponseRow($created) ?? $created;
     }
 
-    private function runUpdateResponse(array $node, array $data, array $scope): array
+    private function runUpdateResponse(array $node, array $data, array $scope, array $flow, string $userId): array
     {
         $formId = $this->resolveFormRef($node, $data, $scope);
+        $this->assertFormAccessible($node, $formId, $flow, $userId);
         $this->assertNotPrivateForm($node, $formId);
         $responseId = $this->resolveSelector($data['responseId'] ?? null, $scope);
         if (!is_string($responseId) || $responseId === '') {
@@ -698,7 +746,12 @@ class CloudFlowRunner
         try {
             $result = $this->ai->chat($messages, false);
         } catch (\Throwable $e) {
-            throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}' llm_chat failed: {$e->getMessage()}", $node['id']);
+            // The provider's message can name the operator's private AI endpoint
+            // ("Could not resolve host: llm.corp.internal") or echo an API-key
+            // fragment from a 401 body; it goes to the server log, and the run log
+            // — which every member of the app can read — gets a plain statement.
+            error_log('CloudFlowRunner: llm_chat node ' . (string) $node['id'] . ' failed: ' . $e->getMessage());
+            throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}' llm_chat failed: the AI provider did not return a reply", $node['id']);
         }
         $usage = is_array($result['usage'] ?? null) ? $result['usage'] : [];
         $in = (int) ($usage['promptTokens'] ?? 0);

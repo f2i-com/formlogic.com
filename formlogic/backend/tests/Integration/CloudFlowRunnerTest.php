@@ -182,8 +182,10 @@ class CloudFlowRunnerTest extends TestCase
 
     private function makeForm(string $ownerId): string
     {
+        // createForm reads `userId`; the old `user_id` key left every fixture form
+        // OWNERLESS, which no test noticed until the runner started checking.
         $form = self::$formService->createForm([
-            'user_id' => $ownerId,
+            'userId' => $ownerId,
             'title' => 'Jobs',
             'status' => 'published',
             'fields' => [
@@ -308,6 +310,34 @@ class CloudFlowRunnerTest extends TestCase
         $outcome = $this->runner()->run($flow, $userId, []);
         $this->assertSame('done', $outcome['status'], json_encode($outcome));
         $this->assertSame('A+B', $outcome['result']);
+    }
+
+    /**
+     * The form id in a record node comes from the author (or a selector) and the
+     * services underneath are ownership-agnostic, so this is the ONLY gate between
+     * "any authenticated user" and every response on the platform.
+     */
+    public function testRecordNodesRefuseAFormTheFlowDoesNotOwn(): void
+    {
+        $attacker = $this->makeUser();
+        $victim = $this->makeUser();
+        $victimForm = $this->makeForm($victim);
+        self::$responses->createResponse($victimForm, ['answers' => ['service' => 'secret', 'phone' => '0491 570 156']]);
+
+        foreach ([
+            ['id' => 'list', 'type' => 'formlogic_list_responses', 'data' => ['form' => $victimForm, 'limit' => 5]],
+            ['id' => 'submit', 'type' => 'formlogic_submit_response', 'data' => ['form' => $victimForm, 'answers' => ['service' => 'planted']]],
+        ] as $node) {
+            $flow = $this->flowRow($attacker, [$node]);
+            $outcome = $this->runner()->run($flow, $attacker, []);
+            $this->assertSame('error', $outcome['status'], json_encode($outcome));
+            $this->assertStringContainsString('form_not_accessible', (string) ($outcome['error']['message'] ?? ''));
+        }
+
+        // Nothing was planted, and the owner still sees exactly one row.
+        $rows = self::$responses->getFormResponses($victimForm, ['limit' => 10]);
+        $this->assertCount(1, $rows);
+        $this->assertSame('secret', $rows[0]['answers']['service'] ?? null);
     }
 
     public function testRecordNodesListSubmitUpdate(): void
@@ -563,7 +593,9 @@ class CloudFlowRunnerTest extends TestCase
         );
         // A zero-second budget is already past the deadline at the first node boundary.
         $outcome = $this->runner(null, 'https://site.example', 0)->run($flow, $userId, []);
-        $this->assertSame('error', $outcome['status']);
+        // A wall-clock overrun is its own terminal status now, so a binding on
+        // flow.timed_out fires for cloud runs too.
+        $this->assertSame('timeout', $outcome['status']);
         $this->assertSame('timeout', $outcome['error']['code']);
     }
 

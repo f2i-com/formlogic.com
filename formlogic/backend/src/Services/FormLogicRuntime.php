@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace FormLogic\Services;
 
+use FormLogic\Helpers\IpSafety;
+
 /**
  * Sandboxed runtime for executing FormLogic scripts on form submissions.
  *
@@ -693,115 +695,8 @@ class FormLogicRuntime
      */
     private function isPrivateIp(string $ip): bool
     {
-        // Check IPv4
-        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            // Use built-in filter for private and reserved ranges
-            $flags = FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE;
-            if (filter_var($ip, FILTER_VALIDATE_IP, $flags) === false) {
-                return true;
-            }
-            // Ranges PHP's filter does not treat as reserved but that are never a
-            // legitimate webhook target: carrier-grade NAT 100.64.0.0/10 (also where
-            // some cloud metadata services live, e.g. 100.100.100.200), the IETF
-            // protocol-assignments block 192.0.0.0/24, and the benchmarking block
-            // 198.18.0.0/15.
-            $n = ip2long($ip);
-            if ($n === false) {
-                return true;
-            }
-            $inCidr = static fn (string $base, int $bits): bool =>
-                ($n >> (32 - $bits)) === (ip2long($base) >> (32 - $bits));
-            if ($inCidr('100.64.0.0', 10) || $inCidr('192.0.0.0', 24) || $inCidr('198.18.0.0', 15)) {
-                return true;
-            }
-            return false;
-        }
-
-        // Check IPv6
-        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
-            // Normalize IPv6 address
-            $ip = strtolower($ip);
-
-            // Remove brackets if present
-            $ip = trim($ip, '[]');
-
-            // Classify by the 16 BYTES, never by the textual form. The previous
-            // check recognised the IPv4-mapped range only as the dotted spelling
-            // `::ffff:a.b.c.d`, but dns_get_record() reports AAAA answers as pure
-            // hex groups — `::ffff:a9fe:a9fe` is 169.254.169.254 — so an
-            // attacker-controlled name with that AAAA record was classified public,
-            // pinned, and on a dual-stack host connected straight to the metadata
-            // service. Bytes have one spelling.
-            $expanded = @inet_pton($ip);
-            if ($expanded === false || strlen($expanded) !== 16) {
-                return true; // Invalid IP, block it
-            }
-            /** @var list<int> $b */
-            $b = array_values(unpack('C16', $expanded));
-            $v4At = static fn (int $off): string => sprintf('%d.%d.%d.%d', $b[$off], $b[$off + 1], $b[$off + 2], $b[$off + 3]);
-            $zeroThrough = static function (int $count) use ($b): bool {
-                for ($i = 0; $i < $count; $i++) {
-                    if ($b[$i] !== 0) {
-                        return false;
-                    }
-                }
-                return true;
-            };
-
-            // :: (unspecified) and ::1 (loopback)
-            if ($zeroThrough(15) && ($b[15] === 0 || $b[15] === 1)) {
-                return true;
-            }
-            // IPv4-mapped ::ffff:0:0/96 — the embedded IPv4 decides, whatever the spelling.
-            if ($zeroThrough(10) && $b[10] === 0xff && $b[11] === 0xff) {
-                return $this->isPrivateIp($v4At(12));
-            }
-            // IPv4-compatible ::a.b.c.d (deprecated; nothing legitimate is reached this way).
-            if ($zeroThrough(12)) {
-                return true;
-            }
-            // NAT64 64:ff9b::/96 — the embedded IPv4 decides.
-            if ($b[0] === 0x00 && $b[1] === 0x64 && $b[2] === 0xff && $b[3] === 0x9b) {
-                return $this->isPrivateIp($v4At(12));
-            }
-            // 6to4 2002:a.b.c.d::/48 — the embedded IPv4 decides.
-            if ($b[0] === 0x20 && $b[1] === 0x02) {
-                return $this->isPrivateIp($v4At(2));
-            }
-            // Teredo 2001:0::/32 embeds an obfuscated IPv4; nothing here should need it.
-            if ($b[0] === 0x20 && $b[1] === 0x01 && $b[2] === 0x00 && $b[3] === 0x00) {
-                return true;
-            }
-            // Documentation 2001:db8::/32
-            if ($b[0] === 0x20 && $b[1] === 0x01 && $b[2] === 0x0d && $b[3] === 0xb8) {
-                return true;
-            }
-            // Discard-only 100::/64
-            if ($b[0] === 0x01 && $b[1] === 0x00 && $b[2] === 0 && $b[3] === 0 && $b[4] === 0 && $b[5] === 0 && $b[6] === 0 && $b[7] === 0) {
-                return true;
-            }
-            // Link-local fe80::/10
-            if ($b[0] === 0xfe && ($b[1] & 0xc0) === 0x80) {
-                return true;
-            }
-            // Unique local fc00::/7
-            if (($b[0] & 0xfe) === 0xfc) {
-                return true;
-            }
-            // Site-local (deprecated) fec0::/10
-            if ($b[0] === 0xfe && ($b[1] & 0xc0) === 0xc0) {
-                return true;
-            }
-            // Multicast ff00::/8 — never a unicast destination for a form webhook.
-            if ($b[0] === 0xff) {
-                return true;
-            }
-
-            return false;
-        }
-
-        // Invalid IP format
-        return true;
+        // One classifier for every outbound path — see IpSafety::isPrivateAddress.
+        return IpSafety::isPrivateAddress($ip);
     }
 
     /**

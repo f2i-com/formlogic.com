@@ -135,6 +135,12 @@ export class FlowExecError extends Error {
  */
 export interface FlowExecutorDeps {
   /**
+   * The app whose runtime is executing this flow (absent for workspace flows).
+   * `http_request` uses it to decide whether the viewer's session may travel
+   * with a same-origin API call: only the app's OWN runtime namespace.
+   */
+  appSlug?: string;
+  /**
    * Sandboxed boolean expression over a JSON context (QuickJS — never eval).
    * `budgetMs`, when given, is the node's own clamped `data.timeoutMs`
    * (100ms–30s) — the real in-VM interrupt deadline should match it instead
@@ -922,13 +928,26 @@ async function runHttpRequest(ctx: FlowNodeContext): Promise<unknown> {
   const sameOrigin =
     url.startsWith('/') ||
     (typeof window !== 'undefined' && !!window.location?.origin && url.startsWith(window.location.origin + '/'));
+  // CREDENTIALS POLICY. This flow was written by the app's owner but runs in the
+  // MEMBER's browser, with the member's cookies. Sending those cookies to any
+  // same-origin API path let an owner exfiltrate a member's own account — one
+  // `http_request GET /api/auth/me/export` fed into a record write — so the
+  // session travels only into the executing app's own runtime namespace
+  // (/api/app/<this app>/…), which is data and actions the member already has in
+  // that app. Everything else on this origin is called anonymously; workspace
+  // flows (no app) never send credentials.
+  const apiPath = sameOrigin ? (url.startsWith('/') ? url : url.slice(window.location.origin.length)) : '';
+  const ownRuntime =
+    !!deps.appSlug &&
+    (apiPath === `/api/app/${encodeURIComponent(deps.appSlug)}` ||
+      apiPath.startsWith(`/api/app/${encodeURIComponent(deps.appSlug)}/`));
   let res: Response;
   try {
     res = await doFetch(url, {
       method,
       headers,
       body: resolvedBody !== undefined && method !== 'GET' && method !== 'HEAD' ? JSON.stringify(resolvedBody) : undefined,
-      credentials: sameOrigin ? 'include' : 'omit',
+      credentials: ownRuntime ? 'include' : 'omit',
       signal: ctx.signal,
     });
   } catch (err) {

@@ -1,3 +1,10 @@
+> **RETIRED (2026-09-02).** FormLogic Desktop has been removed from this
+> repository; its role — local models, services, hardware and headless flows
+> paired to a FormLogic account — is filled by [OAIY](https://oaiy.com), which
+> speaks the same pairing, relay and event contracts the web app and backend
+> still serve. This document is kept as the record of how that side of the
+> contract was designed; nothing below describes code that ships from here.
+
 # FormLogic Data Nodes — implementation contract (v1)
 
 Status: N0 (protocol freeze) + N1 (Desktop encrypted store, read-only Data workspace) +

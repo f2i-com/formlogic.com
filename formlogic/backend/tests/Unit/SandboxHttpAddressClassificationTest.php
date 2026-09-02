@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Tests\Unit;
 
+use FormLogic\Helpers\IpSafety;
 use FormLogic\Services\FormLogicRuntime;
 use PHPUnit\Framework\TestCase;
 
@@ -60,6 +61,9 @@ class SandboxHttpAddressClassificationTest extends TestCase
     public function testEverySpellingOfAPrivateDestinationIsRefused(string $ip): void
     {
         self::assertTrue($this->isPrivate($ip), "$ip must be classified private");
+        // Webhooks and the MCP metadata fetch go through IpSafety directly; the
+        // two entry points are one classifier and must never drift apart again.
+        self::assertFalse(IpSafety::isPublicIp($ip), "IpSafety must agree that $ip is private");
     }
 
     /** @return iterable<string, array{string}> */
@@ -80,5 +84,6 @@ class SandboxHttpAddressClassificationTest extends TestCase
     public function testRoutableAddressesStayReachable(string $ip): void
     {
         self::assertFalse($this->isPrivate($ip), "$ip must be classified public");
+        self::assertTrue(IpSafety::isPublicIp($ip), "IpSafety must agree that $ip is public");
     }
 }

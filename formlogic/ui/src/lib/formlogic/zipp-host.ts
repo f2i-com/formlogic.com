@@ -13,14 +13,14 @@
 // nothing to reach for even if it knows the trampoline's name.
 //
 // LIMITS. Two live inside the engine; the third is deliberately outside it.
-//   * instruction budget — the module's built-in lifetime budget (see
-//     `renewInstructionBudget` in the vendored d.ts; ~50M steps as built), which
-//     a runaway loop exhausts deterministically. A fresh Engine is created per
-//     evaluation, so every evaluation gets the whole budget. The module exposes
-//     no setter, so `budgetMs` cannot be translated into steps here — it only
-//     sizes the wall-clock backstop. NOTE: the backend guest allows 200M steps,
-//     so a very heavy expression can succeed at submit and yet return null in
-//     the browser; raising the browser side is a zipp-wasm change, not one here.
+//   * instruction budget — set per Engine to INSTRUCTION_BUDGET_STEPS, the same
+//     200M the backend guest uses, so a heavy expression cannot succeed at submit
+//     and yet return null here (the module's own default is 50M; zipp-wasm exposes
+//     `setInstructionBudget` for exactly this alignment, clamped to 2e9 so a host
+//     can align but never switch the fuse off). A runaway loop exhausts it
+//     deterministically. A fresh Engine is created per evaluation, so every
+//     evaluation gets the whole budget. `budgetMs` only sizes the wall-clock
+//     backstop — steps and milliseconds are not convertible.
 //   * heap — the engine's own 512 MiB accounting, behind a 1 GiB linked maximum.
 //   * wall clock — enforced by TERMINATING THE WORKER, in engine.ts. zipp's
 //     browser profile omits cooperative abort polling by design and expects the
@@ -39,6 +39,8 @@ import PRELUDE from './prelude.js?raw';
 export type EvalKind = 'condition' | 'calc' | 'validate' | 'test' | 'syntax' | 'applogic';
 
 const DEFAULT_BUDGET_MS = 1000; // matches the backend's wall-time budget
+/** Same figure as DEFAULT_MAX_STEPS in formlogic/runtime/guest/src/main.rs. */
+const INSTRUCTION_BUDGET_STEPS = 200_000_000;
 const MAX_OUTPUT_DEPTH = 8;
 
 let readyPromise: Promise<void> | null = null;
@@ -235,6 +237,7 @@ export async function runEval(
   // installed: one expression can never observe or influence another.
   const engine = new Engine();
   try {
+    engine.setInstructionBudget(INSTRUCTION_BUDGET_STEPS);
     engine.initScript(program);
     const replies = engine.evalInContext('__replies.length ? __replies[__replies.length - 1] : null');
     if (!replies || typeof replies !== 'object') {

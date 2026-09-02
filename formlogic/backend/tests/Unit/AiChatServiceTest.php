@@ -246,6 +246,11 @@ class AiChatServiceTest extends TestCase
         $this->assertSame(['done' => true], AIService::parseChatStreamLine('data: [DONE]'));
         $usage = AIService::parseChatStreamLine('data: {"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}}');
         $this->assertSame(['usage' => ['promptTokens' => 10, 'completionTokens' => 4, 'totalTokens' => 14]], $usage);
+        // vLLM (continuous_usage_stats) and some proxies attach usage to CONTENT
+        // frames; the parser used to return usage alone and drop the text.
+        $mixed = AIService::parseChatStreamLine('data: {"choices":[{"delta":{"content":"Hi"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}');
+        $this->assertSame('Hi', $mixed['delta'] ?? null);
+        $this->assertSame(2, $mixed['usage']['totalTokens'] ?? null);
         // Keepalives, blanks, role-only deltas, empty deltas, malformed JSON, non-data lines.
         $this->assertNull(AIService::parseChatStreamLine(': keepalive'));
         $this->assertNull(AIService::parseChatStreamLine(''));

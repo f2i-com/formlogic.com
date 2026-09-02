@@ -47,8 +47,16 @@ try {
 $webhookService = new WebhookService($mysql, new NullLogger());
 
 // Single-instance guard so overlapping cron ticks don't both run a pass.
-$lockHandle = fopen(sys_get_temp_dir() . '/formlogic-webhook-worker.lock', 'c');
-if ($lockHandle === false || !flock($lockHandle, LOCK_EX | LOCK_NB)) {
+$lockPath = sys_get_temp_dir() . '/formlogic-webhook-worker.lock';
+$lockHandle = fopen($lockPath, 'c');
+if ($lockHandle === false) {
+    // Typically the lock file was created by another user (the web server) with
+    // a mode cron's user cannot open. Folding this into "already running" and
+    // exiting 0 hid every missed retry pass from cron.
+    fwrite(STDERR, sprintf("[%s] cannot open the lock file %s — check its owner/mode; exiting with failure\n", date('c'), $lockPath));
+    exit(1);
+}
+if (!flock($lockHandle, LOCK_EX | LOCK_NB)) {
     fwrite(STDERR, sprintf("[%s] another webhook worker is already running; exiting\n", date('c')));
     exit(0);
 }

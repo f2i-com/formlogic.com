@@ -931,14 +931,18 @@ PROMPT;
         if (!is_array($json)) {
             return null;
         }
-        if (isset($json['usage']) && is_array($json['usage'])) {
-            return ['usage' => self::normalizeUsage($json['usage'])];
-        }
+        // A frame may carry BOTH a content delta and a usage object (vLLM's
+        // continuous_usage_stats, some proxies). Returning usage alone dropped
+        // the delta — silent truncation of the reply. Report whatever is there.
+        $frame = [];
         $delta = $json['choices'][0]['delta']['content'] ?? null;
         if (is_string($delta) && $delta !== '') {
-            return ['delta' => $delta];
+            $frame['delta'] = $delta;
         }
-        return null;
+        if (isset($json['usage']) && is_array($json['usage'])) {
+            $frame['usage'] = self::normalizeUsage($json['usage']);
+        }
+        return $frame === [] ? null : $frame;
     }
 
     /** OpenAI usage object → camelCase {promptTokens, completionTokens, totalTokens} (zeros when absent). */
@@ -1007,7 +1011,6 @@ PROMPT;
                     }
                     if (isset($frame['usage'])) {
                         $usage = $frame['usage'];
-                        continue;
                     }
                     if (isset($frame['delta'])) {
                         $content .= $frame['delta'];
@@ -1050,7 +1053,11 @@ PROMPT;
         if (!$stream && ($response === false || $error)) {
             throw new \Exception('API request failed: ' . ($error ?: 'curl_exec returned false'));
         }
-        if ($stream && $error && $content === '') {
+        if ($stream && $error) {
+            // A transport failure mid-stream used to be swallowed once any delta had
+            // arrived: the partial text was returned as a complete reply and the
+            // caller emitted a normal `done`. A cut-off answer presented as finished
+            // is worse than an error the user can retry.
             throw new \Exception('API request failed: ' . $error);
         }
         if ($httpCode !== 200) {

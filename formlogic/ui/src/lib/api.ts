@@ -5535,7 +5535,10 @@ export function resolveFileUrl(url?: string | null): string {
   if (!url) return '';
   if (/^https?:\/\//i.test(url)) return url;
   if (url.startsWith('/api/')) return API_BASE_URL.replace(/\/$/, '') + url.slice(4);
-  return url;
+  // Anything else — `javascript:`, `data:`, a bare scheme — is not a file we
+  // issued and must never become a clickable href. React 19 does not block
+  // javascript: URLs on its own.
+  return '';
 }
 
 // Export types

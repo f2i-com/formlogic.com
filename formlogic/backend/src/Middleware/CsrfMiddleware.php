@@ -128,7 +128,9 @@ class CsrfMiddleware implements MiddlewareInterface
         // Note: /api/auth/me and /api/auth/logout are NOT here — they require CSRF.
         // /api/auth/mfa/verify completes a two-step login (it mints the auth cookie
         // pre-session), so it gets the same JSON-content-type guard.
-        return in_array($path, ['/api/auth/login', '/api/auth/register', '/api/auth/mfa/verify'], true);
+        // /api/demo/start mints a session too; without the guard any cross-site
+        // <form> POST logs a signed-out visitor into the shared demo account.
+        return in_array($path, ['/api/auth/login', '/api/auth/register', '/api/auth/mfa/verify', '/api/demo/start'], true);
     }
 
     /**

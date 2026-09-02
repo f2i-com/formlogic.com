@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace FormLogic\Services;
 
+use FormLogic\Helpers\IpSafety;
+
 use FormLogic\Database\MySQLConnection;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -56,11 +58,10 @@ class WebhookService
             throw new \InvalidArgumentException('Unable to resolve webhook URL hostname');
         }
         foreach ($resolvedIps as $ip) {
-            $checkIp = $ip;
-            if (preg_match('/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i', $ip, $m)) {
-                $checkIp = $m[1];
-            }
-            if (!filter_var($checkIp, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+            // Same classifier as form scripts and the MCP metadata fetch: bytes, not
+            // spellings, plus CGNAT / 192.0.0.0/24 / 198.18.0.0/15, which the plain
+            // filter_var check here used to let through.
+            if (!IpSafety::isPublicIp($ip)) {
                 throw new \InvalidArgumentException('Webhook URL resolves to a private or reserved IP address');
             }
         }
@@ -360,6 +361,13 @@ class WebhookService
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => 5,
             CURLOPT_CONNECTTIMEOUT => 3,
+            // Only the first 2000 bytes of a reply are ever stored, but RETURNTRANSFER
+            // buffered the WHOLE body first. A receiver answering with a few hundred
+            // MB inside the timeout was a memory-limit fatal — in createResponse's
+            // request (a 500 for an already-persisted submission) or in the worker,
+            // where it also left the row re-selectable forever. Abort past 256 KiB.
+            CURLOPT_NOPROGRESS => false,
+            CURLOPT_XFERINFOFUNCTION => static fn ($ch, $dlTotal, $dlNow): int => $dlNow > 262144 ? 1 : 0,
             CURLOPT_FOLLOWLOCATION => false, // Block redirects to prevent SSRF via redirect
             CURLOPT_PROTOCOLS => CURLPROTO_HTTPS | CURLPROTO_HTTP,
             CURLOPT_HTTPHEADER => [
@@ -543,6 +551,13 @@ class WebhookService
             $this->updateDeliveryResult($deliveryId, false, null, null, 0, 'No stored payload to retry', 'abandoned', $attempt, null);
             return 'abandoned';
         }
+
+        // Record the attempt BEFORE the send. If the process dies mid-send (OOM,
+        // kill, deploy restart) the counter used to stay put, the lease expired,
+        // and the row was re-selected and re-sent on every pass forever — a poison
+        // pill that also took down every row queued behind it.
+        $this->mysql->prepare('UPDATE webhook_deliveries SET attempt = :attempt WHERE id = :id')
+            ->execute(['attempt' => $attempt, 'id' => $deliveryId]);
 
         $start = microtime(true);
         try {

@@ -1,3 +1,10 @@
+> **RETIRED (2026-09-02).** FormLogic Desktop has been removed from this
+> repository; its role — local models, services, hardware and headless flows
+> paired to a FormLogic account — is filled by [OAIY](https://oaiy.com), which
+> speaks the same pairing, relay and event contracts the web app and backend
+> still serve. This document is kept as the record of how that side of the
+> contract was designed; nothing below describes code that ships from here.
+
 # FormLogic Desktop — Plugin SDK Contract
 
 **Status:** Phase 0 contract (frozen 2026-07-07). Schemas: `docs/contracts/plugin-manifest.schema.json`, `desktop-event.schema.json`, `connector-request.schema.json`, `connector-response.schema.json`.

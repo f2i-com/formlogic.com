@@ -1280,13 +1280,17 @@ $app->get('/api/notices', function ($request, $response) use ($container) {
 // Everything here is audited as admin.*; none of it returns user response DATA
 // (structure + counts only).
 $adminRateLimiter = new RateLimitMiddleware($container->get(\FormLogic\Services\RateLimiter::class), 240, 60, 'admin_api', true);
+// The one admin route that verifies the acting admin's OWN password (MFA reset
+// step-up) is a password oracle for a hijacked admin tab; 240/min was ~240
+// guesses a minute. Same 10/min, per user, fail-closed posture as /api/auth/me.
+$adminStepUpRateLimiter = new RateLimitMiddleware($container->get(\FormLogic\Services\RateLimiter::class), 10, 60, 'admin_step_up', true, true);
 // Route args helper (same as $getArgs below, which is defined later in the file).
 // NOTE: route closures here MUST name their params $request/$response — the DI
 // bridge injects by parameter name, so e.g. fn ($rq, $rs) fails to invoke.
 $adminArgs = function ($request) {
     return \Slim\Routing\RouteContext::fromRequest($request)->getRoute()->getArguments();
 };
-$app->group('/api/admin', function (RouteCollectorProxy $group) use ($container, $adminArgs) {
+$app->group('/api/admin', function (RouteCollectorProxy $group) use ($container, $adminArgs, $adminStepUpRateLimiter) {
     $ctrl = fn () => $container->get(\FormLogic\Controllers\AdminController::class);
 
     $group->get('/overview', function ($request, $response) use ($ctrl) {
@@ -1305,7 +1309,7 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     // + remembered browsers wiped) so they can sign in and re-enroll. Audited.
     $group->post('/users/{id}/mfa/reset', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->resetMfa($request, $response, $adminArgs($request));
-    });
+    })->add($adminStepUpRateLimiter);
     // Account tools (support operations, all audited): set/generate a password
     // (sessions revoked), change the email, view the payment ledger, toggle
     // complimentary access, and — heavily gated — erase the whole account.

@@ -66,10 +66,15 @@ function flowRunStaleSeconds(array $argv, array $env): int
             $seconds = (int) $envVal;
         }
     }
-    if ($seconds === null || $seconds < 1) {
-        $seconds = ($seconds !== null && $seconds < 1) ? 1 : 600;
+    if ($seconds !== null && $seconds < 1) {
+        // Clamping 0 to 1 second turned a typo into "reclaim every run older than a
+        // second": each cron tick flipped every in-flight run to error and every
+        // later completion to 409. A nonsensical threshold falls back to the
+        // default and says so.
+        fwrite(STDERR, "flow-runs-reclaim: ignoring staleness threshold {$seconds}s (must be >= 1); using 600s\n");
+        $seconds = null;
     }
-    return $seconds;
+    return $seconds ?? 600;
 }
 
 // Guard so this file is require-able from a unit test (which only exercises flowRunStaleSeconds()).

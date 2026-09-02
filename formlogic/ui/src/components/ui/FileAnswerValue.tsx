@@ -58,7 +58,7 @@ export function FileAnswerValue({ files, linkClassName }: FileAnswerValueProps) 
         </div>
       )}
       {others.map(({ f, k }) =>
-        f.url ? (
+        resolveFileUrl(f.url) ? (
           <a key={k} href={resolveFileUrl(f.url)} target="_blank" rel="noopener noreferrer" className={linkClassName}>
             {f.originalFilename || 'File'}
           </a>

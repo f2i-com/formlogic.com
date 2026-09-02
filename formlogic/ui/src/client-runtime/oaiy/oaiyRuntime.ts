@@ -15,6 +15,7 @@
 // Genericity (the OAIY side): OAIY never learns FormLogic's domain. Every call
 // carries `caller.product = 'formlogic'`; OAIY stores and echoes that, never
 // parses it. See the protocol's caller-identity note.
+import { api } from '../../lib/api';
 import type {
   DesktopClientResult,
   DesktopErrorCode,
@@ -232,6 +233,12 @@ export function __resetOaiyDetectionForTests(): void {
  * it, so gating on it keeps the two honest.
  */
 export function oaiyRouteAvailable(): boolean {
+  // The shared demo account never reaches real hardware. FormLogic Desktop's
+  // route had this gate (FL-CONN-001: the demo's Device Setup once showed the
+  // operator's real dongle); the successor route lacked it, and an operator who
+  // paired OAIY, logged out and opened the demo in the same tab would have had
+  // the demo's scripted `call.dial` placed on their own phone.
+  if (api.isDemoMode()) return false;
   return getOaiyInfo().available && getOaiyToken() !== null;
 }
 
@@ -297,7 +304,21 @@ export async function oaiyConnectorRequest(
       },
     );
     clearTimeout(timer);
-  } catch {
+  } catch (err) {
+    // A TIMEOUT is not "OAIY is absent": the request reached it and the plugin
+    // may well have run the command. Reporting it as a transport failure let the
+    // caller fall through to another route (or the owner's remote desktop) and
+    // execute `sms.send` / `call.dial` a second time. It is an uncertain outcome
+    // — a real failure the caller must surface, never retry elsewhere.
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      return {
+        ok: false,
+        error: {
+          code: 'connector_uncertain',
+          message: 'OAIY Desktop did not answer within 10 s — the command may still have run; check the device before retrying.',
+        },
+      };
+    }
     // Transport failure — OAIY unreachable. Marked so the caller treats it as
     // "absent" rather than a genuine command failure.
     return {

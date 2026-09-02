@@ -10,7 +10,7 @@ use PHPUnit\Framework\TestCase;
 /**
  * Shared __flenc:1 adversarial corpus (data-nodes plan §12.2): the PHP
  * EnvelopeValidator and the Rust desktop validator
- * (desktop/src-tauri/src/data/envelope_validator.rs) must agree case-for-case
+ * (formerly desktop/src-tauri/src/data/envelope_validator.rs, now maintained with OAIY) must agree case-for-case
  * on docs/contracts/data-envelope-adversarial.json, so a Desktop primary can
  * never be talked into storing what the Cloud would have rejected (or vice
  * versa).

@@ -26,11 +26,104 @@ class IpSafety
     /** True when $ip is a public, routable address (not private/reserved/loopback/link-local). */
     public static function isPublicIp(string $ip): bool
     {
-        // Unwrap an IPv4-mapped IPv6 address so the IPv4 range checks apply.
-        if (preg_match('/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i', $ip, $m)) {
-            $ip = $m[1];
+        return !self::isPrivateAddress($ip);
+    }
+
+    /**
+     * The classifier behind every outbound-request guard (form scripts, webhooks,
+     * the MCP client-metadata fetch). Classifies IPv6 by its 16 BYTES, never by the
+     * textual form: dns_get_record() reports AAAA answers as hex groups, and the
+     * previous dotted-only unwrap of `::ffff:a.b.c.d` let `::ffff:a9fe:a9fe`
+     * (169.254.169.254) through as public.
+     */
+    public static function isPrivateAddress(string $ip): bool
+    {
+        $ip = trim($ip, "[] \t\n\r");
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {
+            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false) {
+                return true;
+            }
+            // Ranges PHP's filter does not treat as reserved but that are never a
+            // legitimate outbound target: carrier-grade NAT 100.64.0.0/10 (where some
+            // cloud metadata services live, e.g. 100.100.100.200), the IETF
+            // protocol-assignments block 192.0.0.0/24, and benchmarking 198.18.0.0/15.
+            $n = ip2long($ip);
+            if ($n === false) {
+                return true;
+            }
+            $inCidr = static fn (string $base, int $bits): bool =>
+                ($n >> (32 - $bits)) === (ip2long($base) >> (32 - $bits));
+            return $inCidr('100.64.0.0', 10) || $inCidr('192.0.0.0', 24) || $inCidr('198.18.0.0', 15);
         }
-        return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false;
+
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) === false) {
+            return true; // not an address at all: refuse
+        }
+        $expanded = @inet_pton($ip);
+        if ($expanded === false || strlen($expanded) !== 16) {
+            return true;
+        }
+        /** @var list<int> $b */
+        $b = array_values(unpack('C16', $expanded));
+        $v4At = static fn (int $off): string => sprintf('%d.%d.%d.%d', $b[$off], $b[$off + 1], $b[$off + 2], $b[$off + 3]);
+        $zeroThrough = static function (int $count) use ($b): bool {
+            for ($i = 0; $i < $count; $i++) {
+                if ($b[$i] !== 0) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        // :: (unspecified) and ::1 (loopback)
+        if ($zeroThrough(15) && ($b[15] === 0 || $b[15] === 1)) {
+            return true;
+        }
+        // IPv4-mapped ::ffff:0:0/96 — the embedded IPv4 decides, whatever the spelling.
+        if ($zeroThrough(10) && $b[10] === 0xff && $b[11] === 0xff) {
+            return self::isPrivateAddress($v4At(12));
+        }
+        // IPv4-compatible ::a.b.c.d (deprecated; nothing legitimate is reached this way).
+        if ($zeroThrough(12)) {
+            return true;
+        }
+        // NAT64 64:ff9b::/96 — the embedded IPv4 decides.
+        if ($b[0] === 0x00 && $b[1] === 0x64 && $b[2] === 0xff && $b[3] === 0x9b) {
+            return self::isPrivateAddress($v4At(12));
+        }
+        // 6to4 2002:a.b.c.d::/48 — the embedded IPv4 decides.
+        if ($b[0] === 0x20 && $b[1] === 0x02) {
+            return self::isPrivateAddress($v4At(2));
+        }
+        // Teredo 2001:0::/32 embeds an obfuscated IPv4; nothing here should need it.
+        if ($b[0] === 0x20 && $b[1] === 0x01 && $b[2] === 0x00 && $b[3] === 0x00) {
+            return true;
+        }
+        // Documentation 2001:db8::/32
+        if ($b[0] === 0x20 && $b[1] === 0x01 && $b[2] === 0x0d && $b[3] === 0xb8) {
+            return true;
+        }
+        // Discard-only 100::/64
+        if ($b[0] === 0x01 && $b[1] === 0x00 && $b[2] === 0 && $b[3] === 0 && $b[4] === 0 && $b[5] === 0 && $b[6] === 0 && $b[7] === 0) {
+            return true;
+        }
+        // Link-local fe80::/10
+        if ($b[0] === 0xfe && ($b[1] & 0xc0) === 0x80) {
+            return true;
+        }
+        // Unique local fc00::/7
+        if (($b[0] & 0xfe) === 0xfc) {
+            return true;
+        }
+        // Site-local (deprecated) fec0::/10
+        if ($b[0] === 0xfe && ($b[1] & 0xc0) === 0xc0) {
+            return true;
+        }
+        // Multicast ff00::/8 — never a unicast destination.
+        if ($b[0] === 0xff) {
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -39,9 +132,10 @@ class IpSafety
      *
      * @param string|null $error set to a user-facing reason when false
      */
-    public static function resolvesToPublicHost(string $host, ?string &$error = null): bool
+    public static function resolvesToPublicHost(string $host, ?string &$error = null, ?string &$approvedIp = null): bool
     {
         $error = null;
+        $approvedIp = null;
         $host = strtolower(trim($host, " \t\n\r\0\x0B[]"));
         if ($host === '' || in_array($host, self::BLOCKED_HOSTS, true)) {
             $error = 'Host is not allowed';
@@ -53,6 +147,7 @@ class IpSafety
                 $error = 'Host is a private or reserved IP';
                 return false;
             }
+            $approvedIp = $host;
             return true;
         }
 
@@ -81,6 +176,9 @@ class IpSafety
                 return false;
             }
         }
+        // The first approved address, for callers that pin the connection to what
+        // they checked (a check-then-fetch without pinning is DNS-rebindable).
+        $approvedIp = (string) $ips[0];
         return true;
     }
 }

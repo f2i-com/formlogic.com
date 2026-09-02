@@ -4,23 +4,22 @@ The browser half of FormLogic's expression sandbox. Author-written conditions,
 calculated fields, validation rules and app-logic hooks run in this engine, in a
 dedicated Web Worker, with an empty global object and no host bridge installed.
 
-**Built from** `f2i-com/zipp.org` at **`7fd2f23d`** (v0.0.12 — the commit that
-refreshed the repository's tracked production module, one past the `v0.0.12` tag
-so that it carries the interpreter-only build fix the tag itself lacks). This is
-the same revision the backend's `formlogic/runtime` guest and the desktop's
-`zipp-vm` dependency pin. All three must move together — an expression is
-supposed to mean the same thing wherever it runs, and that only holds if they
-share an engine.
+**Built from** `f2i-com/zipp.org` at **`024c1149`** (v0.0.12 plus
+`setInstructionBudget`, the host-side knob that lets this module run the same
+200M-step budget the backend guest uses — without it a heavy expression could
+succeed at submit and yet come back `null` here). This is the same revision the
+backend's `formlogic/runtime` guest pins. Both must move together — an
+expression is supposed to mean the same thing wherever it runs, and that only
+holds if they share an engine.
 
-The four files here are byte-identical to `landing/public/wasm/` in the zipp
-repository at that revision; the module's SHA-256 is the one the zipp README
-records as its tracked v0.0.12 artifact:
+Built with the recipe below (not a copy of zipp's tracked landing module, which
+predates the budget API):
 
 ```text
-raw         5,558,860 bytes
-gzip-9      1,812,458 bytes
-Brotli-11   1,248,649 bytes
-SHA-256     bd8614fe5f3a3b8ef67f4b917cdefebb3fe69afa39a9804a0d3f6b0b6b267126
+raw         5,559,686 bytes
+gzip-9      1,841,812 bytes
+Brotli-11   1,250,755 bytes
+SHA-256     e735b8a787c2cd50d948d65d5ee51c343eccef9a8c45399fdc212cfe2569e31d
 ```
 
 ## Rebuilding

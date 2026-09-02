@@ -3,7 +3,8 @@
 // expressions, so all of them offer the exact same standard library.
 //
 // There are three such runtimes: the browser (imports the canonical file
-// directly), the PHP backend, and the desktop flow runner. The desktop was NOT a
+// directly) and the PHP backend, whose WASI guest loads it at start-up. (The retired
+// desktop app was a third destination until 2026-09-02.) The desktop was NOT a
 // destination until now, and it shipped no standard library at all — so
 // `validators.email(x)` or `sum(xs)` in a flow condition threw "is not defined",
 // and the runner's `unwrap_or(false)` turned that into a silently-false branch.
@@ -19,7 +20,6 @@ const source = resolve(here, '../src/lib/formlogic/prelude.js');
 
 const destinations = [
   resolve(here, '../../backend/resources/formlogic-prelude.js'),
-  resolve(here, '../../desktop/src-tauri/resources/formlogic-prelude.js'),
 ];
 
 const content = readFileSync(source, 'utf8');

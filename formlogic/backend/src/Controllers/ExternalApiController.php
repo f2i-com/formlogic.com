@@ -184,7 +184,7 @@ class ExternalApiController
         // even if the form definition (calculated fields etc.) changed since.
         $rawAnswersForHash = (is_array($data) && isset($data['answers'])) ? $data['answers'] : [];
         // Sanitize answers: strip non-input fields and unknown field IDs
-        $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers'] ?? []);
+        $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], is_array($data['answers'] ?? null) ? $data['answers'] : []);
         $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
         $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
         // Owner programmatic write (authorizeForm above) → owner attachment rules (FILE-PRIV-001).

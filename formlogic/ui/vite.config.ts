@@ -158,7 +158,10 @@ export default defineConfig(({ mode }) => {
           // the image cache). Offline submission still works via the background-sync
           // POST queues below; the app shell + static assets are precached.
 
-          // Queue failed app form submissions for background sync (no response cached)
+          // Queue failed app form submissions for background sync (no response cached).
+          // NOTE: this queue is emptied by teardownUserSession — Workbox replays with
+          // whatever cookies exist at sync time, and the server attributes the
+          // submission to that session's user. See authStore.purgeBackgroundSyncQueue.
           {
             urlPattern: /^https?:\/\/.*\/api\/app\/[^/]+\/forms\/[^/]+\/responses$/,
             handler: 'NetworkOnly',

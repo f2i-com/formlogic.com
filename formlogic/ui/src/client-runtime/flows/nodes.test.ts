@@ -886,6 +886,35 @@ function routedFetch(routes: Record<string, unknown>): typeof fetch {
 }
 
 describe('http_request', () => {
+  // The flow runs in the MEMBER's browser. Its cookies may travel only into the
+  // executing app's own runtime namespace; an owner's flow could otherwise
+  // exfiltrate the member's own account via GET /api/auth/me/export.
+  const jsonOk = () => new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } });
+
+  it('sends the session only to the executing app\'s own /api/app/<slug>/ namespace', async () => {
+    const fetchFn = vi.fn(async () => jsonOk());
+    const deps = fakeDeps({ fetchFn, appSlug: 'shop' });
+    await executeNode(ctxFor({ id: 'h', type: 'http_request', data: { url: '/api/app/shop/records?limit=1' } }, deps));
+    expect((fetchFn.mock.calls[0] as unknown[])[1]).toMatchObject({ credentials: 'include' });
+  });
+
+  it('calls every other same-origin API path anonymously', async () => {
+    const fetchFn = vi.fn(async () => jsonOk());
+    const deps = fakeDeps({ fetchFn, appSlug: 'shop' });
+    for (const url of ['/api/auth/me/export', '/api/forms/abc/responses', '/api/app/other-app/records', '/api/app/shop-2/records']) {
+      fetchFn.mockClear();
+      await executeNode(ctxFor({ id: 'h', type: 'http_request', data: { url } }, deps));
+      expect((fetchFn.mock.calls[0] as unknown[])[1]).toMatchObject({ credentials: 'omit' });
+    }
+  });
+
+  it('a workspace flow (no app) never sends credentials, even to /api/app/', async () => {
+    const fetchFn = vi.fn(async () => jsonOk());
+    const deps = fakeDeps({ fetchFn });
+    await executeNode(ctxFor({ id: 'h', type: 'http_request', data: { url: '/api/app/shop/records' } }, deps));
+    expect((fetchFn.mock.calls[0] as unknown[])[1]).toMatchObject({ credentials: 'omit' });
+  });
+
   it('rejects a non-allow-listed absolute URL when `service` is unset (unchanged existing behavior)', async () => {
     const node: WorkflowGraphNode = { id: 'h', type: 'http_request', data: { url: 'https://evil.example/x' } };
     await expect(executeNode(ctxFor(node, fakeDeps({ fetchFn: routedFetch({}) }))))

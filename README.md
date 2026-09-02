@@ -7,7 +7,7 @@
 <p align="center"><strong>Forms become apps. Calls become work. Automations keep it moving.</strong></p>
 
 <p align="center">
-  FormLogic is a source-available, self-hostable platform for building connected forms, business apps, portals, dashboards and flows. Add FormLogic Desktop for local AI, hardware and headless automation—including <strong>Aokie</strong>, the AI receptionist that brings real phone calls into your business workflows.
+  FormLogic is a source-available, self-hostable platform for building connected forms, business apps, portals, dashboards and flows. Pair <strong>OAIY</strong> for local AI, hardware and headless automation—including <strong>Aokie</strong>, the AI receptionist that brings real phone calls into your business workflows.
 </p>
 
 <p align="center">
@@ -69,7 +69,7 @@ The same form can work on its own, appear inside several apps, feed a dashboard,
 | Layer | What it owns | What it unlocks |
 |---|---|---|
 | **FormLogic Web** | Forms, records, apps, roles, dashboards, reports, flows, marketplace and APIs | A shared operational workspace your team can reach anywhere |
-| **FormLogic Desktop** | Local models, services, supervised plugins, hardware connectors and headless flow execution | Local capability with cloud visibility—even when the browser is closed |
+| **OAIY** (paired desktop, separate repository) | Local models, services, supervised plugins, hardware connectors and headless flow execution | Local capability with cloud visibility—even when the browser is closed |
 | **Aokie** | Bluetooth phone control, live call audio, speech and durable call/SMS events | A phone receptionist whose conversations become structured business work |
 
 You can use FormLogic entirely in the browser. Desktop is the optional local capability layer; Aokie is its flagship hardware plugin.
@@ -290,7 +290,7 @@ formlogic.com/
 └── DEPLOYMENT.md         Production deployment and recovery guide
 
 aokie.com/
-├── crates/aokie-plugin/      FormLogic Desktop plugin and durable event bridge
+├── crates/aokie-plugin/      OAIY plugin and durable event bridge
 ├── crates/aokie-bluetooth/   HFP/SCO/MAP/PBAP radio runtime
 ├── crates/aokie-dongle/      Dongle discovery and guarded driver management
 ├── crates/aokie-ai/          Local ONNX speech runtimes
@@ -326,7 +326,7 @@ Security controls include server-enforced RBAC, HttpOnly session cookies, CSRF p
 <summary><strong>Current beta boundaries</strong></summary>
 
 - The hosted service is in public beta.
-- FormLogic Desktop's packaged UI currently targets Windows; the web app works across modern browsers.
+- The paired desktop (OAIY) currently targets Windows; the web app works across modern browsers.
 - Aokie is a Windows hardware beta and only catalogued Bluetooth dongles are supported.
 - Aokie auto-answer defaults off and must be explicitly enabled.
 - Local models are the default Aokie path; configured remote providers receive the data required for their request.
@@ -345,7 +345,7 @@ Security controls include server-enforced RBAC, HttpOnly session cookies, CSRF p
 | [External API](docs/API.md) | Scoped API keys and the REST endpoint reference |
 | [MCP](docs/MCP.md) | Connecting your own AI with scoped access |
 | [FormLogic Flows](docs/FORMLOGIC_FLOWS.md) | Graph contract, bindings, execution and run history |
-| [FormLogic Desktop](docs/FORMLOGIC_DESKTOP.md) | Pairing, local services, plugins and headless flows |
+| [Desktop pairing (historical)](docs/FORMLOGIC_DESKTOP.md) | How the paired-desktop contract was designed; the app itself is now OAIY |
 | [Custom app platform](docs/CUSTOM_APP_PLATFORM.md) | QuickJS logic, custom screens, SDK, connectors and domains |
 | [Package format](docs/PACK_FORMAT.md) | Signed `.formlogic` packages, manifests and trust |
 | [Native runtime](docs/NATIVE_RUNTIME_TAURI.md) | Deep links, signed manifests, connectors and offline queue |

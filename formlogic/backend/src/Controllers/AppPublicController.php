@@ -681,7 +681,7 @@ class AppPublicController
 
             // Drop answers for non-input/unknown fields (e.g. forged calculated
             // values or arbitrary field IDs) before validating and persisting.
-            $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers'] ?? []);
+            $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], is_array($data['answers'] ?? null) ? $data['answers'] : []);
             // Re-derive file URLs server-side (don't trust client-supplied url) — parity
             // with the standalone path; prevents stored reviewer-facing phishing links.
             $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
@@ -2123,6 +2123,9 @@ class AppPublicController
                 if (is_array($val)) {
                     $resolvedItems = [];
                     foreach ($val as $id) {
+                        if (!is_scalar($id)) {
+                            continue;
+                        }
                         $resolvedItems[] = $resolvedCache[$targetFormId][$id] ?? [
                             'id' => $id,
                             'display' => 'Record not found',
@@ -2175,11 +2178,10 @@ class AppPublicController
 
             // Skip fields hidden by conditional logic (can't be filled -> dead-end);
             // use the logic-derived effective-required (honors 'require' actions).
+            // Hidden-by-logic fields lose only their REQUIRED status; an answer that
+            // arrives for one is still type-checked (see ResponseController).
             $fieldVis = $visibility[$fieldId] ?? ['visible' => true, 'required' => (bool)($field['required'] ?? false)];
-            if (!$fieldVis['visible']) {
-                continue;
-            }
-            $isRequired = $fieldVis['required'];
+            $isRequired = $fieldVis['visible'] && $fieldVis['required'];
 
             $value = $answers[$fieldId] ?? null;
 
@@ -2357,6 +2359,21 @@ class AppPublicController
                     return 'Longitude must be between -180 and 180';
                 }
                 break;
+            case 'linked_record':
+                // A reference is a record id, or a list of them. Nested arrays used
+                // to be stored verbatim and then crashed every reader that indexed
+                // a cache with the value (TypeError → 500 on the owner's responses
+                // list, the CSV export and the app record list — permanently).
+                foreach ((is_array($value) ? $value : [$value]) as $ref) {
+                    if (!is_string($ref) || $ref === '' || strlen($ref) > 64 || !preg_match('/^[A-Za-z0-9_-]+$/', $ref)) {
+                        return 'Invalid linked record reference';
+                    }
+                }
+                if (is_array($value) && count($value) > 200) {
+                    return 'Too many linked records';
+                }
+                break;
+
             case 'file_upload':
                 if (!is_array($value)) {
                     return 'Invalid file upload format';

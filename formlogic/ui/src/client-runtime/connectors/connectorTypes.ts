@@ -57,6 +57,7 @@ export type ConnectorErrorCode =
   | 'capability_denied'
   | 'connector_missing'
   | 'connector_unavailable'
+  | 'connector_uncertain'
   | 'command_failed'
   // A call-control command named a callId that is no longer the connector's
   // current call (stale tab / raced lifecycle). Never fallbackable — the

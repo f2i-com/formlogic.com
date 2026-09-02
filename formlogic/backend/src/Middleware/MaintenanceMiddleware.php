@@ -31,6 +31,12 @@ class MaintenanceMiddleware implements MiddlewareInterface
     private const ALLOWED_PREFIXES = [
         '/api/health',
         '/api/auth/login',
+        // The second half of a two-step login. Without it an admin with TOTP on
+        // (and no trusted-browser cookie) could never finish signing in to turn
+        // maintenance back off — recovery meant editing storage/maintenance.json.
+        '/api/auth/mfa/verify',
+        '/api/auth/forgot-password',
+        '/api/auth/reset-password',
         '/api/auth/logout',
         '/api/auth/me',
         '/api/admin/',

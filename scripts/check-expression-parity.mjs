@@ -2,34 +2,35 @@
 /**
  * Cross-runtime expression parity — the check that actually enforces the claim.
  *
- * FormLogic evaluates author-written expressions in three places: the browser
- * (zipp wasm), the backend (the zipp sandbox child), and the desktop flow runner
- * (zipp-vm embedded). A condition, a calculated field or a validation rule is
- * supposed to mean the SAME THING in all three.
+ * FormLogic evaluates author-written expressions in two places: the browser
+ * (the zipp wasm module in a Worker) and the backend (the same engine as a WASI
+ * guest under the formlogic-runtime launcher). A condition, a calculated field
+ * or a validation rule is supposed to mean the SAME THING in both. (A third
+ * leg, the desktop flow runner, existed until the desktop app was retired on
+ * 2026-09-02; the comparator fails on a MISSING leg, so it was removed here
+ * rather than left to skip.)
  *
  * `docs/contracts/formlogic-expression-corpus.json` is the shared authority, and
  * each runtime has its own test that asserts it:
  *
  *   backend/tests/Unit/FormLogicExpressionParityTest.php
- *   desktop/src-tauri/tests/formlogic_expression_parity.rs
  *   ui/src/lib/formlogic/corpusParity.test.ts
  *
- * For the 124 cases that pin an exact value, those three suites already prove
- * agreement transitively — all three assert the same literal, so all three agree.
+ * For the 124 cases that pin an exact value, those two suites already prove
+ * agreement transitively — both assert the same literal, so both agree.
  *
  * The other 13 cases pin NOTHING. They are the environment-dependent probes
  * (timezone, locale, Intl) and the throw-class probes, where the right assertion
- * is "whatever the answer is, all three give the same one" rather than a value
+ * is "whatever the answer is, both give the same one" rather than a value
  * baked into a fixture. Each leg records what it produced — and until this script
  * existed, nothing ever compared those recordings. The claim was made and never
  * checked.
  *
- * This closes that. It is a POST-PROCESSING step: run the three suites first,
+ * This closes that. It is a POST-PROCESSING step: run both suites first,
  * then run this. It fails if a leg is missing, if the legs ran different corpora,
  * or if any case disagrees.
  *
  *   php vendor/bin/phpunit --filter FormLogicExpressionParityTest   # backend
- *   cargo test --features gui the_shared_expression_corpus          # desktop
  *   npx vitest run src/lib/formlogic/corpusParity.test.ts           # browser
  *   node scripts/check-expression-parity.mjs
  */
@@ -42,7 +43,6 @@ const DIR = join(ROOT, 'test-results', 'parity');
 
 const LEGS = [
   { file: 'backend.json', label: 'backend', how: 'php vendor/bin/phpunit --filter FormLogicExpressionParityTest' },
-  { file: 'desktop.json', label: 'desktop', how: 'cargo test --features gui the_shared_expression_corpus' },
   { file: 'browser.json', label: 'browser', how: 'npx vitest run src/lib/formlogic/corpusParity.test.ts' },
 ];
 
@@ -53,7 +53,7 @@ for (const leg of LEGS) {
   const path = join(DIR, leg.file);
   if (!existsSync(path)) {
     // A missing leg must FAIL, not silently reduce the comparison to the legs
-    // that happen to be present — "2 of 3 agree" is not the property claimed.
+    // that happen to be present — one leg agreeing with itself is not parity.
     problems.push(`missing ${leg.label} artifact (${path})\n    produce it with: ${leg.how}`);
     continue;
   }
@@ -135,8 +135,8 @@ if (disagreements.length) {
   console.error(`\n${disagreements.length} case(s) DISAGREE across runtimes:\n`);
   console.error(disagreements.join('\n\n'));
   console.error(
-    '\nAn expression must mean the same thing in the browser, the backend and the\n' +
-      'desktop. A divergence here is a real behaviour difference a user can hit.\n'
+    '\nAn expression must mean the same thing in the browser and on the backend.\n' +
+      'A divergence here is a real behaviour difference a user can hit.\n'
   );
 }
 if (absent.length || disagreements.length) process.exit(1);

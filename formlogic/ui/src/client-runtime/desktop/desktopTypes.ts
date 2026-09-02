@@ -170,6 +170,9 @@ export type DesktopErrorCode =
   | 'connector_missing'
   | 'connector_unavailable'
   | 'command_failed'
+  // The runtime was reached but did not answer in time: the command MAY have
+  // run. Never retried on another route (see oaiyRuntime).
+  | 'connector_uncertain'
   | 'ipc_unavailable'
   | 'auth_required';
 

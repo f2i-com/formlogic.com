@@ -107,6 +107,50 @@ export async function teardownUserSession(
  * Prefer teardownUserSession() — it adds the FL-11 generation bump, per-user database
  * erasure, and cross-tab propagation.
  */
+/**
+ * Delete every request Workbox has parked under `queueName` in its
+ * background-sync store (schema: DB `workbox-background-sync`, store `requests`,
+ * index `queueName`). Resolves quietly when the database does not exist.
+ */
+async function purgeBackgroundSyncQueue(queueName: string): Promise<void> {
+  if (typeof indexedDB === 'undefined') return;
+  await new Promise<void>((resolve) => {
+    const open = indexedDB.open('workbox-background-sync');
+    open.onerror = () => resolve();
+    open.onblocked = () => resolve();
+    open.onupgradeneeded = () => {
+      // The DB did not exist; opening created an empty one. Abort so it stays absent.
+      open.transaction?.abort();
+      resolve();
+    };
+    open.onsuccess = () => {
+      const db = open.result;
+      try {
+        if (!db.objectStoreNames.contains('requests')) {
+          db.close();
+          resolve();
+          return;
+        }
+        const tx = db.transaction('requests', 'readwrite');
+        const store = tx.objectStore('requests');
+        const cursorReq = store.index('queueName').openCursor(IDBKeyRange.only(queueName));
+        cursorReq.onsuccess = () => {
+          const cursor = cursorReq.result;
+          if (!cursor) return;
+          cursor.delete();
+          cursor.continue();
+        };
+        tx.oncomplete = () => { db.close(); resolve(); };
+        tx.onerror = () => { db.close(); resolve(); };
+        tx.onabort = () => { db.close(); resolve(); };
+      } catch {
+        db.close();
+        resolve();
+      }
+    };
+  });
+}
+
 async function clearUserSessionData(): Promise<void> {
   // Cancel pending debounced saves so stale callbacks can't fire after the purge.
   clearAllDebounceTimers();
@@ -136,8 +180,37 @@ async function clearUserSessionData(): Promise<void> {
     localStorage.removeItem('formlogic-responses');
     localStorage.removeItem('formlogic-app-runtime');
     localStorage.removeItem('formlogic_storage_mode');
+    // App-logic `storage.set` state is keyed by APP, not by user; the next
+    // account's scripts would read the previous member's values.
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('formlogic-applogic-')) localStorage.removeItem(k);
+    }
   } catch {
     // localStorage may be unavailable (e.g. private browsing)
+  }
+
+  // The OAIY pairing token lives in sessionStorage keyed by base URL only. Left
+  // behind, it survives into the next session — including the shared demo
+  // account — and drives the operator's real hardware. Dynamic import keeps the
+  // OAIY client out of the base bundle for sessions that never pair.
+  try {
+    const oaiy = await import('../client-runtime/oaiy/oaiyRuntime');
+    oaiy.setOaiyToken(null);
+  } catch {
+    // never let it block logout
+  }
+
+  // Workbox's background-sync queue replays a failed app-form POST with WHATEVER
+  // cookies are present at sync time, and the server records the submitter from
+  // that cookie: a submission A queued offline was created as B's after B signed
+  // in on the same browser. The public-form queue is anonymous by construction
+  // and is kept; the app-form queue is emptied here. (Those queued submissions
+  // are lost rather than misattributed — the lesser of the two outcomes.)
+  try {
+    await purgeBackgroundSyncQueue('formSubmissionQueue');
+  } catch {
+    // IndexedDB unavailable, or no queue yet — nothing to purge
   }
 
   try {

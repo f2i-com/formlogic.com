@@ -960,6 +960,11 @@ async function getConnectorCapability(connectorId: string): Promise<string | nul
   if (!capabilityAppSlug) return null;
   const cached = capabilityCache.get(connectorId);
   if (cached && cached.validUntil > Date.now()) return cached.token;
+  // Same epoch guard as the service-capability mint: a logout/login or an app
+  // switch can race the cloud response, and authority minted for the PREVIOUS
+  // principal or app must be neither cached nor used.
+  const contextEpoch = capabilityContextEpoch;
+  const appSlug = capabilityAppSlug;
   try {
     const csrf = typeof document !== 'undefined'
       ? document.cookie.match(/(?:^|;\s*)formlogic_csrf=([^;]*)/)?.[1]
@@ -976,6 +981,7 @@ async function getConnectorCapability(connectorId: string): Promise<string | nul
     if (!res.ok) return null; // e.g. 403: role has no connector access — the desktop's denial is authoritative
     const data = (await res.json()) as { token?: string; expiresInSeconds?: number };
     if (typeof data.token !== 'string' || data.token === '') return null;
+    if (capabilityContextEpoch !== contextEpoch || capabilityAppSlug !== appSlug) return null;
     // Refresh 30s early so an in-flight command never carries a just-expired token.
     const ttlMs = Math.max(5, Math.min(270, (data.expiresInSeconds ?? 300) - 30)) * 1000;
     capabilityCache.set(connectorId, { token: data.token, validUntil: Date.now() + ttlMs });

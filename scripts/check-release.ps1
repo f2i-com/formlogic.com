@@ -1,4 +1,4 @@
-# One local release bar for the FormLogic repo (audit XR-01).
+﻿# One local release bar for the FormLogic repo (audit XR-01).
 #
 # Runs every gate a release must pass, in order, propagating the first failure.
 # Cheap gates always run; expensive/hardware-adjacent gates are opt-in flags so
@@ -7,7 +7,6 @@
 #
 #   powershell -File scripts/check-release.ps1                 # standard gates
 #   powershell -File scripts/check-release.ps1 -Playwright     # + E2E projects
-#   powershell -File scripts/check-release.ps1 -Desktop        # + desktop clippy + test
 #   powershell -File scripts/check-release.ps1 -NativeRuntime  # + native-runtime clippy/check/build
 #   powershell -File scripts/check-release.ps1 -DistSmoke      # + package + boot the zip (FL-30)
 #   powershell -File scripts/check-release.ps1 -Fmt            # + cargo fmt --check, both Rust roots (FL-31)
@@ -16,7 +15,7 @@
 #   powershell -File scripts/check-release.ps1 -Android        # + native-runtime Android target check (FL-31)
 #
 # Requires: PHP + composer deps installed (backend/vendor), Node deps
-# (ui/node_modules), the Rust toolchain for -Desktop/-NativeRuntime, and a
+# (ui/node_modules), the Rust toolchain for -NativeRuntime, and a
 # reachable test MySQL for phpunit (suites self-skip without one — that is a
 # TEST-environment miss, and this script fails loudly when phpunit reports
 # skipped-only runs).
@@ -24,7 +23,6 @@
 param(
     [switch]$Playwright,
     [switch]$NativeRuntime,
-    [switch]$Desktop,
     [switch]$DistSmoke,
     [switch]$Fmt,
     [switch]$RustAudit,
@@ -90,26 +88,11 @@ Invoke-Gate 'contracts: cross-repo digest (FL-34)' $repo {
     node scripts/check-contracts.mjs
 }
 
-# ── Cross-runtime expression parity. Compares the artifacts the three parity
-# suites write; only meaningful once all three have run, so it rides -Desktop
-# (the backend + browser legs run in the gates above, the desktop leg does not).
-# Without it, the 13 engine-defined corpus cases are recorded and never checked. ──
-if ($Desktop) {
-    Invoke-Gate 'contracts: expression parity across runtimes' $repo {
-        node scripts/check-expression-parity.mjs
-    }
-}
-
-# ── Desktop (Rust) — opt-in: multi-minute build ──
-if ($Desktop) {
-    Invoke-Gate 'desktop: cargo clippy (gui features, audit FL-31)' (Join-Path $repo 'formlogic/desktop/src-tauri') {
-        cargo clippy --features gui
-    }
-    Invoke-Gate 'desktop: cargo test (gui features)' (Join-Path $repo 'formlogic/desktop/src-tauri') {
-        cargo test --features gui
-    }
-} else {
-    Write-Host "`n(skipped: desktop cargo clippy + test — pass -Desktop to include)" -ForegroundColor Yellow
+# ── Cross-runtime expression parity. Compares the artifacts the backend and
+# browser parity suites wrote in the gates above. Without it, the 13
+# engine-defined corpus cases are recorded and never checked. ──
+Invoke-Gate 'contracts: expression parity across runtimes' $repo {
+    node scripts/check-expression-parity.mjs
 }
 
 # ── Native runtime — opt-in ──
@@ -130,19 +113,13 @@ if ($NativeRuntime) {
 # ── Rust hygiene gates (audit FL-31) — opt-in, each fails loudly when its
 # tool/toolchain is missing rather than self-skipping ──
 if ($Fmt) {
-    Invoke-Gate 'desktop: cargo fmt --check' (Join-Path $repo 'formlogic/desktop/src-tauri') {
-        cargo fmt --check
-    }
     Invoke-Gate 'native-runtime: cargo fmt --check' (Join-Path $repo 'formlogic/native-runtime/src-tauri') {
         cargo fmt --check
     }
 } else {
-    Write-Host "(skipped: cargo fmt --check — pass -Fmt to include; NOTE both trees carry pre-audit fmt drift)" -ForegroundColor Yellow
+    Write-Host "(skipped: cargo fmt --check — pass -Fmt to include; NOTE the tree carries pre-audit fmt drift)" -ForegroundColor Yellow
 }
 if ($RustAudit) {
-    Invoke-Gate 'desktop: cargo audit (RustSec)' (Join-Path $repo 'formlogic/desktop/src-tauri') {
-        cargo audit
-    }
     Invoke-Gate 'native-runtime: cargo audit (RustSec)' (Join-Path $repo 'formlogic/native-runtime/src-tauri') {
         cargo audit
     }
@@ -150,11 +127,8 @@ if ($RustAudit) {
     Write-Host "(skipped: cargo audit — pass -RustAudit to include; requires cargo-audit installed)" -ForegroundColor Yellow
 }
 if ($Msrv) {
-    # rust-version = "1.88" is pinned in both Cargo.tomls; compiling WITH that
-    # toolchain is what actually detects an accidental MSRV increase.
-    Invoke-Gate 'desktop: MSRV check (cargo +1.88.0)' (Join-Path $repo 'formlogic/desktop/src-tauri') {
-        cargo +1.88.0 check --features gui
-    }
+    # rust-version = "1.88" is pinned in the native-runtime Cargo.toml; compiling
+    # WITH that toolchain is what actually detects an accidental MSRV increase.
     Invoke-Gate 'native-runtime: MSRV check (cargo +1.88.0)' (Join-Path $repo 'formlogic/native-runtime/src-tauri') {
         cargo +1.88.0 check
     }

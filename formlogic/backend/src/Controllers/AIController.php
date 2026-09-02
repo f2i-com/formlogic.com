@@ -92,8 +92,35 @@ class AIController
      *
      * Body: { "prompt": "Create a contact form..." }
      */
+    /**
+     * Charge one ai_messages unit for a generator lane, or return the allowance
+     * refusal. The chat lane always did this; the fixed generators (form, app
+     * plan, file→form, script, improve, screen) carried only the 15/min limiter,
+     * so an account whose hosted-AI allowance was exhausted could keep driving
+     * 16k-token screen generations against the operator's key indefinitely.
+     */
+    private function meterGeneration(Request $request, Response $response): ?Response
+    {
+        if ($this->planService === null) {
+            return null;
+        }
+        $userId = $request->getAttribute('userId');
+        if (!is_string($userId) || $userId === '') {
+            return null;
+        }
+        try {
+            $this->planService->checkAndIncrement($userId, 'ai_messages', 1);
+        } catch (\RuntimeException $e) {
+            return $this->allowanceRefusal($response, $e->getMessage());
+        }
+        return null;
+    }
+
     public function generateForm(Request $request, Response $response): Response
     {
+        if (($refused = $this->meterGeneration($request, $response)) !== null) {
+            return $refused;
+        }
         $body = $request->getParsedBody();
         $prompt = $body['prompt'] ?? '';
 
@@ -151,6 +178,9 @@ class AIController
      */
     public function generateAppPlan(Request $request, Response $response): Response
     {
+        if (($refused = $this->meterGeneration($request, $response)) !== null) {
+            return $refused;
+        }
         $body = $request->getParsedBody();
         $prompt = $body['prompt'] ?? '';
         if (empty($prompt) || !is_string($prompt)) {
@@ -183,6 +213,9 @@ class AIController
      */
     public function generateScreen(Request $request, Response $response): Response
     {
+        if (($refused = $this->meterGeneration($request, $response)) !== null) {
+            return $refused;
+        }
         $body = $request->getParsedBody();
         $prompt = $body['prompt'] ?? '';
         if (empty($prompt) || !is_string($prompt) || strlen($prompt) > 10000) {
@@ -214,6 +247,9 @@ class AIController
      */
     public function generateFormFromFile(Request $request, Response $response): Response
     {
+        if (($refused = $this->meterGeneration($request, $response)) !== null) {
+            return $refused;
+        }
         // Opportunistically purge temp PNGs left by failed PDF/doc conversions (~5% of
         // requests), so the converter's scratch dir can't grow unbounded.
         if (random_int(1, 20) === 1) {
@@ -320,6 +356,9 @@ class AIController
      */
     public function generateScript(Request $request, Response $response): Response
     {
+        if (($refused = $this->meterGeneration($request, $response)) !== null) {
+            return $refused;
+        }
         $body = $request->getParsedBody();
         $prompt = $body['prompt'] ?? '';
         $fields = $body['fields'] ?? [];
@@ -371,6 +410,9 @@ class AIController
      */
     public function improveScript(Request $request, Response $response): Response
     {
+        if (($refused = $this->meterGeneration($request, $response)) !== null) {
+            return $refused;
+        }
         $body = $request->getParsedBody();
         $currentScript = $body['script'] ?? '';
         $prompt = $body['prompt'] ?? '';

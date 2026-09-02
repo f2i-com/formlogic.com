@@ -915,7 +915,8 @@ class McpOAuthService
         // metadata, link-local and LAN destinations (audit DEPLOY-001: security policy is not a
         // developer-diagnostics switch).
         $reason = null;
-        if (!IpSafety::resolvesToPublicHost($host, $reason)) {
+        $approvedIp = null;
+        if (!IpSafety::resolvesToPublicHost($host, $reason, $approvedIp)) {
             $devLoopback = self::isDevelopment() && in_array(strtolower($host), self::LOOPBACK_HOSTS, true);
             if (!$devLoopback) {
                 $this->logger?->info('MCP OAuth: CIMD fetch blocked', ['host' => $host, 'reason' => $reason]);
@@ -949,6 +950,13 @@ class McpOAuthService
         $caBundle = __DIR__ . '/../../resources/cacert.pem';
         if (!ini_get('curl.cainfo') && !getenv('CURL_CA_BUNDLE') && is_file($caBundle)) {
             $curlOpts[CURLOPT_CAINFO] = $caBundle;
+        }
+        // DNS pinning: connect to the address the check above approved. Without it
+        // the check-then-fetch is a rebinding window — a name that resolved public
+        // a moment ago can resolve to an internal host when curl looks it up.
+        if (is_string($approvedIp) && $approvedIp !== '') {
+            $port = (int) (parse_url($url, PHP_URL_PORT) ?: (parse_url($url, PHP_URL_SCHEME) === 'https' ? 443 : 80));
+            $curlOpts[CURLOPT_RESOLVE] = ["{$host}:{$port}:{$approvedIp}"];
         }
         curl_setopt_array($ch, $curlOpts);
         curl_exec($ch);

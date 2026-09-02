@@ -13,9 +13,9 @@ on:
   #   tags:
   #     - 'v*'
 
-# TRUST-001: least privilege — read-only token by default; ONLY the two jobs
-# that upload release assets (desktop installer + distributable zip) ask for
-# contents:write themselves.
+# TRUST-001: least privilege — read-only token by default; ONLY the job that
+# uploads the release asset (the distributable zip) asks for contents:write
+# itself.
 permissions:
   contents: read
 
@@ -108,109 +108,10 @@ jobs:
           npm audit --audit-level=high
 
   # Audit FL-E2E-001: the launch golden paths are a RELEASE REQUIREMENT — the
-  # zip and the desktop installers cannot publish from a SHA whose end-to-end
-  # suite hasn't passed. Reuses the exact e2e workflow the nightly runs.
+  # zip cannot publish from a SHA whose end-to-end suite hasn't passed. Reuses the exact e2e workflow the nightly runs.
   e2e:
     name: E2E golden paths (release gate)
     uses: ./.github/workflows/e2e.yml
-
-  # Audit PKG-001 (best-effort until signing infrastructure exists): build the
-  # Windows desktop installers (NSIS + MSI via `tauri build`), run the desktop
-  # test suite on the exact release SHA first, hash everything, sign when a
-  # certificate is configured, and publish. UNSIGNED artifacts are loudly
-  # flagged — SmartScreen will warn users — and the gap closes the day the
-  # WINDOWS_CERT_PFX_B64 / WINDOWS_CERT_PASSWORD secrets are added.
-  desktop:
-    name: Build Windows desktop installer
-    permissions:
-      contents: write # gh release upload (tag builds)
-    runs-on: windows-latest
-    needs: [verify, e2e]
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
-      - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: formlogic/desktop/package-lock.json
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable 2026-07
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          workspaces: formlogic/desktop/src-tauri
-
-      - name: Desktop tests (release gate on the exact SHA)
-        working-directory: formlogic/desktop/src-tauri
-        # CI-DESKTOP-001: lib AND integration tests on the release SHA (the
-        # aokie contract tests self-skip without the plugin binary).
-        run: cargo test
-
-      - name: Build installers (NSIS + MSI)
-        working-directory: formlogic/desktop
-        run: |
-          npm ci
-          npm run tauri build -- --features gui
-
-      - name: Sign installers (when a certificate is configured)
-        shell: pwsh
-        working-directory: formlogic/desktop/src-tauri/target/release/bundle
-        env:
-          CERT_B64: ${{ secrets.WINDOWS_CERT_PFX_B64 }}
-          CERT_PASS: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-        run: |
-          if (-not $env:CERT_B64) {
-            # TRUST-001: a public TAG release must never ship unsigned; manual
-            # dispatch smoke builds may proceed with a loud warning.
-            if ('${{ github.ref_type }}' -eq 'tag') {
-              throw "TRUST-001: tag releases require WINDOWS_CERT_PFX_B64/WINDOWS_CERT_PASSWORD — refusing to publish unsigned installers"
-            }
-            Write-Warning "PKG-001: no signing certificate configured — UNSIGNED smoke build (SmartScreen will warn). Add the WINDOWS_CERT_PFX_B64 + WINDOWS_CERT_PASSWORD secrets to close the gap."
-            exit 0
-          }
-          $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_B64))
-          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1
-          Get-ChildItem -Recurse -Include *.exe,*.msi | ForEach-Object {
-            & $signtool.FullName sign /f $pfx /p $env:CERT_PASS /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $_.FullName
-            if ($LASTEXITCODE -ne 0) { throw "signing failed for $($_.Name)" }
-          }
-          Remove-Item $pfx
-
-      # Integrity even without a signature: a published SHA256SUMS lets anyone
-      # verify a downloaded installer wasn't tampered with in transit.
-      - name: Checksums
-        shell: pwsh
-        working-directory: formlogic/desktop/src-tauri/target/release/bundle
-        run: |
-          $files = Get-ChildItem -Recurse -Include *.exe,*.msi
-          $files | Get-FileHash -Algorithm SHA256 |
-            ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
-            Set-Content -Encoding ascii SHA256SUMS.txt
-          Get-Content SHA256SUMS.txt
-
-      - name: Upload installer artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: formlogic-desktop-windows
-          path: |
-            formlogic/desktop/src-tauri/target/release/bundle/**/*.exe
-            formlogic/desktop/src-tauri/target/release/bundle/**/*.msi
-            formlogic/desktop/src-tauri/target/release/bundle/SHA256SUMS.txt
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Attach installers to the GitHub release
-        if: github.ref_type == 'tag'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $files = Get-ChildItem -Recurse formlogic/desktop/src-tauri/target/release/bundle -Include *.exe,*.msi,SHA256SUMS.txt | ForEach-Object FullName
-          gh release upload "$env:GITHUB_REF_NAME" @files --repo "$env:GITHUB_REPOSITORY" --clobber
 
   package:
     name: Build distributable zip

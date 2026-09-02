@@ -22,7 +22,10 @@ interface AokieManifest {
 
 function manifest(): AokieManifest {
   return JSON.parse(
-    readFileSync(join(__dirname, '../../../../desktop/src-tauri/resources/plugins/aokie/manifest.json'), 'utf8')
+    // The plugin manifest is a cross-repo contract; its canonical copy lives in the aokie
+    // repo and this tracked copy under docs/contracts is what the UI catalog is held to
+    // (the desktop app that used to bundle it is gone).
+    readFileSync(join(__dirname, '../../../../../docs/contracts/aokie-plugin-manifest.v3.json'), 'utf8')
   ) as AokieManifest;
 }
 

@@ -34,8 +34,8 @@ path = "src/main.rs"
 
 [dependencies]
 # Pinned by revision: this is a security boundary and must not move under us on a
-# rebuild. The revision is the one that produced the browser's tracked wasm
-# module (ui/vendor/zipp-wasm), so the two artifacts are the same engine source.
+# rebuild. The revision is the one the browser's vendored wasm module
+# (ui/vendor/zipp-wasm) was built from, so the two artifacts are the same engine source.
 #
 #   safe-sandbox      interpreter-only profile: unsafe code is a compile error in the
 #                     VM and the regex engine; no filesystem, process or network
@@ -44,5 +44,5 @@ path = "src/main.rs"
 #                     even a code path that would try std::fs under WASI.
 #   wasm-single-agent removes the `$262.agent` thread harness; a WASI guest has no
 #                     threads and the launcher is the isolation boundary anyway.
-zipp-vm = { git = "https://github.com/f2i-com/zipp.org", rev = "7fd2f23d", default-features = false, features = ["safe-sandbox", "wasm-no-fs-loader", "wasm-single-agent"] }
+zipp-vm = { git = "https://github.com/f2i-com/zipp.org", rev = "49e6ddb3", default-features = false, features = ["safe-sandbox", "wasm-no-fs-loader", "wasm-single-agent"] }
 serde_json = "1"

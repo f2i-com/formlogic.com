@@ -621,10 +621,20 @@ class ResponseService
             if (!isset($fileFieldIds[$fieldId]) || !is_array($value)) {
                 continue;
             }
-            foreach ($value as $i => $item) {
+            $kept = [];
+            foreach ($value as $item) {
+                // Only an item with a server-issued upload id is a file. Anything
+                // else — including an item carrying just an attacker-chosen `url` —
+                // is dropped rather than stored, so the reviewer-facing link can
+                // only ever point at /api/files/.
                 if (!is_array($item) || !isset($item['id'], $item['originalFilename'])) {
                     continue;
                 }
+                $kept[] = $item;
+            }
+            $answers[$fieldId] = $kept;
+            $value = $kept;
+            foreach ($value as $i => $item) {
                 $answers[$fieldId][$i]['url'] = '/api/files/' . rawurlencode($formId)
                     . '/' . rawurlencode((string) $item['id'])
                     . '/' . rawurlencode((string) $item['originalFilename']);
@@ -688,10 +698,10 @@ class ResponseService
             $fieldType = $field['type'] ?? 'short_text';
             if (in_array($fieldType, ['statement', 'welcome_screen', 'thank_you', 'calculated', 'hidden'], true)) continue;
 
+            // Hidden-by-logic fields lose only their REQUIRED status; an answer that
+            // arrives for one is still type-checked (see ResponseController).
             $fieldVis = $visibility[$fieldId] ?? ['visible' => true, 'required' => (bool)($field['required'] ?? false)];
-            if (!$fieldVis['visible']) continue;
-
-            $isRequired = $fieldVis['required'];
+            $isRequired = $fieldVis['visible'] && $fieldVis['required'];
             $value = $answers[$fieldId] ?? null;
 
             $isEmpty = $value === null || $value === '' || $value === [] || (is_string($value) && trim($value) === '');
@@ -812,6 +822,21 @@ class ResponseService
                         $errors[$fieldId] = 'Latitude must be between -90 and 90';
                     } elseif ($value['longitude'] < -180 || $value['longitude'] > 180) {
                         $errors[$fieldId] = 'Longitude must be between -180 and 180';
+                    }
+                    break;
+                case 'linked_record':
+                    // A reference is a record id, or a list of them. Nested arrays used
+                    // to be stored verbatim and then crashed every reader that indexed a
+                    // cache with the value (TypeError → 500 on the owner's responses
+                    // list, the CSV export and the app record list — permanently).
+                    foreach ((is_array($value) ? $value : [$value]) as $ref) {
+                        if (!is_string($ref) || $ref === '' || strlen($ref) > 64 || !preg_match('/^[A-Za-z0-9_-]+$/', $ref)) {
+                            $errors[$fieldId] = 'Invalid linked record reference';
+                            break;
+                        }
+                    }
+                    if (is_array($value) && count($value) > 200) {
+                        $errors[$fieldId] = 'Too many linked records';
                     }
                     break;
                 case 'file_upload':
@@ -1976,7 +2001,10 @@ class ResponseService
                 'submitted_at' => $now,
                 'ip_address' => $data['ipAddress'] ?? null,
                 'user_agent' => $data['userAgent'] ?? null,
-                'completion_time' => $data['completionTime'] ?? null,
+                // Client-reported; an INT column, so it is coerced and bounded here
+                // rather than trusted (a non-numeric value failed the insert under
+                // strict sql_mode and 500ed an otherwise valid submission).
+                'completion_time' => is_numeric($data['completionTime'] ?? null) ? max(0, min(2147483647, (int) $data['completionTime'])) : null,
                 'fe_form_id' => $formId,
             ]);
             if ($mysqlStmt->rowCount() === 0) {
@@ -3162,6 +3190,9 @@ class ResponseService
                         if (is_array($value)) {
                             $displayParts = [];
                             foreach ($value as $refId) {
+                                if (!is_scalar($refId)) {
+                                    continue;
+                                }
                                 $displayParts[] = $linkedDisplayCache[$targetFormId][$refId] ?? $refId;
                             }
                             $value = implode(', ', $displayParts);

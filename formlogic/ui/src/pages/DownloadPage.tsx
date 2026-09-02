@@ -4,14 +4,16 @@
 // domain doesn't configure its own install URL — this route used to not exist, so a
 // visitor steered to the native runtime landed on a 404 with no way into the app.
 // Works logged-out, on the platform host AND on custom domains (RootGate only claims
-// the root path there), and is honest about what is actually published per platform:
-// Windows installers are attached to GitHub releases; everywhere else the web app /
-// PWA is the supported path today.
+// the root path there), and is honest about what is actually published per platform.
+//
+// The paired desktop is OAIY (its own product and repository) since FormLogic
+// Desktop was retired on 2026-09-02; this page sends people there rather than to a
+// releases feed that no longer carries an installer.
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Download, Globe, Monitor, Smartphone } from 'lucide-react';
 
-const RELEASES_URL = 'https://github.com/f2i-com/formlogic.com/releases/latest';
+const OAIY_URL = 'https://oaiy.com';
 
 type Platform = 'windows' | 'macos' | 'linux' | 'android' | 'ios' | 'unknown';
 
@@ -44,32 +46,28 @@ export function DownloadPage() {
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-600 text-white shadow-lg">
           <Download className="h-8 w-8" />
         </div>
-        <h1 className="mt-6 text-3xl font-bold tracking-tight text-gray-900 dark:text-white">Get FormLogic Desktop</h1>
+        <h1 className="mt-6 text-3xl font-bold tracking-tight text-gray-900 dark:text-white">Get OAIY for your desktop</h1>
         <p className="mt-3 text-sm leading-relaxed text-gray-600 dark:text-slate-300">
-          FormLogic Desktop is the local capability layer: it runs local AI services and models, connects supervised
-          plugins and hardware (like the Aokie AI receptionist), and keeps your flows running headlessly — while
-          everything also works right here in your browser.
+          OAIY is the local capability layer that pairs with your FormLogic account: it runs local AI services and
+          models, connects supervised plugins and hardware (like the Aokie AI receptionist), and keeps your flows
+          running headlessly — while everything also works right here in your browser.
         </p>
 
         <div className="mt-8 flex flex-col gap-3 text-left">
           {hasInstaller ? (
             <>
               <a
-                href={RELEASES_URL}
+                href={OAIY_URL}
                 target="_blank"
                 rel="noreferrer"
                 className="flex items-center gap-3 rounded-xl bg-primary-600 px-5 py-4 text-primary-foreground shadow-sm transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
               >
                 <Monitor className="h-5 w-5 shrink-0" />
                 <span className="min-w-0">
-                  <span className="block text-sm font-semibold">Download for Windows <span className="ml-1 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">Beta</span></span>
-                  <span className="block text-xs opacity-80">Installer from the latest release (with SHA-256 checksums)</span>
+                  <span className="block text-sm font-semibold">Get OAIY for Windows</span>
+                  <span className="block text-xs opacity-80">Installs from oaiy.com, then pairs with this account from Settings</span>
                 </span>
               </a>
-              <p className="text-center text-xs leading-relaxed text-gray-400 dark:text-slate-500">
-                Desktop is in beta — if the release link asks you to sign in to GitHub, email{' '}
-                <a className="underline hover:no-underline" href="mailto:hello@formlogic.com">hello@formlogic.com</a> for access.
-              </p>
             </>
           ) : (
             <div className="flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 px-5 py-4 dark:border-slate-700 dark:bg-slate-900">
@@ -79,7 +77,7 @@ export function DownloadPage() {
                   No installer for {PLATFORM_LABELS[platform]} yet
                 </p>
                 <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-slate-400">
-                  The packaged app currently ships for Windows only. On {PLATFORM_LABELS[platform]}, use the web app —
+                  OAIY currently ships for Windows only. On {PLATFORM_LABELS[platform]}, use the web app —
                   you can install it to your home screen from your browser's menu for an app-like experience.
                 </p>
               </div>
@@ -93,18 +91,18 @@ export function DownloadPage() {
             <Globe className="h-5 w-5 shrink-0 text-gray-400 dark:text-slate-500" />
             <span className="min-w-0">
               <span className="block text-sm font-semibold">Continue in your browser</span>
-              <span className="block text-xs text-gray-500 dark:text-slate-400">Forms, apps, flows and dashboards run on the web — Desktop adds local models, hardware and headless flows</span>
+              <span className="block text-xs text-gray-500 dark:text-slate-400">Forms, apps, flows and dashboards run on the web — OAIY adds local models, hardware and headless flows</span>
             </span>
           </Link>
 
           {!hasInstaller && (
             <a
-              href={RELEASES_URL}
+              href={OAIY_URL}
               target="_blank"
               rel="noreferrer"
               className="text-center text-xs font-medium text-gray-400 underline hover:no-underline dark:text-slate-500"
             >
-              All releases and checksums on GitHub
+              About OAIY
             </a>
           )}
         </div>

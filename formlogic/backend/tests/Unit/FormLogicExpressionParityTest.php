@@ -11,11 +11,10 @@ use PHPUnit\Framework\TestCase;
 /**
  * BACKEND leg of the cross-engine expression parity harness.
  *
- * FormLogic runs untrusted author-written JavaScript in three separate sandboxes:
- * this backend (the zipp engine as a WASI guest under a spawned wasmtime launcher),
- * the browser (the zipp wasm module in a Worker), and the
- * desktop flow runner. The product's central correctness claim is that the same
- * expression means the same thing in all three. This test asserts the backend's
+ * FormLogic runs untrusted author-written JavaScript in two separate sandboxes:
+ * this backend (the zipp engine as a WASI guest under a spawned wasmtime launcher)
+ * and the browser (the zipp wasm module in a Worker). The product's central
+ * correctness claim is that the same expression means the same thing in both. This test asserts the backend's
  * half of that claim against the shared corpus
  * (docs/contracts/formlogic-expression-corpus.json). The browser leg
  * (ui/src/lib/formlogic/corpusParity.test.ts) asserts the SAME cases and emits the

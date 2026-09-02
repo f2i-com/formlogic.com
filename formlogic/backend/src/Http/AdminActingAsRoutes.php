@@ -62,8 +62,10 @@ final class AdminActingAsRoutes
 
         // ── Form webhooks (config + delivery METADATA — payload columns are never selected) ──
         ['GET',    '/forms/{id}/webhooks',                     WebhookController::class,   'listWebhooks'],
-        ['POST',   '/forms/{id}/webhooks',                     WebhookController::class,   'createWebhook'],
-        ['PUT',    '/forms/{id}/webhooks/{webhookId}',         WebhookController::class,   'updateWebhook'],
+        // createWebhook / updateWebhook are deliberately NOT mirrored: a webhook is
+        // a standing feed of every response (answers included) to a URL of the
+        // caller's choosing — the one mutation that turns "structure and counts
+        // only" into the record data itself. Admins can list and delete.
         ['DELETE', '/forms/{id}/webhooks/{webhookId}',         WebhookController::class,   'deleteWebhook'],
         ['GET',    '/forms/{id}/webhooks/{webhookId}/deliveries', WebhookController::class, 'getDeliveries'],
 
@@ -128,7 +130,9 @@ final class AdminActingAsRoutes
         ['PUT',    '/apps/{appId}/users/{id}',                 AppUserController::class,   'updateUser'],
         ['DELETE', '/apps/{appId}/users/{id}',                 AppUserController::class,   'removeUser'],
         ['GET',    '/apps/{appId}/invitations',                AppUserController::class,   'listInvitations'],
-        ['POST',   '/apps/{appId}/invitations',                AppUserController::class,   'createInvitation'],
+        // createInvitation is NOT mirrored: an admin who can invite an address of
+        // their own becomes a member and reads records through the ordinary app
+        // runtime, outside the mirror and its redaction. List and revoke only.
         ['DELETE', '/apps/{appId}/invitations/{id}',           AppUserController::class,   'revokeInvitation'],
         ['GET',    '/apps/{appId}/groups',                     AppUserController::class,   'listGroups'],
         ['POST',   '/apps/{appId}/groups',                     AppUserController::class,   'createGroup'],

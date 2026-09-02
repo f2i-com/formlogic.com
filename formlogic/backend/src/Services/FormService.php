@@ -541,11 +541,22 @@ class FormService
 
         if (array_key_exists('customScreen', $data)) {
             $customScreen = $this->screenForStorage($data['customScreen']);
-            $updates[] = "custom_screen = :custom_screen";
-            $params['custom_screen'] = !empty($customScreen) ? json_encode($customScreen) : null;
-            $updates[] = "custom_screen_trust = 'owner'";
-            $updates[] = "custom_screen_provenance = :custom_screen_provenance";
-            $params['custom_screen_provenance'] = !empty($customScreen) ? json_encode(['source' => 'owner']) : null;
+            $current = $this->screenForStorage($existing['customScreen'] ?? null);
+            // Re-stamp trust ONLY when the screen body actually changes (the same
+            // rule AppService already applies). The key rides along in whole-form
+            // PUTs — the offline sync, chat/MCP update_form round trips — and an
+            // UNCHANGED pack-installed screen was being promoted from 'untrusted'
+            // to 'owner', handing unreviewed third-party code the full record and
+            // connector SDK without a single byte of it changing.
+            $changed = (empty($customScreen)) !== (empty($current))
+                || (!empty($customScreen) && !empty($current) && $customScreen != $current);
+            if ($changed) {
+                $updates[] = "custom_screen = :custom_screen";
+                $params['custom_screen'] = !empty($customScreen) ? json_encode($customScreen) : null;
+                $updates[] = "custom_screen_trust = 'owner'";
+                $updates[] = "custom_screen_provenance = :custom_screen_provenance";
+                $params['custom_screen_provenance'] = !empty($customScreen) ? json_encode(['source' => 'owner']) : null;
+            }
         }
 
         if (array_key_exists('customLogic', $data)) {

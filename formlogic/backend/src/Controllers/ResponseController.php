@@ -312,7 +312,7 @@ class ResponseController
                 if (is_array($val)) {
                     $resolved[$field['id']] = array_map(
                         fn ($id) => ($displayCache[$targetFormId][$id] ?? $miss($id)) + ['targetFormId' => $targetFormId],
-                        $val
+                        array_values(array_filter($val, 'is_scalar'))
                     );
                 } else {
                     $resolved[$field['id']] = ($displayCache[$targetFormId][$val] ?? $miss($val)) + ['targetFormId' => $targetFormId];
@@ -800,7 +800,7 @@ class ResponseController
         }
 
         // Sanitize answers: strip non-input fields and unknown field IDs
-        $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers'] ?? []);
+        $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], is_array($data['answers'] ?? null) ? $data['answers'] : []);
 
         // Re-derive file URLs server-side so a submitter can't store an attacker-chosen
         // link that later renders as a clickable anchor to reviewers.
@@ -1045,11 +1045,13 @@ class ResponseController
 
             // Skip fields hidden by conditional logic — they can't be filled in,
             // so requiring them would be an unrecoverable dead-end.
+            // A field hidden by conditional logic cannot be REQUIRED (it can't be
+            // filled in), but an answer that arrives for it anyway is still
+            // type-checked: skipping the field entirely let a submitter store an
+            // arbitrary shape — an attacker-chosen `url` on a file answer, rendered
+            // to reviewers as a link — behind any hide/show rule they controlled.
             $fieldVis = $visibility[$fieldId] ?? ['visible' => true, 'required' => (bool)($field['required'] ?? false)];
-            if (!$fieldVis['visible']) {
-                continue;
-            }
-            $isRequired = $fieldVis['required'];
+            $isRequired = $fieldVis['visible'] && $fieldVis['required'];
 
             $value = $answers[$fieldId] ?? null;
 
@@ -1237,6 +1239,21 @@ class ResponseController
                 }
                 if ($value['longitude'] < -180 || $value['longitude'] > 180) {
                     return 'Longitude must be between -180 and 180';
+                }
+                break;
+
+            case 'linked_record':
+                // A reference is a record id, or a list of them. Nested arrays used
+                // to be stored verbatim and then crashed every reader that indexed
+                // a cache with the value (TypeError → 500 on the owner's responses
+                // list, the CSV export and the app record list — permanently).
+                foreach ((is_array($value) ? $value : [$value]) as $ref) {
+                    if (!is_string($ref) || $ref === '' || strlen($ref) > 64 || !preg_match('/^[A-Za-z0-9_-]+$/', $ref)) {
+                        return 'Invalid linked record reference';
+                    }
+                }
+                if (is_array($value) && count($value) > 200) {
+                    return 'Too many linked records';
                 }
                 break;
 

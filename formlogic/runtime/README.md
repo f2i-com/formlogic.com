@@ -26,9 +26,9 @@ code on the server. It runs inside a WebAssembly instance, behind:
   guest cannot open a file.
 
 The browser runs the same engine at the same revision as its own wasm module
-(`ui/vendor/zipp-wasm/`), and the desktop links it natively. The shared corpus
-(`docs/contracts/formlogic-expression-corpus.json`) is asserted against all three
-so an expression means the same thing everywhere; `scripts/check-expression-parity.mjs`
+(`ui/vendor/zipp-wasm/`). The shared corpus
+(`docs/contracts/formlogic-expression-corpus.json`) is asserted against both so
+an expression means the same thing everywhere; `scripts/check-expression-parity.mjs`
 is the comparator.
 
 ## Modes
@@ -92,7 +92,7 @@ scripts/build-runtime.sh linux
 Zip extraction drops the execute bit on the Linux binary; `install.php` checks
 for it and offers the `chmod +x` if it cannot restore it itself.
 
-**Rebuild all three** (guest, both launchers, and `ui/vendor/zipp-wasm/`) when
+**Rebuild everything** (guest, both launchers, and `ui/vendor/zipp-wasm/`) when
 the engine revision changes — never one of them alone.
 
 ## Why wasmtime 44
