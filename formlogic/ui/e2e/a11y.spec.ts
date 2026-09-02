@@ -8,8 +8,39 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
+const API = process.env.E2E_API_URL || 'http://api.formlogic.local';
 const EMAIL = process.env.E2E_EMAIL || 'test@example.com';
 const PASSWORD = process.env.E2E_PASSWORD || 'password123';
+
+// The dashboard renders its action row ("Start with a form" / "Start from a template")
+// only once the account owns a form; a fresh CI account sees the getting-started state,
+// whose "Browse templates" opens the FORM template picker, not the packs modal. Make that
+// precondition explicit instead of depending on which sibling spec created a form first
+// (with two workers that ordering is a coin toss — the button was "detached" one run and
+// "not found" the next).
+async function ensureOwnsAForm(page: Page) {
+  await page.evaluate(async ({ API }) => {
+    const m = document.cookie.match(/(?:^|;\s*)formlogic_csrf=([^;]*)/);
+    const token = m ? decodeURIComponent(m[1]) : '';
+    const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': token };
+    const list = await fetch(API + '/api/forms?limit=1', { credentials: 'include', headers })
+      .then((r) => r.json())
+      .catch(() => null);
+    const forms = Array.isArray(list?.forms) ? list.forms : Array.isArray(list) ? list : [];
+    if (forms.length > 0) return;
+    const res = await fetch(API + '/api/forms', {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: JSON.stringify({
+        title: 'a11y fixture form',
+        status: 'draft',
+        fields: [{ id: 'note', type: 'short_text', label: 'Note', required: false, properties: {}, order: 0 }],
+      }),
+    });
+    if (!res.ok) throw new Error(`could not create the a11y fixture form: HTTP ${res.status}`);
+  }, { API });
+}
 
 async function login(page: Page) {
   await page.goto('/login');
@@ -116,6 +147,7 @@ test.describe('accessibility smoke (axe)', () => {
   test('packs modal — marketplace and installed tabs', async ({ page }) => {
     test.setTimeout(90_000);
     await login(page);
+    await ensureOwnsAForm(page);
     await page.goto('/');
     await page.getByRole('main').waitFor();
     // The dashboard fills in AFTER mount: the headline's counts, the CreateBand above the

@@ -939,7 +939,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                   <Loader2 className="h-6 w-6 animate-spin text-gray-400 dark:text-slate-500" />
                 </div>
               ) : installations.length === 0 ? (
-                <div className="text-center py-8 text-gray-400 dark:text-slate-500">
+                <div className="text-center py-8 text-gray-500 dark:text-slate-400">
                   <Box className="h-8 w-8 mx-auto mb-2 opacity-50" />
                   <p className="text-sm font-medium">No packs installed</p>
                   <p className="text-xs mt-1">Browse the Marketplace tab to find packs to install.</p>
@@ -1095,7 +1095,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                   <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
                 </div>
               ) : myPacks.length === 0 ? (
-                <div className="text-center py-8 text-gray-400 dark:text-slate-500">
+                <div className="text-center py-8 text-gray-500 dark:text-slate-400">
                   <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
                   <p className="text-sm font-medium">No published packs</p>
                   <p className="text-xs mt-1">Publish a pack to share with others.</p>
