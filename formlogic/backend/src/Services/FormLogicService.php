@@ -41,7 +41,7 @@ class FormLogicService
     public function validateField(string $rule, mixed $value, array $formData = []): bool
     {
         $context = array_merge($formData, ['value' => $value]);
-        return (bool) $this->unwrap($this->runner->evaluate($rule, $context));
+        return ResponseService::jsTruthy($this->unwrap($this->runner->evaluate($rule, $context)));
     }
 
     /**
@@ -51,7 +51,7 @@ class FormLogicService
      */
     public function evaluateCondition(string $condition, array $formData): bool
     {
-        return (bool) $this->unwrap($this->runner->evaluate($condition, $formData));
+        return ResponseService::jsTruthy($this->unwrap($this->runner->evaluate($condition, $formData)));
     }
 
     /**

@@ -876,6 +876,14 @@ class UpgradeService
         if (!@copy($src, $dst)) {
             throw new \RuntimeException("Cannot copy {$src} → {$dst}");
         }
+        // ZipArchive::extractTo does not restore unix modes and copy() does not
+        // carry them, so an upgrade would silently strip the execute bit from the
+        // sandbox launcher: every form evaluation then fails at exec while the
+        // health check, which only looks for the file, stays green. Restore it by
+        // path — the staged copy has no bit to inherit.
+        if (PHP_OS_FAMILY !== 'Windows' && str_contains(str_replace('\\', '/', $dst), '/bin/runtime/')) {
+            @chmod($dst, 0755);
+        }
         return 1;
     }
 

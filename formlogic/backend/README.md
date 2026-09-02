@@ -10,7 +10,7 @@ PHP Slim-based REST API for the FormLogic Form Builder.
 
 > Tip: the assisted installers (`formlogic/install.php` wizard or `install.sh`) handle
 > the steps below — including generating `JWT_SECRET` and `AUDIT_HMAC_KEY`. The vendored
-> `qjs` scripting binary ships in `bin/qjs/` (no separate install).
+> The scripting sandbox launcher ships in `bin/runtime/` (no separate install; on Linux it must be executable).
 
 ## Setup
 

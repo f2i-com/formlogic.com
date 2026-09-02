@@ -60,10 +60,10 @@ class SandboxRunner
 
     private function detectBinary(string $base): string
     {
-        // FORMLOGIC_QJS_BIN is still honoured: it is documented, it is set in
-        // existing deployments, and its job (point at a runtime somewhere else)
-        // has not changed. FORMLOGIC_RUNTIME_BIN is the name that matches what it
-        // now points at.
+        // FORMLOGIC_QJS_BIN is still honoured: it was set in existing deployments
+        // and its job (point at a runtime somewhere else) has not changed.
+        // FORMLOGIC_RUNTIME_BIN is the name that matches what it now points at;
+        // both are described in .env.example.
         foreach (['FORMLOGIC_RUNTIME_BIN', 'FORMLOGIC_QJS_BIN'] as $var) {
             $override = getenv($var) ?: ($_ENV[$var] ?? '');
             if (is_string($override) && $override !== '' && is_file($override)) {
@@ -84,7 +84,15 @@ class SandboxRunner
      */
     public function isAvailable(): bool
     {
-        return is_file($this->binary) && is_file($this->prelude);
+        if (!is_file($this->binary) || !is_file($this->prelude)) {
+            return false;
+        }
+        // Present is not the same as runnable. Zip extraction and `git clone` on
+        // a box with core.filemode=false both hand out the Linux launcher without
+        // its execute bit; proc_open then starts a child that dies at exec, and
+        // every evaluation reports "failed to start" while a presence-only check
+        // keeps the health endpoint green. Windows has no execute bit to lose.
+        return PHP_OS_FAMILY === 'Windows' || is_executable($this->binary);
     }
 
     /**
@@ -99,6 +107,20 @@ class SandboxRunner
         // to all jobs) instead of duplicated into every job — see FormLogicService.
         $payload = ['mode' => 'eval', 'jobs' => array_values($jobs), 'context' => (object) $context];
         $done = $this->run($payload, null, $cpuBudgetMs);
+
+        // The callers fail OPEN by design (a condition that cannot be evaluated is
+        // treated as visible; a calculated field is skipped) and they never see
+        // this error string. That is a deliberate posture for the respondent; it
+        // must not also be silence for the operator. A dead or mis-deployed
+        // runtime used to produce a fully visible, fully submittable form and
+        // not one log line anywhere.
+        if (isset($done['error']) && is_string($done['error'])) {
+            error_log(sprintf(
+                'FormLogic sandbox: eval batch of %d expression(s) failed: %s',
+                count($jobs),
+                $done['error']
+            ));
+        }
 
         $out = [];
         foreach (($done['results'] ?? []) as $r) {

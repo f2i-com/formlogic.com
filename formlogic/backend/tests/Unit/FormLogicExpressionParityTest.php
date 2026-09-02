@@ -12,7 +12,8 @@ use PHPUnit\Framework\TestCase;
  * BACKEND leg of the cross-engine expression parity harness.
  *
  * FormLogic runs untrusted author-written JavaScript in three separate sandboxes:
- * this backend (a spawned qjs child), the browser (quickjs-emscripten), and the
+ * this backend (the zipp engine as a WASI guest under a spawned wasmtime launcher),
+ * the browser (the zipp wasm module in a Worker), and the
  * desktop flow runner. The product's central correctness claim is that the same
  * expression means the same thing in all three. This test asserts the backend's
  * half of that claim against the shared corpus
@@ -87,12 +88,12 @@ class FormLogicExpressionParityTest extends TestCase
             // from a passing one, and this is the only automated signal that an
             // engine change did not break every form's server-side logic.
             self::markTestSkipped(
-                'PARITY SUITE DID NOT RUN - the QuickJS runtime is unavailable, so the backend '
-                . 'expression engine went UNVERIFIED. Expected the vendored binary under '
-                . 'backend/bin/qjs/ plus resources/formlogic-harness.js and '
-                . 'resources/formlogic-prelude.js. Set FORMLOGIC_QJS_BIN to an explicit binary '
-                . 'path to run this suite. CI must treat this skip as a failure of the parity '
-                . 'gate, not as a pass.'
+                'PARITY SUITE DID NOT RUN - the sandbox runtime is unavailable, so the backend '
+                . 'expression engine went UNVERIFIED. Expected the vendored launcher under '
+                . 'backend/bin/runtime/ (executable on Linux/macOS) plus '
+                . 'resources/formlogic-prelude.js. Set FORMLOGIC_RUNTIME_BIN to an explicit '
+                . 'binary path to run this suite. CI must treat this skip as a failure of the '
+                . 'parity gate, not as a pass (check-release.ps1 runs phpunit --fail-on-skipped).'
             );
         }
     }
@@ -156,6 +157,7 @@ class FormLogicExpressionParityTest extends TestCase
             'engine' => self::engineName($binary),
             'engineDetail' => [
                 'host' => 'backend/src/Services/SandboxRunner.php',
+                'engine' => 'zipp safe-sandbox as a wasm32-wasip1 guest under wasmtime (formlogic/runtime)',
                 'variant' => 'vendored engine child process (NDJSON over stdio)',
                 'binary' => $binary,
                 'binarySha256' => is_string($binary) && is_file($binary) ? hash_file('sha256', $binary) : null,

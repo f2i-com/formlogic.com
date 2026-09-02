@@ -30,7 +30,7 @@ Options -Indexes
   # field and a Camera field; () would deny them even to our own pages.
   Header always set Permissions-Policy "geolocation=(self), microphone=(), camera=(self), payment=()"
   # Deny framing of the app shell (clickjacking / UI-redress). No script-src/style-src
-  # so the SPA + QuickJS WASM worker are unaffected — only framing is restricted.
+  # so the SPA + zipp WASM worker are unaffected — only framing is restricted.
   Header always set X-Frame-Options "DENY"
   Header always set Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
   # The public form runtime (/form/...) is intentionally embeddable. SetEnvIf matches

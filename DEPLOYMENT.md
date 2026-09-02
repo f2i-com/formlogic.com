@@ -149,7 +149,7 @@ Without credentials the `/billing` page degrades to "not configured" and no char
 
 - `GET /api/health` — public heartbeat (`{status, timestamp}`); use it for uptime/load-balancer checks.
 - `GET /api/health/deep` — **authenticated** "Doctor": checks DB connectivity, writable
-  `storage/`+`logs/` dirs, the QuickJS runtime (binary + harness + prelude), billing config
+  `storage/`+`logs/` dirs, the sandbox runtime (`bin/runtime/` launcher + prelude), billing config
   (critical only when plan enforcement is on; warns on sandbox / missing webhook id), the
   document-conversion tools (`pdftoppm`, `ghostscript`, `libreoffice`), the webhook retry-worker
   heartbeat, and dual-store file drift. Returns `200` when all critical checks pass, `503`

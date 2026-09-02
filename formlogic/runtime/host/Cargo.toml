@@ -1,0 +1,37 @@
+[package]
+name = "formlogic-runtime"
+version = "0.2.0"
+edition = "2021"
+description = "FormLogic's sandbox launcher: runs the zipp WebAssembly guest under wasmtime for the PHP backend"
+publish = false
+
+[workspace]
+resolver = "2"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+overflow-checks = true
+panic = "abort"
+strip = true
+
+[[bin]]
+name = "formlogic-runtime"
+path = "src/main.rs"
+
+[dependencies]
+# Runtime only — no compiler. The guest module is compiled at BUILD time (see
+# build.rs) and embedded; at run time the launcher only deserialises it, which is
+# what keeps process start-up in the low milliseconds. PHP spawns one of these per
+# evaluation batch, so compiling 5 MB of wasm on every spawn was never an option.
+# `runtime` + `std` is the minimum wasmtime needs to instantiate; wasmtime-wasi's
+# p1 layer pulls `component-model` and `async` in on its own.
+wasmtime = { version = "44", default-features = false, features = ["runtime", "std"] }
+wasmtime-wasi = { version = "44", default-features = false, features = ["p1"] }
+
+[build-dependencies]
+# The compiler half, for build.rs only. Resolver 2 keeps build-dependency
+# features separate from normal ones, so Cranelift never reaches the shipped
+# binary.
+wasmtime = { version = "44", default-features = false, features = ["cranelift", "std"] }

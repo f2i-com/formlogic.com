@@ -19,6 +19,16 @@ class FakeWorker {
   onerror: ((e: unknown) => void) | null = null;
   private terminated = false;
 
+  constructor() {
+    // The real Worker loads the engine and reports ready on id 0 before it will
+    // evaluate anything; engine.ts holds requests until then. A microtask (not a
+    // timer) so the handshake completes under fake timers without advancing them.
+    queueMicrotask(() => {
+      if (this.terminated) return;
+      this.onmessage?.({ data: { id: 0, ok: true, ready: true } });
+    });
+  }
+
   postMessage(msg: WorkerRequest): void {
     lastRequest = msg;
     const b = behavior;

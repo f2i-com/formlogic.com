@@ -285,8 +285,9 @@ class ExternalApiController
                 return $this->jsonResponse($response, [
                     'error' => true,
                     'message' => $result->message,
-                    'rejected' => true,
-                ], 422);
+                    'rejected' => $result->isRejected(),
+                    'code' => $result->code,
+                ], $result->status);
             }
 
             // {store:false} scripts persist nothing — skip link indexing + notify.
@@ -431,7 +432,7 @@ class ExternalApiController
             try {
                 $result = $this->responseService->createResponse($args['formId'], $item, $script);
                 if ($result instanceof ScriptRejection) {
-                    $results[] = ['index' => $index, 'success' => false, 'message' => $result->message, 'rejected' => true];
+                    $results[] = ['index' => $index, 'success' => false, 'message' => $result->message, 'rejected' => $result->isRejected(), 'code' => $result->code];
                 } else {
                     $stored = ($result['stored'] ?? true) !== false;
                     if ($stored) {

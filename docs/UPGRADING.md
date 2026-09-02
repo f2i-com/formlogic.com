@@ -75,7 +75,7 @@ ways to apply it:
    the database) and offers **"Upgrade existing installation"**, which runs the exact same
    `initializeSchema()` + `runMigrations()` path, verifies the core tables, and stamps
    `schema_meta` with `upgrade_source=installer` (version from the shipped `api/VERSION`). It
-   also re-checks file permissions and the Linux `qjs` execute bit. Once installed the wizard
+   also re-checks file permissions and the execute bit on the Linux sandbox launcher. Once installed the wizard
    locks itself: temporarily add `SetEnv INSTALL_ENABLE 1` at the top of the web-root `.htaccess`
    to allow the run, then remove the line and delete `install.php`.
 

@@ -47,7 +47,7 @@
 - **Dual Database**: MySQL (metadata, users, apps, analytics) + SQLite (per-form field definitions, responses, computed data)
 - **Auth**: JWT via HttpOnly cookies (firebase/php-jwt, HS256), with Bearer header fallback for API clients
 - **CSRF**: Double-submit cookie pattern (non-HttpOnly cookie readable by JS, matched against `X-CSRF-Token` header)
-- **Scripting**: QuickJS sandbox running real JavaScript — `quickjs-emscripten` in a Web Worker (frontend) and a vendored static `qjs` binary (backend, no Node.js), sharing one standard-library prelude
+- **Scripting**: the zipp JavaScript engine in every runtime — a wasm build in a Web Worker (frontend), the same engine as a WASI guest under a vendored wasmtime launcher (backend, `bin/runtime/`, no Node.js), linked natively on the desktop — sharing one standard-library prelude and one parity corpus
 - **Audit**: Hash-chained audit log with HMAC-SHA256 integrity verification
 - **RBAC**: Role-based access control with per-form permission granularity (Owner role always bypasses checks)
 - **Webhooks**: HMAC-SHA256 signed deliveries with SSRF protection
@@ -127,7 +127,7 @@ formlogic-app/
 ### `composer.json`
 
 - **PSR-4 Autoload**: `FormLogic\` => `src/`
-- **Dependencies**: `slim/slim` ^4.12, `php-di/slim-bridge`, `slim/psr7`, `monolog/monolog` ^3.5, `firebase/php-jwt` ^7.0, `vlucas/phpdotenv` ^5.6, `respect/validation` ^2.3. FormLogic expressions and `onSubmit` scripts run via the bundled QuickJS runtime (vendored `qjs` binary under `backend/bin/qjs`, invoked by `QuickJsRunner`), not a Composer package.
+- **Dependencies**: `slim/slim` ^4.12, `php-di/slim-bridge`, `slim/psr7`, `monolog/monolog` ^3.5, `firebase/php-jwt` ^7.0, `vlucas/phpdotenv` ^5.6, `respect/validation` ^2.3. FormLogic expressions and `onSubmit` scripts run via the bundled sandbox runtime (vendored launcher under `backend/bin/runtime`, invoked by `SandboxRunner`), not a Composer package.
 - **Minimum PHP**: 8.1
 
 ### `.env.example`
@@ -633,7 +633,7 @@ Thin client over a QuickJS sandbox: each evaluation is dispatched to a dedicated
 Web Worker (`formlogic.worker.ts` → `quickjs-host.ts`, using `quickjs-emscripten`)
 with memory/stack/interrupt limits and a terminate watchdog. The standard library
 below is the shared prelude (`prelude.js`), which also runs server-side via the
-vendored `qjs` binary, so client and server results match.
+vendored launcher, so client and server results match — `docs/contracts/formlogic-expression-corpus.json` pins that.
 
 **Standard-library modules** (from `prelude.js`):
 - `validators`: email, phone, url, minLength, maxLength, pattern (ReDoS-limited 500 chars), required, min, max

@@ -1,0 +1,7 @@
+# Compiled artefacts that must never go through end-of-line conversion. Git's
+# NUL-byte heuristic would usually catch these, but a rule is a guarantee and a
+# heuristic is a bet — with autocrlf on, a mis-detected .wasm would be corrupted
+# silently at checkout and only fail when instantiated.
+*.wasm  binary
+*.cwasm binary
+*.exe   binary

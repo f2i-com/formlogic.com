@@ -176,6 +176,12 @@ async function main() {
       'api/public/index.php', 'api/public/.htaccess', 'api/config/settings.php',
       'api/database/schema.sql', 'api/database/migrate.php', 'api/composer.json',
       'api/vendor/autoload.php', 'api/.env.example', 'api/bin/upgrade.php', 'api/VERSION',
+      // The sandbox runtime: both launchers (the zip serves either platform) and
+      // the prelude they load. Their ABSENCE is not a boot failure — the API fails
+      // open without them — which is exactly why they are listed here.
+      'api/bin/runtime/formlogic-runtime-linux-x86_64',
+      'api/bin/runtime/formlogic-runtime-windows-x86_64.exe',
+      'api/resources/formlogic-prelude.js',
     ]) {
       if (!existsSync(path.join(docroot, required))) fail(`required artifact file missing: ${required}`);
     }
@@ -335,14 +341,28 @@ return true;
       body: JSON.stringify({
         title: 'Dist smoke form',
         status: 'published',
-        fields: [{ id: 'note', type: 'short_text', label: 'Note', required: false, order: 0, properties: {} }],
+        fields: [
+          { id: 'note', type: 'short_text', label: 'Note', required: false, order: 0, properties: {} },
+          // A calculated field is the one thing in this smoke that cannot pass
+          // without the sandbox runtime: the server evaluates it in the vendored
+          // launcher on submit, and ResponseService fails OPEN when that engine is
+          // absent (the field is silently skipped, the submission still succeeds).
+          // So the round trip below asserts the VALUE, and reaches into the
+          // prelude while it is at it, so a launcher that starts but cannot load
+          // the standard library is caught too.
+          {
+            id: 'calc', type: 'calculated', label: 'Calc', required: false, order: 1,
+            properties: { calculationExpression: 'validators.email("smoke@example.com") ? 40 + 2 : -1' },
+          },
+        ],
       }),
     }, jar);
     if (!formRes.ok) fail(`form creation failed: HTTP ${formRes.status} ${await formRes.text()}`);
     const form = (await formRes.json()).form;
     if (!form?.id) fail('form creation returned no id');
-    const fieldId = form.fields?.[0]?.id;
-    if (!fieldId) fail('created form has no fields');
+    const fieldId = form.fields?.find((f) => f.type === 'short_text')?.id;
+    const calcId = form.fields?.find((f) => f.type === 'calculated')?.id;
+    if (!fieldId || !calcId) fail('created form is missing its fields');
 
     const respRes = await req(`${BASE}/api/forms/${form.id}/responses`, {
       method: 'POST',
@@ -351,6 +371,19 @@ return true;
     }, jar);
     if (!respRes.ok) fail(`response submission failed: HTTP ${respRes.status} ${await respRes.text()}`);
     console.log('smoke-dist: form + response round trip OK');
+
+    const listRes = await req(`${BASE}/api/forms/${form.id}/responses`, { headers: { 'X-CSRF-Token': csrf } }, jar);
+    if (!listRes.ok) fail(`response listing failed: HTTP ${listRes.status} ${await listRes.text()}`);
+    const rows = (await listRes.json()).responses ?? [];
+    const calc = rows[0]?.answers?.[calcId];
+    if (calc !== 42) {
+      fail(
+        `the sandbox runtime did not evaluate the calculated field (got ${JSON.stringify(calc)}, wanted 42). ` +
+          'The launcher under api/bin/runtime/ is missing, not executable, or not for this platform — ' +
+          'the API still accepted the submission, which is why this check exists.'
+      );
+    }
+    console.log('smoke-dist: sandbox runtime evaluated a calculated field through the prelude (42) OK');
 
     console.log('smoke-dist: PASS — the artifact boots and serves by its documented path');
     process.exitCode = 0;

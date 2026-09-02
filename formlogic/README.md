@@ -39,7 +39,7 @@ For the default checkout under your web root that's:
 http://localhost/formlogic.com/formlogic/install.php
 ```
 
-The wizard checks requirements and file permissions (fixing what it can — including the Linux `qjs` execute bit), tests the MySQL connection, and writes the config files, database, and security keys. It then tells you which of `composer install` / `npm install` are still outstanding, and prints cron lines for the maintenance CLIs. On an already-installed deployment it instead offers an **"Upgrade existing installation"** mode (same guarded migrations as `backend/bin/upgrade.php`; requires `INSTALL_ENABLE=1` since the wizard locks itself once installed). The wizard also ships at the root of the release zip (`install.php` beside `api/`). **Delete `install.php` when done.**
+The wizard checks requirements and file permissions (fixing what it can — including the execute bit on the Linux sandbox launcher), tests the MySQL connection, and writes the config files, database, and security keys. It then tells you which of `composer install` / `npm install` are still outstanding, and prints cron lines for the maintenance CLIs. On an already-installed deployment it instead offers an **"Upgrade existing installation"** mode (same guarded migrations as `backend/bin/upgrade.php`; requires `INSTALL_ENABLE=1` since the wizard locks itself once installed). The wizard also ships at the root of the release zip (`install.php` beside `api/`). **Delete `install.php` when done.**
 
 ### Option 2: Install script (Linux / macOS / Git Bash)
 
@@ -49,7 +49,7 @@ chmod +x install.sh
 ./install.sh
 ```
 
-The script verifies prerequisites, runs `composer install`, creates `backend/.env` with generated `JWT_SECRET` + `AUDIT_HMAC_KEY`, creates the MySQL database and imports the schema (when a DB password is provided), runs `npm install`, creates `ui/.env`, makes the vendored `qjs` binary executable, and builds the frontend. Afterwards, set your database password in `backend/.env` if you skipped it.
+The script verifies prerequisites, runs `composer install`, creates `backend/.env` with generated `JWT_SECRET` + `AUDIT_HMAC_KEY`, creates the MySQL database and imports the schema (when a DB password is provided), runs `npm install`, creates `ui/.env`, makes the vendored sandbox launcher executable, and builds the frontend. Afterwards, set your database password in `backend/.env` if you skipped it.
 
 ### Option 3: Manual setup
 
@@ -113,9 +113,9 @@ The default `ui/.env` points at `http://localhost:8080/api` for development. For
 Form expressions and `onSubmit` scripts run in a **QuickJS** sandbox on both sides, sharing one standard-library prelude (`ui/src/lib/formlogic/prelude.js`):
 
 - **Browser:** `quickjs-emscripten` (pulled by `npm install`) runs the engine in a Web Worker; the prelude is bundled automatically.
-- **Server:** the PHP API shells out to a vendored static `qjs` binary committed under `backend/bin/qjs/` (selected per-OS). `npm run build` runs a `prebuild` step that syncs the prelude into `backend/resources/formlogic-prelude.js`.
+- **Server:** the PHP API shells out to a vendored launcher committed under `backend/bin/runtime/` (selected per-OS) that runs the same zipp engine as a WebAssembly guest under wasmtime — see `formlogic/runtime/README.md`. `npm run build` runs a `prebuild` step that syncs the prelude into `backend/resources/formlogic-prelude.js`.
 
-On Linux/macOS ensure the binary is executable (`chmod +x backend/bin/qjs/qjs-linux-x86_64`); `install.sh` does this for you.
+On Linux/macOS ensure the launcher is executable (`chmod +x backend/bin/runtime/formlogic-runtime-linux-x86_64`); `install.sh` and `install.php` both do this for you.
 
 ## Running
 
@@ -316,7 +316,7 @@ The default `E2E_BASE_URL` is `http://formlogic.local` (see `ui/playwright.confi
 | Database | MySQL (global metadata) + SQLite (per-form responses) |
 | Logging | Monolog |
 | DI | PHP-DI |
-| Scripting (server) | QuickJS (vendored static `qjs` binary, no Node.js) |
+| Scripting (server) | zipp, as a WebAssembly guest under a vendored wasmtime launcher (no Node.js) |
 | Signing | Ed25519 via libsodium (packages + client manifests) |
 
 ### Scripting engine
@@ -324,7 +324,7 @@ The default `E2E_BASE_URL` is `http://formlogic.local` (see `ui/playwright.confi
 FormLogic runs user expressions and `onSubmit` scripts as real JavaScript inside a **QuickJS** sandbox, using one engine and one shared standard-library prelude on both sides (so client and server results match by construction):
 
 - **Browser** — [`quickjs-emscripten`](https://github.com/justjake/quickjs-emscripten) runs in a dedicated Web Worker for real-time validation, conditional logic, and calculated fields, with memory/stack/interrupt limits and a terminate watchdog.
-- **Server** — a vendored static [`qjs`](https://github.com/quickjs-ng/quickjs) binary (under `backend/bin/qjs/`, selected per-OS) invoked by `QuickJsRunner` via `proc_open`. `onSubmit` `ctx.db`/`ctx.http`/`ctx.utils` calls are handled in PHP over a synchronous RPC, keeping the SSRF/DNS-pinning guards on the trusted side.
+- **Server** — a vendored launcher (under `backend/bin/runtime/`, selected per-OS) invoked by `SandboxRunner` via `proc_open`; inside it the [zipp](https://github.com/f2i-com/zipp.org) engine runs as a WASI guest under wasmtime, behind a hard memory ceiling, a fuel budget and no filesystem or network capability. `onSubmit` `ctx.db`/`ctx.http`/`ctx.utils` calls are handled in PHP over a synchronous RPC, keeping the SSRF/DNS-pinning guards on the trusted side.
 
 Untrusted code runs with an empty global and zero host bindings; runaway scripts are killed by the watchdog. The same sandbox also runs app-level and form-level **custom logic** in the app runtime (effect + permission model — see [docs/CUSTOM_APP_PLATFORM.md](../docs/CUSTOM_APP_PLATFORM.md#app-logic-quickjs)).
 
@@ -484,7 +484,7 @@ Update `CORS_ORIGIN` in `backend/.env` to match your frontend URL (e.g. `http://
 
 ### Scripting (form logic / validation / calculations) not running
 - **Browser:** make sure `npm install` completed in `ui/` — it pulls `quickjs-emscripten` (the WASM engine). There is no separate download step.
-- **Server:** ensure the vendored `qjs` binary exists under `backend/bin/qjs/` for your OS (it's committed in the repo). On macOS/Linux it must be executable (`chmod +x backend/bin/qjs/qjs-linux-x86_64`; `install.sh` does this). The prelude is synced to `backend/resources/` by the `prebuild` step of `npm run build`.
+- **Server:** ensure the vendored launcher exists under `backend/bin/runtime/` for your OS (it's committed in the repo). On macOS/Linux it must be executable (`chmod +x backend/bin/runtime/formlogic-runtime-linux-x86_64`; `install.sh` and `install.php` do this). The prelude is synced to `backend/resources/` by the `prebuild` step of `npm run build`.
 
 ### MySQL connection refused
 - Verify MySQL is running: `mysql -u root -p -e "SELECT 1"`
@@ -503,7 +503,7 @@ Set `AI_BASE_URL` (and `AI_API_KEY` if your provider needs one) in `backend/.env
 ## Upstream scripting runtime
 
 - **[quickjs-emscripten](https://github.com/justjake/quickjs-emscripten)** — QuickJS compiled to WASM, used in the browser (via npm)
-- **[quickjs-ng](https://github.com/quickjs-ng/quickjs)** — source of the vendored static `qjs` binary used on the server
+- **[zipp](https://github.com/f2i-com/zipp.org)** — the JavaScript engine behind form logic in the browser, on the server and on the desktop; **[wasmtime](https://wasmtime.dev)** — the WebAssembly runtime the server launcher embeds
 
 ## License
 

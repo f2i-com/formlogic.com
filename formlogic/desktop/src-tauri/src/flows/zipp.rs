@@ -152,7 +152,8 @@ fn build_expression_program(expr: &str, ctx: &Value) -> Result<String, QjsError>
   for (var __k in __ctx) {{
     if (Object.prototype.hasOwnProperty.call(__ctx, __k)
         && /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(__k)
-        && __k !== "__proto__" && __k !== "constructor" && __k !== "prototype") {{
+        && __k !== "__proto__" && __k !== "constructor" && __k !== "prototype"
+        && __k.indexOf("__") !== 0) {{
       globalThis[__k] = __ctx[__k];
     }}
   }}

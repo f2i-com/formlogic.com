@@ -1,0 +1,16 @@
+# This crate only makes sense as a WebAssembly guest; a native build of it would
+# be the old in-process runtime with none of the isolation. Pin the target here so
+# a bare `cargo build` in this directory produces the artifact the launcher embeds.
+[build]
+target = "wasm32-wasip1"
+
+[target.wasm32-wasip1]
+# Mirrors the browser build (crates/zipp-wasm/.cargo/config.toml in the zipp repo):
+# the VM refuses guest growth at its own 512 MiB accounting limit, and the linked
+# maximum sits ABOVE that so exhaustion surfaces as a catchable RangeError inside
+# the engine rather than a linear-memory trap. The launcher's StoreLimits is the
+# hard ceiling that actually bounds a process; this is the allocator backstop.
+rustflags = [
+  "-C", "link-arg=--max-memory=1073741824",
+  "-C", "link-arg=-zstack-size=1048576",
+]

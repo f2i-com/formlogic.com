@@ -1,3 +1,5 @@
-# Build artefacts. The shipped binaries are vendored under
-# backend/bin/runtime/ instead — see this crate's README.
+# Build artefacts for both crates. The shipped launcher binaries are vendored under
+# backend/bin/runtime/, and the guest wasm the launcher embeds is tracked at
+# host/formlogic-runtime-guest.wasm — see README.md.
 target/
+**/target/

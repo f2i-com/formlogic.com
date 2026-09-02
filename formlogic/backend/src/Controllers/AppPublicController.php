@@ -750,7 +750,10 @@ class AppPublicController
             }
 
             if ($result instanceof \FormLogic\Services\ScriptRejection) {
-                return ['status' => 422, 'payload' => ['error' => true, 'message' => $result->message, 'rejected' => true]];
+                return ['status' => $result->status, 'payload' => [
+                    'error' => true, 'message' => $result->message,
+                    'rejected' => $result->isRejected(), 'code' => $result->code,
+                ]];
             }
 
             return ['status' => 201, 'payload' => ['response' => $result]];

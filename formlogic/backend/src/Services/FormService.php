@@ -19,6 +19,15 @@ class FormService
     private const RESERVED_FIELD_IDS = [
         '__isArr', 'validators', 'format', 'compliance', 'finance', 'safety',
         'isEmpty', 'isNotEmpty', 'contains', 'sum', 'avg', 'count', 'value',
+        // Field ids become sandbox globals. One that shadows a JavaScript global
+        // breaks every expression on the form — `Object` as a field id makes the
+        // context installer itself throw — and the validator's stated job is to
+        // refuse ids that break scripting, not only the prelude's names.
+        'globalThis', 'undefined', 'NaN', 'Infinity', 'eval', 'Object', 'Array',
+        'Function', 'String', 'Number', 'Boolean', 'Symbol', 'BigInt', 'JSON',
+        'Math', 'Date', 'RegExp', 'Error', 'Promise', 'Map', 'Set', 'WeakMap',
+        'WeakSet', 'Reflect', 'Proxy', 'parseInt', 'parseFloat', 'isNaN',
+        'isFinite', 'print', 'console', 'ctx',
     ];
 
     /**
@@ -40,6 +49,10 @@ class FormService
         }
         if (in_array($id, self::RESERVED_FIELD_IDS, true)) {
             return "Field ID is reserved and cannot be used: {$id}";
+        }
+        // The sandbox wrappers own the `__` prefix (and refuse such context keys).
+        if (str_starts_with($id, '__')) {
+            return "Field ID cannot start with two underscores (reserved for the runtime): {$id}";
         }
         return null;
     }

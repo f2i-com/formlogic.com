@@ -136,6 +136,30 @@ class ScriptStoreOptOutTest extends TestCase
         $this->assertSame(0, $metaCount);
     }
 
+    /**
+     * A script that never produces a verdict must not let the submission through.
+     *
+     * Before this, an engine failure fell straight through to the INSERT: a
+     * submitter whose answers pushed the script over budget got the record
+     * stored unjudged, and a {store:false} form kept data it promised not to. A
+     * runaway loop is the cheapest reliable way to make the engine fail.
+     */
+    public function testAScriptThatCannotRunRefusesTheSubmissionAndStoresNothing(): void
+    {
+        $script = 'function onSubmit(ctx) { while (true) {} }';
+        $result = self::$responses->createResponse($this->formId, ['answers' => ['name' => 'Dee']], $script);
+
+        $this->assertInstanceOf(ScriptRejection::class, $result);
+        $this->assertSame(ScriptRejection::CODE_UNAVAILABLE, $result->code);
+        $this->assertSame(503, $result->status);
+        $this->assertFalse($result->isRejected(), 'not a judgement on the answers — the script never ran to a verdict');
+        $this->assertStringContainsString('could not run', $result->message);
+
+        [$sqliteCount, $metaCount] = $this->rowCounts();
+        $this->assertSame(0, $sqliteCount, 'nothing may be stored when the gate did not run');
+        $this->assertSame(0, $metaCount);
+    }
+
     public function testPlainScriptStillStores(): void
     {
         $script = 'function onSubmit(ctx) { ctx.db.addTag("kept"); return { note: "ok" }; }';

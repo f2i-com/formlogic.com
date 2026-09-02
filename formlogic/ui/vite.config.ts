@@ -5,7 +5,7 @@ import { VitePWA } from 'vite-plugin-pwa'
 // Baseline Content-Security-Policy for the app shell (E2EE plan §14 — a P3 gate).
 // Injected at BUILD time only: dev mode needs Vite's inline React-refresh preamble,
 // which a meta CSP would break. Deliberate allowances:
-//   - 'wasm-unsafe-eval': the QuickJS form-logic VM, esbuild-wasm (Studio screen
+//   - 'wasm-unsafe-eval': the zipp form-logic VM, esbuild-wasm (Studio screen
 //     compiler) and libsodium (private-form crypto) all instantiate WASM.
 //   - fonts.googleapis.com / fonts.gstatic.com: the shell webfonts.
 //   - www.paypal.com (+ subdomains): the Billing page's PayPal SDK + button iframes.
@@ -230,7 +230,7 @@ export default defineConfig(({ mode }) => {
     }),
   ],
   // The FormLogic evaluation worker (src/lib/formlogic/formlogic.worker.ts) is a
-  // module worker and pulls in the QuickJS WASM sandbox, which code-splits; module
+  // module worker and pulls in the zipp WASM sandbox, which code-splits; module
   // workers require the ES output format (the default 'iife' can't code-split).
   worker: {
     format: 'es',

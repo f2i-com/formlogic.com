@@ -387,6 +387,27 @@ class ResponseService
     }
 
     /**
+     * JavaScript truthiness for a value the sandbox returned, decoded from JSON.
+     *
+     * The browser coerces a condition's result with `Boolean(x)`; `(bool)` on the
+     * PHP side is not the same function. `(bool) "0"` is false where JS says true;
+     * an emptied checkbox arrives as `[]` (an empty JS array or object, which
+     * json_decode cannot tell apart) and is false in PHP, true in JS. Either
+     * mismatch splits a form in two: the client hides a field the server then
+     * requires, or the reverse. Only null, false, 0, NaN and "" are falsy in JS.
+     */
+    public static function jsTruthy(mixed $value): bool
+    {
+        if ($value === null || $value === false || $value === '') {
+            return false;
+        }
+        if (is_int($value) || is_float($value)) {
+            return $value != 0 && !is_nan((float) $value);
+        }
+        return true;
+    }
+
+    /**
      * Compute per-field visibility & effective-required, mirroring the client's
      * useConditionalLogic hook, so the server doesn't enforce `required` (or
      * type validation) on fields the user can't see. Shared by the public and
@@ -453,7 +474,7 @@ class ResponseService
                 $vis[$id] = ['visible' => true, 'required' => $baseRequired];
                 continue;
             }
-            $result = (bool)($r['value'] ?? false);
+            $result = self::jsTruthy($r['value'] ?? null);
 
             switch ($m['action']) {
                 case 'hide':
@@ -1833,6 +1854,23 @@ class ResponseService
             // Handle rejection
             if ($scriptResult->isRejected()) {
                 return new ScriptRejection($scriptResult->rejectionMessage ?? 'Submission rejected');
+            }
+
+            // FAIL CLOSED when the script produced no verdict. An author who wrote
+            // an onSubmit script put a gate on this form — a reject rule, a
+            // {store:false} "I forward the data myself" — and an engine failure
+            // (runtime missing, watchdog kill, budget exhausted, host-call cap,
+            // transport error) must not be a way through that gate. Storing
+            // anyway, which is what happened before, meant a submitter whose
+            // answers pushed the script over budget got their record stored
+            // unjudged, and a store:false form kept plaintext it promised not to.
+            // Nothing has been written at this point, so a retry is safe.
+            if (!$scriptResult->success) {
+                $this->logger->error('onSubmit script did not run; submission refused', [
+                    'formId' => $formId,
+                    'error' => $scriptResult->error,
+                ]);
+                return ScriptRejection::unavailable($scriptResult->error ?? 'script error');
             }
 
             // Script opted out of storage ({store:false}): the submission is

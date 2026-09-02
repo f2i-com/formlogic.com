@@ -53,7 +53,7 @@ tauri-build = { version = "2.0", features = [], optional = true }
 # compile error in the VM and the regex engine, and there is no filesystem,
 # process or network surface for a guest to reach. Pinned by revision because the
 # engine is a security boundary — it must not move under us on a rebuild.
-zipp-vm = { git = "https://github.com/f2i-com/zipp.org", rev = "ddbf7cd9", default-features = false, features = ["safe-sandbox"] }
+zipp-vm = { git = "https://github.com/f2i-com/zipp.org", rev = "7fd2f23d", default-features = false, features = ["safe-sandbox"] }
 # Tauri 2.x with tray-icon support — GUI only, so optional behind `gui`.
 tauri = { version = "2.1", features = ["tray-icon"], optional = true }
 tauri-plugin-shell = { version = "2.0", optional = true }

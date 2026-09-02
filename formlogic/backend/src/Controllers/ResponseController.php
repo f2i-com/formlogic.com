@@ -888,10 +888,11 @@ class ResponseController
 
             // Handle rejection from script
             if ($result instanceof ScriptRejection) {
-                return ['status' => 422, 'payload' => [
+                return ['status' => $result->status, 'payload' => [
                     'error' => true,
                     'message' => $result->message,
-                    'rejected' => true,
+                    'rejected' => $result->isRejected(),
+                    'code' => $result->code,
                 ]];
             }
 

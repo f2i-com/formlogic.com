@@ -12,9 +12,16 @@
 // no db bridge, no localStorage bridge, no clipboard bridge — so the guest has
 // nothing to reach for even if it knows the trampoline's name.
 //
-// LIMITS. Two of the three are set here; the third is deliberately not.
-//   * instruction budget + heap — enforced inside the VM, so a runaway loop dies
-//     deterministically rather than only when a timer notices.
+// LIMITS. Two live inside the engine; the third is deliberately outside it.
+//   * instruction budget — the module's built-in lifetime budget (see
+//     `renewInstructionBudget` in the vendored d.ts; ~50M steps as built), which
+//     a runaway loop exhausts deterministically. A fresh Engine is created per
+//     evaluation, so every evaluation gets the whole budget. The module exposes
+//     no setter, so `budgetMs` cannot be translated into steps here — it only
+//     sizes the wall-clock backstop. NOTE: the backend guest allows 200M steps,
+//     so a very heavy expression can succeed at submit and yet return null in
+//     the browser; raising the browser side is a zipp-wasm change, not one here.
+//   * heap — the engine's own 512 MiB accounting, behind a 1 GiB linked maximum.
 //   * wall clock — enforced by TERMINATING THE WORKER, in engine.ts. zipp's
 //     browser profile omits cooperative abort polling by design and expects the
 //     host to kill the Worker; engine.ts already did exactly that for QuickJS,
@@ -57,14 +64,35 @@ async function loadWasm(): Promise<ArrayBuffer | Response> {
 }
 
 /** Instantiate the module once per Worker; compiling 5 MB of wasm per evaluation
- *  would dominate every call. */
+ *  would dominate every call.
+ *
+ *  A load that FAILS is not memoised. It used to be: an offline first use, a
+ *  transient network error, or a stale bundle whose wasm URL now hits the SPA
+ *  fallback all rejected once and then rejected every later evaluation
+ *  instantly for the life of the page — coming back online never recovered
+ *  form logic. Now the next evaluation tries the load again. */
 function ready(): Promise<void> {
   if (!readyPromise) {
     readyPromise = loadWasm()
       .then((source) => initZipp({ module_or_path: source as never }))
-      .then(() => undefined);
+      .then(() => undefined)
+      .catch((err: unknown) => {
+        readyPromise = null;
+        throw err;
+      });
   }
   return readyPromise;
+}
+
+/**
+ * Load the engine without evaluating anything. The Worker calls this as soon as
+ * it starts so the 5 MB download and compile happen once, up front, and so
+ * engine.ts can tell "still loading" apart from "evaluating" — the per-call
+ * watchdog must not count the load, or a cold cache on a slow link kills the
+ * Worker mid-download on every attempt and fails every condition open.
+ */
+export function warmUp(): Promise<void> {
+  return ready();
 }
 
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -99,7 +127,8 @@ const BOOTSTRAP = `;(function(){
   for (var __k in __c) {
     if (Object.prototype.hasOwnProperty.call(__c, __k)
         && /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(__k)
-        && __k !== "__proto__" && __k !== "constructor" && __k !== "prototype") {
+        && __k !== "__proto__" && __k !== "constructor" && __k !== "prototype"
+        && __k.indexOf("__") !== 0) {
       globalThis[__k] = __c[__k];
     }
   }
@@ -121,11 +150,16 @@ function buildProgram(kind: EvalKind, expression: string, contextJson: string): 
   const exprLiteral = JSON.stringify(expression);
 
   if (kind === 'syntax') {
-    // Parse-only: compile the expression without running it, so validation never
-    // executes a side-effecting expression.
+    // Parse-only, and actually parse-only. The previous form concatenated the
+    // expression into a program string for indirect eval, so an expression of
+    // the shape `1); })(); <anything>; (function(){ return (1` closed the
+    // wrapper and ran <anything>. `new Function` parses its body standalone —
+    // an unbalanced `}` is a SyntaxError, not an escape — and the function is
+    // never invoked, so a side-effecting expression stays inert. Same
+    // single-expression contract validateExpression has always had.
     return `${PRELUDE}
 var __out;
-try { (0, eval)("(function(){ return (" + ${exprLiteral} + "\\n); })"); __out = {ok: true, value: null}; }
+try { new Function("return (" + ${exprLiteral} + "\\n);"); __out = {ok: true, value: null}; }
 catch (e) { __out = {ok: false, error: String((e && e.message) || e)}; }
 __emit(__out);`;
   }

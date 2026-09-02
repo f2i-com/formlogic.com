@@ -624,7 +624,7 @@ function runInstall(array $data): array
         }
     }
 
-    // 8. Check FormLogic qjs runtime binary (on Linux: also fix/report the execute bit)
+    // 8. Check the FormLogic script runtime launcher (on Linux: also fix/report the execute bit)
     $steps[] = flScriptRuntimeStep();
 
     // 9. Optionally set up the demo + marketplace catalog (installable sample app packs + example
@@ -689,7 +689,7 @@ function runInstall(array $data): array
 // Shared post-install checks
 // ---------------------------------------------------------------------------
 /**
- * FormLogic qjs runtime step: presence on every platform, plus the execute bit on Linux/macOS —
+ * FormLogic script runtime step: presence on every platform, plus the execute bit on Linux/macOS —
  * zip extraction commonly drops it, so try chmod +x first and only then ask the operator to.
  */
 function flScriptRuntimeStep(): array
@@ -709,9 +709,9 @@ function flScriptRuntimeStep(): array
             return ['label' => 'FormLogic script runtime', 'status' => 'warn',
                 'message' => 'Present but not executable (and chmod from PHP failed) — run on the server: chmod +x "' . $qjsBin . '"'];
         }
-        return ['label' => 'FormLogic qjs runtime', 'status' => 'ok', 'message' => 'Execute bit was missing — fixed with chmod +x'];
+        return ['label' => 'FormLogic script runtime', 'status' => 'ok', 'message' => 'Execute bit was missing — fixed with chmod +x'];
     }
-    return ['label' => 'FormLogic qjs runtime', 'status' => 'ok'];
+    return ['label' => 'FormLogic script runtime', 'status' => 'ok'];
 }
 
 /**
@@ -1445,7 +1445,7 @@ function renderStepList(stepsList, steps) {
 
     if (step.label && step.label.includes('Composer') && step.status === 'warn') flags.needComposer = true;
     if (step.label && step.label.includes('npm') && step.status === 'warn') flags.needNpm = true;
-    if (step.label && step.label.includes('qjs') && step.status === 'warn') flags.needWasm = true;
+    if (step.label && step.label.includes('script runtime') && step.status === 'warn') flags.needWasm = true;
   }
   return flags;
 }

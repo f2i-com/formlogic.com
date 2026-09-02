@@ -1,0 +1,48 @@
+[package]
+name = "formlogic-runtime-guest"
+version = "0.2.0"
+edition = "2021"
+description = "FormLogic's sandboxed evaluator — the zipp engine compiled to WebAssembly (WASI), run by the formlogic-runtime launcher"
+publish = false
+
+# Its own workspace, deliberately. Cargo unifies features within a workspace, and
+# this crate must resolve zipp-vm with `safe-sandbox` and WITHOUT `jit` — sharing
+# a feature-resolution domain with anything that wants the JIT would silently pull
+# native code generation into the sandbox. (Moot on wasm32, where the JIT cannot
+# exist, but the isolation also keeps the `wasm-*` specialisations below from
+# leaking into any other zipp-vm consumer, which zipp's own notes warn against.)
+[workspace]
+resolver = "2"
+
+[profile.dev]
+overflow-checks = true
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+# An integer wrap in VM bookkeeping should stop the guest, never quietly become
+# an index or limit bypass in the artifact that runs untrusted code. Under wasm a
+# panic is a trap: the launcher sees the instance die and reports it.
+overflow-checks = true
+panic = "abort"
+strip = true
+
+[[bin]]
+name = "formlogic-runtime-guest"
+path = "src/main.rs"
+
+[dependencies]
+# Pinned by revision: this is a security boundary and must not move under us on a
+# rebuild. The revision is the one that produced the browser's tracked wasm
+# module (ui/vendor/zipp-wasm), so the two artifacts are the same engine source.
+#
+#   safe-sandbox      interpreter-only profile: unsafe code is a compile error in the
+#                     VM and the regex engine; no filesystem, process or network
+#                     surface exists for a guest to reach.
+#   wasm-no-fs-loader drops the module-loader host surface entirely, so there is not
+#                     even a code path that would try std::fs under WASI.
+#   wasm-single-agent removes the `$262.agent` thread harness; a WASI guest has no
+#                     threads and the launcher is the isolation boundary anyway.
+zipp-vm = { git = "https://github.com/f2i-com/zipp.org", rev = "7fd2f23d", default-features = false, features = ["safe-sandbox", "wasm-no-fs-loader", "wasm-single-agent"] }
+serde_json = "1"

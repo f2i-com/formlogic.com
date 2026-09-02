@@ -5,17 +5,31 @@ import type { WorkerRequest, WorkerResponse } from './formlogic.worker';
 // ---------------------------------------------------------------------------
 // FormLogic evaluation engine (browser).
 //
-// User-authored expressions/formulas run inside a QuickJS WASM sandbox hosted in
-// a dedicated Web Worker (see zipp-host.ts / formlogic.worker.ts). This module
-// is a thin, stable client: it owns the worker lifecycle and a hard wall-clock
+// User-authored expressions/formulas run inside a zipp WASM sandbox hosted in a
+// dedicated Web Worker (see zipp-host.ts / formlogic.worker.ts). This module is
+// a thin, stable client: it owns the worker lifecycle and a hard wall-clock
 // watchdog that terminates+respawns the worker if an evaluation overruns (the
-// backstop for the rare expression QuickJS can't interrupt in-VM, e.g. a
+// backstop for the rare expression the VM can't interrupt itself, e.g. a
 // catastrophic regex). The exported function surface is unchanged from the
 // previous WASM engine, so hooks and editors need no changes.
+//
+// Two clocks, kept apart on purpose:
+//   * LOADING the engine (a 5 MB module: fetch + compile) gets its own generous
+//     deadline, once per Worker. Nothing is evaluated until the Worker reports
+//     ready on id 0.
+//   * EVALUATING gets the per-call watchdog, armed only once the engine exists.
+// Before they were one clock: the 2.5 s per-call watchdog started at
+// postMessage, the download started inside it, and on a cold cache the Worker
+// was killed mid-download — throwing the partial load away — on every attempt,
+// while every conditional field failed open and the calculated ones went null.
 // ---------------------------------------------------------------------------
 
 const DEFAULT_BUDGET_MS = 1000; // in-VM interrupt deadline
 const WATCHDOG_GRACE_MS = 1500; // extra time before we hard-kill the worker
+/** How long a Worker may take to fetch + compile the engine before it is given up on. */
+const ENGINE_LOAD_TIMEOUT_MS = 90_000;
+/** The Worker's readiness handshake id (see formlogic.worker.ts READY_ID). */
+const READY_ID = 0;
 
 interface Pending {
   resolve: (value: unknown) => void;
@@ -24,6 +38,8 @@ interface Pending {
 }
 
 let worker: Worker | null = null;
+/** Resolves when the current Worker has loaded the engine; rejects if it could not. */
+let workerReady: Promise<void> | null = null;
 let nextId = 1;
 const pending = new Map<number, Pending>();
 
@@ -31,8 +47,23 @@ function spawnWorker(): Worker {
   const w = new Worker(new URL('./formlogic.worker.ts', import.meta.url), {
     type: 'module',
   });
+
+  let settleReady: { resolve: () => void; reject: (e: Error) => void } | null = null;
+  workerReady = new Promise<void>((resolve, reject) => {
+    settleReady = { resolve, reject };
+  });
+  const loadTimer = setTimeout(() => {
+    settleReady?.reject(new Error('FormLogic engine did not load in time'));
+  }, ENGINE_LOAD_TIMEOUT_MS);
+
   w.onmessage = (event: MessageEvent<WorkerResponse>) => {
     const { id, ok, result, error } = event.data;
+    if (id === READY_ID) {
+      clearTimeout(loadTimer);
+      if (ok) settleReady?.resolve();
+      else settleReady?.reject(new Error(error || 'FormLogic engine failed to load'));
+      return;
+    }
     const entry = pending.get(id);
     if (!entry) return;
     clearTimeout(entry.timer);
@@ -46,6 +77,8 @@ function spawnWorker(): Worker {
   w.onerror = (event) => {
     // A worker-level error invalidates all in-flight work; fail them and respawn
     // lazily on the next call.
+    clearTimeout(loadTimer);
+    settleReady?.reject(new Error(event.message || 'FormLogic worker crashed'));
     failAll(new Error(event.message || 'FormLogic worker crashed'));
     terminateWorker();
   };
@@ -63,6 +96,7 @@ function terminateWorker(): void {
   if (worker) {
     worker.terminate();
     worker = null;
+    workerReady = null;
   }
 }
 
@@ -74,13 +108,29 @@ function failAll(reason: Error): void {
   pending.clear();
 }
 
-function evaluate(
+async function evaluate(
   kind: EvalKind,
   expression: string,
   context: Record<string, unknown>,
   budgetMs = DEFAULT_BUDGET_MS
 ): Promise<unknown> {
   const w = getWorker();
+  const ready = workerReady;
+  try {
+    await ready;
+  } catch (err) {
+    // The engine could not load. Drop this Worker so the NEXT call spawns a
+    // fresh one and retries the download, rather than every call for the rest
+    // of the page failing instantly on a memoised error.
+    if (worker === w) terminateWorker();
+    throw err instanceof Error ? err : new Error('FormLogic engine failed to load');
+  }
+  // The Worker may have been replaced while we waited; a request must go to the
+  // one whose engine is ready.
+  if (worker !== w) {
+    return evaluate(kind, expression, context, budgetMs);
+  }
+
   const id = nextId++;
   const request: WorkerRequest = { id, kind, expression, context, budgetMs };
 

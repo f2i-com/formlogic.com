@@ -53,8 +53,12 @@ function Invoke-Gate {
 }
 
 # ── Backend ──
-Invoke-Gate 'backend: phpunit' (Join-Path $repo 'formlogic/backend') {
-    & vendor/bin/phpunit
+# --fail-on-skipped: the sandbox suites (SandboxScriptModeTest, ScriptStoreOptOutTest,
+# FormLogicExpressionParityTest) skip themselves when the launcher is unavailable. On
+# a developer box that is a courtesy; on the release bar it is the ONE signal that
+# the vendored runtime is missing or not executable, and a skip must read as red.
+Invoke-Gate 'backend: phpunit (skips are failures here)' (Join-Path $repo 'formlogic/backend') {
+    & vendor/bin/phpunit --fail-on-skipped
 }
 Invoke-Gate 'backend: phpstan' (Join-Path $repo 'formlogic/backend') {
     & vendor/bin/phpstan analyse --memory-limit=1G

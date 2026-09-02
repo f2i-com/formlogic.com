@@ -20,6 +20,20 @@ Options -Indexes
   </IfModule>
 </FilesMatch>
 
+# The sandbox launcher under bin/runtime/. The web-root .htaccess never routes a
+# request here, but this file is the layer that holds when that one is missing
+# or mod_rewrite is off, and a downloadable copy of the server's sandbox binary
+# is a gift to anyone looking for a memory-safety bug in it.
+<FilesMatch "^formlogic-runtime-">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
 <FilesMatch "\.(env|sqlite|sqlite3|db|log|lock)$">
   <IfModule mod_authz_core.c>
     Require all denied

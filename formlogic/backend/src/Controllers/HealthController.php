@@ -108,13 +108,19 @@ class HealthController
             ];
         }
 
-        // QuickJS runtime — required for scripts + calculated fields.
-        $qjs = new SandboxRunner();
-        $qjsOk = $qjs->isAvailable();
+        // Sandbox runtime — required for scripts + calculated fields. The key
+        // keeps its historical name so an external monitor reading it does not
+        // break; the detail says what is actually checked (isAvailable() now
+        // requires the launcher to be executable, not merely present).
+        $sandbox = new SandboxRunner();
+        $sandboxOk = $sandbox->isAvailable();
         $checks['quickjs'] = [
-            'ok' => $qjsOk,
+            'ok' => $sandboxOk,
             'critical' => true,
-            'detail' => $qjsOk ? 'binary + harness + prelude present' : 'missing binary/harness/prelude',
+            'name' => 'sandboxRuntime',
+            'detail' => $sandboxOk
+                ? 'sandbox launcher executable + prelude present'
+                : 'sandbox launcher missing, not executable, or prelude missing',
         ];
 
         // Billing — only critical when plan enforcement is on.

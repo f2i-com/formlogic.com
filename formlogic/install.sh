@@ -22,11 +22,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$SCRIPT_DIR/backend"
 UI_DIR="$SCRIPT_DIR/ui"
-# Pick the qjs binary that matches the OS the backend will actually run on, so the
-# check below doesn't falsely warn (e.g. on Windows Git Bash the binary is the .exe).
+# Pick the sandbox launcher that matches the OS the backend will actually run on,
+# so the check below doesn't falsely warn (on Windows Git Bash it is the .exe).
 case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*) QJS_BIN="$SCRIPT_DIR/backend/bin/qjs/qjs-windows-x86_64.exe" ;;
-    *)                    QJS_BIN="$SCRIPT_DIR/backend/bin/qjs/qjs-linux-x86_64" ;;
+    MINGW*|MSYS*|CYGWIN*) RUNTIME_BIN="$SCRIPT_DIR/backend/bin/runtime/formlogic-runtime-windows-x86_64.exe" ;;
+    *)                    RUNTIME_BIN="$SCRIPT_DIR/backend/bin/runtime/formlogic-runtime-linux-x86_64" ;;
 esac
 
 # Colors
@@ -183,13 +183,19 @@ fi
 
 # FormLogic runtime: the browser engine (quickjs-emscripten) is installed via the
 # npm step above, and the canonical prelude is synced into the backend by the
-# `npm run build` prebuild step below. The backend uses the vendored static qjs
-# sandbox binary (committed under backend/bin/qjs); just make it executable.
-if [[ -f "$QJS_BIN" ]]; then
-    chmod +x "$QJS_BIN" 2>/dev/null || true
-    ok "FormLogic qjs runtime present"
+# `npm run build` prebuild step below. The backend uses the vendored sandbox
+# launcher (committed under backend/bin/runtime, a wasmtime host for the zipp
+# engine); it only needs to be executable, which git clone and zip extraction
+# cannot be relied on to preserve.
+if [[ -f "$RUNTIME_BIN" ]]; then
+    chmod +x "$RUNTIME_BIN" 2>/dev/null || true
+    if [[ -x "$RUNTIME_BIN" ]]; then
+        ok "FormLogic script runtime present and executable"
+    else
+        warn "FormLogic script runtime at $RUNTIME_BIN is not executable and chmod failed — run: chmod +x \"$RUNTIME_BIN\""
+    fi
 else
-    warn "FormLogic qjs binary missing at $QJS_BIN — form logic & scripts will be disabled server-side"
+    warn "FormLogic script runtime missing at $RUNTIME_BIN — form logic & scripts will be disabled server-side"
 fi
 
 # Build frontend
