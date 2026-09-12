@@ -30,7 +30,7 @@ import { getDesktopInfo } from '../desktop/desktopDetection';
 import { isDesktopPaired } from '../desktop/desktopPairing';
 import { isSimulatorActive } from './connectorSimulator';
 import { generateId } from '../../lib/utils';
-import { oaiyRouteAvailable, oaiyConnectorRequest } from '../oaiy/oaiyRuntime';
+import { oaiyRouteAvailable, oaiyConnectorAvailable, oaiyConnectorRequest } from '../oaiy/oaiyRuntime';
 
 /** The demo half a pack driver supplies (see packConnectorDriver.ts). */
 export interface DemoConnectorFacade {
@@ -85,13 +85,16 @@ export function createDesktopBackedConnector(
     async status(): Promise<ConnectorStatusInfo> {
       // OAIY Desktop, when present, serves this connector via its plugin host.
       if (oaiyRouteAvailable()) {
+        const available = await oaiyConnectorAvailable(id);
         return {
           id,
           kind: manifest.kind,
-          available: true,
+          available,
           source: 'local_http',
           label: `${manifest.label} (OAIY Desktop)`,
-          detail: 'Served by a plugin under OAIY Desktop.',
+          detail: available
+            ? 'Connector commands are available under OAIY Desktop; device and media readiness must be checked separately.'
+            : 'OAIY Desktop is paired, but this connector is unavailable. Check that its plugin is installed, running and healthy.',
         };
       }
       if (!desktopRouteAvailable()) {
@@ -153,16 +156,9 @@ export function createDesktopBackedConnector(
       // twice.
       const requestId = createJournalledRequestId(manifest, command);
 
-      // OAIY-first (additive): when OAIY Desktop is present AND paired, the same
-      // connector command is served by the plugin running under OAIY's plugin
-      // host instead of FormLogic Desktop — this is how OAIY replaces FormLogic
-      // Desktop for the local runtime. OAIY's gateway gates the command against
-      // the plugin's manifest before forwarding, exactly as FormLogic Desktop
-      // does, and returns the same DesktopClientResult shape, so the error
-      // handling below is unchanged. A TRANSPORT failure here falls through to
-      // the FormLogic Desktop route (OAIY vanished mid-call); a real per-command
-      // refusal does NOT fall through — a command that reached a runtime and was
-      // refused must not be silently retried elsewhere.
+      // Select one runtime for this operation. A lost response cannot establish
+      // whether a physical action ran; a second runtime has a separate journal
+      // and cannot safely deduplicate it, even with the same request id.
       if (oaiyRouteAvailable()) {
         const oaiyRes = await oaiyConnectorRequest(
           id,
@@ -171,10 +167,12 @@ export function createDesktopBackedConnector(
           requestId ? { idempotencyKey: requestId } : undefined
         );
         if (oaiyRes.ok) return oaiyRes.data;
-        if (!oaiyRes.transportFailure) {
-          throw new ConnectorError(oaiyRes.error.code as ConnectorErrorCode, oaiyRes.error.message);
-        }
-        // else: OAIY unreachable — try FormLogic Desktop below.
+        throw new ConnectorError(
+          oaiyRes.transportFailure ? 'connector_uncertain' : oaiyRes.error.code as ConnectorErrorCode,
+          oaiyRes.transportFailure
+            ? 'OAIY Desktop did not respond — the command may have run. Check the device before retrying.'
+            : oaiyRes.error.message
+        );
       }
 
       const res = await desktopClient.connectors.request(

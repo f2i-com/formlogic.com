@@ -78,3 +78,15 @@ for (const entry of packCatalog) {
   console.log(`wrote ${entry.id}: ${entry.pack.forms.length} forms, ${apps.length} apps (${withScreen} with screens)`);
 }
 console.log(`\nEmitted ${packCatalog.length} packs to ${outDir}`);
+
+// Public, credential-free summaries keep the starter gallery browsable without the API.
+const summaries = packCatalog.map(entry => ({
+  id: 'bundled-' + entry.id, slug: entry.id, name: entry.name, description: entry.description,
+  icon: entry.icon || null, tags: entry.tags || [], screenshot:null, screenshots:[], category:null,
+  visibility:'public', status:'published', downloadCount:0, avgRating:0, ratingCount:0,
+  featured:entry.id === 'aokie-receptionist', publisherId:'', publisherName:'FormLogic',
+  latestVersion:entry.version, formatVersion:1, formCount:entry.pack.forms.length,
+  appCount:(entry.pack.apps || []).length, createdAt:'', updatedAt:'', versions:[],
+  formTitles:entry.pack.forms.map(form => form.title), appNames:(entry.pack.apps || []).map(app => app.name),
+}));
+writeFileSync(join(here, '..', 'src', 'data', 'starter-catalog.json'), JSON.stringify(summaries, null, 2) + '\n');

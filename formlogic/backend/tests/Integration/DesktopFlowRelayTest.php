@@ -21,8 +21,8 @@ use Slim\Psr7\Factory\ServerRequestFactory;
  * execution-location flows. Covers the full lifecycle (enqueue → poll → claim → progress
  * frames → complete with a sealed result), reserve-first idempotency, the single-flight
  * claim (lane_busy), FIFO order + live queue position, the per-user/per-target caps (2/4),
- * the 15-minute TTL, content purge on complete AND on expiry, the READ-ONCE result
- * envelope (first GET returns it, later GETs show resultAvailable=false), result retention
+ * the 15-minute TTL, content purge on complete AND on expiry, repeatable result
+ * envelopes with requester-only receipt acknowledgement, result retention
  * GC, flk_ scope acceptance (flows:relay plus the grandfathered connector:relay),
  * requesting-user enforcement on the web {id} routes (incl. SSE auth), and flow ownership
  * validation at enqueue. Skipped without a test database.
@@ -154,6 +154,14 @@ class DesktopFlowRelayTest extends TestCase
         return ['status' => $resp->getStatusCode(), 'body' => self::decode($resp)];
     }
 
+    private function webAck(string $userId, string $id, string $receipt): array
+    {
+        $req = (new ServerRequestFactory())->createServerRequest('POST', self::BASE . '/api/desktop/flows/runs/' . $id . '/ack')
+            ->withAttribute('userId', $userId)->withParsedBody(['resultReceipt' => $receipt]);
+        $resp = self::$ctrl->acknowledgeResult($req, (new ResponseFactory())->createResponse(), ['id' => $id]);
+        return ['status' => $resp->getStatusCode(), 'body' => self::decode($resp)];
+    }
+
     /**
      * GET /api/desktop/flows/runs/{id}/stream as $userId — ERROR PATHS ONLY: an authorized
      * call enters the raw SSE loop, which never returns to PHPUnit.
@@ -257,7 +265,7 @@ class DesktopFlowRelayTest extends TestCase
         $this->assertSame(base64_encode('sealed-progress-2'), $out[1]['envelope']);
         $this->assertGreaterThan($out[0]['seq'], $out[1]['seq']);
 
-        // Complete with a sealed result: envelope + frames purge, the result is kept for one read.
+        // Completion purges request/frames but retains the result until ACK or expiry.
         $done = $this->v1Complete($id, ['flows:relay'], ['instanceId' => 'desk-1', 'status' => 'done', 'resultEnvelope' => base64_encode('sealed-result')]);
         $this->assertSame(200, $done['status'], json_encode($done['body']));
         $this->assertSame('done', $done['body']['request']['status']);
@@ -265,23 +273,30 @@ class DesktopFlowRelayTest extends TestCase
         $raw = $this->rawRunRow($id);
         $this->assertNull($raw['envelope'], 'complete() purges the request envelope');
         $this->assertSame(0, $this->frameCount($id), 'complete() purges the frames');
-        $this->assertNotNull($raw['result_envelope'], 'complete() keeps the sealed result for the read-once');
+        $this->assertNotNull($raw['result_envelope'], 'complete() keeps the sealed result until ACK');
 
-        // First web read returns the sealed result — and consumes it.
+        // A lost first response can be recovered by reading the identical ciphertext.
         $read = $this->webGet($this->ownerId, $id);
         $this->assertSame(200, $read['status']);
         $this->assertSame(base64_encode('sealed-result'), $read['body']['request']['resultEnvelope']);
         $this->assertTrue($read['body']['request']['resultAvailable']);
         $this->assertSame(0, $read['body']['request']['queuePos']);
 
-        // Second read: the result is gone (read-once-then-purge).
         $again = $this->webGet($this->ownerId, $id);
-        $this->assertNull($again['body']['request']['resultEnvelope']);
-        $this->assertFalse($again['body']['request']['resultAvailable']);
-        $this->assertNull($this->rawRunRow($id)['result_envelope'], 'the first read purged the result');
+        $this->assertSame($read['body']['request']['resultEnvelope'], $again['body']['request']['resultEnvelope']);
+        $receipt = $read['body']['request']['resultReceipt'];
+        $this->assertSame(hash('sha256', 'sealed-result'), $receipt);
+        $this->assertSame($receipt, $again['body']['request']['resultReceipt']);
+        $this->assertSame(404, $this->webAck($this->otherId, $id, $receipt)['status']);
+        $this->assertSame(409, $this->webAck($this->ownerId, $id, str_repeat('0', 64))['status']);
+        $this->assertNotNull($this->rawRunRow($id)['result_envelope']);
+        $this->assertSame(200, $this->webAck($this->ownerId, $id, $receipt)['status']);
+        $this->assertSame(200, $this->webAck($this->ownerId, $id, $receipt)['status']);
+        $this->assertNull($this->webGet($this->ownerId, $id)['body']['request']['resultEnvelope']);
+        $this->assertNull($this->rawRunRow($id)['result_envelope'], 'only ACK purges the result');
     }
 
-    public function testCompleteFailedAlsoKeepsTheResultForOneRead(): void
+    public function testCompleteFailedAlsoKeepsTheResultUntilAcknowledged(): void
     {
         $id = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
         $this->assertSame(200, $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1'])['status']);
@@ -290,7 +305,7 @@ class DesktopFlowRelayTest extends TestCase
         $read = $this->webGet($this->ownerId, $id);
         $this->assertSame('failed', $read['body']['request']['status']);
         $this->assertSame(base64_encode('sealed-error'), $read['body']['request']['resultEnvelope']);
-        $this->assertFalse($this->webGet($this->ownerId, $id)['body']['request']['resultAvailable']);
+        $this->assertTrue($this->webGet($this->ownerId, $id)['body']['request']['resultAvailable']);
     }
 
     // ── reserve-first idempotency ──
@@ -539,6 +554,7 @@ class DesktopFlowRelayTest extends TestCase
         $this->assertSame(403, $foreign['status']);
         $this->assertSame('forbidden', $foreign['body']['code'] ?? null);
         $this->assertSame(403, $this->webStream($this->ownerId, $delegated['requestId'])['status']);
+        $this->assertSame(403, $this->webAck($this->ownerId, $delegated['requestId'], str_repeat('0', 64))['status']);
         // ...while the actual requester passes the same gate.
         $this->assertSame(200, $this->webGet($this->otherId, $delegated['requestId'])['status']);
 

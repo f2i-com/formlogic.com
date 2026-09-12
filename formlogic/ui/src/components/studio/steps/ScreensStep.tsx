@@ -33,7 +33,6 @@ import { Switch } from '../../ui/Switch';
 import { api } from '../../../lib/api';
 import { toast } from '../../../stores/toastStore';
 import { useAppStore } from '../../../stores/appStore';
-import { useUIStore } from '../../../stores/uiStore';
 import { cn, formatRelativeTime } from '../../../lib/utils';
 import { readableForegroundColor } from '../../../lib/color';
 import { returnToState } from '../../../hooks/useReturnTo';
@@ -42,6 +41,10 @@ import { DynamicIcon } from '../../ui/DynamicIcon';
 import { trackStudioSave } from '../studioSaveState';
 import { statusLabel } from '../../../lib/appStatus';
 import { AppLookPanel } from './AppLookPanel';
+import { HostedAppPanel } from '../HostedAppPanel';
+import { ConnectedWorkspacePanel } from '../ConnectedWorkspacePanel';
+import { AppCompositionPanel } from '../AppCompositionPanel';
+import { SoftnExportPanel } from '../SoftnExportPanel';
 import type { UnpublishedChanges } from '../studioSteps';
 import type { App, AppForm, AppRole, AppRuntimeForm, PermissionAction } from '../../../types/app';
 import type { CustomScreen, Form } from '../../../types/form';
@@ -131,10 +134,10 @@ export function ScreensStep({
   const [selection, setSelection] = useState<ScreenSelection>({ kind: 'home' });
   // A phone user's first sight of their app should not be a 520px desktop mock
   // inside a horizontal scroller. Lazy initialiser, so an explicit later choice
-  // wins and no effect re-derives it. (uiStore defaults isMobile:false, so jsdom
-  // keeps the desktop default.)
+  // wins and no effect re-derives it. Read the viewport directly so a delayed
+  // shell resize effect cannot choose the desktop preview on a phone.
   const [device, setDevice] = useState<'desktop' | 'tablet' | 'mobile'>(
-    () => (useUIStore.getState().isMobile ? 'mobile' : 'desktop')
+    () => (typeof window !== 'undefined' && window.innerWidth < 768 ? 'mobile' : 'desktop')
   );
   const [previewData, setPreviewData] = useState<'sample' | 'real'>('sample');
   const [roleId, setRoleId] = useState<string | null>(null);
@@ -385,7 +388,7 @@ export function ScreensStep({
   };
 
   return (
-    <div className="grid gap-4 @3xl/studio:grid-cols-[minmax(0,18rem)_minmax(0,1fr)] @5xl/studio:grid-cols-[minmax(0,19.5rem)_minmax(0,1fr)]">
+    <div className="grid gap-5 @3xl/studio:grid-cols-[minmax(0,18rem)_minmax(0,1fr)] @5xl/studio:grid-cols-[minmax(0,19.5rem)_minmax(0,1fr)]">
       {/* Screens + their settings share one rail, so the controls for the selected
           screen are never a preview-height below the fold at laptop widths. In the
           middle band they sit side by side rather than as one tall stacked column.
@@ -395,10 +398,10 @@ export function ScreensStep({
           order-first/order-none idiom.) */}
       <div className="order-last grid gap-4 @xl/studio:grid-cols-2 @3xl/studio:order-none @3xl/studio:grid-cols-1 @3xl/studio:content-start">
         <section className="overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
-          <div className="border-b border-gray-200/80 p-4 dark:border-white/[0.06]">
+          <div className="border-b border-gray-200/80 p-5 dark:border-white/[0.06]">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">App screens</h3>
           </div>
-          <div className="scrollbar-thin flex snap-x gap-1.5 overflow-x-auto p-2.5 @xl/studio:block @xl/studio:max-h-[340px] @xl/studio:space-y-1 @xl/studio:overflow-x-visible @xl/studio:overflow-y-auto">
+          <div className="scrollbar-thin flex snap-x gap-1.5 overflow-x-auto p-3 @xl/studio:block @xl/studio:max-h-[340px] @xl/studio:space-y-1 @xl/studio:overflow-x-visible @xl/studio:overflow-y-auto">
             <ScreenItem
               icon={Home}
               label="App home"
@@ -441,15 +444,20 @@ export function ScreensStep({
           </div>
         </section>
 
+        <HostedAppPanel app={app} />
+        <ConnectedWorkspacePanel app={app} />
+        <AppCompositionPanel app={app} onComplete={() => { void onReloadForms(); void onReloadApp(); }} />
+        <SoftnExportPanel key={app.id} app={app} appForms={appForms.map(form => ({ ...form, displayName: form.displayName || formsById[form.formId]?.title }))} />
+
         {/* Screen settings */}
         <section className="h-fit overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
-          <div className="flex items-center justify-between border-b border-gray-200/80 p-4 dark:border-white/[0.06]">
+          <div className="flex items-center justify-between border-b border-gray-200/80 p-5 dark:border-white/[0.06]">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
               {selection.kind === 'home' ? 'Home settings' : 'Screen settings'}
             </h3>
             <Settings2 className="h-4 w-4 text-gray-500 dark:text-slate-400" aria-hidden="true" />
           </div>
-          <div className="space-y-4 p-4">
+          <div className="space-y-5 p-5">
             {selection.kind === 'home' ? (
               <>
                 <div className="rounded-xl border border-gray-200 p-3 dark:border-white/10">
@@ -583,7 +591,7 @@ export function ScreensStep({
 
       {/* Preview — first on a phone, where it is the whole point of the section. */}
       <section className="order-first overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm @3xl/studio:order-none dark:border-white/[0.06] dark:bg-slate-900/50">
-        <div className="space-y-3 border-b border-gray-200/80 p-3 dark:border-white/[0.06]">
+        <div className="space-y-3 border-b border-gray-200/80 p-4 dark:border-white/[0.06]">
           <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
             <span className="flex min-w-0 items-center gap-2">
               <span className="truncate text-xs font-semibold text-gray-800 dark:text-slate-200">
@@ -658,7 +666,7 @@ export function ScreensStep({
             </span>
           </div>
         )}
-        <div className="scrollbar-thin flex min-h-[480px] items-center justify-center overflow-x-auto bg-gray-50/80 p-4 dark:bg-slate-950/40 sm:p-6">
+        <div className="scrollbar-thin flex min-h-[360px] sm:min-h-[480px] items-center overflow-x-auto bg-gray-50/80 p-4 dark:bg-slate-950/40 sm:p-6 [&>div]:mx-auto">
           <AppPreview
             app={app}
             device={device}
@@ -917,6 +925,8 @@ function AppPreview({
 
   return (
     <div
+      role="region"
+      aria-label={`${device} app preview`}
       className={cn(
         'shrink-0 overflow-hidden rounded-[18px] border border-gray-300 bg-white shadow-2xl shadow-gray-950/15 transition-all duration-300 dark:border-white/15 dark:bg-slate-950',
         // A minimum width per device so the mock stays readable in a narrow column;
@@ -925,7 +935,7 @@ function AppPreview({
           ? 'w-full min-w-[520px] max-w-[760px]'
           : device === 'tablet'
             ? 'w-full min-w-[420px] max-w-[560px]'
-            : 'w-[300px]'
+            : 'w-full min-w-0 max-w-[300px]'
       )}
     >
       <div className="flex h-8 items-center gap-1.5 border-b border-gray-200 bg-gray-50 px-3 dark:border-white/[0.08] dark:bg-slate-900">

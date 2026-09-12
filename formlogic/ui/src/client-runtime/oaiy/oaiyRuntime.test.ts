@@ -149,14 +149,30 @@ describe('oaiyConnectorRequest — forwarding + result shape', () => {
     else throw new Error('expected failure');
   });
 
-  it('marks a transport failure so the caller can fall back', async () => {
+  it('reports a dropped connection as uncertain, never safe to replay', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
     const res = await oaiyConnectorRequest('aokie', 'phone.status');
     expect(res.ok).toBe(false);
     if (!res.ok) {
-      expect(res.transportFailure).toBe(true);
-      expect(res.error.code).toBe('connector_unavailable');
+      expect(res.transportFailure).toBeUndefined();
+      expect(res.error.code).toBe('connector_uncertain');
     }
+  });
+
+  it.each(['', '{"result":', '{}'])('reports an incomplete successful body as uncertain: %s', async (body) => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status: 200 })));
+    await expect(oaiyConnectorRequest('aokie', 'sms.send')).resolves.toMatchObject({
+      ok: false, error: { code: 'connector_uncertain' },
+    });
+  });
+
+  it('reports a body stream failure as uncertain', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, text: async () => { throw new TypeError('connection reset after dispatch'); },
+    })));
+    await expect(oaiyConnectorRequest('aokie', 'sms.send')).resolves.toMatchObject({
+      ok: false, error: { code: 'connector_uncertain' },
+    });
   });
 });
 

@@ -37,6 +37,11 @@ class DesktopFlowRelayRouteWiringTest extends TestCase
             $source,
             'the SSE route is session-authed (requesting-user match happens in the controller)'
         );
+        $this->assertMatchesRegularExpression(
+            '/\$app->post\(\'\/api\/desktop\/flows\/runs\/\{id\}\/ack\'.*?->acknowledgeResult\(.*?\);\s*\}\)->add\(\$authRequired\);/s',
+            $source,
+            'result acknowledgement must use session auth before requester authorization'
+        );
     }
 
     public function testDesktopRoutesUseTheScopeCheckedRelayAuth(): void

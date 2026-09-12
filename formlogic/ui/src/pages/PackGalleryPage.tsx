@@ -1,11 +1,15 @@
+import { browseStarters, starterCatalog } from '../lib/starterCatalog';
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import '../styles/landing-v2.css';
+import '../styles/landing-refresh.css';
+import { LandingNav } from '../components/landing-v2/LandingNav';
+import { LandingFooter } from '../components/landing-v2/LandingFooter';
 import {
   Package,
   Search,
   Star,
   Download,
-  ChevronLeft,
   ArrowRight,
   Sparkles,
   Tag as TagIcon,
@@ -122,7 +126,7 @@ function PackCardSkeleton() {
 
 export default function PackGalleryPage() {
   const navigate = useNavigate();
-  const [featuredPacks, setFeaturedPacks] = useState<CatalogPack[]>([]);
+  const [featuredPacks, setFeaturedPacks] = useState<CatalogPack[]>(starterCatalog.filter(pack => pack.featured));
   const [categories, setCategories] = useState<PackFacet[]>([]);
   const [tags, setTags] = useState<PackFacet[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -157,8 +161,9 @@ export default function PackGalleryPage() {
     page,
     limit: 12,
   });
-  const packs = browse.packs;
-  const totalPages = browse.totalPages;
+  const bundled = browseStarters(searchQuery, categoryFilter, tagFilter, sortBy, page);
+  const packs = browse.error ? bundled.packs : browse.packs;
+  const totalPages = browse.error ? bundled.totalPages : browse.totalPages;
   const loading = browse.loading;
   const error = browse.error;
   const loadPacks = browse.retry;
@@ -170,7 +175,7 @@ export default function PackGalleryPage() {
     let cancelled = false;
     void api.browsePacks({ sort: 'popular', limit: 6 }).then((result) => {
       if (!cancelled && result.data?.packs) {
-        setFeaturedPacks(result.data.packs.filter((p) => p.featured));
+        setFeaturedPacks([...result.data.packs.filter((p) => p.featured && p.slug !== 'aokie-receptionist').slice(0, 2), result.data.packs.find(p => p.slug === 'aokie-receptionist') || starterCatalog.find(p => p.slug === 'aokie-receptionist')!]);
       }
     }).catch(() => {});
     // Facets (categories + tags in use) drive the browse chips. Derived from the live catalog,
@@ -194,26 +199,11 @@ export default function PackGalleryPage() {
     }`;
 
   return (
-    <div className="min-h-screen overflow-x-clip bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-50">
-      {/* Slim top bar */}
-      <header className="relative z-20 border-b border-gray-100 dark:border-slate-800/60 bg-white/85 dark:bg-slate-950/75 backdrop-blur-xl">
-        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
-          <button
-            onClick={() => navigate('/')}
-            className="fl-mono inline-flex cursor-pointer items-center gap-1.5 rounded text-xs uppercase tracking-wider text-gray-500 dark:text-slate-400 transition-colors hover:text-gray-900 dark:hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-          >
-            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-            Back
-          </button>
-          <a
-            href="/#demo"
-            className="fl-mono inline-flex items-center gap-1.5 rounded text-xs uppercase tracking-wider text-primary-600 dark:text-primary-400 transition-colors hover:text-primary-700 dark:hover:text-primary-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-          >
-            Try them live in the demo
-            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-          </a>
-        </div>
-      </header>
+    <div className="lv2 fl-marketplace min-h-screen overflow-x-clip bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-50">
+      <a href="#marketplace-content" className="fl-skip">Skip to apps</a>
+      <LandingNav />
+      <main id="marketplace-content">
+      {error && <div role="status" className="mx-auto max-w-6xl px-6 pt-5 text-sm text-slate-600 dark:text-slate-300">Browsing the bundled starter catalogue. Live marketplace details and installation need a connection. <button className="min-h-11 underline" onClick={() => loadPacks()}>Retry live catalogue</button></div>}
 
       {/* Hero — same blueprint-grid + glow grammar as the landing page */}
       <section className="relative overflow-hidden border-b border-gray-100 dark:border-slate-800/60 px-4 pt-14 pb-12 sm:px-6 sm:pt-20 sm:pb-16 lg:px-8">
@@ -244,8 +234,8 @@ export default function PackGalleryPage() {
             className="fl-reveal mt-5 max-w-xl text-base leading-relaxed text-gray-500 dark:text-slate-400 sm:text-lg"
             style={{ transitionDelay: '160ms' }}
           >
-            Every pack is a complete app — forms, workflow, and a live dashboard — ready to install in one
-            click. Browse by category, or search for your trade.
+            Start with a working app, then make it yours. Forms, dashboards and automations
+            stay connected to your FormLogic records. Add Aokie to bring calls and appointment requests into your workspace.
           </p>
           <div data-reveal className="fl-reveal relative mt-8 w-full max-w-md" style={{ transitionDelay: '240ms' }}>
             <Search className="absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400 dark:text-slate-500" aria-hidden="true" />
@@ -262,6 +252,11 @@ export default function PackGalleryPage() {
       </section>
 
       <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+        {!filtering && <section aria-label="Build with connected apps" className="mb-10 grid gap-4 rounded-2xl border border-sky-200 bg-sky-50 p-6 sm:grid-cols-3 sm:p-8 dark:border-sky-900 dark:bg-sky-950/30">
+          <div><span className="fl-mono text-xs text-sky-600 dark:text-sky-300">01 / START</span><h2 className="mt-2 font-semibold">Choose your starting point</h2><p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">Browse a complete workspace for your business. Review its forms and capabilities before installing.</p></div>
+          <div><span className="fl-mono text-xs text-sky-600 dark:text-sky-300">02 / CONNECT</span><h2 className="mt-2 font-semibold">Bring your tools together</h2><p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">Share forms with another app or move Aokie’s automations into an existing workspace.</p><Link to="/aokie" className="mt-2 inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-sky-700 dark:text-sky-300">Explore Aokie <ArrowRight size={15}/></Link></div>
+          <div><span className="fl-mono text-xs text-sky-600 dark:text-sky-300">03 / MAKE IT YOURS</span><h2 className="mt-2 font-semibold">Keep building your app</h2><p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">Customize your workspace and build an editable app with Softn, hosted on FormLogic.</p><a href="/#live-demo" className="mt-2 inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-sky-700 dark:text-sky-300">Try the live workspace <ArrowRight size={15}/></a></div>
+        </section>}
         {/* Featured row */}
         {!filtering && featuredPacks.length > 0 && (
           <div className="mb-10">
@@ -362,13 +357,6 @@ export default function PackGalleryPage() {
               <PackCardSkeleton key={i} />
             ))}
           </div>
-        ) : error ? (
-          <div role="alert" className="py-16 text-center text-gray-500 dark:text-slate-400">
-            <Package className="mx-auto mb-3 h-12 w-12 opacity-50" />
-            <p className="text-lg font-medium text-gray-700 dark:text-slate-300">Couldn’t load apps</p>
-            <p className="mt-1 text-sm">{error}</p>
-            <Button variant="outline" className="mt-4" onClick={() => loadPacks()}>Try again</Button>
-          </div>
         ) : packs.length === 0 ? (
           <div className="py-16 text-center text-gray-500 dark:text-slate-400">
             <Package className="mx-auto mb-3 h-12 w-12 opacity-50" />
@@ -400,6 +388,8 @@ export default function PackGalleryPage() {
           </>
         )}
       </div>
+      </main>
+      <LandingFooter />
     </div>
   );
 }

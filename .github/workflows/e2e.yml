@@ -3,17 +3,14 @@ name: E2E (Playwright) — release gate
 # Full-stack launch golden paths. Runs the real PHP + MySQL + built SPA on ONE origin (so cookies are
 # same-origin over HTTP) and drives it with Playwright/Chrome.
 #
-# Audit REL-001/C-09: this is the RELEASE GATE the launch checklist documents — it runs
-# nightly, on every v* release tag, and on demand. (It was temporarily manual-only while
-# resource-heavy; the checklist and reality must match, and tag pushes are rare enough
-# that the cost is fine.)
-# PAUSED 2026-07-12: the nightly schedule is disabled while the account is near its
-# GitHub Actions usage limit. Run manually from the Actions tab. Restore the
-# schedule block below when usage resets.
+# Audit REL-001/C-09: this is the release gate invoked by manual packaging.
+# PAUSED 2026-09-12: the nightly schedule remains disabled while checks are
+# performed manually. Run from the Actions tab when needed. Restore the
+# schedule block below when automatic CI is explicitly re-enabled.
 on:
   workflow_dispatch:
   # Callable as a reusable workflow (audit FL-E2E-001/FL-REL-001): package.yml
-  # invokes it on v* tags and HARD-DEPENDS on it — the standalone tag trigger
+  # invokes it during manual packaging and HARD-DEPENDS on it — the standalone tag trigger
   # is gone so a tag runs the suite exactly once, as a release requirement.
   workflow_call:
   # schedule:

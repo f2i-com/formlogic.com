@@ -1,13 +1,9 @@
-<p align="center">
-  <img src="docs/readme-assets/formlogic-hero.png" alt="FormLogic product illustration showing a form builder, business dashboard, visual workflow and phone call becoming connected records" width="100%" />
-</p>
-
 <h1 align="center">FormLogic</h1>
 
-<p align="center"><strong>Forms become apps. Calls become work. Automations keep it moving.</strong></p>
+<p align="center"><strong>Build forms and business apps with a backend, a database and the AI you choose.</strong></p>
 
 <p align="center">
-  FormLogic is a source-available, self-hostable platform for building connected forms, business apps, portals, dashboards and flows. Pair <strong>OAIY</strong> for local AI, hardware and headless automation—including <strong>Aokie</strong>, the AI receptionist that brings real phone calls into your business workflows.
+  Create forms, dashboards, portals and automations in one workspace. Build editable apps with <strong>Softn</strong>, host them on FormLogic, and connect <strong>OAIY</strong> for AI and local services. Add <strong>Aokie</strong> when calls, messages and appointments belong in the same app.
 </p>
 
 <p align="center">
@@ -27,66 +23,55 @@
   <a href="#self-host-formlogic"><strong>Self-host FormLogic</strong></a>
 </p>
 
-<p align="center"><sub>Product illustration. Real product screens are shown below.</sub></p>
+<p align="center">
+  <img src="docs/images/dashboard-desktop.jpg" alt="Actual FormLogic dashboard with fictional studio apps, form activity and recent responses" width="100%" />
+</p>
+<p align="center"><sub>Actual running interface, captured September 2026 with fictional studio data. See <a href="docs/images/README.md">screenshot details</a>.</sub></p>
 
 ---
 
-## Most form tools stop at submit. FormLogic carries the work forward.
+## From a form to a connected app
 
-Start with a form. Turn its data into a branded client portal, a focused staff app and a full admin console. Add live dashboards and printable reports. Then connect events, decisions, AI, records, services and devices in visual flows.
-
-<p align="center">
-  <img src="docs/readme-assets/platform-journey.svg" alt="Capture, Operate and Automate with FormLogic" width="100%" />
-</p>
-
-| Capture | Operate | Automate |
-|---|---|---|
-| Collect structured data through **23 field types**, public forms, embedded forms, calls and messages. | Turn shared forms into **apps and portals** with their own branding, navigation, roles, dashboards and reports. | Connect triggers, decisions, AI, records and devices in **flows** that can keep running through Desktop with the browser closed. |
-
-FormLogic is designed around one idea: the interface, the data and the automation should stay connected. A submission is not the end of the workflow—it is the beginning.
-
-## See the product, not just the promise
+1. **Start with your data.** Create a form visually, use AI, or choose a marketplace starter.
+2. **Build the workspace.** Add screens, dashboards, reports, branding, members and roles in App Studio.
+3. **Connect the work.** Use flows and scripts to turn submissions and device events into the next action.
+4. **Make it your own.** Create a portable interface, download its editable `.softn` project, or host your own client with private `.logic` actions and SQLite storage.
+5. **Share the same records.** Add forms to another app without copying the data, or move a complete integration after reviewing its permissions.
 
 <table>
   <tr>
-    <td width="50%">
-      <img src="docs/images/builder.png" alt="FormLogic drag-and-drop form builder" />
-      <br />
-      <sub><strong>Build:</strong> drag-and-drop fields, validation, logic, themes, screens, flows and live preview.</sub>
+    <td width="34%" align="center">
+      <img src="docs/images/dashboard-mobile.jpg" alt="Actual FormLogic dashboard at phone width with fictional studio data" width="300" />
     </td>
-    <td width="50%">
-      <img src="docs/images/app-runtime.png" alt="FormLogic business app dashboard" />
-      <br />
-      <sub><strong>Operate:</strong> real records, KPI cards, charts, activity, role-aware navigation and reports.</sub>
+    <td width="66%" valign="top">
+      <h3>A workspace that fits the screen</h3>
+      <p>Forms, apps and automations stay within reach on desktop and mobile. See recent activity, open the relevant tool and move between your apps from the same dashboard.</p>
+      <p><strong>Forms:</strong> validation, conditional logic, linked records, uploads and custom screens.</p>
+      <p><strong>Apps:</strong> branded portals, shared data, role-aware navigation, charts and reports.</p>
+      <p><strong>Automation:</strong> visual flows, private backend actions, scoped APIs and connected devices.</p>
+      <p><a href="https://formlogic.com/#live-demo">Explore a populated demo</a> · <a href="docs/CONNECTED_APPS.md">How connected workspaces work</a></p>
     </td>
   </tr>
 </table>
-
-The same form can work on its own, appear inside several apps, feed a dashboard, trigger a flow, expose a scoped API and become part of a portable app package.
 
 ## One connected platform
 
 | Layer | What it owns | What it unlocks |
 |---|---|---|
-| **FormLogic Web** | Forms, records, apps, roles, dashboards, reports, flows, marketplace and APIs | A shared operational workspace your team can reach anywhere |
+| **FormLogic** | Forms, records, apps, access control, flows, hosting and APIs | A shared backend and operational workspace |
+| **[Softn](https://github.com/f2i-com/softn.com)** | Portable app interfaces and client logic | Editable `.softn` clients that can run inside a compatible host |
 | **OAIY** (paired desktop, separate repository) | Local models, services, supervised plugins, hardware connectors and headless flow execution | Local capability with cloud visibility—even when the browser is closed |
 | **Aokie** | Bluetooth phone control, live call audio, speech and durable call/SMS events | A phone receptionist whose conversations become structured business work |
 
-You can use FormLogic entirely in the browser. Desktop is the optional local capability layer; Aokie is its flagship hardware plugin.
+You can use the visual builders without connecting AI. Pair OAIY when you need local models, services, devices or background execution. FormLogic owns the app records and permissions; the connected runtime owns its local capabilities.
 
 ---
 
-## Meet Aokie: your phone, now with a front desk
+## Add Aokie to your front desk
 
-<p align="center">
-  <img src="docs/readme-assets/aokie-front-desk.png" alt="Aokie product illustration showing a mobile call passing through local AI into structured FormLogic records" width="100%" />
-</p>
+**Calls, appointments, messages, transcripts, follow-ups and device logs in one app.** The Aokie starter includes a portable front-desk interface, and the same forms can be shared with an existing FormLogic app. That app keeps its original home and gains a **Front desk** view.
 
-<p align="center"><sub>Product illustration. Aokie is currently a Windows hardware beta.</sub></p>
-
-**Aokie brings the phone into FormLogic.** Pair a supported USB Bluetooth dongle with the business mobile you already use and Aokie can answer through the phone's hands-free link, understand the caller, speak naturally and file the result into FormLogic.
-
-> **Your phone stays the phone. Aokie behaves like a hands-free kit. FormLogic becomes the front desk.**
+Aokie runs as an OAIY plugin and connects to a compatible phone over Bluetooth. FormLogic stores the resulting records and runs the business workflows. Use **Open call controls**, **Manage appointments** and **Manage messages** to move from the overview to the relevant tools.
 
 ### What happens on a call
 
@@ -100,7 +85,10 @@ You can use FormLogic entirely in the browser. Desktop is the optional local cap
 ### Built for an actual front desk
 
 - **Custom receptionist** with your business name, greeting, voice, model and instructions.
-- **Real call controls** for answer, reject, hang up and operator speech.
+- **Incoming and outgoing calls** with answer, reject, hang up, outbound dialing and operator speech.
+- **Conversation history** with caller and assistant turns, overlap labels and interrupted replies.
+- **Messages and follow-ups** with incoming SMS, reviewed drafts and configured callback workflows.
+- **Waiting-call visibility** with a read-only summary of waiting and held callers in OAIY.
 - **Natural interruption** with optional barge-in and echo cancellation.
 - **Local-first voice loop** using local speech recognition, a local LLM and local text-to-speech by default.
 - **Remote visibility** through the FormLogic app while Desktop handles the local phone connection.
@@ -142,28 +130,40 @@ Build focused public forms or complete data models with short and long text, ema
 
 Compose KPI, bar, line, area, pie, donut, table, record-list and activity widgets in a drag-and-drop grid. Give the app home screen and each form section its own operational view, then turn the same data into printable PDF reports.
 
-### Real code—behind explicit boundaries
+### Client apps and private backend logic
 
-- **QuickJS app logic** runs lifecycle hooks and returns permission-checked effects.
+- **Softn clients** combine `.ui` interfaces and `.logic` behavior in an editable app project.
+- **Hosted backend actions** run private `.logic` code with permission-checked, transactional SQLite record operations.
+- **Sandboxed app logic** runs lifecycle hooks and returns permission-checked effects.
 - **Custom screens** run as sandboxed HTML/CSS/JavaScript behind an iframe and postMessage SDK.
 - **FormLogic SDK** provides permission-aware React hooks and components for first-party screens.
-- **Server scripts** run in a budgeted QuickJS sandbox with guarded access to record and HTTP helpers.
+- **Server scripts** run in a budgeted ZIPP sandbox with guarded access to record and HTTP helpers.
 
 ### Visual flows that do real work
 
 React to form submissions, connector events and manual runs. Branch, transform and format data, call an OpenAI-compatible model, operate connectors, drive approved local services and read or write FormLogic records. Runs are tracked with correlation IDs, idempotency and history.
 
-### AI on your terms
+### Bring your own AI
 
-- Generate forms and multi-form apps from a prompt, document or image with an OpenAI-compatible provider.
-- Use a cloud model, LM Studio, Ollama, vLLM or another compatible local endpoint.
-- Connect Claude, Cursor or another MCP client through scoped OAuth and let it create or edit forms, apps, screens, dashboards, reports and flows.
-- MCP access is scoped; submission data is not exposed by default.
+Open **Connect your AI** and follow **Choose → Connect → Use in FormLogic**.
+
+- **OAIY Desktop:** connect Codex, a provider API or local models, then approve FormLogic's pairing request.
+- **Your own API provider:** use the browser's provider editor, test the connection and choose a default. The provider must allow browser requests.
+- **External AI clients:** use scoped OAuth/MCP access to create and edit apps, forms, screens, roles, flows and hosted projects.
+
+<p align="center">
+  <img src="docs/images/connect-ai-desktop.jpg" alt="Actual FormLogic AI setup wizard offering OAIY Desktop or your own API provider" width="100%" />
+</p>
+<p align="center"><sub>Actual setup screen with a fictional account. No AI provider is connected in this demo.</sub></p>
+
+FormLogic defaults to free access and bring-your-own AI. Your provider may charge separately. Operator-funded Site AI is off by default; some specialised generation routes still require it. See [AI setup and optional plans](docs/FREE_PLANS_AND_AI_SETUP.md) for the current scope.
 
 ### Portable by design
 
 - Export forms and responses as familiar files.
-- Export a complete app as a signed `.formlogic` package or editable JSON pack.
+- Download an editable `.softn` client, or export a signed `.formlogic` package or JSON pack.
+- Host custom apps with private backend actions and a separate app database.
+- Downloaded clients contain interface code, not account credentials or an offline copy of the backend.
 - Review capabilities and trust level before importing a package.
 - Run in the hosted service, on your own infrastructure, as a PWA or through the native runtime.
 
@@ -223,11 +223,11 @@ FormLogic ships **29 marketplace packs** backed by real forms, linked records, r
 | Path | Best for | Start here |
 |---|---|---|
 | **Explore** | Seeing complete apps before creating an account | [Open the populated live demo](https://formlogic.com/#live-demo) |
-| **Hosted** | Getting started without managing infrastructure | [Create an account](https://formlogic.com/signup)—free during public beta, no card required |
+| **Hosted** | Getting started without managing infrastructure | [Create an account](https://formlogic.com/signup)—free access with bring-your-own AI |
 | **Self-hosted** | Keeping the full deployment on infrastructure you control | Use the assisted installer below |
 | **Desktop + Aokie** | Local AI, devices, headless flows and phone calls | [Follow the Aokie setup guide](https://formlogic.com/aokie) |
 
-Hosted FormLogic is free during public beta. After beta, Personal access is prepaid at **$5 per 30 days** with no auto-renewal; self-hosting remains free, and Enterprise deployment/support is available separately.
+FormLogic defaults to **free access**. Payments are **off by default**. Administrators can enable an optional Supporter plan and edit its name, description and price; the default is **$5 USD per 30 days**, prepaid with no automatic renewal. Free access continues independently of support payments. [Plan configuration](docs/FREE_PLANS_AND_AI_SETUP.md)
 
 ## Self-host FormLogic
 
@@ -240,18 +240,28 @@ Hosted FormLogic is free during public beta. After beta, Personal access is prep
 | Node.js | 20.19+ or 22.12+ for the Vite frontend build |
 | Composer | Any recent release |
 
-Node.js is not needed on the production server at runtime. Server-side user logic runs through the vendored QuickJS binary.
+Node.js is a build dependency for the web client, not an API runtime requirement. The existing server-script and hosted-action sandboxes require their packaged binaries. Hosted apps also need PDO SQLite and the generated Softn host assets.
 
 ### Assisted CLI install
 
 ```bash
 git clone git@github.com:f2i-com/formlogic.com.git
-cd formlogic.com/formlogic
+
+# Keep the shared app engine alongside FormLogic.
+git clone https://github.com/f2i-com/softn.com.git
+cd softn.com
+npm install
+cd ../formlogic.com/formlogic/ui
+npm install
+npm run build:hosted-runtime
+
+# The installer can now build the web client.
+cd ..
 chmod +x install.sh
 ./install.sh
 ```
 
-The installer creates the environment files, generates security keys and prepares the database.
+The installer creates environment files, generates security keys and prepares the database. Build the shared app host first: every frontend build requires its generated assets, including the build performed by the installer.
 
 ### Browser installer
 
@@ -266,15 +276,29 @@ http://localhost/<your-folder>/formlogic/install.php
 
 For manual development setup, production web-server examples, environment variables, tests and troubleshooting, see [formlogic/README.md](formlogic/README.md) and [DEPLOYMENT.md](DEPLOYMENT.md).
 
+### Build the portable app host
+
+Keep `softn.com` beside `formlogic.com` and install dependencies in both repositories. From `formlogic/ui`:
+
+```sh
+npm run build:hosted-runtime
+npm run build
+```
+
+The first command builds the shared Softn runtime and generates `public/hosted-runtime/`. Those build artifacts stay out of Git; include them in the deployment. [Hosted apps guide](docs/HOSTED_APPS.md) covers private actions, SQLite storage, static-asset headers and backups.
+
+For local development, Vite keeps requests on `/api` and proxies to `http://127.0.0.1:8080`. Set `VITE_API_PROXY_TARGET` to change that target.
+
 ## Under the hood
 
 | Layer | Technology |
 |---|---|
 | Web client | React 19, TypeScript, Vite 7, Tailwind CSS 4, Zustand, React Router and Recharts |
-| Builder & flows | dnd-kit, XYFlow, Monaco, QuickJS WASM and Web Workers |
+| Builder & flows | dnd-kit, XYFlow, Monaco, ZIPP WASM and Web Workers |
 | API | PHP 8.2+, Slim 4, PHP-DI and Monolog |
-| Data | MySQL for platform metadata plus one SQLite response database per form |
-| Sandboxed scripting | QuickJS in the browser and a vendored static QuickJS binary on the server |
+| Data | MySQL for platform metadata, SQLite response databases per form and a separate SQLite database per hosted app |
+| Portable apps | Softn interfaces and client logic, a sandboxed host frame and private backend actions |
+| Sandboxed scripting | ZIPP in a browser worker and a bounded server sandbox, including hosted `.logic` actions |
 | Desktop | Tauri v2 and Rust; Windows UI plus a headless runtime |
 | Aokie | Rust, WinUSB, Bluetooth HFP/SCO/MAP, ONNX speech and a versioned JSON-RPC plugin contract |
 | Authentication | HttpOnly signed sessions, scoped API keys, OAuth/MCP tokens and optional TOTP MFA |
@@ -284,10 +308,12 @@ formlogic.com/
 ├── formlogic/
 │   ├── backend/          PHP/Slim API, workers, migrations and storage
 │   ├── ui/               React builder, app runtime, dashboards and flows
-│   ├── desktop/          Tauri Desktop, local services, plugins and flow runner
 │   └── native-runtime/   Signed-manifest native application shell
 ├── docs/                 Architecture, API, MCP, pack and operations docs
 └── DEPLOYMENT.md         Production deployment and recovery guide
+
+oaiy.com/                 Desktop services, providers, plugin host and flow runner
+softn.com/                Shared app engine, builder and FormLogic host
 
 aokie.com/
 ├── crates/aokie-plugin/      OAIY plugin and durable event bridge
@@ -299,7 +325,7 @@ aokie.com/
 
 ## Quality and security gates
 
-Release tags are gated by backend tests, frontend unit tests, type checking, linting, production builds, security invariants and full-stack Playwright golden paths. Desktop and Aokie have their own Rust/Windows test gates.
+Automatic push/PR and scheduled CI checks are currently paused. Run checks locally; retained manual workflows are available from GitHub Actions. Manual packaging still invokes its release verification jobs. OAIY and Aokie maintain their own Rust/Windows checks.
 
 ```bash
 # Backend
@@ -340,13 +366,17 @@ Security controls include server-enforced RBAC, HttpOnly session cookies, CSRF p
 
 | Guide | What it covers |
 |---|---|
+| [Documentation index](docs/README.md) | Current guides, task-based entry points and historical design references |
 | [Developer setup](formlogic/README.md) | Local development, environment variables, tests and web-server configuration |
 | [Deployment](DEPLOYMENT.md) | Production checklist, backups, workers, health checks and recovery |
 | [External API](docs/API.md) | Scoped API keys and the REST endpoint reference |
 | [MCP](docs/MCP.md) | Connecting your own AI with scoped access |
 | [FormLogic Flows](docs/FORMLOGIC_FLOWS.md) | Graph contract, bindings, execution and run history |
 | [Desktop pairing (historical)](docs/FORMLOGIC_DESKTOP.md) | How the paired-desktop contract was designed; the app itself is now OAIY |
-| [Custom app platform](docs/CUSTOM_APP_PLATFORM.md) | QuickJS logic, custom screens, SDK, connectors and domains |
+| [Custom app platform](docs/CUSTOM_APP_PLATFORM.md) | App logic, custom screens, SDK, connectors and domains |
+| [Connected apps](docs/CONNECTED_APPS.md) | Portable dashboards, sharing forms, Aokie integration and MCP setup |
+| [Hosted apps](docs/HOSTED_APPS.md) | Softn clients, private `.logic` actions, SQLite storage and deployment |
+| [AI setup and plans](docs/FREE_PLANS_AND_AI_SETUP.md) | Bring-your-own AI, optional support and administrator controls |
 | [Package format](docs/PACK_FORMAT.md) | Signed `.formlogic` packages, manifests and trust |
 | [Native runtime](docs/NATIVE_RUNTIME_TAURI.md) | Deep links, signed manifests, connectors and offline queue |
 | [Aokie operations](docs/AOKIE_OPERATIONS.md) | Desktop stack, deployment, diagnostics and event recovery |
@@ -361,7 +391,7 @@ Aokie is also proprietary and versioned separately in the [Aokie repository](htt
 ---
 
 <p align="center">
-  <strong>Build the front door. Run the work behind it. Automate what comes next.</strong>
+  <strong>Your forms, apps, data and automations, connected.</strong>
 </p>
 
 <p align="center">

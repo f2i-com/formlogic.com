@@ -68,9 +68,23 @@ function buildAppShellCsp(apiUrl: string | undefined): string {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const APP_SHELL_CSP = buildAppShellCsp(env.VITE_API_URL)
+  // Keep local development same-origin. Without a proxy Vite's HTML fallback
+  // answers /api requests with index.html, which breaks login and app records.
+  const apiProxyTarget = env.VITE_API_PROXY_TARGET === 'off'
+    ? undefined
+    : env.VITE_API_PROXY_TARGET || (mode === 'development' ? 'http://127.0.0.1:8080' : undefined)
   return {
+  server: apiProxyTarget ? {
+    proxy: { '/api': { target: apiProxyTarget, changeOrigin: false } },
+  } : undefined,
   plugins: [
     react(),
+    { name: 'hosted-runtime-cors', configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url?.startsWith('/hosted-runtime/')) res.setHeader('Access-Control-Allow-Origin', '*');
+        next();
+      });
+    } },
     {
       name: 'inject-app-shell-csp',
       apply: 'build',
@@ -136,6 +150,7 @@ export default defineConfig(({ mode }) => {
         //   0.79 MB and fit inside the precache, so that case worked. Buying it back
         //   would cost every visitor 5.5 MB up front, which is the worse trade.
         globIgnores: [
+          'hosted-runtime/**',
           '**/esbuild-*.wasm',
           '**/ts.worker-*.js',
           '**/MonacoEditorImpl-*.js',
@@ -148,7 +163,7 @@ export default defineConfig(({ mode }) => {
         // iframe must load — serving index.html there would break every screen).
         // Was limited to '/app/', which broke offline routing for the platform
         // shell now that scope is '/'.
-        navigateFallbackAllowlist: [/^\/(?!api\/|screen-host\.html)/],
+        navigateFallbackAllowlist: [/^\/(?!api\/|hosted-runtime\/|screen-host\.html)/],
         runtimeCaching: [
           // SECURITY: authenticated, tenant-scoped GET responses (/api/app/{slug},
           // .../forms/{id}, .../responses) are intentionally NOT cached. Workbox

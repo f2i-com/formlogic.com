@@ -58,6 +58,7 @@ import { ThemeEditor } from '../components/builder/ThemeEditor';
 import { PublishPackDialog } from '../components/builder/PublishPackDialog';
 import { api, type PackData } from '../lib/api';
 import { useAuthStore } from '../stores/authStore';
+import { SoftnExportPanel } from '../components/studio/SoftnExportPanel';
 import { FormSettingsModal } from '../components/builder/FormSettingsPanel';
 import { FormVersionHistory } from '../components/builder/FormVersionHistory';
 import { KeyboardShortcutsHelp } from '../components/builder/KeyboardShortcutsHelp';
@@ -78,7 +79,7 @@ import { useChatDockOffset } from '../components/chat/useChatDockOffset';
 import { FIELD_TYPE_INFO, type FormField, type FieldType, type CustomScreen } from '../types/form';
 import { publicUnfillableFieldLabels } from '../lib/publicForm';
 
-type ModalType = 'script' | 'embed' | 'ai' | 'theme' | 'settings' | 'shortcuts' | 'versions' | 'publishPack' | 'screen' | null;
+type ModalType = 'script' | 'embed' | 'ai' | 'theme' | 'settings' | 'shortcuts' | 'versions' | 'publishPack' | 'screen' | 'softn' | null;
 
 /**
  * Serialize the current form into a single-form PackData so it can be published to the
@@ -1158,6 +1159,7 @@ export default function FormBuilder() {
   ];
   const overflowActions: BuilderHeaderAction[] = [
     ...(foldMiddleClusters ? [...designActions, ...dataActions] : []),
+    { id: 'softn', label: 'Download app project', title: 'Create an editable app project', icon: Code2, onSelect: () => setActiveModal('softn') },
     { id: 'versions', label: 'Versions', title: 'Version History', icon: History, onSelect: () => setActiveModal('versions') },
     { id: 'shortcuts', label: 'Shortcuts', title: 'Keyboard Shortcuts (Ctrl+?)', icon: Keyboard, onSelect: () => setActiveModal('shortcuts') },
     // Publishing a pack happens under the CALLER's marketplace identity — an admin
@@ -1618,6 +1620,14 @@ export default function FormBuilder() {
         initialPack={packToPublish}
         onPublished={closeModal}
       />
+
+      {activeModal === 'softn' && <SoftnExportPanel
+        app={{ id: form.id, name: form.title, description: form.description }}
+        forms={[{ ...form, isPrivate: form.isPrivate || isPrivateForm }]}
+        sourceKind="form"
+        isOpen
+        onClose={closeModal}
+      />}
 
       {/* Form Settings Modal */}
       <FormSettingsModal

@@ -1,0 +1,59 @@
+# FormLogic: app-building guide for AI assistants
+
+FormLogic hosts forms, app dashboards, automations and editable Softn projects
+with private .logic backend actions and per-app SQLite databases.
+
+## Start
+- Human-readable onboarding: /ai-setup (public, no account required).
+- Create account: /signup?redirect=%2Fconnect-ai
+- Sign in: /login?redirect=%2Fconnect-ai
+- Guided OAIY or API-provider setup: /connect-ai
+- MCP endpoint: /api/mcp on this site's origin.
+- OAuth discovery: /.well-known/oauth-protected-resource/api/mcp
+- API and product documentation: /docs
+
+Use labelled controls when assisting through the browser. Let the user complete
+account verification, OAuth consent and hardware pairing. Never copy passwords,
+provider credentials, cookies or bearer tokens into app source or downloaded files.
+
+## Build with MCP
+Call get_started and list available tools. Respect the connection's granted scopes.
+1. list_apps / get_app: inspect existing apps and form attachments.
+2. create_app, then create_app_form: create forms within the app.
+3. get_workspace_template: obtain the editable connected dashboard package.
+4. get_app_project: read current client files, private actions and version.
+5. publish_app_project: publish the complete package with expectedVersion
+   (0 for a new deployment). Requires apps:write and screens:write.
+6. update_app {appId, hostedDashboard:true}: use the published project as app home.
+7. Open /app/<slug>/project or /app/<slug> to verify it. Publishing a project
+   does not publish a draft parent app or grant membership automatically.
+
+The client uses softn.backend.call(action, input, callback), with callbacks receiving
+{result} or {error}. Host operations workspaceInfo, workspaceRecords {formId} and
+workspaceOpen {formId} are restricted to the current app and its existing permissions.
+Private actions define onRequest(ctx); ctx.db provides get/list/put/remove over the
+app's SQLite records. Keep private action source in package.actions, not client files.
+Downloaded client projects require a compatible authenticated host for backend calls.
+
+## Compose apps and Aokie
+Call get_aokie_starter to review its forms and capabilities, then
+install_aokie_starter with an explicit approvedConnectorGrants list (empty is allowed).
+Installation needs forms:write and screens:write; approved connector grants also need
+connector:command. Verified-package-only workspaces use the /packs marketplace.
+Connect the native plugin through OAIY,
+then compose_apps {sourceAppId, appId, formIds?} to share existing forms and records.
+Both apps must be owned by the user and allowed by the token. A token limited to one
+app cannot read or import another app. No records are duplicated.
+To move the integration, pass moveAutomation:true and the explicitly reviewed
+approvedConnectorGrants. This requires connector:command, includes all source forms,
+moves flows/bindings and pauses source event scripts. Wait for active runs to finish.
+Destination branding, dashboard and member roles are preserved. Review those roles
+before granting access to shared records; do not assume composition adds permissions.
+Use list_app_roles, create_app_role and set_app_role_permissions to configure roles.
+Permission updates replace the complete built-in list, preserving connector grants.
+set_app_role_connector_grants separately replaces explicitly reviewed connector grants
+and requires connector:command. Neither operation changes the immutable Owner role.
+
+Use desktop_status and connector_command for permitted OAIY/Aokie diagnostics.
+Report disconnected phones or missing speech engines honestly. Do not claim that
+simulated calls, fixture data or an unpaired plugin prove real call/SMS delivery.

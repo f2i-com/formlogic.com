@@ -1,6 +1,7 @@
+import { Link } from 'react-router-dom';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Check, Minus, Plus, Loader2, Info, Sparkles } from 'lucide-react';
-import { api, type AiUsageInfo, type BillingStatus } from '../lib/api';
+import { Minus, Plus, Loader2, Info } from 'lucide-react';
+import { api, DEFAULT_PLATFORM_PLANS, type AiUsageInfo, type BillingStatus } from '../lib/api';
 import { parseServerDate } from '../lib/utils';
 import { toast } from '../stores/toastStore';
 import { logger } from '../lib/logger';
@@ -61,7 +62,7 @@ export function Billing() {
     setCapturing(false);
     if (res.error) { toast.error('Still could not confirm', typeof res.error === 'string' ? res.error : undefined); return; }
     setPendingOrderId(null);
-    toast.success(res.data?.processing ? 'Payment received' : 'Cloud time added', 'Your cloud status has been updated.');
+    toast.success(res.data?.processing ? 'Payment received' : 'Support recorded', 'Your cloud status has been updated.');
     refresh();
   };
 
@@ -114,7 +115,7 @@ export function Billing() {
             if (res.data?.processing) {
               toast.success('Payment received', res.data.message || 'Your cloud time will be added once it clears.');
             } else {
-              toast.success('Cloud time added', res.data?.monthsAdded ? `Added ${res.data.monthsAdded * 30} days.` : 'Your cloud access has been extended.');
+              toast.success('Support recorded', res.data?.monthsAdded ? `Added ${res.data.monthsAdded * 30} days.` : 'Your cloud access has been extended.');
             }
             refresh();
           },
@@ -150,75 +151,21 @@ export function Billing() {
     );
   }
 
-  const cloudActive = status?.active;
+  const plans = status?.plans ?? DEFAULT_PLATFORM_PLANS;
   const cloudUntilLabel = status?.cloudUntil ? parseServerDate(status.cloudUntil).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }) : null;
-  // Self-hosted: no managed billing AND no enforced limits → everything is unlimited and there's
-  // nothing to buy. Show that positively rather than as a "billing not set up" warning.
-  const selfHosted = !status?.paypalEnabled && !status?.usage?.enforced;
-  const beta = !!status?.betaMode;
 
   return (
     <div className="min-h-screen">
-      <Header title="Cloud" />
+      <Header title="Your plan" />
       <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-      <p className="text-gray-500 dark:text-slate-400 mb-8">{status?.betaMode ? "Free while we're in public beta — no payment, no card required." : 'Pay only for the time you use — no subscription, no auto-renew.'}</p>
+      <p className="text-gray-500 dark:text-slate-400 mb-8">FormLogic is free. Bring your own AI, or use the visual builders without AI.</p>
 
-      {/* Current status */}
-      <div className={`rounded-2xl border p-5 mb-6 ${(cloudActive || selfHosted || beta) ? 'border-green-300/70 dark:border-green-500/30 bg-green-50/60 dark:bg-green-500/[0.07]' : 'border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/50'}`}>
-        {beta ? (
-          <div className="flex items-start gap-3">
-            <Sparkles className="h-5 w-5 text-primary-600 dark:text-primary-400 mt-0.5 shrink-0" />
-            <div>
-              <p className="font-medium text-gray-900 dark:text-white">Free during the public beta</p>
-              <p className="text-sm text-gray-600 dark:text-slate-400 mt-0.5">FormLogic is in free public beta — every Cloud feature is available with no payment.{cloudUntilLabel ? <> Your account is set up through <strong className="text-gray-900 dark:text-white">{cloudUntilLabel}</strong>.</> : null} Thanks for helping us test and improve it.</p>
-            </div>
-          </div>
-        ) : selfHosted ? (
-          <div className="flex items-start gap-3">
-            <Check className="h-5 w-5 text-green-600 dark:text-green-400 mt-0.5 shrink-0" />
-            <div>
-              <p className="font-medium text-gray-900 dark:text-white">Self-hosted — unlimited</p>
-              <p className="text-sm text-gray-600 dark:text-slate-400 mt-0.5">This instance runs without managed billing. All features are available with no limits and no payment required.</p>
-            </div>
-          </div>
-        ) : cloudActive ? (
-          <div className="flex items-start gap-3">
-            <Check className="h-5 w-5 text-green-600 dark:text-green-400 mt-0.5 shrink-0" />
-            <div>
-              <p className="font-medium text-gray-900 dark:text-white">Cloud is active</p>
-              <p className="text-sm text-gray-600 dark:text-slate-400 mt-0.5">Your cloud access runs until <strong className="text-gray-900 dark:text-white">{cloudUntilLabel}</strong>. Add more time anytime — it stacks onto this date.</p>
-              {/* Say what running out actually does, before it happens. */}
-              {status?.usage?.enforced && (
-                <p className="mt-1.5 text-sm text-gray-600 dark:text-slate-400">
-                  After that date your forms stop accepting responses until you add more time. Your data
-                  stays safe and exportable.
-                </p>
-              )}
-            </div>
-          </div>
-        ) : (
-          <div>
-            {/* On an instance that ENFORCES limits, "everything still works for free" was
-                said in exactly the state where the server answers writes with 402 — forms
-                stop accepting responses. Match the server's own sentence
-                (CloudWriteGateMiddleware::paymentRequired) so the page and the refusal
-                cannot disagree. Where nothing is gated, the old wording is true. */}
-            {status?.usage?.enforced ? (
-              <>
-                <p className="font-medium text-gray-900 dark:text-white">Cloud access has expired</p>
-                <p className="mt-0.5 text-sm text-gray-600 dark:text-slate-400">
-                  Your forms are not accepting new responses right now. Your data is safe and still
-                  exportable — add cloud time below to publish, accept responses, and upload again.
-                </p>
-              </>
-            ) : (
-              <>
-                <p className="font-medium text-gray-900 dark:text-white">You're on the free plan</p>
-                <p className="mt-0.5 text-sm text-gray-600 dark:text-slate-400">Everything still works for free. Add cloud time below for managed hosting and backups.</p>
-              </>
-            )}
-          </div>
-        )}
+      <div className="space-y-3 rounded-2xl border border-green-300/70 bg-green-50/60 p-5 mb-6 dark:border-green-500/30 dark:bg-green-500/[0.07]">
+        <p className="font-medium text-gray-900 dark:text-white">{plans.freeName} workspace</p>
+        <p className="text-sm text-gray-600 dark:text-slate-400">{plans.freeDescription}</p>
+        <Link to="/connect-ai" className="inline-flex rounded-lg bg-primary-600 px-4 py-2 text-sm text-white">Set up your AI</Link>
+        {!status?.paypalEnabled && <p className="text-sm text-gray-500">Payments are currently disabled. No card is needed.</p>}
+        {cloudUntilLabel && <p className="text-sm text-gray-500">Your existing account credit is recorded through {cloudUntilLabel}. Free access continues after this date.</p>}
       </div>
 
       {/* Plan usage (only when the hosted instance enforces limits) */}
@@ -235,7 +182,7 @@ export function Billing() {
       )}
 
       {/* Site AI usage (Phase 2) — ai_messages metered against the plan allowance. */}
-      <div className="rounded-2xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 p-5 mb-6">
+      {status?.plans?.siteAiEnabled && <div className="rounded-2xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 p-5 mb-6">
         <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">Site AI usage</h2>
         {aiUsageError ? (
           <p className="text-sm text-gray-500 dark:text-slate-400">Site AI usage couldn&apos;t be loaded — {aiUsageError}</p>
@@ -248,17 +195,18 @@ export function Billing() {
         )}
       </div>
 
+      }
       {/* Buy cloud months — hidden on self-hosted instances (nothing to purchase). */}
-      {!selfHosted && (<>
+      {status?.paypalEnabled && (<>
       <div className="rounded-2xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 p-6">
         <div className="flex items-baseline justify-between mb-1">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Add cloud time</h2>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{status?.plans?.paidName ?? 'Supporter'}</h2>
           <div className="text-right">
             <span className="text-2xl font-bold text-gray-900 dark:text-white">{fmt(price)}</span>
             <span className="text-sm text-gray-400 dark:text-slate-500"> / 30 days</span>
           </div>
         </div>
-        <p className="text-sm text-gray-500 dark:text-slate-400 mb-5">One-time payment via PayPal. Each {fmt(price)} adds 30 days.</p>
+        <p className="text-sm text-gray-500 dark:text-slate-400 mb-5">{status?.plans?.paidDescription} Optional prepaid support: {fmt(price)} USD per 30 days, with no auto-renewal. AI provider charges are separate.</p>
 
         {/* Quantity stepper */}
         <div className="flex items-center justify-between gap-4 rounded-xl bg-gray-50 dark:bg-slate-800/60 p-4 mb-5">

@@ -68,6 +68,7 @@ export function FlowsWorkspace() {
   const [newFlowInitialTemplate, setNewFlowInitialTemplate] = useState<FlowStarterTemplate | null>(null);
   const [creating, setCreating] = useState(false);
   const [rightPanel, setRightPanel] = useState<'history' | 'test' | 'triggers' | null>(null);
+  const [testInputs, setTestInputs] = useState<Record<string, string>>({});
   const [historyKey, setHistoryKey] = useState(0);
   const [pendingDelete, setPendingDelete] = useState<FlowDefinition | null>(null);
   // Enable/disable goes through an explicit confirm (no accidental sidebar toggles —
@@ -629,6 +630,8 @@ export function FlowsWorkspace() {
           <div className="hidden w-96 flex-none bg-white dark:bg-slate-900 md:flex motion-safe:transition-[width] motion-safe:duration-200">
             <TestRunDrawer
               flow={selectedFlow}
+              inputValue={testInputs[selectedFlow.id]}
+              onInputChange={(value) => setTestInputs((drafts) => ({ ...drafts, [selectedFlow.id]: value }))}
               onClose={() => setRightPanel(null)}
               onServerRun={() => { setHistoryKey((k) => k + 1); setRightPanel('history'); }}
               onRunStart={() => setNodeStatus({})}
@@ -662,6 +665,8 @@ export function FlowsWorkspace() {
         <FlowMobileDrawer title="Test run" onClose={() => setRightPanel(null)}>
           <TestRunDrawer
             flow={selectedFlow}
+            inputValue={testInputs[selectedFlow.id]}
+            onInputChange={(value) => setTestInputs((drafts) => ({ ...drafts, [selectedFlow.id]: value }))}
             hideClose
             onClose={() => setRightPanel(null)}
             onServerRun={() => { setHistoryKey((k) => k + 1); setRightPanel('history'); }}

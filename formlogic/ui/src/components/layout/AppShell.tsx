@@ -5,7 +5,7 @@ import { Wrench, WifiOff } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { MobileNav } from './MobileNav';
 import { DemoBanner } from './DemoBanner';
-import { DesktopConnectionPopover } from '../desktop/DesktopConnectionPopover';
+import { RuntimeConnectionControl } from '../desktop/RuntimeConnectionControl';
 import { SiteChatWidget } from '../chat/SiteChatWidget';
 import { useChatDockOffset } from '../chat/useChatDockOffset';
 import { useUIStore } from '../../stores/uiStore';
@@ -117,11 +117,11 @@ export function AppShell() {
           // (wide widgets like tables use their own contained overflow-x-auto). clip,
           // not hidden, so it doesn't create a scroll container — the sticky header
           // and dropdowns keep working.
-          'min-h-screen transition-all duration-300 focus:outline-none overflow-x-clip',
-          !isMobile && (sidebarCollapsed ? 'ml-16' : 'ml-64'),
+          'min-h-screen motion-safe:transition-[margin] duration-300 motion-reduce:transition-none focus:outline-none overflow-x-clip',
+          sidebarCollapsed ? 'md:ml-16' : 'md:ml-64',
           // §11B O5: a DOCKED chat is a sibling surface, not an overlay — the
           // workspace narrows so both stay fully visible (the co-creation shell).
-          !isMobile && chatDockedVisible && 'mr-96',
+          chatDockedVisible && 'md:mr-96',
           // Clear the fixed bottom nav plus the home-indicator inset. Routes that
           // claim the bottom edge (the studio) carry no floating furniture, so they
           // reserve the nav only — the extra 4rem was padding for controls that are
@@ -153,7 +153,7 @@ export function AppShell() {
 
       {/* Global Desktop Connection trigger (presence, services/plugins, AI source).
           Fixed-position, z-40 — under the z-50 banners and the mobile nav. */}
-      <DesktopConnectionPopover />
+      <RuntimeConnectionControl />
 
       {/* Floating Site Chat (plan Phase 6): launcher bottom-right, draggable panel /
           mobile bottom sheet. Also fixed z-40, under the z-50 banners; renders nothing

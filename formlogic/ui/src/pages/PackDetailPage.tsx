@@ -1,3 +1,8 @@
+import { starterCatalog } from '../lib/starterCatalog';
+import '../styles/landing-v2.css';
+import '../styles/landing-refresh.css';
+import { LandingNav } from '../components/landing-v2/LandingNav';
+import { LandingFooter } from '../components/landing-v2/LandingFooter';
 import { useState, useEffect, useCallback } from 'react';
 import { parseServerDate } from '../lib/utils';
 import { useParams, useNavigate, Link } from 'react-router-dom';
@@ -53,6 +58,7 @@ export default function PackDetailPage() {
   );
 
   const [pack, setPack] = useState<PackDetail | null>(null);
+  const [bundledPreview, setBundledPreview] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
@@ -123,13 +129,15 @@ export default function PackDetailPage() {
 
   const loadPackDetail = useCallback(async (shouldApply: () => boolean = () => true) => {
     if (!slug) return;
-    setLoading(true);
+    setLoading(true); setPack(null); setBundledPreview(false);
     try {
       const result = await api.getPackDetail(slug);
       if (shouldApply()) {
         if (result.data?.pack) {
           setPack(result.data.pack);
           setLoadError(null);
+        } else if (starterCatalog.some(pack => pack.slug === slug)) {
+          setPack(starterCatalog.find(pack => pack.slug === slug)!); setBundledPreview(true); setLoadError(null);
         } else if (result.status === 404) {
           // A genuine 404 is the only case that means "this template doesn't exist".
           setLoadError(null);
@@ -376,7 +384,9 @@ export default function PackDetailPage() {
   const appNames = pack.appNames ?? [];
 
   return (
-    <div className="min-h-screen overflow-x-clip bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-50">
+    <div className="lv2 fl-marketplace min-h-screen overflow-x-clip bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-50">
+      <LandingNav />
+      {bundledPreview && <p role="status" className="mx-auto max-w-4xl px-6 pt-5 text-sm text-slate-500">Bundled starter preview. Connect to the live marketplace to install this app.</p>}
       {/* Breadcrumb */}
       <div className="border-b border-gray-100 dark:border-slate-800/60 bg-white/85 dark:bg-slate-950/75 backdrop-blur-xl">
         <div className="fl-mono mx-auto flex h-12 max-w-4xl items-center gap-2 px-4 text-xs uppercase tracking-wider text-gray-500 dark:text-slate-400 sm:px-6">
@@ -754,6 +764,7 @@ export default function PackDetailPage() {
           </p>
         )}
       </div>
+      <LandingFooter />
     </div>
   );
 }

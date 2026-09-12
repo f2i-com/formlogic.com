@@ -70,7 +70,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
 
   // Advanced tools start expanded when you're ON one of them (deep links stay
   // oriented); the explicit toggle persists across sessions.
-  const onToolRoute = ['/forms', '/flows', '/diagrams', '/packs', '/trash'].some(
+  const onToolRoute = ['/diagrams', '/packs', '/trash'].some(
     (p) => location.pathname === p || location.pathname.startsWith(p + '/')
   );
   const [toolsOpen, setToolsOpen] = useState<boolean>(() => {
@@ -121,8 +121,6 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
   // owner following either had no way to tell they were the same thing. "Flow" survives
   // inside the editor, where it names the thing being edited.
   const toolLinks = [
-    { path: '/forms', icon: FileText, label: 'Forms', hint: 'Questions you collect answers to' },
-    { path: '/flows', icon: Workflow, label: 'Automations', hint: 'Do something automatically' },
     { path: '/diagrams', icon: Map, label: 'Diagrams', hint: 'Sketch an app before building it' },
     { path: '/packs', icon: Package, label: 'Templates', hint: 'Ready-made apps to install' },
     ...(!isDemo ? [{ path: '/trash', icon: Trash2, label: 'Recycle bin', hint: 'Restore deleted items' }] : []),
@@ -182,6 +180,9 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
           label="Home"
           collapsed={sidebarCollapsed}
         />
+
+        <SidebarNavLink to="/forms" icon={FileText} label="Forms" collapsed={sidebarCollapsed} />
+        <SidebarNavLink to="/flows" icon={Workflow} label="Automations" collapsed={sidebarCollapsed} />
 
         {/* Your apps — published and draft */}
         {!sidebarCollapsed && (
@@ -276,7 +277,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
               <div className="flex-shrink-0 p-1 rounded-md">
                 <Blocks className="h-5 w-5" />
               </div>
-              <span className="flex-1 text-left text-sm">Advanced tools</span>
+              <span className="flex-1 text-left text-sm">More tools</span>
               <ChevronDown className={cn('h-4 w-4 transition-transform', toolsExpanded && 'rotate-180')} />
             </button>
             {toolsExpanded && (

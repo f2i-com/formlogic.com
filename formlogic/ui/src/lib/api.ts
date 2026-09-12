@@ -108,7 +108,24 @@ export interface PlanUsage {
   storage: { usedBytes: number; limitBytes: number | null };
 }
 
+export interface PlatformPlans {
+  paymentsEnabled: boolean;
+  freeName: string;
+  freeDescription: string;
+  paidName: string;
+  paidDescription: string;
+  pricePerMonthCents: number;
+  currency: 'USD';
+  siteAiEnabled: boolean;
+}
+export const DEFAULT_PLATFORM_PLANS: PlatformPlans = {
+  paymentsEnabled: false, freeName: 'Free', freeDescription: 'Build forms and apps with your own AI. No card required.',
+  paidName: 'Supporter', paidDescription: 'Help support FormLogic development. The free workspace stays available to everyone.',
+  pricePerMonthCents: 500, currency: 'USD', siteAiEnabled: false,
+};
+
 export interface BillingStatus {
+  plans?: PlatformPlans;
   cloudUntil: string | null;
   active: boolean;
   pricePerMonthCents: number;
@@ -1671,7 +1688,7 @@ class ApiClient {
   }
 
   // Health check
-  async healthCheck(): Promise<ApiResponse<{ status: string; timestamp: string; betaMode?: boolean; emailConfigured?: boolean; supportEmail?: string; maintenanceMode?: boolean; maintenanceMessage?: string | null }>> {
+  async healthCheck(): Promise<ApiResponse<{ status: string; timestamp: string; plans?: PlatformPlans; betaMode?: boolean; emailConfigured?: boolean; supportEmail?: string; maintenanceMode?: boolean; maintenanceMessage?: string | null }>> {
     return this.request('/health');
   }
 
@@ -1819,6 +1836,10 @@ class ApiClient {
   }
 
   // App Admin endpoints
+  async composeApps(appId: string, input: { sourceAppId: string; formIds?: string[]; moveAutomation?: boolean; approvedConnectorGrants?: string[] }): Promise<ApiResponse<{ appId: string; addedFormIds: string[]; sharedFormIds: string[]; movedFlows: number; automationMoved: boolean }>> {
+    return this.request(`/apps/${encodeURIComponent(appId)}/compose`, { method: 'POST', body: JSON.stringify(input) });
+  }
+
   async getApps(): Promise<ApiResponse<{ apps: AppListItem[]; count: number }>> {
     const server = await this.request<{ apps: AppListItem[]; count: number }>('/apps');
     if (!this._demoMode) return server;
@@ -1880,6 +1901,29 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  }
+
+  async downloadHostedDatabase(id: string): Promise<void> {
+    const routed = this.routeForAdminActing(`/apps/${encodeURIComponent(id)}/hosting/database`);
+    if (routed.blocked) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
+    const response = await fetch(`${this.baseUrl}${routed.endpoint}`, { credentials: 'include' });
+    if (!response.ok) throw new Error('Database download failed. Please try again.');
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a'); link.href = url; link.download = 'app-database.sqlite'; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async getAppHosting(id: string): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment | null }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/hosting`);
+  }
+  async publishAppHosting(id: string, pkg: import('./hosting').HostedPackage, expectedVersion: number): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/hosting`, { method: 'PUT', body: JSON.stringify({ package: pkg, expectedVersion }) });
+  }
+  async getHostedRuntime(slug: string): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment; name: string }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/hosting`);
+  }
+  async runHostedAction(slug: string, action: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<ApiResponse<{ result: unknown }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/actions/${encodeURIComponent(action)}`, { method: 'POST', body: JSON.stringify(input), signal });
   }
 
   async getApp(id: string): Promise<ApiResponse<{ app: unknown }>> {
@@ -4182,6 +4226,12 @@ class ApiClient {
   }
 
   /** Admin: GET /api/admin/allowances — per-plan monthly AI/credit allowances (plan_allowances). */
+  async adminGetPlans(): Promise<ApiResponse<{ plans: PlatformPlans }>> {
+    return this.request('/admin/plans');
+  }
+  async adminPutPlans(plans: PlatformPlans): Promise<ApiResponse<{ plans: PlatformPlans }>> {
+    return this.request('/admin/plans', { method: 'PUT', body: JSON.stringify(plans) });
+  }
   async adminListAllowances(): Promise<DesktopAiApiResponse<{ allowances: PlanAllowance[] }>> {
     const res = await this.desktopAiRequest<unknown>('/admin/allowances');
     if (res.error) return desktopAiErrorOnly(res);
@@ -4272,6 +4322,13 @@ class ApiClient {
     const body = recordValue(res.data);
     const inner = recordValue(body?.data) ?? recordValue(body?.run) ?? body ?? {};
     return { data: normalizeDesktopFlowRunStatus(inner), status: res.status };
+  }
+
+  /** Explicit receipt ACK. Call only after the caller has durably accepted the result. */
+  async acknowledgeDesktopFlowResult(requestId: string, resultReceipt: string): Promise<DesktopAiApiResponse<unknown>> {
+    return this.desktopAiRequest(`/desktop/flows/runs/${encodeURIComponent(requestId)}/ack`, {
+      method: 'POST', body: JSON.stringify({ resultReceipt }),
+    });
   }
 
   // Connector routing (ROUTE-001): connector→app(+desktop) assignments — which ONE
@@ -5435,6 +5492,8 @@ export interface DesktopFlowRunStatus {
   queuePos?: number;
   /** Sealed result frame (base64 nonce || ct), present once status is 'done'. */
   resultEnvelope?: string;
+  /** SHA-256 of ciphertext; ordinary reads never acknowledge it automatically. */
+  resultReceipt?: string;
   /** Typed failure code (plan §5.8) when status is failed/expired. */
   code?: string;
   message?: string;
@@ -5482,6 +5541,7 @@ function normalizeDesktopFlowRunStatus(inner: Record<string, unknown>): DesktopF
     status: typeof inner.status === 'string' ? inner.status : 'pending',
     ...(typeof inner.queuePos === 'number' ? { queuePos: inner.queuePos } : {}),
     ...(typeof inner.resultEnvelope === 'string' ? { resultEnvelope: inner.resultEnvelope } : {}),
+    ...(typeof inner.resultReceipt === 'string' ? { resultReceipt: inner.resultReceipt } : {}),
     ...(typeof inner.code === 'string' ? { code: inner.code } : {}),
     ...(typeof inner.message === 'string' ? { message: inner.message } : {}),
   };

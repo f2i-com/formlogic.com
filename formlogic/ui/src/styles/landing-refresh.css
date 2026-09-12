@@ -1,0 +1,125 @@
+/* Marketing-only refresh; the application retains its existing design system. */
+.lv2 { --lv2-purple: #315bea; --lv2-purple-2: #244bce; --lv2-label: #315bea; --lv2-link: #315bea; --lv2-band: #f5f6f8; --lv2-band-tint: #eef2fa; }
+:root.dark .lv2 { --lv2-label: #9eb5ff; --lv2-link: #9eb5ff; }
+.lv2 .lv2-nav { background: var(--lv2-band-alt); border-bottom: 1px solid var(--lv2-line); backdrop-filter: none; }
+.lv2 .lv2-nav .lv2-mark, .lv2 .lv2-nav__links a, .lv2 .lv2-nav__signin, .lv2 .lv2-nav__theme, .lv2 .lv2-nav__menu, .lv2 .lv2-nav__star { color: var(--lv2-ink); }
+.lv2 .lv2-nav__cta, .lv2 .lv2-btn--primary { background: #315bea; color: white; box-shadow: none; border-radius: 8px; }
+.lv2 .lv2-nav__links.lv2-open { background: var(--lv2-band-alt); }
+.lv2 .lv2-hero { background: var(--lv2-band-alt); color: var(--lv2-ink); padding-top: 0; overflow: hidden; }
+.lv2 .lv2-hero__grid { display: none; }
+.lv2 .lv2-hero__inner { display: flex; flex-direction: column; gap: 54px; padding-top: 76px; padding-bottom: 40px; }
+.lv2 .lv2-hero__copy { flex: none; padding: 0; max-width: 870px; text-align: center; margin: auto; }
+.lv2 .lv2-eyebrow { color: var(--lv2-label); background: transparent; border: 0; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
+.lv2 .lv2-hero__copy h1 { max-width: none; font-size: clamp(42px, 5.7vw, 76px); line-height: 1.04; letter-spacing: -.055em; color: var(--lv2-ink); margin: 22px 0; }
+.lv2 .lv2-hero__slides { display: block; min-height: 0; }
+.lv2 .lv2-hero__slide:not(.is-active) { display: none; }
+.lv2 .lv2-hero__slide { position: static; }
+.lv2 .lv2-hero__copy h1 em { display: block; color: var(--lv2-label); background: none; -webkit-text-fill-color: currentColor; }
+:root:not(.dark) .lv2 .lv2-hero { background: var(--lv2-band-alt); }
+:root:not(.dark) .lv2 .lv2-hero .lv2-eyebrow { background: transparent; color: var(--lv2-label); }
+:root:not(.dark) .lv2 .lv2-hero__copy h1 em { color: var(--lv2-label); }
+.lv2 .lv2-hero__copy > p { color: var(--lv2-body); max-width: 630px; margin: 0 auto; font-size: 18px; line-height: 1.7; }
+.lv2 .lv2-hero__actions, .lv2 .lv2-hero__proof { justify-content: center; }
+.lv2 .lv2-hero__proof { color: var(--lv2-body); font-size: 13px; }
+.lv2 .lv2-hero__proof svg { color: var(--lv2-label); }
+.lv2 .lv2-hero .lv2-btn--ghost { color: var(--lv2-ink); border: 1px solid var(--lv2-line); background: var(--lv2-band); border-radius: 8px; }
+.lv2 .lv2-proof-strip { color: var(--lv2-ink); border-color: var(--lv2-line); padding: 28px 0 40px; }
+.lv2 .lv2-proof-strip strong { color: var(--lv2-ink); font-size: 28px; }
+.lv2 .lv2-proof-strip small { color: var(--lv2-body); font-size: 13px; }
+.lv2 .lv2-h2 { letter-spacing: -.05em; }
+.lv2 .fl-skip { position: fixed; left: 16px; top: -80px; z-index: 100; padding: 12px 18px; background: #315bea; color: white; }
+.lv2 .fl-skip:focus { top: 12px; }
+/* These images are captures of the app itself, rather than a separate mock UI. */
+.lv2 .fl-workspace { width: 100%; margin: 0; background: var(--lv2-card); border: 1px solid var(--lv2-line); border-radius: 12px; box-shadow: 0 30px 90px -35px #1a2f6355; text-align: left; overflow: hidden; }
+.lv2 .fl-workspace__bar, .lv2 .fl-workspace__foot { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px; padding: 16px 22px; font-size: 13px; }
+.lv2 .fl-workspace__bar { border-bottom: 1px solid var(--lv2-line); }
+.lv2 .fl-workspace__bar > span:first-child { font-weight: 650; }
+.lv2 .fl-example-label { color: var(--lv2-body); font-size: 11px; letter-spacing: .06em; }
+.lv2 .fl-workspace__capture { display: block; }
+.lv2 .fl-workspace__capture img { display: block; width: 100%; height: auto; aspect-ratio: 1440 / 1000; }
+.lv2 .fl-workspace__foot { border-top: 1px solid var(--lv2-line); color: var(--lv2-body); font-size: 12px; }
+.lv2 .fl-workspace__foot a { color: var(--lv2-label); display: inline-flex; align-items: center; gap: 8px; min-height: 44px; font-size: 13px; font-weight: 650; }
+.lv2 .fl-workspace__foot a:focus-visible { outline: 2px solid var(--lv2-label); outline-offset: 4px; border-radius: 3px; }
+@media (max-width: 640px) {
+  .lv2 .lv2-nav__star { display: none; }
+  .lv2 .lv2-nav__actions { gap: 6px; }
+  .lv2 .lv2-nav__cta { white-space: nowrap; padding: 0 10px; }
+  .lv2 .lv2-hero__inner { padding-top: 46px; gap: 36px; }
+  .lv2 .lv2-hero__copy > p { font-size: 16px; }
+  .lv2 .fl-workspace__bar, .lv2 .fl-workspace__foot { padding: 14px 18px; }
+  .lv2 .fl-workspace__capture img { aspect-ratio: 390 / 1000; }
+}
+@media (max-width: 360px) { .lv2 .lv2-nav__cta { display: none; } }
+
+/* Short landscape screens must be able to scroll every navigation link. */
+@media (max-width: 899px) {
+  .lv2 .lv2-nav__inner { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .lv2 .lv2-nav__brand { min-width: 0; }
+  .lv2 .lv2-nav__actions { margin-left: 0; }
+  .lv2 .lv2-nav__links { max-height: calc(100dvh - 72px); overflow-y: auto; overscroll-behavior: contain; padding-bottom: max(18px, env(safe-area-inset-bottom)); }
+  .lv2 .lv2-nav__menu, .lv2 .lv2-nav__theme { width: 44px; height: 44px; flex-shrink: 0; }
+}
+.lv2 .lv2-nav__mobile-start { display: none; }
+/* Keep the brand and both 44px controls clear of each other on small phones.
+   Signup stays directly available in the expanded menu. */
+@media (max-width: 420px) {
+  .lv2 .lv2-nav__cta { display: none; }
+  .lv2 .lv2-nav__mobile-start { display: flex; align-items: center; gap: 8px; color: var(--lv2-label); font-weight: 700; }
+}
+@media (max-width: 640px) {
+  .lv2 .fl-workspace__foot a { min-height: 44px; font-size: 13px; }
+}
+@media (max-width: 360px) {
+  .lv2 .lv2-hero__copy h1 { font-size: 36px; letter-spacing: -.045em; }
+  .lv2 .lv2-hero__inner { padding-top: 30px; }
+}
+
+.lv2 .fl-portable { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:clamp(28px,6vw,88px); align-items:center; }
+.lv2 .fl-portable__note { color:var(--lv2-body); font-size:14px; line-height:1.7; max-width:48ch; margin-top:20px; }
+.lv2 .fl-portable__credit { color:var(--lv2-body); font-size:13px; line-height:1.7; margin-top:18px; }
+.lv2 .fl-portable__credit a { display:inline-flex; align-items:center; gap:3px; min-height:44px; color:var(--lv2-label); text-decoration:underline; text-underline-offset:4px; }
+.lv2 .fl-portable__steps { list-style:none; padding:0; margin:0; display:grid; gap:12px; }
+.lv2 .fl-portable__steps li { display:flex; gap:18px; padding:24px; border:1px solid var(--lv2-line); border-radius:18px; background:var(--lv2-card); }
+.lv2 .fl-portable__steps h3 { color:var(--lv2-ink); font-size:19px; margin:4px 0 8px; }
+.lv2 .fl-portable__steps p { color:var(--lv2-body); font-size:15px; line-height:1.65; margin:0; }
+.lv2 .fl-portable__number { color:var(--lv2-label); font-size:11px; font-weight:700; letter-spacing:.12em; }
+.lv2 .fl-portable__icon { flex-shrink:0; color:var(--lv2-label); margin-top:3px; }
+@media(max-width:720px) { .lv2 .fl-portable { grid-template-columns:minmax(0,1fr); } .lv2 .fl-portable__steps li { padding:20px; gap:14px; } }
+
+/* Comfortable page gutters and card insets at every viewport size. */
+.lv2 .lv2-container { width: min(1200px, calc(100% - clamp(40px, 7vw, 96px))); }
+.lv2 .lv2-platform__grid { gap: 20px; }
+.lv2 .lv2-platform__card { min-width: 0; padding: clamp(24px, 3vw, 36px); }
+@media (max-width: 640px) {
+  .lv2 .fl-portable__steps li { padding: 24px; }
+}
+
+/* The interface, private backend and database form one readable path. */
+.lv2 .fl-hosting-path { display: flex; align-items: center; gap: 10px; margin: 28px 0; padding: 20px; background: var(--lv2-card); border: 1px solid var(--lv2-line); border-radius: 16px; }
+.lv2 .fl-hosting-path > div { min-width: 0; flex: 1; display: grid; gap: 7px; }
+.lv2 .fl-hosting-path svg { color: var(--lv2-label); flex-shrink: 0; }
+.lv2 .fl-hosting-path strong { font-size: 13px; color: var(--lv2-ink); }
+.lv2 .fl-hosting-path span { font-size: 11px; line-height: 1.5; color: var(--lv2-body); }
+.lv2 .fl-hosting-cta { display: inline-flex; align-items: center; gap: 12px; min-height: 48px; margin-top: 20px; padding: 12px 20px; background: var(--lv2-label); color: #fff; border-radius: 10px; font-size: 14px; font-weight: 650; }
+.lv2 .fl-hosting-cta:focus-visible { outline: 3px solid var(--lv2-ink); outline-offset: 4px; }
+.lv2 .fl-hosting-note { margin: 30px 0 0; padding-top: 22px; border-top: 1px solid var(--lv2-line); color: var(--lv2-body); font-size: 13px; line-height: 1.8; }
+@media (max-width: 420px) {
+  .lv2 .fl-hosting-path { flex-direction: column; align-items: stretch; padding: 22px; gap: 12px; }
+  .lv2 .fl-hosting-path > div { grid-template-columns: 24px 1fr; column-gap: 10px; }
+  .lv2 .fl-hosting-path > div svg { grid-row: span 2; }
+  .lv2 .fl-hosting-path > svg { transform: rotate(90deg); margin-left: 2px; }
+}
+
+.lv2-pricing-dynamic { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
+.lv2-pricing-dynamic .lv2-plan { min-width: 0; overflow-wrap: anywhere; }
+.lv2-pricing-dynamic .lv2-plan__price { flex-wrap: wrap; }
+.lv2-pricing-dynamic .lv2-plan__cta { white-space: normal; text-align: center; }
+.lv2 .lv2-hero__copy { width: 100%; min-width: 0; }
+.lv2 .lv2-cta__text { min-width: 0; max-width: 100%; }
+@media (max-width: 480px) {
+  .lv2-pricing-dynamic .lv2-plan { padding: 24px 20px; }
+  .lv2 .lv2-eyebrow { white-space: normal; text-align: center; }
+}
+
+/* Marketplace is a theme-following content page, including while signed out. */
+.lv2.fl-marketplace { background:var(--lv2-band-alt); color:var(--lv2-ink); }

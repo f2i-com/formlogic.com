@@ -47,6 +47,7 @@ const TEMPLATE_PLACEHOLDERS = [
 ].join(', ');
 
 interface AiServicesDialogProps {
+  apiOnly?: boolean;
   isOpen: boolean;
   onClose: () => void;
   desktopPresence: FlowsDesktopPresence;
@@ -246,7 +247,7 @@ function createProvider(kind: AiProviderKind = 'openai'): AiProviderConfig {
   };
 }
 
-export default function AiServicesDialog({ isOpen, onClose, desktopPresence }: AiServicesDialogProps) {
+export default function AiServicesDialog({ isOpen, onClose, desktopPresence, apiOnly = false }: AiServicesDialogProps) {
   const userId = useAuthStore((state) => state.user?.id);
   // The provider list lives in localStorage (an external store) — derive it during
   // render and re-derive by bumping `providersVersion` after every mutation, instead
@@ -345,7 +346,7 @@ export default function AiServicesDialog({ isOpen, onClose, desktopPresence }: A
         description={
           editor
             ? 'Configuration is stored only in this browser — never on the server.'
-            : 'Manage browser-stored API services and inspect FormLogic Desktop services for flows.'
+            : apiOnly ? 'Add your own API provider, save its settings and test the connection.' : 'Manage browser-stored API services and inspect FormLogic Desktop services for flows.'
         }
       >
         {editor ? (
@@ -364,7 +365,7 @@ export default function AiServicesDialog({ isOpen, onClose, desktopPresence }: A
         ) : (
         <div className="space-y-4 p-4 sm:p-6">
           {/* Keyed by presence.kind: a presence change remounts with fresh loading state. */}
-          <DesktopServicesSection key={desktopPresence.kind} presence={desktopPresence} />
+          {!apiOnly && <DesktopServicesSection key={desktopPresence.kind} presence={desktopPresence} />}
 
           <section className="rounded-xl border border-gray-200/80 bg-white p-4 dark:border-slate-700/60 dark:bg-slate-900">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">

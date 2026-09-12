@@ -1,4 +1,3 @@
-import { Link } from 'react-router-dom';
 import {
   Code2,
   Database,
@@ -13,7 +12,7 @@ import {
 } from 'lucide-react';
 import { SectionLabel } from './shared';
 
-/** FormLogic Desktop spotlight: mini control-centre mock + the capability copy. */
+/** OAIY Desktop spotlight: mini control-centre mock + the capability copy. */
 export function DesktopSpotlight() {
   return (
     <section id="desktop" className="lv2-section lv2-desktop">
@@ -42,7 +41,7 @@ export function DesktopSpotlight() {
             </aside>
             <div className="lv2-minidesk__main">
               <div className="lv2-minidesk__top">
-                <span>Control centre</span>
+                <span>Example control centre</span>
                 <span>
                   <i /> All systems ready
                 </span>
@@ -84,7 +83,7 @@ export function DesktopSpotlight() {
         </div>
 
         <div className="lv2-desktop__copy" data-reveal="">
-          <SectionLabel light>FormLogic Desktop</SectionLabel>
+          <SectionLabel light>OAIY Desktop</SectionLabel>
           <h2>Local power. Cloud visibility.</h2>
           <p>
             Desktop is the local capability layer for FormLogic. It manages models, services,
@@ -115,9 +114,9 @@ export function DesktopSpotlight() {
             </span>
           </div>
           <div className="lv2-inline-actions" style={{ marginTop: 26 }}>
-            <Link to="/download" className="lv2-btn lv2-btn--primary">
-              Get FormLogic Desktop <Download size={16} />
-            </Link>
+            <a href="https://oaiy.com/desktop.html" className="lv2-btn lv2-btn--primary">
+              Get OAIY Desktop <Download size={16} />
+            </a>
           </div>
           <span className="lv2-desktop__note">
             <Monitor size={15} /> Windows desktop UI today; a Linux headless runtime is also

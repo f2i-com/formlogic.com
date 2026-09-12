@@ -153,6 +153,8 @@ const LOGIC_CALL_TURN = `function run(ctx) {
         turn_key: String(d.callId || ev.correlationId || '') + ':' + Number(d.turn || 0),
         speaker: speaker,
         text: text,
+        delivery: String(d.delivery || ''),
+        overlapped: d.overlapped === true ? ['yes'] : [],
         // The payload's at is the SPEECH-START stamp (bot turns are emitted
         // when the reply finishes; overlap caller turns are back-dated) —
         // sorting by it reads in true conversation order. Envelope time is
@@ -336,7 +338,7 @@ const FLOW_CALL_CONTEXT = `(function () {
 })()`;
 
 const FLOW_SUMMARY_DECIDE = `(function () {
-  var content = String(((nodes.summary || {}).content) || '').trim();
+  var content = String((typeof nodes.summary === 'string' ? nodes.summary : (nodes.summary || {}).content) || '').trim();
   // The FOLLOW-UP marker line is flow plumbing, not prose - strip it from
   // what lands on the Calls record (seen live: 'FOLLOW-UP: no' in the summary).
   var summary = content.replace(/\\n?\\s*FOLLOW-UP:\\s*(yes|no)\\s*$/i, '').trim()
@@ -355,7 +357,7 @@ const FLOW_SUMMARY_DECIDE = `(function () {
 })()`;
 
 const FLOW_SMS_DRAFT_BUILD = `(function () {
-  var text = String(((nodes.draft || {}).content) || '').trim();
+  var text = String((typeof nodes.draft === 'string' ? nodes.draft : (nodes.draft || {}).content) || '').trim();
   return {
     hasDraft: !!text,
     draftMessage: {
@@ -653,8 +655,8 @@ ${SMS_ENABLED_JS}
     };
     out.hasTaskUpdate = true;
     out.taskId = task.id;
-    out.taskUpdate = { callback_state: 'sms_sent', priority: 'high', summary: (oldSummary + ' [callback not answered - apology text sent]').slice(0, 500) };
-    out.summaryLine = 'Callback not answered - apology SMS sent, task stays open.';
+    out.taskUpdate = { callback_state: 'sms_queued', callback_sms_id: out.smsMessage.message_id, priority: 'high', summary: (oldSummary + ' [callback not answered - apology text queued]').slice(0, 500) };
+    out.summaryLine = 'Callback not answered - apology SMS queued; awaiting the phone acknowledgement.';
     return out;
   }
   out.hasTaskUpdate = true;
@@ -713,7 +715,7 @@ ${SMS_ENABLED_JS}
       is_ai_reply: ['yes'],
       approval_status: 'not_required'
     };
-    out.summaryLine = 'Apology text sent to the caller we lost on hold.';
+    out.summaryLine = 'Apology text queued for the caller we lost on hold.';
     return out;
   }
   out.hasTask = true;
@@ -852,7 +854,7 @@ const FLOW_AFTER_CALL_CTX = `(function () {
 // time never blocks — the appointment degrades to a follow-up task instead. The
 // binding's outputActions perform the actual writes, gated on the has* flags.
 const FLOW_AFTER_CALL_PLAN = `(function () {
-  var raw = String(((nodes.extract || {}).content) || '').trim();
+  var raw = String((typeof nodes.extract === 'string' ? nodes.extract : (nodes.extract || {}).content) || '').trim();
   var m = raw.match(/\\{[\\s\\S]*\\}/);
   var data = {};
   try { data = JSON.parse(m ? m[0] : raw) || {}; } catch (e) { data = {}; }
@@ -979,6 +981,7 @@ const FLOW_AFTER_CALL_PLAN = `(function () {
   var appointments = [];
   for (var a0 = 0; a0 < created.length; a0++) {
     var ap = {
+      caller_name: name || caller,
       service: created[a0].service || service || 'Appointment',
       date: created[a0].date,
       status: 'requested',
@@ -1732,7 +1735,7 @@ const FLOW_MANAGER_PLAN = `(function () {
     out.spoken = 'I did not catch the change you want - say it again?';
     return out;
   }
-  var raw = String(((nodes.decide || {}).content) || '').trim();
+  var raw = String((typeof nodes.decide === 'string' ? nodes.decide : (nodes.decide || {}).content) || '').trim();
   var m = raw.match(/\\{[\\s\\S]*\\}/);
   var data = {};
   try { data = JSON.parse(m ? m[0] : raw) || {}; } catch (e) { data = {}; }
@@ -2022,6 +2025,7 @@ const FLOW_APPOINTMENT_REQUEST_APPLY = `(function () {
   var ok = reason === '';
   var whenLabel = date + ' at ' + time;
   var appointment = {
+    caller_name: callerName,
     request_id: requestId,
     call_id: callId,
     service: service,
@@ -2572,7 +2576,7 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
   var targetDate = '';
   var reply = '';
   if (verdict !== 'yes') {
-    var raw = String(((nodes.decide || {}).content) || '').trim();
+    var raw = String((typeof nodes.decide === 'string' ? nodes.decide : (nodes.decide || {}).content) || '').trim();
     var m = raw.match(/\\{[\\s\\S]*\\}/);
     var data = {};
     try { data = JSON.parse(m ? m[0] : raw) || {}; } catch (e) { data = {}; }
@@ -2865,23 +2869,33 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
 // — sends to one number are serialized through the per-task conversation
 // loop, so newest-queued-first is reliable in practice.
 const FLOW_SMS_DELIVERY = `(function () {
-  var outcome = String(inputs.outcome || 'sent');
-  if (outcome !== 'sent' && outcome !== 'failed') outcome = 'sent';
+  var outcome = String(inputs.outcome || '');
   var messageId = String(inputs.messageId || '');
-  if (!messageId) return { hasUpdate: false, summaryLine: 'SMS acknowledgement had no messageId.' };
+  var out = { hasUpdate: false, hasTaskUpdate: false, summaryLine: '' };
+  if (!messageId || (outcome !== 'sent' && outcome !== 'failed')) {
+    out.summaryLine = 'SMS acknowledgement needs a messageId and a known outcome.';
+    return out;
+  }
   var rows = (nodes.messages && nodes.messages.responses) || [];
   for (var i = 0; i < rows.length; i++) {
     var a = (rows[i] && rows[i].answers) || {};
     if (String(a.direction || '') === 'outbound' && String(a.status || '') === 'queued' && String(a.message_id || '') === messageId) {
-      return {
-        hasUpdate: true,
-        responseId: rows[i].id,
-        update: { status: outcome },
-        summaryLine: 'Outbound SMS to ' + String(a.phone || '') + ' marked ' + outcome + '.'
-      };
+      out.hasUpdate = true; out.responseId = rows[i].id; out.update = { status: outcome };
+      break;
     }
   }
-  return { hasUpdate: false, summaryLine: 'No outbound SMS row matched messageId ' + messageId + '.' };
+  var tasks = (nodes.tasks && nodes.tasks.responses) || [];
+  for (var t = 0; t < tasks.length; t++) {
+    var task = tasks[t]; var ta = task.answers || {};
+    if ((ta.status === 'open' || ta.status === 'in_progress') && ta.callback_state === 'sms_queued' && ta.callback_sms_id === messageId) {
+      out.hasTaskUpdate = true; out.taskId = task.id;
+      out.taskUpdate = { callback_state: outcome === 'sent' ? 'sms_sent' : 'needs_human', priority: outcome === 'sent' ? 'high' : 'urgent',
+        summary: (String(ta.summary || '').slice(0, 350) + (outcome === 'sent' ? ' [phone accepted apology text]' : ' [apology text failed - follow up manually]')).slice(0, 500) };
+      break;
+    }
+  }
+  out.summaryLine = (out.hasUpdate || out.hasTaskUpdate) ? 'Phone reported SMS ' + outcome + '.' : 'No pending record matched this SMS acknowledgement.';
+  return out;
 })()`;
 
 // ── Pack data ───────────────────────────────────────────────────────────────
@@ -3133,6 +3147,8 @@ export const aokieReceptionistPack: PackData = {
         // recognizer text is kept here — the transcript stays honest about
         // what each layer actually heard.
         { id: 'stt_text', type: 'long_text', label: 'Raw speech-to-text', required: false, properties: {} },
+        { id: 'delivery', type: 'short_text', label: 'Speech delivery', required: false, properties: {} },
+        { id: 'overlapped', type: 'checkbox', label: 'Spoke while Aokie was talking', required: false, properties: { options: [{ id: 'yes', label: 'Yes', value: 'yes' }] } },
         { id: 'timestamp', type: 'short_text', label: 'Timestamp', required: false, properties: {} },
         { id: 'confidence', type: 'number', label: 'Confidence', required: false, properties: { min: 0, max: 1, step: 0.01 } },
         {
@@ -3308,13 +3324,7 @@ export const aokieReceptionistPack: PackData = {
       settings: { ...defaultSettings },
       theme: { ...defaultTheme },
       fields: [
-        { id: 'customer_link', type: 'linked_record', label: 'Customer', required: false, properties: { targetFormId: '@pack:customers' } },
-        // phone + call_id: correlation handles for the SMS follow-up loop — the
-        // sms-followup-conversation flow finds this appointment by the texter's
-        // number (phone_eq) and matches it to its task via the shared call_id.
-        { id: 'phone', type: 'phone', label: 'Phone', required: false, properties: { placeholder: '+61 400 000 000' } },
-        { id: 'call_id', type: 'short_text', label: 'Call ID', required: false, properties: {} },
-        { id: 'request_id', type: 'short_text', label: 'Request ID', required: false, properties: {} },
+        { id: 'caller_name', type: 'short_text', label: 'Caller Name', required: false, properties: { placeholder: 'Name given by the caller' } },
         { id: 'service', type: 'short_text', label: 'Service', required: true, properties: { placeholder: 'What is being booked' } },
         { id: 'date', type: 'date', label: 'Date', required: true, properties: {} },
         { id: 'time', type: 'time', label: 'Time', required: false, properties: {} },
@@ -3333,6 +3343,11 @@ export const aokieReceptionistPack: PackData = {
             ],
           },
         },
+        { id: 'customer_link', type: 'linked_record', label: 'Customer', required: false, properties: { targetFormId: '@pack:customers' } },
+        { id: 'phone', type: 'phone', label: 'Phone', required: false, properties: { placeholder: '+61 400 000 000' } },
+        // Keep correlation fields available without crowding the booking list.
+        { id: 'call_id', type: 'short_text', label: 'Call ID', required: false, properties: {} },
+        { id: 'request_id', type: 'short_text', label: 'Request ID', required: false, properties: {} },
         {
           id: 'source',
           type: 'dropdown',
@@ -3511,6 +3526,7 @@ export const aokieReceptionistPack: PackData = {
             options: [
               { id: 'queued', label: 'Calling back automatically', value: 'queued' },
               { id: 'reached', label: 'Reached by callback', value: 'reached' },
+              { id: 'sms_queued', label: 'Apology text awaiting phone acknowledgement', value: 'sms_queued' },
               { id: 'sms_sent', label: "Couldn't reach — apology text sent", value: 'sms_sent' },
               { id: 'needs_human', label: "Couldn't reach — please ring them", value: 'needs_human' },
             ],
@@ -3521,6 +3537,7 @@ export const aokieReceptionistPack: PackData = {
         // dial usually fires while the line is still busy (the knocker gave
         // up DURING a live call) and is refused typed — the drain retries
         // whenever an inbound call ends, until the line can take it.
+        { id: 'callback_sms_id', type: 'short_text', label: 'Callback SMS ID', required: false, properties: {} },
         { id: 'callback_number', type: 'short_text', label: 'Callback number (normalized)', required: false, properties: {} },
         { id: 'callback_opening', type: 'long_text', label: 'Callback opening line', required: false, properties: {} },
         { id: 'callback_purpose', type: 'long_text', label: 'Callback purpose (agent grounding)', required: false, properties: {} },
@@ -3825,7 +3842,7 @@ export const aokieReceptionistPack: PackData = {
       name: 'Aokie Receptionist',
       description:
         'AI phone receptionist over FormLogic Desktop: live call console, automatic call/SMS records, caller lookup, call summaries, SMS reply drafts and follow-up tasks — with the Aokie Bluetooth phone bridge doing the hardware work. Runs headless in FormLogic Desktop; open this app anywhere to monitor it.',
-      settings: { icon: 'PhoneCall', appKind: 'staff' },
+      settings: { icon: 'PhoneCall', appKind: 'staff', aokieWorkspace: true },
       // Included services (pack services wave 1): the owner can turn each of these
       // off in App Settings -> Included services; the backend gates the matching
       // endpoints on the toggle (admission + discovery for the Companion relay).
@@ -4321,18 +4338,23 @@ export const aokieReceptionistPack: PackData = {
       nodeCapabilities: ['formlogic.responses.read'],
       flowJson: {
         nodes: [
+          { id: 'phone', type: 'logic_block', data: { expr: "(function(){ var phone = String(inputs.callerPhone || inputs.from || '').trim(); return {phone:phone, usable:/^\\+?[0-9][0-9 ()-]{4,}$/.test(phone)}; })()" } },
+          { id: 'hasPhone', type: 'condition', data: { expr: 'nodes.phone.usable === true' } },
           { id: 'in', type: 'input', data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'callerPhone', example: '+61400000000' }, { name: 'from', example: '+61400000000' }] } },
           {
             id: 'customers',
             type: 'formlogic_list_responses',
-            data: { form: '@pack:customers', return: 'all', limit: 5, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.callerPhone' }] },
+            data: { form: '@pack:customers', return: 'all', limit: 5, filters: [{ field: 'phone', op: 'phone_eq', value: '$nodes.phone.phone' }] },
           },
           { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
           { id: 'plan', type: 'logic_block', data: { expr: FLOW_HOLD_LOST } },
           { id: 'out', type: 'output', data: { value: { hasSms: '$nodes.plan.hasSms', sms: '$nodes.plan.sms', smsMessage: '$nodes.plan.smsMessage', hasTask: '$nodes.plan.hasTask', task: '$nodes.plan.task', summaryLine: '$nodes.plan.summaryLine' } } },
         ],
         edges: [
-          { source: 'in', target: 'customers' },
+          { source: 'in', target: 'phone' },
+          { source: 'phone', target: 'hasPhone' },
+          { source: 'hasPhone', target: 'customers', sourceHandle: 'true' },
+          { source: 'hasPhone', target: 'plan', sourceHandle: 'false' },
           { source: 'customers', target: 'settings' },
           { source: 'settings', target: 'plan' },
           { source: 'plan', target: 'out' },
@@ -4714,12 +4736,14 @@ export const aokieReceptionistPack: PackData = {
             type: 'formlogic_list_responses',
             data: { form: '@pack:sms-messages', return: 'all', limit: 10, filters: [{ field: 'message_id', op: 'eq', value: '$inputs.messageId' }] },
           },
+          { id: 'tasks', type: 'formlogic_list_responses', data: { form: '@pack:follow-up-tasks', return: 'all', limit: 10, filters: [{ field: 'callback_sms_id', op: 'eq', value: '$inputs.messageId' }] } },
           { id: 'mark', type: 'logic_block', data: { expr: FLOW_SMS_DELIVERY } },
           {
             id: 'out',
             type: 'output',
             data: {
               value: {
+                hasTaskUpdate: '$nodes.mark.hasTaskUpdate', taskId: '$nodes.mark.taskId', taskUpdate: '$nodes.mark.taskUpdate',
                 hasUpdate: '$nodes.mark.hasUpdate',
                 responseId: '$nodes.mark.responseId',
                 update: '$nodes.mark.update',
@@ -4730,7 +4754,8 @@ export const aokieReceptionistPack: PackData = {
         ],
         edges: [
           { source: 'in', target: 'messages' },
-          { source: 'messages', target: 'mark' },
+          { source: 'messages', target: 'tasks' },
+          { source: 'tasks', target: 'mark' },
           { source: 'mark', target: 'out' },
         ],
       },
@@ -4827,15 +4852,17 @@ export const aokieReceptionistPack: PackData = {
               extraBody: { chat_template_kwargs: { enable_thinking: false } },
             },
           },
-          { id: 'say', type: 'aokie_speak', data: { textFrom: '$nodes.reply.content' } },
-          { id: 'out', type: 'output', data: { value: { spoken: '$nodes.reply.content' } } },
+          { id: 'replyText', type: 'logic_block', data: { expr: "({ content: typeof nodes.reply === 'string' ? nodes.reply : (nodes.reply || {}).content || '' })" } },
+          { id: 'say', type: 'aokie_speak', data: { textFrom: '$nodes.replyText.content' } },
+          { id: 'out', type: 'output', data: { value: { spoken: '$nodes.replyText.content' } } },
         ],
         edges: [
           { source: 'in', target: 'settings' },
           { source: 'settings', target: 'turns' },
           { source: 'turns', target: 'context' },
           { source: 'context', target: 'reply' },
-          { source: 'reply', target: 'say' },
+          { source: 'reply', target: 'replyText' },
+          { source: 'replyText', target: 'say' },
           { source: 'say', target: 'out' },
         ],
       },
@@ -4873,6 +4900,9 @@ export const aokieReceptionistPack: PackData = {
           // SMS-kickoff context (after-call parity): the customer's SMS
           // eligibility, any still-active SMS loop for this number, and the
           // business name for the confirmation text.
+          // Withheld caller IDs can still leave an appointment request. Skip
+          // phone lookups rather than sending an empty filter to the desktop.
+          { id: 'hasPhone', type: 'condition', data: { expr: "String(inputs.from || '').replace(/[^0-9]/g, '').length >= 5" } },
           { id: 'customers', type: 'formlogic_list_responses', data: { form: '@pack:customers', return: 'all', limit: 5, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.from' }] } },
           { id: 'phoneTasks', type: 'formlogic_list_responses', data: { form: '@pack:follow-up-tasks', return: 'all', limit: 10, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.from' }] } },
           { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
@@ -4909,7 +4939,9 @@ export const aokieReceptionistPack: PackData = {
           { source: 'callAppointments', target: 'requestTasks' },
           { source: 'requestTasks', target: 'callTasks' },
           { source: 'callTasks', target: 'calls' },
-          { source: 'calls', target: 'customers' },
+          { source: 'calls', target: 'hasPhone' },
+          { source: 'hasPhone', target: 'customers', sourceHandle: 'true' },
+          { source: 'hasPhone', target: 'settings', sourceHandle: 'false' },
           { source: 'customers', target: 'phoneTasks' },
           { source: 'phoneTasks', target: 'settings' },
           { source: 'settings', target: 'plan' },
@@ -5033,18 +5065,20 @@ export const aokieReceptionistPack: PackData = {
       nodeCapabilities: ['formlogic.responses.read'],
       flowJson: {
         nodes: [
+          { id: 'phone', type: 'logic_block', data: { expr: "(function(){ var phone = String(inputs.callerPhone || inputs.from || '').trim(); return {phone:phone, usable:/^\\+?[0-9][0-9 ()-]{4,}$/.test(phone)}; })()" } },
+          { id: 'hasPhone', type: 'condition', data: { expr: 'nodes.phone.usable === true' } },
           { id: 'in', type: 'input', data: { inputs: [{ name: 'callerPhone', example: '+61400000000' }, { name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }, { name: 'outcome', example: 'missed' }] } },
           {
             id: 'customers',
             type: 'formlogic_list_responses',
-            data: { form: '@pack:customers', return: 'all', limit: 5, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.callerPhone' }] },
+            data: { form: '@pack:customers', return: 'all', limit: 5, filters: [{ field: 'phone', op: 'phone_eq', value: '$nodes.phone.phone' }] },
           },
           // Existing open callbacks for this number: a second missed call
           // must not mint a second dial while one is already pending.
           {
             id: 'tasks',
             type: 'formlogic_list_responses',
-            data: { form: '@pack:follow-up-tasks', return: 'all', limit: 10, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.callerPhone' }] },
+            data: { form: '@pack:follow-up-tasks', return: 'all', limit: 10, filters: [{ field: 'phone', op: 'phone_eq', value: '$nodes.phone.phone' }] },
           },
           { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
           // Their upcoming bookings (date-windowed in SQL) ride the dial
@@ -5053,13 +5087,16 @@ export const aokieReceptionistPack: PackData = {
           {
             id: 'appts',
             type: 'formlogic_list_responses',
-            data: { form: '@pack:appointments', return: 'all', limit: 20, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.callerPhone' }, { field: 'date', op: 'gte', value: '$nodes.win.todayIso' }] },
+            data: { form: '@pack:appointments', return: 'all', limit: 20, filters: [{ field: 'phone', op: 'phone_eq', value: '$nodes.phone.phone' }, { field: 'date', op: 'gte', value: '$nodes.win.todayIso' }] },
           },
           { id: 'task', type: 'logic_block', data: { expr: FLOW_MISSED_TASK } },
           { id: 'out', type: 'output', data: { value: { task: '$nodes.task.task', wantsCallback: '$nodes.task.wantsCallback', dial: '$nodes.task.dial' } } },
         ],
         edges: [
-          { source: 'in', target: 'customers' },
+          { source: 'in', target: 'phone' },
+          { source: 'phone', target: 'hasPhone' },
+          { source: 'hasPhone', target: 'customers', sourceHandle: 'true' },
+          { source: 'hasPhone', target: 'task', sourceHandle: 'false' },
           { source: 'customers', target: 'tasks' },
           { source: 'tasks', target: 'settings' },
           { source: 'settings', target: 'win' },
@@ -5077,6 +5114,8 @@ export const aokieReceptionistPack: PackData = {
       nodeCapabilities: ['formlogic.responses.read'],
       flowJson: {
         nodes: [
+          { id: 'phone', type: 'logic_block', data: { expr: "(function(){ var phone = String(inputs.to || '').trim(); return {phone:phone, usable:/^\\+?[0-9][0-9 ()-]{4,}$/.test(phone)}; })()" } },
+          { id: 'hasPhone', type: 'condition', data: { expr: 'nodes.phone.usable === true' } },
           {
             id: 'in',
             type: 'input',
@@ -5085,12 +5124,12 @@ export const aokieReceptionistPack: PackData = {
           {
             id: 'tasks',
             type: 'formlogic_list_responses',
-            data: { form: '@pack:follow-up-tasks', return: 'all', limit: 10, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.to' }] },
+            data: { form: '@pack:follow-up-tasks', return: 'all', limit: 10, filters: [{ field: 'phone', op: 'phone_eq', value: '$nodes.phone.phone' }] },
           },
           {
             id: 'customers',
             type: 'formlogic_list_responses',
-            data: { form: '@pack:customers', return: 'all', limit: 5, filters: [{ field: 'phone', op: 'phone_eq', value: '$inputs.to' }] },
+            data: { form: '@pack:customers', return: 'all', limit: 5, filters: [{ field: 'phone', op: 'phone_eq', value: '$nodes.phone.phone' }] },
           },
           { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
           { id: 'plan', type: 'logic_block', data: { expr: FLOW_CALLBACK_RESULT } },
@@ -5111,7 +5150,10 @@ export const aokieReceptionistPack: PackData = {
           },
         ],
         edges: [
-          { source: 'in', target: 'tasks' },
+          { source: 'in', target: 'phone' },
+          { source: 'phone', target: 'hasPhone' },
+          { source: 'hasPhone', target: 'tasks', sourceHandle: 'true' },
+          { source: 'hasPhone', target: 'plan', sourceHandle: 'false' },
           { source: 'tasks', target: 'customers' },
           { source: 'customers', target: 'settings' },
           { source: 'settings', target: 'plan' },
@@ -5412,6 +5454,7 @@ export const aokieReceptionistPack: PackData = {
       // The literal 'sent' rides the inputMap so ONE flow serves both acks.
       inputMap: { messageId: '$event.data.messageId', to: '$event.data.to', outcome: 'sent' },
       outputActions: [
+        { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasTaskUpdate', responseId: '$result.taskId', answers: '$result.taskUpdate' },
         { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasUpdate', responseId: '$result.responseId', answers: '$result.update' },
       ],
       fallbackPolicy: { onError: 'log_and_continue' },
@@ -5425,6 +5468,7 @@ export const aokieReceptionistPack: PackData = {
       timeoutMs: 15000,
       inputMap: { messageId: '$event.data.messageId', to: '$event.data.to', outcome: 'failed', reason: '$event.data.reason' },
       outputActions: [
+        { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasTaskUpdate', responseId: '$result.taskId', answers: '$result.taskUpdate' },
         { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasUpdate', responseId: '$result.responseId', answers: '$result.update' },
         // A failed send is a customer who was promised a text — shout about it.
         { type: 'formlogic.toast', message: 'SMS to {{event.data.to}} FAILED: {{event.data.reason}}' },

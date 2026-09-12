@@ -32,9 +32,9 @@ export function LandingFooter() {
           </div>
           <div className="lv2-footer__col">
             <strong>Product</strong>
-            <a href="#platform">Platform</a>
-            <a href="#aokie">Aokie</a>
-            <a href="#desktop">Desktop</a>
+            <a href="/#platform">Platform</a>
+            <a href="/#aokie">Aokie</a>
+            <a href="/#desktop">Desktop</a>
             <Link to="/packs">Marketplace</Link>
           </div>
           <div className="lv2-footer__col">

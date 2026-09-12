@@ -250,6 +250,26 @@ class AdminController
     }
 
     /** GET /api/admin/allowances — the per-plan monthly AI/cloud-credit allowance rows. */
+    public function getPlans(Request $request, Response $response): Response
+    {
+        return $this->jsonResponse($response, ['plans' => (new \FormLogic\Services\PlatformPlansService())->status()]);
+    }
+
+    public function putPlans(Request $request, Response $response): Response
+    {
+        try {
+            $body = $request->getParsedBody();
+            if (!is_array($body)) throw new \InvalidArgumentException('Plan settings must be an object.');
+            $plans = (new \FormLogic\Services\PlatformPlansService())->save($body);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\RuntimeException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Could not save plan settings.'], 503);
+        }
+        $this->audit($request, 'admin.plans_update', 'platform', $plans);
+        return $this->jsonResponse($response, ['plans' => $plans]);
+    }
+
     public function listAllowances(Request $request, Response $response): Response
     {
         if ($this->planService === null) {

@@ -13,6 +13,7 @@ import { TimezoneSelect } from '../components/ui/TimezoneSelect';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
+import { LocalRuntimePanel } from '../components/desktop/LocalRuntimePanel';
 import { ConnectorRoutingPanel } from '../components/desktop/ConnectorRoutingPanel';
 import { DataNodesPanel } from '../components/desktop/DataNodesPanel';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
@@ -88,6 +89,7 @@ const SECTIONS = [
   { id: 'ai', label: 'AI assistant' },
   { id: 'security', label: 'Security' },
   { id: 'api-keys', label: 'API keys' },
+  { id: 'local-runtime', label: 'OAIY & local desktop' },
   { id: 'linked-desktops', label: 'Linked desktops' },
   { id: 'mcp', label: 'External AI access' },
   { id: 'audit', label: 'Audit trail' },
@@ -807,6 +809,7 @@ export function Settings() {
               iconColor="text-indigo-600 dark:text-indigo-400"
             />
             <div className="ml-0 sm:ml-14">
+              <Link to="/connect-ai" className="mb-5 inline-flex rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white">Start guided AI setup</Link>
               <AiSourceCard />
             </div>
           </CardContent>
@@ -1071,6 +1074,8 @@ export function Settings() {
         </Card>
 
         {/* Linked Desktops Section */}
+        <section id="local-runtime" className="scroll-mt-24" aria-label="Local desktop connection"><LocalRuntimePanel /></section>
+
         <Card id="linked-desktops" className="overflow-hidden scroll-mt-24">
           <CardContent className="p-6">
             <SectionHeader

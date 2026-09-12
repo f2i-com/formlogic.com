@@ -6,6 +6,7 @@ import { AppRuntimeThemeProvider } from './AppRuntimeThemeProvider';
 import { AppRuntimeAuthGuard } from './AppRuntimeAuthGuard';
 import { AppRuntimeShell } from './AppRuntimeShell';
 import { DemoDataTag } from './DemoDataTag';
+import { AokieWorkspace } from './AokieWorkspace';
 import { AppHomeScreen } from './AppHomeScreen';
 import { AppFormView } from './AppFormView';
 import { AppDataTable } from './AppDataTable';
@@ -116,6 +117,7 @@ export function AppRuntimeRoot() {
         <AppRuntimeShell>
           <Routes>
             <Route path="/" element={<AppHomeScreen />} />
+            <Route path="/aokie" element={<AokieWorkspace />} />
             <Route path="/records" element={<AppRecordsBrowser />} />
             <Route path="/reports" element={<AppReports />} />
             <Route path="/form/:formId" element={<HiddenFormGuard><AppFormView /></HiddenFormGuard>} />

@@ -1,0 +1,132 @@
+import { useEffect, useRef, useState } from "react";
+import { api } from "../../lib/api";
+import { workspaceBridge } from "../../lib/softn/workspaceBridge";
+
+const navigate = (path: string) => window.location.assign(path);
+
+export function HostedAppFrame({
+  slug,
+  client,
+  version,
+}: {
+  slug: string;
+  client: Record<string, string>;
+  version: number;
+}) {
+  const frame = useRef<HTMLIFrameElement>(null);
+
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let channel: MessageChannel | undefined;
+    let active = true;
+    let inFlight = 0;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(
+      () =>
+        setError(
+          "The app runtime did not load. Check that the hosting runtime has been built.",
+        ),
+      20000,
+    );
+    function receive(event: MessageEvent) {
+      if (
+        event.source !== frame.current?.contentWindow ||
+        event.data?.type !== "formlogic:ready" ||
+        channel
+      )
+        return;
+      clearTimeout(timeout);
+      setError("");
+      channel = new MessageChannel();
+      channel.port1.onmessage = async (event) => {
+        if (event.data?.type === "error") {
+          setError(
+            "The app could not load. Check its interface and logic files.",
+          );
+          return;
+        }
+        const { id, action, input } = event.data ?? {};
+        if (
+          event.data?.type !== "call" ||
+          !Number.isSafeInteger(id) ||
+          typeof action !== "string" ||
+          !/^[a-z][a-zA-Z0-9_-]{0,63}$/.test(action)
+        )
+          return;
+        const reply = (result: unknown) => {
+          if (active) channel?.port1.postMessage({ id, result });
+        };
+        if (
+          !input ||
+          typeof input !== "object" ||
+          Array.isArray(input) ||
+          JSON.stringify(input).length > 32768
+        ) {
+          reply({ error: "Invalid action input." });
+          return;
+        }
+        if (inFlight >= 4) {
+          reply({ error: "Please wait for the current request." });
+          return;
+        }
+        inFlight++;
+        try {
+          if (["workspaceInfo", "workspaceRecords", "workspaceOpen"].includes(action)) {
+            reply({ result: await workspaceBridge(slug, action, input, navigate) });
+            return;
+          }
+          const result = await api.runHostedAction(
+            slug,
+            action,
+            input,
+            controller.signal,
+          );
+          reply(result.error ? { error: result.error } : result.data);
+        } catch (reason) {
+          reply({ error: reason instanceof Error ? reason.message : "The request could not be completed." });
+        } finally {
+          inFlight--;
+        }
+      };
+      frame.current?.contentWindow?.postMessage(
+        {
+          type: "formlogic:init",
+          client,
+          appId: `hosted-${slug}-${version}`,
+          dark: document.documentElement.classList.contains("dark"),
+        },
+        "*",
+        [channel.port2],
+      );
+    }
+    window.addEventListener("message", receive);
+    return () => {
+      active = false;
+      controller.abort();
+      clearTimeout(timeout);
+      window.removeEventListener("message", receive);
+      channel?.port1.close();
+    };
+  }, [slug, client, version]);
+  return (
+    <div className="flex h-full min-h-[420px] min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-950">
+      {error && (
+        <p
+          role="alert"
+          className="bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200"
+        >
+          {error}
+        </p>
+      )}
+      <iframe
+        key={`${slug}/${version}`}
+        ref={frame}
+        title="Hosted app"
+        src="/hosted-runtime/index.html"
+        sandbox="allow-scripts"
+        referrerPolicy="no-referrer"
+        className="min-h-[420px] w-full flex-1 border-0"
+      />
+    </div>
+  );
+}

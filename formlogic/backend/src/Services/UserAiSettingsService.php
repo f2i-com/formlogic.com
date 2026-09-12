@@ -24,7 +24,7 @@ class UserAiSettingsService
     private const MAX_ID = 128;
 
     public const DEFAULTS = [
-        'aiSource' => 'site',
+        'aiSource' => 'custom',
         'desktopProviderId' => null,
         'desktopModel' => null,
         'customProviderId' => null,

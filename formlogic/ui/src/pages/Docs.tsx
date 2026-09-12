@@ -3,12 +3,12 @@ import { Link } from 'react-router-dom';
 import {
   ArrowRight, ArrowLeft, Menu, X, BookOpen, Rocket, LayoutGrid, ListChecks,
   GitBranch, Palette, Code2, Share2, Inbox, Download, BarChart3, Boxes,
-  Package, Server, Shield, Lightbulb, Check, Terminal, Cloud, Plug, Sparkles, Workflow, Moon, Sun,
+  Package, Server, Shield, Lightbulb, Check, Terminal, Cloud, Plug, Workflow, Moon, Sun, Search, Phone, LifeBuoy,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Logo } from '../components/ui/Logo';
-import { useBetaMode } from '../hooks/useBetaMode';
 import { useUIStore } from '../stores/uiStore';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 
 // Shares the landing page's display/mono/gradient chrome so docs feel part of the brand.
 function useDocsChrome() {
@@ -37,6 +37,7 @@ function useDocsChrome() {
 const SECTIONS = [
   { id: 'introduction', title: 'Introduction', icon: BookOpen },
   { id: 'quick-start', title: 'Quick start', icon: Rocket },
+  { id: 'connect-ai', title: 'Connect your AI', icon: Plug },
   { id: 'builder', title: 'The form builder', icon: LayoutGrid },
   { id: 'field-types', title: 'Field types', icon: ListChecks },
   { id: 'logic', title: 'Validation & logic', icon: GitBranch },
@@ -48,17 +49,31 @@ const SECTIONS = [
   { id: 'analytics', title: 'Analytics', icon: BarChart3 },
   { id: 'api', title: 'API access', icon: Terminal },
   { id: 'mcp', title: 'Build with your AI (MCP)', icon: Plug },
-  { id: 'cloud', title: 'Cloud & billing', icon: Cloud },
+  { id: 'cloud', title: 'Free access & support', icon: Cloud },
   { id: 'apps', title: 'Apps & permissions', icon: Boxes },
+  { id: 'hosted-apps', title: 'Host an editable app', icon: Code2 },
+  { id: 'aokie', title: 'Aokie calls & appointments', icon: Phone },
   { id: 'packs', title: 'Packs & templates', icon: Package },
-  { id: 'flows', title: 'Flows & Desktop', icon: Workflow },
+  { id: 'flows', title: 'Automations & OAIY', icon: Workflow },
   { id: 'self-hosting', title: 'Self-hosting', icon: Server },
   { id: 'security', title: 'Security', icon: Shield },
+  { id: 'troubleshooting', title: 'Troubleshooting & guides', icon: LifeBuoy },
 ];
+
+const START_PATHS = [
+  { id: 'quick-start', title: 'Create your first form', description: 'Build, publish and collect a response.', icon: Rocket },
+  { id: 'connect-ai', title: 'Bring your own AI', description: 'Use OAIY, a provider API or your AI client.', icon: Plug },
+  { id: 'hosted-apps', title: 'Build a connected app', description: 'An editable interface, private logic and data.', icon: Code2 },
+  { id: 'aokie', title: 'Set up a front desk', description: 'Connect calls, messages and appointments.', icon: Phone },
+];
+
+function GuideLink({ file, children }: { file: string; children: React.ReactNode }) {
+  return <a href={`https://github.com/f2i-com/formlogic.com/blob/main/${file}`} className="text-primary-700 dark:text-primary-300 underline decoration-primary-300/50 underline-offset-4 hover:decoration-current">{children}</a>;
+}
 
 function H2({ id, icon: Icon, children }: { id: string; icon: React.ElementType; children: React.ReactNode }) {
   return (
-    <h2 id={id} className="fl-display scroll-mt-24 text-2xl sm:text-3xl text-gray-900 dark:text-white flex items-center gap-3 mb-5 mt-2">
+    <h2 id={id} tabIndex={-1} className="fl-display scroll-mt-24 text-2xl sm:text-3xl text-gray-900 dark:text-white flex items-center gap-3 mb-5 mt-2 outline-none">
       <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400 shrink-0">
         <Icon className="h-5 w-5" />
       </span>
@@ -84,14 +99,14 @@ function CodeBlock({ title, children }: { title?: string; children: React.ReactN
           <span className="fl-mono text-xs text-slate-400 truncate">{title}</span>
         </div>
       )}
-      <pre className="fl-mono text-[12.5px] leading-[1.7] text-slate-200 p-4 sm:p-5 overflow-x-auto"><code>{children}</code></pre>
+      <pre tabIndex={0} role="region" aria-label={title ?? 'Code example'} className="fl-mono text-[12.5px] leading-[1.7] text-slate-200 p-4 sm:p-5 overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-400"><code>{children}</code></pre>
     </div>
   );
 }
 
 // Bump when the /screenshots images are replaced: Apache serves them without Cache-Control,
 // so browsers heuristically cache by Last-Modified and would keep showing the old captures.
-const SCREENSHOT_VERSION = '2026-07-11';
+const SCREENSHOT_VERSION = '2026-09-12';
 
 function ThemeToggle() {
   const theme = useUIStore((s) => s.theme);
@@ -115,7 +130,7 @@ function Figure({ src, alt, caption }: { src: string; alt: string; caption: stri
       <div className="rounded-xl overflow-hidden border border-gray-200/80 dark:border-slate-800 shadow-xl shadow-gray-900/[0.06] dark:shadow-black/30 bg-gray-50 dark:bg-slate-900">
         <img src={`${src}?v=${SCREENSHOT_VERSION}`} alt={alt} loading="lazy" className="w-full block" />
       </div>
-      <figcaption className="fl-mono text-xs text-gray-400 dark:text-slate-500 mt-2.5 text-center">{caption}</figcaption>
+      <figcaption className="fl-mono text-xs text-gray-500 dark:text-slate-400 mt-2.5 text-center">{caption}</figcaption>
     </figure>
   );
 }
@@ -165,7 +180,7 @@ const FIELD_TYPES: Array<[string, string]> = [
   ['File upload', 'Accept documents and images, with type and size limits.'],
   ['Signature', 'Draw-or-type signature capture.'],
   ['Calculated', 'A read-only value computed from an expression over other fields.'],
-  ['Linked record', 'Reference a response from another form (relationships).'],
+  ['Linked record', 'Reference a response from another form in an authenticated app or owner context. The picker is unavailable to anonymous standalone visitors.'],
   ['Location', 'Capture latitude / longitude.'],
   ['Hidden', 'Stores a default, computed, or script-set value that respondents never see — saved with the response and shown in exports.'],
   ['Statement · Welcome · Thank you', 'Display-only content and intro / completion screens.'],
@@ -173,34 +188,54 @@ const FIELD_TYPES: Array<[string, string]> = [
 
 export function Docs() {
   useDocsChrome();
-  const beta = useBetaMode();
+  useDocumentTitle('Documentation');
   const [mobileNav, setMobileNav] = useState(false);
   const [activeId, setActiveId] = useState<string>(SECTIONS[0].id);
+  const [sectionQuery, setSectionQuery] = useState('');
+  const visibleSections = SECTIONS.filter((section) => section.title.toLowerCase().includes(sectionQuery.trim().toLowerCase()));
 
-  // Highlight the TOC entry for the section currently in view (presentation only).
   useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) setActiveId(entry.target.id);
-        }
-      },
-      { rootMargin: '-15% 0px -75% 0px' },
-    );
-    for (const s of SECTIONS) {
-      const el = document.getElementById(s.id);
-      if (el) observer.observe(el);
-    }
-    return () => observer.disconnect();
+    if (!mobileNav) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMobileNav(false);
+        document.getElementById('docs-menu-toggle')?.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [mobileNav]);
+
+  // Keep the preceding section active through long content and gaps between headings.
+  useEffect(() => {
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const current = [...SECTIONS].reverse().find((section) => {
+        const heading = document.getElementById(section.id);
+        return heading && heading.getBoundingClientRect().top <= 180;
+      });
+      setActiveId(current?.id ?? SECTIONS[0].id);
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
+    window.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+    schedule();
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('scroll', schedule);
+      window.removeEventListener('resize', schedule);
+    };
   }, []);
 
   return (
     <div className="min-h-screen bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-50 selection:bg-primary-500/20">
+      <a href="#docs-content" onClick={() => setMobileNav(false)} className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:rounded-lg focus:bg-primary-600 focus:p-3 focus:text-primary-foreground">Skip to documentation</a>
       {/* Top nav */}
       <nav className="fixed top-0 inset-x-0 h-16 bg-white/85 dark:bg-slate-950/80 backdrop-blur-xl border-b border-gray-100 dark:border-primary-500/10 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={() => setMobileNav((v) => !v)} aria-label="Toggle docs menu" aria-expanded={mobileNav} className="lg:hidden p-2 -ml-2 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors cursor-pointer">
+            <button id="docs-menu-toggle" onClick={() => setMobileNav((v) => !v)} aria-label="Toggle docs menu" aria-controls="docs-sections" aria-expanded={mobileNav} className="lg:hidden p-2 -ml-2 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors cursor-pointer">
               {mobileNav ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
             <Link
@@ -225,13 +260,17 @@ export function Docs() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-16">
         <div className="lg:grid lg:grid-cols-[16rem_minmax(0,1fr)] lg:gap-10">
           {/* Sidebar TOC — inline column on desktop, full-height overlay panel under the nav on mobile */}
-          <aside className={`${mobileNav ? 'fixed inset-x-0 top-16 bottom-0 z-40 block overflow-y-auto bg-white dark:bg-slate-950 px-4 sm:px-6' : 'hidden'} py-6 lg:py-8 lg:block lg:sticky lg:top-16 lg:bottom-auto lg:inset-x-auto lg:z-auto lg:bg-transparent lg:px-0 lg:h-[calc(100vh-4rem)] lg:overflow-y-auto`}>
-            <p className="fl-mono text-[11px] uppercase tracking-[0.2em] text-gray-400 dark:text-slate-500 mb-3 px-3">On this page</p>
+          <aside id="docs-sections" className={`${mobileNav ? 'fixed inset-x-0 top-16 bottom-0 z-40 block overflow-y-auto bg-white dark:bg-slate-950 px-4 sm:px-6' : 'hidden'} py-6 lg:py-8 lg:block lg:sticky lg:top-16 lg:bottom-auto lg:inset-x-auto lg:z-auto lg:bg-transparent lg:px-0 lg:h-[calc(100vh-4rem)] lg:overflow-y-auto`}>
+            <p className="fl-mono text-[11px] uppercase tracking-[0.2em] text-gray-500 dark:text-slate-400 mb-3 px-3">On this page</p>
+            <label className="mb-4 mx-1 flex items-center gap-2 rounded-xl border border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900 px-3 focus-within:ring-2 focus-within:ring-primary-500/50">
+              <Search className="h-4 w-4 shrink-0 text-gray-500" />
+              <input type="search" value={sectionQuery} onChange={(event) => setSectionQuery(event.target.value)} aria-label="Find a docs section" placeholder="Find a section…" className="min-w-0 w-full bg-transparent py-3 text-sm text-gray-900 dark:text-slate-100 outline-none" />
+            </label>
             <nav className="space-y-0.5" aria-label="Docs sections">
-              {SECTIONS.map((s) => {
+              {visibleSections.map((s) => {
                 const isActive = activeId === s.id;
                 return (
-                  <a key={s.id} href={`#${s.id}`} onClick={() => { setActiveId(s.id); setMobileNav(false); }}
+                  <a key={s.id} href={`#${s.id}`} onClick={() => { setActiveId(s.id); setMobileNav(false); setSectionQuery(''); requestAnimationFrame(() => document.getElementById(s.id)?.focus({ preventScroll: true })); }}
                     aria-current={isActive ? 'true' : undefined}
                     className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors ${
                       isActive
@@ -243,24 +282,33 @@ export function Docs() {
                   </a>
                 );
               })}
+              {visibleSections.length === 0 && <p role="status" className="px-3 py-4 text-sm text-gray-500 dark:text-slate-400">No matching section. Try “AI”, “app” or “form”.</p>}
             </nav>
           </aside>
 
           {/* Content */}
-          <main className="min-w-0 py-8 lg:py-12 max-w-3xl">
+          <main id="docs-content" tabIndex={-1} className="min-w-0 py-8 lg:py-12 max-w-3xl scroll-mt-24 outline-none [overflow-wrap:anywhere]">
             <div className="mb-12">
               <p className="fl-mono text-xs uppercase tracking-[0.2em] text-primary-600 dark:text-primary-400 mb-4">Documentation</p>
-              <h1 className="fl-display text-4xl sm:text-5xl text-gray-900 dark:text-white mb-5">How to use <span className="fl-grad">FormLogic</span></h1>
+              <h1 className="fl-display text-4xl sm:text-5xl text-gray-900 dark:text-white mb-5">Build something<br /><span className="fl-grad">that works for you.</span></h1>
               <p className="text-lg text-gray-500 dark:text-slate-400 leading-relaxed">
-                A complete, step-by-step guide — from building your first form to running server-side logic,
-                viewing responses, and shipping multi-form apps. Follow it top to bottom, or jump to a section.
+                Start with a form. Turn it into an app. Connect your AI, automate the next step,
+                and keep your team’s work in one place. Choose a guide to get started.
               </p>
+              <div className="grid sm:grid-cols-2 gap-3 mt-7">
+                {START_PATHS.map((path) => <a key={path.id} href={`#${path.id}`} className="group rounded-2xl border border-gray-200 dark:border-slate-800 bg-gray-50/70 dark:bg-slate-900/50 p-5 hover:border-primary-400 dark:hover:border-primary-500/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors">
+                  <path.icon className="h-5 w-5 text-primary-600 dark:text-primary-400 mb-3" />
+                  <span className="flex items-center justify-between gap-2 font-semibold text-gray-900 dark:text-white">{path.title}<ArrowRight className="h-4 w-4 shrink-0 text-gray-400 group-hover:text-primary-500" /></span>
+                  <span className="block mt-2 text-sm leading-relaxed text-gray-600 dark:text-slate-400">{path.description}</span>
+                </a>)}
+              </div>
+              <p className="text-sm text-gray-500 dark:text-slate-400 mt-5">New here? <Link to="/packs" className="text-primary-700 dark:text-primary-300 underline underline-offset-4">Explore starter apps</Link> or <Link to="/ai-setup" className="text-primary-700 dark:text-primary-300 underline underline-offset-4">follow the guided setup</Link>. Free access, with your own AI when you need it.</p>
             </div>
 
             {/* Introduction */}
             <section className="mb-14">
               <H2 id="introduction" icon={BookOpen}>Introduction</H2>
-              <P>FormLogic is a form platform with a real backend. Unlike basic form builders, every submission can run a sandboxed server-side script, and each form stores its responses in its own portable database you can download anytime. The flow is simple:</P>
+              <P>FormLogic brings forms, dashboards, records, roles and automations into one workspace. Forms define the data. Apps give that data a home for a team or customer. A form can appear in several apps while keeping the same records and server-enforced permissions.</P>
               <div className="flex flex-wrap items-center gap-2 my-5 fl-mono text-xs">
                 <span className="px-3 py-1.5 rounded-full bg-gray-100 dark:bg-slate-900 border border-gray-200 dark:border-slate-800">a visitor submits</span>
                 <ArrowRight className="h-3.5 w-3.5 text-primary-500" />
@@ -268,21 +316,35 @@ export function Docs() {
                 <ArrowRight className="h-3.5 w-3.5 text-primary-500" />
                 <span className="px-3 py-1.5 rounded-full bg-primary-50 dark:bg-primary-500/10 border border-primary-200 dark:border-primary-500/25 text-primary-700 dark:text-primary-300">data is stored</span>
               </div>
-              <P>This guide assumes you're using the hosted app. If you want to run it yourself, jump to <a href="#self-hosting" className="text-primary-600 dark:text-primary-400 hover:underline">Self-hosting</a>.</P>
+              <P>Editable app interfaces use Softn. FormLogic hosts their private backend logic and SQLite databases. OAIY connects local AI, services and devices; Aokie adds calls, messages and appointment workflows. You can start with the visual builders and connect these when you need them.</P>
+              <P>This guide covers the current workspace. For deployment or API details, use the linked developer guides or jump to <a href="#self-hosting" className="text-primary-600 dark:text-primary-400 underline underline-offset-4">Self-hosting</a>.</P>
             </section>
 
             {/* Quick start */}
             <section className="mb-14">
               <H2 id="quick-start" icon={Rocket}>Quick start</H2>
-              <P>Go from zero to a live form in about two minutes:</P>
+              <P>Start with one form and a test response. No AI connection is needed for the visual builder.</P>
               <Steps items={[
-                <><strong className="text-gray-900 dark:text-white">Create an account</strong> on the <Link to="/signup" className="text-primary-600 dark:text-primary-400 hover:underline">sign-up page</Link>, then sign in. You land on your dashboard.</>,
-                <><strong className="text-gray-900 dark:text-white">Click “New form”</strong> and pick a starting point — a blank form, a built-in template, or generate one from a prompt or a photo with AI.</>,
+                <><strong className="text-gray-900 dark:text-white">Create an account</strong> on the <Link to="/signup" className="text-primary-600 dark:text-primary-400 underline underline-offset-4">sign-up page</Link>, then sign in. You land on your dashboard.</>,
+                <><strong className="text-gray-900 dark:text-white">Choose “New form”</strong> and start blank or from a template. To generate one with AI, <a href="#connect-ai" className="underline">connect your AI</a> first; available generation tools depend on that connection.</>,
                 <><strong className="text-gray-900 dark:text-white">Add fields</strong> from the palette and arrange them in the builder.</>,
-                <><strong className="text-gray-900 dark:text-white">Click Publish</strong> to make it live, then share the link or embed it.</>,
-                <><strong className="text-gray-900 dark:text-white">Watch responses</strong> arrive under <C>Responses</C>, and download your data anytime.</>,
+                <><strong className="text-gray-900 dark:text-white">Save the form to your account and Publish</strong>, then share its public link or embed it. Browser-local forms stay on this device.</>,
+                <><strong className="text-gray-900 dark:text-white">Submit a test response</strong>, check it under <C>Responses</C>, then add the form to an app when you want a dashboard or member access.</>,
               ]} />
-              <Figure src="/screenshots/dashboard.png" alt="FormLogic dashboard" caption="Your dashboard — every form, its responses, and quick actions in one place." />
+              <Figure src="/images/dashboard-demo/desktop-dark.jpg" alt="Current FormLogic dashboard showing fictional studio apps and activity" caption="The current dashboard, shown with fictional studio data." />
+            </section>
+
+            <section className="mb-14">
+              <H2 id="connect-ai" icon={Plug}>Connect your AI</H2>
+              <P>Open <Link to="/connect-ai" className="text-primary-700 dark:text-primary-300 underline">Connect your AI</Link>. The wizard walks through choosing a connection, testing it and making it your default. You can explore the <Link to="/ai-setup" className="underline">public setup guide</Link> before signing in; the connection wizard requires sign-in.</P>
+              <Steps items={[
+                <><strong className="text-gray-900 dark:text-white">Choose OAIY or a direct API.</strong> OAIY can connect a Codex account, a provider key or a local model. A direct API connection is configured in this browser and needs a provider that permits browser requests.</>,
+                <><strong className="text-gray-900 dark:text-white">Connect and test.</strong> In OAIY, complete Getting started, select an AI provider and approve the FormLogic pairing code. For a direct API, enter the endpoint, model and key in the provider editor and test the connection.</>,
+                <><strong className="text-gray-900 dark:text-white">Choose your default.</strong> Finish the wizard and try a small request in the workspace. The selected provider supplies the AI; its own usage limits and charges apply.</>,
+              ]} />
+              <Figure src="/images/docs/connect-ai.jpg" alt="FormLogic connection wizard offering OAIY Desktop and a direct API provider" caption="Actual connection wizard with a fictional account and no provider connected." />
+              <Tip>Browser pairing lets this browser use approved OAIY capabilities. To deliver device events and run account workflows, also link your FormLogic account in OAIY. Those are separate connections. For an external AI client, follow <a href="#mcp" className="underline">Build with your AI (MCP)</a>.</Tip>
+              <P>Operator-funded Site AI is off by default. Some specialised generation tools still require it and are unavailable when it is off. <GuideLink file="docs/FREE_PLANS_AND_AI_SETUP.md">Connection options, feature coverage and administrator setup</GuideLink>.</P>
             </section>
 
             {/* Builder */}
@@ -294,13 +356,13 @@ export function Docs() {
                 <>Select any field to edit it in the settings panel — its <strong className="text-gray-900 dark:text-white">Basic</strong> info (label, description, placeholder, required), <strong className="text-gray-900 dark:text-white">Validation</strong> rules, and conditional <strong className="text-gray-900 dark:text-white">Logic</strong>.</>,
                 <>Use the header to open <C>Theme</C>, <C>Script</C>, <C>Preview</C>, <C>Share</C>, and <C>Publish</C>. Undo / redo is always one click away.</>,
               ]} />
-              <Figure src="/screenshots/builder.png" alt="The FormLogic form builder" caption="The builder: field palette (left), canvas (centre), and the field settings panel (right)." />
+
             </section>
 
             {/* Field types */}
             <section className="mb-14">
               <H2 id="field-types" icon={ListChecks}>Field types</H2>
-              <P>FormLogic ships with a field for almost any question. Every field can be marked required and most support validation.</P>
+              <P>Choose the field that matches the answer you need. Input fields support requiredness and type-specific validation. Display-only, hidden and calculated fields do not have a required toggle.</P>
               <div className="grid sm:grid-cols-2 gap-3 my-5">
                 {FIELD_TYPES.map(([name, desc]) => (
                   <div key={name} className="rounded-xl border border-gray-200/80 dark:border-slate-800 bg-white dark:bg-slate-900/40 p-4">
@@ -315,8 +377,8 @@ export function Docs() {
             <section className="mb-14">
               <H2 id="logic" icon={GitBranch}>Validation &amp; conditional logic</H2>
               <P>Open a field's settings and switch to the <strong className="text-gray-900 dark:text-white">Validation</strong> tab to add rules — minimum / maximum length, a numeric range, or a regular-expression pattern. Rules run both in the browser and on the server, so they can't be bypassed.</P>
-              <P>The <strong className="text-gray-900 dark:text-white">Logic</strong> tab lets a field appear only when earlier answers meet a condition — for example, show a “Which competitor?” field only when someone answers “Yes, I switched”. A field that's conditionally hidden is skipped during validation and submission.</P>
-              <Tip>For anything beyond simple show/hide — scoring, cross-field checks, or calling another service — use a <a href="#scripts" className="text-primary-600 dark:text-primary-400 hover:underline">backend script</a>.</Tip>
+              <P>The <strong className="text-gray-900 dark:text-white">Logic</strong> tab lets a field appear only when earlier answers meet a condition. For example, show “Which competitor?” when someone answers “Yes, I switched”. A conditionally hidden input is no longer required, but hiding it does not erase its answer. Supplied values still go through server validation.</P>
+              <Tip>For anything beyond simple show/hide — scoring, cross-field checks, or calling another service — use a <a href="#scripts" className="text-primary-600 dark:text-primary-400 underline underline-offset-4">backend script</a>.</Tip>
             </section>
 
             {/* Theming */}
@@ -326,9 +388,9 @@ export function Docs() {
               <Bullets items={[
                 <>Primary, background, and text <strong className="text-gray-900 dark:text-white">colours</strong>, plus the <strong className="text-gray-900 dark:text-white">font</strong>.</>,
                 <>A <strong className="text-gray-900 dark:text-white">logo</strong> shown above the form and a full-page <strong className="text-gray-900 dark:text-white">background image</strong>.</>,
-                <>Choose between <strong className="text-gray-900 dark:text-white">Focused</strong> mode (one question at a time, Typeform-style) and <strong className="text-gray-900 dark:text-white">Classic</strong> mode (all questions on one page) — or let the respondent switch.</>,
               ]} />
-              <Figure src="/screenshots/form-fill.png" alt="A published form in focused mode" caption="A published form in focused mode — one question at a time, fully themed." />
+              <P>To change the layout, open <C>Settings → Presentation → Presentation mode</C>. Choose <strong>Focused</strong> for one question at a time, <strong>Classic</strong> for all questions on one page, or <strong>Both</strong> to let the respondent switch.</P>
+
             </section>
 
             {/* Scripts */}
@@ -336,18 +398,19 @@ export function Docs() {
               <H2 id="scripts" icon={Code2}>Backend scripts (onSubmit)</H2>
               <P>This is what makes FormLogic different. Click <C>Script</C> in the builder to write an <C>onSubmit(ctx)</C> function that runs <strong className="text-gray-900 dark:text-white">on the server</strong> every time the form is submitted — to validate, score, tag, compute fields, set a status, or call an external API.</P>
               <CodeBlock title="onSubmit — lead scoring">{`function onSubmit(ctx) {
-  // Read answers by field id
+  // Replace these field IDs with those shown in Form Fields.
+  // Add a hidden lead_score field to keep the computed result.
   let score = 0;
   if ((Number(ctx.answers.budget) || 0) >= 10000) score += 40;
   if (ctx.answers.role === "decision_maker") score += 30;
 
   // Store a computed field, a status, and a tag on the response
   ctx.db.setField("lead_score", score);
-  ctx.db.setStatus(score >= 50 ? "qualified" : "review");
+  ctx.db.setStatus(score >= 50 ? "approved" : "reviewed");
   if (score >= 50) ctx.db.addTag("hot-lead");
 
   // Reject a submission outright
-  if (ctx.answers.email.endsWith("@spam.com")) {
+  if (String(ctx.answers.email || "").toLowerCase().endsWith("@spam.com")) {
     return { reject: true, message: "Please use a work email." };
   }
 }`}</CodeBlock>
@@ -363,23 +426,23 @@ export function Docs() {
               <P>You don't have to write it from scratch. The Script editor includes:</P>
               <Bullets items={[
                 <><strong className="text-gray-900 dark:text-white">Starter script</strong> — generates a working example using your form's real field IDs.</>,
-                <><strong className="text-gray-900 dark:text-white">AI Generate</strong> — describe what you want in plain English and it writes the script, grounded in your fields.</>,
-                <><strong className="text-gray-900 dark:text-white">Run Test</strong> — execute the script against sample answers without saving anything, and see the computed result.</>,
+                <><strong className="text-gray-900 dark:text-white">AI assistance</strong> — use the connected chat to help write the script. A separate AI Generate tab is available only when that generation route is enabled and chat AI is unavailable.</>,
+                <><strong className="text-gray-900 dark:text-white">Run Test</strong> — use sample answers without saving a FormLogic response and inspect the computed result. HTTP calls still execute, so use test endpoints.</>,
                 <>An <strong className="text-gray-900 dark:text-white">API Reference</strong> tab with every function, and a <strong className="text-gray-900 dark:text-white">Form Fields</strong> tab listing your field IDs.</>,
               ]} />
-              <Figure src="/screenshots/script-editor.png" alt="The backend script editor's AI Generate tab" caption="The script editor — describe the logic and AI writes it using your form's fields." />
-              <Tip>Scripts run in a secure sandbox with strict limits (instruction count, wall-clock time, memory, no filesystem). <C>ctx.http</C> and <C>ctx.db</C> are <strong className="text-gray-900 dark:text-white">synchronous</strong> — call them directly, don't use <C>async</C>/<C>await</C>. A script error never blocks a submission — it's recorded and the response is still saved.</Tip>
+
+              <Tip>Scripts run in a sandbox with instruction, time and memory limits and no filesystem access. <C>ctx.http</C> and <C>ctx.db</C> are synchronous: call them directly, without <C>async</C>/<C>await</C>. If the script fails or times out, the submission is not saved. Fix the script or runtime problem, test it and retry the submission. An intentional rejection also prevents saving and returns your rejection message.</Tip>
             </section>
 
             {/* Publishing */}
             <section className="mb-14">
               <H2 id="publishing" icon={Share2}>Publishing &amp; sharing</H2>
               <Steps items={[
-                <>Click <C>Publish</C> in the builder. Your form goes live and gets a public link.</>,
+                <>Save your form to the account backend, then click <C>Publish</C>. A hosted form gets a public link; a browser-local form only publishes locally and has no public URL.</>,
                 <>Open <C>Share</C> to copy the link or grab an <strong className="text-gray-900 dark:text-white">embed</strong> snippet for your website.</>,
-                <>Re-publish anytime — changes go live instantly. Set the form to “closed” or add a response quota in <C>Settings</C> when you're done collecting.</>,
+                <>Edits to an already-published hosted form autosave and become live; they are not held for a separate republish. Close the form or change its response limit in <C>Settings</C> when you are done collecting.</>,
               ]} />
-              <Tip>Files uploaded to a <strong className="text-gray-900 dark:text-white">public standalone form</strong> can be opened by anyone with the file link. For member-only file access, collect uploads through an <strong className="text-gray-900 dark:text-white">app form</strong>, where access is gated by app membership + permissions.</Tip>
+              <Tip>Uploads are private by default. Access requires the owner, an app member with the relevant response permission, or a short-lived per-file receipt token for a standalone submission. Publishing a form does not make its uploads public. Explicitly configured public-record screens can expose selected file fields, so review those settings before sharing.</Tip>
             </section>
 
             {/* Responses */}
@@ -391,7 +454,7 @@ export function Docs() {
                 <>Filter by status (submitted, reviewed, approved, rejected…) and search across answers.</>,
                 <>File uploads appear as download links; choice answers show their human labels.</>,
               ]} />
-              <Figure src="/screenshots/responses.png" alt="The responses table" caption="The responses view — responsive columns, statuses, and one-click detail." />
+
             </section>
 
             {/* Exporting */}
@@ -403,23 +466,23 @@ export function Docs() {
                 <><strong className="text-gray-900 dark:text-white">JSON</strong> — for programmatic use.</>,
                 <><strong className="text-gray-900 dark:text-white">SQLite</strong> — the form's entire database file, queryable with any SQLite tool.</>,
               ]} />
-              <Tip>Each form is backed by its own SQLite database (responses, computed fields, tags, logs). No vendor lock-in — download it and take it anywhere.</Tip>
+              <Tip>Each form has its own SQLite database. For an encrypted private form, that database contains encrypted envelopes, not readable answers. Plaintext CSV/JSON downloads in Analytics are unavailable; use the decrypted spreadsheet export in Responses after unlocking the form.</Tip>
             </section>
 
             {/* Analytics */}
             <section className="mb-14">
               <H2 id="analytics" icon={BarChart3}>Analytics</H2>
-              <P>The analytics page shows the funnel for each form — <strong className="text-gray-900 dark:text-white">views → starts → responses</strong> — plus completion rate, average completion time, responses over time, and a per-field breakdown.</P>
-              <Figure src="/screenshots/analytics.png" alt="Form analytics" caption="Built-in analytics — views, completion rate, trends, and field-level breakdowns." />
+              <P>For a hosted form, Analytics shows <strong className="text-gray-900 dark:text-white">views → starts → responses</strong>, completion rate, average completion time and response trends. Field breakdowns may use a sample of recent responses; check the sample-size label. Encrypted answer contents are unavailable to server-side field analytics.</P>
+
             </section>
 
             {/* API access */}
             <section className="mb-14">
               <H2 id="api" icon={Terminal}>API access</H2>
-              <P>Every form has a REST API, so you can use it programmatically — submit responses from your own app, script, or device, and read or manage the data. A submission made through the API runs the <strong className="text-gray-900 dark:text-white">same pipeline as filling out the form</strong>: server-side validation, calculated fields, and your <a href="#scripts" className="text-primary-600 dark:text-primary-400 hover:underline">backend <C>onSubmit</C> script</a> (including reject, set status, and add tags). Full scripting, over HTTP.</P>
+              <P>Every form has a REST API, so you can use it programmatically — submit responses from your own app, script, or device, and read or manage the data. A submission made through the API runs the <strong className="text-gray-900 dark:text-white">same pipeline as filling out the form</strong>: server-side validation, calculated fields, and your <a href="#scripts" className="text-primary-600 dark:text-primary-400 underline underline-offset-4">backend <C>onSubmit</C> script</a> (including reject, set status, and add tags). Full scripting, over HTTP.</P>
               <P>Create a key, then send it as a Bearer token on every request:</P>
               <Steps items={[
-                <>Open <C>Settings → API keys</C> and click <strong className="text-gray-900 dark:text-white">Create key</strong>.</>,
+                <>Open <C>Settings → API keys</C> and choose <strong className="text-gray-900 dark:text-white">Create API Key</strong>.</>,
                 <>Choose its <strong className="text-gray-900 dark:text-white">scopes</strong> (grant only what's needed), and optionally restrict it to specific forms or set an expiry.</>,
                 <>Copy the key (<C>flk_…</C>) — it's shown <strong className="text-gray-900 dark:text-white">once</strong> and stored hashed. Keep it secret.</>,
               ]} />
@@ -438,21 +501,21 @@ export function Docs() {
                 <li><strong className="text-gray-900 dark:text-white">Analytics</strong> — the per-form funnel and field breakdowns (<C>responses:read</C>)</li>
                 <li><strong className="text-gray-900 dark:text-white">Webhooks</strong> — list (<C>webhooks:read</C>), create/update/delete (<C>webhooks:write</C>)</li>
               </ul>
-              <Tip>A key only ever reaches <strong className="text-gray-900 dark:text-white">your own</strong> forms, is rate-limited, and uses the base URL <C>https://&lt;your-api-host&gt;/api/v1</C>. The full endpoint reference with examples lives in <C>docs/API.md</C> in the repository.</Tip>
+              <Tip>A key only reaches permitted resources and uses the base URL <C>https://&lt;your-api-host&gt;/api/v1</C>. Keep long-lived keys on a trusted server. Hosted clients use an authenticated bridge instead of embedding keys. <GuideLink file="docs/API.md">REST endpoint reference and examples</GuideLink>.</Tip>
             </section>
 
             {/* MCP */}
             <section className="mb-14">
               <H2 id="mcp" icon={Plug}>Build with your AI (MCP)</H2>
-              <P>Point your <strong className="text-gray-900 dark:text-white">own</strong> AI — Claude, ChatGPT, Claude Code, Cursor, anything that speaks <strong className="text-gray-900 dark:text-white">MCP</strong> (Model Context Protocol) — at FormLogic and let it build and edit forms, dashboards, reports, and whole apps. Bring your own (frontier) model instead of the built-in one. Every connection is <strong className="text-gray-900 dark:text-white">scoped and revocable</strong>.</P>
-              <h3 className="scroll-mt-24 text-[15px] text-gray-700 dark:text-slate-200 font-semibold mt-6 mb-3">Connect with OAuth (Claude / ChatGPT)</h3>
+              <P>Connect an AI client that supports remote HTTP <strong className="text-gray-900 dark:text-white">MCP</strong> (Model Context Protocol) to create and edit forms, screens, dashboards, reports, flows and hosted app projects. Every connection is scoped and revocable. The client can only use tools granted by your token and account permissions.</P>
+              <h3 className="scroll-mt-24 text-[15px] text-gray-700 dark:text-slate-200 font-semibold mt-6 mb-3">Connect with OAuth</h3>
               <Steps items={[
-                <>Copy your MCP URL — <C>https://&lt;your-host&gt;/api/mcp</C> (shown in <strong className="text-gray-900 dark:text-white">Settings → Connect an AI</strong>).</>,
-                <>Add it as a <strong className="text-gray-900 dark:text-white">custom connector</strong> in Claude or ChatGPT (or <C>claude mcp add --transport http formlogic &lt;url&gt;</C> in Claude Code) — no token copying.</>,
+                <>Open <C>Settings → External AI access → Manage AI connections</C> and copy your MCP URL: <C>https://&lt;your-host&gt;/api/mcp</C>.</>,
+                <>Add that URL as a remote MCP server in your AI client and choose OAuth if the client supports it.</>,
                 <>Your browser opens FormLogic&apos;s consent page: check who&apos;s asking, optionally <strong className="text-gray-900 dark:text-white">limit the connection to one app</strong>, and approve.</>,
               ]} />
               <h3 className="scroll-mt-24 text-[15px] text-gray-700 dark:text-slate-200 font-semibold mt-6 mb-3">Or generate a manual token (other clients)</h3>
-              <P>From <strong className="text-gray-900 dark:text-white">Connect an AI</strong> — in <C>Settings</C> (all your apps), an app&apos;s <C>Manage</C> tab (that app only), or <strong className="text-gray-900 dark:text-white">&quot;Hand to an AI&quot;</strong> on the Apps page — click <strong className="text-gray-900 dark:text-white">Generate connection</strong> and paste the config into any client that supports remote/HTTP MCP servers:</P>
+              <P>Open <C>Manage AI connections</C> in Settings, or <C>Connect an AI</C> on the Apps page. For a connection limited to an existing app, use that app&apos;s <C>Manage → Connect an AI</C> action. Choose <strong className="text-gray-900 dark:text-white">Generate connection</strong> and use the supplied settings in your client. Its exact configuration format may differ; a URL and bearer-header configuration looks like:</P>
               <CodeBlock title="client config — add as a remote/HTTP MCP server">{`{
   "mcpServers": {
     "formlogic": {
@@ -468,106 +531,145 @@ export function Docs() {
                 <li><strong className="text-gray-900 dark:text-white">Apps</strong> — <C>list_apps</C>, <C>create_app</C>, <C>update_app</C> (name, slug, publish), <C>add_form_to_app</C>, <C>set_app_home</C> (a no-code widget dashboard, or a custom code screen)</li>
                 <li><strong className="text-gray-900 dark:text-white">Reports</strong> — <C>create_report</C> (charts, KPIs, tables) and <C>create_document</C> (exportable PDF pages)</li>
                 <li><strong className="text-gray-900 dark:text-white">Responses</strong> — <C>list_responses</C> (only with the <C>responses:read</C> scope)</li>
-                <li><strong className="text-gray-900 dark:text-white">Desktop</strong> — <C>desktop_status</C> and <C>connector_command</C> (drive connectors on your linked FormLogic Desktop, like the Aokie phone bridge — off by default)</li>
+                <li><strong className="text-gray-900 dark:text-white">Hosted apps</strong> — <C>get_workspace_template</C>, <C>get_app_project</C>, <C>publish_app_project</C> and <C>compose_apps</C></li>
+                <li><strong className="text-gray-900 dark:text-white">Aokie and roles</strong> — install a starter, create app roles and set form permissions and reviewed connector grants</li>
+                <li><strong className="text-gray-900 dark:text-white">OAIY</strong> — <C>desktop_status</C> and <C>connector_command</C> operate approved connectors, including the Aokie phone bridge; command access is off by default</li>
               </ul>
-              <Tip>An <strong className="text-gray-900 dark:text-white">app-scoped</strong> link is enforced: the AI only ever sees that one app&apos;s forms and can&apos;t reach anything else. To turn the <strong className="text-gray-900 dark:text-white">built-in</strong> AI off and steer everyone to bring-your-own, set <C>AI_ENABLED=false</C>. Full reference: <C>docs/MCP.md</C>.</Tip>
+              <Tip>Start with app-scoped access and grant only the capabilities needed. Read the current project and version before replacing it. Signup, email verification, OAuth consent and native device pairing still require the person using the account; MCP does not bypass them.</Tip>
+              <P><GuideLink file="docs/MCP.md">MCP setup, scopes and tool reference</GuideLink> · <Link to="/ai-setup" className="text-primary-700 dark:text-primary-300 underline">Guided setup</Link> · <a href="/llms.txt" className="text-primary-700 dark:text-primary-300 underline">Machine-readable starting point</a></P>
             </section>
 
-            {/* Cloud & billing */}
+            {/* Plans and AI setup */}
             <section className="mb-14">
-              <H2 id="cloud" icon={Cloud}>Cloud &amp; billing</H2>
-              {beta && (
-                <div className="mb-5 flex items-start gap-3 rounded-2xl border border-amber-300/60 dark:border-amber-400/25 bg-amber-50/70 dark:bg-amber-500/10 px-5 py-4">
-                  <Sparkles className="h-5 w-5 text-amber-500 dark:text-amber-400 shrink-0 mt-0.5" aria-hidden="true" />
-                  <p className="text-sm text-amber-900 dark:text-amber-100 leading-relaxed">
-                    <strong>This instance is in public beta.</strong> Cloud is free while the beta runs — new accounts get
-                    a long free window, plan limits are lifted, and checkout is paused. The pricing below is what will
-                    apply once the beta ends.
-                  </p>
-                </div>
-              )}
-              <P>FormLogic is free to use — self-host it or run it locally and everything works. <strong className="text-gray-900 dark:text-white">Cloud</strong> is optional managed hosting (we run it for you, with backups) billed <strong className="text-gray-900 dark:text-white">pay-as-you-go</strong>: every new account gets the <strong className="text-gray-900 dark:text-white">first 30 days of Cloud free</strong>, then $5 buys another 30 days — that's it, <strong className="text-gray-900 dark:text-white">no subscription and nothing auto-renews</strong>.</P>
+              <H2 id="cloud" icon={Cloud}>Free access &amp; optional support</H2>
+              <P>FormLogic is free. Create forms, apps and automations with the visual builders, and bring your own AI when you want an assistant. Your AI provider may charge separately.</P>
               <Steps items={[
-                <>Open <strong className="text-gray-900 dark:text-white">Cloud &amp; billing</strong> from the account menu (top-right).</>,
-                <>Choose how many 30-day periods you want — buying several at once just stacks them onto your expiry date.</>,
-                <>Pay with <strong className="text-gray-900 dark:text-white">PayPal</strong>. Your cloud access extends from the later of today or your current expiry, so time never overlaps or gets lost.</>,
-                <>When it lapses, nothing is deleted — you simply drop back to the free plan until you top up again.</>,
-              ]} />
-              <Bullets items={[
-                <>One-time PayPal payments — no card stored, no recurring charge.</>,
-                <>Each payment is verified on the server before any time is credited.</>,
-                <>Self-hosting? Set <C>PAYPAL_CLIENT_ID</C> / <C>PAYPAL_SECRET</C> (and optionally <C>CLOUD_PRICE_CENTS</C>) in the backend <C>.env</C> to enable purchases — leave them blank to hide billing entirely.</>,
+                <>Open <Link to="/connect-ai" className="underline">Connect your AI</Link> and choose OAIY desktop or your own API provider.</>,
+                <>For OAIY, use its Getting started guide to sign in with Codex, add a provider key, or start a local model. Approve FormLogic's pairing code in OAIY.</>,
+                <>For a direct API, save and test your provider in this browser. Select it as your default in the final wizard step.</>,
+                <>After signing in, open your account menu and choose <C>Cloud &amp; billing</C> to reach <strong>Your plan</strong>. Payments are disabled by default; if enabled, support is optional and prepaid, with no auto-renewal.</>,
+                <>Administrators can edit plan names, descriptions and prices in Admin &gt; Platform &gt; Plans. PayPal credentials alone never enable checkout. Free access continues regardless of support expiry.</>,
               ]} />
             </section>
 
             {/* Apps */}
             <section className="mb-14">
               <H2 id="apps" icon={Boxes}>Apps &amp; permissions</H2>
-              <P>An <strong className="text-gray-900 dark:text-white">App</strong> bundles several forms into a private, role-based workspace — perfect for internal tools like an HR hub or a project tracker.</P>
+              <P>An app brings forms, screens, dashboards and members together. Open its <strong className="text-gray-900 dark:text-white">App Studio</strong> to shape the experience: manage forms and records, choose screens, configure automations, then review people and roles before sharing.</P>
               <Steps items={[
-                <>Go to <C>Apps → New app</C> and add the forms it should contain.</>,
+                <>Go to <C>Apps → Create app</C> and add the forms it should contain.</>,
                 <>Define <strong className="text-gray-900 dark:text-white">roles</strong> and set per-form <strong className="text-gray-900 dark:text-white">permissions</strong> (submit, view own, view all, edit, delete, export).</>,
                 <>Invite <strong className="text-gray-900 dark:text-white">members</strong> by email and assign roles. They sign in to the app's runtime — a clean data-table interface scoped to what they're allowed to see.</>,
                 <>Use <strong className="text-gray-900 dark:text-white">linked records</strong> to relate responses across forms (e.g. an interview linked to a candidate).</>,
               ]} />
 
               <h3 className="scroll-mt-24 text-[15px] text-gray-700 dark:text-slate-200 font-semibold mt-8 mb-3">No-code dashboards</h3>
-              <P>Every app — and every form section — opens on a <strong className="text-gray-900 dark:text-white">dashboard you can build without code</strong>. Add widgets to a drag-and-drop grid: big-number <strong className="text-gray-900 dark:text-white">KPIs</strong>, bar / line / area / pie <strong className="text-gray-900 dark:text-white">charts</strong>, tables, and recent-record lists — each backed by a live query over your forms and drawn with real charts. Click <C>Edit dashboard</C> to rearrange, resize, or change any widget's query and chart type, exactly like building a report.</P>
-              <Figure src="/screenshots/app-dashboard.png" alt="An app's no-code widget dashboard" caption="An app dashboard — KPIs, live charts, and recent activity, all configured without writing code." />
+              <P>Use a widget dashboard as an app home or form section. Add KPIs, charts, tables and recent-record lists backed by your forms. Click <C>Edit dashboard</C> to rearrange, resize or configure widgets. For an editable app interface that opens the same tools, use <a href="#hosted-apps" className="underline">Create connected dashboard</a>.</P>
+
               <P>Two more ways to shape an app:</P>
               <Bullets items={[
                 <><strong className="text-gray-900 dark:text-white">Reports</strong> — build cross-form queries (bar, pie, KPI, table) and export them to PDF, with no SQL to write.</>,
                 <><strong className="text-gray-900 dark:text-white">Custom screens</strong> — for total control, drop in a sandboxed HTML/CSS/JS screen (hand-written or AI-generated) as an app home or a form section — the same SDK powers public form links and embeds.</>,
               ]} />
+              <Tip>Adding the same form to another app shares its records; it does not copy them. Review roles in each app. <GuideLink file="docs/ONE_BACKEND_MANY_PORTALS.md">One backend, many portals</GuideLink>.</Tip>
+            </section>
+
+            <section className="mb-14">
+              <H2 id="hosted-apps" icon={Code2}>Host an editable app</H2>
+              <P>Softn powers portable interfaces made from <C>.ui</C> screens and <C>.logic</C> code. FormLogic can host the interface alongside private backend actions and a separate SQLite database. The interface stays editable and downloadable.</P>
+              <h3 className="text-lg font-semibold mt-6 mb-3">Use your existing forms and records</h3>
+              <Steps items={[
+                <>Open your app&apos;s <C>App Studio → Screens</C> and choose <C>Create connected dashboard</C>.</>,
+                <>Preview the starter. It lists the app&apos;s forms and tools, reads permitted recent records and opens existing form screens.</>,
+                <>Choose <C>Use as app home</C> when ready. The original home is retained so you can restore it.</>,
+                <>Use <C>Download starter</C> to edit the portable client further. Existing chart widgets are not automatically converted into this starter.</>,
+              ]} />
+              <h3 className="text-lg font-semibold mt-6 mb-3">Build custom screens and private actions</h3>
+              <Steps items={[
+                <>In <C>Screens → App hosting</C>, start from the working notes project or import a client <C>.softn</C> bundle. Review the imported interface and its backend requirements.</>,
+                <>Define named private actions with <C>onRequest(ctx)</C>. Set each action&apos;s access to owner or member and its database mode to read or write.</>,
+                <>Call actions from the client with <C>softn.backend.call</C>. The host handles the signed-in session; the client receives no account token.</>,
+                <>Publish the project and preview it. Publish the parent app and give members access separately before sharing it with them.</>,
+              ]} />
+              <CodeBlock title="client .logic — call a private backend action">{`let notes = [];
+let message = "";
+
+function _init() {
+  softn.backend.call("listNotes", {}, function(response) {
+    if (response.error) { message = response.error; return; }
+    notes = response.result;
+  });
+}`}</CodeBlock>
+              <P>Private actions use bounded <C>ctx.db.get</C>, <C>list</C>, <C>put</C> and <C>remove</C> operations inside a transaction. They do not expose arbitrary SQL or network access. A member action must check <C>ctx.user.id</C> itself when records need finer ownership rules.</P>
+              <Tip><strong>Choose the right export.</strong> Download client contains public interface files. Save project copy includes private action source. Download database includes the deployment and records. Downloaded clients need a compatible authenticated FormLogic host for live records; they contain neither credentials nor an offline database.</Tip>
+              <P>Local app storage, hosted app databases and existing form response databases are separate. Importing a client does not migrate its records or automatically wire local forms to backend actions. <GuideLink file="docs/HOSTED_APPS.md">Hosting API, examples, limits and backups</GuideLink> · <GuideLink file="docs/CONNECTED_APPS.md">Connected dashboard guide</GuideLink>.</P>
+            </section>
+
+            <section className="mb-14">
+              <H2 id="aokie" icon={Phone}>Aokie calls &amp; appointments</H2>
+              <P>The Aokie starter gives your team a front desk for calls, appointments, messages, transcript turns, follow-ups and device logs. Its portable interface uses the same permission-checked FormLogic records as the rest of your app.</P>
+              <Figure src="/images/docs/aokie-front-desk.png" alt="Current Aokie front desk with Calls, Appointments, Messages, Transcripts, Follow-ups and Device logs" caption="The running Aokie app, shown with fictional call records." />
+              <Steps items={[
+                <>Find <strong>Aokie Receptionist</strong> in <Link to="/packs" className="underline">Starter apps</Link>, review its forms and capabilities, then install it in your account.</>,
+                <>Install Aokie in OAIY, connect a supported Bluetooth dongle and pair your phone. Follow <Link to="/aokie" className="underline">the Aokie setup guide</Link> for the hardware steps.</>,
+                <>Configure and test speech recognition, your language model and text-to-speech in OAIY. Link FormLogic and select the destination app in Device Setup.</>,
+                <>Make a controlled test call. Check the call record and transcript in the app, then verify an appointment request reaches the Appointments view. Review it before treating it as confirmed.</>,
+              ]} />
+              <P>Use <strong>Open call controls</strong>, <strong>Manage appointments</strong> and <strong>Manage messages</strong> to reach the relevant tools. Outbound calls, interruption handling, SMS and missed-call callbacks depend on the configured phone, runtime and flows. Auto-answer is off by default.</P>
+              <h3 className="text-lg font-semibold mt-6 mb-3">Add Aokie to an app you already use</h3>
+              <Steps items={[
+                <>Open the destination app&apos;s <C>App Studio → Screens → Add from another app</C> and select Aokie.</>,
+                <>Share Calls and Appointments to add a <strong>Front desk</strong> view alongside your existing home. Include the other receptionist forms for transcripts, logs, messages and follow-ups.</>,
+                <>Review destination roles. The forms and records are shared; automation stays in the source unless you explicitly select <C>Move automation here too</C> and approve the connector capabilities.</>,
+                <>If you move automation, review Device Setup and reload open source tabs before testing the new destination.</>,
+              ]} />
+              <P><GuideLink file="docs/CONNECTED_APPS.md">App composition and portable front desk</GuideLink> · <GuideLink file="docs/AOKIE_OPERATIONS.md">Aokie operations</GuideLink> · <GuideLink file="docs/AOKIE_TROUBLESHOOTING.md">Call and audio troubleshooting</GuideLink>.</P>
             </section>
 
             {/* Packs */}
             <section className="mb-14">
               <H2 id="packs" icon={Package}>Packs &amp; templates</H2>
-              <P>Packs are complete, ready-made <strong className="text-gray-900 dark:text-white">apps</strong> — forms, workflow, and a live dashboard — you can install in one click from the <Link to="/packs" className="text-primary-600 dark:text-primary-400 hover:underline">marketplace</Link>. Dozens of them span real trades and teams: HR &amp; onboarding, customer service, property maintenance, construction site diaries, short-stay turnovers, field service, fitness studios, catering, and more.</P>
+              <P>Packs provide starter forms, screens and workflows for a business use case. Browse <Link to="/packs" className="text-primary-600 dark:text-primary-400 underline underline-offset-4">Starter apps</Link> without signing in, including Aokie, trades, hospitality, customer service and team operations.</P>
+              <Figure src="/images/docs/starter-apps.jpg" alt="The public FormLogic starter-app catalogue" caption="The current starter-app catalogue, available before sign-in." />
               <Bullets items={[
-                <><strong className="text-gray-900 dark:text-white">Try any pack live in the demo</strong> before you commit — no sign-up needed.</>,
-                <>Open a pack to preview its forms and dashboard, then install it into your account with one click.</>,
+                <>Open a pack to inspect its forms and capabilities. Use the live demo link where a seeded demo is available.</>,
+                <>Sign in, complete the capability review and install it into your account. Configure roles, connections and workflows for your own use.</>,
+                <>If the live marketplace is unavailable, the gallery labels its bundled preview. You can browse that catalogue, but installation requires a working server connection.</>,
                 <>Built something useful? In the builder, choose <C>Publish as pack</C> to share your work with the marketplace.</>,
               ]} />
-              <Figure src="/screenshots/marketplace.png" alt="The pack marketplace" caption="The marketplace — every pack is a complete app with a live dashboard. Try it in the demo, or publish your own." />
+
             </section>
 
             {/* Flows & Desktop */}
             <section className="mb-14">
-              <H2 id="flows" icon={Workflow}>Flows &amp; Desktop</H2>
-              <P><strong className="text-gray-900 dark:text-white">Flows</strong> run your busywork. A flow is a <strong className="text-gray-900 dark:text-white">trigger</strong> — a form submission, a schedule, or a device event like an incoming call — plus a chain of nodes: branches, loops, record reads and writes, AI calls, and speech. Build them visually at <C>/flows</C>, test-run them in place, and they execute right in your browser.</P>
-              <Figure src="/screenshots/flows.png" alt="The Flows workspace" caption="The Flows workspace — the Aokie Receptionist pack's flows: caller lookup, live reply, call summary, SMS drafts." />
+              <H2 id="flows" icon={Workflow}>Automations &amp; OAIY</H2>
+              <P>Open <strong>Automations</strong> to build a flow: an event starts it, nodes read or transform data, and actions write records or use an approved connector. Begin with a manual test, inspect the run history and then enable the trigger you need. Workspace flows support <C>form.submitted</C>; connector events such as Aokie calls need a flow within an app.</P>
+
               <Bullets items={[
-                <><strong className="text-gray-900 dark:text-white">FormLogic Desktop</strong> — a companion desktop app that pairs with your account and runs your flows <em>headlessly</em>, so automations keep working when the browser is closed. It also hosts local AI services (a llama.cpp LLM server and a speech server) that AI and speech nodes use by default — no API keys required.</>,
-                <><strong className="text-gray-900 dark:text-white">AI services</strong> — point AI nodes at the Desktop's local models, or add any OpenAI-compatible provider from the AI services panel in the Flows header.</>,
-                <><strong className="text-gray-900 dark:text-white">The Aokie Receptionist</strong> — the flagship pack ties it together: an AI phone receptionist that answers real calls on the Desktop with local speech-to-text, a local LLM, and text-to-speech. Live calls stream into a front-desk console, and every call lands as records — calls with chat-style transcripts, customers, bookings, orders, and SMS threads — that your flows act on.</>,
+                <><strong className="text-gray-900 dark:text-white">Browser runs</strong> execute while the workspace is open. Check the selected execution target when testing.</>,
+                <><strong className="text-gray-900 dark:text-white">OAIY background runs</strong> need OAIY running with a linked account, the relevant flow configured for that runtime and the required connector grants. Pairing the browser alone does not enable background execution.</>,
+                <><strong className="text-gray-900 dark:text-white">AI and speech</strong> use the provider and services configured for the runtime. Test each service before debugging a whole conversation flow.</>,
+                <><strong className="text-gray-900 dark:text-white">Aokie events</strong> feed caller lookup, appointment requests, summaries and follow-up work into FormLogic. Check the event destination and run history if calls work locally but records do not appear.</>,
               ]} />
+              <P><GuideLink file="docs/FORMLOGIC_FLOWS.md">Flow nodes, bindings, execution and run history</GuideLink>.</P>
             </section>
 
             {/* Self-hosting */}
             <section className="mb-14">
               <H2 id="self-hosting" icon={Server}>Self-hosting</H2>
-              <P>FormLogic runs entirely on your own infrastructure — PHP backend, static frontend, MySQL for global data, and SQLite per form. There's no Node runtime requirement on the server (scripts run in a vendored sandbox).</P>
-              <P>Two assisted installers live in <C>formlogic/</C>:</P>
+              <P>FormLogic can run on your infrastructure: PHP 8.2+, MySQL 8+, SQLite for form responses and hosted apps, and a static frontend. Node.js is needed for building the frontend, not for running the PHP API. Include the packaged sandbox binaries and generated app host assets.</P>
+              <P><strong>Prepare a source checkout before running an installer.</strong> Keep <C>softn.com</C> beside <C>formlogic.com</C>, install dependencies in the Softn repository and in <C>formlogic/ui</C>, then run this from <C>formlogic/ui</C>:</P>
+              <CodeBlock title="required before the frontend build or CLI installer">{`npm run build:hosted-runtime`}</CodeBlock>
+              <P>Every frontend build checks for these generated assets. A fresh clone without them cannot complete <C>npm run build</C> or the CLI installer. A deployment using prepared build artifacts must include the matching runtime directory.</P>
+              <P>Then choose an assisted installer in <C>formlogic/</C>:</P>
               <Bullets items={[
                 <><strong className="text-gray-900 dark:text-white">Web wizard</strong> — serve the repo and open <C>.../formlogic/install.php</C>. It checks requirements, tests the database, writes config, and (optionally) seeds the marketplace with the ready-made app packs plus a no-signup demo.</>,
                 <><strong className="text-gray-900 dark:text-white">CLI</strong> — run <C>./install.sh</C> from <C>formlogic/</C>. Same seeding; skip it with <C>SEED_DEMO=0 ./install.sh</C>.</>,
               ]} />
-              <CodeBlock title="manual setup (summary)">{`# 1. Create the database
-mysql -u root -p -e "CREATE DATABASE formlogic CHARACTER SET utf8mb4;"
-
-# 2. Backend
-cd formlogic/backend && composer install
-cp .env.example .env        # set DB creds + a 32+ char JWT_SECRET
-
-# 3. Frontend
-cd ../ui && npm install && npm run build
-
-# 4. (Optional) seed the marketplace + demo with the sample app packs
-cd ../backend && php bin/provision-demo.php`}</CodeBlock>
+              <P>Use the <GuideLink file="formlogic/README.md">developer setup guide</GuideLink> for database initialization, environment variables and local servers. The CLI builds the web client. For a manual setup, run <C>npm run build</C> from <C>formlogic/ui</C> after preparing the runtime.</P>
+              <P>Include the generated <C>public/hosted-runtime/</C> assets in deployment and follow their static-file header requirements. Back up hosted app databases separately from form exports. <GuideLink file="docs/HOSTED_APPS.md">Hosted app deployment and backups</GuideLink> · <GuideLink file="DEPLOYMENT.md">Production deployment guide</GuideLink>.</P>
               <Tip><strong className="text-gray-900 dark:text-white">One domain is all you need.</strong> The frontend calls the API at <C>/api</C> on the <strong className="text-gray-900 dark:text-white">same origin</strong> by default, so you can serve the app and its API from a single domain with no CORS setup — point your web server's <C>/api</C> at the PHP backend and serve the built UI for everything else. Only set <C>VITE_API_URL</C> (at build time) and <C>CORS_ORIGIN</C> if you deliberately put the API on a <em>separate</em> host.</Tip>
-              <P>FormLogic is source-available — the full source, README, and deployment guide live on <a href="https://github.com/f2i-com/formlogic.com" target="_blank" rel="noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline">GitHub</a> (production hardening: set <C>APP_ENV=production</C>, strong secrets, HTTPS). You can self-host and modify it freely under the project's <a href="https://github.com/f2i-com/formlogic.com/blob/main/LICENSE" target="_blank" rel="noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline">license</a>. If it's useful to you, a <strong className="text-gray-900 dark:text-white">star</strong> is hugely appreciated.</P>
+              <P>FormLogic is source-available — the full source, README, and deployment guide live on <a href="https://github.com/f2i-com/formlogic.com" target="_blank" rel="noreferrer" className="text-primary-600 dark:text-primary-400 underline underline-offset-4">GitHub</a> (production hardening: set <C>APP_ENV=production</C>, strong secrets, HTTPS). You can self-host and modify it freely under the project's <a href="https://github.com/f2i-com/formlogic.com/blob/main/LICENSE" target="_blank" rel="noreferrer" className="text-primary-600 dark:text-primary-400 underline underline-offset-4">license</a>. If it's useful to you, a <strong className="text-gray-900 dark:text-white">star</strong> is hugely appreciated.</P>
             </section>
 
             {/* Security */}
@@ -576,7 +678,7 @@ cd ../backend && php bin/provision-demo.php`}</CodeBlock>
               <Bullets items={[
                 <><strong className="text-gray-900 dark:text-white">Sandboxed scripts</strong> — user code runs with instruction, time, memory, and call-depth limits, and no filesystem or DOM access. Optional <C>ctx.http</C> calls are brokered by the server with SSRF and DNS-pinning protection plus timeout, redirect, and response-size limits.</>,
                 <><strong className="text-gray-900 dark:text-white">Server-enforced rules</strong> — validation and submission limits can't be tampered with from the browser.</>,
-                <><strong className="text-gray-900 dark:text-white">Sessions</strong> — HttpOnly + Secure cookies with CSRF protection; rate limiting on sensitive endpoints.</>,
+                <><strong className="text-gray-900 dark:text-white">Sessions</strong> — HttpOnly cookies, CSRF protection and rate limits on sensitive endpoints. Production deployments should use HTTPS and Secure cookies; local HTTP development has different cookie settings.</>,
                 <><strong className="text-gray-900 dark:text-white">Hash-chained audit log</strong> and a portable per-form database — your data stays yours.</>,
               ]} />
               <div className="mt-10 rounded-2xl border border-primary-200/70 dark:border-primary-500/25 bg-primary-50/60 dark:bg-primary-500/[0.07] p-7 text-center">
@@ -586,7 +688,24 @@ cd ../backend && php bin/provision-demo.php`}</CodeBlock>
               </div>
             </section>
 
-            <div className="border-t border-gray-200/80 dark:border-slate-900 pt-8 flex items-center justify-between fl-mono text-xs text-gray-400 dark:text-slate-500">
+            <section className="mb-14">
+              <H2 id="troubleshooting" icon={LifeBuoy}>Troubleshooting &amp; deeper guides</H2>
+              <div className="space-y-3">
+                {[
+                  { title: 'AI is connected, but generation is unavailable', body: 'Reopen Connect your AI, test the selected provider and check the default. Some specialised tools need operator-funded Site AI. An OAIY pairing and an account link serve different purposes.', file: 'docs/FREE_PLANS_AND_AI_SETUP.md', label: 'AI setup and feature coverage' },
+                  { title: 'An app preview is blank or cannot load records', body: 'Confirm the app host assets were built and served correctly. Preview as the owner, then check the parent app publication status and member access. Downloaded clients need the authenticated host bridge for live data.', file: 'docs/HOSTED_APPS.md', label: 'Hosting diagnostics and deployment' },
+                  { title: 'Calls work, but appointments or transcripts are missing', body: 'Check the linked FormLogic account and destination in OAIY, the app’s shared forms and the event or flow run history. Appointment requests remain requests until staff or an explicit flow confirms them.', file: 'docs/AOKIE_TROUBLESHOOTING.md', label: 'Aokie troubleshooting' },
+                  { title: 'An AI client cannot see an app or use a tool', body: 'Review token expiry, app confinement and the required scopes. Publishing projects and assigning connector grants require additional scopes. Reconnect with only the extra permissions you need.', file: 'docs/MCP.md', label: 'MCP tools and permissions' },
+                ].map((item) => <details key={item.title} className="group rounded-xl border border-gray-200 dark:border-slate-800 bg-gray-50/60 dark:bg-slate-900/40 p-4 sm:p-5">
+                  <summary className="cursor-pointer font-semibold text-gray-900 dark:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 rounded">{item.title}</summary>
+                  <p className="mt-3 text-sm leading-relaxed text-gray-600 dark:text-slate-300">{item.body}</p>
+                  <p className="mt-3 text-sm"><GuideLink file={item.file}>{item.label}</GuideLink></p>
+                </details>)}
+              </div>
+              <P><span className="block mt-6">For implementation details, examples and operator references, start with the <GuideLink file="docs/README.md">documentation index</GuideLink>. It separates current guides from historical design notes.</span></P>
+            </section>
+
+            <div className="border-t border-gray-200/80 dark:border-slate-900 pt-8 flex items-center justify-between fl-mono text-xs text-gray-500 dark:text-slate-400">
               <span>&copy; {new Date().getFullYear()} FormLogic</span>
               <div className="flex gap-5">
                 <Link to="/" className="hover:text-gray-700 dark:hover:text-slate-300 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors">Home</Link>

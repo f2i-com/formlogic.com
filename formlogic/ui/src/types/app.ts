@@ -29,6 +29,9 @@ export const KIND_LABELS: Record<AppKind, string> = {
 };
 
 export interface AppSettings {
+  /** Use the published portable project for the app's home dashboard. */
+  hostedDashboard?: boolean;
+  aokieWorkspace?: boolean;
   allowSelfRegistration: boolean;
   requireApproval: boolean;
   defaultRoleId?: string;

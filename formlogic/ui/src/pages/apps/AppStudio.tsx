@@ -327,7 +327,7 @@ export function AppStudio() {
         chat launcher is positioned by VIEWPORT, so `sm:` really is the right unit for
         its clearance.
       */}
-      <div className="@container/studio mx-auto max-w-[1540px] p-4 pb-6 sm:p-6 sm:pb-28 lg:p-7 lg:pb-28">
+      <div className="@container/studio mx-auto max-w-[1540px] px-5 py-5 pb-8 sm:p-7 sm:pb-28 lg:p-8 lg:pb-28">
         {/* The section's own name, painted. It was `sr-only`, so the studio had no
             visible page title at all and the flattest type hierarchy in the app. */}
         <div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">

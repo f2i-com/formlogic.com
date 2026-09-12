@@ -1,14 +1,13 @@
 // The create-app entry (/apps/new): name the app, then land straight in the
 // App Studio wizard — creating and editing share ONE surface (owner direction).
 //
-// AI availability routes the entry: with a usable default AI the name card
-// mentions the copilot; with none, the "Connect your AI" doors appear FIRST as
-// a precursor (never a tollgate — "Continue without AI" is always one click).
+// AI readiness is checked in the background. Creation stays available while
+// optional connection controls expand in place, preserving the app draft.
 // Deliberately minimal: attaching existing forms happens in the studio's Data
 // step, companion apps are created from an app's Forms manager.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Boxes, Check, HardDrive, Package, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Boxes, Check, HardDrive, Package, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -22,21 +21,21 @@ import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
 import { useVaultStore } from '../../stores/vaultStore';
 import { cn } from '../../lib/utils';
-import type { AppFormPrivacyDefault } from '../../types/app';
+import type { AppFormPrivacyDefault, AppKind } from '../../types/app';
 
-type Phase = 'checking' | 'connect' | 'name';
 
 export function AppCreateStart() {
   const navigate = useNavigate();
   const createApp = useAppStore((s) => s.createApp);
   const isDemo = useAuthStore((s) => !!s.user?.isDemo);
-  const [phase, setPhase] = useState<Phase>('checking');
   const [aiReady, setAiReady] = useState(false);
   const [rechecking, setRechecking] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [formPrivacy, setFormPrivacy] = useState<AppFormPrivacyDefault>('plain');
   const [creating, setCreating] = useState(false);
+  const createLock = useRef(false);
+  const [appKind, setAppKind] = useState<AppKind>('internal');
   const [showVaultSetup, setShowVaultSetup] = useState(false);
   const [showVaultUnlock, setShowVaultUnlock] = useState(false);
 
@@ -48,10 +47,10 @@ export function AppCreateStart() {
       (res) => {
         if (cancelled) return;
         setAiReady(res.ready);
-        setPhase(res.ready ? 'name' : 'connect');
+
       },
       () => {
-        if (!cancelled) setPhase('connect');
+        if (!cancelled) setAiReady(false);
       }
     );
     return () => {
@@ -67,10 +66,12 @@ export function AppCreateStart() {
       setAiReady(res.ready);
       if (res.ready) {
         toast.success('AI connected', 'Your default AI is ready — the studio can now plan and build with you.');
-        setPhase('name');
+
       } else {
         toast.info('Not connected yet', res.reason ?? 'No usable default AI was found.');
       }
+    } catch {
+      toast.error('Connection check failed', 'You can still create your app and connect AI later.');
     } finally {
       setRechecking(false);
     }
@@ -78,37 +79,38 @@ export function AppCreateStart() {
 
   const create = async () => {
     const trimmed = name.trim();
-    if (!trimmed || creating) return;
-
-    // A private default is fail-closed: pause app creation until the vault is
-    // ready. The selection must never create a plaintext app that merely looks
-    // encrypted.
-    if (formPrivacy === 'private') {
-      if (isDemo) {
-        toast.info('Already private to this browser', 'Demo projects stay in IndexedDB and are never uploaded. Sign up to use end-to-end encrypted forms.');
-        return;
-      }
-      let vaultStatus = useVaultStore.getState().status;
-      if (vaultStatus === 'unknown') {
-        await useVaultStore.getState().refreshStatus();
-        vaultStatus = useVaultStore.getState().status;
-      }
-      if (vaultStatus === 'none') {
-        setShowVaultSetup(true);
-        return;
-      }
-      if (vaultStatus !== 'unlocked') {
-        setShowVaultUnlock(true);
-        return;
-      }
-    }
-
+    if (!trimmed || createLock.current) return;
+    createLock.current = true;
     setCreating(true);
     try {
+
+      // A private default is fail-closed: pause app creation until the vault is
+      // ready. The selection must never create a plaintext app that merely looks
+      // encrypted.
+      if (formPrivacy === 'private') {
+        if (isDemo) {
+          toast.info('Already private to this browser', 'Demo projects stay in IndexedDB and are never uploaded. Sign up to use end-to-end encrypted forms.');
+          return;
+        }
+        let vaultStatus = useVaultStore.getState().status;
+        if (vaultStatus === 'unknown') {
+          await useVaultStore.getState().refreshStatus();
+          vaultStatus = useVaultStore.getState().status;
+        }
+        if (vaultStatus === 'none') {
+          setShowVaultSetup(true);
+          return;
+        }
+        if (vaultStatus !== 'unlocked') {
+          setShowVaultUnlock(true);
+          return;
+        }
+      }
+
       const app = await createApp({
         name: trimmed,
         description: description.trim() || undefined,
-        settings: { defaultFormPrivacy: formPrivacy },
+        settings: { defaultFormPrivacy: formPrivacy, appKind },
       });
       if (app) {
         // Brand-new apps land on the studio's Overview (the /studio redirect).
@@ -119,6 +121,7 @@ export function AppCreateStart() {
     } catch {
       toast.error('Creation failed', 'An unexpected error occurred. Please try again.');
     } finally {
+      createLock.current = false;
       setCreating(false);
     }
   };
@@ -134,49 +137,23 @@ export function AppCreateStart() {
         }
       />
       <main className="mx-auto max-w-3xl px-4 pb-32 pt-6 sm:pb-16 sm:pt-8">
-        {phase === 'checking' && (
-          <div className="flex items-center justify-center py-24" role="status" aria-label="Checking your AI setup">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
-          </div>
-        )}
-
-        {phase === 'connect' && (
+        {(
           <>
-            <h1 className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">
-              <Sparkles className="h-6 w-6 text-primary-600 dark:text-primary-300" />
-              Want an AI copilot for this app?
-            </h1>
-            <p className="mt-2 max-w-xl text-sm leading-relaxed text-gray-500 dark:text-slate-400">
-              No AI is connected yet. Connect one and the App Studio can plan, sketch and build
-              with you — or skip this and build everything by hand. You can connect an AI later
-              at any time.
-            </p>
-            <div className="mt-6">
-              <ConnectAiDoors />
-            </div>
-            <div className="mt-6 flex flex-col items-center gap-3 sm:flex-row sm:justify-between">
-              <Button variant="secondary" onClick={recheck} isLoading={rechecking} leftIcon={<RefreshCw className="h-4 w-4" />}>
-                I've connected it — check again
-              </Button>
-              <Button onClick={() => setPhase('name')} rightIcon={<ArrowRight className="h-4 w-4" />}>
-                Continue without AI
-              </Button>
-            </div>
-          </>
-        )}
-
-        {phase === 'name' && (
-          <>
-            <h1 className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">
+            <h2 className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">
               <Boxes className="h-6 w-6 text-primary-600 dark:text-primary-300" />
               Create a new app
-            </h1>
+            </h2>
             <p className="mt-2 max-w-xl text-sm leading-relaxed text-gray-500 dark:text-slate-400">
               {aiReady
                 ? 'Name it and step into the App Studio — plan it with AI, sketch it as a diagram, or build it by hand. Everything is editable later.'
                 : 'Name it and step into the App Studio — a guided, skippable builder for data, screens, automations and access. Everything is editable later.'}
             </p>
 
+            {!aiReady && <details className="mt-5 rounded-xl border border-gray-200 dark:border-slate-700 p-4">
+              <summary className="cursor-pointer text-sm font-medium text-gray-700 dark:text-slate-200">Optional: connect an AI copilot</summary>
+              <div className="mt-4"><ConnectAiDoors /></div>
+              <Button className="mt-3" variant="secondary" onClick={() => void recheck()} isLoading={rechecking} leftIcon={<RefreshCw className="h-4 w-4" />}>Check connection</Button>
+            </details>}
             <section className="mt-6 rounded-2xl border border-gray-200/80 bg-white p-5 shadow-sm dark:border-slate-700/60 dark:bg-slate-900 sm:p-6">
               {isDemo && (
                 <div className="mb-5 flex items-start gap-3 rounded-xl border border-primary-200/80 bg-primary-50/70 p-3 text-primary-800 dark:border-primary-500/20 dark:bg-primary-500/10 dark:text-primary-200">
@@ -187,6 +164,16 @@ export function AppCreateStart() {
                 </div>
               )}
               <div className="space-y-4">
+                <fieldset>
+                  <legend className="mb-2 text-sm font-semibold text-gray-700 dark:text-slate-200">What are you building?</legend>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([['internal', 'Internal tool'], ['client', 'Client portal'], ['public', 'Public intake'], ['custom', 'Custom app']] as const).map(([value, label]) => (
+                      <label key={value} className={cn('flex min-h-12 cursor-pointer items-center gap-2 rounded-xl border p-3 text-sm', appKind === value ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300' : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300')}>
+                        <input type="radio" name="app-kind" value={value} checked={appKind === value} disabled={creating} onChange={() => setAppKind(value)} />{label}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
                 <div>
                   <label htmlFor="new-app-name" className="mb-1.5 block text-xs font-semibold text-gray-600 dark:text-slate-300">
                     App name
@@ -198,6 +185,8 @@ export function AppCreateStart() {
                     onKeyDown={(e) => { if (e.key === 'Enter') void create(); }}
                     placeholder="e.g. Plumbing Operations, Client Portal"
                     autoFocus
+                    disabled={creating}
+                    maxLength={120}
                   />
                 </div>
                 <div>
@@ -210,6 +199,7 @@ export function AppCreateStart() {
                     onChange={(e) => setDescription(e.target.value)}
                     placeholder="One or two sentences — shown to members and used by the AI when planning."
                     rows={3}
+                    disabled={creating}
                     className="min-h-24 resize-none"
                   />
                 </div>
@@ -231,6 +221,7 @@ export function AppCreateStart() {
                         name="new-app-privacy"
                         value="plain"
                         checked={formPrivacy === 'plain'}
+                        disabled={creating}
                         onChange={() => setFormPrivacy('plain')}
                         className="sr-only"
                       />
@@ -251,7 +242,7 @@ export function AppCreateStart() {
                     </label>
 
                     <label
-                      aria-disabled={isDemo}
+                      aria-disabled={isDemo || creating}
                       className={cn(
                         'relative flex gap-3 rounded-xl border p-4 transition',
                         isDemo ? 'cursor-not-allowed border-gray-200 bg-gray-50/70 opacity-65 dark:border-white/10 dark:bg-white/[0.02]' : 'cursor-pointer',
@@ -266,7 +257,7 @@ export function AppCreateStart() {
                         value="private"
                         checked={formPrivacy === 'private'}
                         onChange={() => setFormPrivacy('private')}
-                        disabled={isDemo}
+                        disabled={isDemo || creating}
                         className="sr-only"
                       />
                       <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-emerald-600 shadow-sm ring-1 ring-emerald-200 dark:bg-slate-800 dark:text-emerald-300 dark:ring-emerald-500/20">

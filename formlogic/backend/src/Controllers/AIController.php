@@ -79,7 +79,7 @@ class AIController
             'available' => $isConfigured,
             'enabled' => $enabled,
             'message' => !$enabled
-                ? 'The in-app AI is turned off (AI_ENABLED=false). Connect an external AI via the MCP server instead.'
+                ? 'Operator-funded Site AI is disabled. Open Connect your AI to use OAIY or your own API provider.'
                 : ($isConfigured
                     ? 'AI service is configured and ready'
                     : 'AI service is not configured. Set AI_BASE_URL to a local/OpenAI-compatible server (LM Studio, Ollama, …) — add AI_API_KEY only if your provider requires one.'),

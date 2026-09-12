@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Menu, Moon, Star, Sun, X } from 'lucide-react';
 import { FormLogicMark } from './shared';
@@ -23,6 +23,25 @@ function GithubMark({ size = 15 }: { size?: number }) {
 
 export function LandingNav() {
   const [open, setOpen] = useState(false);
+  const menuButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const desktop = window.matchMedia('(min-width: 900px)');
+    const onResize = () => { if (desktop.matches) setOpen(false); };
+    desktop.addEventListener('change', onResize);
+    return () => desktop.removeEventListener('change', onResize);
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setOpen(false); menuButton.current?.focus(); }
+    };
+    document.addEventListener('keydown', onKey);
+    const onOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !menuButton.current?.closest('nav')?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', onOutside);
+    return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('pointerdown', onOutside); };
+  }, [open]);
   const close = () => setOpen(false);
   // The same persisted theme the whole product uses (App syncs it onto <html>): the landing's
   // light bands, the docs page, and the app runtime all follow this toggle.
@@ -32,19 +51,22 @@ export function LandingNav() {
   return (
     <nav className="lv2-nav" aria-label="FormLogic primary navigation">
       <div className="lv2-container lv2-nav__inner">
-        <a href="#top" className="lv2-nav__brand" aria-label="FormLogic home" onClick={close}>
+        <a href="/#top" className="lv2-nav__brand" aria-label="FormLogic home" onClick={close}>
           <FormLogicMark />
         </a>
 
         <div id="lv2-nav-links" className={`lv2-nav__links${open ? ' lv2-open' : ''}`}>
-          <a href="#platform" onClick={close}>Product</a>
-          <a href="#aokie" onClick={close}>Aokie</a>
-          <a href="#desktop" onClick={close}>Desktop</a>
+          <a href="/#platform" onClick={close}>Product</a>
+          <a href="/#portable-apps" onClick={close}>Build apps</a>
+          <a href="/#desktop" onClick={close}>OAIY</a>
           <Link to="/packs" onClick={close}>Marketplace</Link>
-          <a href="#pricing" onClick={close}>Pricing</a>
+          <a href="/#pricing" onClick={close}>Pricing</a>
           <Link to="/docs" onClick={close}>Docs</Link>
           <Link to="/login" onClick={close} className="lv2-nav__mobile-signin">
             Sign in
+          </Link>
+          <Link to="/signup" onClick={close} className="lv2-nav__mobile-start">
+            Start free <ArrowRight size={15} aria-hidden="true" />
           </Link>
         </div>
 
@@ -79,6 +101,7 @@ export function LandingNav() {
           <button
             type="button"
             className="lv2-nav__menu"
+            ref={menuButton}
             aria-label={open ? 'Close navigation' : 'Open navigation'}
             aria-expanded={open}
             aria-controls="lv2-nav-links"

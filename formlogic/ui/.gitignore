@@ -3,3 +3,6 @@
 test-results/
 playwright-report/
 .playwright/
+
+# Built from the sibling app engine; regenerate with npm run build:hosted-runtime.
+public/hosted-runtime/

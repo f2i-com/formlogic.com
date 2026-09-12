@@ -40,7 +40,7 @@ class BillingController
     private string $currency = 'USD';
     private const MAX_MONTHS = 12;
 
-    public function __construct(PayPalService $paypal, MySQLConnection $db, ?AuditService $auditService = null, ?LoggerInterface $logger = null, ?PlanService $planService = null, bool $betaMode = false)
+    public function __construct(PayPalService $paypal, MySQLConnection $db, ?AuditService $auditService = null, ?LoggerInterface $logger = null, ?PlanService $planService = null, bool $betaMode = false, private ?\FormLogic\Services\PlatformPlansService $platformPlans = null)
     {
         $this->paypal = $paypal;
         $this->db = $db;
@@ -49,7 +49,8 @@ class BillingController
         $this->planService = $planService;
         $this->betaMode = $betaMode;
         $this->ipResolver = IpResolver::fromEnvironment();
-        $this->pricePerMonthCents = (int) ($_ENV['CLOUD_PRICE_CENTS'] ?? 500);
+        $this->platformPlans ??= new \FormLogic\Services\PlatformPlansService();
+        $this->pricePerMonthCents = $this->platformPlans->status()['pricePerMonthCents'];
         if ($this->pricePerMonthCents < 1) {
             $this->pricePerMonthCents = 500;
         }
@@ -62,14 +63,15 @@ class BillingController
         $cloudUntil = $this->getCloudUntil($userId);
         return $this->jsonResponse($response, [
             'cloudUntil' => $cloudUntil,
-            'active' => $this->betaMode || ($cloudUntil !== null && strtotime($cloudUntil) > time()),
+            'active' => true,
+            'plans' => $this->platformPlans->status(),
             'pricePerMonthCents' => $this->pricePerMonthCents,
             'currency' => $this->currency,
             'maxMonths' => self::MAX_MONTHS,
             // During the public beta everything is free and payments are turned off.
             'betaMode' => $this->betaMode,
-            'paypalEnabled' => !$this->betaMode && $this->paypal->isConfigured(),
-            'paypalClientId' => (!$this->betaMode && $this->paypal->isConfigured()) ? $this->paypal->getClientId() : null,
+            'paypalEnabled' => !$this->betaMode && $this->platformPlans->status()['paymentsEnabled'] && $this->paypal->isConfigured(),
+            'paypalClientId' => (!$this->betaMode && $this->platformPlans->status()['paymentsEnabled'] && $this->paypal->isConfigured()) ? $this->paypal->getClientId() : null,
             // Plan usage (forms/storage) — only meaningful when enforcement is on.
             'usage' => $this->planService ? $this->planService->usage($userId) : null,
         ]);
@@ -81,6 +83,9 @@ class BillingController
         $userId = $request->getAttribute('userId');
         if ($this->betaMode) {
             return $this->jsonResponse($response, ['error' => true, 'code' => 'beta_free', 'message' => 'Payments are disabled during the beta — Cloud is free right now.'], 403);
+        }
+        if (!$this->platformPlans->status()['paymentsEnabled']) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => 'payments_disabled', 'message' => 'FormLogic is free. Optional payments are disabled.'], 403);
         }
         if (!$this->paypal->isConfigured()) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Cloud billing is not configured on this instance.'], 503);
@@ -96,7 +101,7 @@ class BillingController
             $orderId = $this->paypal->createOrder(
                 $amountCents,
                 $this->currency,
-                ($months * 30) . ' days of FormLogic Cloud',
+                ($months * 30) . ' days of ' . $this->platformPlans->status()['paidName'],
                 $userId . ':' . $months
             );
             // Record the order as the server's source of truth for what was purchased.
@@ -120,6 +125,9 @@ class BillingController
         $orderId = (string) ($args['orderId'] ?? '');
         if ($this->betaMode) {
             return $this->jsonResponse($response, ['error' => true, 'code' => 'beta_free', 'message' => 'Payments are disabled during the beta — Cloud is free right now.'], 403);
+        }
+        if (!$this->platformPlans->status()['paymentsEnabled']) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => 'payments_disabled', 'message' => 'FormLogic is free. Optional payments are disabled.'], 403);
         }
         if (!$this->paypal->isConfigured()) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Cloud billing is not configured on this instance.'], 503);
@@ -333,7 +341,7 @@ class BillingController
         $cloudUntil = $this->getCloudUntil($userId);
         return $this->jsonResponse($response, array_merge([
             'cloudUntil' => $cloudUntil,
-            'active' => $cloudUntil !== null && strtotime($cloudUntil) > time(),
+            'active' => true,
         ], $extra));
     }
 

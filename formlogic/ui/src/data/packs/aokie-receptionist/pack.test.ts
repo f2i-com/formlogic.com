@@ -1442,12 +1442,13 @@ describe('aokieReceptionistPack â€” SMS follow-up loop (logic blocks)', () 
       expect(r.hasUpdate).toBe(false);
     });
 
-    it('an unknown outcome coerces to sent â€” never an invalid dropdown value', () => {
+    it('an unknown outcome is ignored â€” never an invalid dropdown value', () => {
       const r = evalExpr(markExpr, {
         inputs: { messageId: 'sms-unknown', to: '+61400000000', outcome: 'exploded' },
         nodes: rows([{ direction: 'outbound', status: 'queued', message_id: 'sms-unknown' }]).nodes,
       });
-      expect(r.update).toEqual({ status: 'sent' });
+      expect(r.hasUpdate).toBe(false);
+      expect(r.hasTaskUpdate).toBe(false);
     });
   });
 
@@ -2631,7 +2632,7 @@ describe('aokieReceptionistPack â€” Phase 0.5 record-driven screening & SMS
       expect(r.hasSms).toBe(false);
     });
 
-    it('callback NOT answered + sms-capable â†’ apology text (normalized to +CC), task stays open as sms_sent', () => {
+    it('callback NOT answered + sms-capable â†’ apology text (normalized to +CC), task stays open as sms_queued', () => {
       const r = runResult('no_answer', { settings: { default_country_code: '61' } });
       expect(r.hasSms).toBe(true);
       expect(r.sms.to).toBe('+61491570156');
@@ -2639,7 +2640,7 @@ describe('aokieReceptionistPack â€” Phase 0.5 record-driven screening & SMS
       expect(r.sms.body).toContain('Pirate Cuts');
       expect(r.sms.body).toMatch(/^[\x20-\x7E]+$/);
       expect(r.smsMessage.status).toBe('queued');
-      expect(r.taskUpdate.callback_state).toBe('sms_sent');
+      expect(r.taskUpdate.callback_state).toBe('sms_queued');
       expect(r.taskUpdate.status).toBeUndefined();
     });
 
@@ -2693,7 +2694,7 @@ describe('aokieReceptionistPack â€” Phase 0.5 record-driven screening & SMS
       expect(calls.fields.some((f) => f.id === 'direction')).toBe(true);
       const tasks = pack.forms.find((f) => f.packFormId === 'follow-up-tasks')!;
       const cb = tasks.fields.find((f) => f.id === 'callback_state')!;
-      expect((cb.properties as { options: Array<{ value: string }> }).options.map((o) => o.value)).toEqual(['queued', 'reached', 'sms_sent', 'needs_human']);
+      expect((cb.properties as { options: Array<{ value: string }> }).options.map((o) => o.value)).toEqual(['queued', 'reached', 'sms_queued', 'sms_sent', 'needs_human']);
     });
   });
 

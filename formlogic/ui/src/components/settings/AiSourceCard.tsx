@@ -9,6 +9,7 @@
 //   - 'Custom (this browser)' (the browser-local AI services registry).
 // Saved via GET/PUT /api/ai/preferences; the saved state also primes
 // websiteAiRouting.resolveDefaultAiSource() for default-source consumers.
+import { usePublicConfig } from '../../hooks/usePublicConfig';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { CODEX_PROVIDER_ID, CODEX_REASONING_EFFORTS } from '../../client-runtime/desktop/desktopTunnel';
 import { Check, Laptop, Loader2, RefreshCw, Settings2 } from 'lucide-react';
@@ -88,7 +89,8 @@ interface CatalogResult {
   models: ModelOption[];
 }
 
-export function AiSourceCard() {
+export function AiSourceCard({ preferredSource }: { preferredSource?: 'desktop' | 'custom' } = {}) {
+  const { plans } = usePublicConfig();
   const user = useAuthStore((s) => s.user);
   const readOnly = !!user?.isDemo;
   const desktopPresence = useFlowsDesktopPresence();
@@ -100,7 +102,7 @@ export function AiSourceCard() {
 
   // Editable fields (kept independently of the active source so flipping sources
   // doesn't destroy a configured provider on save).
-  const [source, setSource] = useState<AiSourceSetting>('site');
+  const [source, setSource] = useState<AiSourceSetting>('custom');
   const [desktopProviderId, setDesktopProviderId] = useState('');
   const [desktopModel, setDesktopModel] = useState('');
   const [customProviderId, setCustomProviderId] = useState('');
@@ -128,7 +130,7 @@ export function AiSourceCard() {
       }
       const prefs = res.data;
       setLoaded(prefs);
-      setSource(prefs.aiSource);
+      setSource(preferredSource ?? prefs.aiSource);
       setDesktopProviderId(prefs.desktopProviderId ?? '');
       setDesktopModel(prefs.desktopModel ?? '');
       setCustomProviderId(prefs.customProviderId ?? '');
@@ -140,7 +142,7 @@ export function AiSourceCard() {
     return () => {
       cancelled = true;
     };
-  }, [reloadTick]);
+  }, [reloadTick, preferredSource]);
 
   // Desktop provider dropdown options: the paired desktop's chat-capable providers
   // first (loopback /api/ai/sources); when that yields nothing but a desktop IS
@@ -368,7 +370,8 @@ export function AiSourceCard() {
       <fieldset disabled={readOnly} className="space-y-3 border-0 p-0 m-0 min-w-0 disabled:opacity-70">
         <legend className="sr-only">AI source</legend>
 
-        {/* FormLogic Site AI */}
+        {/* FormLogic Site AI is an explicit operator opt-in. */}
+        {plans.siteAiEnabled && !preferredSource && <>
         <label
           className={cn(
             'flex items-start gap-3 rounded-xl border p-4 transition-colors',
@@ -399,6 +402,8 @@ export function AiSourceCard() {
           </span>
         </label>
 
+        </>}
+        {(!preferredSource || preferredSource === 'desktop') && <>
         {/* My Desktop AI */}
         <label
           className={cn(
@@ -424,13 +429,13 @@ export function AiSourceCard() {
           <span className="min-w-0">
             <span className="block text-sm font-medium text-gray-900 dark:text-white">My Desktop AI</span>
             <span className="block text-sm text-gray-500 dark:text-slate-400">
-              A provider in your FormLogic Desktop — end-to-end encrypted, nothing is stored on the server.
+              A provider in your OAIY desktop — end-to-end encrypted, nothing is stored on the server.
             </span>
           </span>
         </label>
 
         {source === 'desktop' && (
-          <div className="ml-8 space-y-3 rounded-xl border border-gray-100 dark:border-slate-800 p-4">
+          <div className="sm:ml-8 space-y-3 rounded-xl border border-gray-100 dark:border-slate-800 p-4">
             {showProviderSelect ? (
               <div>
                 <label htmlFor="fl-ai-desktop-provider" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">
@@ -468,7 +473,7 @@ export function AiSourceCard() {
                   setDesktopModel('');
                 }}
                 disabled={readOnly}
-                hint="No paired desktop was found here — enter the provider id as it appears in FormLogic Desktop."
+                hint="No paired desktop was found here — enter the provider id as it appears in OAIY."
               />
             )}
 
@@ -563,6 +568,8 @@ export function AiSourceCard() {
           </div>
         )}
 
+        </>}
+        {(!preferredSource || preferredSource === 'custom') && <>
         {/* Custom (this browser) */}
         <label
           className={cn(
@@ -594,7 +601,7 @@ export function AiSourceCard() {
         </label>
 
         {source === 'custom' && (
-          <div className="ml-8 space-y-3 rounded-xl border border-gray-100 dark:border-slate-800 p-4">
+          <div className="sm:ml-8 space-y-3 rounded-xl border border-gray-100 dark:border-slate-800 p-4">
             {customProviders.length > 0 ? (
               <div>
                 <label htmlFor="fl-ai-custom-provider" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">
@@ -629,6 +636,7 @@ export function AiSourceCard() {
             )}
           </div>
         )}
+        </>}
       </fieldset>
 
       <div>
@@ -691,6 +699,7 @@ export function AiSourceCard() {
       <Suspense fallback={null}>
         {showAiServices && (
           <AiServicesDialog
+            apiOnly={preferredSource === 'custom'}
             isOpen={showAiServices}
             onClose={() => {
               setShowAiServices(false);

@@ -33,6 +33,7 @@ class HealthController
     public function basic(Request $request, Response $response): Response
     {
         return $this->json($response, [
+            'plans' => array_replace((new \FormLogic\Services\PlatformPlansService())->status(), ['paymentsEnabled' => !(bool) ($this->settings['cloud']['betaMode'] ?? false) && (new \FormLogic\Services\PlatformPlansService())->status()['paymentsEnabled']]),
             'status' => 'ok',
             'timestamp' => date('c'),
             // Public flag so the SPA can show the "free while in beta" banner + signup note pre-auth.

@@ -94,7 +94,7 @@ export function Login() {
   const displayError = localError || error;
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-transparent flex">
+    <div className="min-h-[100dvh] bg-gray-50 dark:bg-transparent flex">
       {/* Left panel - Branding */}
       <div className="hidden lg:flex lg:w-[45%] bg-gradient-to-br from-primary-700 via-primary-800 to-slate-900 dark:from-slate-900/80 dark:via-primary-950/60 dark:to-slate-950/80 backdrop-blur-xl p-12 flex-col justify-between relative overflow-hidden">
         {/* Decorative elements. The extra scrim keeps the white copy WCAG-AA readable
@@ -110,9 +110,9 @@ export function Login() {
           </Link>
         </div>
         <div className="relative z-10">
-          <h1 className="text-4xl font-bold text-white mb-4 tracking-tight">
+          <h2 className="text-4xl font-bold text-white mb-4 tracking-tight">
             Welcome back
-          </h1>
+          </h2>
           <p className="text-primary-200/80 text-lg leading-relaxed">
             Sign in to access your forms, responses, and analytics.
           </p>
@@ -133,7 +133,7 @@ export function Login() {
 
           {mfaToken ? (
             <>
-              <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">Two-factor code</h2>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">Two-factor code</h1>
               <p className="text-gray-500 dark:text-slate-400 mb-8">
                 This browser isn't remembered — enter the 6-digit code from your
                 authenticator app, or one of your recovery codes.
@@ -206,10 +206,10 @@ export function Login() {
             </>
           ) : (
             <>
-              <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">Sign in</h2>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">Sign in</h1>
               <p className="text-gray-500 dark:text-slate-400 mb-8">
                 Don't have an account?{' '}
-                <Link to="/signup" className="text-primary-600 dark:text-primary-400 hover:text-primary-500 dark:hover:text-primary-300 font-medium transition-colors">
+                <Link to={dest === '/' ? '/signup' : `/signup?redirect=${encodeURIComponent(dest)}`} className="text-primary-600 dark:text-primary-400 hover:text-primary-500 dark:hover:text-primary-300 font-medium transition-colors">
                   Create one
                 </Link>
               </p>
@@ -261,7 +261,7 @@ export function Login() {
           )}
 
           <p className="mt-8 text-center text-sm text-gray-500 dark:text-slate-500">
-            <Link to="/" className="text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
+            <Link to="/" className="inline-flex min-h-11 items-center text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
               &larr; Back to home
             </Link>
           </p>

@@ -16,3 +16,6 @@ AGENTS.md
 
 # Root-level node_modules (stray tool installs land here; the real one lives in formlogic/ui)
 node_modules/
+
+# Isolated local booking test database files
+formlogic/backend/storage/booking-test/

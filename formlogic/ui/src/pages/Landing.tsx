@@ -1,4 +1,5 @@
 import '../styles/landing-v2.css';
+import '../styles/landing-refresh.css';
 import { LiveDemoSection } from '../components/landing/LiveDemoSection';
 import { FormExamplesSection } from '../components/landing/FormExamplesSection';
 import { AiMcpSpotlight } from '../components/landing-v2/AiMcpSpotlight';
@@ -8,6 +9,7 @@ import { DesktopSpotlight } from '../components/landing-v2/DesktopSpotlight';
 import { LandingFooter } from '../components/landing-v2/LandingFooter';
 import { LandingHero } from '../components/landing-v2/LandingHero';
 import { LandingNav } from '../components/landing-v2/LandingNav';
+import { PortableAppsSpotlight } from '../components/landing-v2/PortableAppsSpotlight';
 import { PlatformStory } from '../components/landing-v2/PlatformStory';
 import { PricingSection } from '../components/landing-v2/PricingSection';
 import { useLandingFonts, useReveal } from '../components/landing-v2/hooks';
@@ -36,7 +38,9 @@ export function Landing() {
 
   return (
     <div className="lv2">
+      <a href="#main-content" className="fl-skip">Skip to content</a>
       <LandingNav />
+      <main id="main-content">
       <LandingHero beta={beta} />
       <PlatformStory />
       <div id="live-demo" className="lv2-band--alt lv2-demo-band">
@@ -49,10 +53,12 @@ export function Landing() {
         <FormExamplesSection />
       </div>
       <AokieSpotlight />
+      <PortableAppsSpotlight />
       <CapabilityBento />
       <DesktopSpotlight />
       <AiMcpSpotlight />
       <PricingSection beta={beta} />
+      </main>
       <LandingFooter />
     </div>
   );

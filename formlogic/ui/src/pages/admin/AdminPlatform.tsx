@@ -7,6 +7,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { api, type AdminNotice, type MaintenanceStatus, type ScheduledBackupRun } from '../../lib/api';
 import { formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
 import { toast } from '../../stores/toastStore';
+import { AdminPlansCard } from './AdminPlansCard';
 import { AdminAllowancesCard } from './AdminAllowancesCard';
 import { AdminError, AdminSpinner } from './adminUi';
 
@@ -117,6 +118,7 @@ export function AdminPlatform() {
 
   return (
     <div className="space-y-5">
+      <AdminPlansCard />
       <Card>
         <CardContent className="p-5 space-y-4">
           <div className="flex items-center justify-between gap-3 flex-wrap">

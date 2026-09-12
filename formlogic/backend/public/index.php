@@ -603,12 +603,14 @@ $container->set(FileStorageService::class, function (Container $c) {
     return new FileStorageService($uploadsConfig);
 });
 
+$container->set(\FormLogic\Services\PlatformPlansService::class, fn () => new \FormLogic\Services\PlatformPlansService());
+
 // Hosted-cloud plan limits (form count + storage) + cloud-access status.
 $container->set(\FormLogic\Services\PlanService::class, function (Container $c) {
     return new \FormLogic\Services\PlanService(
         $c->get(MySQLConnection::class),
         $c->get(FileStorageService::class),
-        $c->get('settings')['cloud'] ?? []
+        array_replace($c->get('settings')['cloud'] ?? [], ['planEnforced' => false])
     );
 });
 
@@ -674,7 +676,11 @@ $container->set(\FormLogic\Controllers\McpController::class, function (Container
         // Blueprints (diagrams) over MCP: sketch via blueprint_propose_elements, read via
         // list/get_blueprint, and materialize_blueprint turns the diagram into a real app.
         $c->get(\FormLogic\Services\BlueprintService::class),
-        $c->get(\FormLogic\Services\BlueprintMaterializeService::class)
+        $c->get(\FormLogic\Services\BlueprintMaterializeService::class),
+        $c->get(\FormLogic\Services\HostedAppService::class),
+        $c->get(\FormLogic\Services\AppCompositionService::class),
+        $c->get(\FormLogic\Services\PackService::class),
+        $c->get(\FormLogic\Services\AppUserService::class)
     );
 });
 // MCP OAuth 2.1: discovery metadata + client registration (DCR/CIMD) + code/refresh grants, so
@@ -743,7 +749,8 @@ $container->set(\FormLogic\Controllers\BillingController::class, function (Conta
         $c->get(AuditService::class),
         $c->get(LoggerInterface::class),
         $c->get(\FormLogic\Services\PlanService::class),
-        (bool) ($c->get('settings')['cloud']['betaMode'] ?? false)
+        (bool) ($c->get('settings')['cloud']['betaMode'] ?? false),
+        $c->get(\FormLogic\Services\PlatformPlansService::class)
     );
 });
 
@@ -946,7 +953,11 @@ $container->set(\FormLogic\Services\ChatToolsService::class, function (Container
         // These were MISSING here — the chat surface's blueprint tools refused with
         // 'unavailable in this context' despite being in the catalog.
         $c->get(\FormLogic\Services\BlueprintService::class),
-        $c->get(\FormLogic\Services\BlueprintMaterializeService::class)
+        $c->get(\FormLogic\Services\BlueprintMaterializeService::class),
+        $c->get(\FormLogic\Services\HostedAppService::class),
+        $c->get(\FormLogic\Services\AppCompositionService::class),
+        $c->get(\FormLogic\Services\PackService::class),
+        $c->get(\FormLogic\Services\AppUserService::class)
     );
 });
 // Chat tool grants (plan Phase 6 section 6): per-turn hashed tokens bound to user + desktop
@@ -1228,6 +1239,7 @@ $app->get('/api/health', function ($request, $response) use ($container) {
     $response->getBody()->write(json_encode([
         'status' => 'ok',
         'timestamp' => date('c'),
+        'plans' => array_replace($container->get(\FormLogic\Services\PlatformPlansService::class)->status(), ['paymentsEnabled' => !(bool) ($settings['cloud']['betaMode'] ?? false) && $container->get(\FormLogic\Services\PlatformPlansService::class)->status()['paymentsEnabled']]),
         'betaMode' => (bool) ($settings['cloud']['betaMode'] ?? false),
         // E2EE Private Forms beta flag (plan D9) — the SPA shows/hides the feature on this.
         'privateForms' => (bool) ($settings['cloud']['privateForms'] ?? false),
@@ -1388,6 +1400,8 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
 
     // Plan allowances (Site AI + cloud credits): list/update the per-plan monthly caps
     // (plan Phase 2; updates audited as admin.allowance_update).
+    $group->get('/plans', function ($request, $response) use ($ctrl) { return $ctrl()->getPlans($request, $response); });
+    $group->put('/plans', function ($request, $response) use ($ctrl) { return $ctrl()->putPlans($request, $response); });
     $group->get('/allowances', function ($request, $response) use ($ctrl) {
         return $ctrl()->listAllowances($request, $response);
     });
@@ -2917,6 +2931,27 @@ $app->get('/api/admin/audit/verify', function ($request, $response) use ($contai
     return $response->withHeader('Content-Type', 'application/json');
 })->add($authRequired);
 
+// Hosted projects: authentication, CSRF (global), bounded requests and cloud write gate.
+$hostingLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'hosted_apps', true, true);
+$app->post('/api/apps/{id}/compose', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppCompositionController::class)->compose($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+$app->get('/api/apps/{id}/hosting', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\HostedAppController::class)->manage($request, $response, $getArgs($request));
+})->add($hostingLimiter)->add($authRequired);
+$app->get('/api/apps/{id}/hosting/{download:database}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\HostedAppController::class)->manage($request, $response, $getArgs($request));
+})->add($hostingLimiter)->add($authRequired);
+$app->put('/api/apps/{id}/hosting', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\HostedAppController::class)->manage($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+$app->get('/api/app/{slug}/hosting', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\HostedAppController::class)->runtime($request, $response, $getArgs($request));
+})->add($hostingLimiter)->add($authRequired);
+$app->post('/api/app/{slug}/actions/{action}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\HostedAppController::class)->runtime($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+
 // App Admin routes (protected - require authentication + ownership)
 $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, $getArgs) {
     $group->get('', function ($request, $response) use ($container) {
@@ -3187,6 +3222,9 @@ $app->get('/api/desktop/flows/runs/{id}', function ($request, $response) use ($c
 })->add($authRequired);
 $app->get('/api/desktop/flows/runs/{id}/stream', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\DesktopFlowRelayController::class)->stream($request, $response, $getArgs($request));
+})->add($authRequired);
+$app->post('/api/desktop/flows/runs/{id}/ack', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\DesktopFlowRelayController::class)->acknowledgeResult($request, $response, $getArgs($request));
 })->add($authRequired);
 
 // Flow run dispatcher (plan section 5.7): POST /api/flows/{id}/run honors the flow's

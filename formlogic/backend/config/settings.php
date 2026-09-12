@@ -40,10 +40,9 @@ if ($isProduction && $dbPassword === 'password') {
     );
 }
 
-// Cloud plan enforcement (hosted SaaS only). OFF by default so self-hosters are
-// unlimited. If a hosted operator turns it on in production, PayPal must be configured
-// or users would hit limits with no way to pay to lift them.
-$cloudPlanEnforced = filter_var(Environment::get('CLOUD_PLAN_ENFORCED', 'false'), FILTER_VALIDATE_BOOLEAN);
+// The workspace remains free. Optional paid support is controlled by the admin
+// platform plans setting; legacy cloud expiry never blocks forms or responses.
+$cloudPlanEnforced = false;
 
 // Public-beta mode: free signup for a limited window, payments disabled, nothing enforced — so people
 // can test without paying while the product is still maturing. New accounts get BETA_FREE_DAYS of Cloud
@@ -69,19 +68,6 @@ if ($betaMode) {
 // Support / contact address shown to users when transactional email isn't configured yet (e.g. a
 // fresh install with no SMTP) — the password-reset page points people here to reset or verify by hand.
 $supportEmail = trim((string) Environment::get('SUPPORT_EMAIL', '')) ?: 'hello@formlogic.com';
-
-if ($isProduction && $cloudPlanEnforced) {
-    $missingPaypal = array_values(array_filter(
-        ['PAYPAL_CLIENT_ID', 'PAYPAL_SECRET'],
-        fn($k) => Environment::nonEmpty($k) === null
-    ));
-    if ($missingPaypal) {
-        throw new \RuntimeException(
-            'CONFIG ERROR: CLOUD_PLAN_ENFORCED=true requires PayPal billing to be configured (missing: ' .
-            implode(', ', $missingPaypal) . '). Otherwise users would hit plan limits with no way to pay to lift them.'
-        );
-    }
-}
 
 // Platform-administrator bootstrap: a comma-separated email allowlist. Accounts
 // matching it are treated as admins even before the users.is_admin flag is set —

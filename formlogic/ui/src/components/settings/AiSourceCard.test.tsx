@@ -18,6 +18,9 @@ const { getAiPreferencesMock, putAiPreferencesMock, fetchModelCatalogMock, fetch
     toastError: vi.fn(),
   }));
 
+let mockSiteAi = true;
+vi.mock('../../hooks/usePublicConfig', () => ({ usePublicConfig: () => ({ plans: { siteAiEnabled: mockSiteAi } }) }));
+
 let mockUser: { id: string; isDemo?: boolean } | null = { id: 'u1' };
 
 vi.mock('../../lib/api', () => ({
@@ -115,6 +118,7 @@ describe('AiSourceCard', () => {
   let container: HTMLDivElement | null = null;
 
   beforeEach(() => {
+  mockSiteAi = true;
     vi.clearAllMocks();
     clearModelCatalogCacheForTests();
     clearProviderCatalogCacheForTests();
@@ -483,4 +487,12 @@ describe('AiSourceCard', () => {
     expect(providerSelect!.value).toBe('remote-prov');
     expect(providerSelect!.textContent).toContain('remote-prov (saved)');
   });
+  it('hides operator-funded AI when the instance requires users to bring their own', async () => {
+    mockSiteAi = false;
+    getAiPreferencesMock.mockResolvedValue({ data: prefs({ aiSource: 'custom' }) });
+    await mount();
+    expect(container!.querySelector('input[value="site"]')).toBeNull();
+    expect(container!.querySelector('input[value="custom"]')).not.toBeNull();
+  });
+
 });

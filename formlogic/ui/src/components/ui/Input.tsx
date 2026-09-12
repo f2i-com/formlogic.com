@@ -50,7 +50,8 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
               'disabled:bg-gray-100 dark:disabled:bg-slate-800/50 disabled:text-gray-500 dark:disabled:text-slate-600 disabled:cursor-not-allowed disabled:hover:border-gray-300 dark:disabled:hover:border-slate-800',
               error && 'border-red-400 focus:ring-red-500/20 focus:border-red-500 hover:border-red-400',
               leftIcon && 'pl-10',
-              (rightIcon || rightElement) && 'pr-10',
+              rightIcon && !rightElement && 'pr-10',
+              rightElement && 'pr-14',
               className
             )}
             {...props}

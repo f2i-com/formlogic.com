@@ -2,7 +2,7 @@
 //
 // Picks a starter template, creation scope (Workspace or an installed app), and name. Templates
 // that rely on an Aokie connector can auto-target the only installed app that grants Aokie.
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { Check, ClipboardList, FileText, MessageSquare, PhoneIncoming, Plug, Workflow, type LucideIcon } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -36,6 +36,7 @@ export function NewFlowDialog({
   creating,
   apps = [],
   initialTemplate = null,
+  fixedAppId,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -43,13 +44,16 @@ export function NewFlowDialog({
   creating: boolean;
   apps?: AppListItem[];
   initialTemplate?: FlowStarterTemplate | null;
+  /** App Studio creates automations in the app the author is editing. */
+  fixedAppId?: string;
 }) {
+  const formId = useId();
   const availableConnectorIds = useMemo(() => connectorIdsForApps(apps), [apps]);
   const visibleTemplates = useMemo(() => flowStarterTemplatesForConnectors(availableConnectorIds), [availableConnectorIds]);
   const initial = visibleTemplates.find((candidate) => candidate.id === initialTemplate?.id) ?? visibleTemplates[0] ?? FLOW_STARTER_TEMPLATES[0];
   const [templateId, setTemplateId] = useState<string>(initial.id);
   const [name, setName] = useState<string>(initial.name);
-  const [scopeAppId, setScopeAppId] = useState<string | null>(() => recommendedScope(initial, apps));
+  const [scopeAppId, setScopeAppId] = useState<string | null>(() => fixedAppId ?? recommendedScope(initial, apps));
   // Once the author edits a field, template switches stop overwriting that field.
   const [nameEdited, setNameEdited] = useState(false);
   const [scopeEdited, setScopeEdited] = useState(false);
@@ -69,36 +73,46 @@ export function NewFlowDialog({
       setName(nextTemplate.name);
       setNameEdited(false);
       setScopeEdited(false);
-      setScopeAppId(recommendedScope(nextTemplate, apps));
+      setScopeAppId(fixedAppId ?? recommendedScope(nextTemplate, apps));
     }
   }
 
   const pickTemplate = (t: FlowStarterTemplate) => {
     setTemplateId(t.id);
     if (!nameEdited) setName(t.name);
-    if (!scopeEdited) setScopeAppId(recommendedScope(t, apps));
+    if (!scopeEdited) setScopeAppId(fixedAppId ?? recommendedScope(t, apps));
   };
 
+  const selectedApp = apps.find((app) => app.id === scopeAppId);
+  const connectorUnavailable = !!template.requiresConnector && (!selectedApp || !deriveFlowConnectors(selectedApp).some((connector) => connector.id === template.requiresConnector));
+  const canCreate = name.trim().length > 0 && !connectorUnavailable && (!scopeAppId || !!selectedApp);
   const submit = () => {
-    if (creating) return;
+    if (creating || !canCreate) return;
     onCreate({ ...buildFlowCreateInput(template.id, name), appId: scopeAppId });
   };
 
   return (
     <Modal
       isOpen={isOpen}
-      onClose={onClose}
-      title="New flow"
-      description="Start from a blank canvas or a ready-made template."
-      size="lg"
+      onClose={() => { if (!creating) onClose(); }}
+      title="Create an automation"
+      description="Choose a starting point. Then add steps, test the result and connect a trigger."
+      size="xl"
+      footer={<div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-gray-500 dark:text-slate-400">You will review the flow before connecting a trigger.</p>
+        <div className="flex gap-2">
+          <Button type="button" variant="ghost" onClick={onClose} disabled={creating}>Cancel</Button>
+          <Button type="submit" form={formId} isLoading={creating} disabled={creating || !canCreate}>Create automation</Button>
+        </div>
+      </div>}
     >
-      <form
+      <form id={formId}
         onSubmit={(e) => { e.preventDefault(); submit(); }}
         className="space-y-5 p-4 sm:p-6"
       >
         <div>
           <label className="mb-1.5 block text-xs font-medium text-gray-600 dark:text-slate-300" htmlFor="new-flow-name">
-            Flow name
+            Automation name
           </label>
           <input
             id="new-flow-name"
@@ -106,21 +120,23 @@ export function NewFlowDialog({
             onChange={(e) => { setName(e.target.value); setNameEdited(true); }}
             placeholder={template.name}
             autoComplete="off"
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+            required
+            maxLength={100}
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-3 text-base text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
           />
         </div>
 
         <fieldset>
           <legend className="mb-2 text-xs font-medium text-gray-600 dark:text-slate-300">Create in</legend>
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-            <ScopeButton
+            {!fixedAppId && <ScopeButton
               active={scopeAppId === null}
               label="Workspace"
-              description="Runs when one of your forms is submitted, or on demand. Can be reused by any app."
+              description="A reusable automation for your forms, or for running on demand."
               icon={Workflow}
               onClick={() => { setScopeAppId(null); setScopeEdited(true); }}
-            />
-            {apps.map((app) => {
+            />}
+            {apps.filter(app => !fixedAppId || app.id === fixedAppId).map((app) => {
               const hasAokie = deriveFlowConnectors(app).some((connector) => connector.id === 'aokie');
               return (
                 <ScopeButton
@@ -178,12 +194,12 @@ export function NewFlowDialog({
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-1.5">
-                      <span className={cn('block truncate text-sm font-semibold', active ? 'text-primary-800 dark:text-primary-200' : 'text-gray-900 dark:text-white')}>
+                      <span className={cn('block break-words text-sm font-semibold', active ? 'text-primary-800 dark:text-primary-200' : 'text-gray-900 dark:text-white')}>
                         {t.name}
                       </span>
                       {active && <Check className="h-3.5 w-3.5 flex-none text-primary-600 dark:text-primary-400" />}
                     </span>
-                    <span className="mt-0.5 block text-[11px] leading-snug text-gray-500 dark:text-slate-400">{t.summary}</span>
+                    <span className="mt-0.5 block text-xs leading-relaxed text-gray-500 dark:text-slate-400">{t.summary}</span>
                     {t.appHint && (
                       <span className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-slate-700/70 dark:text-slate-400">
                         <Plug className="h-2.5 w-2.5" /> {t.appHint}
@@ -198,10 +214,7 @@ export function NewFlowDialog({
 
         <p className="text-xs leading-relaxed text-gray-500 dark:text-slate-400">{template.description}</p>
 
-        <div className="flex justify-end gap-2 border-t border-gray-200/70 pt-4 dark:border-slate-800">
-          <Button type="button" variant="ghost" onClick={onClose} disabled={creating}>Cancel</Button>
-          <Button type="submit" isLoading={creating} disabled={creating}>Create flow</Button>
-        </div>
+        {connectorUnavailable && <p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">Choose an app with Aokie access for this template, or select a different starting point.</p>}
       </form>
     </Modal>
   );
@@ -237,10 +250,10 @@ function ScopeButton({ active, label, description, icon: Icon, onClick }: {
         <Icon className="h-4 w-4" />
       </span>
       <span className="min-w-0 flex-1">
-        <span className={cn('block truncate text-sm font-semibold', active ? 'text-primary-800 dark:text-primary-200' : 'text-gray-900 dark:text-white')}>
+        <span className={cn('block break-words text-sm font-semibold', active ? 'text-primary-800 dark:text-primary-200' : 'text-gray-900 dark:text-white')}>
           {label}
         </span>
-        <span className="mt-0.5 block text-[11px] leading-snug text-gray-500 dark:text-slate-400">{description}</span>
+        <span className="mt-0.5 block text-xs leading-relaxed text-gray-500 dark:text-slate-400">{description}</span>
       </span>
       {active && <Check className="mt-1 h-3.5 w-3.5 flex-none text-primary-600 dark:text-primary-400" />}
     </button>

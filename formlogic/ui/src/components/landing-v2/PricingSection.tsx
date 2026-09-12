@@ -1,131 +1,109 @@
-import { Link } from 'react-router-dom';
-import { ArrowRight, Check, Sparkles } from 'lucide-react';
-import { SectionLabel } from './shared';
+import { Link } from "react-router-dom";
+import { ArrowRight, Check } from "lucide-react";
+import { usePublicConfig } from "../../hooks/usePublicConfig";
+import { SectionLabel } from "./shared";
 
-const SALES_EMAIL = `mailto:sales@${import.meta.env.VITE_PUBLIC_DOMAIN || 'formlogic.com'}?subject=FormLogic%20Enterprise`;
-
-type Plan = {
-  name: string;
-  price: string;
-  period: string;
-  description: string;
-  items: string[];
-  action: string;
-  featured?: boolean;
-  /** internal router path, or an href (mailto / hash) */
-  to?: string;
-  href?: string;
-};
-
-const PLANS: Plan[] = [
-  {
-    name: 'Self-hosted',
-    price: '$0',
-    period: 'forever',
-    description: 'Run FormLogic on your own infrastructure.',
-    items: [
-      'Complete source access',
-      'Unlimited forms and responses',
-      'Apps, flows, API and packs',
-      'Your own storage and AI',
-    ],
-    action: 'Read the docs',
-    to: '/docs',
-  },
-  {
-    name: 'Personal',
-    price: '$5',
-    period: '/ 30 days',
-    description: 'Managed FormLogic without a subscription.',
-    items: [
-      'First 30 days free',
-      '100 forms and 1 GB storage',
-      'Unlimited responses (fair use)',
-      'Prepaid with no auto-renewal',
-    ],
-    action: 'Start free',
-    to: '/signup',
-    featured: true,
-  },
-  {
-    name: 'Enterprise',
-    price: 'Custom',
-    period: '',
-    description: 'Deployment and support for larger teams.',
-    items: [
-      'Everything in Personal',
-      'Unlimited forms',
-      'Configurable storage',
-      'Deployment and security review',
-    ],
-    action: 'Talk to us',
-    href: SALES_EMAIL,
-  },
-];
-
-/** Dynamic pricing: three plans, with the beta banner while betaMode is on. */
 export function PricingSection({ beta }: { beta: boolean }) {
+  const { plans } = usePublicConfig();
+  const paid = plans.paymentsEnabled && !beta;
+  const cards = [
+    {
+      name: plans.freeName,
+      price: "$0",
+      period: "no card required",
+      description: plans.freeDescription,
+      items: [
+        "Forms, apps and automations",
+        "Your backend logic and databases",
+        "Use OAIY, Codex or your own API provider",
+        "Visual builders work without AI",
+      ],
+      to: "/signup",
+      action: "Create a free workspace",
+    },
+    ...(paid
+      ? [
+          {
+            name: plans.paidName,
+            price: new Intl.NumberFormat("en-US", {
+              style: "currency",
+              currency: plans.currency,
+            }).format(plans.pricePerMonthCents / 100),
+            period: "USD / 30 days",
+            description: plans.paidDescription,
+            items: [
+              "Optional support for development",
+              "Free access remains available",
+              "Prepaid, with no auto-renewal",
+              "AI provider charges are separate",
+            ],
+            to: "/billing",
+            action: "View support options",
+          },
+        ]
+      : []),
+    {
+      name: "Your AI, your choice",
+      price: "BYO AI",
+      period: "",
+      description: "A guided setup helps connect the AI you already use.",
+      items: [
+        "OAIY desktop with Codex sign-in",
+        "Your own provider API key",
+        "Local models on your computer",
+        "Change providers in Settings",
+      ],
+      to: "/connect-ai",
+      action: "Explore AI setup",
+    },
+  ];
   return (
     <section id="pricing" className="lv2-section lv2-band">
       <div className="lv2-container">
         <div className="lv2-heading--center" data-reveal="">
-          <SectionLabel both>Simple pricing</SectionLabel>
-          <h2 className="lv2-h2">Start free. Pay without another subscription.</h2>
+          <SectionLabel both>Free to build</SectionLabel>
+          <h2 className="lv2-h2">Bring your ideas. Bring your own AI.</h2>
           <p className="lv2-lead">
-            {beta
-              ? 'The hosted service is free during public beta. After beta, use prepaid Personal access or self-host for free.'
-              : 'Use prepaid Personal access without a subscription, or self-host for free.'}
+            FormLogic is free to use while we keep building it together. Connect
+            your own AI when you want help, or start with the visual builders.
           </p>
-          {beta && (
-            <span className="lv2-beta-pill">
-              <Sparkles size={14} /> Free during public beta — no card required
-            </span>
-          )}
         </div>
-        <div className="lv2-pricing-grid" data-reveal="">
-          {PLANS.map((plan) => {
-            const body = (
-              <>
-                {plan.featured && <span className="lv2-plan__popular">Most popular</span>}
-                <h3>{plan.name}</h3>
-                <div className="lv2-plan__price">
-                  <strong>{plan.price}</strong>
-                  {plan.period && <span>{plan.period}</span>}
-                </div>
-                <p>{plan.description}</p>
-                <ul>
-                  {plan.items.map((item) => (
-                    <li key={item}>
-                      <Check size={15} /> {item}
-                    </li>
-                  ))}
-                </ul>
-                {plan.to ? (
-                  <Link
-                    to={plan.to}
-                    className={`lv2-plan__cta${plan.featured ? ' lv2-plan__cta--primary' : ''}`}
-                  >
-                    {plan.action} <ArrowRight size={15} />
-                  </Link>
-                ) : (
-                  <a href={plan.href} className="lv2-plan__cta">
-                    {plan.action} <ArrowRight size={15} />
-                  </a>
-                )}
-              </>
-            );
-            return (
-              <article
-                key={plan.name}
-                className={`lv2-plan${plan.featured ? ' lv2-plan--featured' : ''}`}
+        <div className="lv2-pricing-grid lv2-pricing-dynamic" data-reveal="">
+          {cards.map((card, i) => (
+            <article
+              key={card.name}
+              className={`lv2-plan${i === 0 ? " lv2-plan--featured" : ""}`}
+            >
+              <h3>{card.name}</h3>
+              <div className="lv2-plan__price">
+                <strong>{card.price}</strong>
+                <span>{card.period}</span>
+              </div>
+              <p>{card.description}</p>
+              <ul>
+                {card.items.map((item) => (
+                  <li key={item}>
+                    <Check size={15} />
+                    {item}
+                  </li>
+                ))}
+              </ul>
+              <Link
+                to={card.to}
+                className={`lv2-plan__cta${i === 0 ? " lv2-plan__cta--primary" : ""}`}
               >
-                {body}
-              </article>
-            );
-          })}
+                {card.action}
+                <ArrowRight size={15} />
+              </Link>
+            </article>
+          ))}
         </div>
         <p className="lv2-pricing__fineprint">
-          Personal is prepaid — no auto-renewal, cancel anytime, export everything.
+          {paid
+            ? "Supporting FormLogic is optional. Your free workspace does not expire."
+            : "No payments are being accepted right now. No card required."}{" "}
+          Your AI provider may charge separately. Codex requires an eligible
+          account or API billing.
         </p>
       </div>
     </section>

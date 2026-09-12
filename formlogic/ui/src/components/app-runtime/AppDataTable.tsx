@@ -98,14 +98,16 @@ export function AppDataTable() {
 
   // Column visibility: default to first 6 fields
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(() => {
-    const initial = new Set<string>(['submittedAt', 'status']);
+    const initial = new Set<string>(['__submittedAt']);
+    if (!fields.some(f => f.id === 'status')) initial.add('__responseStatus');
     fields.slice(0, 6).forEach((f) => initial.add(f.id));
     return initial;
   });
 
   // Re-initialize visible columns when fields change (different form)
   useEffect(() => {
-    const initial = new Set<string>(['submittedAt', 'status']);
+    const initial = new Set<string>(['__submittedAt']);
+    if (!fields.some(f => f.id === 'status')) initial.add('__responseStatus');
     fields.slice(0, 6).forEach((f) => initial.add(f.id));
     // eslint-disable-next-line react-hooks/set-state-in-effect -- prop->local-state sync: reset column visibility when the viewed form (formId) changes externally
     setVisibleColumns(initial);
@@ -389,7 +391,7 @@ export function AppDataTable() {
   };
 
   const statusCol: Column<Record<string, unknown>> = {
-    key: 'status', label: 'Status', sortable: true, render: (r) => {
+    key: 'status', label: 'Submission status', sortable: true, render: (r) => {
       const s = String(r.status ?? 'submitted');
       return (
         <span className={cn(
@@ -404,12 +406,12 @@ export function AppDataTable() {
 
   // Filter columns by visibility
   const columns: Column<Record<string, unknown>>[] = [
-    ...(visibleColumns.has('submittedAt') ? [submittedAtCol] : []),
+    ...(visibleColumns.has('__submittedAt') ? [submittedAtCol] : []),
     ...allFieldColumns.filter((col) => {
       const fieldId = col.key.replace('answer_', '');
       return visibleColumns.has(fieldId);
     }),
-    ...(visibleColumns.has('status') ? [statusCol] : []),
+    ...(visibleColumns.has('__responseStatus') ? [statusCol] : []),
   ];
 
   const handleExport = async () => {
@@ -455,7 +457,7 @@ export function AppDataTable() {
         <div id="col-vis-panel" role="group" aria-label="Toggle columns" className="absolute right-0 top-full mt-1 z-50 w-56 max-h-72 overflow-y-auto bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-xl shadow-lg py-1">
           {/* Fixed columns */}
           <label className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer">
-            <input type="checkbox" checked={visibleColumns.has('submittedAt')} onChange={() => toggleColumn('submittedAt')} className="app-accent rounded" />
+            <input type="checkbox" checked={visibleColumns.has('__submittedAt')} onChange={() => toggleColumn('__submittedAt')} className="app-accent rounded" />
             <span className="text-gray-700 dark:text-slate-300">Submitted</span>
           </label>
           {fields.map((f) => (
@@ -465,8 +467,8 @@ export function AppDataTable() {
             </label>
           ))}
           <label className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer">
-            <input type="checkbox" checked={visibleColumns.has('status')} onChange={() => toggleColumn('status')} className="app-accent rounded" />
-            <span className="text-gray-700 dark:text-slate-300">Status</span>
+            <input type="checkbox" checked={visibleColumns.has('__responseStatus')} onChange={() => toggleColumn('__responseStatus')} className="app-accent rounded" />
+            <span className="text-gray-700 dark:text-slate-300">Submission status</span>
           </label>
         </div>
       )}

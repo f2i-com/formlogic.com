@@ -285,9 +285,10 @@ export async function oaiyConnectorRequest(
   opts?: { idempotencyKey?: string },
 ): Promise<DesktopClientResult<unknown>> {
   let resp: Response;
+  let json: unknown;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     resp = await fetch(
       `${getOaiyBaseUrl()}/api/bridge/connectors/${encodeURIComponent(connectorId)}/request`,
       {
@@ -303,33 +304,26 @@ export async function oaiyConnectorRequest(
         }),
       },
     );
-    clearTimeout(timer);
-  } catch (err) {
-    // A TIMEOUT is not "OAIY is absent": the request reached it and the plugin
-    // may well have run the command. Reporting it as a transport failure let the
-    // caller fall through to another route (or the owner's remote desktop) and
-    // execute `sms.send` / `call.dial` a second time. It is an uncertain outcome
-    // — a real failure the caller must surface, never retry elsewhere.
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      return {
-        ok: false,
-        error: {
-          code: 'connector_uncertain',
-          message: 'OAIY Desktop did not answer within 10 s — the command may still have run; check the device before retrying.',
-        },
-      };
+    // Keep the deadline active through body delivery. A dropped/truncated body
+    // is just as uncertain as losing the connection before response headers.
+    const text = await resp.text();
+    json = text ? safeParse(text) : undefined;
+    if (resp.ok && (!json || typeof json !== 'object' || !('result' in json))) {
+      throw new Error('Missing connector result');
     }
-    // Transport failure — OAIY unreachable. Marked so the caller treats it as
-    // "absent" rather than a genuine command failure.
+  } catch {
+    // Fetch cannot distinguish refusal before dispatch from a response lost
+    // after an SMS/call completed. Never advertise this as safe to replay.
     return {
       ok: false,
-      transportFailure: true,
-      error: { code: 'connector_unavailable', message: 'OAIY Desktop did not respond.' },
+      error: {
+        code: 'connector_uncertain',
+        message: 'OAIY Desktop did not return a complete response — the command may have run; check the device before retrying.',
+      },
     };
+  } finally {
+    clearTimeout(timer);
   }
-
-  const text = await resp.text().catch(() => '');
-  const json = text ? safeParse(text) : undefined;
 
   if (resp.ok) {
     // OAIY returns { ok: true, result }, where `result` is the plugin's RAW
@@ -355,17 +349,16 @@ export async function oaiyConnectorRequest(
  *  connector is "available" via OAIY when the runtime is up and its plugin
  *  advertises the connector as available in capability discovery. */
 export async function oaiyConnectorAvailable(connectorId: string): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     const resp = await fetch(`${getOaiyBaseUrl()}/api/bridge/capabilities`, {
       method: 'GET',
       credentials: 'omit',
       cache: 'no-store',
       signal: controller.signal,
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', ...authHeaders() },
     });
-    clearTimeout(timer);
     if (!resp.ok) return false;
     const body = (await resp.json().catch(() => null)) as
       | { capabilities?: Array<{ id: string; available: boolean }> }
@@ -374,6 +367,8 @@ export async function oaiyConnectorAvailable(connectorId: string): Promise<boole
     return (body?.capabilities ?? []).some((c) => c.id.startsWith(prefix) && c.available);
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

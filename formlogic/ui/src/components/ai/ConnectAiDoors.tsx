@@ -25,14 +25,14 @@ export function ConnectAiDoors() {
           </h2>
           <p className="mt-1.5 text-sm leading-relaxed text-gray-600 dark:text-slate-300">
             Connect an AI provider directly to FormLogic — an OpenAI-compatible endpoint or a
-            hosted model. It works anywhere you sign in, without your computer needing to stay online.
+            hosted model. Direct API settings stay in this browser. Your provider must allow browser requests.
           </p>
           <button
             type="button"
-            onClick={() => navigate('/settings#ai')}
+            onClick={() => navigate('/connect-ai')}
             className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-700"
           >
-            Set up in Settings <ArrowRight className="h-3.5 w-3.5" />
+            Start guided setup <ArrowRight className="h-3.5 w-3.5" />
           </button>
         </section>
 
@@ -40,7 +40,7 @@ export function ConnectAiDoors() {
         <section className="rounded-2xl border border-gray-200/80 bg-white p-5 dark:border-slate-700/60 dark:bg-slate-900">
           <h2 className="flex items-center gap-2 text-base font-semibold text-gray-900 dark:text-white">
             <Monitor className="h-5 w-5 text-primary-600 dark:text-primary-300" />
-            FormLogic Desktop
+            OAIY desktop
             <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-gray-600 dark:bg-slate-800 dark:text-slate-300">Local &amp; private</span>
           </h2>
           <p className="mt-1.5 text-sm leading-relaxed text-gray-600 dark:text-slate-300">
@@ -54,10 +54,10 @@ export function ConnectAiDoors() {
           </ul>
           <button
             type="button"
-            onClick={() => navigate('/download')}
+            onClick={() => navigate('/connect-ai')}
             className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:border-primary-400 hover:text-primary-700 dark:border-slate-600 dark:text-slate-200 dark:hover:text-primary-300"
           >
-            Get FormLogic Desktop <ArrowRight className="h-3.5 w-3.5" />
+            Set up OAIY <ArrowRight className="h-3.5 w-3.5" />
           </button>
         </section>
 

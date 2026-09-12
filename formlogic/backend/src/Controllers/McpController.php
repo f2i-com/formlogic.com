@@ -78,6 +78,10 @@ class McpController
         // diagram into a real app. Null only in older tests — production wires both.
         private ?\FormLogic\Services\BlueprintService $blueprintService = null,
         private ?\FormLogic\Services\BlueprintMaterializeService $blueprintMaterializer = null,
+        private ?\FormLogic\Services\HostedAppService $hosting = null,
+        private ?\FormLogic\Services\AppCompositionService $composition = null,
+        private ?\FormLogic\Services\PackService $packs = null,
+        private ?\FormLogic\Services\AppUserService $appUsers = null,
     ) {}
 
     // ── Token management (authenticated app owner) ──
@@ -466,6 +470,10 @@ class McpController
             $this->trashService,
             $this->blueprintService,
             $this->blueprintMaterializer,
+            $this->hosting,
+            $this->composition,
+            $this->packs,
+            $this->appUsers,
         );
     }
 
@@ -540,6 +548,7 @@ FormLogic builds self-hosted apps made of FORMS (fields + data), optional backen
 Build an app from scratch:
 1. create_app { name, description?, appKind? } — a container for forms. appKind tags the audience: admin|client|staff|public|internal|custom. (Skip if your token is already scoped to one app; then create_app is hidden.)
 2. create_app_form { title, fields } — create a form AND attach it to the app in one call. Repeat per form. Fields: [{ id, type, label, required, properties? }]. Common types: short_text, long_text, email, number, dropdown / multiple_choice (properties.options: [{id,label,value}]), checkbox, date, rating, scale, file_upload, hidden, statement, linked_record (properties.targetFormId = another form's id, to relate records).
+For a portable connected dashboard: get_workspace_template, get_app_project, then publish_app_project. Use compose_apps to add existing app forms or move Aokie automation into a destination app. Read both apps first; preserve existing member permissions.
 3. (optional) update_form { formId, logicScript } — a QuickJS "function onSubmit(ctx) {…}" server-side script.
 4. (recommended) set_app_home { appId, customScreen: { kind:"dashboard", dashboard:{ cols:12, widgets:[…] } } } — a no-code widget DASHBOARD home screen, the primary kind. Widgets: { kind:"report", layout:{x,y,w,h}, title?, spec } (spec = the same shape as create_report), { kind:"list", layout, list:{formId,limit?,titleField?,subtitleField?,metaField?} }, { kind:"text", layout, text:{body} }, { kind:"actions", layout } (new-record buttons), { kind:"activity", layout } (latest records). ALTERNATIVE: a full CODE frontend { enabled:true, files:[{path,content}] } (React-style TSX supported: entry index.tsx mounting createRoot(document.getElementById('root')!).render(<App/>); built-ins 'react'/'react-dom/client'/'preact'/'preact/hooks', no other npm; folders + relative imports fine; no index.html needed) or legacy { enabled:true, ts, html, css }; compiled/bundled automatically. Inside it window.FormLogic is the SDK: context(), forms(), submit(formId,answers), records(formId,{limit}), currentUser(), navigate(formId), toast.success/error, escapeHtml(v) — render record data as JSX text (auto-escaped), never dangerouslySetInnerHTML.
 5. (optional) AUTOMATE with flows: create_flow { appId, name, flowJson:{nodes,edges}, nodeCapabilities } then create_flow_binding { flow:<slug>, event, formId?|connectorId?, inputMap?, outputActions? } — e.g. run a flow on event "form.submitted" of a form, or on a connector event like "aokie.call.incoming". Full node reference in get_started § Flows.

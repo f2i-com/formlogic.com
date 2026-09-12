@@ -4,6 +4,8 @@ import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { AppCustomScreenRuntime } from '../custom-screen/AppCustomScreenRuntime';
 import { SdkScreenRuntime } from '../custom-screen/SdkScreenRuntime';
 import { AppDashboardHome } from './AppDashboardHome';
+import { AokieWorkspace } from './AokieWorkspace';
+import { HostedDashboardHome } from './HostedDashboardHome';
 import { safeAppNavTarget } from '../../lib/screenNav';
 import { useCustomAppLogic } from '../../client-runtime/logic/useCustomAppLogic';
 import { useDesktopConnectorEvents } from '../../client-runtime/desktop/useDesktopConnectorEvents';
@@ -28,6 +30,9 @@ export function AppHomeScreen() {
   useDesktopConnectorEvents({ appSlug, enabled: logicEnabled, runConnectorEvent });
 
   if (!config) return null;
+  if (config.app.settings?.hostedDashboard === true) return <HostedDashboardHome slug={config.app.slug} />;
+
+  if (config.app.settings?.aokieWorkspace === true) return <AokieWorkspace listen={false} />;
 
   // A host-rendered SDK (React) screen from the trusted registry takes over the home when configured.
   if (cs?.enabled && cs.kind === 'sdk' && cs.sdkScreen?.screenId) {

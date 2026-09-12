@@ -276,7 +276,7 @@ class DesktopCommandService
      */
     public function pollPending(string $ownerUserId, ?string $sinceId, int $waitMs, int $limit = 50, ?string $instanceId = null): array
     {
-        $waitMs = max(0, min($waitMs, self::MAX_WAIT_MS));
+        $waitMs = LongPollBudget::milliseconds($waitMs, self::MAX_WAIT_MS);
         $deadline = microtime(true) + ($waitMs / 1000);
         do {
             $pending = $this->listPending($ownerUserId, $sinceId, $limit, $instanceId);

@@ -175,7 +175,12 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   // Reports are optional: the section shows if any exist, or to the owner (who can create them).
   const showReports = (config.app?.reports?.length ?? 0) > 0 || isOwner();
 
-  const dashboardItem: NavItem = { id: 'dashboard', label: 'Dashboard', iconName: null, kind: 'dashboard', path: basePath };
+  const onAokie = location.pathname === `${basePath}/aokie`;
+  const hasAokie = forms.some(form => form.packFormId === 'calls') && forms.some(form => form.packFormId === 'appointments');
+  const aokieHome = config.app.settings?.aokieWorkspace === true && config.app.settings?.hostedDashboard !== true;
+  const separateFrontDesk = hasAokie && !aokieHome;
+  const aokieItem: NavItem = { id: 'aokie', label: 'Front desk', iconName: 'PhoneCall', kind: 'link', path: `${basePath}/aokie` };
+  const dashboardItem: NavItem = { id: 'dashboard', label: aokieHome ? 'Front desk' : 'Dashboard', iconName: aokieHome ? 'PhoneCall' : null, kind: aokieHome ? 'link' : 'dashboard', path: basePath };
   // Menu entries: data-only (`hidden`) and unlisted (`menuHidden`) forms render
   // no entry; hidden forms are also excluded from custom-link nav targets.
   const formItems: NavItem[] = menuForms(forms).map((f) => ({
@@ -207,7 +212,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
 
   // Sidebar/drawer nav, grouped: Overview / Forms / Data.
   const navGroups: Array<{ label: string; items: NavItem[] }> = [
-    { label: 'Overview', items: [dashboardItem] },
+    { label: 'Overview', items: [dashboardItem, ...(separateFrontDesk ? [aokieItem] : [])] },
     ...(formsGroupItems.length > 0 ? [{ label: 'Forms', items: formsGroupItems }] : []),
     { label: 'Data', items: showReports ? [recordsItem, reportsItem] : [recordsItem] },
   ];
@@ -233,6 +238,8 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
 
   const isActive = (id: string) => {
     if (location.pathname.includes('/profile')) return false;
+    if (id === 'aokie') return onAokie;
+    if (onAokie) return aokieHome && id === 'dashboard';
     if (id === 'reports') return onReports;
     if (id === 'records') return onRecords && !onReports;
     if (onRecords || onReports) return false; // on records/reports, no form/dashboard item is active
@@ -242,7 +249,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   // Mobile bottom bar: Dashboard / Records / Reports own the fixed slots — forms live
   // under "More" (they're also reachable from Dashboard and Records), so Records and
   // Reports never fall into the overflow just because an app has many forms.
-  const bottomNavItems: NavItem[] = [dashboardItem, recordsItem, ...(showReports ? [reportsItem] : [])];
+  const bottomNavItems: NavItem[] = [dashboardItem, ...(separateFrontDesk ? [aokieItem] : []), recordsItem, ...(showReports ? [reportsItem] : [])];
   const hasMoreItems = formsGroupItems.length > 0;
   // Highlight "More" when the current section (a form) lives in the overflow menu.
   const activeInOverflow = hasMoreItems && formsGroupItems.some((i) => isActive(i.id));

@@ -32,7 +32,12 @@ class ChatToolsService
     public const TOOL_SCOPES = [
         'list_forms' => 'forms:read', 'get_form' => 'forms:read',
         'create_form' => 'forms:write', 'update_form' => 'forms:write', 'create_app_form' => 'forms:write',
-        'list_apps' => 'apps:read', 'create_app' => 'apps:write',
+        'list_apps' => 'apps:read', 'get_app' => 'apps:read', 'create_app' => 'apps:write',
+        'get_app_project' => 'apps:read', 'get_workspace_template' => 'apps:read',
+        'publish_app_project' => 'apps:write', 'compose_apps' => 'apps:write',
+        'list_app_roles' => 'apps:read', 'create_app_role' => 'apps:write',
+        'set_app_role_permissions' => 'apps:write', 'set_app_role_connector_grants' => 'apps:write',
+        'get_aokie_starter' => 'apps:read', 'install_aokie_starter' => 'apps:write',
         'update_app' => 'apps:write', 'add_form_to_app' => 'apps:write',
         'create_report' => 'apps:write', 'create_document' => 'apps:write',
         'set_app_home' => 'screens:write', 'set_form_screen' => 'screens:write',
@@ -81,6 +86,10 @@ class ChatToolsService
         // §11A D3/D5: the SAME create-or-delta materialiser the canvas 'Create app'
         // button uses — lets an external AI turn its diagram into a real app.
         private ?BlueprintMaterializeService $materializer = null,
+        private ?HostedAppService $hosting = null,
+        private ?AppCompositionService $composition = null,
+        private ?PackService $packs = null,
+        private ?AppUserService $appUsers = null,
     ) {}
 
     // ── Chat-surface entry (subset-restricted) ──────────────────────────────────────────
@@ -248,6 +257,11 @@ class ChatToolsService
                     $settings['hideNav'] = (bool) $args['hideNav'];
                     $upd['settings'] = $settings;
                 }
+                if (array_key_exists('hostedDashboard', $args)) {
+                    if (!is_bool($args['hostedDashboard'])) throw new \InvalidArgumentException('hostedDashboard must be boolean.');
+                    if ($args['hostedDashboard'] && (!$this->hosting || !$this->hosting->get((string)$args['appId']))) throw new \InvalidArgumentException('Publish an app project before making it the home dashboard.');
+                    $upd['settings'] = array_merge($upd['settings'] ?? $app['settings'] ?? [], ['hostedDashboard' => $args['hostedDashboard']]);
+                }
                 if (array_key_exists('customLogic', $args) && is_array($args['customLogic'])) {
                     $bundle = \FormLogic\Helpers\CustomLogicSanitizer::sanitize($args['customLogic']);
                     if (!\FormLogic\Helpers\CustomLogicSanitizer::withinSizeCap($bundle)) {
@@ -258,6 +272,111 @@ class ChatToolsService
                 $data = $this->appService->updateApp((string) $args['appId'], $upd);
                 $ctx->audit('update_app', ['appId' => $args['appId'] ?? null]);
                 break;
+            case 'get_app':
+            case 'get_app_project': {
+                $id = (string)($args['appId'] ?? $scopedApp ?? '');
+                $this->assertAppScope($ctx, $id);
+                $app = $this->ownApp($id, $userId);
+                if ($name === 'get_app') $data = ['app' => $app, 'forms' => $this->appService->getAppForms($id)];
+                else {
+                    if (!$this->hosting) throw new \RuntimeException('Hosting is unavailable.');
+                    $data = ['deployment' => $this->hosting->get($id, true)];
+                }
+                break;
+            }
+            case 'list_app_roles':
+            case 'create_app_role':
+            case 'set_app_role_permissions':
+            case 'set_app_role_connector_grants': {
+                $id = (string)($args['appId'] ?? $scopedApp ?? '');
+                $this->assertAppScope($ctx, $id);
+                $this->ownApp($id, $userId);
+                if (!$this->appUsers) throw new \RuntimeException('Member roles are unavailable.');
+                if ($name === 'list_app_roles') {
+                    $data = ['roles' => $this->appUsers->getRoles($id), 'permissions' => \FormLogic\Constants\AppPermissions::ALL, 'formPermissions' => \FormLogic\Constants\AppPermissions::FORM_LEVEL];
+                    break;
+                }
+                if ($name === 'create_app_role') {
+                    $label = $args['name'] ?? null;
+                    if (!is_string($label) || trim($label) === '' || mb_strlen($label) > 100) throw new \InvalidArgumentException('Role name must contain 1 to 100 characters.');
+                    $data = $this->appUsers->createRole($id, ['name' => trim($label)]);
+                } else {
+                    $role = (string)($args['roleId'] ?? '');
+                    if (!$this->appUsers->roleBelongsToApp($role, $id)) throw new ChatToolDeniedException('Role does not belong to this app.', 'app_scope');
+                    $connector = $name === 'set_app_role_connector_grants';
+                    if ($connector) $ctx->requireScope('connector:command');
+                    $entries = $args['permissions'] ?? null;
+                    if (!is_array($entries) || !array_is_list($entries) || count($entries) > 500) throw new \InvalidArgumentException('Provide the complete reviewed permissions list (at most 500).');
+                    $forms = array_column($this->appService->getAppForms($id), 'formId');
+                    foreach ($entries as $entry) {
+                        if (!is_array($entry) || !is_string($entry['permission'] ?? null)) throw new \InvalidArgumentException('Each permission needs a permission name.');
+                        $permission = $entry['permission'];
+                        $formId = $entry['formId'] ?? null;
+                        $valid = $connector ? \FormLogic\Constants\AppPermissions::isConnectorGrant($permission) : in_array($permission, \FormLogic\Constants\AppPermissions::ALL, true);
+                        if (!$valid || ($formId !== null && (!is_string($formId) || !in_array($formId, $forms, true)))) throw new \InvalidArgumentException('Unknown permission or form outside this app.');
+                        if (!$connector && in_array($permission, \FormLogic\Constants\AppPermissions::FORM_LEVEL, true) !== ($formId !== null)) throw new \InvalidArgumentException('Form permissions require formId; app permissions must omit it.');
+                    }
+                    if ($connector) $this->appUsers->setConnectorGrants($role, $entries, true);
+                    else $this->appUsers->setRolePermissions($role, $entries, true);
+                    $data = ['roles' => $this->appUsers->getRoles($id)];
+                }
+                $ctx->audit($name, ['appId' => $id, 'roleId' => $args['roleId'] ?? $data['id'] ?? null]);
+                break;
+            }
+            case 'get_aokie_starter':
+            case 'install_aokie_starter': {
+                $resource = json_decode(file_get_contents(dirname(__DIR__, 2) . '/resources/marketplace-packs/aokie-receptionist.json'), true, 512, JSON_THROW_ON_ERROR);
+                $pack = $resource['pack'];
+                if ($name === 'get_aokie_starter') {
+                    $data = ['name' => $resource['name'], 'description' => $resource['description'], 'capabilities' => \FormLogic\Helpers\PackCapabilities::describe($pack), 'forms' => array_column($pack['forms'], 'title')];
+                    break;
+                }
+                $ctx->requireScope('forms:write'); $ctx->requireScope('screens:write');
+                if ($scopedApp !== null) throw new ChatToolDeniedException('Install creates a new app; use an account-wide or creator connection.', 'app_scope');
+                if (!$this->packs) throw new \RuntimeException('Starter installation is unavailable.');
+                if (($_ENV['REQUIRE_VERIFIED_PACKAGES'] ?? getenv('REQUIRE_VERIFIED_PACKAGES')) === 'true') throw new ChatToolDeniedException('This workspace requires verified package installation through the marketplace.', 'verified_package_required');
+                if (!is_array($args['approvedConnectorGrants'] ?? null) || !array_is_list($args['approvedConnectorGrants']) || array_filter($args['approvedConnectorGrants'], static fn($g) => !is_string($g))) throw new \InvalidArgumentException('Read get_aokie_starter, then provide the explicitly reviewed approvedConnectorGrants list (empty is allowed).');
+                if ($args['approvedConnectorGrants']) $ctx->requireScope('connector:command');
+                if ($this->planService && !$this->planService->canCreateForms($userId, count($pack['forms']))) throw new ChatToolDeniedException('The starter would exceed the account form limit.', 'form_limit');
+                $data = $this->packs->importPack($pack, $userId, null, null, null, $args['approvedConnectorGrants']);
+                if ($creatorMode) {
+                    foreach ($data['apps'] ?? [] as $created) $ctx->recordCreated('apps', $created['id']);
+                    foreach ($data['forms'] ?? [] as $created) $ctx->recordCreated('forms', $created['id']);
+                }
+                $ctx->audit('install_aokie_starter', ['installationId' => $data['installationId'] ?? null]);
+                break;
+            }
+            case 'get_workspace_template':
+                $template = (string)($args['template'] ?? 'workspace');
+                if (!in_array($template, ['workspace', 'aokie'], true)) throw new \InvalidArgumentException('Choose workspace or aokie.');
+                $file = $template === 'aokie' ? 'aokie-workspace' : 'connected-workspace';
+                $data = json_decode(file_get_contents(dirname(__DIR__, 2) . '/resources/' . $file . '.json'), true, 512, JSON_THROW_ON_ERROR);
+                break;
+            case 'publish_app_project': {
+                $ctx->requireScope('screens:write');
+                $id = (string)($args['appId'] ?? $scopedApp ?? '');
+                $this->assertAppScope($ctx, $id);
+                $this->ownApp($id, $userId);
+                if (!$this->hosting) throw new \RuntimeException('Hosting is unavailable.');
+                if (!is_array($args['package'] ?? null) || !is_int($args['expectedVersion'] ?? null) || $args['expectedVersion'] < 0) throw new \InvalidArgumentException('Provide package and expectedVersion (0 for a new deployment).');
+                $data = ['deployment' => $this->hosting->publish($id, $args['package'], $args['expectedVersion'])];
+                $ctx->audit('publish_app_project', ['appId' => $id, 'version' => $data['deployment']['version']]);
+                break;
+            }
+            case 'compose_apps': {
+                $source = (string)($args['sourceAppId'] ?? '');
+                $target = (string)($args['appId'] ?? '');
+                // An app-scoped/creator token cannot use composition to import out-of-scope data.
+                $ctx->requireScope('forms:read');
+                $this->assertAppScope($ctx, $source); $this->assertAppScope($ctx, $target);
+                $this->ownApp($source, $userId); $this->ownApp($target, $userId);
+                if (!$this->composition) throw new \RuntimeException('App composition is unavailable.');
+                if (isset($args['moveAutomation']) && !is_bool($args['moveAutomation'])) throw new \InvalidArgumentException('moveAutomation must be boolean.');
+                if (($args['moveAutomation'] ?? false) === true) $ctx->requireScope('connector:command');
+                $data = $this->composition->compose($userId, $source, $target, $args['formIds'] ?? null, $args['moveAutomation'] ?? false, $args['approvedConnectorGrants'] ?? []);
+                $ctx->audit('compose_apps', ['appId' => $target, 'sourceAppId' => $source, 'automationMoved' => $args['moveAutomation'] ?? false]);
+                break;
+            }
             case 'add_form_to_app':
                 $this->assertAppScope($ctx, (string) ($args['appId'] ?? ''));
                 $this->ownApp((string) ($args['appId'] ?? ''), $userId);
@@ -984,10 +1103,21 @@ class ChatToolsService
         // never stall on a deferred schema.
         return [
             ['name' => 'create_app', 'scope' => 'apps:write', 'description' => 'Create an app (container for forms). Optional appKind tags the audience the app serves.', 'inputSchema' => $obj(['name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'appKind' => ['type' => 'string', 'enum' => AppService::APP_KINDS, 'description' => 'Optional audience tag: admin console, client portal, staff field app, public intake, internal, or custom.']], ['name'])],
+            ['name' => 'get_aokie_starter', 'scope' => 'apps:read', 'description' => 'Inspect the bundled Aokie starter forms and reviewable connector capabilities before installing. Does not install native software or change anything.', 'inputSchema' => $obj([])],
+            ['name' => 'list_app_roles', 'scope' => 'apps:read', 'description' => 'Read roles and their current permissions, including connector grants, plus valid built-in permission names. Owner and token app confinement apply.', 'inputSchema' => $obj(['appId' => ['type' => 'string']], ['appId'])],
+            ['name' => 'create_app_role', 'scope' => 'apps:write', 'description' => 'Create an empty member role. Configure its permissions before assigning members. Does not send invitations.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string']], ['appId', 'name'])],
+            ['name' => 'set_app_role_permissions', 'scope' => 'apps:write', 'description' => 'Replace a role built-in permissions with the complete reviewed list. Read list_app_roles first. Form permissions require formId; app permissions omit it. Connector grants are preserved. The system Owner role is immutable.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'roleId' => ['type' => 'string'], 'permissions' => ['type' => 'array', 'items' => $obj(['permission' => ['type' => 'string'], 'formId' => ['type' => 'string']], ['permission'])]], ['appId', 'roleId', 'permissions'])],
+            ['name' => 'set_app_role_connector_grants', 'scope' => 'apps:write', 'description' => 'Replace only a role connector capabilities with the complete explicitly reviewed permissions list; also requires connector:command. Built-in permissions are preserved. Use specific connector commands rather than wildcards. The system Owner role is immutable.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'roleId' => ['type' => 'string'], 'permissions' => ['type' => 'array', 'items' => $obj(['permission' => ['type' => 'string'], 'formId' => ['type' => 'string']], ['permission'])]], ['appId', 'roleId', 'permissions'])],
+            ['name' => 'install_aokie_starter', 'scope' => 'apps:write', 'description' => 'Install the bundled Aokie forms, screens and flows as a new app. Requires forms:write and screens:write; non-empty connector grants also require connector:command. Explicit approvedConnectorGrants is mandatory; unapproved grants stay withheld. Honors verified-package policy and form quotas. Then use compose_apps to integrate into an existing app. Native OAIY plugin installation and device pairing are separate steps.', 'inputSchema' => $obj(['approvedConnectorGrants' => ['type' => 'array', 'items' => ['type' => 'string']]], ['approvedConnectorGrants'])],
+            ['name' => 'get_app', 'scope' => 'apps:read', 'description' => 'Read an owned app including its settings, custom logic, dashboard and attached form identities. Read before editing or composing.', 'inputSchema' => $obj(['appId' => ['type' => 'string']], ['appId'])],
+            ['name' => 'get_app_project', 'scope' => 'apps:read', 'description' => 'Read the editable hosted app project: public .ui/.logic client, PRIVATE backend actions and current deployment version. Never place private actions or credentials in client files.', 'inputSchema' => $obj(['appId' => ['type' => 'string']], ['appId'])],
+            ['name' => 'get_workspace_template', 'scope' => 'apps:read', 'description' => 'Get an editable Softn dashboard package connected to the current app forms, records and Aokie tools. Publish the returned package with publish_app_project. The workspaceInfo/workspaceRecords/workspaceOpen host callbacks are scoped to that app.', 'inputSchema' => $obj(['template' => ['type' => 'string', 'enum' => ['workspace', 'aokie'], 'description' => 'Choose a generic dashboard or the Aokie front desk with calls, transcripts, logs and appointments.']])],
+            ['name' => 'publish_app_project', 'scope' => 'apps:write', 'description' => 'Publish a Softn client and private .logic backend actions with per-app SQLite. Also requires screens:write. Read get_app_project first; expectedVersion prevents overwriting newer work (0 for first publish). Package: {version:1,client:{"manifest.json":"...","ui/main.ui":"...","logic/main.logic":"..."},actions:{name:{source:"function onRequest(ctx) {...}",access:"owner|member",mode:"read|write"}}}. Private actions use ctx.db.get/list/put/remove. Open /app/<slug>/project after publishing.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'expectedVersion' => ['type' => 'integer', 'minimum' => 0], 'package' => ['type' => 'object']], ['appId', 'expectedVersion', 'package'])],
+            ['name' => 'compose_apps', 'scope' => 'apps:write', 'description' => 'Share selected existing forms and records from sourceAppId into appId; no data copy and no change to destination branding, screens or roles. Both apps must be owned and within token scope. moveAutomation:true requires connector:command and explicitly approvedConnectorGrants: moves flows/bindings and enabled scripts to the destination, disabling source scripts to avoid duplicate writers. Includes every source form in that mode. Review destination member permissions after composition.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'sourceAppId' => ['type' => 'string'], 'formIds' => ['type' => 'array', 'items' => ['type' => 'string']], 'moveAutomation' => ['type' => 'boolean'], 'approvedConnectorGrants' => ['type' => 'array', 'items' => ['type' => 'string']]], ['appId', 'sourceAppId'])],
             ['name' => 'create_app_form', 'scope' => 'forms:write', 'description' => "PREFERRED for building an app: create a form AND attach it to an app in one call (no orphan form). appId defaults to the token's app when app-scoped; required for account-wide tokens. Same fields as create_form + displayName.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'displayName' => ['type' => 'string'], 'title' => ['type' => 'string'], 'description' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published']]], ['title'])],
             ['name' => 'set_app_home', 'scope' => 'screens:write', 'description' => "Set the app's home screen. PREFERRED: a no-code widget DASHBOARD ({ kind:'dashboard', dashboard:{ cols, widgets } } — charts/KPIs/lists the host renders natively; report widgets take the same spec as create_report). ALTERNATIVE: a full sandboxed CODE frontend (HTML/CSS/TypeScript) over the app's forms — its SDK spans all the app's forms: submit(formId,answers)/records(formId)/navigate(formId)/context()/forms()/currentUser(). Build a whole app here; you don't need a screen per form.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'customScreen' => $screen], ['appId', 'customScreen'])],
             ['name' => 'set_form_screen', 'scope' => 'screens:write', 'description' => "Set a FORM's custom screen — a sandboxed frontend rendered INSTEAD of the default field UI on the form's public link, embeds and previews when enabled:true (enabled:false keeps it a draft the owner can preview in the Studio). Same two kinds as set_app_home: a no-code widget DASHBOARD, or a CODE screen (TSX files talking to window.FormLogic: submit(answers)/records()/context()/currentUser()/toast). publicRecords + publicRecordFields opt anonymous visitors into reading the whitelisted answer fields (leaderboards). REPLACES the form's whole customScreen — send the complete screen every time (read the current one with get_form first when editing).", 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'customScreen' => $screen], ['formId', 'customScreen'])],
-            ['name' => 'update_app', 'scope' => 'apps:write', 'description' => 'Update an app: rename, set description, change the URL slug, publish (status: draft|published|archived), hide the sidebar/menu (hideNav: true for a self-contained custom-home app), or set its app-logic bundle (customLogic — sandboxed QuickJS event handlers, e.g. reacting to connector events).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'URL slug: lowercase letters, digits, hyphens.'], 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']], 'hideNav' => ['type' => 'boolean', 'description' => 'Render the app full-screen without the sidebar/menu.'], 'customLogic' => $customLogic], ['appId'])],
+            ['name' => 'update_app', 'scope' => 'apps:write', 'description' => 'Update an app: rename, set description, change the URL slug, publish (status: draft|published|archived), hide the sidebar/menu (hideNav: true for a self-contained custom-home app), or set its app-logic bundle (customLogic — sandboxed QuickJS event handlers, e.g. reacting to connector events).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'URL slug: lowercase letters, digits, hyphens.'], 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']], 'hideNav' => ['type' => 'boolean', 'description' => 'Render the app full-screen without the sidebar/menu.'], 'hostedDashboard' => ['type' => 'boolean', 'description' => 'Use the published Softn project as app home; false restores the previous screen.'], 'customLogic' => $customLogic], ['appId'])],
             ['name' => 'create_flow', 'scope' => 'apps:write', 'description' => "Create a FLOW (automation) in an app: a graph of nodes — LLM chat, find/submit/update records, condition, template, QuickJS logic, HTTP, connector commands, speech — that runs when a bound trigger event fires. After creating it, wire it to its trigger with create_flow_binding. Set nodeCapabilities to the union of the capabilities your nodes need (see get_started § Flows), e.g. ['formlogic.responses.read','formlogic.responses.write'].", 'inputSchema' => $obj(['appId' => ['type' => 'string', 'description' => "Defaults to the token's app when app-scoped."], 'name' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'lowercase letters/digits/hyphens; defaults from name.'], 'description' => ['type' => 'string'], 'flowJson' => $flowGraph, 'nodeCapabilities' => ['type' => 'array', 'items' => ['type' => 'string'], 'description' => "Capabilities the flow's nodes need: formlogic.responses.read / formlogic.responses.write / formlogic.kv.write / model.llm.local / connector.<id>.<command>."], 'enabled' => ['type' => 'boolean']], ['name'])],
             ['name' => 'list_blueprints', 'scope' => 'apps:read', 'description' => "List the owner's blueprints (DIAGRAMS — the visual sketches of apps at /diagrams): blueprintId, name, appId (null until materialised into a real app), semanticRevision, updatedAt. Use get_blueprint before proposing changes.", 'inputSchema' => $obj([])],
             ['name' => 'get_blueprint', 'scope' => 'apps:read', 'description' => 'Get one blueprint (diagram) including its elements (nodes AND relationship edges) and current semanticRevision — you need that revision for blueprint_propose_elements.', 'inputSchema' => $obj(['blueprintId' => ['type' => 'string']], ['blueprintId'])],

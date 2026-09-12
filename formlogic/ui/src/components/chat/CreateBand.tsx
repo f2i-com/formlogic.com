@@ -309,7 +309,7 @@ export function CreateBand() {
             <span className="rounded bg-primary-100 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-primary-700 dark:bg-primary-500/20 dark:text-primary-300">Recommended</span>
           </p>
           <p className="mt-1 text-xs leading-snug text-gray-500 dark:text-slate-400">
-            A web provider, FormLogic Desktop, or an external assistant through MCP.
+            A web provider, OAIY Desktop, or an external assistant through MCP.
           </p>
         </button>
         <button

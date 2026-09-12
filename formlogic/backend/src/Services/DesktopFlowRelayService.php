@@ -20,9 +20,9 @@ use PDO;
  *
  * Result retention (the flow lane's one deliberate difference from the AI lane): a flow run's
  * RESULT must be retrievable after completion, so complete() purges the request envelope +
- * frames but KEEPS result_envelope until the requester reads the run row ONCE
- * (consumeResultEnvelope(), called by the controller's web GET) — read-once-then-purge is the
- * honest E2E design. A result nobody reads is still bounded: expireStale() purges terminal-row
+ * frames but KEEPS result_envelope until explicit acknowledgement by the requester.
+ * Reads are repeatable so a lost response cannot destroy the result.
+ * Retention remains bounded: expireStale() purges terminal-row
  * results older than RESULT_RETENTION_SECONDS.
  *
  * Queueing mirrors DesktopAiRelayService (reserve-first on the UNIQUE idempotency_key,
@@ -298,7 +298,7 @@ class DesktopFlowRelayService
      */
     public function pollPending(string $ownerUserId, ?string $sinceId, int $waitMs, int $limit = 50, ?string $instanceId = null): array
     {
-        $waitMs = max(0, min($waitMs, self::MAX_WAIT_MS));
+        $waitMs = LongPollBudget::milliseconds($waitMs, self::MAX_WAIT_MS);
         $deadline = microtime(true) + ($waitMs / 1000);
         do {
             $pending = $this->listPending($ownerUserId, $sinceId, $limit, $instanceId);
@@ -494,7 +494,7 @@ class DesktopFlowRelayService
      * Complete a claimed run (claimed|streaming→done|failed), claimant-bound. Stores the sealed
      * result envelope (if any) and PURGES the request envelope + progress frames (plan §7: the
      * backend keeps sealed bodies only for the run's lifetime). The RESULT envelope survives
-     * until the requester reads the run row once (consumeResultEnvelope) — a flow run's result
+     * until explicit acknowledgement or retention expiry — a flow run's result
      * must be retrievable after completion, unlike a chat request's.
      * Returns the updated run; null when not found; throws
      * \RuntimeException('not_claimed'|'claimed_elsewhere') on conflicts (→ 409).
@@ -568,14 +568,20 @@ class DesktopFlowRelayService
         return $this->get($id, $ownerUserId);
     }
 
-    /**
-     * Read-once result retrieval (the flow lane's E2E result design, see the class docblock):
-     * returns the sealed result envelope (base64) of a terminal run and purges it in the same
-     * transaction — the FIRST reader gets the result, every later reader gets null. Returns
-     * null when the run has no stored result (not finished, already consumed, or completed
-     * without one).
-     */
+    /** Compatibility name: reads are repeatable until explicit acknowledgement or retention GC. */
     public function consumeResultEnvelope(string $id, string $ownerUserId): ?string
+    {
+        $read = $this->mysql->prepare("
+            SELECT result_envelope FROM desktop_flow_runs
+            WHERE id = :id AND owner_user_id = :o AND status IN ('done', 'failed')
+        ");
+        $read->execute(['id' => $id, 'o' => $ownerUserId]);
+        $row = $read->fetch();
+        return $row && $row['result_envelope'] !== null ? base64_encode((string) $row['result_envelope']) : null;
+    }
+
+    /** Purge only the ciphertext identified by a receipt, after the requester accepts it. */
+    public function acknowledgeResultEnvelope(string $id, string $ownerUserId, string $receipt): bool
     {
         $this->mysql->beginTransaction();
         try {
@@ -585,15 +591,23 @@ class DesktopFlowRelayService
             ");
             $lock->execute(['id' => $id, 'o' => $ownerUserId]);
             $row = $lock->fetch();
-            if (!$row || $row['result_envelope'] === null) {
+            if (!$row) {
                 $this->mysql->commit();
-                return null;
+                return false;
+            }
+            if ($row['result_envelope'] === null) {
+                $this->mysql->commit();
+                return true; // already acknowledged or removed by bounded retention
+            }
+            if (!hash_equals(hash('sha256', (string) $row['result_envelope']), $receipt)) {
+                $this->mysql->commit();
+                return false;
             }
             $this->mysql->prepare("
                 UPDATE desktop_flow_runs SET result_envelope = NULL WHERE id = :id
             ")->execute(['id' => $id]);
             $this->mysql->commit();
-            return base64_encode((string) $row['result_envelope']);
+            return true;
         } catch (\Throwable $e) {
             if ($this->mysql->inTransaction()) {
                 $this->mysql->rollBack();

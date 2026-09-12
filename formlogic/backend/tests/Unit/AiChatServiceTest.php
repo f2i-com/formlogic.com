@@ -41,7 +41,9 @@ class AiChatServiceTest extends TestCase
     {
         // A keyless local endpoint makes isConfigured() true without any credential.
         $_ENV['AI_BASE_URL'] = 'http://127.0.0.1:9';
-        return new FakeAiService();
+        $plans = $this->createMock(\FormLogic\Services\PlatformPlansService::class);
+        $plans->method('status')->willReturn(array_replace(\FormLogic\Services\PlatformPlansService::defaults(), ['siteAiEnabled' => true]));
+        return new FakeAiService($plans);
     }
 
     // ── validation ──
@@ -232,7 +234,9 @@ class AiChatServiceTest extends TestCase
     public function testChatThrowsWhenNotConfigured(): void
     {
         // No AI_BASE_URL at all → the default api.openai.com endpoint without a key.
-        $ai = new FakeAiService();
+        $plans = $this->createMock(\FormLogic\Services\PlatformPlansService::class);
+        $plans->method('status')->willReturn(array_replace(\FormLogic\Services\PlatformPlansService::defaults(), ['siteAiEnabled' => true]));
+        $ai = new FakeAiService($plans);
         $this->expectException(\Exception::class);
         $this->expectExceptionMessageMatches('/not configured/');
         $ai->chat([['role' => 'user', 'content' => 'Hi']], false);

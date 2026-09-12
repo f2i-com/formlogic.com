@@ -1,31 +1,45 @@
 # MCP — build apps with your own AI
 
+[Documentation home](../README.md) · [AI setup](FREE_PLANS_AND_AI_SETUP.md) ·
+[Connected apps and Aokie](CONNECTED_APPS.md) · [Hosted app actions](HOSTED_APPS.md)
+
 FormLogic ships an **MCP server** (Model Context Protocol, over HTTP) so you can point your *own* AI —
-Claude Desktop, Claude Code, Cursor, or anything that speaks MCP — at a FormLogic app and have it build
-and edit forms, compose **widget dashboards**, write **custom screens**, and wire everything together.
-Bring your own (frontier) model instead of the built-in one.
+using a compatible client — at a FormLogic app and have it build and edit forms,
+compose **widget dashboards**, publish **Softn app projects**, write private
+backend actions, configure roles and connect **Aokie** to an existing app.
 
 It works over a **temporary, scoped connection**: a short-lived bearer token with an idle timeout that you
-can revoke at any time. Claude and ChatGPT connect with **one pasted URL** (OAuth, below); any other MCP
-client can use a [manual token](#manual-tokens-advanced--other-clients).
+can revoke at any time. Clients that support remote MCP OAuth start from the MCP
+URL; other compatible HTTP clients can use a [manual token](#manual-tokens-advanced--other-clients).
 
-> Beta. App screens created this way run in the same sandbox as everything else (see [Custom screens](#)).
+MCP gives an external AI tools to build in your account. **Connect your AI**
+selects the model used by FormLogic's own chat; these are separate connections.
+Use the public `/ai-setup` guide before signing in, or `/llms.txt` for an AI-readable
+overview. Signup, verification, OAuth consent, native installation and phone
+pairing remain user setup steps; they are not MCP tools.
+
+**Start every build by reading `get_started`, then inspect existing apps before
+editing them.** For an existing app, use an app-scoped connection. Combining two
+existing apps needs a connection that can access both.
+
+Screens and backend actions use the same host boundaries as their UI editors.
+See [Custom screens](API.md) and [Hosted apps](HOSTED_APPS.md).
 
 ---
 
 ## Connecting from Claude / ChatGPT (OAuth)
 
-The primary path — no token copying. FormLogic is an OAuth 2.1 **protected resource** and
-**authorization server** on the same origin, so MCP clients that support connector auth (Claude
-web/desktop/mobile, Claude Code, ChatGPT) discover everything from the MCP URL alone.
+FormLogic is an OAuth 2.1 **protected resource** and **authorization server** on
+the same origin. A client that supports remote MCP discovery and OAuth can
+discover the connection from the MCP URL. Client availability and menu labels
+depend on that client's account and version.
 
 **User steps**
 
-1. Copy your MCP URL — `https://<your-host>/api/mcp` (shown in **Settings → Connect an AI**).
-2. Paste it into your client:
-   - **Claude** (web / desktop / mobile): Settings → **Connectors** → **Add custom connector** → paste the URL.
-   - **Claude Code**: `claude mcp add --transport http formlogic https://<your-host>/api/mcp`, then `/mcp` → authenticate.
-   - **ChatGPT**: Settings → **Connectors** → create a custom (MCP) connector → paste the URL.
+1. Copy your MCP URL — `https://<your-host>/api/mcp` (shown in **Settings → External AI access → Manage AI connections**).
+2. Add a remote HTTP MCP connection in your client, paste the URL and start its
+   authentication flow. If it only accepts bearer headers, use the manual-token
+   instructions below instead.
 3. Your browser opens FormLogic's consent page (`/oauth/authorize`). Sign in if you aren't already.
 4. Check **who is asking** (the client name and the redirect host are shown — if they aren't the AI you
    just used, deny), optionally **limit the connection to one app**, and **Approve**.
@@ -35,10 +49,9 @@ Approving mints a normal scoped MCP session under the hood (token prefix `flm_oa
 [Scopes](#scopes), [Tools](#tools) and [Security](#security) applies unchanged — same app-scoping, same
 audit trail, revocable like any other token.
 
-> **HTTPS required for hosted clients.** claude.ai and ChatGPT drive the OAuth flow from their servers,
-> so they can only reach a publicly resolvable **https** origin — a production custom connector cannot
-> reach `http://formlogic.local`. Test locally with **MCP Inspector** or **Claude Code** pointed at the
-> LAN address, or expose the dev stack through a tunnel.
+> **Hosted clients need a reachable server.** A service running outside your
+> machine cannot reach your `localhost`. Use the deployed HTTPS origin for a
+> hosted client, or a locally running MCP client for a local development server.
 
 ### How the flow works (technical appendix)
 
@@ -110,6 +123,11 @@ under [Scopes](#scopes).
 
 ## FormLogic Desktop device-link (first-party native client)
 
+This is the account-link protocol used by compatible desktop runtimes, including
+OAIY. Open **OAIY → Connections → Linked account** for the user-facing flow.
+It is separate from an external AI's temporary MCP connection and from browser
+pairing with OAIY's local API.
+
 FormLogic Desktop links an account through the **same OAuth 2.1 authorization server**, but as a
 first-party PUBLIC native client — no manual API-key paste. This reuses the authorize + consent +
 PKCE machinery above; only the client and the token-exchange output differ.
@@ -164,7 +182,7 @@ all open the same **Connect an AI** dialog:
 
 | From | Scope of the token |
 |---|---|
-| **Settings → Connect an AI** | All your apps (account-wide) |
+| **Settings → External AI access → Manage AI connections** | All your apps (account-wide) |
 | **App settings → Manage → Connect an AI** | That one app only |
 | **Apps → "Hand to an AI"** | Creates a blank app, then a link scoped to it |
 
@@ -215,8 +233,9 @@ submission data**:
 `responses:read` (read records) and `responses:write` (create/update/delete records through the same
 validated pipeline as the external API, including each form's onSubmit script) are **off by default** and
 must be granted explicitly, as is **`connector:command`** (lets the token drive connectors on your linked
-FormLogic Desktop — e.g. control the Aokie phone). `tools/list` only returns the tools your token's
-scopes allow.
+desktop runtime — e.g. control the Aokie phone). `tools/list` filters tools by
+their primary scopes; some actions additionally require the scopes listed in
+the project-tool table below when called.
 
 **App‑scoped tokens** are enforced everywhere: they only see that one app's forms, can't create new apps,
 and can't touch other apps or their forms.
@@ -245,10 +264,11 @@ FormLogic in advance:
 | `list_forms` | forms:read | List your forms (only the scoped app's, if app‑scoped) |
 | `get_form` | forms:read | Get one form (fields, `logicScript`, `customScreen`) |
 | `create_form` | forms:write | Create a form (fields, onSubmit script, custom screen, status) |
+| `create_app_form` | forms:write + apps:write | Create a form and attach it to the target app in one call; preferred when building an app |
 | `update_form` | forms:write | Update a form |
 | `list_apps` | apps:read | List your apps (only the scoped one, if app‑scoped) |
 | `create_app` | apps:write | Create an app — optional `description` + `appKind` audience tag (rejected for app‑scoped tokens) |
-| `update_app` | apps:write | Rename, set description, change the **slug**, publish (`status: "published"`) / unpublish (`"draft"`) |
+| `update_app` | apps:write | Rename, set description/slug, publish (`status: "published"`), unpublish (`"draft"`), or select an existing published project with `hostedDashboard: true` |
 | `add_form_to_app` | apps:write | Attach a form to an app |
 | `set_app_home` | screens:write | Set the app's **home** screen — a widget **dashboard** (preferred) or a custom code screen |
 | `set_form_screen` | screens:write | Set a form's **custom screen** (replaces the whole `customScreen`) — the form-side twin of `set_app_home` |
@@ -289,6 +309,70 @@ also uses for its v1 tool subset (`docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md` §5
 delegates to it, threading the token session (scopes, app/creator confinement, `mcp.*` audits)
 through an explicit caller context — **MCP behavior, scopes, wire shapes and audit rows are
 unchanged**; the extraction only gives the two surfaces one implementation that cannot drift.
+
+### Portable projects and Aokie via MCP
+
+These tools use the same project, composition and role services as App Studio.
+They retain owner checks, token confinement and audit events. Read the current
+project and permissions before replacing them.
+
+| Tool | Required scopes | Use |
+|---|---|---|
+| `get_app` | `apps:read` | Read one app and its attached forms. |
+| `get_workspace_template` | `apps:read` | Fetch an editable connected dashboard package; `template` is `workspace` or `aokie`. |
+| `get_app_project` | `apps:read` | Read the deployment, current version and **private backend action source**. |
+| `publish_app_project` | `apps:write`, `screens:write` | Publish `{appId, expectedVersion, package}` with per-app SQLite storage. |
+| `get_aokie_starter` | `apps:read` | Inspect starter forms and requested connector capabilities before installation. |
+| `install_aokie_starter` | `apps:write`, `forms:write`, `screens:write` | Create a new app from the starter; requires an explicit `approvedConnectorGrants` list. Nonempty grants also require `connector:command`. |
+| `compose_apps` | `apps:write`, `forms:read` | Share existing forms between owned apps; moving automation additionally requires `connector:command` and reviewed connector grants. |
+| `list_app_roles` | `apps:read` | Read current roles and valid permission names. |
+| `create_app_role` | `apps:write` | Create an empty role before assigning permissions. |
+| `set_app_role_permissions` | `apps:write` | Replace the role's complete ordinary permission list, retaining connector grants. |
+| `set_app_role_connector_grants` | `apps:write`, `connector:command` | Replace the role's complete connector permission list, retaining ordinary permissions. |
+
+**Publish a dashboard or custom app**
+
+1. Read `get_app {appId}` and `get_app_project {appId}`. A missing deployment
+   means the first publish uses `expectedVersion: 0`.
+2. For a new connected interface, call `get_workspace_template {template:
+   "workspace"}` or `{template: "aokie"}`. Edit the returned package, preserving
+   existing private actions when updating a project.
+3. Call `publish_app_project {appId, expectedVersion, package}`. Use the version
+   you read, and merge newer work if publication reports a conflict.
+4. Preview `/app/<slug>/project`. Then use `update_app {appId, hostedDashboard:
+   true}` to make it home. Publishing the project does not publish the parent app;
+   use `update_app {appId, status: "published"}` when it is ready for members.
+
+The package separates public `.ui`/`.logic` files in `client` from private actions
+in `actions`. Actions define `onRequest(ctx)` and use `ctx.db.get/list/put/remove`.
+See [Hosted apps](HOSTED_APPS.md) for the format, access rules and transaction
+limits. Keep private source out of client files; a client download does not
+include records or an authenticated session.
+
+**Integrate Aokie with an existing app**
+
+1. Inspect `get_aokie_starter`. If installation is needed, call
+   `install_aokie_starter {approvedConnectorGrants: [...]}` with the reviewed
+   list, including `[]` when no capabilities are granted. Installation creates a
+   new app and cannot use an app-scoped token; verified-package policy applies.
+2. Read both apps and their form IDs. Call `compose_apps` with the destination as
+   `appId`, Aokie as `sourceAppId`, and the selected `formIds`.
+3. Sharing preserves form IDs and records, leaves automation in the source, and
+   keeps the destination's home and roles. Aokie's Calls and Appointments forms
+   expose its **Front desk** route alongside the existing home.
+4. To transfer automation ownership too, use `moveAutomation: true` and an
+   explicitly reviewed `approvedConnectorGrants` list. This includes all source
+   forms, moves flows/bindings and disables source scripts to avoid duplicate
+   writers. Active source runs and incompatible connector settings block the move.
+5. Review destination member permissions with `list_app_roles`. Role updates
+   replace the specified permission class; they cannot modify the system Owner
+   role and do not send invitations.
+
+Both apps must be owned by the caller and accessible to the token. Native OAIY
+plugin installation, account linking, phone pairing and provider setup are
+separate from starter installation. Check `desktop_status` before an authorised
+hardware command, then verify records and flow outcomes in the destination app.
+See [Connected apps](CONNECTED_APPS.md) for the complete user workflow.
 
 ### Widget dashboards via MCP (the primary home screen)
 

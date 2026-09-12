@@ -15,7 +15,7 @@ class AIService
     private string $model;
     private string $visionModel;
 
-    public function __construct()
+    public function __construct(private ?PlatformPlansService $platformPlans = null)
     {
         // Provider-neutral AI_* names take precedence (point these at LM Studio / Ollama / any
         // OpenAI-compatible local server); the OPENAI_* names remain as fallbacks for back-compat.
@@ -72,6 +72,7 @@ class AIService
      */
     public function isEnabled(): bool
     {
+        if (!($this->platformPlans ?? new PlatformPlansService())->status()['siteAiEnabled']) return false;
         $v = strtolower(trim((string) ($_ENV['AI_ENABLED'] ?? 'true')));
         return !in_array($v, ['false', '0', 'no', 'off'], true);
     }
@@ -694,7 +695,7 @@ PROMPT;
     private function chatCompletion(array $messages, ?string $model = null, int $maxTokens = 4096): string
     {
         if (!$this->isEnabled()) {
-            throw new \Exception('The in-app AI is disabled (AI_ENABLED=false). Use an external AI via the MCP server instead.');
+            throw new \Exception('Operator-funded Site AI is disabled. Open Connect your AI to use OAIY or your own API provider.');
         }
         if (!$this->isConfigured()) {
             throw new \Exception('AI service is not configured. Set AI_BASE_URL (and AI_API_KEY if your provider requires one).');
@@ -787,7 +788,7 @@ PROMPT;
     {
         $messages = self::validateChatMessages($messages);
         if (!$this->isEnabled()) {
-            throw new \Exception('The in-app AI is disabled (AI_ENABLED=false). Use an external AI via the MCP server instead.');
+            throw new \Exception('Operator-funded Site AI is disabled. Open Connect your AI to use OAIY or your own API provider.');
         }
         if (!$this->isConfigured()) {
             throw new \Exception('AI service is not configured. Set AI_BASE_URL (and AI_API_KEY if your provider requires one).');
@@ -1104,7 +1105,7 @@ PROMPT;
     public function chatToolsRound(array $messages, array $tools): array
     {
         if (!$this->isEnabled()) {
-            throw new \Exception('The in-app AI is disabled (AI_ENABLED=false). Use an external AI via the MCP server instead.');
+            throw new \Exception('Operator-funded Site AI is disabled. Open Connect your AI to use OAIY or your own API provider.');
         }
         if (!$this->isConfigured()) {
             throw new \Exception('AI service is not configured. Set AI_BASE_URL (and AI_API_KEY if your provider requires one).');

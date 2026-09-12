@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
-import { api } from '../lib/api';
+import { api, DEFAULT_PLATFORM_PLANS, type PlatformPlans } from '../lib/api';
 
 /**
- * Public, pre-auth instance configuration read once from /api/health (so it works on the
- * landing / signup / forgot-password screens before login). Cached at module scope so every
- * consumer shares a single fetch.
+ * Public, pre-auth instance configuration refreshed on mount from /api/health (so it works on the
+ * landing / signup / forgot-password screens before login). Cached at module scope to seed the next view while it refreshes.
  */
 export interface PublicConfig {
   /** BETA_MODE=true: Cloud is free and payments are disabled. */
   betaMode: boolean;
+  plans: PlatformPlans;
   /** Whether transactional email can actually be sent (MAIL_FROM_ADDRESS + a delivery path). */
   emailConfigured: boolean;
   /** Address to contact for manual help when email isn't configured. */
@@ -23,6 +23,7 @@ export interface PublicConfig {
 // to email support on an instance that can send mail, e.g. when /health is unreachable or old).
 const DEFAULTS: PublicConfig = {
   betaMode: false,
+  plans: DEFAULT_PLATFORM_PLANS,
   emailConfigured: true,
   supportEmail: 'hello@formlogic.com',
   maintenanceMode: false,
@@ -34,13 +35,14 @@ let cached: PublicConfig | null = null;
 export function usePublicConfig(): PublicConfig {
   const [cfg, setCfg] = useState<PublicConfig>(cached ?? DEFAULTS);
   useEffect(() => {
-    if (cached !== null) return; // already known — initial state is correct
+    /* Refresh on mount so admin edits appear without restarting the SPA. */
     let active = true;
     api.healthCheck()
       .then((res) => {
         if (!active) return;
         cached = {
           betaMode: !!res.data?.betaMode,
+          plans: res.data?.plans ?? DEFAULT_PLATFORM_PLANS,
           // Only treat email as unconfigured when the backend explicitly says so.
           emailConfigured: res.data?.emailConfigured !== false,
           supportEmail: res.data?.supportEmail || DEFAULTS.supportEmail,

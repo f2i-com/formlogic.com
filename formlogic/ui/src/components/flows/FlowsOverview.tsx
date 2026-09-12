@@ -12,6 +12,8 @@ import {
   Play, Plus, Power, RefreshCw, Search, Sparkles, Trash2, Workflow, Zap, type LucideIcon,
 } from 'lucide-react';
 import { listProviders } from '../../client-runtime/flows/aiProviders';
+import { getOaiyStatus, subscribeOaiyStatus } from '../../client-runtime/oaiy/oaiyDetection';
+import { isOaiyPaired, subscribeOaiyPaired } from '../../client-runtime/oaiy/oaiyRuntime';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { useAuthStore } from '../../stores/authStore';
@@ -141,7 +143,7 @@ export function FlowsOverview({
       {/* @container/flows: viewport breakpoints split off a fixed 21–24rem right rail while
           the real content box could be 640px (sidebar 256 + docked chat 384 at 1280), which
           left the flow list ~250px wide and clipped by AppShell's overflow-x-clip. */}
-      <div className="@container/flows mx-auto w-full max-w-7xl px-4 pb-28 pt-5 sm:px-6 sm:pt-6 lg:px-8">
+      <div className="@container/flows mx-auto w-full max-w-7xl px-5 pb-28 pt-6 sm:px-7 sm:pt-7 lg:px-8">
         {/* Hero — one glance: what flows do plus how many are live. */}
         <section className="relative overflow-hidden rounded-2xl border border-gray-200/80 bg-white p-5 dark:border-slate-700/60 dark:bg-slate-900 sm:p-6">
           <div
@@ -157,7 +159,7 @@ export function FlowsOverview({
               <div className="min-w-0">
                 <h2 className="text-xl font-semibold tracking-tight text-gray-900 dark:text-white sm:text-2xl">Automate the busywork</h2>
                 <p className="mt-1 max-w-2xl text-sm leading-relaxed text-gray-600 dark:text-slate-400">
-                  Flows run when a call comes in, a form is submitted, or on demand — they look up records, draft replies, and speak on the line.
+                  An automation is a flow of steps: collect an input, do the work and return a result. Start with a form response or run it yourself.
                 </p>
               </div>
             </div>
@@ -181,13 +183,24 @@ export function FlowsOverview({
           </div>
         </section>
 
+        <ol aria-label="How to build an automation" className="mt-5 grid gap-3 @2xl/flows:grid-cols-3">
+          {[
+            ['Choose a starting point', 'Begin with a template or a blank flow.'],
+            ['Build and test', 'Connect steps and try them with sample inputs.'],
+            ['Connect a trigger', 'Choose what starts the flow, then review its run history.'],
+          ].map(([title, detail], index) => <li key={title} className="flex gap-3 rounded-xl border border-gray-200/80 bg-white p-5 dark:border-slate-700/60 dark:bg-slate-900">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary-50 text-xs font-semibold text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">{index + 1}</span>
+            <div className="min-w-0"><h3 className="text-sm font-semibold text-gray-900 dark:text-white">{title}</h3><p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-slate-400">{detail}</p></div>
+          </li>)}
+        </ol>
+
         {/* Main grid: flow list + templates | readiness + recent runs. Single column below lg. */}
         <div className="mt-5 grid items-start gap-5 @4xl/flows:grid-cols-[minmax(0,1fr),21rem] @6xl/flows:grid-cols-[minmax(0,1fr),24rem]">
           <div className="min-w-0 space-y-5">
             {flows.length === 0 ? (
               <section className="rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
                 <Workflow className="mx-auto mb-3 h-8 w-8 text-gray-300 dark:text-slate-600" />
-                <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">No flows yet</p>
+                <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">Your first automation starts here</p>
                 <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-gray-500 dark:text-slate-400">
                   Create your first flow from scratch, or start from a template below.
                 </p>
@@ -208,10 +221,10 @@ export function FlowsOverview({
               />
             )}
 
-            <section className="rounded-xl border border-gray-200/80 bg-white p-4 dark:border-slate-700/60 dark:bg-slate-900">
+            <section className="rounded-xl border border-gray-200/80 bg-white p-5 dark:border-slate-700/60 dark:bg-slate-900">
               <div className="mb-3">
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Start from a template</h3>
-                <p className="text-xs text-gray-500 dark:text-slate-400">Open the New flow dialog with a starter preselected.</p>
+                <p className="text-xs text-gray-500 dark:text-slate-400">Choose a useful starting point and adapt it to your app.</p>
               </div>
               <div className="grid grid-cols-1 gap-2.5 @xl/flows:grid-cols-2">
                 {visibleTemplates.map((template) => {
@@ -241,7 +254,7 @@ export function FlowsOverview({
             <DesktopStatusCard presence={desktopPresence} />
             <AiServicesStatusCard providerCount={providerCount} presence={desktopPresence} onOpen={onOpenAiServices} />
 
-            <section className="rounded-xl border border-gray-200/80 bg-white p-4 dark:border-slate-700/60 dark:bg-slate-900">
+            <section className="rounded-xl border border-gray-200/80 bg-white p-5 dark:border-slate-700/60 dark:bg-slate-900">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div>
                   <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Recent runs</h3>
@@ -334,7 +347,7 @@ function FlowListCard({
     <section className="rounded-xl border border-gray-200/80 bg-white dark:border-slate-700/60 dark:bg-slate-900">
       <div className="flex flex-col gap-2.5 border-b border-gray-100 p-4 dark:border-slate-800 sm:flex-row sm:items-center">
         <h3 className="flex flex-none items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
-          Your flows
+          Your automations
           <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
             {total}
           </span>
@@ -357,7 +370,7 @@ function FlowListCard({
               aria-label="Show automations from"
               className="max-w-40 min-h-9 flex-none cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 max-sm:min-h-11 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
             >
-              <option value="all">All apps</option>
+              <option value="all">All locations</option>
               {groups.map((g) => (
                 <option key={g.app?.id ?? 'workspace'} value={g.app?.id ?? 'workspace'}>
                   {g.app ? g.app.name : 'Workspace'} · {g.flows.length}
@@ -633,19 +646,19 @@ function AiServicesStatusCard({
 }) {
   const speechLabel =
     presence.kind === 'local'
-      ? 'Default Desktop speech ready'
+      ? 'Local speech routing'
       : presence.kind === 'remote'
-        ? 'Linked Desktop speech online'
-        : 'Desktop speech offline';
+        ? 'Linked desktop routing'
+        : 'Choose AI for your steps';
   const speechCopy =
     presence.kind === 'local'
       ? 'Speech nodes use the Desktop aokie-voice service by default when no API service or endpoint is selected.'
       : presence.kind === 'remote'
         ? 'The linked Desktop is online; browser service enumeration is only available for local pairing.'
-        : 'Link FormLogic Desktop to use the default speech service, or choose a browser-stored API service on AI nodes.';
+        : 'Select a configured service on each AI step. OAIY plugins and local models are managed through your desktop connection.';
 
   return (
-    <section className="rounded-xl border border-gray-200/80 bg-white p-4 dark:border-slate-700/60 dark:bg-slate-900">
+    <section className="rounded-xl border border-gray-200/80 bg-white p-5 dark:border-slate-700/60 dark:bg-slate-900">
       <div className="flex items-start gap-3">
         <span className="flex h-10 w-10 flex-none items-center justify-center rounded-lg bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300">
           <Sparkles className="h-5 w-5" />
@@ -670,17 +683,22 @@ function AiServicesStatusCard({
 
 function DesktopStatusCard({ presence }: { presence: FlowsDesktopPresence }) {
   const navigate = useNavigate();
-  const label =
+  const [oaiy, setOaiy] = useState(getOaiyStatus);
+  const [paired, setPaired] = useState(isOaiyPaired);
+  useEffect(() => subscribeOaiyStatus(setOaiy), []);
+  useEffect(() => subscribeOaiyPaired(setPaired), []);
+  const oaiyConnected = oaiy.available && paired;
+  const label = oaiyConnected ? 'OAIY Desktop connected' : oaiy.available ? 'OAIY Desktop detected' :
     presence.kind === 'local'
-      ? 'Desktop connected'
+      ? 'FormLogic Desktop connected'
       : presence.kind === 'remote'
         ? `Desktop online - ${presence.label}`
-        : 'Desktop offline';
+        : 'Connect OAIY Desktop';
   const lastSeen = presence.kind === 'remote' ? describeFlowsLastSeen(presence.lastSeenMs) : null;
-  const online = presence.kind !== 'none';
+  const online = oaiyConnected || presence.kind !== 'none';
 
   return (
-    <section className="rounded-xl border border-gray-200/80 bg-white p-4 dark:border-slate-700/60 dark:bg-slate-900">
+    <section className="rounded-xl border border-gray-200/80 bg-white p-5 dark:border-slate-700/60 dark:bg-slate-900">
       <div className="flex items-start gap-3">
         <span
           className={cn(
@@ -697,31 +715,26 @@ function DesktopStatusCard({ presence }: { presence: FlowsDesktopPresence }) {
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{label}</h3>
             <span className={cn('h-2 w-2 rounded-full', online ? 'bg-emerald-500' : 'bg-gray-400 dark:bg-slate-500')} />
           </div>
-          {presence.kind === 'local' && (
+          {oaiy.available && <p className="mt-2 text-xs leading-relaxed text-gray-500 dark:text-slate-400">{paired ? 'Connected for this browser session. Available actions depend on your installed plugins and services.' : 'Connect this browser to use its plugins and local services.'}</p>}
+          {!oaiy.available && presence.kind === 'local' && (
             <p className="mt-1 text-xs leading-snug text-gray-500 dark:text-slate-400">
               This browser is paired to FormLogic Desktop on this machine.
             </p>
           )}
-          {presence.kind === 'remote' && (
+          {!oaiy.available && presence.kind === 'remote' && (
             <p className="mt-1 text-xs leading-snug text-gray-500 dark:text-slate-400">
               A linked Desktop is online{lastSeen ? ` - last seen ${lastSeen}` : ''}.
             </p>
           )}
-          {presence.kind === 'none' && (
+          {!oaiy.available && presence.kind === 'none' && (
             <>
               <p className="mt-1 text-xs leading-snug text-gray-500 dark:text-slate-400">
-                Desktop-powered nodes (browser, image, speech, Aokie phone) won't run until FormLogic Desktop is running and linked.
+                OAIY adds local AI, browser tools and Aokie phone actions. You can build and test other steps without connecting a desktop.
               </p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-3"
-                onClick={() => navigate('/settings#linked-desktops')}
-              >
-                Set up in Settings
-              </Button>
+
             </>
           )}
+          <Button variant="outline" size="sm" className="mt-3" onClick={() => navigate('/settings#local-runtime')}>{online ? 'Manage connection' : 'Set up OAIY'}</Button>
         </div>
       </div>
     </section>

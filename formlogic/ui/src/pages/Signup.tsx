@@ -75,7 +75,7 @@ export function Signup() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-transparent flex">
+    <div className="min-h-[100dvh] bg-gray-50 dark:bg-transparent flex">
       {/* Left panel - Branding */}
       <div className="hidden lg:flex lg:w-[45%] bg-gradient-to-br from-primary-700 via-primary-800 to-slate-900 dark:from-slate-900/80 dark:via-primary-950/60 dark:to-slate-950/80 backdrop-blur-xl p-12 flex-col justify-between relative overflow-hidden">
         {/* Decorative elements. The extra scrim keeps the white copy WCAG-AA readable
@@ -91,9 +91,9 @@ export function Signup() {
           </Link>
         </div>
         <div className="relative z-10">
-          <h1 className="text-4xl font-bold text-white mb-4 tracking-tight">
+          <h2 className="text-4xl font-bold text-white mb-4 tracking-tight">
             Start building smarter forms
-          </h1>
+          </h2>
           <p className="text-primary-200/80 text-lg mb-8 leading-relaxed">
             Create forms with real backend logic and full data control.
           </p>
@@ -122,10 +122,10 @@ export function Signup() {
             </Link>
           </div>
 
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">Create your account</h2>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">Create your account</h1>
           <p className="text-gray-500 dark:text-slate-400 mb-8">
             Already have an account?{' '}
-            <Link to="/login" className="text-primary-600 dark:text-primary-400 hover:text-primary-500 dark:hover:text-primary-300 font-medium transition-colors">
+            <Link to={dest === '/' ? '/login' : `/login?redirect=${encodeURIComponent(dest)}`} className="text-primary-600 dark:text-primary-400 hover:text-primary-500 dark:hover:text-primary-300 font-medium transition-colors">
               Sign in
             </Link>
           </p>
@@ -206,7 +206,7 @@ export function Signup() {
           </form>
 
           <p className="mt-8 text-center text-sm text-gray-500 dark:text-slate-500">
-            <Link to="/" className="text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
+            <Link to="/" className="inline-flex min-h-11 items-center text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
               &larr; Back to home
             </Link>
           </p>

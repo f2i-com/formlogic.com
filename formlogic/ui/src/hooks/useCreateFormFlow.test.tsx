@@ -52,8 +52,8 @@ vi.mock('../stores/toastStore', () => ({
 
 // The picker is reduced to a button that selects "blank + private".
 vi.mock('../components/builder', () => ({
-  TemplateSelector: ({ onSelectTemplate }: { onSelectTemplate: (t: null, makePrivate: boolean) => void }) => (
-    <button data-testid="pick-private" onClick={() => onSelectTemplate(null, true)} />
+  TemplateSelector: ({ onSelectTemplate }: { onSelectTemplate: (t: null, makePrivate: boolean, name?: string) => void }) => (
+    <button data-testid="pick-private" onClick={() => onSelectTemplate(null, true, 'Customer enquiries')} />
   ),
 }));
 
@@ -97,7 +97,7 @@ describe('useCreateFormFlow private fail-closed', () => {
 
   it('enable failure REMOVES the created form — no silent plaintext fallback', async () => {
     enableMock.mockRejectedValue(Object.assign(new Error('encryption setup already running'), { code: 'encryption_enabling' }));
-    container.querySelector<HTMLButtonElement>('[data-testid="pick-private"]')!.click();
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="pick-private"]')!.click());
     await flush();
 
     expect(deleteFormMock).toHaveBeenCalledWith('f-new');
@@ -109,9 +109,36 @@ describe('useCreateFormFlow private fail-closed', () => {
     );
   });
 
+  it('retains the chosen name and suppresses repeated creation while pending', async () => {
+    let finish!: (form: { id: string; fields: never[] }) => void;
+    createFormMock.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    enableMock.mockResolvedValue(undefined);
+    act(() => {
+      const button = container.querySelector<HTMLButtonElement>('[data-testid="pick-private"]')!;
+      button.click(); button.click();
+    });
+    expect(createFormMock).toHaveBeenCalledTimes(1);
+    expect(createFormMock).toHaveBeenCalledWith('Customer enquiries');
+    await act(async () => finish({ id: 'f-new', fields: [] }));
+    await flush();
+    expect(navigateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows retry when the server could not create a draft', async () => {
+    createFormMock.mockResolvedValueOnce(null);
+    enableMock.mockResolvedValue(undefined);
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="pick-private"]')!.click());
+    await flush();
+    expect(navigateMock).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledWith('Creation failed', expect.stringContaining('choices are kept'));
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="pick-private"]')!.click());
+    await flush();
+    expect(navigateMock).toHaveBeenCalledWith('/builder/f-new');
+  });
+
   it('successful enable keeps the form and navigates to the builder', async () => {
     enableMock.mockResolvedValue(undefined);
-    container.querySelector<HTMLButtonElement>('[data-testid="pick-private"]')!.click();
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="pick-private"]')!.click());
     await flush();
 
     expect(deleteFormMock).not.toHaveBeenCalled();

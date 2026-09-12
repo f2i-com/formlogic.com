@@ -115,7 +115,7 @@ export function LocalRuntimePanel() {
   const detected = active !== null;
   // The OTHER runtime, when it is also running — a small note, since only one is active.
   const alsoRunning =
-    active === 'oaiy' && desktop.available ? 'FormLogic Desktop' : active === 'desktop' && oaiy.available ? 'OAIY Desktop' : null;
+    active === 'oaiy' && desktop.available && desktop.companion === 'formlogic-desktop' ? 'FormLogic Desktop' : active === 'desktop' && oaiy.available ? 'OAIY Desktop' : null;
 
   // Auto-reconnect is a FormLogic Desktop capability (origin-trusted silent
   // re-pair). Only attempt it when FormLogic Desktop is the active runtime — OAIY
@@ -157,7 +157,7 @@ export function LocalRuntimePanel() {
       setPairing('approved');
       setPairCode(null);
       // pairWithOaiy already stored the token (→ subscribeOaiyPaired fired).
-      toast.success('OAIY Desktop connected', 'Flows on this machine now run through OAIY Desktop.');
+      toast.success('OAIY Desktop connected', 'This browser can now use installed OAIY plugins and services.');
       void loadDetails();
       return;
     }
@@ -259,7 +259,7 @@ export function LocalRuntimePanel() {
   return (
     <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           <HardDrive className="h-5 w-5 text-primary-600 dark:text-primary-400" />
           <h3 className="font-medium text-gray-900 dark:text-white tracking-tight">Local runtime</h3>
           <span
@@ -289,10 +289,8 @@ export function LocalRuntimePanel() {
       </div>
 
       <p className="text-sm text-gray-600 dark:text-slate-400 mb-4">
-        The local runtime is the companion that hosts device plugins, local AI models, and hardware
-        connectors on this machine. Apps in this browser talk to it over{' '}
-        <span className="font-mono">127.0.0.1</span> — never to raw hardware directly. OAIY Desktop is
-        used when present; FormLogic Desktop is the fallback until OAIY fully replaces it.
+        Connect OAIY Desktop to use local AI and installed plugins from your apps and automations.
+        Your browser asks for approval before it connects. FormLogic Desktop is also supported.
       </p>
 
       {!detected && (

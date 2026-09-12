@@ -2,13 +2,12 @@
 //
 // The connector composes two local runtimes: OAIY Desktop (preferred, the
 // successor) and FormLogic Desktop (fallback). These lock in the branch logic:
-// prefer OAIY, fall back to FormLogic Desktop ONLY on an OAIY transport failure,
-// and NEVER fall back once a real per-command refusal came back — a command that
-// reached a runtime and was refused must not be silently retried elsewhere.
+// prefer OAIY and pin the operation there once dispatch is attempted.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../oaiy/oaiyRuntime', () => ({
   oaiyRouteAvailable: vi.fn(() => false),
+  oaiyConnectorAvailable: vi.fn(async () => false),
   oaiyConnectorRequest: vi.fn(),
 }));
 vi.mock('../desktop/desktopClient', () => ({
@@ -21,7 +20,7 @@ vi.mock('../../lib/api', () => ({ api: { isDemoMode: vi.fn(() => false) } }));
 
 import { createDesktopBackedConnector } from './desktopConnector';
 import { ConnectorError } from './connectorTypes';
-import { oaiyRouteAvailable, oaiyConnectorRequest } from '../oaiy/oaiyRuntime';
+import { oaiyRouteAvailable, oaiyConnectorAvailable, oaiyConnectorRequest } from '../oaiy/oaiyRuntime';
 import { desktopClient } from '../desktop/desktopClient';
 import { getDesktopInfo } from '../desktop/desktopDetection';
 import { isDesktopPaired } from '../desktop/desktopPairing';
@@ -42,6 +41,7 @@ const paired = vi.mocked(isDesktopPaired);
 
 beforeEach(() => {
   oaiyAvailable.mockReturnValue(false);
+  vi.mocked(oaiyConnectorAvailable).mockResolvedValue(false);
   desktopInfo.mockReturnValue({ available: false } as never);
   paired.mockReturnValue(false);
 });
@@ -61,7 +61,7 @@ describe('createDesktopBackedConnector — OAIY-first routing', () => {
     expect(desktopRequest).not.toHaveBeenCalled();
   });
 
-  it('falls back to FormLogic Desktop when OAIY transport-fails', async () => {
+  it('does not replay an uncertain SMS through FormLogic Desktop', async () => {
     oaiyAvailable.mockReturnValue(true);
     oaiyRequest.mockResolvedValue({
       ok: false,
@@ -74,11 +74,9 @@ describe('createDesktopBackedConnector — OAIY-first routing', () => {
     desktopRequest.mockResolvedValue({ ok: true, data: { via: 'formlogic-desktop' } });
     const c = createDesktopBackedConnector(manifest as never, null);
 
-    const out = await c.request('phone.status');
-
-    expect(out).toEqual({ via: 'formlogic-desktop' });
+    await expect(c.request('sms.send', { to: 'x' })).rejects.toMatchObject({ code: 'connector_uncertain' });
     expect(oaiyRequest).toHaveBeenCalled();
-    expect(desktopRequest).toHaveBeenCalled();
+    expect(desktopRequest).not.toHaveBeenCalled();
   });
 
   it('does NOT fall back on a real per-command refusal from OAIY', async () => {
@@ -135,8 +133,16 @@ describe('createDesktopBackedConnector — OAIY-first routing', () => {
     expect(desktopRequest).not.toHaveBeenCalled();
   });
 
-  it('status reports available via OAIY when the OAIY route is up', async () => {
+  it('pairing alone does not make a missing connector available', async () => {
     oaiyAvailable.mockReturnValue(true);
+    const c = createDesktopBackedConnector(manifest as never, null);
+    expect((await c.status()).available).toBe(false);
+    expect(oaiyConnectorAvailable).toHaveBeenCalledWith('aokie');
+  });
+
+  it('status reports available when the connector capability is available', async () => {
+    oaiyAvailable.mockReturnValue(true);
+    vi.mocked(oaiyConnectorAvailable).mockResolvedValue(true);
     const c = createDesktopBackedConnector(manifest as never, null);
     const s = await c.status();
     expect(s.available).toBe(true);

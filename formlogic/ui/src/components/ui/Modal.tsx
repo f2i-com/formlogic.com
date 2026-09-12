@@ -14,6 +14,7 @@ type ModalProps = {
   onClose: () => void;
   description?: string;
   children: React.ReactNode;
+  footer?: React.ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'full';
   showCloseButton?: boolean;
 } & (
@@ -30,12 +31,25 @@ const FOCUSABLE_SELECTORS = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(', ');
 
+const openModals: string[] = [];
+function focusable(panel: HTMLElement): HTMLElement[] {
+  return Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS)).filter((el) => {
+    if (el.tabIndex < 0 || el.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
+    for (let ancestor: HTMLElement | null = el; ancestor; ancestor = ancestor.parentElement) {
+      const style = getComputedStyle(ancestor);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+    }
+    return true;
+  });
+}
+
 export function Modal({
   isOpen,
   onClose,
   title,
   description,
   children,
+  footer,
   size = 'md',
   showCloseButton = true,
   ariaLabel,
@@ -56,19 +70,29 @@ export function Modal({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      if (openModals.at(-1) !== uniqueId || e.defaultPrevented) return;
       if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
         onCloseRef.current();
         return;
       }
 
       // Focus trapping
       if (e.key === 'Tab' && modalRef.current) {
-        const focusableElements = modalRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS);
-        if (focusableElements.length === 0) return;
+        const focusableElements = focusable(modalRef.current);
+        if (focusableElements.length === 0) {
+          e.preventDefault();
+          modalRef.current.focus();
+          return;
+        }
         const firstElement = focusableElements[0];
         const lastElement = focusableElements[focusableElements.length - 1];
 
-        if (e.shiftKey && document.activeElement === firstElement) {
+        if (!modalRef.current.contains(document.activeElement)) {
+          e.preventDefault();
+          (e.shiftKey ? lastElement : firstElement).focus();
+        } else if (e.shiftKey && (document.activeElement === firstElement || document.activeElement === modalRef.current)) {
           e.preventDefault();
           lastElement.focus();
         } else if (!e.shiftKey && document.activeElement === lastElement) {
@@ -77,7 +101,7 @@ export function Modal({
         }
       }
     },
-    []
+    [uniqueId]
   );
 
   useEffect(() => {
@@ -95,16 +119,18 @@ export function Modal({
     }
 
     document.addEventListener('keydown', handleKeyDown);
+    openModals.push(uniqueId);
     lockBodyScroll();
 
     // Focus the first focusable element in the modal (only on initial open).
     // With no focusable child, focus the PANEL itself (audit FL-27) so keyboard
     // and screen-reader users still land inside the dialog.
+    let focusFrame = 0;
     if (!hasInitialFocusRef.current) {
       hasInitialFocusRef.current = true;
-      requestAnimationFrame(() => {
-        if (modalRef.current) {
-          const focusableElements = modalRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS);
+      focusFrame = requestAnimationFrame(() => {
+        if (modalRef.current && openModals.at(-1) === uniqueId) {
+          const focusableElements = focusable(modalRef.current);
           if (focusableElements[0]) focusableElements[0].focus();
           else modalRef.current.focus();
         }
@@ -112,16 +138,21 @@ export function Modal({
     }
 
     return () => {
+      cancelAnimationFrame(focusFrame);
+      const wasTop = openModals.at(-1) === uniqueId;
+      const index = openModals.indexOf(uniqueId);
+      if (index >= 0) openModals.splice(index, 1);
+      hasInitialFocusRef.current = false;
       document.removeEventListener('keydown', handleKeyDown);
       unlockBodyScroll();
 
       // Restore focus to the previously focused element when closing
-      if (previousFocusRef.current && typeof previousFocusRef.current.focus === 'function') {
+      if (wasTop && previousFocusRef.current?.isConnected && typeof previousFocusRef.current.focus === 'function') {
         previousFocusRef.current.focus();
         previousFocusRef.current = null;
       }
     };
-  }, [isOpen, handleKeyDown]);
+  }, [isOpen, handleKeyDown, uniqueId]);
 
   const sizes = {
     sm: 'max-w-[calc(100%-2rem)] sm:max-w-sm',
@@ -173,10 +204,10 @@ export function Modal({
             )}
           >
             {(title || showCloseButton) && (
-              <div className="flex items-start justify-between px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-200/80 dark:border-slate-800 bg-gray-50/80 dark:bg-white/[0.02]">
+              <div className="shrink-0 flex items-start justify-between px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-200/80 dark:border-slate-800 bg-gray-50/80 dark:bg-white/[0.02]">
                 <div className="min-w-0 flex-1 pr-2">
                   {title && (
-                    <h2 id={titleId} className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white truncate tracking-tight">
+                    <h2 id={titleId} className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white break-words tracking-tight">
                       {title}
                     </h2>
                   )}
@@ -195,7 +226,8 @@ export function Modal({
                 )}
               </div>
             )}
-            <div className="flex-1 overflow-y-auto">{children}</div>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{children}</div>
+            {footer && <div className="shrink-0 border-t border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3 sm:px-6">{footer}</div>}
           </motion.div>
         </div>
       )}

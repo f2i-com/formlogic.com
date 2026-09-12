@@ -12,10 +12,11 @@ import type { App } from '../../types/app';
 type AuthUser = NonNullable<ReturnType<typeof useAuthStore.getState>['user']>;
 const mocks = vi.hoisted(() => ({
   createApp: vi.fn(),
+  readiness: vi.fn(async () => ({ ready: true })),
 }));
 
 vi.mock('../../client-runtime/flows/aiDefault', () => ({
-  getAiReadiness: vi.fn(async () => ({ ready: true })),
+  getAiReadiness: mocks.readiness,
 }));
 
 vi.mock('../../lib/api', () => ({
@@ -117,8 +118,24 @@ describe('AppCreateStart data protection', () => {
 
     expect(mocks.createApp).toHaveBeenCalledWith(expect.objectContaining({
       name: 'Client portal',
-      settings: { defaultFormPrivacy: 'private' },
+      settings: { defaultFormPrivacy: 'private', appKind: 'internal' },
     }));
+    expect(pathRef.current).toBe('/apps/app-private/studio');
+  });
+
+  it('creates without waiting for AI and suppresses repeated submits', async () => {
+    mocks.readiness.mockReturnValueOnce(new Promise(() => {}));
+    let finish!: (value: { data: { app: App } }) => void;
+    mocks.createApp.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    await renderPage();
+    await act(async () => setInput(container.querySelector<HTMLInputElement>('#new-app-name')!, 'Operations'));
+    const button = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Create and open'))!;
+    await act(async () => {
+      button.click();
+      button.click();
+    });
+    expect(mocks.createApp).toHaveBeenCalledTimes(1);
+    await act(async () => finish({ data: { app: createdApp } }));
     expect(pathRef.current).toBe('/apps/app-private/studio');
   });
 

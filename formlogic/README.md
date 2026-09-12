@@ -1,31 +1,37 @@
 # FormLogic — Developer Setup
 
-This is the developer guide for installing, running, testing, and deploying FormLogic. For what FormLogic *is* — the product story, feature tour, marketplace catalog, and screenshots — see the **[root README](../README.md)**.
+This is the developer guide for installing, running, testing, and deploying FormLogic. For the product tour and screenshots, see the **[root README](../README.md)**. For task guides and API references, start with the **[documentation index](../docs/README.md)**.
 
-Everything lives in this directory:
+The web application lives in this directory:
 
 - `backend/` — PHP 8.2 / Slim 4 API
 - `ui/` — React 19 + TypeScript + Vite SPA
 - `native-runtime/` — Tauri v2 desktop/mobile shell (optional; has its own [README](native-runtime/README.md))
 - `install.php` / `install.sh` — assisted installers
 
+OAIY is the separate desktop host for local AI, services, plugins and background flows. Aokie runs as an OAIY plugin and connects its call, message and appointment records to FormLogic. Their source lives in the sibling `oaiy.com` and `aokie.com` repositories; the optional `native-runtime/` shell here is not OAIY. See [connected apps](../docs/CONNECTED_APPS.md) for pairing, account linking and app bindings.
+
+Hosted app interfaces use Softn. Building their shared browser runtime requires the sibling `softn.com` checkout, or a previously generated runtime artifact. This is a build dependency; PHP hosting does not require an OAIY or Node process.
+
 ## Prerequisites
 
 | Requirement | Version | Check |
 |-------------|---------|-------|
 | PHP | 8.2+ | `php -v` |
-| PHP extensions | pdo_mysql, pdo_sqlite, mbstring, json, openssl, fileinfo | `php -m` |
+| PHP extensions | pdo_mysql, pdo_sqlite, mbstring, json, openssl, fileinfo, sodium | `php -m` |
 | Composer | any | `composer --version` |
 | MySQL | 8.0+ | `mysql --version` |
 | Node.js | 20.19+ / 22.12+ (Vite 7) | `node -v` |
 | npm | any | `npm -v` |
 | Git | any | `git --version` |
 
-Node.js is a **build-time** dependency only. The server-side script sandbox is a vendored static QuickJS binary — no Node.js on the server.
+Node.js is a **build-time** dependency only. The server-side script sandbox uses the vendored zipp WebAssembly guest and wasmtime launcher — no Node.js on the API server. When building from a fresh source checkout, prepare the hosted runtime below before the first UI build, including builds started by an installer.
 
 ## Install
 
 ### Option 1: Web install wizard (Windows / WAMP / XAMPP)
+
+For a source checkout, complete the [frontend dependency setup](#4-frontend) and [hosted runtime build](#5-hosted-app-runtime) before building the UI. The runtime is required; the wizard does not generate it. A packaged release already includes the built runtime assets.
 
 Serve the repo from your web root and open the wizard in a browser (the URL must include the `/formlogic/` segment, since that's where `install.php` lives):
 
@@ -43,8 +49,17 @@ The wizard checks requirements and file permissions (fixing what it can — incl
 
 ### Option 2: Install script (Linux / macOS / Git Bash)
 
+The script runs `npm run build`, whose prebuild check requires the generated hosted runtime. **Build that runtime before invoking the installer.** For a clean source install, clone FormLogic and Softn as siblings and run the commands in this order (use your existing checkouts if already cloned):
+
 ```bash
-cd formlogic
+git clone git@github.com:f2i-com/formlogic.com.git
+git clone git@github.com:f2i-com/softn.com.git
+cd softn.com
+npm install
+cd ../formlogic.com/formlogic/ui
+npm install
+npm run build:hosted-runtime
+cd ..
 chmod +x install.sh
 ./install.sh
 ```
@@ -81,7 +96,7 @@ AUDIT_HMAC_KEY=your_generated_key_here
 Create the storage directories:
 
 ```bash
-mkdir -p storage/forms storage/packs storage/uploads logs
+mkdir -p storage/forms storage/hosted-apps storage/packs storage/uploads logs
 ```
 
 #### 3. Database
@@ -106,14 +121,30 @@ npm install
 cp .env.example .env
 ```
 
-The default `ui/.env` points at `http://localhost:8080/api` for development. For same-domain production, change it to `/api`.
+Keep the default `VITE_API_URL=/api` for development and same-domain production. In development, Vite forwards `/api` to `http://127.0.0.1:8080`, keeping requests and session cookies on the browser's frontend origin. If your PHP server uses another address, set `VITE_API_PROXY_TARGET` in `ui/.env`; use `off` only when you intentionally do not want the proxy. Restart Vite after changing environment variables.
 
-#### 5. Scripting runtime — nothing to do
+#### 5. Hosted app runtime
 
-Form expressions and `onSubmit` scripts run in a **QuickJS** sandbox on both sides, sharing one standard-library prelude (`ui/src/lib/formlogic/prelude.js`):
+With `softn.com` checked out next to `formlogic.com`, install its workspace dependencies and build the shared assets:
 
-- **Browser:** `quickjs-emscripten` (pulled by `npm install`) runs the engine in a Web Worker; the prelude is bundled automatically.
-- **Server:** the PHP API shells out to a vendored launcher committed under `backend/bin/runtime/` (selected per-OS) that runs the same zipp engine as a WebAssembly guest under wasmtime — see `formlogic/runtime/README.md`. `npm run build` runs a `prebuild` step that syncs the prelude into `backend/resources/formlogic-prelude.js`.
+```bash
+# From formlogic.com/formlogic/ui
+cd ../../../softn.com
+npm install
+cd ../formlogic.com/formlogic/ui
+npm run build:hosted-runtime
+```
+
+This builds Softn core/components and `apps/formlogic-host`, then copies the result into `ui/public/hosted-runtime/`. Generated runtime assets are ignored by Git. A normal UI build checks they exist; deploy them with the UI, or restore a compatible build artifact when the Softn source is unavailable. See [hosted app deployment](../docs/HOSTED_APPS.md#build-and-operate) for the iframe's static-asset CORS requirements.
+
+When editing the canonical workspace or Aokie client templates in Softn, also run `node scripts/sync-workspace-project.mjs` from `ui/` to refresh the UI and PHP resource copies. See [maintaining shared clients](../docs/CONNECTED_APPS.md#maintain-the-shared-clients).
+
+#### 6. Form scripting runtime
+
+Form expressions and `onSubmit` scripts run in a **zipp** sandbox on both sides, sharing one standard-library prelude (`ui/src/lib/formlogic/prelude.js`):
+
+- **Browser:** the vendored module in `ui/vendor/zipp-wasm/` runs in a Web Worker; Vite bundles its WASM and the prelude.
+- **Server:** the PHP API invokes a vendored per-OS launcher under `backend/bin/runtime/`, which runs zipp as a WebAssembly guest under wasmtime. See the [runtime README](runtime/README.md). The UI build's `prebuild` step syncs the prelude into `backend/resources/formlogic-prelude.js`.
 
 On Linux/macOS ensure the launcher is executable (`chmod +x backend/bin/runtime/formlogic-runtime-linux-x86_64`); `install.sh` and `install.php` both do this for you.
 
@@ -133,7 +164,9 @@ npm run dev
 # App at http://localhost:5173
 ```
 
-Open http://localhost:5173 and create an account.
+Open http://localhost:5173 and create an account. Keep using one hostname (`localhost` or `127.0.0.1`) throughout the browser session. A request to `/api/health` on the frontend origin should return JSON through the Vite proxy.
+
+The workspace is free by default and does not need AI for manual editing or starters. The public `/ai-setup` guide explains the options; `/connect-ai` opens the setup wizard after login. Operator-funded Site AI and payments are off by default in the admin platform settings. See [free plans and AI setup](../docs/FREE_PLANS_AND_AI_SETUP.md) for BYO providers, OAIY, MCP and the separate Site AI switch.
 
 ### Production
 
@@ -146,10 +179,11 @@ npm run build     # output: ui/dist/
 
 - Serve `ui/dist/` as the document root (SPA fallback to `index.html`)
 - Route `/api/*` to `backend/public/index.php`
+- Serve `/hosted-runtime/*` as real static files, with `Access-Control-Allow-Origin: *` and `X-Content-Type-Options: nosniff` for the sandboxed app frame. Missing assets must return 404, not the SPA HTML. Apply these headers only to this static directory, not authenticated API routes.
 
 > **Production must be HTTPS.** Auth uses `Secure` cookies in production, so login fails over plain HTTP. Terminate TLS directly or at a reverse proxy (which must send `X-Forwarded-Proto: https`), and redirect port 80 → 443. See [DEPLOYMENT.md](../DEPLOYMENT.md) for the full launch checklist.
 >
-> **Only expose two directories:** `ui/dist` and `backend/public`. **Never** let the web server reach `backend/storage` (per-form SQLite response DBs + uploads), `backend/logs`, or any `.env` — those hold your data and secrets.
+> **Only expose two directories:** `ui/dist` and `backend/public`. **Never** let the web server reach `backend/storage` (form and hosted-app SQLite databases, private action source and uploads), `backend/logs`, or any `.env` — those hold your data and secrets.
 
 <details>
 <summary><strong>Example Apache VirtualHost (HTTPS)</strong></summary>
@@ -173,6 +207,14 @@ npm run build     # output: ui/dist/
     <Directory /var/www/formlogic/ui/dist>
         AllowOverride None
         FallbackResource /index.html
+    </Directory>
+
+    # Sandboxed hosted apps load these static assets without an origin identity.
+    # Requires mod_headers; missing runtime assets must not fall back to the SPA.
+    <Directory /var/www/formlogic/ui/dist/hosted-runtime>
+        FallbackResource disabled
+        Header always set Access-Control-Allow-Origin "*"
+        Header always set X-Content-Type-Options "nosniff"
     </Directory>
 
     # Backend API — exposes backend/public ONLY (never backend/storage, backend/logs, or .env).
@@ -216,6 +258,13 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
+    # Static hosted runtime only; do not apply permissive CORS to /api.
+    location ^~ /hosted-runtime/ {
+        try_files $uri =404;
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+
     # Backend API — backend/public ONLY.
     location /api/ {
         alias /var/www/formlogic/backend/public/;
@@ -256,15 +305,18 @@ Custom app domains (running an app on a customer's own domain) additionally use 
 ### Distributable zip (packaged release)
 
 `node scripts/package-dist.mjs` (from the repo root) builds a ready-to-upload release zip in the single-domain layout: the built UI at the zip root, the production-filtered backend under `api/`, plus the `install.php` wizard, `INSTALL.txt`, `UPGRADE.txt`, and `VERSION` — output at `dist-package/formlogic-<version>.zip` (flags: `--skip-ui-build`, `--no-install`, `--out <dir>`, `--keep-staging`).
-The [package workflow](../.github/workflows/package.yml) runs the same script on every `v*` tag — attaching the zip to the GitHub release — and on demand via *Run workflow*.
+The [package workflow](../.github/workflows/package.yml) is **manual-only**. Use Actions → **Package (distributable zip)** → **Run workflow**. Selecting a `v*` tag attaches the zip to that tag's GitHub release after its verification jobs pass; selecting a branch creates an artifact without publishing a release. Pushing a tag alone does not start this workflow. Prepare the generated hosted-runtime assets before packaging from source.
 
 ## Tests and checks
+
+Automatic push/PR checks are temporarily paused. Run the relevant checks locally, or explicitly start a manual workflow; a push does not establish that its checks passed. Use a disposable local test database and account for tests that create or remove records.
 
 ### Backend (PHPUnit)
 
 ```bash
 cd backend
 composer test          # runs phpunit (unit + integration suites, tests/)
+composer analyse       # PHPStan
 php -l path/to/File.php   # quick syntax check on a single file
 ```
 
@@ -274,6 +326,7 @@ php -l path/to/File.php   # quick syntax check on a single file
 cd ui
 npm run test           # vitest run (unit tests, single pass)
 npm run test:unit      # vitest in watch mode
+npm run typecheck:test # type-check test files
 npm run lint           # eslint
 npm run build          # tsc -b + vite build (type-checks everything)
 ```
@@ -305,7 +358,8 @@ The default `E2E_BASE_URL` is `http://formlogic.local` (see `ui/playwright.confi
 | Animation | Framer Motion |
 | Icons | Lucide React |
 | PWA | vite-plugin-pwa |
-| Scripting (browser) | QuickJS (`quickjs-emscripten`) in a Web Worker |
+| Scripting (browser) | Vendored zipp WASM in a Web Worker |
+| Hosted app UI | Softn shared runtime in a sandboxed frame |
 
 ### Backend
 
@@ -313,7 +367,7 @@ The default `E2E_BASE_URL` is `http://formlogic.local` (see `ui/playwright.confi
 |-------|-----------|
 | Framework | PHP 8.2+ / Slim 4 |
 | Auth | HttpOnly cookie sessions (JWT-signed) + scoped API keys + ephemeral MCP tokens |
-| Database | MySQL (global metadata) + SQLite (per-form responses) |
+| Database | MySQL (global metadata), per-form SQLite responses, per-hosted-app SQLite deployment and records |
 | Logging | Monolog |
 | DI | PHP-DI |
 | Scripting (server) | zipp, as a WebAssembly guest under a vendored wasmtime launcher (no Node.js) |
@@ -321,14 +375,18 @@ The default `E2E_BASE_URL` is `http://formlogic.local` (see `ui/playwright.confi
 
 ### Scripting engine
 
-FormLogic runs user expressions and `onSubmit` scripts as real JavaScript inside a **QuickJS** sandbox, using one engine and one shared standard-library prelude on both sides (so client and server results match by construction):
+FormLogic runs user expressions and `onSubmit` scripts inside a **zipp** sandbox, using the same engine revision and shared standard-library prelude on both sides. A shared expression corpus checks browser/server behavior:
 
-- **Browser** — [`quickjs-emscripten`](https://github.com/justjake/quickjs-emscripten) runs in a dedicated Web Worker for real-time validation, conditional logic, and calculated fields, with memory/stack/interrupt limits and a terminate watchdog.
+- **Browser** — the vendored `ui/vendor/zipp-wasm/` module runs in a dedicated Web Worker for validation, conditional logic and calculated fields. Engine limits and the worker watchdog bound evaluation.
 - **Server** — a vendored launcher (under `backend/bin/runtime/`, selected per-OS) invoked by `SandboxRunner` via `proc_open`; inside it the [zipp](https://github.com/f2i-com/zipp.org) engine runs as a WASI guest under wasmtime, behind a hard memory ceiling, a fuel budget and no filesystem or network capability. `onSubmit` `ctx.db`/`ctx.http`/`ctx.utils` calls are handled in PHP over a synchronous RPC, keeping the SSRF/DNS-pinning guards on the trusted side.
 
-Untrusted code runs with an empty global and zero host bindings; runaway scripts are killed by the watchdog. The same sandbox also runs app-level and form-level **custom logic** in the app runtime (effect + permission model — see [docs/CUSTOM_APP_PLATFORM.md](../docs/CUSTOM_APP_PLATFORM.md#app-logic-quickjs)).
+Host access is denied by default; each evaluation receives only its permitted bindings, and runaway scripts are stopped by the sandbox budgets or watchdog. The same sandbox also runs app-level and form-level **custom logic** (effect + permission model — see [custom app platform](../docs/CUSTOM_APP_PLATFORM.md#app-logic-quickjs); that reference retains its older QuickJS heading).
 
 **Edit the prelude only at `ui/src/lib/formlogic/prelude.js`** — the build's `prebuild` step (`npm run sync:prelude`) syncs it into `backend/resources/`.
+
+Hosted client `.logic` calls named private backend actions through FormLogic's authenticated bridge. The backend resolves the app identity and gives each action access to that app's records. Private action source stays on the server; the client download contains only public interface files. See [hosted apps](../docs/HOSTED_APPS.md) for the action API, access rules and limits.
+
+Hosted databases live in `backend/storage/hosted-apps/<sha256(appId)>.sqlite`; `SQLITE_STORAGE_PATH` configures form response databases separately. The PHP user needs write access to both directories. Include hosted databases in operator backups: current account/form exports do not include them. Use **Download database** for a consistent hosted-app snapshot, or the SQLite backup procedure in the hosting guide.
 
 ## Project structure
 
@@ -357,7 +415,9 @@ formlogic/
 ├── ui/
 │   ├── .env.example               # Frontend environment template
 │   ├── e2e/                       # Playwright specs (run against a live deploy)
-│   ├── scripts/                   # sync-prelude, emit-marketplace, screenshot/QA tooling
+│   ├── public/hosted-runtime/      # Generated Softn runtime assets (not tracked)
+│   ├── vendor/zipp-wasm/           # Browser scripting engine
+│   ├── scripts/                   # Prelude/template sync, runtime build, marketplace and QA tooling
 │   └── src/
 │       ├── pages/                 # Top-level pages + pages/apps/ (app admin)
 │       ├── components/
@@ -370,9 +430,9 @@ formlogic/
 │       ├── client-runtime/        # App-logic host, effects/permissions, connectors
 │       ├── sdk/                   # FormLogic SDK (permission-aware hooks + components)
 │       ├── application-package/   # .formlogic package types + validator
-│       ├── lib/formlogic/         # QuickJS engine wrapper (Web Worker) + shared prelude
+│       ├── lib/formlogic/         # zipp engine wrapper (Web Worker) + shared prelude
 │       ├── types/                 # TypeScript interfaces (form, app, custom logic)
-│       └── data/packs/            # The 29 marketplace pack bundles
+│       └── data/packs/            # Marketplace pack bundles
 │
 ├── native-runtime/                # Tauri v2 shell (Rust) — see its README
 └── README.md                      # This file
@@ -380,7 +440,7 @@ formlogic/
 
 ## Architecture notes
 
-- **Dual database** — MySQL holds users, forms (metadata + field definitions), apps, roles, permissions, audit log, webhooks, and response metadata; each form's response data lives in its **own SQLite file**, which isolates forms and makes per-form export trivial.
+- **Data storage** — MySQL holds users, forms (metadata + field definitions), apps, roles, permissions, audit log, webhooks and response metadata. Each form has a SQLite response database; each hosted project has a separate SQLite deployment/record database. Back up both storage paths.
 - **One backend, many portals** — a form can be attached to many apps (`app_forms` many-to-many) and every app reads/writes the same records; member payloads are filtered server-side by role. See [docs/ONE_BACKEND_MANY_PORTALS.md](../docs/ONE_BACKEND_MANY_PORTALS.md).
 - **Auth** — HttpOnly cookies with JWT-signed tokens; CSRF via double-submit cookie, validated on state-changing requests.
 - **Storage modes** — forms can live in browser localStorage (no account) or sync to the backend; the preference persists.
@@ -388,14 +448,14 @@ formlogic/
 
 ## Environment variables
 
-The authoritative, fully annotated list is **`backend/.env.example`** (mail/SMTP, PayPal billing, beta mode, cloud plan limits, trusted proxies, support email, and more). The core ones:
+Start with **`backend/.env.example`** for local configuration. The defaults below describe runtime fallbacks; the example explicitly enables development mode. Admin-managed plan and Site AI settings are separate from environment variables; see [platform settings](../docs/FREE_PLANS_AND_AI_SETUP.md#administrator-controls).
 
 ### Backend (`backend/.env`)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `APP_ENV` | `development` | `development` or `production` |
-| `APP_DEBUG` | `true` | Show detailed errors (disable in production) |
+| `APP_ENV` | `production` | Only explicit `development` enables development behavior |
+| `APP_DEBUG` | `false` | Detailed errors only when also in development mode |
 | `DB_HOST` | `localhost` | MySQL host |
 | `DB_PORT` | `3306` | MySQL port |
 | `DB_DATABASE` | `formlogic` | MySQL database name |
@@ -409,11 +469,11 @@ The authoritative, fully annotated list is **`backend/.env.example`** (mail/SMTP
 | `CORS_ALLOWED_ORIGINS` | | Additional CORS origins (comma-separated) |
 | `COOKIE_DOMAIN` | | Cookie domain (empty = current domain) |
 | `UPLOAD_MAX_FILE_SIZE` | `10485760` | Max upload size in bytes (10MB) |
-| `AI_BASE_URL` | | OpenAI-compatible API base URL — OpenAI, Azure, or a local server (LM Studio / Ollama / vLLM) |
+| `AI_BASE_URL` | `https://api.openai.com/v1` | Operator-funded Site AI endpoint; an OpenAI-compatible API base URL |
 | `AI_API_KEY` | | API key; optional — leave blank for a keyless local server |
 | `AI_MODEL` | `gpt-4o` | Text model for AI generation |
-| `AI_VISION_MODEL` | `gpt-4o` | Vision model for image/document extraction (defaults to `AI_MODEL`) |
-| `AI_ENABLED` | `true` | Set `false` to disable the built-in AI entirely (steers users to bring their own AI via MCP) |
+| `AI_VISION_MODEL` | `AI_MODEL` | Vision model for image/document extraction |
+| `AI_ENABLED` | `true` | Additional Site AI gate: `false` disables it. Site AI still defaults **off** in admin settings, even with a server key present. Does not disable BYO providers or MCP. |
 | `REQUIRE_VERIFIED_PACKAGES` | `false` | Require a verified signature on every package/pack import |
 
 Legacy `OPENAI_API_KEY` / `OPENAI_API_URL` / `OPENAI_MODEL` names are still honored as fallbacks for the `AI_*` variables.
@@ -422,7 +482,8 @@ Legacy `OPENAI_API_KEY` / `OPENAI_API_URL` / `OPENAI_MODEL` names are still hono
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VITE_API_URL` | `http://localhost:8080/api` | Backend API URL (dev default; use `/api` for same-domain production) |
+| `VITE_API_URL` | `/api` | Same-origin API path in development and production |
+| `VITE_API_PROXY_TARGET` | `http://127.0.0.1:8080` in development | PHP target for Vite's `/api` proxy; `off` disables it. No production proxy is started by this setting. |
 | `VITE_PUBLIC_DOMAIN` | `formlogic.com` | Domain shown in landing-page mockups + sales contact (baked in at build time) |
 
 ## API overview
@@ -431,7 +492,7 @@ Three ways in, all documented elsewhere:
 
 - **Internal API** (`/api/...`) — cookie-authenticated; everything the SPA does: auth, forms, responses, apps (incl. companion apps, form relations, custom domains, signed exports), app runtime (incl. `sync/batch` offline sync, activity, reports), packs/marketplace, billing. Routes are all declared in `backend/public/index.php`.
 - **External REST API** (`/api/v1/...`) — API-key authenticated (`Authorization: Bearer flk_…`, scoped keys created in Settings → API keys). Submissions run the full pipeline including the `onSubmit` script. Full reference: **[docs/API.md](../docs/API.md)**.
-- **MCP server** (`POST /api/mcp`) — short-lived scoped tokens for external AI clients (Claude, Cursor, …) to build and edit apps. Setup + tool list: **[docs/MCP.md](../docs/MCP.md)**.
+- **MCP server** (`POST /api/mcp`) — scoped access for external AI clients to build and edit apps. See **[MCP setup and tool reference](../docs/MCP.md)**.
 
 ## Field types
 
@@ -469,7 +530,7 @@ Three ways in, all documented elsewhere:
 - **Security headers** (X-Content-Type-Options, X-Frame-Options, CSP, etc.)
 - **Input validation** with type checking and constraint enforcement
 - **SSRF protection** on webhooks, `ctx.http`, and domain probes — DNS resolution checks and private/reserved IP blocking, re-resolved per request
-- **Sandboxed scripting** — user scripts run in an isolated QuickJS sandbox with instruction-count, wall-clock, memory, and call-depth limits, and no `eval`, DOM, or filesystem access
+- **Sandboxed scripting** — user scripts run in isolated zipp sandboxes with bounded execution and explicitly granted host bindings; no direct DOM, filesystem or network access
 - **Signed packages & manifests** — Ed25519 signatures over `.formlogic` exports and client manifests; tampered archives are rejected on import
 - **Hash-chained audit log** with HMAC-SHA256 integrity verification (`GET /api/admin/audit/verify`)
 - **Body size limits** on uploads; **User-Agent sanitization** against stored XSS
@@ -479,11 +540,14 @@ Three ways in, all documented elsewhere:
 ### "SECURITY ERROR: JWT_SECRET must be set" on first request
 `APP_ENV` is `production` but `JWT_SECRET` is empty. Either set `APP_ENV=development` in `backend/.env` for local development, or generate a secret (`php -r "echo bin2hex(random_bytes(32));"`) and set it.
 
-### CORS errors in the browser console
-Update `CORS_ORIGIN` in `backend/.env` to match your frontend URL (e.g. `http://localhost:5173` for dev).
+### API requests fail or return HTML instead of JSON
+Keep `VITE_API_URL=/api`; confirm the PHP server is running and Vite's proxy target reaches it. Restart Vite after editing `.env`. In production, route `/api` to PHP before the SPA fallback. If you deliberately use a separate API origin, configure `CORS_ORIGIN`/`CORS_ALLOWED_ORIGINS` for the frontend and verify cookie policy.
+
+### Hosted preview is blank or a build reports a missing hosted runtime
+Run `npm run build:hosted-runtime` with the sibling Softn dependencies installed, then rebuild the UI. Check that `/hosted-runtime/index.html` and its JS/WASM assets are deployed. The static runtime needs the CORS headers above; missing files must not return the landing page. See [hosting troubleshooting](../docs/HOSTED_APPS.md#troubleshooting).
 
 ### Scripting (form logic / validation / calculations) not running
-- **Browser:** make sure `npm install` completed in `ui/` — it pulls `quickjs-emscripten` (the WASM engine). There is no separate download step.
+- **Browser:** ensure the vendored `ui/vendor/zipp-wasm/` files are present and the built WASM asset loads successfully in the worker. It is bundled by Vite; no `quickjs-emscripten` download is required.
 - **Server:** ensure the vendored launcher exists under `backend/bin/runtime/` for your OS (it's committed in the repo). On macOS/Linux it must be executable (`chmod +x backend/bin/runtime/formlogic-runtime-linux-x86_64`; `install.sh` and `install.php` do this). The prelude is synced to `backend/resources/` by the `prebuild` step of `npm run build`.
 
 ### MySQL connection refused
@@ -498,11 +562,12 @@ sudo apt install php8.2-mysql php8.2-sqlite3 php8.2-mbstring php8.2-xml
 ```
 
 ### AI generation not working
-Set `AI_BASE_URL` (and `AI_API_KEY` if your provider needs one) in `backend/.env` — any OpenAI-compatible endpoint works, including keyless local servers. Check `GET /api/ai/status`. Note that in production an API key is never sent over plain `http://` (keyless local servers are fine).
+Check the selected source in **Connect your AI** and run its connection test. For OAIY, confirm browser pairing, provider readiness and the exact advertised gateway endpoint; browser pairing is separate from linking the FormLogic account for background records and flows. Direct browser providers need browser-compatible CORS.
+
+Some server-side generation routes still require operator-funded Site AI. For those, an admin must enable Site AI and configure `AI_BASE_URL`, model and any required key; `AI_ENABLED=false` overrides the admin switch. Check `GET /api/ai/status`. Production blocks provider keys over plain HTTP unless the explicit loopback-only exception is enabled. See [AI setup and limits](../docs/FREE_PLANS_AND_AI_SETUP.md).
 
 ## Upstream scripting runtime
 
-- **[quickjs-emscripten](https://github.com/justjake/quickjs-emscripten)** — QuickJS compiled to WASM, used in the browser (via npm)
 - **[zipp](https://github.com/f2i-com/zipp.org)** — the JavaScript engine behind form logic in the browser, on the server and on the desktop; **[wasmtime](https://wasmtime.dev)** — the WebAssembly runtime the server launcher embeds
 
 ## License

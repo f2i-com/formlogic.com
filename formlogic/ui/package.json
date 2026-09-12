@@ -5,15 +5,17 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "capture:dashboard-preview": "node scripts/capture-dashboard-preview.mjs",
     "sync:prelude": "node scripts/sync-prelude.mjs",
-    "prebuild": "node scripts/sync-prelude.mjs && node scripts/clean-dist.mjs",
+    "prebuild": "node scripts/sync-prelude.mjs && node scripts/check-hosted-runtime.mjs && node scripts/clean-dist.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck:test": "tsc -p tsconfig.test.json",
     "test:unit": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "build:hosted-runtime": "node scripts/build-hosted-runtime.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -26,6 +28,7 @@
     "clsx": "^2.1.1",
     "dagre": "^0.8.5",
     "esbuild-wasm": "^0.28.2",
+    "fflate": "^0.8.3",
     "framer-motion": "^12.23.26",
     "libsodium-wrappers-sumo": "^0.8.4",
     "lucide-react": "^1.39.0",

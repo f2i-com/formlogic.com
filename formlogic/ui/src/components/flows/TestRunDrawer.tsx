@@ -72,7 +72,7 @@ function PhaseGlyph({ phase }: { phase: NodeRunPhase }) {
   return <X className="h-3.5 w-3.5 flex-none text-red-500" />;
 }
 
-export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeStatus, onCloudRunFeedback, hideClose = false }: {
+export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeStatus, onCloudRunFeedback, hideClose = false, inputValue, onInputChange }: {
   flow: FlowDefinition;
   onClose: () => void;
   /** Called after a successful server test-run (app flows) so the caller can refresh history. */
@@ -85,9 +85,13 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
   onCloudRunFeedback?: (flowId: string, feedback: CloudRunFeedback) => void;
   /** The mobile slide-over supplies its own close — suppress the header's to avoid two X buttons. */
   hideClose?: boolean;
+  /** Keep a draft when the workspace moves this panel between desktop and mobile layouts. */
+  inputValue?: string;
+  onInputChange?: (value: string) => void;
 }) {
   const navigate = useNavigate();
-  const [inputText, setInputText] = useState(() => initialInputsJson(flow.flowJson));
+  const [localInputText, setInputText] = useState(() => initialInputsJson(flow.flowJson));
+  const inputText = inputValue ?? localInputText;
   const [running, setRunning] = useState(false);
   const [serverRunning, setServerRunning] = useState(false);
   const [outcome, setOutcome] = useState<FlowRunOutcome | null>(null);
@@ -325,7 +329,7 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
           <textarea
             id="flow-test-inputs"
             value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
+            onChange={(e) => { setInputText(e.target.value); onInputChange?.(e.target.value); }}
             rows={6}
             spellCheck={false}
             className={INPUT_CLS + ' resize-y'}

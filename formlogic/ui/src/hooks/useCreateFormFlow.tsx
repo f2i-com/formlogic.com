@@ -24,15 +24,16 @@ export function useCreateFormFlow() {
   const { createForm, addFields, setActiveForm } = useFormStore();
   const vaultStatus = useVaultStore((s) => s.status);
   const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
   const creatingRef = useRef(false); // guard against a double-tap creating two drafts
 
-  const handleSelect = async (template: FormTemplate | null, makePrivate = false) => {
+  const handleSelect = async (template: FormTemplate | null, makePrivate = false, name?: string) => {
     if (creatingRef.current) return;
     creatingRef.current = true;
-    setOpen(false);
+    setCreating(true);
     try {
-      const form = await createForm(template ? template.name : 'Untitled Form');
-      if (!form) return;
+      const form = await createForm(name?.trim() || (template ? template.name : 'Untitled Form'));
+      if (!form) { toast.error('Creation failed', 'Could not create this form. Your choices are kept so you can try again.'); return; }
       if (template && template.fields.length > 0) {
         addFields(form.id, template.fields);
       }
@@ -67,21 +68,24 @@ export function useCreateFormFlow() {
       }
 
       setActiveForm(form.id);
+      setOpen(false);
       navigate(`/builder/${form.id}`);
       if (template) toast.success('Form Created', `Started with "${template.name}" template`);
     } catch {
       toast.error('Creation failed', 'Could not create a new form. Please try again.');
     } finally {
       creatingRef.current = false;
+      setCreating(false);
     }
   };
 
   const newFormPicker = (
     <TemplateSelector
       isOpen={open}
-      onClose={() => setOpen(false)}
+      onClose={() => { if (!creatingRef.current) setOpen(false); }}
       onSelectTemplate={handleSelect}
       canMakePrivate={vaultStatus === 'unlocked'}
+      isCreating={creating}
     />
   );
 

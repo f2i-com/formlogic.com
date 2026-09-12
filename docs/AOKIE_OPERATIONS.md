@@ -1,96 +1,80 @@
-# Aokie Receptionist — Operations Runbook
+# Aokie operations
 
-Operating the AI phone receptionist: the desktop stack, deploy/restart
-recipes, and how to diagnose a live problem. The plugin's own architecture is
-in the aokie repo's `docs/ARCHITECTURE.md`; this is the FormLogic-side operator
-view.
+[Documentation index](README.md) · [Connected apps](CONNECTED_APPS.md) · [Troubleshooting](AOKIE_TROUBLESHOOTING.md)
 
-## The stack
+Aokie runs the phone conversation in OAIY. FormLogic hosts the editable front desk and stores records produced by connected flows. This guide covers current OAIY integration; the retired `formlogic-desktop.exe` host and port `17872` are not the current setup.
 
-FormLogic Desktop spawns and supervises everything:
+## Check each connection
 
-| Process | Port | Role |
+| Component | Where to check | What success establishes |
 |---|---|---|
-| `formlogic-desktop.exe` | 17872 (loopback API) | The Tauri host + flow runtime |
-| `aokie-plugin.exe` | — (stdio) | The phone bridge + voice agent |
-| `aokie-voice-server.exe` | 17920 (loopback) | STT/TTS service |
-| `llama-server.exe` | 8080 (loopback) | Local LLM the agent reuses |
+| OAIY desktop | Overview; default `http://127.0.0.1:17972/api/health` | The host is reachable and identifies itself as OAIY. This alone does not prove flow or phone readiness. |
+| Flow runtime | OAIY Overview and Runs | The CLI/Node runtime is available; queued and failed runs are visible. |
+| Aokie plugin | Plugins → Aokie → AI Receptionist → Overview | Plugin health, build, phone, AI and event-delivery status. |
+| Phone | Phone setup and Overview | Pairing has progressed to a phone connection; audio still needs a test. |
+| AI and speech | OAIY Services/providers, then Aokie Settings | Selected LLM, STT and TTS endpoints are available. Model loading and GPU execution are separate from process startup. |
+| Browser pairing | FormLogic Connect your AI; OAIY Connections | This browser may use the approved local host. |
+| Linked account | OAIY Connections → Linked account | OAIY has scoped FormLogic access for records and background work. |
+| App routing | FormLogic App Studio, receptionist settings and flow bindings | Events target the intended app/forms. Sharing Aokie forms into another app does not rewrite every automation. |
 
-## Restart recipe (the important gotcha)
+The GUI process is `oaiy-desktop.exe`; the headless alternative is `oaiy-server.exe`. Aokie runs as `aokie-plugin.exe` over supervised stdio. Model and speech processes depend on the selected services: do not assume a fixed LLM port or speech-server binary. FormLogic's development PHP API may already use port `8080`.
 
-Services spawned by the desktop **inherit its `127.0.0.1:17872` listener
-handle**, so killing only the desktop leaves the port wedged by a dead PID's
-children and a relaunched instance serves nothing ("Loading services…"). The
-holders are `llama-server.exe` + `aokie-voice-server.exe`. Always kill all four
-together:
+Use the host-advertised gateway URL for configured providers. Current OAIY provider routing supports chat completions, not a realtime WebSocket voice proxy. Aokie's tested local path uses separate LLM, STT and TTS endpoints. See [AI setup](FREE_PLANS_AND_AI_SETUP.md) and the [OAIY README](https://github.com/f2i-com/oaiy.com#readme).
+
+## Set up and verify the app
+
+1. Install the **Aokie Receptionist** starter, or compose its shared forms into the intended app. Check Calls, Appointments, Messages, Transcripts, Follow-ups and Device logs in the front desk.
+2. Start Aokie in OAIY. Complete adapter setup and phone pairing with matching codes; select AI/speech providers and review Consent. Read the [hardware guide](https://github.com/f2i-com/aokie.com/blob/main/docs/HARDWARE.md) before changing an adapter driver.
+3. Pair the FormLogic browser and link the FormLogic account in OAIY. Check the account, destination app and enabled event bindings.
+4. Make a test call from a phone you control. Verify live state, caller/assistant transcript and the completed FormLogic call record. Test incoming and outbound behavior separately; outbound Aokie waits for the recipient to speak before introducing itself.
+5. Submit a fictional appointment request in conversation. Check the flow result and Appointments record. A requested appointment remains a request until staff or an intentionally configured backend confirms it.
+6. If using messaging, send a test SMS to a number you control and reply. Verify the phone operation, incoming event and app record separately. **Sent** means phone acceptance, not a carrier delivery receipt.
+7. Review and test each automation before enabling it. Auto-answer is off by default. Call waiting/hold and callbacks need separate live checks on the actual handset/carrier.
+
+The current local test configuration used Qwen3.5-9B Q4, NVIDIA Parakeet and Pocket TTS for incoming/outbound conversations, interruptions and SMS. These are tested choices, not required dependencies. Carrier-specific waiting/hold and automatic missed-call callbacks still need additional live validation.
+
+## Diagnose without changing state
+
+Start with readiness cards, current errors and run history. A failed health read is unknown state; the current console shows **Needs attention** rather than retaining a stale green reading.
+
+These read-only OAIY endpoints use the connected host's base URL:
+
+| Endpoint | Use |
+|---|---|
+| `GET /api/health` | Public host discovery/identity. |
+| `GET /api/bridge/status` | Authenticated runtime readiness, CLI/Node details, run counts and plugin availability. |
+| `GET /api/plugins` | Authenticated plugin state, reason, manifest version and `lastHealth`, `lastHealthAt` or `lastHealthError`. |
+| `GET /api/plugins/aokie/logs?tail=100` | Authenticated bounded plugin stdout/stderr logs. |
+
+Use the existing approved browser or desktop session for protected requests. The old `/api/desktop/support-bundle` recipe is not a current OAIY endpoint. Reconnect or relink through the UI instead of extracting credentials from local config files.
+
+A public discovery check in PowerShell:
 
 ```powershell
-Stop-Process -Name formlogic-desktop,aokie-plugin,llama-server,aokie-voice-server -Force
-# verify the port is free before relaunching:
-Get-NetTCPConnection -LocalPort 17872   # must return nothing
-# relaunch the desktop; it respawns the plugin + services itself:
-Start-Process formlogic-desktop.exe
-# services do NOT auto-restart with the desktop — start them explicitly:
-Invoke-WebRequest -Uri http://127.0.0.1:17872/api/services/llama-cpp/start -Method POST
-Invoke-WebRequest -Uri http://127.0.0.1:17872/api/services/aokie-voice/start -Method POST
+Invoke-RestMethod 'http://127.0.0.1:17972/api/health'
 ```
 
-`llama-server` answers 503 on :8080 while the model loads, then 200 after ~30 s.
+Record timestamps, build versions, error codes and relevant run/record IDs. Plugin logs can contain phone numbers, messages and transcripts; review and redact them before sharing. A raw log is not a privacy-filtered support bundle.
 
-## Deploying a new plugin build
+## Restart or update safely
 
-The plugin exe is **locked while Aokie is connected**, so it must be replaced
-while the stack is down (the four-process kill above frees it). Build with the
-helper hash pinned (release-signing gate), then copy into the plugins dir:
+End the test call and check waiting/held callers before restarting. Use OAIY's plugin/service stop and start controls for a clean shutdown. Confirm Aokie has stopped before replacing a Windows executable, then install the intended package, start required services and recheck readiness.
 
-```bash
-export AOKIE_EXPECTED_HELPER_SHA256=<sha256 of the deployed aokie-driver-helper.exe>
-cargo build -p aokie-plugin --features voice --release   # in the aokie repo
-cp target/release/aokie-plugin.exe \
-   "$APPDATA/com.formlogic.desktop/plugins/aokie/aokie-plugin.exe"
+For source builds, follow the [Aokie build guide](https://github.com/f2i-com/aokie.com#build-from-source), including its voice feature and driver-helper integrity requirements. Find the active OAIY data directory through its configuration UI; the retired `com.formlogic.desktop` install path is not appropriate.
+
+If OAIY cannot bind its API after restarting, inspect the listener and its process command line before stopping anything:
+
+```powershell
+Get-NetTCPConnection -State Listen -LocalPort 17972 |
+    Select-Object LocalAddress, LocalPort, OwningProcess
 ```
 
-The flow runtime caches app bindings with a ~60 s TTL, so a DB-added binding is
-picked up within a minute — no reconnect needed.
+Use the actual configured port for a headless/custom host. Avoid terminating every model or speech process by name; another project may own one. Verify pairing, account linking, providers and a resulting app record after recovery.
 
-## Diagnosis — one endpoint
+## Delivery, retention and time
 
-`GET http://127.0.0.1:17872/api/desktop/support-bundle` is the privacy-safe
-diagnostics document (no tokens, no conversation content). It answers, in one
-call:
+Aokie's durable outbox tracks pending, failed and dead events. **All events delivered** describes delivery to the host; a successful FormLogic flow and stored record establish end-to-end success. Fix the link, permission or flow error before redriving. `outbox.redrive` can target one idempotency key or an explicit dead set; inspect business side effects before retrying. Preserve original event identity so deduplication can work.
 
-- **flowRuntime** — `linked`, `errors`, `lastError` (the first place a flow or
-  record-write failure surfaces).
-- **plugins[].health.components** — the plugin's computed readiness:
-  - `build{version, ref}` — exactly which build answered.
-  - `radio{initialized, phoneConnected, callActive, staleSttResults, error}`.
-  - `outbox{pending, failed, dead}` — dead > 0 means events need a redrive.
-  - `config{version, quarantined}` — which settings revision, and whether the
-    settings file was corrupt.
-- **journals** — per-plugin `receipts` vs `processedMarkers`. A mismatch is the
-  crash-recovery signal (events journaled but not yet processed).
+Check the installed forms' `retentionDays` and purge behavior rather than assuming every deployment uses the starter's policy. Customers, appointments and follow-ups have different retention needs from call/transcript/message/device records. Set the app timezone for dashboard day boundaries and confirm booking dates/times in that timezone.
 
-## Recovering dead events
-
-Dead-lettered outbox rows are shown in the support bundle. Redrive them through
-the connector:
-
-- One event: `outbox.redrive {idempotencyKey: "…"}`
-- The whole dead set: `outbox.redrive {all: true}`
-
-The receipts journal dedupes anything that actually made it through before
-dead-lettering, so a redrive can never double-publish.
-
-## Records retention
-
-Caller-PII forms (Calls, Transcript Turns, SMS Threads/Messages, Hardware
-Events) carry `retentionDays: 90`; expired responses are purged through the
-full deletion path (SQLite + MySQL metadata + uploaded files) on an
-hour-throttled sweep inside the response pipeline. Business records
-(Customers, Appointments, Orders, Follow-ups) are deliberately permanent.
-
-## Timezone
-
-"Today" on the dashboard and relative date filters resolve in the **app's**
-timezone (`app settings → timezone`), not the server's UTC. Set it, or a UTC+
-business sees day boundaries hours off.
+Preserve FormLogic records and Aokie plugin data during updates. Hosted custom backend databases need separate backups as described in [hosted apps](HOSTED_APPS.md#export-and-back-up). A downloaded editable client contains source, not live records or credentials.

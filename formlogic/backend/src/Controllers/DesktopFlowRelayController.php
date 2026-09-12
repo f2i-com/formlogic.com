@@ -15,7 +15,7 @@ use Psr\Http\Message\ServerRequestInterface as Request;
  * E2E flow-run relay channel (docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md Phase 5 §5.7). Two surfaces:
  *   - Web (session-authed, /api/desktop/flows/*): a member ENQUEUES a sealed run of one of their
  *     OWN flows ('desktop' execution location) for their linked desktop, reads its status + live
- *     queue position + (read-once) sealed result, and streams the sealed progress frames over SSE.
+ *     queue position + repeatable sealed result, and streams the sealed progress frames over SSE.
  *     Every {id} route is restricted to the REQUESTING user — account members can't read each
  *     other's runs.
  *   - Desktop (flk_ API key, /api/v1/desktop-flows/*): long-polls the lane, claims single-flight,
@@ -119,9 +119,8 @@ class DesktopFlowRelayController
 
     /**
      * GET /api/desktop/flows/runs/{id} — status + LIVE queue position. Requesting-user only.
-     * For a terminal run with a stored sealed result, the result rides this response EXACTLY
-     * ONCE (read-once-then-purge, the flow lane's E2E result design): the first read returns
-     * resultEnvelope and clears it server-side; later reads show resultAvailable=false.
+     * Ciphertext reads are repeatable until explicit receipt acknowledgement or retention
+     * expiry. A lost HTTP response must not destroy the only retrievable answer.
      */
     public function getRun(Request $request, Response $response, array $args): Response
     {
@@ -131,11 +130,33 @@ class DesktopFlowRelayController
         }
         $row['queuePos'] = $this->relay->queuePosition($row['requestId'], (string) $row['ownerUserId']) ?? 0;
         $row['resultEnvelope'] = null;
+        $row['resultReceipt'] = null;
         if (($row['resultAvailable'] ?? false) === true) {
             $row['resultEnvelope'] = $this->relay->consumeResultEnvelope($row['requestId'], (string) $row['ownerUserId']);
             $row['resultAvailable'] = $row['resultEnvelope'] !== null;
+            if ($row['resultEnvelope'] !== null) {
+                $row['resultReceipt'] = hash('sha256', base64_decode($row['resultEnvelope'], true));
+            }
         }
         return $this->jsonResponse($response, ['request' => $row]);
+    }
+
+    /** POST /api/desktop/flows/runs/{id}/ack — call only after accepting/storing the result. */
+    public function acknowledgeResult(Request $request, Response $response, array $args): Response
+    {
+        [, $row, $err] = $this->resolveOwnRequest($request, $response, (string) ($args['id'] ?? ''));
+        if ($err !== null) {
+            return $err;
+        }
+        $body = $request->getParsedBody();
+        $receipt = is_array($body) ? ($body['resultReceipt'] ?? null) : null;
+        if (!is_string($receipt) || !preg_match('/^[a-f0-9]{64}$/', $receipt)) {
+            return $this->jsonError($response, 'A SHA-256 resultReceipt is required', 400);
+        }
+        if (!$this->relay->acknowledgeResultEnvelope($row['requestId'], (string) $row['ownerUserId'], $receipt)) {
+            return $this->jsonError($response, 'Result receipt does not match an available terminal result', 409);
+        }
+        return $this->jsonResponse($response, ['acknowledged' => true]);
     }
 
     /**

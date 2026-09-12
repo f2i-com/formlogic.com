@@ -24,7 +24,7 @@ import {
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { Logo } from '../components/ui/Logo';
 
-const DESKTOP_RELEASES = 'https://github.com/f2i-com/formlogic.com/releases/latest';
+const DESKTOP_RELEASES = 'https://github.com/f2i-com/oaiy.com/releases/latest';
 const AOKIE_RELEASES = 'https://github.com/f2i-com/aokie.com/releases';
 
 /* ---------- small local doc components (Docs.tsx conventions) ---------- */
@@ -41,7 +41,7 @@ function H2({ icon, children, id }: { icon: ReactNode; children: ReactNode; id?:
 }
 
 function P({ children }: { children: ReactNode }) {
-  return <p className="mt-4 text-[15px] leading-relaxed text-gray-600 dark:text-slate-300">{children}</p>;
+  return <p className="mt-4 text-base leading-relaxed text-gray-600 dark:text-slate-300">{children}</p>;
 }
 
 function C({ children }: { children: ReactNode }) {
@@ -67,15 +67,31 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
         {n}
       </span>
       <h3 className="pt-1 text-lg font-semibold text-gray-900 dark:text-white">{title}</h3>
-      <div className="mt-2 space-y-3 text-[15px] leading-relaxed text-gray-600 dark:text-slate-300">{children}</div>
+      <div className="mt-2 space-y-3 text-base leading-relaxed text-gray-600 dark:text-slate-300">{children}</div>
     </li>
   );
 }
 
 function SpecTable({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
   return (
-    <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 dark:border-slate-700/70">
-      <table className="w-full min-w-[560px] text-left text-sm">
+    <div className="mt-4">
+      <div className="space-y-3 sm:hidden">
+        {rows.map((cells, index) => (
+          <section key={index} className="rounded-xl border border-gray-200 p-4 dark:border-slate-700/70">
+            <h3 className="text-base font-semibold text-gray-900 dark:text-white">{cells[0]}</h3>
+            <dl className="mt-3 space-y-3 text-sm leading-relaxed">
+              {cells.slice(1).map((cell, column) => (
+                <div key={column} className="min-w-0 break-words">
+                  <dt className="font-medium text-gray-500 dark:text-slate-400">{head[column + 1]}</dt>
+                  <dd className="mt-1 text-gray-700 dark:text-slate-200">{cell}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        ))}
+      </div>
+      <div className="hidden overflow-x-auto rounded-xl border border-gray-200 sm:block dark:border-slate-700/70">
+      <table className="w-full text-left text-sm">
         <thead>
           <tr className="border-b border-gray-200 bg-gray-50 dark:border-slate-700/70 dark:bg-slate-900">
             {head.map((h) => (
@@ -97,6 +113,7 @@ function SpecTable({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -124,38 +141,38 @@ export function AokieGuidePage() {
     <div className="min-h-[100dvh] w-full overflow-x-clip bg-white dark:bg-slate-950">
       {/* Slim header */}
       <header className="sticky top-0 z-20 border-b border-gray-200/70 bg-white/85 backdrop-blur dark:border-slate-800 dark:bg-slate-950/85">
-        <div className="mx-auto flex h-14 max-w-3xl items-center justify-between px-5">
+        <div className="mx-auto flex h-14 max-w-4xl items-center justify-between px-5">
           <Link to="/" aria-label="FormLogic home">
             <Logo size="sm" />
           </Link>
           <nav className="flex items-center gap-4 text-sm font-medium text-gray-600 dark:text-slate-300">
             <Link to="/packs/aokie-receptionist" className="hover:text-gray-900 dark:hover:text-white">Marketplace</Link>
-            <Link
-              to="/download"
+            <a
+              href="https://oaiy.com/desktop.html"
               className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-1.5 text-primary-foreground hover:bg-primary-700"
             >
               <Download className="h-3.5 w-3.5" /> Get Desktop
-            </Link>
+            </a>
           </nav>
         </div>
       </header>
 
       {/* Hero */}
       <section className="border-b border-gray-200/70 bg-gradient-to-b from-primary-50/60 to-white dark:border-slate-800 dark:from-slate-900 dark:to-slate-950">
-        <div className="mx-auto max-w-3xl px-5 py-14">
+        <div className="mx-auto max-w-4xl px-5 py-14">
           <p className="text-xs font-bold uppercase tracking-[0.18em] text-primary-600 dark:text-primary-400">
             Aokie · AI Receptionist
             <span className="ml-2 inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-bold tracking-normal text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
               Hardware beta
             </span>
           </p>
-          <h1 className="mt-3 text-4xl font-bold tracking-tight text-gray-900 dark:text-white">
-            Run your own AI phone receptionist — on your own machine.
+          <h1 className="mt-3 text-4xl sm:text-6xl font-bold tracking-tight text-gray-900 dark:text-white">
+            A front desk. On your own hardware.
           </h1>
-          <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-gray-600 dark:text-slate-300">
+          <p className="mt-4 max-w-2xl text-base leading-relaxed text-gray-600 dark:text-slate-300">
             Aokie turns a Windows PC, a USB Bluetooth dongle and the phone you already own into a
-            local AI receptionist: it answers calls, talks to callers, captures appointment
-            requests and files every call, transcript and request into your FormLogic app.
+            local AI receptionist. Connect call handling and appointment requests to your FormLogic workspace,
+            with OAIY running the local services. This hardware beta needs a verified end-to-end test before live use.
             Speech recognition, the language model and the voice run{' '}
             <strong>locally on your hardware by default</strong> — no per-minute fees, and with
             the standard local models your call audio stays on your machine. (If you point Aokie
@@ -168,12 +185,12 @@ export function AokieGuidePage() {
             <a href="#requirements" className="underline hover:no-underline">what you need</a> below.
           </p>
           <div className="mt-7 flex flex-wrap items-center gap-3">
-            <Link
-              to="/download"
+            <a
+              href="https://oaiy.com/desktop.html"
               className="inline-flex items-center gap-2 rounded-xl bg-primary-600 px-5 py-3 text-sm font-semibold text-primary-foreground shadow-sm transition-transform hover:-translate-y-0.5"
             >
-              <Monitor className="h-4 w-4" /> Download FormLogic Desktop
-            </Link>
+              <Monitor className="h-4 w-4" /> Download OAIY Desktop
+            </a>
             <Link
               to="/packs/aokie-receptionist"
               className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-5 py-3 text-sm font-semibold text-gray-800 hover:bg-gray-50 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-900"
@@ -184,7 +201,7 @@ export function AokieGuidePage() {
         </div>
       </section>
 
-      <main className="mx-auto max-w-3xl px-5 pb-24">
+      <main className="mx-auto max-w-4xl px-5 pb-24">
         {/* How it works */}
         <H2 icon={<PhoneCall size={18} />} id="how-it-works">How it works</H2>
         <P>
@@ -192,7 +209,7 @@ export function AokieGuidePage() {
           hands-free kit. When a call comes in, Aokie answers it through the dongle and runs the
           whole conversation locally:
         </P>
-        <ol className="mt-4 space-y-2 text-[15px] leading-relaxed text-gray-600 dark:text-slate-300">
+        <ol className="mt-4 space-y-2 text-base leading-relaxed text-gray-600 dark:text-slate-300">
           <li className="flex gap-3"><Phone className="mt-0.5 h-4 w-4 shrink-0 text-primary-500" /> The caller&apos;s voice arrives over the Bluetooth hands-free link (HFP).</li>
           <li className="flex gap-3"><Mic className="mt-0.5 h-4 w-4 shrink-0 text-primary-500" /> A local speech-recognition model (Parakeet) turns it into text in real time.</li>
           <li className="flex gap-3"><Cpu className="mt-0.5 h-4 w-4 shrink-0 text-primary-500" /> A local language model decides what to say — using the business name, services and instructions from the Receptionist Settings you control.</li>
@@ -209,9 +226,8 @@ export function AokieGuidePage() {
             [
               <strong key="gpu">GPU</strong>,
               <>
-                Around <strong>8&nbsp;GB of VRAM</strong> comfortably runs the default model (Gemma&nbsp;4 E4B).
-                6&nbsp;GB cards can use the lighter E2B variant, and smaller quantised models (Qwen&nbsp;3.5&nbsp;4B,
-                MiniCPM5&nbsp;1B) run through the bundled <C>llama-server</C> on modest hardware.
+                Size RAM and VRAM for the selected language, speech and voice models running together.
+                Check the release profile, model precision and context size; validate response latency on your machine.
               </>,
             ],
             [<strong key="disk">Disk</strong>, <>Roughly 4–8&nbsp;GB free for the models (see the table below).</>],
@@ -221,7 +237,7 @@ export function AokieGuidePage() {
             ],
             [
               <strong key="phone">Phone</strong>,
-              <>Any mainstream Android or iOS handset with your business SIM. Calls use HFP, SMS uses MAP, contacts use PBAP.</>,
+              <>A handset tested with your adapter and Aokie release. Calls use HFP; SMS and contacts also depend on handset support for MAP and PBAP.</>,
             ],
             [<strong key="fl">FormLogic</strong>, <>A FormLogic account (cloud or self-hosted) for the Receptionist app, records and dashboards.</>],
           ]}
@@ -230,27 +246,28 @@ export function AokieGuidePage() {
         <h3 className="mt-8 text-lg font-semibold text-gray-900 dark:text-white">Supported Bluetooth dongles</h3>
         <P>
           Aokie takes the dongle over with the WinUSB driver and speaks to the radio directly —
-          that&apos;s what makes reliable call audio possible, but it means only known-good chipsets
-          are supported:
+          the adapter is dedicated to Aokie while that driver is installed. The following identifiers
+          are recognised, but each hardware and phone combination needs qualification:
         </P>
         <SpecTable
           head={['Chipset', 'USB id', 'Support']}
           rows={[
-            ['Broadcom BCM20702', <C key="a">0a5c:21e8</C>, <Badge key="b" tone="ok">Certified</Badge>],
-            ['Broadcom BCM20702 (variant)', <C key="a">0a5c:21ec</C>, <Badge key="b" tone="ok">Certified</Badge>],
+            ['Broadcom BCM20702', <C key="a">0a5c:21e8</C>, <Badge key="b" tone="beta">Qualification required</Badge>],
+            ['Broadcom BCM20702 (variant)', <C key="a">0a5c:21ec</C>, <Badge key="b" tone="beta">Qualification required</Badge>],
             ['Realtek RTL8761', <C key="a">0bda:8771</C>, <Badge key="b" tone="beta">Beta</Badge>],
             ['Realtek RTL8821CE', <C key="a">0bda:c822</C>, <Badge key="b" tone="beta">Beta</Badge>],
             ['CSR CSR8510 A10', <C key="a">0a12:0001</C>, <Badge key="b" tone="beta">Beta</Badge>],
           ]}
         />
         <P>
-          <em>Certified</em> means the full answer / hear / speak / SMS path is verified.
-          <em> Beta</em> chipsets enumerate and pair, but call audio can vary by revision.
+          These are adapter families recognised by the software, not a guarantee of working call audio.
+          Check release-specific test evidence for your exact adapter revision and handset before purchasing hardware.
+          Pairing alone does not verify two-way audio, SMS or unattended operation.
         </P>
 
         <h3 className="mt-8 text-lg font-semibold text-gray-900 dark:text-white">The models (and their sizes)</h3>
         <P>
-          Everything is downloaded once from Hugging Face and cached locally. FormLogic Desktop
+          Everything is downloaded once from Hugging Face and cached locally. OAIY Desktop
           fetches them for you on first run (or from its <strong>Models</strong> page) — you never
           need to download files by hand, but here is what lands on disk:
         </P>
@@ -261,13 +278,13 @@ export function AokieGuidePage() {
               'Language model (default)',
               <>Gemma 4 E4B <span className="text-gray-400 dark:text-slate-500">(onnx-community/gemma-4-E4B-it-ONNX)</span></>,
               '≈ 4 GB',
-              'Fits comfortably in 8 GB VRAM with room for context.',
+              'Memory use depends on precision, context and concurrent services.',
             ],
             [
               'Language model (small)',
               <>Gemma 4 E2B / Qwen 3.5 4B <span className="text-gray-400 dark:text-slate-500">(unsloth/Qwen3.5-4B-GGUF)</span> / MiniCPM5 1B</>,
               '≈ 1–2.5 GB',
-              'For 6 GB cards or CPU-heavy setups, via the bundled llama-server.',
+              'Alternative profiles; verify compatibility and latency before use.',
             ],
             [
               'Speech-to-text',
@@ -287,31 +304,32 @@ export function AokieGuidePage() {
         {/* Setup steps */}
         <H2 icon={<Wrench size={18} />} id="setup">Set it up, step by step</H2>
         <ol className="mt-6 space-y-10">
-          <Step n={1} title="Install FormLogic Desktop">
+          <Step n={1} title="Install OAIY Desktop">
             <p>
-              Grab the Windows installer from the <Link className="font-medium text-primary-600 underline-offset-2 hover:underline dark:text-primary-400" to="/download">download page</Link>{' '}
+              Grab the Windows installer from the <a className="font-medium text-primary-600 underline-offset-2 hover:underline dark:text-primary-400" href="https://oaiy.com/desktop.html">OAIY download page</a>{' '}
               (or the <a className="font-medium text-primary-600 underline-offset-2 hover:underline dark:text-primary-400" href={DESKTOP_RELEASES} target="_blank" rel="noreferrer">latest GitHub release</a>, with SHA-256 checksums) and run it.
               Desktop lives in your system tray and supervises everything local: models, services,
               plugins and the flow runtime.
             </p>
             <p className="text-[13px] text-gray-500 dark:text-slate-400">
-              During the beta the release downloads require beta access — if a release link asks you
-              to sign in to GitHub, email{' '}
-              <a className="underline hover:no-underline" href="mailto:hello@formlogic.com">hello@formlogic.com</a>{' '}
-              for an invite.
+              Read the release notes for the supported Windows version and installation instructions.
+              Keep the OAIY and Aokie versions recorded together when testing your setup.
             </p>
           </Step>
 
-          <Step n={2} title="Install the Aokie plugin">
+          <Step n={2} title="Install the complete Aokie release bundle">
             <p>
-              In Desktop open <strong>Plugins</strong> and click <strong>Install Aokie plugin</strong> —
-              Aokie is bundled as a built-in plugin template, and like any plugin it can be stopped or
-              removed again at any time. If the plugin card reports its binary isn&apos;t installed
-              yet, download the plugin bundle from the{' '}
-              <a className="font-medium text-primary-600 underline-offset-2 hover:underline dark:text-primary-400" href={AOKIE_RELEASES} target="_blank" rel="noreferrer">Aokie releases page</a>{' '}
-              and drop its files (<C>aokie-plugin.exe</C>, <C>aokie-driver-helper.exe</C>, the ONNX runtime DLL)
-              into the plugin folder — the Plugins page has an <em>open</em> button that takes you straight there.
+              Download the plugin ZIP from the{' '}
+              <a className="font-medium text-primary-600 underline dark:text-primary-400" href={AOKIE_RELEASES}>Aokie releases page</a>.
+              In OAIY Desktop open <strong>Plugins → Install a plugin</strong>, enter the full local
+              path to the ZIP (or its complete extracted folder), then choose <strong>Install</strong>.
+              Use a release compatible with your OAIY version and check the release&apos;s verification instructions.
             </p>
+            <Tip>
+              Keep the release bundle intact. Do not copy replacement executables or DLLs into an installed
+              plugin: its manifest, services, UI and binaries belong to the same release. Install the complete
+              bundle again when updating or repairing it. A built-in template alone is not a complete Aokie installation.
+            </Tip>
           </Step>
 
           <Step n={3} title="Let it download the models">
@@ -323,7 +341,7 @@ export function AokieGuidePage() {
             </p>
             <ul className="list-disc space-y-1 pl-5">
               <li><C>aokie-voice</C> — the speech service (Parakeet STT + pocket-tts TTS).</li>
-              <li><C>llama-cpp</C> — the language model server (when using a GGUF model). It answers <C>503</C> while the model loads and is ready about 30 seconds later.</li>
+              <li><C>llama-cpp</C> — the language model server (when using a GGUF model). It can answer <C>503</C> while loading. Wait for a successful health check; loading time depends on the model and hardware.</li>
             </ul>
           </Step>
 
@@ -335,7 +353,7 @@ export function AokieGuidePage() {
             </p>
             <ul className="list-disc space-y-1 pl-5">
               <li><strong>Choose the dongle</strong> — it scans your USB devices and shows which ones are supported.</li>
-              <li><strong>Install the driver</strong> — Windows shows one elevation (UAC) prompt; answer <em>Yes</em>. Only that exact device is rebound to WinUSB.</li>
+              <li><strong>Install the driver</strong> — review the selected adapter before approving the Windows elevation prompt. That device is rebound to WinUSB.</li>
               <li><strong>Verify</strong> — the wizard confirms the dongle re-appeared, bound and ready.</li>
             </ul>
             <p>
@@ -366,17 +384,20 @@ export function AokieGuidePage() {
               from the marketplace — it ships the whole business side ready-made: Calls, Customers,
               Appointments, Transcript Turns, SMS, a front-desk console and the flows that connect
               them to the phone. Then link Desktop to your account:{' '}
-              <strong>Connections → Link FormLogic Cloud</strong> (a one-click OAuth approval).
-              From now on the desktop runs the app&apos;s flows headlessly — calls create records
-              even with the browser closed.
+              In OAIY, open <strong>Connections → Linked account</strong>, choose FormLogic and its
+              address, then select <strong>Link account</strong> and approve in your browser.
+              Check the linked account and flow status before testing. Browser pairing and linking a
+              FormLogic account are separate steps. Verify record creation with the browser closed
+              before relying on unattended operation.
             </p>
           </Step>
 
           <Step n={7} title="Make a test call, then make it yours">
             <p>
-              Call your own number. Aokie answers, greets, and handles the conversation — try
-              interrupting it mid-sentence; barge-in is on by default. Afterwards, check the app:
-              the call, transcript and summary are already filed.
+              Use a test caller who knows they are speaking to an AI receptionist. Verify that the caller
+              hears the greeting, Aokie receives their speech, and both sides can interrupt and hang up.
+              Afterwards, check the call record, transcript, summary and appointment request in FormLogic.
+              Keep the setup in testing until this whole path passes on your exact hardware.
             </p>
             <p>
               To customise the receptionist, add a record to <strong>Receptionist Settings</strong>{' '}
@@ -389,7 +410,7 @@ export function AokieGuidePage() {
 
         {/* Troubleshooting */}
         <H2 icon={<Wrench size={18} />} id="troubleshooting">If something doesn&apos;t work</H2>
-        <ul className="mt-4 list-disc space-y-2 pl-5 text-[15px] leading-relaxed text-gray-600 dark:text-slate-300">
+        <ul className="mt-4 list-disc space-y-2 pl-5 text-base leading-relaxed text-gray-600 dark:text-slate-300">
           <li>
             <strong>The phone can&apos;t find &quot;Aokie AI Assistant&quot;.</strong> The pairing
             window has expired (it&apos;s discoverable only while open) — press <em>Pair a phone</em>{' '}
@@ -397,14 +418,14 @@ export function AokieGuidePage() {
           </li>
           <li>
             <strong>The first reply takes a while after startup.</strong> The language model loads
-            for ~30 seconds after Desktop starts (<C>llama-cpp</C> answers 503 meanwhile). Give it a
-            moment, then call again.
+            after Desktop starts (<C>llama-cpp</C> can answer 503 meanwhile). Check service health
+            and logs, then make a test call once speech, voice and language services are ready.
           </li>
           <li>
             <strong>Call connects but there&apos;s no audio.</strong> Check the Hardware Events feed
             in the app&apos;s Device Setup screen — an <C>sco_unarmed</C> event means the audio
             channel didn&apos;t arm; replugging the dongle or switching the codec setting
-            (<C>hfpCodec</C>: auto / CVSD / mSBC) usually resolves it.
+            (<C>hfpCodec</C>: auto / CVSD / mSBC) may help; repeat the two-way audio test after any change.
           </li>
           <li>
             <strong>Want your normal Bluetooth back?</strong> The Dongle setup wizard&apos;s{' '}
@@ -415,8 +436,8 @@ export function AokieGuidePage() {
         {/* Privacy */}
         <H2 icon={<ShieldCheck size={18} />} id="privacy">Private by construction</H2>
         <P>
-          Transcription, the language model and speech synthesis all run on your machine — call
-          audio is processed locally and records live in your FormLogic app under your retention
+          With local providers configured, transcription, the language model and speech synthesis run
+          on your machine. Remote providers receive the inputs you send them. Records live in your FormLogic app under your retention
           settings. One thing that stays your responsibility: rules about call recording and
           AI-disclosure vary by country and state, so set the greeting and behaviour to match your
           local requirements.
@@ -426,16 +447,15 @@ export function AokieGuidePage() {
         <div className="mt-14 rounded-2xl bg-primary-600 px-6 py-8 text-primary-foreground sm:px-8">
           <h2 className="text-2xl font-bold tracking-tight">Ready to give your phone a front desk?</h2>
           <p className="mt-2 max-w-xl text-sm leading-relaxed opacity-90">
-            Install FormLogic Desktop, add the Aokie plugin, pair your phone — and your calls start
-            answering themselves.
+            Install OAIY Desktop, add the complete Aokie bundle, then test your phone and workflow together.
           </p>
           <div className="mt-5 flex flex-wrap gap-3">
-            <Link
-              to="/download"
+            <a
+              href="https://oaiy.com/desktop.html"
               className="inline-flex items-center gap-2 rounded-xl bg-white px-5 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50"
             >
-              <Download className="h-4 w-4" /> Get FormLogic Desktop
-            </Link>
+              <Download className="h-4 w-4" /> Get OAIY Desktop
+            </a>
             <Link
               to="/packs/aokie-receptionist"
               className="inline-flex items-center gap-2 rounded-xl border border-white/40 px-5 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-white/10"
@@ -449,7 +469,7 @@ export function AokieGuidePage() {
         <p className="mt-8 flex items-start gap-2 text-xs leading-relaxed text-gray-400 dark:text-slate-500">
           <Usb className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span>
-            Aokie needs FormLogic Desktop on Windows and a supported Bluetooth dongle.{' '}
+            Aokie needs OAIY Desktop on Windows and a supported Bluetooth dongle.{' '}
             <Bluetooth className="inline h-3 w-3" /> Your phone keeps working normally — Aokie is
             just another hands-free device to it. <Smartphone className="inline h-3 w-3" />
           </span>

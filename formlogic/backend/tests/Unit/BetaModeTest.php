@@ -19,13 +19,16 @@ class BetaModeTest extends TestCase
 {
     private function controller(bool $beta): BillingController
     {
+        $plans = $this->createMock(\FormLogic\Services\PlatformPlansService::class);
+        $plans->method('status')->willReturn(array_replace(\FormLogic\Services\PlatformPlansService::defaults(), ['paymentsEnabled' => true]));
         return new BillingController(
             $this->createMock(PayPalService::class), // isConfigured() defaults to false
             $this->createMock(MySQLConnection::class),
             null,
             null,
             null,
-            $beta
+            $beta,
+            $plans
         );
     }
 

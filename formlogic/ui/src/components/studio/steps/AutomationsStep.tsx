@@ -16,7 +16,8 @@ import { toast } from '../../../stores/toastStore';
 import { cn, formatRelativeTime } from '../../../lib/utils';
 import { FLOW_EVENT_CATALOG } from '../../flows/flowEventCatalog';
 import { getNodeSpec } from '../../flows/editor/nodeCatalog';
-import { FLOW_STARTER_TEMPLATES } from '../../flows/starterTemplates';
+import type { FlowStarterTemplate } from '../../flows/starterTemplates';
+import { NewFlowDialog } from '../../flows/NewFlowDialog';
 import { triggerRunSummary } from '../../flows/bindings/triggerVocabulary';
 import { returnToState } from '../../../hooks/useReturnTo';
 import { trackStudioSave } from '../studioSaveState';
@@ -57,6 +58,7 @@ export function AutomationsStep({
   // The flow editor's back link returns here when opened from this step.
   const studioReturn = returnToState(`/apps/${app.id}/studio/automations`, 'App Studio');
   const [selectedFlowId, setSelectedFlowId] = useState<string | null>(null);
+  const [showNew, setShowNew] = useState(false);
   const [creating, setCreating] = useState(false);
 
   const selected = flows.find((f) => f.id === selectedFlowId) ?? flows[0] ?? null;
@@ -100,24 +102,24 @@ export function AutomationsStep({
     navigate(`/flows?flow=${flow.id}&panel=test`, { state: studioReturn });
   };
 
-  const newAutomation = async () => {
+  const newAutomation = async ({ name, slug: requestedSlug, template }: { name: string; slug: string; template: FlowStarterTemplate }) => {
     if (creating) return;
     setCreating(true);
     try {
-      const blank = FLOW_STARTER_TEMPLATES[0];
       const taken = new Set(flows.map((f) => f.slug));
-      let slug = 'new-automation';
+      let slug = requestedSlug;
       let n = 1;
       while (taken.has(slug)) {
         n += 1;
-        slug = `new-automation-${n}`;
+        slug = `${requestedSlug.slice(0, 54)}-${n}`;
       }
       const res = await api.createFlow(app.id, {
-        name: n > 1 ? `New automation ${n}` : 'New automation',
+        name,
+        description: template.description,
         slug,
-        flowJson: blank.flowJson,
+        flowJson: template.flowJson,
         enabled: false,
-        nodeCapabilities: blank.nodeCapabilities,
+        nodeCapabilities: template.nodeCapabilities,
       });
       const flow = res.data?.flow;
       if (!flow) {
@@ -133,16 +135,16 @@ export function AutomationsStep({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col justify-between gap-3 rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 p-3 shadow-sm sm:flex-row sm:items-center">
+      <div className="flex flex-col justify-between gap-3 rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 p-5 shadow-sm sm:flex-row sm:items-center">
         <p className="px-1 text-xs text-gray-500 dark:text-slate-400">
-          Automations are FormLogic Flows scoped to this app — triggered by form events, schedules or connectors.
+          Choose the steps that run for this app, then connect a form event, schedule or other trigger.
         </p>
         <div className="flex items-center gap-2">
           <Button variant="secondary" size="sm" onClick={() => navigate('/flows')} leftIcon={<Workflow className="h-4 w-4" />}>
-            Flows workspace
+            All automations
           </Button>
           {flows.length > 0 && (
-            <Button size="sm" onClick={newAutomation} isLoading={creating} leftIcon={<Plus className="h-4 w-4" />}>
+            <Button size="sm" onClick={() => setShowNew(true)} isLoading={creating} leftIcon={<Plus className="h-4 w-4" />}>
               New automation
             </Button>
           )}
@@ -157,7 +159,7 @@ export function AutomationsStep({
             Automate what happens when a form is submitted, a status changes, or on a schedule —
             notifications, record updates, AI steps and more.
           </p>
-          <Button className="mt-4" onClick={newAutomation} isLoading={creating} leftIcon={<Plus className="h-4 w-4" />}>
+          <Button className="mt-4" onClick={() => setShowNew(true)} isLoading={creating} leftIcon={<Plus className="h-4 w-4" />}>
             Create your first automation
           </Button>
         </section>
@@ -204,7 +206,7 @@ export function AutomationsStep({
                           <span className="flex items-center gap-2">
                             <span className="truncate text-xs font-bold text-gray-900 dark:text-white">{flow.name}</span>
                             <Badge variant={flow.enabled ? 'success' : 'default'} size="sm">
-                              {flow.enabled ? 'Active' : 'Paused'}
+                              {flow.enabled ? 'Enabled' : 'Paused'}
                             </Badge>
                           </span>
                           <span className="mt-1.5 block text-[10px] leading-4 text-gray-500 dark:text-slate-400 line-clamp-2">
@@ -335,6 +337,7 @@ export function AutomationsStep({
           )}
         </div>
       )}
+      <NewFlowDialog isOpen={showNew} onClose={() => setShowNew(false)} onCreate={(input) => { void newAutomation(input); }} creating={creating} apps={[app]} fixedAppId={app.id} />
     </div>
   );
 }

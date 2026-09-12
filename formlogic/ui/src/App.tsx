@@ -54,6 +54,8 @@ function lazyWithRetry(factory: () => Promise<{ default: React.ComponentType<any
   );
 }
 
+const HostedAppPage = lazyWithRetry(() => import('./pages/apps/HostedAppPage'));
+
 // Lazy load pages for better performance
 const Dashboard = lazyWithRetry(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
 const FormsList = lazyWithRetry(() => import('./pages/FormsList').then(m => ({ default: m.FormsList })));
@@ -109,6 +111,7 @@ const AppRuntimeRoot = lazyWithRetry(() => import('./components/app-runtime/AppR
 // Lazy load pack marketplace pages
 const PackGalleryPage = lazyWithRetry(() => import('./pages/PackGalleryPage'));
 const PackDetailPage = lazyWithRetry(() => import('./pages/PackDetailPage'));
+const AiSetupPage = lazyWithRetry(() => import('./pages/AiSetupPage'));
 const Docs = lazyWithRetry(() => import('./pages/Docs').then(m => ({ default: m.Docs })));
 // Aokie setup guide — the landing "Explore Aokie" CTA's tutorial page (public).
 const AokieGuidePage = lazyWithRetry(() => import('./pages/AokieGuidePage').then(m => ({ default: m.AokieGuidePage })));
@@ -235,6 +238,7 @@ const PUBLIC_PATHS = [
   '/',
   '/login',
   '/signup',
+  '/connect-ai',
   '/forgot-password',
   '/reset-password',
   '/accept-invite',
@@ -242,6 +246,7 @@ const PUBLIC_PATHS = [
   '/packs',
   '/packs/:slug',
   '/docs',
+  '/ai-setup',
   '/aokie',
   '/privacy',
   '/terms',
@@ -282,6 +287,7 @@ function AppRoutes() {
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
+        <Route path="/connect-ai" element={<Navigate to="/login?redirect=%2Fconnect-ai" replace />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         {/* App invitation acceptance (prompts sign-in if needed) */}
@@ -295,6 +301,7 @@ function AppRoutes() {
         <Route path="/packs/:slug" element={<PackDetailPage />} />
         {/* Docs (public) */}
         <Route path="/docs" element={<Docs />} />
+        <Route path="/ai-setup" element={<AiSetupPage />} />
         {/* Aokie setup guide (public marketing tutorial) */}
         <Route path="/aokie" element={<AokieGuidePage />} />
         {/* Legal (public) */}
@@ -308,6 +315,7 @@ function AppRoutes() {
         {/* Platform-aware app download page — the launch-page "Get the app" fallback (FL-NATIVE-001) */}
         <Route path="/download" element={<DownloadPage />} />
         {/* App runtime - accessible with platform auth */}
+        <Route path="/app/:appSlug/project" element={<HostedAppPage />} />
         <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
         {/* 404 catch-all */}
         <Route path="*" element={<NotFound />} />
@@ -328,6 +336,7 @@ function AppRoutes() {
         {/* Leaving the demo for a real account (Login/Signup log the demo out, then show the form) */}
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
+        <Route path="/connect-ai" element={<Navigate to="/login?redirect=%2Fconnect-ai" replace />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
 
@@ -377,12 +386,14 @@ function AppRoutes() {
         <Route path="/packs" element={<PackGalleryPage />} />
         <Route path="/packs/:slug" element={<PackDetailPage />} />
         <Route path="/docs" element={<Docs />} />
+        <Route path="/ai-setup" element={<AiSetupPage />} />
         <Route path="/aokie" element={<AokieGuidePage />} />
         <Route path="/privacy" element={<LegalPage type="privacy" />} />
         <Route path="/terms" element={<LegalPage type="terms" />} />
         <Route path="/form/:formId" element={<FormResponse />} />
         <Route path="/open/app/:appSlug/*" element={<OpenInApp />} />
         <Route path="/download" element={<DownloadPage />} />
+        <Route path="/app/:appSlug/project" element={<HostedAppPage />} />
         <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
 
         {/* 404 catch-all */}
@@ -491,6 +502,7 @@ function AppRoutes() {
 
       {/* Docs */}
       <Route path="/docs" element={<Docs />} />
+        <Route path="/ai-setup" element={<AiSetupPage />} />
 
       {/* Aokie setup guide (public marketing tutorial) */}
       <Route path="/aokie" element={<AokieGuidePage />} />
@@ -506,6 +518,7 @@ function AppRoutes() {
       <Route path="/open/app/:appSlug/*" element={<OpenInApp />} />
       <Route path="/download" element={<DownloadPage />} />
       {/* App runtime (full screen, separate layout) */}
+      <Route path="/app/:appSlug/project" element={<HostedAppPage />} />
       <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
 
       {/* 404 catch-all */}

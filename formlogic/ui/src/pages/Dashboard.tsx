@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 
 import { logger } from '../lib/logger';
+import { mapConcurrent } from '../lib/mapConcurrent';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import {
   FileText,
@@ -48,13 +49,13 @@ import { loadAppGroupsCache, fetchAppGroups, type AppGroup } from '../lib/appGro
 import { appClickLabel, appClickPath } from '../lib/appNavigation';
 import { isDemoLocalId } from '../lib/demoLocal';
 import { cn, formatRelativeTime, sanitizeFilename, parseServerDate } from '../lib/utils';
-import { EmbedModal, TemplateSelector, PackImportModal, useFormPreview } from '../components/builder';
+import { EmbedModal, PackImportModal, useFormPreview } from '../components/builder';
 import { WelcomeModal } from '../components/onboarding/WelcomeModal';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
 import { CreateBand } from '../components/chat/CreateBand';
 import { PrivateLockBadge } from '../components/forms/PrivateLockBadge';
-import type { FormTemplate } from '../data/formTemplates';
+import { useCreateFormFlow } from '../hooks/useCreateFormFlow';
 import type { App } from '../types/app';
 import type { Form } from '../types/form';
 
@@ -705,7 +706,7 @@ function QuickFind({
 export function Dashboard() {
   useDocumentTitle('Dashboard');
   const navigate = useNavigate();
-  const { forms, createForm, setActiveForm, deleteForm, addField, storageMode } = useFormStore();
+  const { forms, createForm, setActiveForm, deleteForm, storageMode } = useFormStore();
   const formsLoading = useFormStore((s) => s.isLoading || !s.isInitialized);
   const { getResponsesByFormId, responses } = useResponseStore();
   const user = useAuthStore((state) => state.user);
@@ -754,7 +755,7 @@ export function Dashboard() {
   // part of (badge only — preview routing does its own fresh per-click context lookup).
   const [appOfForm, setAppOfForm] = useState<Record<string, string>>({});
   const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string; status: Form['status'] } | null>(null);
-  const [showTemplateSelector, setShowTemplateSelector] = useState(false);
+  const { openNewForm: handleCreateForm, newFormPicker } = useCreateFormFlow();
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [showPackImport, setShowPackImport] = useState(false);
 
@@ -773,30 +774,6 @@ export function Dashboard() {
     [apps, storageMode]
   );
 
-  const handleCreateForm = () => {
-    setShowTemplateSelector(true);
-  };
-
-  const handleSelectTemplate = async (template: FormTemplate | null) => {
-    setShowTemplateSelector(false);
-
-    if (template) {
-      const form = await createForm(template.name);
-      if (!form) return;
-      template.fields.forEach((field) => {
-        addField(form.id, field);
-      });
-      setActiveForm(form.id);
-      navigate(`/builder/${form.id}`);
-      toast.success('Form created', `Started with "${template.name}" template`);
-    } else {
-      const form = await createForm('Untitled Form');
-      if (!form) return;
-      setActiveForm(form.id);
-      navigate(`/builder/${form.id}`);
-    }
-  };
-
   // First-run onboarding: a welcome that routes a brand-new user into creating their first form.
   // Dismissal persists PER USER (namespaced by id) so a fresh account on a shared browser still sees
   // it and returning users aren't nagged. Derived during render (no effect) so it reacts once `user`
@@ -810,8 +787,8 @@ export function Dashboard() {
     if (onboardingKey) { try { localStorage.setItem(onboardingKey, '1'); } catch { /* ignore */ } }
     bumpOnboarding((n) => n + 1);
   }, [onboardingKey]);
-  const onWelcomeBlank = () => { dismissWelcome(); handleSelectTemplate(null); };
-  const onWelcomeTemplate = () => { dismissWelcome(); setShowTemplateSelector(true); };
+  const onWelcomeBlank = () => { dismissWelcome(); handleCreateForm(); };
+  const onWelcomeTemplate = () => { dismissWelcome(); handleCreateForm(); };
 
   // Gentle post-signup security nudge: suggest two-factor auth to NEW accounts
   // (first 14 days) that haven't enabled it. Optional by design — dismissal
@@ -966,32 +943,35 @@ export function Dashboard() {
       if (storageMode === 'api' && user && forms.length > 0) {
         // Fresh-enough cache + data already shown → skip the fan-out entirely.
         const cached = loadUiCache<DashboardStatsCache>('dashboard-stats', user.id);
-        if (cached && cached.ageMs < STATS_FRESH_MS && statsShownFor.current === user.id) {
+        const serverForms = forms.filter((form) => !isDemoLocalId(form.id));
+        const cacheMatchesForms = cached && serverForms.length === Object.keys(cached.data.responseCounts).length &&
+          serverForms.every((form) => cached.data.responseCounts[form.id] !== undefined);
+        if (statsReloadToken === 0 && cached && cacheMatchesForms && cached.ageMs < STATS_FRESH_MS && statsShownFor.current === user.id) {
           setStatsReady(true);
           return;
         }
         try {
           let totalResponses = 0;
-          const serverForms = forms.filter((form) => !isDemoLocalId(form.id));
           // getTimezoneOffset() returns minutes BEHIND UTC (JS convention); the API wants
           // minutes AHEAD — negate it (see api.getFormAnalytics doc) so responsesByDate (and
           // therefore the pulse strip) buckets by the viewer's local calendar day.
           const tzOffsetMinutes = -new Date().getTimezoneOffset();
-          const analyticsResults = await Promise.all(
-            serverForms.map((form) => api.getFormAnalytics(form.id, tzOffsetMinutes))
+          const analyticsResults = await mapConcurrent(
+            serverForms, (form) => api.getFormAnalytics(form.id, tzOffsetMinutes).catch(() => ({ data: undefined })),
+            () => cancelled,
           );
           if (cancelled) return;
           let analyticsFailures = 0;
-          for (const result of analyticsResults) {
+          for (const [index, result] of analyticsResults.entries()) {
             if (result.data?.analytics) {
               totalResponses += result.data.analytics.totalResponses;
             } else {
               analyticsFailures += 1;
+              totalResponses += cached?.data.responseCounts[serverForms[index].id] ?? 0;
             }
           }
-          // Every call failed: there are no figures, as opposed to figures of zero.
-          const allAnalyticsFailed = serverForms.length > 0 && analyticsFailures === serverForms.length;
-          setStatsFailed(allAnalyticsFailed);
+          // A partial read is not a complete total. Keep known figures and flag it.
+          setStatsFailed(analyticsFailures > 0);
 
           setStats({ totalResponses });
 
@@ -1003,6 +983,12 @@ export function Dashboard() {
           // forms.updatedAt, so updatedAt alone would miss the newest activity.
           const lastActivity: Record<string, number> = {};
           analyticsResults.forEach((result, i) => {
+            const formId = serverForms[i].id;
+            if (!result.data?.analytics && cached) {
+              if (cached.data.responseCounts[formId] !== undefined) counts[formId] = cached.data.responseCounts[formId];
+              if (cached.data.pulses[formId]) pulses[formId] = cached.data.pulses[formId];
+              if (cached.data.lastActivity?.[formId]) lastActivity[formId] = cached.data.lastActivity[formId];
+            }
             if (result.data?.analytics) {
               counts[serverForms[i].id] = result.data.analytics.totalResponses;
               pulses[serverForms[i].id] = buildPulseFromSparse(result.data.analytics.responsesByDate);
@@ -1043,16 +1029,17 @@ export function Dashboard() {
             )
           );
           if (cancelled) return;
-          const merged = recentResults.flatMap((r) =>
+          const merged = recentResults.flatMap((r, index) =>
             r && r.res.data?.responses
               ? r.res.data.responses.map((resp) => ({ id: resp.id, formId: r.f.id, formTitle: r.f.title, submittedAt: resp.submittedAt }))
-              : []
+              : (cached?.data.recent ?? []).filter((row) => row.formId === formsWithResponses[index].id)
           );
+          if (recentResults.some((r) => !r?.res.data?.responses)) setStatsFailed(true);
           merged.sort((a, b) => parseServerDate(b.submittedAt).getTime() - parseServerDate(a.submittedAt).getTime());
           const recent = merged.slice(0, 5);
           setApiRecent(recent);
           setStatsReady(true);
-          if (!allAnalyticsFailed) {
+          if (analyticsFailures === 0 && recentResults.every((r) => r?.res.data?.responses)) {
             statsShownFor.current = user.id;
             saveUiCache<DashboardStatsCache>('dashboard-stats', user.id, {
               totalResponses,
@@ -1065,8 +1052,7 @@ export function Dashboard() {
         } catch (error) {
           if (cancelled) return;
           logger.error('Failed to fetch dashboard stats:', error);
-          // With cached data on screen a failed revalidate degrades silently to
-          // the stale numbers; only an empty dashboard warns and falls back.
+          setStatsFailed(true);
           if (statsShownFor.current !== user?.id) {
             setStatsFailed(true);
             setStats(localStats);
@@ -1231,7 +1217,7 @@ export function Dashboard() {
       </span>
     );
   } else if (statsFailed) {
-    headline = <span className="text-gray-500 dark:text-slate-400">We couldn&apos;t load your response figures.</span>;
+    headline = <span className="text-gray-500 dark:text-slate-400">Some response figures are unavailable. Last known figures are kept where possible.</span>;
   } else if (totalForms === 0) {
     headline = <>Create your first form to start collecting responses.</>;
   } else if (totalResponses === 0) {
@@ -1255,7 +1241,7 @@ export function Dashboard() {
           lose another 384px to a docked chat, so viewport breakpoints fired the 3-column
           layout exactly when the content box was 704px — 219px tracks, with app names and
           "12 forms · published" both truncated to nothing. Size against the real box. */}
-      <div className="@container/dash flex-1 w-full p-4 sm:p-6 lg:p-8">
+      <div className="@container/dash flex-1 w-full max-w-[1600px] mx-auto px-5 py-6 sm:p-7 lg:p-10">
         {/* Post-signup security nudge: suggest (optional) two-factor auth to new accounts. */}
         {showMfaNudge && (
           <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-primary-200/70 dark:border-primary-500/25 bg-primary-50/70 dark:bg-primary-500/10 p-4">
@@ -1290,10 +1276,10 @@ export function Dashboard() {
             <AlertTriangle className="h-5 w-5 flex-none text-amber-600 dark:text-amber-400" />
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-gray-900 dark:text-white">
-                {formsFailed ? "We couldn't load your forms" : "We couldn't load your response figures"}
+                {formsFailed ? "We couldn't load your forms" : "Some response figures couldn't be refreshed"}
               </p>
               <p className="mt-0.5 text-xs text-gray-600 dark:text-slate-300">
-                Nothing has been lost — this is a problem reading them, not a problem with your data.
+                {formsFailed ? 'Try again to reconnect to your workspace.' : 'Figures may be incomplete or out of date. Refresh to get the latest activity.'}
               </p>
             </div>
             <Button
@@ -1302,7 +1288,6 @@ export function Dashboard() {
               className="flex-none"
               onClick={() => {
                 if (formsFailed) void useFormStore.getState().refreshForms();
-                setStatsFailed(false);
                 setStatsReloadToken((n) => n + 1);
               }}
             >
@@ -1311,33 +1296,91 @@ export function Dashboard() {
           </div>
         )}
 
-        {/* §11B O1: the availability-routed creation band — chat-first when an AI can
-            answer, "Build your way" when none is connected. A brand-new owner used to get
-            this PLUS the headline's two buttons PLUS the "Get started" hero PLUS the
-            welcome modal — four competing invitations, two of which contradicted the
-            app-first spine by leading with a single form. On first run the hero owns the
-            invitation and this band stands down. */}
-        {storageMode === 'api' && !showGettingStarted && <CreateBand />}
-
         {/* Headline band — the intake ledger reads as one live sentence, not four stat cards. */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-semibold tracking-tight text-gray-900 dark:text-white">
+        <div className="mb-8 rounded-2xl border border-gray-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 @2xl/dash:p-8">
+          <p className="text-xs font-semibold uppercase tracking-widest text-primary-600 dark:text-primary-400">Your workspace</p>
+          <h2 className="mt-2 text-2xl @2xl/dash:text-3xl font-semibold tracking-tight text-gray-900 dark:text-white">Your workspace, at a glance.</h2>
+          <p className="mt-3 max-w-3xl text-base leading-relaxed text-gray-600 dark:text-slate-300" aria-live="polite">
             {headline}
-          </h1>
+          </p>
           {/* Deliberately minimal (owner direction): the sidebar's Create app owns the
               whole app journey (studio covers diagrams, AI and the rest) — the dashboard
               keeps just the form quick-start and pack import. */}
           {!showGettingStarted && (
             <div className="mt-4 flex flex-wrap gap-3">
               <Button onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
-                Start with a form
+                Create a form
               </Button>
+              <Button variant="outline" onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />}>Create an app</Button>
               <Button variant="outline" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />}>
                 Start from a template
               </Button>
             </div>
           )}
         </div>
+
+            {/* Apps strip — the user's most recently updated apps, mirroring the Apps page
+                cards. Lives under My forms (sharing its 2/3-width column), not as a full-width
+                strip — the AppIdentityTile treatment itself is unchanged ("as-is"). */}
+            {recentApps.length > 0 && (
+              <div className="mb-8">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Your apps</h2>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => navigate('/apps')}
+                    className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+                  >
+                    View all
+                    <ArrowRight className="h-4 w-4 ml-1" />
+                  </Button>
+                </div>
+                <div className="grid grid-cols-1 gap-3 @2xl/dash:grid-cols-2">
+                  {recentApps.map((app) => {
+                    // Real count from the list endpoint; navConfig.length is empty on pack-provisioned apps.
+                    const formCount = app.formCount;
+                    return (
+                      <button
+                        key={app.id}
+                        onClick={() => navigate(appClickPath(app))}
+                        title={appClickLabel(app)}
+                        className={cn(
+                          'flex items-center gap-4 p-5 min-w-0 rounded-xl border text-left group cursor-pointer',
+                          'bg-white dark:bg-slate-900/50 border-gray-200/80 dark:border-white/[0.06] shadow-sm shadow-gray-900/[0.03]',
+                          'hover:bg-gray-50 dark:hover:bg-slate-800/60 hover:border-gray-300 dark:hover:border-slate-600 motion-safe:transition-colors',
+                          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950'
+                        )}
+                      >
+                        <AppIdentityTile app={app} />
+                        <div className="min-w-0 flex-1">
+                          <span className="block text-sm font-medium text-gray-900 dark:text-slate-100 truncate group-hover:text-primary-600 dark:group-hover:text-primary-400 motion-safe:transition-colors">
+                            {app.name}
+                          </span>
+                          <span className="block text-xs text-gray-500 dark:text-slate-400 truncate tabular-nums">
+                            {formCount !== undefined ? `${formCount} form${formCount === 1 ? '' : 's'} · ` : ''} <span className="capitalize">{app.status}</span>
+                          </span>
+                        </div>
+                        <ChevronRight className="h-4 w-4 flex-none text-gray-300 dark:text-slate-600 group-hover:text-gray-500 dark:group-hover:text-slate-400 motion-safe:transition-colors" aria-hidden="true" />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+        {/* §11B O1: the availability-routed creation band — chat-first when an AI can
+            answer, "Build your way" when none is connected. A brand-new owner used to get
+            this PLUS the headline's two buttons PLUS the "Get started" hero PLUS the
+            welcome modal — four competing invitations, two of which contradicted the
+            app-first spine by leading with a single form. On first run the hero owns the
+            invitation and this band stands down. */}
+        {storageMode === 'api' && !showGettingStarted && (
+          <details className="mb-5 rounded-xl border border-gray-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/60">
+            <summary className="cursor-pointer p-4 text-sm font-medium text-gray-700 dark:text-slate-200">Build something new with AI or the visual builders</summary>
+            <div className="px-4 pb-1"><CreateBand /></div>
+          </details>
+        )}
 
         {/* Quick find — jump straight to any form's records/builder/analytics. */}
         {forms.length > 0 && (
@@ -1375,7 +1418,7 @@ export function Dashboard() {
                       <Button
                         variant="ghost"
                         className="text-primary-foreground hover:bg-white/10"
-                        onClick={() => setShowTemplateSelector(true)}
+                        onClick={() => handleCreateForm()}
                       >
                         <BookOpen className="h-4 w-4 mr-2" />
                         Browse templates
@@ -1458,7 +1501,8 @@ export function Dashboard() {
                 {recentForms.map((form) => {
                   const formResponses = getResponsesByFormId(form.id);
                   const fieldCount = form.fieldCount ?? form.fields?.length ?? 0;
-                  const n = storageMode === 'api' ? (displayedResponseCounts[form.id] ?? 0) : formResponses.length;
+                  const n = storageMode === 'api' ? displayedResponseCounts[form.id] : formResponses.length;
+                  const pulseUnavailable = storageMode === 'api' && !pulseByForm[form.id] && !statsLoading;
                   const days = pulseByForm[form.id] ?? buildPulseFromTimestamps([]);
                   const periodResponses = days.reduce((sum, day) => sum + day.count, 0);
                   return (
@@ -1470,9 +1514,9 @@ export function Dashboard() {
                       // reader announced one giant button whose inner controls were
                       // unreachable. The title link below is the accessible action.
                       onClick={() => navigate(`/builder/${form.id}`)}
-                      className="group cursor-pointer overflow-hidden transition-all duration-300 hover:border-primary-300/80 hover:shadow-md hover:shadow-gray-900/[0.05] focus-within:ring-2 focus-within:ring-primary-500 focus-within:ring-offset-2 dark:hover:border-primary-500/30 dark:hover:shadow-black/20 dark:focus-within:ring-offset-slate-950"
+                      className="@container/formcard group cursor-pointer overflow-hidden motion-safe:transition-all duration-300 hover:border-primary-300/80 hover:shadow-md hover:shadow-gray-900/[0.05] focus-within:ring-2 focus-within:ring-primary-500 focus-within:ring-offset-2 dark:hover:border-primary-500/30 dark:hover:shadow-black/20 dark:focus-within:ring-offset-slate-950"
                     >
-                      <CardContent className="p-0">
+                      <CardContent className="p-0 sm:p-0">
                         <div className="p-4 sm:p-5">
                           <div className="flex items-start gap-3">
                             <span className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-600 ring-1 ring-inset ring-primary-100/80 transition-colors group-hover:bg-primary-100 dark:bg-primary-500/10 dark:text-primary-400 dark:ring-primary-500/15 dark:group-hover:bg-primary-500/15">
@@ -1481,7 +1525,7 @@ export function Dashboard() {
 
                             <div className="min-w-0 flex-1">
                               <div className="flex min-w-0 flex-wrap items-center gap-2">
-                                <h4 className="min-w-0 max-w-full truncate font-semibold text-gray-900 motion-safe:transition-colors group-hover:text-primary-600 dark:text-white dark:group-hover:text-primary-400" title={form.title || 'Untitled Form'}>
+                                <h4 className="min-w-0 max-w-full break-words font-semibold text-gray-900 motion-safe:transition-colors group-hover:text-primary-600 dark:text-white dark:group-hover:text-primary-400" title={form.title || 'Untitled Form'}>
                                   <Link
                                     to={`/builder/${form.id}`}
                                     aria-label={`Open ${form.title || 'Untitled Form'} in the builder`}
@@ -1555,7 +1599,7 @@ export function Dashboard() {
                             </div>
                           </div>
 
-                          <div className="mt-4 grid min-w-0 gap-3 @xl/dash:grid-cols-[minmax(0,1fr)_minmax(13rem,16rem)] @xl/dash:items-end">
+                          <div className="mt-4 grid min-w-0 gap-3 @xl/formcard:grid-cols-[minmax(0,1fr)_minmax(13rem,16rem)] @xl/formcard:items-end">
                             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 text-xs text-gray-500 dark:text-slate-400">
                               <span className="flex items-center gap-1.5 tabular-nums">
                                 <Clock className="h-3.5 w-3.5 flex-none" />
@@ -1578,7 +1622,7 @@ export function Dashboard() {
                               ) : (
                                 <span className="flex items-center gap-1.5 tabular-nums">
                                   <Inbox className="h-3.5 w-3.5 flex-none" />
-                                  {n} total response{n === 1 ? '' : 's'}
+                                  {n === undefined ? 'Response count unavailable' : `${n} total response${n === 1 ? '' : 's'}`}
                                 </span>
                               )}
                             </div>
@@ -1593,11 +1637,11 @@ export function Dashboard() {
                                   <Skeleton className="h-3 w-10" />
                                 ) : (
                                   <span className="flex-none text-[10px] font-semibold tabular-nums text-gray-500 dark:text-slate-400">
-                                    {periodResponses} new
+                                    {pulseUnavailable ? 'Unavailable' : `${periodResponses} new`}
                                   </span>
                                 )}
                               </div>
-                              <PulseStrip days={days} loading={statsLoading} />
+                              {pulseUnavailable ? <p className="py-3 text-xs text-gray-500 dark:text-slate-400">Activity couldn’t be loaded.</p> : <PulseStrip days={days} loading={statsLoading} />}
                               <div className="mt-0.5 flex justify-between text-[9px] font-medium uppercase tracking-wider text-gray-400 dark:text-slate-500">
                                 <span>14 days ago</span>
                                 <span>Today</span>
@@ -1619,55 +1663,7 @@ export function Dashboard() {
               </div>
             )}
 
-            {/* Apps strip — the user's most recently updated apps, mirroring the Apps page
-                cards. Lives under My forms (sharing its 2/3-width column), not as a full-width
-                strip — the AppIdentityTile treatment itself is unchanged ("as-is"). */}
-            {recentApps.length > 0 && (
-              <div className="mt-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Apps</h2>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => navigate('/apps')}
-                    className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
-                  >
-                    View all
-                    <ArrowRight className="h-4 w-4 ml-1" />
-                  </Button>
-                </div>
-                <div className="grid grid-cols-1 gap-3 @2xl/dash:grid-cols-2">
-                  {recentApps.map((app) => {
-                    // Real count from the list endpoint; navConfig.length is empty on pack-provisioned apps.
-                    const formCount = app.formCount ?? app.navConfig?.length ?? 0;
-                    return (
-                      <button
-                        key={app.id}
-                        onClick={() => navigate(appClickPath(app))}
-                        title={appClickLabel(app)}
-                        className={cn(
-                          'flex items-center gap-3 p-4 min-w-0 rounded-xl border text-left group cursor-pointer',
-                          'bg-white dark:bg-slate-900/50 border-gray-200/80 dark:border-white/[0.06] shadow-sm shadow-gray-900/[0.03]',
-                          'hover:bg-gray-50 dark:hover:bg-slate-800/60 hover:border-gray-300 dark:hover:border-slate-600 motion-safe:transition-colors',
-                          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950'
-                        )}
-                      >
-                        <AppIdentityTile app={app} />
-                        <div className="min-w-0 flex-1">
-                          <span className="block text-sm font-medium text-gray-900 dark:text-slate-100 truncate group-hover:text-primary-600 dark:group-hover:text-primary-400 motion-safe:transition-colors">
-                            {app.name}
-                          </span>
-                          <span className="block text-xs text-gray-500 dark:text-slate-400 truncate tabular-nums">
-                            {formCount} form{formCount === 1 ? '' : 's'} · <span className="capitalize">{app.status}</span>
-                          </span>
-                        </div>
-                        <ChevronRight className="h-4 w-4 flex-none text-gray-300 dark:text-slate-600 group-hover:text-gray-500 dark:group-hover:text-slate-400 motion-safe:transition-colors" aria-hidden="true" />
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+
           </div>
 
           {/* Recent Activity - Takes 1/3 on desktop (min-w-0: same grid-item rule as above) */}
@@ -1772,11 +1768,7 @@ export function Dashboard() {
       />
 
       {/* Template Selector */}
-      <TemplateSelector
-        isOpen={showTemplateSelector}
-        onClose={() => setShowTemplateSelector(false)}
-        onSelectTemplate={handleSelectTemplate}
-      />
+      {newFormPicker}
 
       {/* Pack Import Modal */}
       <PackImportModal
