@@ -35,7 +35,7 @@
     "dagre": "^0.8.5",
     "esbuild-wasm": "^0.28.2",
     "fflate": "^0.8.3",
-    "framer-motion": "^12.23.26",
+    "framer-motion": "^13.2.0",
     "libsodium-wrappers-sumo": "^0.8.4",
     "lucide-react": "^1.39.0",
     "monaco-editor": "^0.56.0",
