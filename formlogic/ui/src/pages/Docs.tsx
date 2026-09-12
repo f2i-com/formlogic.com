@@ -1,14 +1,18 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  ArrowRight, ArrowLeft, Menu, X, BookOpen, Rocket, LayoutGrid, ListChecks,
+  ArrowRight, Menu, X, BookOpen, Rocket, LayoutGrid, ListChecks,
   GitBranch, Palette, Code2, Share2, Inbox, Download, BarChart3, Boxes,
-  Package, Server, Shield, Lightbulb, Check, Terminal, Cloud, Plug, Workflow, Moon, Sun, Search, Phone, LifeBuoy,
+  Package, Server, Shield, Lightbulb, Check, Terminal, Cloud, Plug, Workflow, Search, Phone, LifeBuoy,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
-import { Logo } from '../components/ui/Logo';
-import { useUIStore } from '../stores/uiStore';
+import { LandingNav } from '../components/landing-v2/LandingNav';
+import { LandingFooter } from '../components/landing-v2/LandingFooter';
+import { useLandingFonts } from '../components/landing-v2/hooks';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import '../styles/landing-v2.css';
+import '../styles/landing-refresh.css';
+import '../styles/docs.css';
 
 // Shares the landing page's display/mono/gradient chrome so docs feel part of the brand.
 function useDocsChrome() {
@@ -108,22 +112,6 @@ function CodeBlock({ title, children }: { title?: string; children: React.ReactN
 // so browsers heuristically cache by Last-Modified and would keep showing the old captures.
 const SCREENSHOT_VERSION = '2026-09-12';
 
-function ThemeToggle() {
-  const theme = useUIStore((s) => s.theme);
-  const toggleTheme = useUIStore((s) => s.toggleTheme);
-  return (
-    <button
-      type="button"
-      onClick={toggleTheme}
-      aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-      title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-      className="p-2 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors cursor-pointer"
-    >
-      {theme === 'dark' ? <Sun className="h-4.5 w-4.5" /> : <Moon className="h-4.5 w-4.5" />}
-    </button>
-  );
-}
-
 function Figure({ src, alt, caption }: { src: string; alt: string; caption: string }) {
   return (
     <figure className="my-6">
@@ -188,6 +176,7 @@ const FIELD_TYPES: Array<[string, string]> = [
 
 export function Docs() {
   useDocsChrome();
+  useLandingFonts();
   useDocumentTitle('Documentation');
   const [mobileNav, setMobileNav] = useState(false);
   const [activeId, setActiveId] = useState<string>(SECTIONS[0].id);
@@ -229,38 +218,21 @@ export function Docs() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-50 selection:bg-primary-500/20">
-      <a href="#docs-content" onClick={() => setMobileNav(false)} className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:rounded-lg focus:bg-primary-600 focus:p-3 focus:text-primary-foreground">Skip to documentation</a>
-      {/* Top nav */}
-      <nav className="fixed top-0 inset-x-0 h-16 bg-white/85 dark:bg-slate-950/80 backdrop-blur-xl border-b border-gray-100 dark:border-primary-500/10 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button id="docs-menu-toggle" onClick={() => setMobileNav((v) => !v)} aria-label="Toggle docs menu" aria-controls="docs-sections" aria-expanded={mobileNav} className="lg:hidden p-2 -ml-2 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors cursor-pointer">
-              {mobileNav ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-            </button>
-            <Link
-              to="/"
-              aria-label="FormLogic home"
-              className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50"
-            >
-              <Logo size="md" />
-            </Link>
-            <span className="fl-mono hidden sm:inline text-[11px] uppercase tracking-[0.2em] text-primary-600 dark:text-primary-400 border border-primary-200/70 dark:border-primary-500/25 rounded-full px-2.5 py-0.5">Docs</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <Link to="/" className="hidden sm:flex items-center gap-1.5 text-sm font-medium text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors">
-              <ArrowLeft className="h-4 w-4" /> Home
-            </Link>
-            <ThemeToggle />
-            <Link to="/signup"><Button className="bg-primary-600 hover:bg-primary-500 text-primary-foreground border-0">Get started</Button></Link>
-          </div>
-        </div>
-      </nav>
+    <div className="lv2 fl-docs min-h-screen selection:bg-primary-500/20">
+      <a href="#docs-content" onClick={() => setMobileNav(false)} className="fl-skip">Skip to documentation</a>
+      <LandingNav onMenuOpen={() => setMobileNav(false)} />
+      <div className="fl-docs__toolbar lg:hidden">
+        <span className="text-sm font-semibold">Documentation</span>
+        <button id="docs-menu-toggle" onClick={() => setMobileNav((v) => !v)} aria-label={mobileNav ? 'Close docs sections' : 'Browse docs sections'} aria-controls="docs-sections" aria-expanded={mobileNav} className="inline-flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 cursor-pointer">
+          {mobileNav ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+          <span>{mobileNav ? 'Close sections' : 'On this page'}</span>
+        </button>
+      </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-16">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="lg:grid lg:grid-cols-[16rem_minmax(0,1fr)] lg:gap-10">
           {/* Sidebar TOC — inline column on desktop, full-height overlay panel under the nav on mobile */}
-          <aside id="docs-sections" className={`${mobileNav ? 'fixed inset-x-0 top-16 bottom-0 z-40 block overflow-y-auto bg-white dark:bg-slate-950 px-4 sm:px-6' : 'hidden'} py-6 lg:py-8 lg:block lg:sticky lg:top-16 lg:bottom-auto lg:inset-x-auto lg:z-auto lg:bg-transparent lg:px-0 lg:h-[calc(100vh-4rem)] lg:overflow-y-auto`}>
+          <aside id="docs-sections" className={`fl-docs__sections ${mobileNav ? 'fl-docs__sections--open' : ''} py-6 lg:py-8`}>
             <p className="fl-mono text-[11px] uppercase tracking-[0.2em] text-gray-500 dark:text-slate-400 mb-3 px-3">On this page</p>
             <label className="mb-4 mx-1 flex items-center gap-2 rounded-xl border border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900 px-3 focus-within:ring-2 focus-within:ring-primary-500/50">
               <Search className="h-4 w-4 shrink-0 text-gray-500" />
@@ -705,17 +677,10 @@ function _init() {
               <P><span className="block mt-6">For implementation details, examples and operator references, start with the <GuideLink file="docs/README.md">documentation index</GuideLink>. It separates current guides from historical design notes.</span></P>
             </section>
 
-            <div className="border-t border-gray-200/80 dark:border-slate-900 pt-8 flex items-center justify-between fl-mono text-xs text-gray-500 dark:text-slate-400">
-              <span>&copy; {new Date().getFullYear()} FormLogic</span>
-              <div className="flex gap-5">
-                <Link to="/" className="hover:text-gray-700 dark:hover:text-slate-300 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors">Home</Link>
-                <Link to="/privacy" className="hover:text-gray-700 dark:hover:text-slate-300 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors">Privacy</Link>
-                <Link to="/terms" className="hover:text-gray-700 dark:hover:text-slate-300 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors">Terms</Link>
-              </div>
-            </div>
           </main>
         </div>
       </div>
+      <LandingFooter />
     </div>
   );
 }

@@ -5,6 +5,7 @@
 .lv2 .lv2-nav .lv2-mark, .lv2 .lv2-nav__links a, .lv2 .lv2-nav__signin, .lv2 .lv2-nav__theme, .lv2 .lv2-nav__menu, .lv2 .lv2-nav__star { color: var(--lv2-ink); }
 .lv2 .lv2-nav__cta, .lv2 .lv2-btn--primary { background: #315bea; color: white; box-shadow: none; border-radius: 8px; }
 .lv2 .lv2-nav__links.lv2-open { background: var(--lv2-band-alt); }
+.lv2 .lv2-nav__links a[aria-current="page"] { color: var(--lv2-link); font-weight: 650; }
 .lv2 .lv2-hero { background: var(--lv2-band-alt); color: var(--lv2-ink); padding-top: 0; overflow: hidden; }
 .lv2 .lv2-hero__grid { display: none; }
 .lv2 .lv2-hero__inner { display: flex; flex-direction: column; gap: 54px; padding-top: 76px; padding-bottom: 40px; }

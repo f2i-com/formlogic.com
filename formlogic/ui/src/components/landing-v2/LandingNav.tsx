@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, NavLink } from 'react-router-dom';
 import { ArrowRight, Menu, Moon, Star, Sun, X } from 'lucide-react';
 import { FormLogicMark } from './shared';
 import { GITHUB_URL } from './stats';
@@ -21,7 +21,7 @@ function GithubMark({ size = 15 }: { size?: number }) {
   );
 }
 
-export function LandingNav() {
+export function LandingNav({ onMenuOpen }: { onMenuOpen?: () => void } = {}) {
   const [open, setOpen] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -36,11 +36,12 @@ export function LandingNav() {
       if (event.key === 'Escape') { setOpen(false); menuButton.current?.focus(); }
     };
     document.addEventListener('keydown', onKey);
-    const onOutside = (event: PointerEvent) => {
+    const onOutside = (event: Event) => {
       if (event.target instanceof Node && !menuButton.current?.closest('nav')?.contains(event.target)) setOpen(false);
     };
     document.addEventListener('pointerdown', onOutside);
-    return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('pointerdown', onOutside); };
+    document.addEventListener('focusin', onOutside);
+    return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('pointerdown', onOutside); document.removeEventListener('focusin', onOutside); };
   }, [open]);
   const close = () => setOpen(false);
   // The same persisted theme the whole product uses (App syncs it onto <html>): the landing's
@@ -59,9 +60,9 @@ export function LandingNav() {
           <a href="/#platform" onClick={close}>Product</a>
           <a href="/#portable-apps" onClick={close}>Build apps</a>
           <a href="/#desktop" onClick={close}>OAIY</a>
-          <Link to="/packs" onClick={close}>Marketplace</Link>
+          <NavLink to="/packs" onClick={close}>Marketplace</NavLink>
           <a href="/#pricing" onClick={close}>Pricing</a>
-          <Link to="/docs" onClick={close}>Docs</Link>
+          <NavLink to="/docs" onClick={close}>Docs</NavLink>
           <Link to="/login" onClick={close} className="lv2-nav__mobile-signin">
             Sign in
           </Link>
@@ -105,7 +106,7 @@ export function LandingNav() {
             aria-label={open ? 'Close navigation' : 'Open navigation'}
             aria-expanded={open}
             aria-controls="lv2-nav-links"
-            onClick={() => setOpen((v) => !v)}
+            onClick={() => { if (!open) onMenuOpen?.(); setOpen((v) => !v); }}
           >
             {open ? <X size={21} /> : <Menu size={21} />}
           </button>
