@@ -27,11 +27,6 @@
 //     host to kill the Worker; engine.ts already did exactly that for QuickJS,
 //     so the deadline story is unchanged.
 import initZipp, { Engine } from '../../../vendor/zipp-wasm/zipp_wasm.js';
-// `new URL(..., import.meta.url)` rather than Vite's `?url`: the same module has
-// to instantiate in a browser Worker AND under vitest's Node environment, and a
-// root-relative `/vendor/...` string is not a URL Node can resolve. Vite still
-// fingerprints and emits the asset from this form.
-const wasmUrl = new URL('../../../vendor/zipp-wasm/zipp_wasm_bg.wasm', import.meta.url);
 // Canonical standard library — single source of truth, shared with the backend
 // and the desktop (ui/scripts/sync-prelude.mjs writes the copies).
 import PRELUDE from './prelude.js?raw';
@@ -46,23 +41,22 @@ const MAX_OUTPUT_DEPTH = 8;
 let readyPromise: Promise<void> | null = null;
 
 /**
- * Get the wasm bytes in whichever environment we are in.
- *
- * The browser (and the Worker) fetches the emitted asset. Node — which is where
- * the parity suite runs — cannot `fetch` a `file:` URL, so it reads the file. The
- * specifier is held in a variable so the bundler cannot statically see a Node
- * built-in and try to bundle it for the browser.
+ * Node parity tests read the checked-in artifact. Browser workers receive the
+ * page's verified bytes and never download another copy themselves. Keep the
+ * Node-only URL dynamic so Vite does not emit a second worker-owned WASM asset.
  */
-async function loadWasm(): Promise<ArrayBuffer | Response> {
+async function loadNodeWasm(): Promise<ArrayBuffer> {
   const isNode =
     typeof process !== 'undefined' && !!(process as { versions?: { node?: string } }).versions?.node;
+  const nodeArtifact = '../../../vendor/zipp-wasm/zipp_wasm_bg.wasm';
+  const wasmUrl = new URL(/* @vite-ignore */ nodeArtifact, import.meta.url);
   if (isNode && wasmUrl.protocol === 'file:') {
     const fsSpecifier = 'node:fs/promises';
     const fs = await import(/* @vite-ignore */ fsSpecifier);
     const buf = await fs.readFile(wasmUrl);
     return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
   }
-  return fetch(wasmUrl);
+  throw new Error('The app engine must be supplied by the host before evaluation.');
 }
 
 /** Instantiate the module once per Worker; compiling 5 MB of wasm per evaluation
@@ -73,9 +67,9 @@ async function loadWasm(): Promise<ArrayBuffer | Response> {
  *  fallback all rejected once and then rejected every later evaluation
  *  instantly for the life of the page — coming back online never recovered
  *  form logic. Now the next evaluation tries the load again. */
-function ready(): Promise<void> {
+function ready(bytes?: ArrayBuffer): Promise<void> {
   if (!readyPromise) {
-    readyPromise = loadWasm()
+    readyPromise = (bytes ? Promise.resolve(bytes) : loadNodeWasm())
       .then((source) => initZipp({ module_or_path: source as never }))
       .then(() => undefined)
       .catch((err: unknown) => {
@@ -93,8 +87,8 @@ function ready(): Promise<void> {
  * watchdog must not count the load, or a cold cache on a slow link kills the
  * Worker mid-download on every attempt and fails every condition open.
  */
-export function warmUp(): Promise<void> {
-  return ready();
+export function warmUp(bytes?: ArrayBuffer): Promise<void> {
+  return ready(bytes);
 }
 
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);

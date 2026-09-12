@@ -1,0 +1,34 @@
+{
+  "repository": "https://github.com/f2i-com/zipp.org",
+  "revision": "127477bd667eaf264a403ebd41c617b857574de2",
+  "version": "0.0.17",
+  "release": "v0.0.17",
+  "guest": {
+    "artifact": "formlogic-runtime-guest.wasm",
+    "sha256": "10b04ad8c87cbcb10660c5132bdbc7b171185a11dddc698d4628712418f28194",
+    "target": "wasm32-wasip1",
+    "rustc": "rustc 1.92.0 (ded5c06cf 2025-12-08)",
+    "defaultFeatures": false,
+    "features": ["safe-sandbox", "wasm-no-fs-loader", "wasm-single-agent"]
+  },
+  "host": {
+    "wasmtime": "44.0.3",
+    "profile": "release",
+    "targetCpu": "baseline target triple; no host ISA detection",
+    "launchers": [
+      {
+        "artifact": "../../backend/bin/runtime/formlogic-runtime-windows-x86_64.exe",
+        "sha256": "8bae65c24ba37e2f98876a516c692305287d1c0785d2a1109735fdbd379b4498",
+        "target": "x86_64-pc-windows-msvc",
+        "rustc": "rustc 1.92.0 (ded5c06cf 2025-12-08)"
+      },
+      {
+        "artifact": "../../backend/bin/runtime/formlogic-runtime-linux-x86_64",
+        "sha256": "eccfc92531c10d01906021d28754b70346f72b128e71e9247fee5f3bd81be070",
+        "target": "x86_64-unknown-linux-musl",
+        "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+        "linkage": "static-pie"
+      }
+    ]
+  }
+}

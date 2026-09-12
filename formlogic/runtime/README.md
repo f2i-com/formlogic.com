@@ -31,6 +31,10 @@ The browser runs the same engine at the same revision as its own wasm module
 an expression means the same thing everywhere; `scripts/check-expression-parity.mjs`
 is the comparator.
 
+The guest is pinned to **ZIPP v0.0.17**, revision
+`127477bd667eaf264a403ebd41c617b857574de2`. Its source and artifact hashes are
+recorded in `host/SOURCE.json`; the native launchers embed that guest.
+
 ## Modes
 
 - `eval` — one or more expressions against a shared context. Each expression runs
@@ -62,7 +66,7 @@ last three are the launcher's hard limits and normally stay at their defaults.
 **1. The guest.** Needs the `wasm32-wasip1` target (`rustup target add wasm32-wasip1`).
 
 ```sh
-cd guest && cargo build --release        # .cargo/config.toml pins the target
+cd guest && cargo build --release --locked # .cargo/config.toml pins the target
 cp target/wasm32-wasip1/release/formlogic-runtime-guest.wasm ../host/
 ```
 
@@ -75,7 +79,7 @@ the build's `TARGET` — named explicitly, so the artifact is baseline x86-64 an
 not tuned to this workstation's ISA extensions — and embeds it.
 
 ```sh
-cd host && cargo build --release
+cd host && cargo build --release --locked
 cp target/release/formlogic-runtime.exe ../../backend/bin/runtime/formlogic-runtime-windows-x86_64.exe
 ```
 
@@ -88,6 +92,20 @@ not have. The result is a static musl binary with no libc dependency — the
 ```sh
 scripts/build-runtime.sh linux
 ```
+
+An existing Linux or WSL installation with Rust 1.92 or newer, the
+`x86_64-unknown-linux-musl` target, and `musl-gcc` can build the same launcher
+without Docker. From `runtime/host` in the Linux shell:
+
+```sh
+CC_x86_64_unknown_linux_musl=musl-gcc CARGO_TARGET_DIR=/tmp/formlogic-runtime-target \
+  cargo build --release --locked --target x86_64-unknown-linux-musl
+cp /tmp/formlogic-runtime-target/x86_64-unknown-linux-musl/release/formlogic-runtime \
+  ../../backend/bin/runtime/formlogic-runtime-linux-x86_64
+```
+
+The guest is built first in either case. Keeping Linux's target directory
+separate from Windows also prevents incompatible build caches from mixing.
 
 Zip extraction drops the execute bit on the Linux binary; `install.php` checks
 for it and offers the `chmod +x` if it cannot restore it itself.

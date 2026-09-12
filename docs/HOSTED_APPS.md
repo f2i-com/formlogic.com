@@ -117,10 +117,15 @@ Install dependencies in the sibling `softn.com` and FormLogic UI repositories, t
 ```powershell
 # From formlogic.com/formlogic/ui
 npm run build:hosted-runtime
+npm run test:zipp-sharing
 npm run build
 ```
 
-The first command builds the shared core/components and `softn.com/apps/formlogic-host`, then copies generated static files into `public/hosted-runtime`. These generated files are ignored by Git; preserve them as a build artifact if frontend deployment runs without the sibling source checkout. A normal UI build fails clearly if the runtime is missing. This avoids shipping a hosting screen whose frame can only return 404. The runtime is excluded from the main PWA precache and SPA fallback.
+The first command checks that FormLogic and Softn vendor the same ZIPP version and binary hash, builds the shared core/components and `softn.com/apps/formlogic-host`, then replaces `public/hosted-runtime` with the verified output. A complete asset manifest detects missing, modified or obsolete files. These generated files are ignored by Git; preserve the entire artifact, including `runtime-manifest.json`, if frontend deployment runs without the sibling source checkout. A normal UI build rejects a missing or mismatched runtime. Deploy the parent UI and hosted runtime together. The runtime is excluded from the main PWA precache and SPA fallback.
+
+Both browser integrations currently use ZIPP v0.0.17. FormLogic downloads and verifies the binary lazily once per page, then passes cloned bytes to its expression worker and each hosted Softn app. Each context keeps its own WASM instance, memory and permissions. Failed downloads can retry; worker restarts, additional apps and source replacements reuse the cached bytes. The shell announces its version and hash before initialization, so a stale shell displays an update error rather than running mismatched glue. The browser check covers both loading orders, concurrent startup, separate app state, backend actions, source replacement and download recovery using only local fixture data.
+
+Hosted apps use main-thread script execution. The iframe's existing opaque origin and `worker-src blob:` policy do not permit Softn's additional URL-based sandbox workers; sharing engine bytes does not change those capabilities.
 
 Serve `/hosted-runtime/` static assets with `Access-Control-Allow-Origin: *` and `X-Content-Type-Options: nosniff`; the opaque iframe needs anonymous CORS access to its trusted JS/WASM. An Apache `.htaccess` is included; equivalent headers must be configured for Nginx or another host. Do not add permissive CORS to authenticated API routes. Vite development has a middleware limited to the static runtime directory.
 

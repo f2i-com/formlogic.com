@@ -24,7 +24,7 @@ mkdir -p "$OUT"
 
 build_guest() {
   echo "== guest (wasm32-wasip1)"
-  (cd "$RUNTIME/guest" && cargo build --release)
+  (cd "$RUNTIME/guest" && cargo build --release --locked)
   cp "$RUNTIME/guest/target/wasm32-wasip1/release/formlogic-runtime-guest.wasm" \
      "$RUNTIME/host/formlogic-runtime-guest.wasm"
   sha256sum "$RUNTIME/host/formlogic-runtime-guest.wasm"
@@ -32,7 +32,7 @@ build_guest() {
 
 build_windows() {
   echo "== launcher (windows-x86_64)"
-  (cd "$RUNTIME/host" && cargo build --release)
+  (cd "$RUNTIME/host" && cargo build --release --locked)
   cp "$RUNTIME/host/target/release/formlogic-runtime.exe" "$OUT/formlogic-runtime-windows-x86_64.exe"
   ls -la "$OUT/formlogic-runtime-windows-x86_64.exe"
 }
@@ -56,7 +56,7 @@ build_linux() {
       apt-get update -qq >/dev/null && apt-get install -y -qq musl-tools >/dev/null
       rustup target add x86_64-unknown-linux-musl >/dev/null
       export CC_x86_64_unknown_linux_musl=musl-gcc
-      cargo build --release --target x86_64-unknown-linux-musl
+      cargo build --release --locked --target x86_64-unknown-linux-musl
       cp target/x86_64-unknown-linux-musl/release/formlogic-runtime /work/formlogic-runtime-linux-x86_64
     '
   mv "$RUNTIME/host/formlogic-runtime-linux-x86_64" "$OUT/formlogic-runtime-linux-x86_64"

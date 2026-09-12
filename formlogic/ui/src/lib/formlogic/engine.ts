@@ -1,6 +1,7 @@
 import { logger } from '../logger';
 import type { EvalKind } from './zipp-host';
 import type { WorkerRequest, WorkerResponse } from './formlogic.worker';
+import { getZippWasmBytes } from './zipp-bytes';
 
 // ---------------------------------------------------------------------------
 // FormLogic evaluation engine (browser).
@@ -82,6 +83,14 @@ function spawnWorker(): Worker {
     failAll(new Error(event.message || 'FormLogic worker crashed'));
     terminateWorker();
   };
+  // Reuse the page's download for every worker incarnation and hosted app.
+  // Do not transfer the buffer: it must remain available after a worker timeout.
+  void getZippWasmBytes().then(bytes => {
+    if (worker === w) w.postMessage({ type: 'init', zippWasm: bytes });
+  }).catch((error: unknown) => {
+    clearTimeout(loadTimer);
+    settleReady?.reject(error instanceof Error ? error : new Error('The app engine could not be loaded.'));
+  });
   return w;
 }
 

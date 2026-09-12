@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 // The app-first sidebar (App Studio redesign): the user's apps are the primary
 // navigation — published/draft state shown per app, owner clicks land in the
-// App Studio, member clicks open the live runtime, and the shared building
-// blocks (Forms/Automations/Diagrams/Templates/Recycle bin) live under Advanced tools.
+// App Studio, member clicks open the live runtime, and Forms/Automations stay
+// visible while Diagrams/Templates/Recycle bin live under More tools.
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
@@ -157,17 +157,26 @@ describe('Sidebar (app-first)', () => {
     expect(pathRef.current).toBe('/apps');
   });
 
-  it('keeps the shared building blocks under Advanced tools', async () => {
-    await renderSidebar();
-    const toggle = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Advanced tools'))!;
+  it('keeps Forms and Automations visible while More tools can be expanded', async () => {
+    await renderSidebar('/flows');
+    const toggle = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('More tools'))!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('a[href="/forms"]')?.textContent).toContain('Forms');
+    expect(container.querySelector('a[href="/flows"]')?.textContent).toContain('Automations');
+    expect(container.querySelector('a[href="/flows"]')?.getAttribute('aria-current')).toBe('page');
+    expect(container.querySelector('a[href="/diagrams"]')).toBeNull();
+
     await act(async () => { toggle.click(); });
-    for (const label of ['Forms', 'Automations', 'Diagrams', 'Templates', 'Recycle bin']) {
-      expect(container.textContent).toContain(label);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    for (const [path, label] of [['/diagrams', 'Diagrams'], ['/packs', 'Templates'], ['/trash', 'Recycle bin']]) {
+      expect(container.querySelector(`a[href="${path}"]`)?.textContent).toContain(label);
     }
   });
 
-  it('auto-expands Advanced tools when already on a tool route', async () => {
-    await renderSidebar('/flows');
-    expect(container.textContent).toContain('Diagrams');
+  it('auto-expands More tools when already on a tool route', async () => {
+    await renderSidebar('/diagrams');
+    const toggle = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('More tools'))!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(container.querySelector('a[href="/diagrams"]')?.getAttribute('aria-current')).toBe('page');
   });
 });

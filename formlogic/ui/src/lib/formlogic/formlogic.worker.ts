@@ -4,8 +4,9 @@
 // freeze the UI), and lets engine.ts enforce a hard worker.terminate() watchdog
 // as a backstop to the in-VM instruction budget.
 //
-// The first thing this Worker does is load the engine and report READY (or the
-// load error) on the reserved id 0. engine.ts holds every evaluation until then
+// The host supplies verified engine bytes once; this Worker instantiates its
+// own module and reports READY (or the load error) on reserved id 0. engine.ts
+// holds every evaluation until then
 // and only starts a call's watchdog once the engine exists, so a 5 MB download
 // on a cold cache is never mistaken for a wedged evaluation.
 /// <reference lib="webworker" />
@@ -22,6 +23,11 @@ export interface WorkerRequest {
   budgetMs?: number;
 }
 
+export interface WorkerInit {
+  type: 'init';
+  zippWasm: ArrayBuffer;
+}
+
 export interface WorkerResponse {
   id: number;
   ok: boolean;
@@ -35,14 +41,26 @@ const post = (response: WorkerResponse): void => {
   (self as DedicatedWorkerGlobalScope).postMessage(response);
 };
 
-warmUp().then(
-  () => post({ id: READY_ID, ok: true, ready: true }),
-  (err: unknown) => post({ id: READY_ID, ok: false, ready: true, error: err instanceof Error ? err.message : String(err) })
-);
-
-self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
+let initialization: Promise<void> | undefined;
+self.onmessage = async (event: MessageEvent<WorkerRequest | WorkerInit>) => {
+  if ('type' in event.data && event.data.type === 'init') {
+    if (initialization) return;
+    if (!(event.data.zippWasm instanceof ArrayBuffer)) {
+      post({ id: READY_ID, ok: false, ready: true, error: 'The app engine bytes are missing.' });
+      return;
+    }
+    initialization = warmUp(event.data.zippWasm);
+    initialization.then(
+      () => post({ id: READY_ID, ok: true, ready: true }),
+      (err: unknown) => post({ id: READY_ID, ok: false, ready: true, error: err instanceof Error ? err.message : String(err) })
+    );
+    return;
+  }
+  if (!('id' in event.data)) return;
   const { id, kind, expression, context, budgetMs } = event.data;
   try {
+    if (!initialization) throw new Error('The app engine has not been initialized.');
+    await initialization;
     const result = await runEval(kind, expression, context ?? {}, { budgetMs });
     const response: WorkerResponse = { id, ok: true, result };
     (self as DedicatedWorkerGlobalScope).postMessage(response);

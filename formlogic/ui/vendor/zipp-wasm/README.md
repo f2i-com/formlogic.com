@@ -1,73 +1,60 @@
-# zipp-wasm (vendored)
+# ZIPP WebAssembly runtime
 
-The browser half of FormLogic's expression sandbox. Author-written conditions,
-calculated fields, validation rules and app-logic hooks run in this engine, in a
-dedicated Web Worker, with an empty global object and no host bridge installed.
+FormLogic vendors the official **ZIPP v0.0.17 web release**. The exact release,
+source revision, archive digest and WASM digest are recorded in
+[SOURCE.json](SOURCE.json). The JavaScript glue, type declarations and WASM file
+must be updated together from that release archive.
 
-**Built from** `f2i-com/zipp.org` at **`024c1149`** (v0.0.12 plus
-`setInstructionBudget`, the host-side knob that lets this module run the same
-200M-step budget the backend guest uses — without it a heavy expression could
-succeed at submit and yet come back `null` here). This is the same revision the
-backend's `formlogic/runtime` guest pins. Both must move together — an
-expression is supposed to mean the same thing wherever it runs, and that only
-holds if they share an engine.
+## Runtime integration
 
-Built with the recipe below (not a copy of zipp's tracked landing module, which
-predates the budget API):
+Form expressions, calculated fields, validation and app logic run in a dedicated
+worker. Each evaluation receives a fresh `Engine`, the canonical FormLogic
+prelude and a JSON data context. The form-expression host does not install a
+host bridge. Instruction budgets and the worker watchdog remain separate from
+the engine download deadline.
 
-```text
-raw         5,559,686 bytes
-gzip-9      1,841,812 bytes
-Brotli-11   1,250,755 bytes
-SHA-256     e735b8a787c2cd50d948d65d5ee51c343eccef9a8c45399fdc212cfe2569e31d
-```
+The page's [byte broker](../../src/lib/formlogic/zipp-bytes.ts) downloads the
+WASM lazily, checks its SHA-256 against SOURCE.json and caches one retryable
+promise. It supplies cloned bytes to the form worker and any hosted Softn app.
+On HTTP LAN development addresses without WebCrypto, verification lazily uses
+FormLogic's existing bundled libsodium library instead of requiring HTTPS or
+skipping the digest check.
+Workers and hosted frames retain independent WebAssembly instances, memory and
+capabilities. A worker restart or a second hosted app reuses the page's bytes;
+it does not detach the shared buffer or download the engine again.
 
-## Rebuilding
+The trusted hosted shell advertises its engine version and hash before receiving
+bytes. FormLogic rejects a mismatched shell with a visible update error. This
+prevents new engine bytes being paired with old generated glue after a partial
+site update. `npm run build:hosted-runtime` builds a matching shell and writes a
+complete asset manifest; the normal frontend prebuild verifies that manifest.
 
-Exactly as `crates/zipp-wasm/README.md` in the zipp repo specifies. The steps are
-not interchangeable with the obvious alternatives, and the zipp repo documents
-why with measurements:
+Pages that do not request form evaluation or initialize a hosted app do not
+fetch this binary. Each execution context still initializes its own module;
+this integration shares the download, not mutable VM state or sandbox authority.
+
+## Updating
+
+1. Obtain `zipp-wasm-<version>-web.zip` from the corresponding official ZIPP
+   release and verify its archive digest.
+2. Replace `zipp_wasm.js`, `zipp_wasm.d.ts`, `zipp_wasm_bg.wasm` and
+   `zipp_wasm_bg.wasm.d.ts` together. Refresh SOURCE.json with the release and
+   computed binary digest; preserve the upstream license.
+3. Update Softn's `packages/@softn/core/wasm-zipp` to the same release and digest.
+4. Run `npm run build:hosted-runtime` from FormLogic's UI directory, followed by
+   its build and runtime tests.
+5. Check the [backend guest](../../../runtime/guest/Cargo.toml) and shared
+   expression parity corpus as part of the same engine upgrade. The WASI guest
+   is built separately; it is not this browser binary.
+
+Useful checks from `formlogic/ui`:
 
 ```sh
-rustup +1.92.0 target add wasm32-unknown-unknown
-cargo install wasm-bindgen-cli --version '=0.2.126' --locked
-cd crates/zipp-wasm
-RUSTFLAGS='-Dwarnings -C link-arg=--max-memory=1073741824 -C link-arg=-zstack-size=1048576' \
-  cargo +1.92.0 build --locked --release --target wasm32-unknown-unknown
-wasm-bindgen --target web --out-dir pkg \
-  --remove-name-section --remove-producers-section \
-  target/wasm32-unknown-unknown/release/zipp_wasm.wasm
-node tests/node/strip-target-features.cjs \
-  pkg/zipp_wasm_bg.wasm pkg/zipp_wasm_bg.stripped.wasm
-mv pkg/zipp_wasm_bg.stripped.wasm pkg/zipp_wasm_bg.wasm
+npm test -- src/lib/formlogic/corpusParity.test.ts src/lib/formlogic/zipp-bytes.test.ts src/lib/formlogic/engine.test.ts src/components/studio/HostedAppFrame.test.tsx
+npm run test:hosted-runtime
+npm run test:zipp-sharing
 ```
 
-Then copy `zipp_wasm.js`, `zipp_wasm.d.ts`, `zipp_wasm_bg.wasm` and
-`zipp_wasm_bg.wasm.d.ts` here.
-
-The linked memory maximum is 1 GiB, deliberately ABOVE the VM's own 512 MiB
-accounting limit: exhaustion then surfaces as a catchable `RangeError` inside
-the engine instead of a linear-memory trap that kills the Worker. That maximum is
-per instance; the host (`engine.ts`) is what bounds how many Workers exist.
-
-**Do not add `wasm-opt`.** It is worse on both axes it appears to help: measured
-on this module it is 22 KB *larger* after brotli (Binaryen's rewrites trade away
-the regularity the compressor feeds on) and ~2% slower. The real saving comes
-from dropping the name section, which `wasm-bindgen` already does.
-
-**Do not set `opt-level = "z"`.** It cuts the wire size to ~975 KB but makes the
-interpreter 1.9–2.5x slower.
-
-## Size, and why it is worth watching
-
-5.3 MB raw, ~1.2 MB brotli. That is meaningfully larger than the QuickJS build it
-replaced (~0.79 MB raw, ~0.21 MB brotli), and it ships to every visitor who opens
-a form with a calculated field.
-
-Two things follow. First, it must be **served compressed** — the shipped
-`.htaccess` asks Apache for Brotli/deflate on `application/wasm` and declares the
-MIME type, and a deployment whose Apache lacks `mod_brotli`/`mod_deflate` (WAMP
-ships them commented out) sends the full 5.3 MB. Second, the remaining weight is
-engine breadth FormLogic does not use (full regex, Intl, unicode normalisation
-tables); if it becomes a problem the lever is a narrower feature set in zipp, not
-another build flag here.
+Serve WASM as `application/wasm` with compression. FormLogic's `.htaccess`
+provides the MIME and compression configuration, while the content-hashed URL
+allows an updated artifact to coexist with an earlier cached version.

@@ -1,8 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import { workspaceBridge } from "../../lib/softn/workspaceBridge";
+import { getZippWasmBytes, matchesZippRuntime } from "../../lib/formlogic/zipp-bytes";
 
 const navigate = (path: string) => window.location.assign(path);
+// The frame bootstraps once. Its DOM lifetime must match the effect's client
+// identity, including replacing source without changing a deployment version.
+const clientIdentities = new WeakMap<Record<string, string>, number>();
+let nextClientIdentity = 0;
+function clientIdentity(client: Record<string, string>): number {
+  let identity = clientIdentities.get(client);
+  if (identity === undefined) {
+    identity = ++nextClientIdentity;
+    clientIdentities.set(client, identity);
+  }
+  return identity;
+}
 
 export function HostedAppFrame({
   slug,
@@ -19,23 +32,42 @@ export function HostedAppFrame({
   useEffect(() => {
     let channel: MessageChannel | undefined;
     let active = true;
+    let initializing = false;
+    let expired = false;
     let inFlight = 0;
     const controller = new AbortController();
     const timeout = window.setTimeout(
-      () =>
+      () => {
+        expired = true;
         setError(
-          "The app runtime did not load. Check that the hosting runtime has been built.",
-        ),
-      20000,
+          "The app runtime did not load in time. Please reload to try again.",
+        );
+      },
+      90000,
     );
-    function receive(event: MessageEvent) {
+    async function receive(event: MessageEvent) {
       if (
         event.source !== frame.current?.contentWindow ||
         event.data?.type !== "formlogic:ready" ||
-        channel
+        channel || initializing || expired
       )
         return;
-      clearTimeout(timeout);
+      if (!matchesZippRuntime(event.data.zipp)) {
+        clearTimeout(timeout);
+        setError("This app runtime is out of date. Please update the hosted app runtime and reload.");
+        return;
+      }
+      initializing = true;
+      let zippWasm: ArrayBuffer;
+      try {
+        zippWasm = await getZippWasmBytes();
+      } catch (reason) {
+        clearTimeout(timeout);
+        if (active) setError(reason instanceof Error ? reason.message : "The app engine could not be loaded.");
+        initializing = false;
+        return;
+      }
+      if (!active || expired) return;
       setError("");
       channel = new MessageChannel();
       channel.port1.onmessage = async (event) => {
@@ -94,10 +126,13 @@ export function HostedAppFrame({
           client,
           appId: `hosted-${slug}-${version}`,
           dark: document.documentElement.classList.contains("dark"),
+          // Clone the public bytes; never transfer/detach the page's cache.
+          zippWasm,
         },
         "*",
         [channel.port2],
       );
+      clearTimeout(timeout);
     }
     window.addEventListener("message", receive);
     return () => {
@@ -119,7 +154,7 @@ export function HostedAppFrame({
         </p>
       )}
       <iframe
-        key={`${slug}/${version}`}
+        key={`${slug}/${version}/${clientIdentity(client)}`}
         ref={frame}
         title="Hosted app"
         src="/hosted-runtime/index.html"

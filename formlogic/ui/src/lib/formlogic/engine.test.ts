@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { WorkerRequest, WorkerResponse } from './formlogic.worker';
+import type { WorkerInit, WorkerRequest, WorkerResponse } from './formlogic.worker';
+
+vi.mock('./zipp-bytes', () => ({
+  getZippWasmBytes: vi.fn(async () => new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]).buffer),
+}));
 
 // engine.ts spawns a real browser Worker (formlogic.worker.ts -> zipp-host.ts, a real WASM
 // QuickJS VM) — we can't and shouldn't run that under Vitest. This fake simulates the SAME
@@ -19,17 +23,14 @@ class FakeWorker {
   onerror: ((e: unknown) => void) | null = null;
   private terminated = false;
 
-  constructor() {
-    // The real Worker loads the engine and reports ready on id 0 before it will
-    // evaluate anything; engine.ts holds requests until then. A microtask (not a
-    // timer) so the handshake completes under fake timers without advancing them.
-    queueMicrotask(() => {
-      if (this.terminated) return;
-      this.onmessage?.({ data: { id: 0, ok: true, ready: true } });
-    });
-  }
-
-  postMessage(msg: WorkerRequest): void {
+  postMessage(msg: WorkerRequest | WorkerInit): void {
+    if ('type' in msg) {
+      // The real worker becomes ready only after the page supplies its bytes.
+      queueMicrotask(() => {
+        if (!this.terminated) this.onmessage?.({ data: { id: 0, ok: true, ready: true } });
+      });
+      return;
+    }
     lastRequest = msg;
     const b = behavior;
     if (b.kind === 'hang') return;
