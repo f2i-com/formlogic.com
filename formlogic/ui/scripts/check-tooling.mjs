@@ -44,8 +44,24 @@ try {
   await expect(page.getByLabel('Editor value')).toContainText('const nextVisit = "Friday";');
   await page.getByRole('button', { name: 'Show booking help' }).click();
   await expect(page.locator('.monaco-hover strong', { hasText: 'Booking help' })).toBeVisible();
+  // Exercise the actual product dialog with Motion's real enter/exit lifecycle.
+  // Unit tests stub motion, so they cannot catch an animation upgrade retaining
+  // a closed portal or preventing focus/scroll restoration.
+  for (const reducedMotion of ['no-preference', 'reduce']) {
+    await page.emulateMedia({ reducedMotion });
+    const opener = page.getByRole('button', { name: 'Open appointment dialog' });
+    await opener.click();
+    const dialog = page.getByRole('dialog', { name: 'Appointment details' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveCSS('opacity', '1');
+    await dialog.getByRole('textbox', { name: 'Customer name' }).fill('Friday appointment');
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(opener).toBeFocused();
+    assert.notEqual(await page.locator('body').evaluate(el => el.style.overflow), 'hidden');
+  }
   assert.deepEqual(errors, [], 'the bundled editor must run without browser errors');
-  console.log('PASS production editor editing, TypeScript worker, and formatted hover');
+  console.log('PASS production editor, TypeScript worker, formatted hover, and animated dialog lifecycle');
 } finally {
   await browser?.close();
   await new Promise(resolve => server ? server.close(resolve) : resolve());

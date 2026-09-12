@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { StrictMode, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as monaco from 'monaco-editor';
 import MonacoEditorImpl from '../../src/components/ui/MonacoEditorImpl';
+import { Modal } from '../../src/components/ui/Modal';
+import '../../src/index.css';
 
 let editor: monaco.editor.IStandaloneCodeEditor | undefined;
 
@@ -12,6 +14,7 @@ monaco.languages.registerHoverProvider('typescript', {
 function EditorToolingCheck() {
   const [value, setValue] = useState('const customer = "Lance";');
   const [diagnostics, setDiagnostics] = useState('Not checked');
+  const [dialogOpen, setDialogOpen] = useState(false);
   const checkWorker = async () => {
     const model = editor?.getModel();
     if (!model) throw new Error('Editor model is not ready');
@@ -23,6 +26,10 @@ function EditorToolingCheck() {
 
   return <main>
     <h1>Editor tooling check</h1>
+    <button onClick={() => setDialogOpen(true)}>Open appointment dialog</button>
+    <Modal isOpen={dialogOpen} onClose={() => setDialogOpen(false)} title="Appointment details">
+      <label>Customer name<input aria-label="Customer name" defaultValue="Sample customer" /></label>
+    </Modal>
     <button onClick={() => void checkWorker()}>Check TypeScript worker</button>
     <button onClick={() => editor?.focus()}>Focus editor</button>
     <button onClick={() => {
@@ -36,4 +43,4 @@ function EditorToolingCheck() {
   </main>;
 }
 
-createRoot(document.getElementById('root')!).render(<EditorToolingCheck />);
+createRoot(document.getElementById('root')!).render(<StrictMode><EditorToolingCheck /></StrictMode>);
