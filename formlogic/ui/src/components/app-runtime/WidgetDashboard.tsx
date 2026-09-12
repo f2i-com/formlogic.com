@@ -327,7 +327,7 @@ let dashScopeCounter = 0;
 function DashboardCustomCss({ css, scopeId }: { css?: string; scopeId: string }) {
   useEffect(() => {
     if (!css || !css.trim()) return;
-    let scoped = '';
+    let scoped: string;
     try {
       const sheet = new CSSStyleSheet();
       sheet.replaceSync(css);

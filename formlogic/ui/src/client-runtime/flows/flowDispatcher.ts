@@ -619,7 +619,7 @@ let desktopFreshCache: { at: number; fresh: boolean } | null = null;
 export async function defaultDesktopRuntimeFresh(): Promise<boolean> {
   const now = Date.now();
   if (desktopFreshCache && now - desktopFreshCache.at < 30_000) return desktopFreshCache.fresh;
-  let fresh = false;
+  let fresh: boolean;
   try {
     const res = await api.getDesktopConnections();
     // ROUTE-001 wrapped the payload as {connections:[...]} — the old

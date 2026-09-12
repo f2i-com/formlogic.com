@@ -1,3 +1,4 @@
+import { deferEffect } from '../../lib/deferredEffect';
 // Data Storage card for Private forms (plan §20.1 N3a subset;
 // docs/FORMLOGIC_DATA_NODES.md §11): shows whether the form still runs as
 // legacy_cloud_primary or has its owner-signed epoch-1 placement, and offers
@@ -14,6 +15,9 @@ import { Button } from '../ui/Button';
 import type { DataPlacementState } from '../../types/dataPlacement';
 
 export function DataPlacementCard({ formId }: { formId: string }) {
+  return <FormDataPlacementCard key={formId} formId={formId} />;
+}
+function FormDataPlacementCard({ formId }: { formId: string }) {
   const [state, setState] = useState<DataPlacementState | null>(null);
   const [enabled, setEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -29,9 +33,7 @@ export function DataPlacementCard({ formId }: { formId: string }) {
     setState(res.data ?? null);
   }, [formId]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useEffect(() => deferEffect(() => { void load(); }), [load]);
 
   const runSign = useCallback(async () => {
     setBusy(true);
@@ -51,11 +53,11 @@ export function DataPlacementCard({ formId }: { formId: string }) {
     }
   }, [formId, load]);
 
-  useEffect(() => {
+  useEffect(() => deferEffect(() => {
     if (pendingSign && !showUnlock && useVaultStore.getState().status === 'unlocked') {
       void runSign();
     }
-  }, [pendingSign, showUnlock, runSign]);
+  }), [pendingSign, showUnlock, runSign]);
 
   const startSign = () => {
     if (useVaultStore.getState().status === 'unlocked') {

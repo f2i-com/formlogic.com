@@ -153,7 +153,7 @@ async function contractFetch(method: 'GET' | 'POST', endpoint: string, body?: un
   } catch (e) {
     return { ok: false, status: 0, data: null, message: e instanceof Error ? e.message : 'Network error' };
   }
-  let parsed: unknown = null;
+  let parsed: unknown;
   try {
     parsed = await res.json();
   } catch {

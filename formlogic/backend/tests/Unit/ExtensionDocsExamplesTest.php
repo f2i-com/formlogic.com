@@ -60,7 +60,7 @@ class ExtensionDocsExamplesTest extends TestCase
     {
         $doc = file_get_contents(self::DOC);
         $this->assertIsString($doc, 'docs/EXTENSIONS.md must be readable');
-        preg_match_all('/```jsonc\n(.*?)```/s', $doc, $matches);
+        preg_match_all('/```jsonc\r?\n(.*?)```/s', $doc, $matches);
         $blocks = [];
         foreach ($matches[1] as $index => $raw) {
             $stripped = trim($this->stripLineComments($raw));

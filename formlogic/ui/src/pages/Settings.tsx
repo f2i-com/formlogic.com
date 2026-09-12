@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { deferEffect } from '../lib/deferredEffect';
+import { useCurrentTime } from '../hooks/useCurrentTime';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
@@ -202,7 +204,8 @@ export function Settings() {
   const [email, setEmail] = useState(user?.email || '');
   const [timezone, setTimezone] = useState(user?.timezone || '');
   const [profilePassword, setProfilePassword] = useState('');
-  const [hasProfileChanges, setHasProfileChanges] = useState(false);
+  const hasProfileChanges = name !== (user?.name || '') || email !== (user?.email || '') || timezone !== (user?.timezone || '');
+  const now = useCurrentTime(15_000);
 
   // Theme
   const themeColor = useUIStore((state) => state.themeColor);
@@ -247,21 +250,15 @@ export function Settings() {
   const [isRevokingDesktop, setIsRevokingDesktop] = useState(false);
 
   // Update form when user changes
-  useEffect(() => {
+  const [profileUser, setProfileUser] = useState(user);
+  if (profileUser !== user) {
+    setProfileUser(user);
     if (user) {
       setName(user.name || '');
       setEmail(user.email || '');
       setTimezone(user.timezone || '');
     }
-  }, [user]);
-
-  // Track profile changes
-  useEffect(() => {
-    const nameChanged = name !== (user?.name || '');
-    const emailChanged = email !== (user?.email || '');
-    const tzChanged = timezone !== (user?.timezone || '');
-    setHasProfileChanges(nameChanged || emailChanged || tzChanged);
-  }, [name, email, timezone, user]);
+  }
 
   const emailChanged = email.trim().toLowerCase() !== (user?.email || '').toLowerCase();
 
@@ -284,7 +281,6 @@ export function Settings() {
       const result = await updateProfile(payload as Parameters<typeof updateProfile>[0]);
       if (result.success) {
         toast.success('Profile Updated', 'Your profile has been saved successfully.');
-        setHasProfileChanges(false);
         setProfilePassword('');
       } else {
         toast.error('Update Failed', result.error || 'Could not update your profile.');
@@ -448,9 +444,9 @@ export function Settings() {
   };
 
   // Load API keys on mount
-  useEffect(() => {
+  useEffect(() => deferEffect(() => {
     loadApiKeys();
-  }, []);
+  }), []);
 
   // `silent`: used by the background poll below so a periodic refresh doesn't blank the
   // already-rendered list behind a loading spinner (or an error state) — same convention
@@ -481,14 +477,14 @@ export function Settings() {
   // Load linked desktops on mount, then keep polling while this tab is visible so the
   // "Online now" badge (derived from a freshness window) reflects a desktop that
   // disconnects while Settings stays open, instead of only refreshing on next visit.
-  useEffect(() => {
+  useEffect(() => deferEffect(() => {
     loadDesktopConnections();
     const timer = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
       loadDesktopConnections(true);
     }, 45_000);
     return () => clearInterval(timer);
-  }, []);
+  }), []);
 
   const handleCreateApiKey = async () => {
     if (!newKeyName.trim() || newKeyScopes.length === 0) return;
@@ -1105,7 +1101,7 @@ export function Settings() {
               ) : (
                 <div className="space-y-2">
                   {desktopConnections.map((conn) => {
-                    const isOnline = conn.lastSeenAt !== null && Date.now() - parseServerDate(conn.lastSeenAt).getTime() < 90_000;
+                    const isOnline = conn.lastSeenAt !== null && now - parseServerDate(conn.lastSeenAt).getTime() < 90_000;
                     return (
                       <div
                         key={conn.id}

@@ -10,11 +10,17 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { PermissionMatrix } from '../../components/ui/PermissionMatrix';
 import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
+import { deferEffect } from '../../lib/deferredEffect';
 import { toast } from '../../stores/toastStore';
 import type { AppRole, AppForm, PermissionAction } from '../../types/app';
 import { useAuthStore } from '../../stores/authStore';
 
 export function AppRoleEditor() {
+  const { appId } = useParams<{ appId: string }>();
+  return <AppRoleEditorContent key={appId} />;
+}
+
+function AppRoleEditorContent() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
   const paths = useResourcePaths();
@@ -40,39 +46,43 @@ export function AppRoleEditor() {
   const [dirty, setDirty] = useState(false);
   const [pendingRoleId, setPendingRoleId] = useState<string | null>(null);
   const [pendingNav, setPendingNav] = useState<{ to: string; state?: ReturnToState } | null>(null);
+  const nextPermissionKey = `${appId ?? ''}/${selectedRoleId ?? ''}/${permsReloadToken}`;
+  const [permissionKey, setPermissionKey] = useState(nextPermissionKey);
+  if (permissionKey !== nextPermissionKey) {
+    setPermissionKey(nextPermissionKey);
+    setPermissions([]);
+    setPermsLoaded(false);
+    setPermsError(null);
+    setDirty(false);
+  }
 
   const navGuarded = (to: string, state?: ReturnToState) => {
     if (dirty) setPendingNav({ to, state }); else navigate(to, { state });
   };
 
-  const loadData = async () => {
+  const loadData = async (isCancelled: () => boolean = () => false) => {
     if (!appId) return;
     try {
       const [r, f] = await Promise.all([fetchRoles(appId), fetchAppForms(appId)]);
+      if (isCancelled()) return;
       setRoles(r);
       setAppForms(f);
-      // The [appId] effect resets selectedRoleId to null before this runs, but
-      // that reset isn't visible in this closure — always select the first role
-      // on (re)load so switching apps doesn't leave nothing selected.
+      // Select the first role on (re)load; the route key resets selection when switching apps.
       if (r.length > 0) setSelectedRoleId(r[0].id);
     } catch {
-      toast.error('Load failed', 'Could not load roles. Please refresh the page.');
+      if (!isCancelled()) toast.error('Load failed', 'Could not load roles. Please refresh the page.');
     }
   };
 
   useEffect(() => {
-    setSelectedRoleId(null);
-    setPermissions([]);
-    loadData();
+    let cancelled = false;
+    const cancelStart = deferEffect(() => { void loadData(() => cancelled); });
+    return () => { cancelled = true; cancelStart(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run only on appId change; loadData is recreated every render so including it would re-fetch on each render (fetch storm)
   }, [appId]);
 
   useEffect(() => {
     if (!appId || !selectedRoleId) return;
-    setPermissions([]); // Clear previous role's permissions immediately
-    setPermsLoaded(false);
-    setPermsError(null);
-    setDirty(false); // fresh role load is not a user edit
     let cancelled = false;
     // api.request NEVER throws — it returns { error } — so the error branch has to be
     // read here. Rendering an unread set as an empty matrix looked exactly like a

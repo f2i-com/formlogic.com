@@ -9,6 +9,7 @@ import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { RelationFormModal } from './RelationFormModal';
 import { api } from '../../lib/api';
+import { deferEffect } from '../../lib/deferredEffect';
 import type { Form, FormField } from '../../types/form';
 import type { AppForm } from '../../types/app';
 
@@ -36,11 +37,12 @@ export function AppRelationsManager() {
   const [deleteTarget, setDeleteTarget] = useState<Relation | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const loadRelations = useCallback(async () => {
+  const loadRelations = useCallback(async (isCancelled: () => boolean = () => false) => {
     if (!appId) return;
     setLoading(true);
 
     const forms = await fetchAppForms(appId);
+    if (isCancelled()) return;
     setAppForms(forms);
 
     // Build a name map from app forms
@@ -51,6 +53,7 @@ export function AppRelationsManager() {
     const results = await Promise.allSettled(
       forms.map((af) => api.getForm(af.formId))
     );
+    if (isCancelled()) return;
 
     const rels: Relation[] = [];
     results.forEach((result, idx) => {
@@ -74,7 +77,9 @@ export function AppRelationsManager() {
   }, [appId, fetchAppForms]);
 
   useEffect(() => {
-    loadRelations();
+    let cancelled = false;
+    const cancelStart = deferEffect(() => { void loadRelations(() => cancelled); });
+    return () => { cancelled = true; cancelStart(); };
   }, [loadRelations]);
 
   const [deleteError, setDeleteError] = useState<string | null>(null);

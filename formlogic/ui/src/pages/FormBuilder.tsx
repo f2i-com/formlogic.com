@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useState, useMemo, useCallback, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -320,7 +320,7 @@ export default function FormBuilder() {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   // Response-data count for the field pending deletion (null while loading):
   // >0 swaps the plain confirm for the keep-data / delete-data choice.
-  const [pendingDeleteUsage, setPendingDeleteUsage] = useState<number | null>(null);
+  const [deleteUsage, setDeleteUsage] = useState<{ key: string; count: number } | null>(null);
   const [purgingField, setPurgingField] = useState(false);
   const headerRef = useRef<HTMLElement | null>(null);
   const headerWidthRef = useRef<number | null>(null);
@@ -503,10 +503,10 @@ export default function FormBuilder() {
 
   // Local title state to avoid calling updateForm on every keystroke
   const [localTitle, setLocalTitle] = useState(form?.title ?? '');
-  const titleSyncedFromForm = useRef(form?.title);
+  const [titleSyncedFromForm, setTitleSyncedFromForm] = useState(form?.title);
   // Sync local title when form title changes externally (e.g., AI generation, undo)
-  if (form && form.title !== titleSyncedFromForm.current) {
-    titleSyncedFromForm.current = form.title;
+  if (form && form.title !== titleSyncedFromForm) {
+    setTitleSyncedFromForm(form.title);
     setLocalTitle(form.title);
   }
 
@@ -522,7 +522,7 @@ export default function FormBuilder() {
 
   // Flush title to store on unmount
   const flushRef = useRef(flushTitle);
-  flushRef.current = flushTitle;
+  useLayoutEffect(() => { flushRef.current = flushTitle; }, [flushTitle]);
   useEffect(() => () => { flushRef.current(); }, []);
 
   // Track latest form for cleanup ref (avoids stale closure in unmount effect)
@@ -547,17 +547,18 @@ export default function FormBuilder() {
   // E2EE: is this an end-to-end-encrypted (private) form? Drives the badge, the
   // field-palette blocks (no file/camera/linked_record - plan SS9.1), and the
   // schema-publish path on Publish. Looked up once per form (owner-only endpoint).
-  const [isPrivateForm, setIsPrivateForm] = useState(false);
+  const [privacy, setPrivacy] = useState<{ formId: string; private: boolean } | null>(null);
+  const isPrivateForm = storageMode === 'api' && !acting && privacy?.formId === currentFormId && privacy?.private === true;
   // E2EE: publishing a private form with a locked vault is BLOCKED — this opens
   // the unlock dialog, after which the publish retries (blocker 2).
   const [showPublishUnlock, setShowPublishUnlock] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    if (!currentFormId || storageMode !== 'api' || acting) { setIsPrivateForm(false); return; }
+    if (!currentFormId || storageMode !== 'api' || acting) return;
     void import('../lib/crypto/formCrypto').then(async ({ getFormPrivacy }) => {
       const priv = await getFormPrivacy(currentFormId).catch(() => false);
-      if (!cancelled) setIsPrivateForm(priv);
-    }).catch(() => { if (!cancelled) setIsPrivateForm(false); });
+      if (!cancelled) setPrivacy({ formId: currentFormId, private: priv });
+    }).catch(() => { if (!cancelled) setPrivacy({ formId: currentFormId, private: false }); });
     return () => { cancelled = true; };
   }, [currentFormId, storageMode, acting]);
   // Flows work for ANY saved cloud form — draft or published (the binding routes gate on
@@ -921,18 +922,21 @@ export default function FormBuilder() {
   // dialog shows. A failed lookup (offline, admin acting mode) falls back to 0,
   // i.e. the plain confirm and today's delete behavior.
   const formIdForUsage = form?.id;
+  const deleteUsageKey = `${formIdForUsage ?? ''}/${pendingDeleteId ?? ''}`;
+  const [usageRequestKey, setUsageRequestKey] = useState(deleteUsageKey);
+  if (usageRequestKey !== deleteUsageKey) {
+    setUsageRequestKey(deleteUsageKey);
+    setDeleteUsage(null);
+  }
+  const pendingDeleteUsage = deleteUsage?.key === deleteUsageKey ? deleteUsage.count : null;
   useEffect(() => {
-    if (!pendingDeleteId || !formIdForUsage) {
-      setPendingDeleteUsage(null);
-      return;
-    }
+    if (!pendingDeleteId || !formIdForUsage) return;
     let cancelled = false;
-    setPendingDeleteUsage(null);
     api.getFieldUsage(formIdForUsage, pendingDeleteId)
-      .then((res) => { if (!cancelled) setPendingDeleteUsage(res.data?.responsesWithValue ?? 0); })
-      .catch(() => { if (!cancelled) setPendingDeleteUsage(0); });
+      .then((res) => { if (!cancelled) setDeleteUsage({ key: deleteUsageKey, count: res.data?.responsesWithValue ?? 0 }); })
+      .catch(() => { if (!cancelled) setDeleteUsage({ key: deleteUsageKey, count: 0 }); });
     return () => { cancelled = true; };
-  }, [pendingDeleteId, formIdForUsage]);
+  }, [pendingDeleteId, formIdForUsage, deleteUsageKey]);
 
   // "Keep the data": the field leaves the form but survives as a HIDDEN field —
   // same id, so every stored answer stays visible in records and exports.
@@ -1047,7 +1051,7 @@ export default function FormBuilder() {
         setShowPublishUnlock(true);
         return;
       }
-      let signed: Awaited<ReturnType<typeof fc.signPrivateFormSchema>> = null;
+      let signed: Awaited<ReturnType<typeof fc.signPrivateFormSchema>>;
       try {
         signed = await fc.signPrivateFormSchema(form.id, JSON.stringify(form.fields ?? []));
       } catch (e) {
@@ -1637,7 +1641,7 @@ export default function FormBuilder() {
         formId={form.id}
         onSave={(settings) => updateForm(form.id, { settings })}
         isPrivate={storageMode === 'api' && !acting ? isPrivateForm : undefined}
-        onEncryptionEnabled={() => setIsPrivateForm(true)}
+        onEncryptionEnabled={() => setPrivacy({ formId: form.id, private: true })}
       />
 
       {/* Version History */}

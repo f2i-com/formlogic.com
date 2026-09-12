@@ -376,7 +376,7 @@ export function parseProviderImport(text: string): AiProviderConfig[] {
     parsed = JSON.parse(text);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    throw new Error(`AI service import must be valid JSON: ${reason}`);
+    throw new Error(`AI service import must be valid JSON: ${reason}`, { cause: err });
   }
   const items = Array.isArray(parsed) ? parsed : [parsed];
   if (items.length === 0) throw new Error('AI service import did not contain any services.');
@@ -673,7 +673,7 @@ export function renderRequestTemplate(template: string, vars: AiRequestTemplateV
     return JSON.parse(rendered);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    throw new Error(`AI provider request template must render to valid JSON: ${reason}`);
+    throw new Error(`AI provider request template must render to valid JSON: ${reason}`, { cause: err });
   }
 }
 

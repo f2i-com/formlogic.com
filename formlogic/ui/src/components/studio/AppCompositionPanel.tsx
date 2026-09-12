@@ -1,3 +1,4 @@
+import { deferEffect } from '../../lib/deferredEffect';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Boxes } from 'lucide-react';
@@ -38,10 +39,15 @@ function CompositionDialog({ app, onClose, onComplete }: { app: App; onClose: ()
     }).catch(() => { if (active) { setLoading(false); setError('Could not load apps.'); } });
     return () => { active = false; };
   }, [app.id]);
-  useEffect(() => {
+  const [previousSourceId, setPreviousSourceId] = useState(sourceId);
+  if (previousSourceId !== sourceId) {
+    setPreviousSourceId(sourceId);
+    setLoading(!!sourceId); setError(''); setSource(null); setMove(false); setApproved(false);
+    setForms([]); setSelected([]); setGrants([]);
+  }
+  useEffect(() => deferEffect(() => {
     if (!sourceId) return;
     let active = true;
-    setLoading(true); setError(''); setSource(null); setMove(false); setApproved(false);
     void Promise.all([api.getApp(sourceId), api.getAppForms(sourceId), api.listFlows(sourceId)]).then(([a, f, flows]) => {
       if (!active) return;
       setLoading(false);
@@ -52,7 +58,7 @@ function CompositionDialog({ app, onClose, onComplete }: { app: App; onClose: ()
       setGrants([...new Set([...(logic?.permissions || []), ...(logic?.scripts || []).flatMap(script => script.permissions || []), ...(flows.data?.flows || []).flatMap(flow => flow.nodeCapabilities || [])])].filter(grant => grant.startsWith('connector.')));
     }).catch(() => { if (active) { setLoading(false); setError('Could not read this app.'); } });
     return () => { active = false; };
-  }, [sourceId]);
+  }), [sourceId]);
   async function compose() {
     if (busy || !source) return;
     setBusy(true); setError('');

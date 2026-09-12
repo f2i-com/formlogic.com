@@ -21,7 +21,7 @@ let server;
 try {
   await build({
     root, configFile: false, publicDir: false, plugins: [react()],
-    build: { outDir: output, emptyOutDir: true, rollupOptions: { input: fixture } },
+    build: { outDir: output, emptyOutDir: true, rolldownOptions: { input: fixture } },
   });
   server = createServer(async (request, response) => {
     const path = new URL(request.url, 'http://localhost').pathname;

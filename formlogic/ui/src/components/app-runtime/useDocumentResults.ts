@@ -31,10 +31,15 @@ export function useDocumentResults(doc: AppReportDocument | null, allReports: Ap
     [referenced, reportsById]
   );
 
+  const [resultKey, setResultKey] = useState<string | null>(null);
+  if (resultKey !== key) {
+    setResultKey(key);
+    setResultsById({});
+    setLoading(referenced.length > 0);
+  }
   useEffect(() => {
     let cancelled = false;
-    if (referenced.length === 0) { setResultsById({}); setLoading(false); return; }
-    setLoading(true);
+    if (referenced.length === 0) return;
     (async () => {
       const map: Record<string, AppReportResult | undefined> = {};
       await Promise.all(referenced.map(async (id) => {

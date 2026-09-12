@@ -212,7 +212,7 @@ impl QueueCrypto {
             eprintln!("[formlogic] sync-queue.key is malformed — rotating it");
         }
         let mut key = [0u8; 32];
-        getrandom::getrandom(&mut key).ok()?;
+        getrandom::fill(&mut key).ok()?;
         let _ = std::fs::create_dir_all(dir);
         if std::fs::write(&path, hex_encode(&key)).is_err() {
             return None;
@@ -227,8 +227,8 @@ impl QueueCrypto {
 
     fn seal(&self, plaintext: &[u8]) -> Option<String> {
         let mut nonce = [0u8; 24];
-        getrandom::getrandom(&mut nonce).ok()?;
-        let ct = self.cipher.encrypt(XNonce::from_slice(&nonce), plaintext).ok()?;
+        getrandom::fill(&mut nonce).ok()?;
+        let ct = self.cipher.encrypt(&XNonce::from(nonce), plaintext).ok()?;
         let mut out = Vec::with_capacity(24 + ct.len());
         out.extend_from_slice(&nonce);
         out.extend_from_slice(&ct);
@@ -241,7 +241,8 @@ impl QueueCrypto {
             return None;
         }
         let (nonce, ct) = raw.split_at(24);
-        self.cipher.decrypt(XNonce::from_slice(nonce), ct).ok()
+        let nonce: [u8; 24] = nonce.try_into().ok()?;
+        self.cipher.decrypt(&XNonce::from(nonce), ct).ok()
     }
 }
 
@@ -524,6 +525,56 @@ mod tests {
 
     fn load(dir: &Path) -> PartitionedSyncQueue {
         PartitionedSyncQueue::load(dir.join("sync-queue.json"), dir)
+    }
+
+    fn legacy_crypto_fixture() -> Value {
+        serde_json::from_str(include_str!("../tests/fixtures/sync-queue-v2-libsodium.json")).unwrap()
+    }
+
+    #[test]
+    fn xchacha20poly1305_preserves_the_existing_libsodium_wire_format() {
+        // This ciphertext comes from PHP libsodium, not from the upgraded
+        // Rust implementation. The format remains nonce || ciphertext || tag,
+        // hex encoded, with a 32-byte key and no additional authenticated data.
+        let fixture = legacy_crypto_fixture();
+        let key: [u8; 32] = hex_decode(fixture["key"].as_str().unwrap()).unwrap().try_into().unwrap();
+        let nonce: [u8; 24] = hex_decode(fixture["nonce"].as_str().unwrap()).unwrap().try_into().unwrap();
+        let plaintext = fixture["plaintext"].as_str().unwrap().as_bytes();
+        let sealed = fixture["queue"]["sealed"].as_str().unwrap();
+        let crypto = QueueCrypto::from_key(key);
+        assert_eq!(crypto.open_sealed(sealed).unwrap(), plaintext);
+        let encrypted = crypto.cipher.encrypt(&XNonce::from(nonce), plaintext).unwrap();
+        assert_eq!(hex_encode(&[nonce.as_slice(), encrypted.as_slice()].concat()), sealed);
+
+        let mut damaged = hex_decode(sealed).unwrap();
+        *damaged.last_mut().unwrap() ^= 1;
+        assert!(crypto.open_sealed(&hex_encode(&damaged)).is_none());
+        assert!(QueueCrypto::from_key([8u8; 32]).open_sealed(sealed).is_none());
+    }
+
+    #[test]
+    fn existing_v2_queue_reopens_and_resaves_without_rotating_its_key() {
+        let fixture = legacy_crypto_fixture();
+        let dir = tmp("crypto-upgrade");
+        let key = fixture["key"].as_str().unwrap();
+        std::fs::write(dir.join(KEY_FILE), key).unwrap();
+        std::fs::write(dir.join("sync-queue.json"), fixture["queue"].to_string()).unwrap();
+        let partition = part("https://example.test", "account", "app", "demo");
+        let queue = load(&dir);
+        assert!(queue.recovered_corruption.is_none());
+        let items = queue.get_queue(&partition);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "legacy-item");
+        assert_eq!(items[0].answers["message"], "Saved before dependency upgrade");
+        queue.enqueue(&partition, &json!({"id": "after-upgrade", "answers": {"quantity": 2}})).unwrap();
+        let reopened = load(&dir);
+        assert!(reopened.recovered_corruption.is_none());
+        assert_eq!(reopened.get_queue(&partition).len(), 2);
+        assert_eq!(std::fs::read_to_string(dir.join(KEY_FILE)).unwrap(), key);
+        let persisted: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("sync-queue.json")).unwrap()).unwrap();
+        assert_eq!(persisted["v"], 2);
+        assert!(persisted["sealed"].is_string());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

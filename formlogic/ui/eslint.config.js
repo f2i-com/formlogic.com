@@ -6,7 +6,9 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // Built/vendored runtime artifacts are verified by the artifact/hash checks.
+  // Their generated code and declarations are not authored application source.
+  globalIgnores(['dist', 'public/hosted-runtime/**', 'vendor/zipp-wasm/**']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
@@ -19,6 +21,12 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+  },
+  {
+    // These browser-test entry points mount themselves; they are not component
+    // modules used by Vite Fast Refresh. Keep all other authored-source rules.
+    files: ['e2e/fixtures/**/*.{ts,tsx}'],
+    rules: { 'react-refresh/only-export-components': 'off' },
   },
   {
     // Sandboxed custom-screen SOURCES (shipped as customScreen.files, bundled by esbuild-wasm on

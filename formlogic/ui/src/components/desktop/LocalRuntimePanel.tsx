@@ -21,6 +21,7 @@ import { HardDrive, Loader2, Play, Plug, RefreshCw, Square, Unplug } from 'lucid
 import { api } from '../../lib/api';
 import { Button } from '../ui/Button';
 import { toast } from '../../stores/toastStore';
+import { deferEffect } from '../../lib/deferredEffect';
 import {
   getDesktopInfo,
   refreshDesktopStatus,
@@ -93,7 +94,7 @@ export function LocalRuntimePanel() {
   const [pairing, setPairing] = useState<PairingUiState>('idle');
   /** The OAIY confirmation code to show the user while a request is pending. */
   const [pairCode, setPairCode] = useState<string | null>(null);
-  const [plugins, setPlugins] = useState<PluginRow[] | null>(null);
+  const [loadedPlugins, setLoadedPlugins] = useState<{ runtime: ActiveRuntime | null; rows: PluginRow[] | null }>({ runtime: null, rows: null });
   const [refreshing, setRefreshing] = useState(false);
   /** Plugin ids with an in-flight start/stop, so their button shows a spinner. */
   const [pluginBusy, setPluginBusy] = useState<Set<string>>(new Set());
@@ -110,6 +111,7 @@ export function LocalRuntimePanel() {
   // fallback). FormLogic Desktop is active only when OAIY is absent.
   const active: ActiveRuntime | null = oaiy.available ? 'oaiy' : desktop.available ? 'desktop' : null;
   const activePaired = active === 'oaiy' ? oaiyPaired : active === 'desktop' ? desktopPaired : false;
+  const plugins = activePaired && loadedPlugins.runtime === active ? loadedPlugins.rows : null;
   const activeVersion = active === 'oaiy' ? oaiy.version : active === 'desktop' ? desktop.version : undefined;
   const activeLabel = active ? RUNTIME_LABEL[active] : null;
   const detected = active !== null;
@@ -124,26 +126,28 @@ export function LocalRuntimePanel() {
     if (active === 'desktop' && desktop.available && !desktopPaired) void attemptSilentReconnect();
   }, [active, desktop.available, desktopPaired]);
 
-  const loadDetails = useCallback(async () => {
+  const loadDetails = useCallback(async (isCurrent: () => boolean = () => true) => {
     if (active === 'oaiy' && isOaiyPaired()) {
-      setPlugins(await listOaiyPlugins());
+      const rows = await listOaiyPlugins();
+      if (isCurrent()) setLoadedPlugins({ runtime: active, rows });
       return;
     }
     if (active === 'desktop' && isDesktopPaired()) {
       const res = await desktopClient.plugins.list();
+      if (!isCurrent()) return;
       // A 401 drops the token inside the client — reflect that instead of a stale list.
       setDesktopPairedState(isDesktopPaired());
-      setPlugins(res.ok ? res.data : null);
+      setLoadedPlugins({ runtime: active, rows: res.ok ? res.data : null });
       return;
     }
-    setPlugins(null);
+    setLoadedPlugins({ runtime: active, rows: null });
   }, [active]);
 
-  useEffect(() => {
-    // Deliberate load-on-mount/-on-change: loadDetails only clears stale state
-    // before the async fetch.
-    void loadDetails();
-  }, [active, oaiyPaired, desktopPaired, loadDetails]);
+  useEffect(() => deferEffect(() => {
+    let current = true;
+    void loadDetails(() => current);
+    return () => { current = false; };
+  }), [active, oaiyPaired, desktopPaired, loadDetails]);
 
   const connectOaiy = async () => {
     setPairing('pending');
@@ -218,14 +222,14 @@ export function LocalRuntimePanel() {
     if (active === 'oaiy') {
       setOaiyToken(null); // drops this session's OAIY token (→ subscribeOaiyPaired fires)
       setPairing('idle');
-      setPlugins(null);
+      setLoadedPlugins({ runtime: active, rows: null });
       toast.info('Disconnected', 'The OAIY Desktop token for this browser session was discarded.');
       return;
     }
     disconnectDesktop(); // drops the token AND suppresses auto-reconnect until an explicit Connect
     setDesktopPairedState(false);
     setPairing('idle');
-    setPlugins(null);
+    setLoadedPlugins({ runtime: active, rows: null });
     toast.info('Disconnected', 'The pairing token for this browser session was discarded.');
   };
 

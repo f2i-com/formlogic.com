@@ -61,14 +61,12 @@ export function CreateBand() {
   }, []);
 
   useEffect(() => {
-    if (!submitting || chatLaunch !== null) return;
+    if (chatLaunch !== null) return;
     // The chat has consumed the launch. Return the Dashboard composer to a fresh
     // state so closing the panel never leaves it stuck on "Opening chat…".
     submitLockRef.current = false;
-    setPrompt('');
-    setPendingImages([]);
-    setSubmitting(false);
-  }, [chatLaunch, submitting]);
+  }, [chatLaunch]);
+  if (submitting && chatLaunch === null) setSubmitting(false);
 
   const dismiss = useCallback(() => {
     setDismissed(true);

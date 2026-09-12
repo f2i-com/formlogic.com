@@ -98,11 +98,11 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
     return () => { cancelled = true; };
   }, [slug]);
 
-  useEffect(() => {
-    if (pack && installedCatalogIds) {
-      setInstalled(installedCatalogIds.has(pack.id));
-    }
-  }, [pack, installedCatalogIds]);
+  const [previousCatalog, setPreviousCatalog] = useState({ pack, ids: installedCatalogIds });
+  if (previousCatalog.pack !== pack || previousCatalog.ids !== installedCatalogIds) {
+    setPreviousCatalog({ pack, ids: installedCatalogIds });
+    if (pack && installedCatalogIds) setInstalled(installedCatalogIds.has(pack.id));
+  }
 
   const loadPackDetail = useCallback(async () => {
     setLoading(true);

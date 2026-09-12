@@ -380,9 +380,7 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
     return () => clearTimeout(t);
   }, [dirty, saving, saveFailed, serialized, save]);
 
-  useEffect(() => {
-    if (failedSaveGraph !== null && failedSaveGraph !== serialized) setFailedSaveGraph(null);
-  }, [failedSaveGraph, serialized]);
+  if (failedSaveGraph !== null && failedSaveGraph !== serialized) setFailedSaveGraph(null);
 
   // Keyboard: undo / redo + copy / paste / duplicate / select-all (ignore while typing in a field,
   // which also lets Monaco/textarea handle their own Ctrl+C/V). Delete is React Flow's native,
@@ -455,9 +453,7 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
     return () => observer.disconnect();
   }, [applyEditorLayout]);
 
-  useEffect(() => {
-    if (editorLayout.palette === 'inline' && mobilePaletteOpen) setMobilePaletteOpen(false);
-  }, [editorLayout.palette, mobilePaletteOpen]);
+  if (editorLayout.palette === 'inline' && mobilePaletteOpen) setMobilePaletteOpen(false);
 
   // Let node cards name a picked form by its title (not its UUID).
   const formsCtx = useMemo(

@@ -14,6 +14,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
+import { deferEffect } from '../../lib/deferredEffect';
 import { demoApplyFlowOverlay, demoApplyFormBindingOverlay, demoCreateFlow, demoUpdateFlow, demoDeleteFlow } from '../../lib/demoLocal';
 import { toast } from '../../stores/toastStore';
 import { FlowEditor } from '../../components/flows/editor/FlowEditor';
@@ -218,7 +219,7 @@ export function FlowsWorkspace() {
   useEffect(() => {
     if (!selectedFlow) return;
     if (flowBindingsById[selectedFlow.id] !== undefined) return;
-    void fetchFlowBindings(selectedFlow);
+    return deferEffect(() => { void fetchFlowBindings(selectedFlow); });
   }, [selectedFlow, flowBindingsById, fetchFlowBindings]);
 
   // Initial load (+ apply any ?flow=<id> deep-link once the flows are known). All setState runs
@@ -300,8 +301,8 @@ export function FlowsWorkspace() {
 
   useEffect(() => {
     let cancelled = false;
-    void loadInitialData(() => cancelled);
-    return () => { cancelled = true; };
+    const cancelStart = deferEffect(() => { void loadInitialData(() => cancelled); });
+    return () => { cancelled = true; cancelStart(); };
   }, [loadInitialData]);
 
   useEffect(() => {

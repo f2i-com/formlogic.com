@@ -836,7 +836,7 @@ function ProviderEditor({
       return;
     }
     const modelsUrl = joinUrl(saved.baseUrl, '/models');
-    let modelErrorText = '';
+    let modelErrorText: string;
     try {
       const res = await fetchWithTimeout(modelsUrl, { method: 'GET', headers: resolved.headers });
       if (!res.ok) throw new Error(describeHttpFailure('GET', modelsUrl, res.status, sentKey));

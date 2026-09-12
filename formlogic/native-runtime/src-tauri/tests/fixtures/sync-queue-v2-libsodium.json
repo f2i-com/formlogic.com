@@ -1,0 +1,10 @@
+{
+    "provenance": "PHP libsodium sodium_crypto_aead_xchacha20poly1305_ietf_encrypt; key=0x07*32; nonce=00..17; empty AAD",
+    "key": "0707070707070707070707070707070707070707070707070707070707070707",
+    "nonce": "000102030405060708090a0b0c0d0e0f1011121314151617",
+    "plaintext": "[{\"id\":\"legacy-item\",\"appSlug\":\"demo\",\"formId\":\"contact\",\"idempotencyKey\":\"legacy-request\",\"answers\":{\"message\":\"Saved before dependency upgrade\"},\"status\":\"pending\",\"attempts\":0,\"lastError\":null,\"createdAt\":\"2026-01-02T03:04:05Z\",\"partition\":\"https://example.test|account|app\",\"manifestVersion\":\"v1\"}]",
+    "queue": {
+        "v": 2,
+        "sealed": "000102030405060708090a0b0c0d0e0f1011121314151617f36c89ec9e3e618749a2e626859b82c52bb3553538d55601834edbf4fdeeaeb5675be203d7b87c9679935934538ecade9d1825b8e51374f8f422c699cfecbaf6fec4ab6d84ab333372d73d601f034bce5503e6b2c59e811092ac7b94bc6ac42dc32b62454826f51903f0fe4b1614915299e2581863e7dec422c4b3c72763c9c052b88df53cd0098e5ed34f6493ea1c1234dc40c6c655cc30107842cca0d9092f41b18ad48b6311e68674c14a5612a847d123618daebbb42af4ecca7dc1c4a16200f5db7d93d3d97f943c10ef00e647703b04b92920e44d4b9b82661ff22655fc6a3ab9fe1aa8e75f5fb603bc812adc0c6eea6808c11b3aa6952e7a452c290964bec0a5e42e2abc45104408d86c6f737693a35060204725ec4d12e6e203339aa5b43c9e7630de3a18daff25a6cdde29c220e7d8b508f90dbe2efff63a484e"
+    }
+}

@@ -40,15 +40,22 @@ export interface MaintenanceState {
 
 export function useBroadcastNotices(enabled: boolean): MaintenanceState {
   const cfg = usePublicConfig();
-  const [maintenance, setMaintenance] = useState<MaintenanceState>({ active: false, message: '' });
+  const [config, setConfig] = useState({ mode: cfg.maintenanceMode, message: cfg.maintenanceMessage });
+  const [maintenance, setMaintenance] = useState<MaintenanceState>(() => ({
+    active: cfg.maintenanceMode,
+    message: cfg.maintenanceMode ? cfg.maintenanceMessage || 'The site is briefly down for maintenance.' : '',
+  }));
   const pollingRef = useRef(false);
 
-  // Page-load state from the pre-auth config (covers opening the app mid-window).
-  useEffect(() => {
-    if (cfg.maintenanceMode) {
-      setMaintenance({ active: true, message: cfg.maintenanceMessage || 'The site is briefly down for maintenance.' });
-    }
-  }, [cfg.maintenanceMode, cfg.maintenanceMessage]);
+  // Apply new pre-auth configuration before rendering the shell. Poll responses
+  // can subsequently supersede it as the maintenance window opens or closes.
+  if (config.mode !== cfg.maintenanceMode || config.message !== cfg.maintenanceMessage) {
+    setConfig({ mode: cfg.maintenanceMode, message: cfg.maintenanceMessage });
+    setMaintenance({
+      active: cfg.maintenanceMode,
+      message: cfg.maintenanceMode ? cfg.maintenanceMessage || 'The site is briefly down for maintenance.' : '',
+    });
+  }
 
   useEffect(() => {
     if (!enabled) return;

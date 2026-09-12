@@ -184,26 +184,26 @@ export function ReportBuilder({ report, onClose, onSave, forms: formsProp, runRe
   const splittable = allFields.filter((f) => (CHOICE_TYPES.includes(f.type) || f.ref === '__status') && f.ref !== groupField);
 
   // Changing the source form invalidates everything that referenced it.
-  const prevFormRef = useRef(formId);
-  useEffect(() => {
-    if (prevFormRef.current !== formId) {
-      prevFormRef.current = formId;
+  const [previousFormId, setPreviousFormId] = useState(formId);
+  if (previousFormId !== formId) {
+      setPreviousFormId(formId);
       setJoins([]); setGroupField(''); setMeasureField(''); setColumns([]); setFilters([]);
       setRangeField(''); setSplitField('');
       setTableSort({ by: '__submitted_at', dir: 'desc' });
-    }
-  }, [formId]);
+  }
 
   // Default group/column choices when the form/viz changes and nothing is set yet.
-  useEffect(() => {
+  const selectionKey = `${formId}:${viz}`;
+  const [defaultedSelection, setDefaultedSelection] = useState<string | null>(null);
+  if (previousFormId === formId && defaultedSelection !== selectionKey) {
+    setDefaultedSelection(selectionKey);
     if (isSeries && !groupable.some((g) => g.ref === groupField)) {
       setGroupField(groupable[0]?.ref ?? '');
     }
     if (viz === 'table' && columns.length === 0) {
       setColumns(baseFields.slice(0, 4).map((f) => f.id));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formId, viz]);
+  }
 
   // Removing a join prunes any refs that pointed at it.
   const removeJoin = (via: string, joinFormId: string) => {

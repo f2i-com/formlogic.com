@@ -833,6 +833,11 @@ function normalizeFormData(raw: any) {
 // Main Form Response Component
 export default function FormResponse() {
   const { formId } = useParams<{ formId: string }>();
+  return <FormResponseContent key={formId} />;
+}
+
+function FormResponseContent() {
+  const { formId } = useParams<{ formId: string }>();
   // Pre-auth instance flags — carries the admin's maintenance message for embeds.
   const publicConfig = usePublicConfig();
   // Whether THIS viewer is signed in — a linked_record picker can only be scoped to a
@@ -891,8 +896,7 @@ export default function FormResponse() {
   // When a custom screen owns this form's view but "allow new records" is on, this flips the
   // viewer between the screen (dashboard) and the real form.
   const [showFormView, setShowFormView] = useState(false);
-  // The component instance is reused across /form/:formId navigations — always land on the screen.
-  useEffect(() => { setShowFormView(false); }, [formId]);
+  // The route key resets this choice and all submission state for every new form.
 
   const handleCalculated = useCallback((fId: string, val: unknown) => {
     setCalculatedValues(prev => {
@@ -911,15 +915,15 @@ export default function FormResponse() {
 
     // If store already has the form with fields loaded, no fetch needed
     if (storeForm && storeForm.fields.length > 0) {
-      setPublicForm(null);
       return;
     }
 
     let cancelled = false;
-    setIsLoadingForm(true);
-    setFormLoadError(false);
-
     (async () => {
+      await Promise.resolve();
+      if (cancelled) return;
+      setIsLoadingForm(true);
+      setFormLoadError(false);
       // 1. Try authenticated form API (works for owner, any status)
       if (api.isAuthenticated()) {
         try {
@@ -962,7 +966,14 @@ export default function FormResponse() {
   }, [formId, storeForm?.id, storeForm?.fields.length]);
 
   // Use store form (with fields) if available, otherwise fetched form
-  const rawForm = (storeForm && storeForm.fields.length > 0) ? storeForm : publicForm ?? storeForm;
+  const rawForm = (storeForm && storeForm.fields.length > 0) ? storeForm : publicForm?.id === formId ? publicForm : storeForm;
+  const currentEncryption = rawForm?.encryption;
+  const [schemaEncryption, setSchemaEncryption] = useState(currentEncryption);
+  if (schemaEncryption !== currentEncryption) {
+    setSchemaEncryption(currentEncryption);
+    setPrivateSchema(null);
+    setPrivateSchemaError(null);
+  }
   const appTheme = useUIStore((s) => s.theme);
   // A form the creator never themed should follow the viewer's light/dark mode rather
   // than rendering with no background/text (which showed as white-on-white in dark mode).
@@ -994,8 +1005,6 @@ export default function FormResponse() {
   // completes the form is not rendered; on failure it fails closed.
   useEffect(() => {
     if (!rawForm || rawForm.encryption?.mode !== 'private') {
-      setPrivateSchema(null);
-      setPrivateSchemaError(null);
       return;
     }
     const encryption = rawForm.encryption;
@@ -1150,12 +1159,13 @@ export default function FormResponse() {
   }, [formId, resetCurrentResponse, startResponse]);
 
   // Set initial presentation mode from form settings
-  useEffect(() => {
+  const [presentationFormId, setPresentationFormId] = useState<string>();
+  if (form?.id && presentationFormId !== form.id) {
+    setPresentationFormId(form.id);
     if (form?.settings?.defaultPresentationMode) {
       setResponseMode(form.settings.defaultPresentationMode);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form?.id]);
+  }
 
   // Get dynamic required status for a field
   const getFieldRequired = (field: FormField) => {
@@ -1369,7 +1379,7 @@ export default function FormResponse() {
     // the base bundle. ANY failure is a blocking error - there is NO plaintext
     // fallback, and plaintext never enters responseStore persistence.
     if (form.encryption?.mode === 'private') {
-      let queued = false;
+      let queued: boolean;
       try {
         const crypto = await import('../lib/crypto/privateSubmit');
         // Fold client-computed calculated/hidden values into the sealed answers,

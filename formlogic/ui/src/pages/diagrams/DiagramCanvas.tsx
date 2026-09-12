@@ -491,9 +491,7 @@ export function DiagramCanvas({
   const initial = useMemo(() => toCanvas(elements), [elements]);
   const [nodes, setNodes] = useState<Node[]>(initial.nodes);
   const [rfEdges, setRfEdges] = useState<Edge[]>(initial.edges);
-  useEffect(() => {
-    setRfEdges(initial.edges);
-  }, [initial]);
+  const [canvasSource, setCanvasSource] = useState<typeof initial | null>(null);
   const onEdgesChange = useCallback(
     (changes: Parameters<typeof applyEdgeChanges>[0]) => setRfEdges((current) => applyEdgeChanges(changes, current)),
     [],
@@ -512,7 +510,9 @@ export function DiagramCanvas({
   const setTextRef = useRef<(elementId: string, text: string) => void>(() => undefined);
   const resizeRef = useRef<(elementId: string, w: number, h: number) => void>(() => undefined);
 
-  useEffect(() => {
+  if (canvasSource !== initial) {
+    setCanvasSource(initial);
+    setRfEdges(initial.edges);
     setNodes(
       initial.nodes.map((node) => ({
         ...node,
@@ -524,7 +524,7 @@ export function DiagramCanvas({
         },
       })),
     );
-  }, [initial]);
+  }
   useEffect(() => {
     semanticRef.current = blueprint.semanticRevision;
   }, [blueprint.semanticRevision]);

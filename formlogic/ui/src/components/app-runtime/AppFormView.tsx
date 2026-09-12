@@ -4,6 +4,7 @@ import { ArrowLeft, Check, ChevronUp, ChevronDown, CheckCircle, ClipboardCheck, 
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { handleRovingKeys } from '../../lib/a11y';
 import { readableForegroundColor } from '../../lib/color';
+import { useAuthStore } from '../../stores/authStore';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { toast } from '../../stores/toastStore';
 import { AppSectionDashboard } from './AppSectionDashboard';
@@ -696,6 +697,12 @@ function validateField(field: FormField, value: unknown): string | null {
 
 export function AppFormView() {
   const { appSlug, formId } = useParams();
+  const userId = useAuthStore((state) => state.user?.id ?? 'anonymous');
+  return <FormVisit key={`${userId}:${appSlug}:${formId}`} />;
+}
+
+function FormVisit() {
+  const { appSlug, formId } = useParams();
   const navigate = useNavigate();
   const { config, createResponse, canSubmit, canViewOwn, canViewAll } = useAppRuntimeStore();
   // Bridge v1 for sandboxed code screens: connector()/updateRecord()/presence()
@@ -708,10 +715,31 @@ export function AppFormView() {
   // Fires the per-step focus/scroll once per navigation (init 0 = skip mount).
   const lastFocusedStepRef = useRef(0);
   const [form, setForm] = useState<Record<string, unknown> | null>(null);
-  const [answers, setAnswers] = useState<Record<string, unknown>>({});
+  const [answerEdits, setAnswers] = useState<Record<string, unknown>>({});
+  const [searchParams] = useSearchParams();
+  const wantNew = searchParams.get('new') === '1';
+  const linkField = searchParams.get('linkField');
+  const linkTo = searchParams.get('linkTo');
+  const answers = useMemo(() => {
+    const seeded: Record<string, unknown> = {};
+    const formFields = (form?.fields ?? []) as FormField[];
+    for (const field of formFields) {
+      const props = field.properties as { calculationExpression?: string; defaultValue?: unknown };
+      if (field.type === 'hidden' && !props?.calculationExpression && props?.defaultValue !== undefined) seeded[field.id] = props.defaultValue;
+    }
+    const linked = linkField && linkTo ? formFields.find(field => field.id === linkField && field.type === 'linked_record') : null;
+    if (linked && linkField) seeded[linkField] = (linked.properties as { allowMultiple?: boolean })?.allowMultiple ? [linkTo] : linkTo;
+    return { ...seeded, ...answerEdits };
+  }, [form, linkField, linkTo, answerEdits]);
   // A recoverable draft found in sessionStorage for THIS form — offered, never applied
   // silently, so nobody is confused by answers they did not just type.
-  const [recoverableDraft, setRecoverableDraft] = useState<Record<string, unknown> | null>(null);
+  const [recoverableDraft, setRecoverableDraft] = useState<Record<string, unknown> | null>(() => {
+    try {
+      const stored = sessionStorage.getItem(`formlogic.runtimeDraft.${appSlug}.${formId}`);
+      const parsed: unknown = stored ? JSON.parse(stored) : null;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Object.keys(parsed).length > 0 ? parsed as Record<string, unknown> : null;
+    } catch { return null; }
+  });
   const [currentStep, setCurrentStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -725,16 +753,15 @@ export function AppFormView() {
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [showNigo, setShowNigo] = useState(false);
-  const [viewMode, setViewMode] = useState<'focused' | 'classic'>('focused');
+  const [viewModeChoice, setViewMode] = useState<'focused' | 'classic' | null>(null);
   const [calculatedValues, setCalculatedValues] = useState<Record<string, unknown>>({});
-  // When this form's custom screen has "allow new records" on, flips between the section
-  // dashboard (screen) and the real form. ?new=1 (home-screen quick actions, dashboard Submit
-  // buttons) deep-links straight into the form entry, past the section screen.
-  const [searchParams] = useSearchParams();
-  const wantNew = searchParams.get('new') === '1';
+  // Keep user navigation within this form, while honoring a new-record deep link.
   const [showFormView, setShowFormView] = useState(wantNew);
-  // The component instance is reused across /form/:formId navigations — honor ?new=1 per visit.
-  useEffect(() => { setShowFormView(wantNew); }, [formId, wantNew]);
+  const [previousWantNew, setPreviousWantNew] = useState(wantNew);
+  if (previousWantNew !== wantNew) {
+    setPreviousWantNew(wantNew);
+    setShowFormView(wantNew);
+  }
 
   // Settings-style singleton forms (settings.singleRecord): the form IS its one record.
   // When a record already exists, visiting the form opens that record in edit mode instead
@@ -761,20 +788,6 @@ export function AppFormView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- canViewOwn/canViewAll are stable store actions
   }, [singleRecord, customScreenOwnsForm, appSlug, formId, navigate]);
 
-  // Related-records "Add": arriving from a record's related sub-grid with
-  // ?linkField=<fieldId>&linkTo=<parentResponseId> pre-links the new record back
-  // to its parent by seeding that linked_record field (array when it allows many).
-  const linkField = searchParams.get('linkField');
-  const linkTo = searchParams.get('linkTo');
-  useEffect(() => {
-    if (!form || !linkField || !linkTo) return;
-    const fields = (form.fields as Array<Record<string, unknown>> | undefined) ?? [];
-    const target = fields.find((f) => f.id === linkField && f.type === 'linked_record');
-    if (!target) return;
-    const multiple = !!(target.properties as Record<string, unknown> | undefined)?.allowMultiple;
-    setAnswers((prev) => (prev[linkField] !== undefined ? prev : { ...prev, [linkField]: multiple ? [linkTo] : linkTo }));
-  }, [form, linkField, linkTo]);
-
   const handleCalculated = useCallback((fId: string, val: unknown) => {
     setCalculatedValues(prev => {
       if (prev[fId] === val) return prev;
@@ -787,14 +800,14 @@ export function AppFormView() {
   const draftKey = appSlug && formId ? `formlogic.runtimeDraft.${appSlug}.${formId}` : null;
 
   useEffect(() => {
-    if (!draftKey || submitted) return;
+    if (!draftKey || submitted || (recoverableDraft && Object.keys(answerEdits).length === 0)) return;
     // Write on every change so an in-app navigation (which beforeunload cannot see, and
     // which resets this component's answers) does not take the answers with it.
     try {
       if (Object.keys(answers).length > 0) sessionStorage.setItem(draftKey, JSON.stringify(answers));
       else sessionStorage.removeItem(draftKey);
     } catch { /* private mode / quota — a draft is a nicety, never a blocker */ }
-  }, [answers, draftKey, submitted]);
+  }, [answers, answerEdits, draftKey, submitted, recoverableDraft]);
 
   // Warn before a refresh/close discards a half-filled form. The PUBLIC filler has had
   // this guard for a while; the member runtime — where staff fill longer forms on phones
@@ -810,28 +823,8 @@ export function AppFormView() {
   useEffect(() => {
     if (!appSlug || !formId) return;
 
-    // This component instance is reused across /form/:formId navigations, so
-    // reset all per-form state — otherwise the previous form's answers/step leak
-    // into (and get submitted with) the next form.
-    setAnswers({});
-    setCalculatedValues({});
-    setCurrentStep(0);
-    setSubmitted(false);
-    setError(null);
-    // Surface (do not apply) any draft left from an earlier visit in this tab.
-    try {
-      const stored = sessionStorage.getItem(`formlogic.runtimeDraft.${appSlug}.${formId}`);
-      const parsed = stored ? (JSON.parse(stored) as Record<string, unknown>) : null;
-      setRecoverableDraft(parsed && Object.keys(parsed).length > 0 ? parsed : null);
-    } catch {
-      setRecoverableDraft(null);
-    }
-
-    // Cancellation guard so a slow request for the previous form can't resolve
-    // after the new one and render a stale form under the new URL.
+    // Each identity has its own keyed component; ignore requests from an old visit.
     let cancelled = false;
-    setLoading(true);
-    setFetchError(null);
     api.getAppForm(appSlug, formId).then((result) => {
       if (cancelled) return;
       if (result.data?.form) {
@@ -879,15 +872,6 @@ export function AppFormView() {
   );
   const allFieldIds = useMemo(() => ((form?.fields ?? []) as FormField[]).map((f) => f.id), [form]);
 
-  // Seed static defaults for hidden fields that have no calculation expression.
-  useEffect(() => {
-    hiddenFields.forEach((f) => {
-      const props = f.properties as { calculationExpression?: string; defaultValue?: string };
-      if (!props.calculationExpression && props.defaultValue !== undefined) {
-        setAnswers((prev) => (prev[f.id] === undefined ? { ...prev, [f.id]: props.defaultValue } : prev));
-      }
-    });
-  }, [hiddenFields]);
   const thankYouField = useMemo(
     () => ((form?.fields ?? []) as FormField[]).find(f => f.type === 'thank_you'),
     [form]
@@ -899,16 +883,9 @@ export function AppFormView() {
   const allowBack = formSettings?.allowBackNavigation !== false;
   const nigoEnabled = formSettings?.showNigoDashboard === true;
   const presentationMode = (formSettings?.presentationMode as string) || 'both';
+  const viewMode = viewModeChoice ?? (formSettings?.defaultPresentationMode === 'classic' ? 'classic' : 'focused');
   const effectiveMode = presentationMode === 'both' ? viewMode : presentationMode;
   const showModeToggle = presentationMode === 'both';
-
-  // Set initial view mode from form settings
-  useEffect(() => {
-    const dflt = formSettings?.defaultPresentationMode as string;
-    if (dflt === 'focused' || dflt === 'classic') {
-      setViewMode(dflt);
-    }
-  }, [formSettings?.defaultPresentationMode]);
 
   // Build sets for NigoDashboard
   const visibleFieldIds = useMemo(() => new Set(fields.map((f) => f.id)), [fields]);
@@ -920,9 +897,8 @@ export function AppFormView() {
 
   // Clamp the step when conditional logic shrinks the visible set so the user
   // isn't stranded past the last remaining field.
-  useEffect(() => {
-    setCurrentStep((s) => Math.min(s, Math.max(0, fields.length - 1)));
-  }, [fields.length]);
+  const lastStep = Math.max(0, fields.length - 1);
+  if (currentStep > lastStep) setCurrentStep(lastStep);
 
   const safeStep = Math.min(currentStep, Math.max(0, fields.length - 1));
   const currentField = fields[safeStep];
@@ -962,10 +938,10 @@ export function AppFormView() {
   // asynchronously from api.getAppForm, so we must NOT run on formId change alone — at that
   // point `form?.customLogic` is still null and form-scoped onScreenEnter scripts would be
   // silently skipped. We wait for `loading` to flip false (the fetch for THIS form resolved,
-  // guarded against stale responses in the reset effect above) and fire exactly once per
+  // guarded against stale responses in the load effect above) and fire exactly once per
   // screen entry — keyed on appSlug::formId so answer edits / unrelated re-renders don't
-  // re-trigger it, and re-entering a form later does. Runs after the reset effect (which
-  // clears answers on formId change, in an earlier render), so prefill lands on a clean record.
+  // re-trigger it, and re-entering a form later does. The keyed visit starts with a clean
+  // answer record, so prefill cannot merge with another form's state.
   const screenEnterKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!appSlug || !formId || loading || !form) return;
@@ -986,10 +962,10 @@ export function AppFormView() {
   // Use refs to avoid stale closure when handleSubmit is called from memoized handleNext
   const answersRef = useRef(answers);
    
-  answersRef.current = answers;
+  useEffect(() => { answersRef.current = answers; }, [answers]);
   const calculatedRef = useRef(calculatedValues);
    
-  calculatedRef.current = calculatedValues;
+  useEffect(() => { calculatedRef.current = calculatedValues; }, [calculatedValues]);
 
   const submittingRef = useRef(false);
   const handleSubmit = useCallback(async () => {
@@ -1450,22 +1426,10 @@ export function AppFormView() {
         )}
       </div>
 
-      {effectiveMode === 'focused' ? (
-      <>
-      {/* Progress bar */}
-      {showProgress && (
-        <div className="absolute top-0 left-0 right-0 z-10">
-          <div
-            className="h-1 transition-all duration-300 rounded-full"
-            style={{ width: `${progress}%`, backgroundColor: primaryColor }}
-          />
-        </div>
-      )}
-
       {/* An earlier visit in this tab left answers behind (in-app navigation resets this
           component, and phones discard backgrounded tabs). Offer them rather than
           restoring silently — answers appearing on their own are their own confusion. */}
-      {recoverableDraft && Object.keys(answers).length === 0 && (
+      {recoverableDraft && Object.keys(answerEdits).length === 0 && (
         <div className="mx-4 mt-4 flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-sm dark:border-amber-500/30 dark:bg-amber-500/10 sm:flex-row sm:items-center">
           <p className="min-w-0 flex-1 text-gray-800 dark:text-slate-200">
             You had started filling this in. Pick up where you left off?
@@ -1491,6 +1455,20 @@ export function AppFormView() {
           </div>
         </div>
       )}
+
+
+      {effectiveMode === 'focused' ? (
+      <>
+      {/* Progress bar */}
+      {showProgress && (
+        <div className="absolute top-0 left-0 right-0 z-10">
+          <div
+            className="h-1 transition-all duration-300 rounded-full"
+            style={{ width: `${progress}%`, backgroundColor: primaryColor }}
+          />
+        </div>
+      )}
+
 
       {/* Main field area */}
       <div className="flex-1 flex items-center justify-center px-4 py-8">

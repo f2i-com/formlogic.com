@@ -14,6 +14,7 @@ import { VaultUnlockDialog } from '../vault/VaultUnlockDialog';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { Button } from '../ui/Button';
 import type { DataNodeWire } from '../../types/dataPlacement';
+import { deferEffect } from '../../lib/deferredEffect';
 
 function displayFingerprint(fp: string): string {
   return (fp.slice(0, 24).match(/.{1,4}/g) ?? []).join(' ');
@@ -29,8 +30,9 @@ export function DataNodesPanel() {
   const [forgetTarget, setForgetTarget] = useState<DataNodeWire | null>(null);
   const [showUnlock, setShowUnlock] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (isCurrent: () => boolean = () => true) => {
     const res = await api.getDataNodes();
+    if (!isCurrent()) return;
     if (res.error) {
       if (res.status === 403) setEnabled(false);
       return;
@@ -38,9 +40,11 @@ export function DataNodesPanel() {
     setNodes(res.data?.nodes ?? []);
   }, []);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useEffect(() => deferEffect(() => {
+    let current = true;
+    void load(() => current);
+    return () => { current = false; };
+  }), [load]);
 
   const runApprove = async (node: DataNodeWire) => {
     if (!user) return;

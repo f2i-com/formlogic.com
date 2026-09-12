@@ -196,7 +196,7 @@ describe('data-sync vectors (flcanon/1)', () => {
   it('reject vectors never verify as canonical bytes', () => {
     const vectors = loadVectors();
     for (const r of vectors.reject) {
-      let verifies = false;
+      let verifies: boolean;
       try {
         verifies = canonicalize(JSON.parse(r.json)) === r.json;
       } catch {

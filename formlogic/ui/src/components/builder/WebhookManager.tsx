@@ -1,3 +1,4 @@
+import { deferEffect } from '../../lib/deferredEffect';
 import { useState, useEffect, useCallback } from 'react';
 import { Zap, Plus, Trash2, ToggleLeft, ToggleRight, Copy, CheckCircle, XCircle, Clock, ChevronDown, ChevronUp, Pencil } from 'lucide-react';
 import { Button } from '../ui/Button';
@@ -19,7 +20,10 @@ const WEBHOOK_EVENTS = [
   { value: 'form.published', label: 'Form Published', desc: 'When the form is published' },
 ];
 
-export function WebhookManager({ formId }: WebhookManagerProps) {
+export function WebhookManager(props: WebhookManagerProps) {
+  return <FormWebhookManager key={props.formId} {...props} />;
+}
+function FormWebhookManager({ formId }: WebhookManagerProps) {
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -44,7 +48,7 @@ export function WebhookManager({ formId }: WebhookManagerProps) {
     setLoading(false);
   }, [formId]);
 
-  useEffect(() => { loadWebhooks(); }, [loadWebhooks]);
+  useEffect(() => deferEffect(() => { void loadWebhooks(); }), [loadWebhooks]);
 
   const resetForm = () => {
     setNewUrl('');

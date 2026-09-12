@@ -129,7 +129,6 @@ test.describe('launch golden paths 2', () => {
     const tag = uniq();
     const memberEmail = `e2e-member-${tag}@example.com`;
     let appId = '';
-    let slug = '';
 
     // A second, isolated browser session for the member-to-be.
     const memberCtx = await browser.newContext();
@@ -137,7 +136,7 @@ test.describe('launch golden paths 2', () => {
     try {
       const created = await call(page, 'POST', '/api/apps', { name: `E2E RBAC ${tag}` });
       appId = created.body?.app?.id ?? created.body?.id;
-      slug = created.body?.app?.slug ?? created.body?.slug;
+      const slug = created.body?.app?.slug ?? created.body?.slug;
       expect(appId && slug, JSON.stringify(created.body)).toBeTruthy();
       // The runtime serves PUBLISHED apps; a fresh app starts as a draft.
       const published = await call(page, 'PUT', `/api/apps/${appId}`, { status: 'published' });

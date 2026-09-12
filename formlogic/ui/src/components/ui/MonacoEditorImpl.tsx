@@ -131,8 +131,9 @@ declare const FormLogic: FlAppSdk;
 let compilerConfigured = false;
 
 export default function MonacoEditorImpl({ value, onChange, language = 'typescript', sdk = 'form', height, path, onMount: onMountProp }: CodeEditorProps) {
-  const onMount: OnMount = useCallback((editor, m) => {
-    const ts = m.languages.typescript;
+  const onMount: OnMount = useCallback((editor) => {
+    // Monaco 0.55 moved language-feature namespaces out of `languages`.
+    const ts = monaco.typescript;
     if (!compilerConfigured) {
       ts.typescriptDefaults.setCompilerOptions({
         target: ts.ScriptTarget.ES2020,

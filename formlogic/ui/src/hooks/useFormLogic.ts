@@ -7,6 +7,7 @@ import {
   testExpression as runTest,
 } from '../lib/formlogic';
 import type { FormField } from '../types/form';
+import { deferEffect } from '../lib/deferredEffect';
 
 /**
  * Hook for evaluating conditional logic on fields
@@ -33,7 +34,6 @@ export function useConditionalLogic(
   useEffect(() => {
     if (seededKeyRef.current === fieldIdsKey) return;
     seededKeyRef.current = fieldIdsKey;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- re-seed effect: the field SET changed externally (async form load); must re-seed all-visible synchronously to avoid a flash of empty form
     setVisibleFields(new Set(fields.map((f) => f.id)));
     setRequiredFields(new Set(fields.filter((f) => f.required).map((f) => f.id)));
   }, [fieldIdsKey, fields]);
@@ -120,7 +120,6 @@ export function useConditionalLogic(
     // debounce subsequent re-evals so typing doesn't fire a QuickJS round-trip per keystroke.
     if (firstEvalRef.current) {
       firstEvalRef.current = false;
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch effect: kick off the async evaluation (which sets isEvaluating) synchronously on first run so on-load visibility is correct with no flash
       evaluateAllConditions();
       return;
     }
@@ -288,12 +287,15 @@ export function useCalculatedField(
   // Use a ref for formData to avoid re-creating calculate on every formData change.
   // The dependencyKey already tracks the relevant dependency values.
   const formDataRef = useRef(formData);
-  // eslint-disable-next-line react-hooks/refs -- mirror ref for latest value in callbacks; not read during render output
-  formDataRef.current = formData;
+  useEffect(() => { formDataRef.current = formData; }, [formData]);
+  const calculationIdRef = useRef(0);
 
   const calculate = useCallback(async () => {
+    const calculationId = ++calculationIdRef.current;
     if (!expression) {
       setValue(null);
+      setError(null);
+      setIsCalculating(false);
       return;
     }
 
@@ -302,8 +304,10 @@ export function useCalculatedField(
 
     try {
       const result = await calculateValue(expression, formDataRef.current);
+      if (calculationId !== calculationIdRef.current) return;
       setValue(result);
     } catch (err) {
+      if (calculationId !== calculationIdRef.current) return;
       setError(err instanceof Error ? err.message : 'Calculation error');
       setValue(null);
     }
@@ -312,13 +316,17 @@ export function useCalculatedField(
   }, [expression]);
 
   useEffect(() => {
-    calculate();
+    const cancel = deferEffect(() => { void calculate(); });
+    return () => {
+      cancel();
+      calculationIdRef.current += 1;
+    };
   }, [calculate, dependencyKey]);
 
   return {
-    value,
-    isCalculating,
-    error,
+    value: expression ? value : null,
+    isCalculating: !!expression && isCalculating,
+    error: expression ? error : null,
     recalculate: calculate,
   };
 }

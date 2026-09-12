@@ -5,6 +5,8 @@ import { createPortal } from 'react-dom';
 import { logger } from '../lib/logger';
 import { mapConcurrent } from '../lib/mapConcurrent';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { useCurrentTime } from '../hooks/useCurrentTime';
+import { deferEffect } from '../lib/deferredEffect';
 import {
   FileText,
   Eye,
@@ -704,6 +706,7 @@ function QuickFind({
 }
 
 export function Dashboard() {
+  const now = useCurrentTime();
   useDocumentTitle('Dashboard');
   const navigate = useNavigate();
   const { forms, createForm, setActiveForm, deleteForm, storageMode } = useFormStore();
@@ -799,7 +802,7 @@ export function Dashboard() {
     try { return localStorage.getItem(mfaNudgeKey) === '1'; } catch { return false; }
   })();
   const accountAgeDays = user?.createdAt
-    ? (Date.now() - parseServerDate(user.createdAt).getTime()) / 86400000
+    ? (now - parseServerDate(user.createdAt).getTime()) / 86400000
     : Infinity;
   const showMfaNudge = !!user && !user.isDemo && !user.mfaEnabled && !mfaNudgeDismissed && accountAgeDays < 14;
   const dismissMfaNudge = useCallback(() => {
@@ -845,7 +848,7 @@ export function Dashboard() {
   // Browser-created demo forms keep their records in IndexedDB, even while the
   // shared demo workspace otherwise uses cloud/API mode. Read that small local
   // overlay separately so the workspace dashboard agrees with the published app.
-  useEffect(() => {
+  useEffect(() => deferEffect(() => {
     let cancelled = false;
     const browserForms = storageMode === 'api'
       ? forms.filter((form) => isDemoLocalId(form.id))
@@ -910,14 +913,14 @@ export function Dashboard() {
     });
 
     return () => { cancelled = true; };
-  }, [forms, storageMode]);
+  }), [forms, storageMode]);
 
   // Which user's data is currently on screen (cache hydration or a landed fetch).
   // Lets the fetch effect refresh silently instead of dropping back to skeletons.
   const statsShownFor = useRef<string | null>(null);
 
   // Hydrate the last visit's aggregates instantly (stale-while-revalidate).
-  useEffect(() => {
+  useEffect(() => deferEffect(() => {
     if (storageMode !== 'api' || !user?.id) return;
     if (statsShownFor.current === user.id) return;
     const cached = loadUiCache<DashboardStatsCache>('dashboard-stats', user.id);
@@ -929,7 +932,7 @@ export function Dashboard() {
     setApiPulses(cached.data.pulses);
     setApiRecent(cached.data.recent);
     setStatsReady(true);
-  }, [storageMode, user?.id]);
+  }), [storageMode, user?.id]);
 
   // Fetch stats from API when in API mode
   useEffect(() => {
@@ -1099,7 +1102,7 @@ export function Dashboard() {
   // Load which app each form belongs to (cloud mode) so Recent Forms can tag it (badge only).
   // Shared cached fetch (see lib/appGroups): the last visit's mapping applies instantly,
   // the per-app fan-out refreshes it in the background.
-  useEffect(() => {
+  useEffect(() => deferEffect(() => {
     let cancelled = false;
     if (storageMode !== 'api') { setAppOfForm({}); return; }
     const toMap = (groups: AppGroup[]) => {
@@ -1113,7 +1116,7 @@ export function Dashboard() {
       .then((groups) => { if (!cancelled) setAppOfForm(toMap(groups)); })
       .catch(() => { /* badge-only data — keep whatever is shown */ });
     return () => { cancelled = true; };
-  }, [storageMode, user?.id]);
+  }), [storageMode, user?.id]);
 
   // Preview a form in a NEW TAB and IN CONTEXT: fresh app-context lookup on click (shared
   // mechanism) — one published app opens the app runtime at that form, several ask which,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api';
 import { isDemoLocalId } from '../../lib/demoLocal';
 import { toast } from '../../stores/toastStore';
@@ -236,7 +236,6 @@ export function CustomScreenRuntime({
   // draining its task queue briefly after React commits the new one; its
   // messages must be refused or a stale subscribe could start an ownerless
   // feed AFTER the reload cleanup ran (review 2026-07-17).
-  const genRef = useRef(0);
   // Live subscription relay (events/captions): host-owned feeds pushed into
   // the iframe as __flPush frames. A ref so re-renders never drop active
   // subscriptions; cleared when the iframe reloads and on unmount.
@@ -253,7 +252,7 @@ export function CustomScreenRuntime({
   // Drive the screen's light/dark from the viewer's theme (same contract as the app-home runtime).
   const colorScheme = useUIStore((s) => s.theme);
   const schemeRef = useRef(colorScheme);
-  schemeRef.current = colorScheme;
+  useEffect(() => { schemeRef.current = colorScheme; }, [colorScheme]);
 
   // Resolve the screen to { html, css, js }: a single precompiled `js` (fast, public pages), or compile
   // `ts` / bundle a multi-file `files` project on the fly (lazy esbuild — never weighs on `js` screens).
@@ -265,23 +264,31 @@ export function CustomScreenRuntime({
     return () => { cancelled = true; };
   }, [screen.html, screen.css, screen.js, screen.ts, screen.files, screen.entry]);
 
+  // Content changes start a new document generation. Snapshot its initial theme
+  // without rebuilding the live document when only the viewer's theme changes.
+  const documentKey = JSON.stringify([assets.html, assets.css, assets.js, accentColor]);
+  const [documentState, setDocumentState] = useState({ key: documentKey, generation: 0, scheme: colorScheme });
+  if (documentState.key !== documentKey) {
+    setDocumentState({ key: documentKey, generation: documentState.generation + 1, scheme: colorScheme });
+  }
+  const { generation, scheme: initialScheme } = documentState;
+
   const srcDoc = useMemo(() => {
     const css = assets.css || '';
     const html = assets.html || '';
     // Neutralize an early </script> in user code so it can't break out of its <script> block.
     const js = (assets.js || '').replace(/<\/script>/gi, '<\\/script>');
-    // Initial mode from a ref so theme toggles update via postMessage without rebuilding the iframe.
-    const dark = schemeRef.current === 'dark';
+    // The document keeps its initial palette; later theme changes use postMessage.
+    const dark = initialScheme === 'dark';
     const accent = accentColor || '#6366f1';
     const palette = screenPaletteCss(accent, readableForegroundColor(accent));
-    // Each rebuilt document gets a fresh generation stamp (see genRef).
-    genRef.current += 1;
+    // Each rebuilt document carries its generation stamp.
     // SDK shim goes in <head> so window.FormLogic exists before any user script (inline or block) runs.
     return `<!doctype html><html class="${dark ? 'fl-dark' : ''}"><head><meta charset="utf-8">`
       + `<meta http-equiv="Content-Security-Policy" content="${SCREEN_CSP}">`
       + `<meta name="viewport" content="width=device-width, initial-scale=1">`
       + `<meta name="color-scheme" content="light dark">`
-      + `<script>var __flGen=${genRef.current};${SDK_SHIM}${SCREEN_THEME_SHIM}</script>`
+      + `<script>var __flGen=${generation};${SDK_SHIM}${SCREEN_THEME_SHIM}</script>`
       + `<style>html,body{margin:0;font-family:system-ui,sans-serif}${palette}${css}</style></head>`
       + `<body>${html}<script>${js}</script></body></html>`;
     // Depend on the CONTENT strings, not the `assets` object identity: the
@@ -289,26 +296,24 @@ export function CustomScreenRuntime({
     // mount, and recomputing srcDoc there would bump the gen stamp and mutate
     // the live iframe's srcdoc — which adds a browser history entry (the
     // "press Back twice" bug). Identical content ⇒ same deps ⇒ no rebuild.
-  }, [assets.html, assets.css, assets.js, accentColor]);
+  }, [assets.html, assets.css, assets.js, accentColor, generation, initialScheme]);
 
   // Hand the composed document to the sandbox host. Both sides of the load
   // race are covered: the host pings __flScreenHostReady once its listener is
   // up (it may beat this effect), and the iframe's onLoad below re-sends —
   // the host accepts exactly one init, so duplicates are inert.
-  const sendDoc = () => {
+  const sendDoc = useCallback(() => {
     iframeRef.current?.contentWindow?.postMessage({ __flScreenDoc: srcDoc }, '*');
-  };
-  const sendDocRef = useRef(sendDoc);
-  sendDocRef.current = sendDoc;
+  }, [srcDoc]);
   useEffect(() => {
     const onReady = (e: MessageEvent) => {
       if (!e.data || !(e.data as { __flScreenHostReady?: boolean }).__flScreenHostReady) return;
       if (!iframeRef.current || e.source !== iframeRef.current.contentWindow) return;
-      sendDocRef.current();
+      sendDoc();
     };
     window.addEventListener('message', onReady);
     return () => window.removeEventListener('message', onReady);
-  }, []);
+  }, [sendDoc]);
 
   // Push theme changes into the already-loaded iframe (instant, no reload).
   useEffect(() => {
@@ -335,11 +340,12 @@ export function CustomScreenRuntime({
       const m = e.data;
       // Only accept SDK messages from OUR sandboxed iframe.
       if (!m || !m.__fl || !iframeRef.current || e.source !== iframeRef.current.contentWindow) return;
+      const requestWindow = iframeRef.current.contentWindow;
       // …and only from the CURRENT document generation: the WindowProxy
       // survives a srcdoc reload, so the dying predecessor can still post —
       // acting on it could start an ownerless subscription after the reload
       // cleanup already ran. Refuse with an honest error instead.
-      if (typeof m.gen === 'number' && m.gen !== genRef.current) {
+      if (typeof m.gen === 'number' && m.gen !== generation) {
         iframeRef.current.contentWindow?.postMessage(
           { __flReply: true, id: m.id, error: 'This screen was reloaded — request ignored.' },
           '*'
@@ -594,11 +600,13 @@ export function CustomScreenRuntime({
       } catch (err) {
         error = err instanceof Error ? err.message : 'Request failed';
       }
-      iframeRef.current?.contentWindow?.postMessage({ __flReply: true, id: m.id, result, error }, '*');
+      // An awaited API request belongs to its original document, even after reload.
+      if (iframeRef.current?.contentWindow !== requestWindow) return;
+      requestWindow?.postMessage({ __flReply: true, id: m.id, result, error }, '*');
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [formId, formTitle, fields, user, publicMode, appSlug, onOpenForm, onOpenRecords, record, fetchRelated, bridge, onOpenScreen, onOpenRecord, onCeremony, screen._trust]);
+  }, [formId, formTitle, fields, user, publicMode, appSlug, onOpenForm, onOpenRecords, record, fetchRelated, bridge, onOpenScreen, onOpenRecord, onCeremony, screen._trust, generation]);
 
   return (
     <iframe
@@ -606,12 +614,12 @@ export function CustomScreenRuntime({
       // one-shot per host): keying on the generation stamp (bumped when the
       // doc rebuilds) remounts the iframe, preserving the old srcdoc reload
       // semantics (gen bump + subs cleanup).
-      key={genRef.current}
+      key={generation}
       ref={iframeRef}
       title="Custom screen"
       sandbox="allow-scripts"
       src={SCREEN_HOST_URL}
-      onLoad={() => sendDocRef.current()}
+      onLoad={sendDoc}
       className={className || 'w-full h-full border-0'}
     />
   );

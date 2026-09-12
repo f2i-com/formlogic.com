@@ -21,6 +21,9 @@ import { isEncryptedEnvelope } from '../lib/crypto/envelope';
 import { useFittedColumns } from '../hooks/useFittedColumns';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { publicUnfillableFieldLabels } from '../lib/publicForm';
+import { deferEffect } from '../lib/deferredEffect';
+import { useCurrentTime } from '../hooks/useCurrentTime';
+import type { LocalFormResponse } from '../types/form';
 
 interface DailyResponse {
   day: string;
@@ -42,7 +45,8 @@ export default function FormAnalytics() {
   const navigate = useNavigate();
   const location = useLocation();
   const { getForm, loadFullForm, storageMode } = useFormStore();
-  const { getResponsesByFormId } = useResponseStore();
+  const allLocalResponses = useResponseStore((state) => state.responses);
+  const now = useCurrentTime();
   const user = useAuthStore((state) => state.user);
   // True while the form store is still hydrating — so a deep-link/refresh shows a
   // loading state instead of flashing "Form not found" before the form arrives.
@@ -50,10 +54,19 @@ export default function FormAnalytics() {
 
   const [analytics, setAnalytics] = useState<FormAnalyticsType | null>(null);
   // Real response rows for API/cloud mode (the local store is empty there).
-  const [apiResponses, setApiResponses] = useState<ReturnType<typeof getResponsesByFormId>>([]);
+  const [apiResponses, setApiResponses] = useState<LocalFormResponse[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  const nextAnalyticsKey = `${formId ?? ''}/${storageMode}/${user?.id ?? ''}/${reloadToken}`;
+  const [analyticsKey, setAnalyticsKey] = useState(nextAnalyticsKey);
+  if (analyticsKey !== nextAnalyticsKey) {
+    setAnalyticsKey(nextAnalyticsKey);
+    setAnalytics(null);
+    setApiResponses([]);
+    setLoadError(null);
+    setIsLoading(storageMode === 'api' && !!user && !!formId);
+  }
 
   // Load full form data (with fields) from API
   useEffect(() => {
@@ -61,8 +74,10 @@ export default function FormAnalytics() {
   }, [formId, loadFullForm]);
 
   const form = formId ? getForm(formId) : undefined;
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- getResponsesByFormId returns a fresh .filter() array each call and its action ref is stable; recomputing per render is required so localAnalytics reflects live store data — memoizing here would freeze stale responses
-  const localResponses = formId ? getResponsesByFormId(formId) : [];
+  const localResponses = useMemo(
+    () => allLocalResponses.filter((response) => response.formId === formId),
+    [allLocalResponses, formId],
+  );
   // Use server-fetched responses in API mode (local store is empty in cloud mode),
   // so the field breakdown and Recent Responses table reflect real data.
   const responses = storageMode === 'api' ? apiResponses : localResponses;
@@ -90,11 +105,8 @@ export default function FormAnalytics() {
   }, [localResponses]);
 
   // Fetch analytics from API
-  useEffect(() => {
+  useEffect(() => deferEffect(() => {
     let cancelled = false;
-    // Clear the previous form's API analytics so it doesn't briefly show for the
-    // new form (or persist if the new fetch fails / isn't applicable).
-    setAnalytics(null);
 
     async function fetchAnalytics() {
       if (storageMode === 'api' && user && formId) {
@@ -127,7 +139,7 @@ export default function FormAnalytics() {
               ...r,
               completionTime: r.completionTime ?? r.metadata?.completionTime ?? 0,
             }));
-            setApiResponses(norm as unknown as ReturnType<typeof getResponsesByFormId>);
+            setApiResponses(norm as LocalFormResponse[]);
           }
         } catch (error) {
           if (cancelled) return;
@@ -141,7 +153,7 @@ export default function FormAnalytics() {
 
     fetchAnalytics();
     return () => { cancelled = true; };
-  }, [formId, storageMode, user, reloadToken]);
+  }), [formId, storageMode, user, reloadToken]);
 
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -168,8 +180,7 @@ export default function FormAnalytics() {
     };
   }, [exportMenuOpen]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- derived inline from the live `form` store object so fieldBreakdown recomputes whenever the form's fields change; the array is only newly allocated in the undefined-form branch
-  const formFields = form?.fields ?? [];
+  const formFields = useMemo(() => form?.fields ?? [], [form]);
 
   // Calculate field breakdown statistics
   const fieldBreakdown = useMemo(() => {
@@ -273,7 +284,6 @@ export default function FormAnalytics() {
   // server's per-day series (covers ALL responses, not just the fetched page);
   // fall back to the in-memory responses for local mode.
   const weeklyTrend = useMemo(() => {
-    const now = Date.now();
     const oneWeekAgo = now - 7 * 24 * 60 * 60 * 1000;
     const twoWeeksAgo = now - 14 * 24 * 60 * 60 * 1000;
     let thisWeek = 0;
@@ -296,7 +306,7 @@ export default function FormAnalytics() {
       // null = no prior week to compare against
       pct: lastWeek > 0 ? Math.round(((thisWeek - lastWeek) / lastWeek) * 100) : null,
     };
-  }, [analytics, responses]);
+  }, [analytics, responses, now]);
 
   // Responses Over Time — selectable window over the (up to 30-day) per-day counts.
   const [rangeDays, setRangeDays] = useState<ChartRange>(7);
@@ -316,7 +326,7 @@ export default function FormAnalytics() {
     }
     const out: DailyResponse[] = [];
     for (let i = rangeDays - 1; i >= 0; i--) {
-      const d = new Date();
+      const d = new Date(now);
       d.setDate(d.getDate() - i);
       out.push({
         day: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
@@ -324,8 +334,7 @@ export default function FormAnalytics() {
       });
     }
     return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- localResponses is a fresh array each render by design (see above); keying on its length + analytics keeps the memo honest without thrashing
-  }, [analytics, localResponses.length, rangeDays]);
+  }, [analytics, localResponses, rangeDays, now]);
   const rangeTotal = useMemo(() => dailySeries.reduce((a, d) => a + d.count, 0), [dailySeries]);
 
   // Chart inks follow the mode (subscribed, so a theme toggle re-renders the chart);

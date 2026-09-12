@@ -1,3 +1,4 @@
+import { deferEffect } from '../../lib/deferredEffect';
 import { useState, useEffect, useCallback } from 'react';
 import { History, RotateCcw, Loader2, Inbox } from 'lucide-react';
 import { Modal } from '../ui/Modal';
@@ -26,7 +27,10 @@ interface FormVersionHistoryProps {
  * author roll back to a previous version. Wires the previously dead
  * getFormVersions / restoreFormVersion endpoints.
  */
-export function FormVersionHistory({ isOpen, onClose, formId, onRestored }: FormVersionHistoryProps) {
+export function FormVersionHistory(props: FormVersionHistoryProps) {
+  return <FormVersionHistoryVisit key={props.formId} {...props} />;
+}
+function FormVersionHistoryVisit({ isOpen, onClose, formId, onRestored }: FormVersionHistoryProps) {
   const [versions, setVersions] = useState<VersionRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [restoreTarget, setRestoreTarget] = useState<number | null>(null);
@@ -44,9 +48,9 @@ export function FormVersionHistory({ isOpen, onClose, formId, onRestored }: Form
     }
   }, [formId]);
 
-  useEffect(() => {
-    if (isOpen) load();
-  }, [isOpen, load]);
+  useEffect(() => deferEffect(() => {
+    if (isOpen) void load();
+  }), [isOpen, load]);
 
   const handleRestore = async (version: number) => {
     setRestoring(true);

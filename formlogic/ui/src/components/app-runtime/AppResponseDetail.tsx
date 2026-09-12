@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { deferEffect } from '../../lib/deferredEffect';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Save, Trash2, Pencil, X, Link2, AlertTriangle, Lock } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
@@ -24,6 +25,12 @@ const FULL_WIDTH_TYPES = ['long_text', 'signature', 'file_upload'];
 
 export function AppResponseDetail() {
   const { appSlug, formId, responseId } = useParams();
+  const userId = useAuthStore((state) => state.user?.id ?? 'anonymous');
+  return <ResponseVisit key={`${userId}:${appSlug}:${formId}:${responseId}`} />;
+}
+
+function ResponseVisit() {
+  const { appSlug, formId, responseId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
   const authUser = useAuthStore((s) => s.user);
@@ -46,17 +53,19 @@ export function AppResponseDetail() {
   // ?edit=1 deep-links straight into edit mode (singleton settings-style forms land here from
   // the form view). Applied once the record is loaded; view-only roles just see the record.
   const wantEdit = new URLSearchParams(location.search).get('edit') === '1';
-  useEffect(() => {
-    if (wantEdit && response && formId && canEdit(formId)) setEditing(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- canEdit is a stable store action
-  }, [wantEdit, response, formId]);
+  const [editRequested, setEditRequested] = useState(false);
+  if (wantEdit && response && formId && canEdit(formId) && !editRequested) {
+    setEditRequested(true);
+    setEditing(true);
+  }
+  if (!wantEdit && editRequested) setEditRequested(false);
   // Exclude layout-only screens (they carry no answer) so they don't render as empty
   // "No answer" rows — or, in edit mode, as bogus editable inputs the backend discards.
   const fields = ((runtimeForm?.fields ?? []) as Array<{ id: string; label: string; type: string; properties?: Record<string, unknown> }>)
     .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type));
   const hasLinkedFields = fields.some((f) => f.type === 'linked_record');
 
-  useEffect(() => {
+  useEffect(() => deferEffect(() => {
     if (appSlug && formId && responseId && config) {
        
       setLoading(true);
@@ -109,7 +118,7 @@ export function AppResponseDetail() {
     // `fields` derives purely from config+formId (already deps) but is a fresh array per render —
     // listing it would refire the fetch every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appSlug, formId, responseId, config, hasLinkedFields]);
+  }), [appSlug, formId, responseId, config, hasLinkedFields]);
 
   // History-aware back: return to wherever the user came from (table, related-records
   // panel, linked-record chip), falling back to the responses table on a direct load.

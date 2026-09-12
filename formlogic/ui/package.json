@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=24"
+  },
   "scripts": {
     "dev": "vite",
     "capture:dashboard-preview": "node scripts/capture-dashboard-preview.mjs",
@@ -16,6 +19,7 @@
     "test:unit": "vitest",
     "test:e2e": "playwright test",
     "test:zipp-sharing": "node scripts/check-zipp-sharing.mjs",
+    "test:tooling": "node scripts/check-tooling.mjs",
     "test:hosted-runtime": "node --test scripts/hosted-runtime-artifact.test.mjs",
     "build:hosted-runtime": "node scripts/build-hosted-runtime.mjs"
   },
@@ -48,27 +52,32 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",
-    "@eslint/js": "^9.39.1",
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.61.1",
     "@types/jsdom": "^28.0.3",
     "@types/libsodium-wrappers-sumo": "^0.8.2",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
-    "@types/uuid": "^10.0.0",
-    "@vitejs/plugin-react": "^5.1.1",
+    "@vitejs/plugin-react": "^6.1.1",
     "autoprefixer": "^10.4.23",
-    "eslint": "^9.39.1",
-    "eslint-plugin-react-hooks": "7.0.1",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.10.0",
+    "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-react-refresh": "^0.5.6",
-    "globals": "^16.5.0",
+    "globals": "^17.11.0",
     "jsdom": "^29.1.1",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.18",
     "typescript": "~5.9.3",
-    "typescript-eslint": "^8.46.4",
-    "vite": "^7.2.4",
-    "vite-plugin-pwa": "^1.2.0",
+    "typescript-eslint": "^8.70.0",
+    "vite": "^8.3.0",
+    "vite-plugin-pwa": "^1.3.0",
     "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "monaco-editor": {
+      "dompurify": "^3.4.15"
+    }
   }
 }

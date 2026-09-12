@@ -25,7 +25,6 @@ export const DynamicIcon = React.memo(function DynamicIcon({
   }
 
   // `Icon` is a stable module-level reference from ICON_MAP, not a component constructed during
-  // render — so it does not remount/reset on each render. The lint can't see through the lookup.
-  // eslint-disable-next-line react-hooks/static-components
+  // render — so it does not remount/reset on each render.
   return <Icon className={className} style={style} />;
 });

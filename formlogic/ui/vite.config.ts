@@ -153,6 +153,11 @@ export default defineConfig(({ mode }) => {
           'hosted-runtime/**',
           '**/esbuild-*.wasm',
           '**/ts.worker-*.js',
+          '**/editor.worker-*.js',
+          '**/css.worker-*.js',
+          '**/html.worker-*.js',
+          '**/json.worker-*.js',
+          '**/editor.api-*.js',
           '**/MonacoEditorImpl-*.js',
           '**/screen-host.html',
           '**/zipp_wasm_bg-*.wasm',
@@ -254,6 +259,8 @@ export default defineConfig(({ mode }) => {
     format: 'es',
   },
   build: {
+    // Keep the Vite 7 browser support floor while migrating the bundler.
+    target: ['chrome107', 'edge107', 'firefox104', 'safari16'],
     // Do NOT wipe the output directory.
     //
     // In the bundle deployment this repo documents, the PHP backend is COPIED
@@ -269,18 +276,20 @@ export default defineConfig(({ mode }) => {
     // clears them. That is a far better trade than a build step that silently
     // breaks the deployment it is building for.
     emptyOutDir: false,
-    rollupOptions: {
+    rolldownOptions: {
       output: {
         // Split large vendor libs out of the main chunk so the initial app
         // bundle is smaller and these cache independently across deploys.
-        manualChunks: {
-          react: ['react', 'react-dom', 'react-router-dom'],
-          motion: ['framer-motion'],
-          // lucide-react is intentionally NOT chunked here: icons are now imported
-          // by explicit name (see lib/iconUtils.ts) so they tree-shake and fold
-          // into the component chunks that use them. A dedicated chunk would have
-          // re-bundled the whole ~1,500-icon set.
-          dnd: ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities'],
+        codeSplitting: {
+          groups: [
+            { name: 'react', test: /[/\\]node_modules[/\\](react|react-dom|react-router|react-router-dom|scheduler)[/\\]/, priority: 20 },
+            { name: 'motion', test: /[/\\]node_modules[/\\](framer-motion|motion-dom|motion-utils)[/\\]/ },
+            // lucide-react is intentionally NOT chunked here: icons are now imported
+            // by explicit name (see lib/iconUtils.ts) so they tree-shake and fold
+            // into the component chunks that use them. A dedicated chunk would have
+            // re-bundled the whole ~1,500-icon set.
+            { name: 'dnd', test: /[/\\]node_modules[/\\]@dnd-kit[/\\](core|sortable|utilities)[/\\]/ },
+          ],
         },
       },
     },

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
@@ -83,12 +83,11 @@ export function AppCustomScreenRuntime({
   // dying predecessor document can still drain queued tasks after React commits
   // the new one — its RPCs must be refused, or a stale action could execute
   // against the NEW screen's forms/trust/user/navigation.
-  const genRef = useRef(0);
   const user = useAuthStore((s) => s.user);
   // Drive the screen's light/dark from the viewer's app-mode toggle.
   const colorScheme = useUIStore((s) => s.theme);
   const schemeRef = useRef(colorScheme);
-  schemeRef.current = colorScheme;
+  useEffect(() => { schemeRef.current = colorScheme; }, [colorScheme]);
   const accentColor = accent || '#6366f1';
 
   // Resolve to { html, css, js }: precompiled `js`, or compile `ts` / bundle multi-file `files` on the fly.
@@ -100,28 +99,35 @@ export function AppCustomScreenRuntime({
     return () => { cancelled = true; };
   }, [screen.html, screen.css, screen.js, screen.ts, screen.files, screen.entry]);
 
+  // Content changes start a new document generation. Snapshot its initial theme
+  // without rebuilding the live document when only the viewer's theme changes.
+  const documentKey = JSON.stringify([assets.html, assets.css, assets.js, accentColor]);
+  const [documentState, setDocumentState] = useState({ key: documentKey, generation: 0, scheme: colorScheme });
+  if (documentState.key !== documentKey) {
+    setDocumentState({ key: documentKey, generation: documentState.generation + 1, scheme: colorScheme });
+  }
+  const { generation, scheme: initialScheme } = documentState;
+
   const srcDoc = useMemo(() => {
     const css = assets.css || '';
     const html = assets.html || '';
     const js = (assets.js || '').replace(/<\/script>/gi, '<\\/script>');
-    // Initial mode is read from a ref (not a memo dep) so a theme toggle updates the screen via
-    // postMessage instead of rebuilding the iframe (which would reload + refetch the dashboard).
-    const dark = schemeRef.current === 'dark';
+    // The document keeps its initial palette; later theme changes use postMessage.
+    const dark = initialScheme === 'dark';
     const palette = screenPaletteCss(accentColor, readableForegroundColor(accentColor));
     // Each rebuilt document gets a fresh generation stamp (audit FL-15).
-    genRef.current += 1;
     return `<!doctype html><html class="${dark ? 'fl-dark' : ''}"><head><meta charset="utf-8">`
       + `<meta http-equiv="Content-Security-Policy" content="${SCREEN_CSP}">`
       + `<meta name="viewport" content="width=device-width, initial-scale=1">`
       + `<meta name="color-scheme" content="light dark">`
-      + `<script>var __flGen=${genRef.current};${APP_SDK_SHIM}${SCREEN_THEME_SHIM}</script>`
+      + `<script>var __flGen=${generation};${APP_SDK_SHIM}${SCREEN_THEME_SHIM}</script>`
       + `<style>html,body{margin:0;font-family:system-ui,sans-serif}${palette}${css}</style></head>`
       + `<body>${html}<script>${js}</script></body></html>`;
     // Depend on the CONTENT strings, not the `assets` object identity (same reasoning
     // as CustomScreenRuntime): the async asset-resolve replaces `assets` with an
     // equal-valued object on mount, and recomputing here would bump the generation
     // and remount the iframe for nothing.
-  }, [assets.html, assets.css, assets.js, accentColor]);
+  }, [assets.html, assets.css, assets.js, accentColor, generation, initialScheme]);
 
   // A rebuilt document is a brand-new client: give it a fresh SDK rate budget so
   // the old document's spend can't throttle (or subsidize) the new one (FL-15).
@@ -136,20 +142,18 @@ export function AppCustomScreenRuntime({
   // script — so every app home code screen was blank in a production build
   // while working in dev, where no CSP is injected. /screen-host.html is a real
   // same-origin document with its own CSP; it accepts exactly one init.
-  const sendDoc = () => {
+  const sendDoc = useCallback(() => {
     iframeRef.current?.contentWindow?.postMessage({ __flScreenDoc: srcDoc }, '*');
-  };
-  const sendDocRef = useRef(sendDoc);
-  sendDocRef.current = sendDoc;
+  }, [srcDoc]);
   useEffect(() => {
     const onReady = (e: MessageEvent) => {
       if (!e.data || !(e.data as { __flScreenHostReady?: boolean }).__flScreenHostReady) return;
       if (!iframeRef.current || e.source !== iframeRef.current.contentWindow) return;
-      sendDocRef.current();
+      sendDoc();
     };
     window.addEventListener('message', onReady);
     return () => window.removeEventListener('message', onReady);
-  }, []);
+  }, [sendDoc]);
 
   // Push theme changes into the already-loaded iframe (instant, no reload).
   useEffect(() => {
@@ -163,11 +167,12 @@ export function AppCustomScreenRuntime({
     const handler = async (e: MessageEvent) => {
       const m = e.data;
       if (!m || !m.__fl || !iframeRef.current || e.source !== iframeRef.current.contentWindow) return;
+      const requestWindow = iframeRef.current.contentWindow;
       // Only the CURRENT document generation may act (audit FL-15): the WindowProxy
       // survives a srcdoc swap, so the dying predecessor can still post — executing
       // its requests against the new screen's forms/trust would be a stale-document
       // confused-deputy. Refuse with an honest error instead.
-      if (typeof m.gen === 'number' && m.gen !== genRef.current) {
+      if (typeof m.gen === 'number' && m.gen !== generation) {
         iframeRef.current.contentWindow?.postMessage(
           { __flReply: true, id: m.id, error: 'This screen was reloaded — request ignored.' },
           '*'
@@ -234,23 +239,25 @@ export function AppCustomScreenRuntime({
       } catch (err) {
         error = err instanceof Error ? err.message : 'Request failed';
       }
-      iframeRef.current?.contentWindow?.postMessage({ __flReply: true, id: m.id, result, error }, '*');
+      // An awaited API request belongs to its original document, even after reload.
+      if (iframeRef.current?.contentWindow !== requestWindow) return;
+      requestWindow?.postMessage({ __flReply: true, id: m.id, result, error }, '*');
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [appSlug, appName, forms, user, onNavigate, accentColor, screen._trust]);
+  }, [appSlug, appName, forms, user, onNavigate, accentColor, screen._trust, generation]);
 
   return (
     <iframe
       // A changed document remounts the iframe (audit FL-15): keying on the
       // generation gives the new document a FRESH WindowProxy, so pending RPCs
       // from the predecessor can never be confused with the current screen's.
-      key={genRef.current}
+      key={generation}
       ref={iframeRef}
       title="App home"
       sandbox="allow-scripts"
       src={SCREEN_HOST_URL}
-      onLoad={() => sendDocRef.current()}
+      onLoad={sendDoc}
       className={className || 'w-full h-full border-0'}
     />
   );

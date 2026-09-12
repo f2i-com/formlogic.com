@@ -36,6 +36,7 @@ import { useFormStore } from '../stores/formStore';
 import { useAppStore } from '../stores/appStore';
 import { useAuthStore } from '../stores/authStore';
 import { useMarketplaceChrome } from '../lib/marketplaceChrome';
+import { deferEffect } from '../lib/deferredEffect';
 
 type PackDetail = CatalogPack & {
   versions: PackVersionInfo[];
@@ -46,6 +47,11 @@ type PackDetail = CatalogPack & {
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 export default function PackDetailPage() {
+  const { slug } = useParams<{ slug: string }>();
+  return <PackDetailContent key={slug} />;
+}
+
+function PackDetailContent() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
@@ -93,27 +99,6 @@ export default function PackDetailPage() {
   useEffect(() => {
     document.title = pack ? `${pack.name} — FormLogic marketplace` : 'Marketplace — FormLogic';
   }, [pack]);
-
-  useEffect(() => {
-    if (!slug) return;
-    // Guard against stale responses: if the user navigates slug A -> B while A's
-    // requests are in flight, A must not clobber B's pack/ratings on resolve.
-    let cancelled = false;
-    const shouldApply = () => !cancelled;
-    loadPackDetail(shouldApply);
-    loadRatings(shouldApply);
-    checkInstalled();
-    // Find the demo app(s) installed from this pack on the shared Demo account (matched by catalog
-    // slug) so signed-out + demo visitors can view it live.
-    api.getDemoApps().then((r) => {
-      if (cancelled) return;
-      setDemoApps((r.data?.apps ?? [])
-        .filter((a) => a.catalogSlug === slug && a.slug)
-        .map((a) => ({ slug: a.slug, name: a.name })));
-    }).catch(() => { /* demo may be disabled */ });
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slug]);
 
   const launchDemo = useCallback(async (appSlug: string) => {
     if (launchingDemo) return;
@@ -183,8 +168,23 @@ export default function PackDetailPage() {
     }
   }, [pack]);
 
+  useEffect(() => deferEffect(() => {
+    if (!slug) return;
+    let cancelled = false;
+    const shouldApply = () => !cancelled;
+    void loadPackDetail(shouldApply);
+    void loadRatings(shouldApply);
+    api.getDemoApps().then((r) => {
+      if (cancelled) return;
+      setDemoApps((r.data?.apps ?? [])
+        .filter((a) => a.catalogSlug === slug && a.slug)
+        .map((a) => ({ slug: a.slug, name: a.name })));
+    }).catch(() => { /* demo may be disabled */ });
+    return () => { cancelled = true; };
+  }), [slug, loadPackDetail, loadRatings]);
+
   useEffect(() => {
-    if (pack) checkInstalled();
+    if (pack) return deferEffect(() => { void checkInstalled(); });
   }, [pack, checkInstalled]);
 
   // Import an already-downloaded pack (shared by the direct + consent-confirmed paths).

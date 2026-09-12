@@ -182,16 +182,23 @@ function ChartsPanel({ reports, appName, isOwner, onNew, onEdit, onDelete }: {
   const [clickedId, setClickedId] = useState<string | null>(null);
   const selected = reports.find((r) => r.id === clickedId) ?? reports[0] ?? null;
   const [result, setResult] = useState<AppReportResult | null>(null);
-  const [running, setRunning] = useState(false);
+  const [running, setRunning] = useState(!!selected);
   const [err, setErr] = useState<string | null>(null);
+  const [resultSelection, setResultSelection] = useState(selected);
+  if (resultSelection !== selected) {
+    setResultSelection(selected);
+    setResult(null);
+    setRunning(!!selected);
+    setErr(null);
+  }
+
 
   const formName = (fid: string) => config?.forms.find((f) => f.formId === fid)?.displayName ?? 'form';
 
   useEffect(() => {
-    if (!selected) { setResult(null); return; }
+    if (!selected) return;
     let cancelled = false;
     (async () => {
-      setRunning(true); setErr(null);
       try {
         const res = await runReport(selected.spec);
         if (!cancelled) setResult(res);

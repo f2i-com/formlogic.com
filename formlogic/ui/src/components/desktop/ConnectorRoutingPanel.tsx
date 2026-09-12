@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, type ConnectorAssignments } from '../../lib/api';
 import { parseServerDate } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
+import { deferEffect } from '../../lib/deferredEffect';
+import { useCurrentTime } from '../../hooks/useCurrentTime';
 
 /**
  * Connector routing (ROUTE-001): which linked desktop services a connector's
@@ -16,25 +18,28 @@ import { toast } from '../../stores/toastStore';
 export function ConnectorRoutingPanel() {
   const [data, setData] = useState<ConnectorAssignments | null>(null);
   const [savingConnector, setSavingConnector] = useState<string | null>(null);
+  const now = useCurrentTime(15_000);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (isCurrent: () => boolean) => {
     try {
       const res = await api.getConnectorAssignments();
-      if (res.data) setData(res.data);
+      if (isCurrent() && res.data) setData(res.data);
     } catch {
       // Silent: this panel is supplementary — the desktops list above already
       // surfaces connectivity problems.
     }
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => deferEffect(() => {
+    let current = true;
+    void load(() => current);
+    return () => { current = false; };
+  }), [load]);
 
   if (!data || data.assignments.length === 0) return null;
 
   const fresh = (lastSeenAt: string | null) =>
-    lastSeenAt !== null && Date.now() - parseServerDate(lastSeenAt).getTime() < 90_000;
+    lastSeenAt !== null && now - parseServerDate(lastSeenAt).getTime() < 90_000;
 
   const pick = async (connectorId: string, appId: string, desktopConnectionId: string | null) => {
     setSavingConnector(connectorId);

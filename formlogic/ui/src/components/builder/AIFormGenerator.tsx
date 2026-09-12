@@ -1,3 +1,4 @@
+import { deferEffect } from '../../lib/deferredEffect';
 import { useState, useRef, useEffect } from 'react';
 import { Sparkles, FileText, Image, Upload, AlertCircle, Wand2 } from 'lucide-react';
 import { Modal } from '../ui/Modal';
@@ -66,10 +67,14 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
   const generationAbortRef = useRef<AbortController | null>(null);
 
   // Check AI availability on mount
-  useEffect(() => {
+  useEffect(() => deferEffect(() => {
     if (isOpen) {
-      checkAvailability().catch(() => setIsAvailable(false));
       let cancelled = false;
+      void api.getAIStatus().then((result) => {
+        if (cancelled) return;
+        setIsAvailable(result.data?.available ?? false);
+        setAiMessage(result.data?.message || (result.data ? '' : 'AI is unavailable right now.'));
+      }).catch(() => { if (!cancelled) setIsAvailable(false); });
       setDesktopProvidersLoading(true);
       setDesktopProvidersError('');
       desktopClient.ai.sources().then((result) => {
@@ -97,7 +102,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
         cancelled = true;
       };
     }
-  }, [isOpen]);
+  }), [isOpen]);
 
   // Cleanup preview URL on unmount
   useEffect(() => {
@@ -109,17 +114,6 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, e
   }, [previewUrl]);
 
   useEffect(() => () => generationAbortRef.current?.abort(), []);
-
-  const checkAvailability = async () => {
-    const result = await api.getAIStatus();
-    if (result.data) {
-      setIsAvailable(result.data.available);
-      setAiMessage(result.data.message || '');
-    } else {
-      setIsAvailable(false);
-      setAiMessage('AI is unavailable right now.');
-    }
-  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type: 'document' | 'image') => {
     const file = e.target.files?.[0];

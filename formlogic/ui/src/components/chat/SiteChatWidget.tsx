@@ -191,6 +191,12 @@ function ToolProposalCard({
 // ---------------------------------------------------------------------------
 
 export function SiteChatWidget() {
+  const userId = useAuthStore((s) => s.user?.id ?? 'anonymous');
+  // A different account receives a fresh transcript, pending turn and preferences.
+  return <AccountChatWidget key={userId} />;
+}
+
+function AccountChatWidget() {
   const user = useAuthStore((s) => s.user);
   const isMobile = useUIStore((s) => s.isMobile);
   const chatOpen = useUIStore((s) => s.chatOpen);
@@ -252,12 +258,15 @@ export function SiteChatWidget() {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [input, setInput] = useState('');
   // §11B O1: the Dashboard's "What do you want to create?" composer seeds the chat.
+  const [consumedSeed, setConsumedSeed] = useState<string | null>(null);
+  if (chatOpen && chatSeed && consumedSeed !== chatSeed) {
+    setConsumedSeed(chatSeed);
+    setInput(chatSeed);
+  }
   useEffect(() => {
-    if (chatOpen && chatSeed) {
-      setInput(chatSeed);
-      setChatSeed(null);
-    }
-  }, [chatOpen, chatSeed, setChatSeed]);
+    if (chatOpen && chatSeed && consumedSeed === chatSeed) setChatSeed(null);
+  }, [chatOpen, chatSeed, consumedSeed, setChatSeed]);
+  if (!chatSeed && consumedSeed !== null) setConsumedSeed(null);
   const [sending, setSending] = useState(false);
   const [liveTurn, setLiveTurn] = useState<LiveTurn | null>(null);
   const [prefs, setPrefs] = useState<AiPreferences | null>(null);
@@ -329,24 +338,12 @@ export function SiteChatWidget() {
   }, [isDemo, userId, demoSnap.version, demoSnap.threadId]);
 
   // A pending "Clear?" confirmation is scoped to the thread and view it was asked in.
-  useEffect(() => {
+  const confirmationScope = `${activeThreadId ?? ''}:${view}`;
+  const [previousConfirmationScope, setPreviousConfirmationScope] = useState(confirmationScope);
+  if (previousConfirmationScope !== confirmationScope) {
+    setPreviousConfirmationScope(confirmationScope);
     setConfirmingClear(false);
-  }, [activeThreadId, view]);
-
-  // Account switches never show another user's threads: reset all transcript state.
-  useEffect(() => {
-    initializedRef.current = false;
-    setThreads([]);
-    setActiveThread(null);
-    setMessages([]);
-    setHasMore(false);
-    setLiveTurn(null);
-    setPrefs(null);
-    setLastSource(null);
-    setView('chat');
-    clientSeqRef.current = {};
-    lastSendRef.current = null;
-  }, [userId, setActiveThread]);
+  }
 
   const selectThread = useCallback(
     async (threadId: string) => {

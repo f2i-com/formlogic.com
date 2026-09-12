@@ -155,7 +155,7 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
       return;
     }
     const client = getCryptoClient();
-    let unlocked = false;
+    let unlocked: boolean;
     try {
       unlocked = (await client.status()).unlocked && client.isRunning;
     } catch {

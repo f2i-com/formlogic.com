@@ -1,3 +1,4 @@
+import { deferEffect } from '../../lib/deferredEffect';
 import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Package,
@@ -74,6 +75,18 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
   const [activeTab, setActiveTab] = useState<Tab>(initialTab ?? 'marketplace');
 
   // Marketplace state
+  const loadInstallations = useCallback(async () => {
+    setLoadingInstallations(true);
+    try {
+      const result = await api.getInstalledPacks();
+      setInstallations(result.data?.installations ?? []);
+    } catch {
+      // silently fail
+    } finally {
+      setLoadingInstallations(false);
+    }
+  }, []);
+
   // MKT-601: the popup and the routed gallery browse through the SAME hook — one initial fetch,
   // stale-response cancellation, and an honest error state with a retry. They had drifted: this
   // surface used to swallow every failure and render an empty catalog, which looks identical to
@@ -161,12 +174,9 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
   // MKT-601: browsing (including its debounce and stale-response handling) now lives in
   // usePackBrowse. Only the installed list is fetched here, and only when the modal opens —
   // it must not re-fire on every search keystroke.
-  useEffect(() => {
-    if (isOpen && storageMode === 'api') {
-      loadInstallations();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- open-effect: the installed list loads when the modal opens or storage mode changes, never on search input
-  }, [isOpen, storageMode]);
+  useEffect(() => deferEffect(() => {
+    if (isOpen && storageMode === 'api') void loadInstallations();
+  }), [isOpen, storageMode, loadInstallations]);
 
   const [seeding, setSeeding] = useState(false);
   const seedAttemptedRef = useRef(false);
@@ -209,18 +219,6 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
       .finally(() => setSeeding(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- browse.retry is stable (useCallback with no deps); listing `browse` would re-run this on every result
   }, [isOpen, storageMode, browse.loading, browse.error, browse.packs.length, searchQuery]);
-
-  const loadInstallations = useCallback(async () => {
-    setLoadingInstallations(true);
-    try {
-      const result = await api.getInstalledPacks();
-      setInstallations(result.data?.installations ?? []);
-    } catch {
-      // silently fail
-    } finally {
-      setLoadingInstallations(false);
-    }
-  }, []);
 
   const loadMyPacks = useCallback(async () => {
     setLoadingMyPacks(true);
@@ -313,7 +311,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
 
   // Pull the inner Pack out of any recognized wrapper: a signed { package } envelope, an
   // ApplicationPackage { pack }, or a bare/flat pack. Returns null if none is present.
-  const extractPack = useCallback((obj: unknown): PackData | null => {
+  const extractPack = useCallback(function extractPack(obj: unknown): PackData | null {
     if (!obj || typeof obj !== 'object') return null;
     const o = obj as Record<string, unknown>;
     if (o.package && typeof o.package === 'object') return extractPack(o.package);

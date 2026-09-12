@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type PlatformPlans } from "../../lib/api";
+import { deferEffect } from "../../lib/deferredEffect";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Card, CardContent } from "../../components/ui/Card";
@@ -20,9 +21,9 @@ export function AdminPlansCard() {
     setPlans(result.data.plans);
     setPrice((result.data.plans.pricePerMonthCents / 100).toFixed(2));
   };
-  useEffect(() => {
+  useEffect(() => deferEffect(() => {
     void load();
-  }, []);
+  }), []);
   const save = async () => {
     if (!plans) return;
     const cents = Math.round(Number(price) * 100);

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -15,10 +15,12 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
   const [email, setEmail] = useState('');
 
-  // Sync mode when initialMode prop changes (e.g. opening from different buttons)
-  useEffect(() => {
+  // Reset before rendering a different entry mode, preserving the current draft.
+  const [previousInitialMode, setPreviousInitialMode] = useState(initialMode);
+  if (previousInitialMode !== initialMode) {
+    setPreviousInitialMode(initialMode);
     setMode(initialMode);
-  }, [initialMode]);
+  }
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');

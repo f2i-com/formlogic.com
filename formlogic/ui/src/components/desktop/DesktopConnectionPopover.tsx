@@ -27,6 +27,7 @@ import { useToastStore } from '../../stores/toastStore';
 import { useUIStore } from '../../stores/uiStore';
 import { pathClaimsBottomEdge } from '../../lib/bottomEdgeClaim';
 import { cn } from '../../lib/utils';
+import { deferEffect } from '../../lib/deferredEffect';
 import {
   AI_SOURCE_OPTIONS,
   aiPreferencesApi,
@@ -46,6 +47,7 @@ import {
 } from './desktopConnection';
 
 interface LoadedLists {
+  kind: DesktopConnectionKind | null;
   services: DesktopServiceSnapshot[] | null;
   plugins: DesktopPluginSummary[] | null;
   error: string | null;
@@ -100,7 +102,7 @@ export function DesktopConnectionPopover() {
 
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const [lists, setLists] = useState<LoadedLists>({ services: null, plugins: null, error: null });
+  const [loadedLists, setLists] = useState<LoadedLists>({ kind: null, services: null, plugins: null, error: null });
   const [listsLoading, setListsLoading] = useState(false);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [notice, setNotice] = useState<OpFeedback | null>(null);
@@ -109,14 +111,18 @@ export function DesktopConnectionPopover() {
   const [aiSaving, setAiSaving] = useState(false);
 
   const transport = view.kind === 'local' ? 'local' : 'relay';
+  const lists = loadedLists.kind === view.kind ? loadedLists : { services: null, plugins: null, error: null };
+  const preferencesAvailable = aiPreferencesApi() !== null;
 
-  const loadLists = useCallback(async (kind: DesktopConnectionKind) => {
+  const loadLists = useCallback(async (kind: DesktopConnectionKind, isCurrent: () => boolean = () => true) => {
     if (kind !== 'local' && kind !== 'remote') return;
     setListsLoading(true);
     try {
       if (kind === 'local') {
         const [svc, plg] = await Promise.all([desktopClient.services.list(), desktopClient.plugins.list()]);
+        if (!isCurrent()) return;
         setLists({
+          kind,
           services: svc.ok ? svc.data : null,
           plugins: plg.ok ? plg.data : null,
           error: !svc.ok || !plg.ok ? (!svc.ok ? svc.error : (plg as { error: { message: string } }).error).message : null,
@@ -126,6 +132,7 @@ export function DesktopConnectionPopover() {
           runDesktopOp({ op: 'desktop.services.list' }),
           runDesktopOp({ op: 'desktop.plugins.list' }),
         ]);
+        if (!isCurrent()) return;
         const services = svc.ok && svc.outcome.status === 'done' ? extractListResult<DesktopServiceSnapshot>(svc.outcome.result, 'services') : null;
         const plugins = plg.ok && plg.outcome.status === 'done' ? extractListResult<DesktopPluginSummary>(plg.outcome.result, 'plugins') : null;
         const failed = !svc.ok ? svc.error.message
@@ -133,29 +140,30 @@ export function DesktopConnectionPopover() {
           : !plg.ok ? plg.error.message
           : plg.outcome.status !== 'done' ? describeOpOutcome('Listing plugins', plg.outcome).text
           : null;
-        setLists({ services, plugins, error: services === null && plugins === null ? failed : null });
+        setLists({ kind, services, plugins, error: services === null && plugins === null ? failed : null });
       }
     } finally {
-      setListsLoading(false);
+      if (isCurrent()) setListsLoading(false);
     }
   }, []);
 
   // Load (and reload per transport switch) the service/plugin lists while open.
-  useEffect(() => {
+  useEffect(() => deferEffect(() => {
     if (!open) return;
-    void loadLists(view.kind);
-  }, [open, view.kind, loadLists]);
+    let current = true;
+    void loadLists(view.kind, () => current);
+    return () => { current = false; };
+  }), [open, view.kind, loadLists]);
 
   // AI-source preferences — only when the Wave-2 api methods exist (else hidden).
   useEffect(() => {
     if (!open || isDemo) return;
     const prefsApi = aiPreferencesApi();
-    if (!prefsApi) {
-      setAiPrefsReady(false);
-      return;
-    }
+    if (!prefsApi) return;
+    let current = true;
     void (async () => {
       const res = await prefsApi.getAiPreferences();
+      if (!current) return;
       // The preferences route itself may not have landed yet — degrade to hidden.
       setAiPrefsReady(false);
       if (res.data) {
@@ -163,6 +171,7 @@ export function DesktopConnectionPopover() {
         setAiPrefsReady(true);
       }
     })();
+    return () => { current = false; };
   }, [open, isDemo]);
 
   if (!user) return null;
@@ -414,7 +423,7 @@ export function DesktopConnectionPopover() {
             </>
           )}
 
-          {aiPrefsReady && aiPrefs && !isDemo && (
+          {preferencesAvailable && aiPrefsReady && aiPrefs && !isDemo && (
             <section aria-label="AI source">
               <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">
                 <Sparkles className="h-3.5 w-3.5" /> AI source

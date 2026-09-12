@@ -175,6 +175,34 @@ describe('extractListResult', () => {
 });
 
 describe('DesktopConnectionPopover — local presence', () => {
+  it('keeps the current desktop lists when an earlier transport replies late', async () => {
+    let finishLocal!: (result: unknown) => void;
+    h.desktopClient.services.list.mockImplementationOnce(() => new Promise((resolve) => { finishLocal = resolve; }));
+    h.runDesktopOp.mockImplementation(async (req: { op: string }) => ({
+      ok: true,
+      outcome: {
+        status: 'done', commandId: 'remote-list',
+        result: req.op === 'desktop.services.list'
+          ? { services: [{ ...SERVICES[0], name: 'Remote model service' }] }
+          : { plugins: PLUGINS },
+      },
+    }));
+    await renderPopover();
+    await openPanel();
+    expect(h.desktopClient.services.list).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      h.presence = { kind: 'remote', label: 'OTHER-PC', lastSeenMs: Date.now() };
+      // The real presence hook subscribes externally; this store change triggers
+      // the same rerender for the test's controlled presence value.
+      useUIStore.setState({ sidebarCollapsed: true });
+    });
+    expect(panel()!.textContent).toContain('Remote model service');
+    await act(async () => { finishLocal({ ok: true, data: SERVICES }); });
+    expect(panel()!.textContent).toContain('Remote model service');
+    expect(panel()!.textContent).not.toContain('llama.cpp');
+  });
+
   it('stays out of the App Studio on a phone, where the section owns the bottom edge', async () => {
     useUIStore.setState({ isMobile: true });
     await renderPopover('/apps/a1/studio/automations');

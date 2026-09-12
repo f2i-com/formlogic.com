@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { CloudOff, Cloud, AlertTriangle } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -31,9 +31,12 @@ export function SyncConflictDialog() {
   // resolution (push every offline copy over the cloud). Dismissing now just postpones:
   // both copies stay untouched and the conflicts resurface on the next sync/reconnect.
   const [postponed, setPostponed] = useState(false);
-  useEffect(() => {
+  const [previousConflicts, setPreviousConflicts] = useState(conflicts);
+  if (previousConflicts !== conflicts) {
+    setPreviousConflicts(conflicts);
     setPostponed(false); // a fresh conflict set (next sync attempt) re-opens the dialog
-  }, [conflicts]);
+    setDecisions({});
+  }
 
   const open = !!conflicts && conflicts.length > 0 && !postponed;
   const choiceFor = (id: string): Choice => decisions[id] ?? 'mine';

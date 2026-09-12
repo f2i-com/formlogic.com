@@ -96,7 +96,11 @@ export async function decryptRowsPipeline<T extends DecryptableRow>(
   );
   for (const row of encryptedRows) {
     const result = opened.get(row.id);
-    if (!result) continue;
+    if (!result) {
+      errors[row.id] = 'decrypt_failed';
+      merged.set(row.id, { ...row, answers: {}, _encrypted: true, _decryptError: 'decrypt_failed' });
+      continue;
+    }
     if ('error' in result) {
       errors[row.id] = result.error.code;
       merged.set(row.id, { ...row, answers: {}, _encrypted: true, _decryptError: result.error.code });
@@ -145,27 +149,39 @@ export function useDecryptedResponses<T extends DecryptableRow>(
 
   // Server-authoritative privacy (tri-state). Until it resolves, envelope-shaped
   // rows still take the private path so ciphertext never renders as answers.
-  const [privacy, setPrivacy] = useState<FormPrivacy>('unknown');
+  const [privacyResult, setPrivacyResult] = useState<{ formId: string | undefined; value: FormPrivacy }>(() => ({ formId, value: 'unknown' }));
+  const privacy = privacyResult.formId === formId ? privacyResult.value : 'unknown';
+  if (privacyResult.formId !== formId) setPrivacyResult({ formId, value: 'unknown' });
   useEffect(() => {
-    if (!formId) { setPrivacy('unknown'); return; }
+    if (!formId) return;
     let cancelled = false;
-    setPrivacy('unknown');
     getFormPrivacyState(formId)
-      .then((p) => { if (!cancelled) setPrivacy(p); })
-      .catch(() => { if (!cancelled) setPrivacy('unknown'); });
+      .then((value) => { if (!cancelled) setPrivacyResult({ formId, value }); })
+      .catch(() => { if (!cancelled) setPrivacyResult({ formId, value: 'unknown' }); });
     return () => { cancelled = true; };
   }, [formId]);
 
   const envelopePresent = useMemo(() => rows.some((r) => isEncryptedEnvelope(r.answers)), [rows]);
   const isPrivate = privacy === 'private' || (privacy === 'unknown' && envelopePresent);
 
-  const [decrypting, setDecrypting] = useState(false);
-  const [result, setResult] = useState<{
-    generation: number;
-    formId: string;
+  const request = useMemo(() => ({ formId, rows, generation, status, privacy, isPrivate }),
+    [formId, rows, generation, status, privacy, isPrivate]);
+  type Decryption = {
     merged: Map<string, DecryptedDisplayRow<T>>;
     errors: Record<string, string>;
-  } | null>(null);
+  };
+  const [snapshot, setSnapshot] = useState<{
+    request: typeof request;
+    result: Decryption | null;
+    settled: boolean;
+  }>(() => ({ request, result: null, settled: false }));
+
+  // Drop plaintext before committing a changed form or vault state. Row batches
+  // are separately matched below so stale decrypted answers never render.
+  if (snapshot.request.formId !== formId || snapshot.request.generation !== generation
+    || snapshot.request.status !== status || snapshot.request.privacy !== privacy) {
+    setSnapshot({ request, result: null, settled: false });
+  }
 
   // Knowing a private form exists, make sure the vault presence is loaded so
   // the lock UI can distinguish "no vault yet" from "locked".
@@ -174,13 +190,9 @@ export function useDecryptedResponses<T extends DecryptableRow>(
   }, [isPrivate]);
 
   useEffect(() => {
-    if (!formId || !isPrivate || status !== 'unlocked') {
-      setResult(null);
-      setDecrypting(false);
-      return;
-    }
+    const { formId, rows, isPrivate, status, privacy, generation } = request;
+    if (!formId || !isPrivate || status !== 'unlocked') return;
     let cancelled = false;
-    setDecrypting(true);
     void (async () => {
       try {
         const { merged, errors } = await decryptRowsPipeline(
@@ -189,22 +201,31 @@ export function useDecryptedResponses<T extends DecryptableRow>(
         );
         // Never publish results from a generation that has since been locked.
         if (!cancelled && vaultGeneration() === generation) {
-          setResult({ generation, formId, merged, errors });
+          setSnapshot({ request, result: { merged, errors }, settled: true });
         }
       } catch (e) {
         logger.warn('[e2ee] decrypt pipeline failed:', e);
-        if (!cancelled) setResult(null);
-      } finally {
-        if (!cancelled) setDecrypting(false);
+        if (!cancelled && vaultGeneration() === generation) {
+          const merged = new Map<string, DecryptedDisplayRow<T>>();
+          const errors: Record<string, string> = {};
+          for (const row of rows) {
+            const encrypted = isEncryptedEnvelope(row.answers);
+            if (!encrypted && privacy !== 'private') continue;
+            const code = encrypted ? 'decrypt_failed' : CORRUPT_ROW_CODE;
+            errors[row.id] = code;
+            merged.set(row.id, { ...row, answers: {}, _encrypted: true, _decryptError: code });
+          }
+          setSnapshot({ request, result: { merged, errors }, settled: true });
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [formId, rows, isPrivate, privacy, status, generation]);
+  }, [request]);
 
-  const current = result !== null && result.generation === generation && result.formId === formId
-    ? result
+  const current = snapshot.request === request && status === 'unlocked'
+    ? snapshot.result
     : null;
 
   const displayRows = useMemo(() => {
@@ -217,7 +238,7 @@ export function useDecryptedResponses<T extends DecryptableRow>(
     isPrivate,
     privacy,
     locked: isPrivate && status !== 'unlocked',
-    decrypting: isPrivate && status === 'unlocked' && (decrypting || current === null),
+    decrypting: !!formId && isPrivate && status === 'unlocked' && (snapshot.request !== request || !snapshot.settled),
     errors: current?.errors ?? {},
   };
 }

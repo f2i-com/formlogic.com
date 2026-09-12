@@ -237,7 +237,7 @@ FormLogic defaults to **free access**. Payments are **off by default**. Administ
 |---|---|
 | PHP | 8.2+ with `pdo_mysql`, `pdo_sqlite`, `mbstring`, `json`, `openssl` and `fileinfo` |
 | MySQL | 8.0+ |
-| Node.js | 20.19+ or 22.12+ for the Vite frontend build |
+| Node.js | 20.19+ (20.x), 22.13+ (22.x), or 24+ for frontend development and checks |
 | Composer | Any recent release |
 
 Node.js is a build dependency for the web client, not an API runtime requirement. The existing server-script and hosted-action sandboxes require their packaged binaries. Hosted apps also need PDO SQLite and the generated Softn host assets.

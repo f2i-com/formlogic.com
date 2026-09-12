@@ -359,9 +359,11 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
   const showAiTab = aiAvailable && !chatAiAvailable;
 
   // Sync editedScript when the script prop changes (e.g. switching forms)
-  useEffect(() => {
+  const [previousScript, setPreviousScript] = useState(script);
+  if (previousScript !== script) {
+    setPreviousScript(script);
     setEditedScript(script);
-  }, [script]);
+  }
   const [testResult, setTestResult] = useState<{
     success: boolean;
     message: string;
@@ -376,17 +378,16 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
   // onSubmit scripts run server-side, so a real test run requires the form to
   // exist on the server (cloud storage mode).
   const storageMode = useFormStore((s) => s.storageMode);
-  const [sampleAnswers, setSampleAnswers] = useState('');
+  const [sampleAnswers, setSampleAnswers] = useState(() => isOpen ? JSON.stringify(buildSampleAnswers(formFields), null, 2) : '');
   const [showSample, setShowSample] = useState(false);
 
   // Seed the editable sample answers from the form's fields each time the editor
   // opens (fresh, type-aware defaults the author can then tweak).
-  useEffect(() => {
-    if (isOpen) {
-      setSampleAnswers(JSON.stringify(buildSampleAnswers(formFields), null, 2));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
+  const [previousOpen, setPreviousOpen] = useState(isOpen);
+  if (previousOpen !== isOpen) {
+    setPreviousOpen(isOpen);
+    if (isOpen) setSampleAnswers(JSON.stringify(buildSampleAnswers(formFields), null, 2));
+  }
   const [aiPrompt, setAiPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);

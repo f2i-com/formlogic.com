@@ -8,6 +8,7 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { toast } from '../stores/toastStore';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { api } from '../lib/api';
+import { deferEffect } from '../lib/deferredEffect';
 import type { TrashItem } from '../lib/api';
 import { useAccountTimezone, formatDateTimeInZone } from '../lib/timezone';
 import { FileText, LayoutGrid, Workflow, RotateCcw, Trash2, Recycle } from 'lucide-react';
@@ -69,7 +70,7 @@ export function TrashPage() {
     setItems(res.data.items);
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => deferEffect(() => { void load(); }), [load]);
 
   const handleRestore = async (item: TrashItem) => {
     setBusyId(item.id);

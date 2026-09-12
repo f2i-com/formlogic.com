@@ -1,6 +1,6 @@
-# Scheduled dependency PRs to keep launch maintenance boring. CI already runs `composer audit` and
-# `npm audit --audit-level=high`; this opens the actual update PRs. Security updates are not batched
-# (Dependabot always raises those immediately, ungrouped).
+# Scheduled dependency PRs; validation runs manually while automatic CI is paused.
+# Related tools are grouped so major upgrades can satisfy their peer requirements together.
+# These groups apply to version updates; security alerts remain enabled separately.
 version: 2
 updates:
   # Frontend (React/Vite/TS) — formlogic/ui
@@ -9,13 +9,20 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-    ignore:
-      # 7.1's stricter effect analysis flags ~100 sites that pass under 7.0 (see the
-      # 2026-09-02 dependency sweep). Pinned at 7.0.1 until that refactor lands.
-      - dependency-name: eslint-plugin-react-hooks
-        versions: [">=7.1.0"]
     groups:
-      # Dev tooling (linters, types, build) churns often and is low-risk — one PR.
+      # Order matters: these coupled packages join their first matching group.
+      frontend-build:
+        patterns: [vite, "@vitejs/plugin-react", vite-plugin-pwa]
+      frontend-lint:
+        patterns:
+          - eslint
+          - "@eslint/js"
+          - typescript-eslint
+          - "@typescript-eslint/*"
+          - eslint-plugin-react-hooks
+          - eslint-plugin-react-refresh
+          - globals
+      # Other development dependencies: routine updates can share one review.
       dev-tooling:
         dependency-type: development
         update-types: [minor, patch]
@@ -57,5 +64,7 @@ updates:
       interval: monthly
     open-pull-requests-limit: 3
     groups:
+      native-crypto:
+        patterns: [ed25519-dalek, chacha20poly1305, getrandom, sha2]
       native-cargo-minor-patch:
         update-types: [minor, patch]

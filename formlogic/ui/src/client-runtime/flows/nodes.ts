@@ -564,7 +564,7 @@ async function resolveLlmChatEndpoint(ctx: FlowNodeContext): Promise<string> {
   }
 
   if (deps.resolveDesktopLlmEndpoint) {
-    let resolved: { endpoint: string; service: string } | null = null;
+    let resolved: { endpoint: string; service: string } | null;
     try {
       resolved = await deps.resolveDesktopLlmEndpoint();
     } catch {
@@ -957,7 +957,7 @@ async function runHttpRequest(ctx: FlowNodeContext): Promise<unknown> {
       node.id
     );
   }
-  let parsed: unknown = null;
+  let parsed: unknown;
   const text = await res.text().catch(() => '');
   try {
     parsed = text === '' ? null : JSON.parse(text);
@@ -1009,7 +1009,7 @@ async function resolveServiceBase(
     return base;
   }
   if (deps.resolveDesktopServiceBase) {
-    let base: string | null = null;
+    let base: string | null;
     try {
       base = await deps.resolveDesktopServiceBase(serviceId);
     } catch {
@@ -1281,7 +1281,7 @@ async function resolveConfiguredEndpoint(ctx: FlowNodeContext, defaultPath: stri
   if (deps.resolveDesktopServiceBase) {
     const candidates = explicitService ? [explicitService] : [preferredService, SPEECH_SERVICE];
     for (const serviceId of candidates) {
-      let base: string | null = null;
+      let base: string | null;
       try {
         base = await deps.resolveDesktopServiceBase(serviceId);
       } catch {

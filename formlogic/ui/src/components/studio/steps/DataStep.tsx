@@ -151,11 +151,9 @@ export function DataStep({
     return id ? { attachment: appForms.find((af) => af.formId === id) ?? null, form: formsById[id] ?? null, id } : null;
   }, [selectedFormId, appForms, formsById]);
 
-  useEffect(() => {
-    if (selected?.form?.isPrivate && newFieldType === 'file_upload') {
-      setNewFieldType('short_text');
-    }
-  }, [selected?.form?.isPrivate, newFieldType]);
+  if (selected?.form?.isPrivate && newFieldType === 'file_upload') {
+    setNewFieldType('short_text');
+  }
 
   const formNameById = useMemo(() => {
     const map: Record<string, string> = {};

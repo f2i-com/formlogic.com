@@ -42,7 +42,7 @@ export function RecordScreenPanel({
   // app (e.g. the builder's record view) — the actions then reject honestly.
   const bridge = useScreenBridge(formId, appSlug);
   const navigate = useNavigate();
-  let body: React.ReactNode = null;
+  let body: React.ReactNode;
   if (screen.kind === 'sdk') {
     // An unregistered id renders nothing rather than a broken card (old client, renamed screen).
     // Existence-checked here as a plain value; SdkScreenRuntime does the actual (error-bounded)

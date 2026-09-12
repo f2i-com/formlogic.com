@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
+import { useCurrentTime } from '../hooks/useCurrentTime';
 import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { LinkedRecordChips } from '../components/responses/recordDisplay';
 import { renderEditField } from '../components/responses/renderEditField';
@@ -250,11 +251,14 @@ function FormResponses() {
   // can't clobber the new form's data when it resolves late — /responses/:formId
   // has no route key, so this component instance is reused across formId changes.
   const formIdRef = useRef(formId);
-  formIdRef.current = formId;
+  useLayoutEffect(() => {
+    formIdRef.current = formId;
+    return () => { formIdRef.current = undefined; };
+  }, [formId]);
   // Mirrored so reloadResponses can tell "retry of a failed first load" (nothing on
   // screen — surface the failure) from "background refresh" (keep what we have).
   const responsesRef = useRef(responses);
-  responsesRef.current = responses;
+  useLayoutEffect(() => { responsesRef.current = responses; }, [responses]);
   const reloadResponses = useCallback(async () => {
     if (!formId || storageMode !== 'api') return;
     const fid = formId;
@@ -363,10 +367,11 @@ function FormResponses() {
   const visibleFields = displayFields.slice(0, visibleFieldCount);
 
   // Calculate stats
+  const now = useCurrentTime();
   const stats = useMemo(() => {
-    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
-    const today = new Date().toDateString();
+    const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+    const twoWeeksAgo = now - 14 * 24 * 60 * 60 * 1000;
+    const today = new Date(now).toDateString();
 
     let thisWeek = 0;
     let lastWeek = 0;
@@ -390,7 +395,7 @@ function FormResponses() {
       // null = no prior week to compare against
       weeklyPct: lastWeek > 0 ? Math.round(((thisWeek - lastWeek) / lastWeek) * 100) : null,
     };
-  }, [viewResponses]);
+  }, [viewResponses, now]);
 
   // Precompute a lowercased search haystack per response ONCE (keyed on the
   // DECRYPTED rows for private forms), so typing in the search box is a cheap
@@ -464,10 +469,7 @@ function FormResponses() {
 
   // Clamp the current page when the result set shrinks (e.g. deleting the only
   // row on the last page) so the user isn't stranded on an empty page.
-  useEffect(() => {
-    const tp = Math.max(1, Math.ceil(filteredResponses.length / ITEMS_PER_PAGE));
-    if (currentPage > tp) setCurrentPage(tp);
-  }, [filteredResponses.length, currentPage]);
+  if (currentPage > Math.max(1, totalPages)) setCurrentPage(Math.max(1, totalPages));
 
   // Open the record's own page (the view modal is retired — records are full pages now).
   const handleView = (response: ResponseWithStatus) => {

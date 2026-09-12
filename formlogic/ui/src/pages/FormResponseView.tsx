@@ -25,6 +25,7 @@ import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
 import { api } from '../lib/api';
+import { deferEffect } from '../lib/deferredEffect';
 import { isDemoLocalId } from '../lib/demoLocal';
 import { toast } from '../stores/toastStore';
 import { statusBadgeVariant, formatStatusLabel } from '../lib/utils';
@@ -96,7 +97,7 @@ function FormResponseView() {
   const [recomputing, setRecomputing] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
 
-  useEffect(() => {
+  useEffect(() => deferEffect(() => {
     if (!formId || !responseId) return;
     let cancelled = false;
     setLoading(true);
@@ -129,7 +130,7 @@ function FormResponseView() {
     };
     void run();
     return () => { cancelled = true; };
-  }, [formId, responseId, storageMode, getStoredForm, getLocalResponses, reloadTick]);
+  }), [formId, responseId, storageMode, getStoredForm, getLocalResponses, reloadTick]);
 
   // E2EE: a private-form record's `answers` is the stored envelope. Decrypt it in
   // the browser (vault unlocked) and drive the whole view off the decrypted copy.

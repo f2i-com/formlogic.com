@@ -1,3 +1,4 @@
+import { deferEffect } from '../../lib/deferredEffect';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api';
 import type { App, AppForm, AppRole, AppVersion } from '../../types/app';
@@ -237,9 +238,10 @@ export function useStudioData(appId: string | undefined): StudioData {
     }
   }, [reloadApp, reloadForms, reloadFlows, reloadAux]);
 
-  useEffect(() => {
-    // A new app invalidates every request already in flight for the previous one.
-    loadToken.current += 1;
+  // Reset before the new app renders; old requests are invalidated by effect cleanup.
+  const [loadedAppId, setLoadedAppId] = useState(appId);
+  if (loadedAppId !== appId) {
+    setLoadedAppId(appId);
     setApp(null);
     setAppLoaded(false);
     setAppError(null);
@@ -256,7 +258,18 @@ export function useStudioData(appId: string | undefined): StudioData {
     setDomains([]);
     setMemberCount(0);
     setAuxFailed(false);
-    void reload();
+    setVersionsFailed(false);
+    setDomainsFailed(false);
+    setMembersFailed(false);
+    setLoading(true);
+  }
+  useEffect(() => {
+    loadToken.current += 1;
+    const cancelStart = deferEffect(() => { void reload(); });
+    return () => {
+      cancelStart();
+      loadToken.current += 1;
+    };
   }, [reload]);
 
   return useMemo(
