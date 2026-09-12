@@ -37,7 +37,7 @@
     "fflate": "^0.8.3",
     "framer-motion": "^12.23.26",
     "libsodium-wrappers-sumo": "^0.8.4",
-    "lucide-react": "^1.39.0",
+    "lucide-react": "^1.43.0",
     "monaco-editor": "^0.56.0",
     "preact": "^10.29.7",
     "qrcode.react": "^4.2.0",
