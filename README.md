@@ -237,10 +237,12 @@ FormLogic defaults to **free access**. Payments are **off by default**. Administ
 |---|---|
 | PHP | 8.2+ with `pdo_mysql`, `pdo_sqlite`, `mbstring`, `json`, `openssl` and `fileinfo` |
 | MySQL | 8.0+ |
-| Node.js | 20.19+ (20.x), 22.13+ (22.x), or 24+ for frontend development and checks |
+| Node.js | 24.19.0 LTS recommended (pinned in `.node-version`); supported: 22.22.2+ (22.x), 24.15.0+ (24.x), or 26+ |
 | Composer | Any recent release |
 
 Node.js is a build dependency for the web client, not an API runtime requirement. The existing server-script and hosted-action sandboxes require their packaged binaries. Hosted apps also need PDO SQLite and the generated Softn host assets.
+
+The frontend test suite uses jsdom 30. Node 20 and older Node 22/24 releases cannot run it. Check `node --version` before `npm ci`; use the version in `.node-version` for the same environment as the manual build and release checks.
 
 ### Assisted CLI install
 

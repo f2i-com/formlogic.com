@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "engines": {
-    "node": "^20.19.0 || ^22.13.0 || >=24"
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "scripts": {
     "dev": "vite",
@@ -54,7 +54,7 @@
     "@axe-core/playwright": "^4.12.1",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.63.0",
-    "@types/jsdom": "^28.0.3",
+    "@types/jsdom": "^30.0.0",
     "@types/libsodium-wrappers-sumo": "^0.8.2",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
@@ -66,7 +66,7 @@
     "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-react-refresh": "^0.5.6",
     "globals": "^17.12.0",
-    "jsdom": "^29.1.1",
+    "jsdom": "^30.0.1",
     "postcss": "^8.5.28",
     "tailwindcss": "^4.1.18",
     "typescript": "~5.9.3",
@@ -79,5 +79,8 @@
     "monaco-editor": {
       "dompurify": "^3.4.15"
     }
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
   }
 }
