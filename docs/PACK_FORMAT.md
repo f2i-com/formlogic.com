@@ -7,7 +7,7 @@ portable, self-contained unit. It powers three things:
 - **The pack marketplace / templates** — publish and install reusable bundles.
 - **The AI App Builder + MCP** — the shape an AI assembles when it builds an app.
 
-`PackService::validatePack()` (backend) is the authoritative validator; this document describes what it
+`PackService::validateDefinition()` (backend) is the authoritative validator; this document describes what it
 accepts. Import is the single trust boundary: it regenerates all ids, sets the importer as owner, forces
 `status: draft`, strips notification recipients, and remaps cross-references.
 
@@ -35,10 +35,21 @@ accepts. Import is the single trust boundary: it regenerates all ids, sets the i
     "author": "…",                    // optional
     "tags": []                        // optional
   },
-  "forms": [ /* PackForm[] */ ],       // required, 1–50
+  "forms": [ /* PackForm[] */ ],       // required, 0–50 (see app projects below)
   "apps":  [ /* PackApp[]  */ ]        // optional, 0–20
 }
 ```
+
+## Editable Softn app projects
+
+An app can contain **one** of `hostedProject` or `nativeProject` alongside its forms, roles and specialist tools. A pack may use `forms: []` when at least one app contains a project. Imported apps remain drafts.
+
+- `hostedProject`: `{version: 1, client: {"manifest.json": "...", "ui/main.ui": "..."}, actions: {guide: {source: "function onRequest(ctx) { return {}; }", access: "member", mode: "read"}}}`. The client is editable Softn source; private named actions run in ZIPP. Form records use existing FormLogic APIs, and `ctx.db` provides a separate app action store.
+- `nativeProject`: `{version: 0, home: true, access: "members", files: {"manifest.json": "...", "ui/main.ui": "...", "server/main.logic": "...", "server/migrations/001.sql": "..."}, assets: {}}`. Its manifest declares the server API v1 routes, capabilities and private SQLite migrations. `application` access preserves app-managed sign-in. Media in `assets` is base64 encoded.
+
+The installer validates the project, provisions its storage and rolls back a failed installation. Exports include the owner's current project source and named actions or native migrations, but exclude database contents and credentials. See [Hosted apps](HOSTED_APPS.md) for manifest requirements and runtime limits.
+
+The [folder catalogue](PACK_PROJECTS.md) compiles `pack.json`, `install.json`, project folders and optional `logicScriptFile` references into this JSON format. The schema describes the **compiled download/import payload**; source-folder files are resolved before validation. Edit folders to update future installations without rebuilding the UI.
 
 ## PackForm
 
@@ -50,7 +61,7 @@ accepts. Import is the single trust boundary: it regenerates all ids, sets the i
   "icon": "FileText",                 // optional (≤ 100 chars)
   "settings": {},                     // object (≤ 10KB) — notifications are stripped on export + import
   "theme": {},                        // object (≤ 10KB)
-  "logicScript": "function onSubmit(ctx){…}", // optional (≤ 100KB), the QuickJS onSubmit script
+  "logicScript": "function onSubmit(ctx){…}", // optional (≤ 100KB), the ZIPP onSubmit script
   "customScreen": { /* see below */ }, // optional (≤ 512KB)
   "fields": [ /* ≤ 200 */             // required
     { "id": "customer", "type": "linked_record", "label": "Customer", "required": false,

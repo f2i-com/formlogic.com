@@ -211,6 +211,7 @@ class PackCatalogService
     public function getPackDetail(string $slug, ?string $viewerId = null): ?array
     {
         $folders = (new FolderPackCatalog())->load();
+        $slug = FolderPackCatalog::resolveSlug($folders, $slug);
         if (isset($folders['entries'][$slug])) return FolderPackCatalog::summary($folders['entries'][$slug]);
         if (in_array($slug, $folders['hidden'], true)) return null;
         $stmt = $this->mysql->prepare("

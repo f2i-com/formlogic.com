@@ -6,6 +6,38 @@
   "type": "object",
   "required": ["formatVersion", "packMeta", "forms"],
   "additionalProperties": true,
+  "anyOf": [
+    {
+      "properties": {
+        "forms": {
+          "minItems": 1
+        }
+      }
+    },
+    {
+      "required": [
+        "apps"
+      ],
+      "properties": {
+        "apps": {
+          "contains": {
+            "anyOf": [
+              {
+                "required": [
+                  "hostedProject"
+                ]
+              },
+              {
+                "required": [
+                  "nativeProject"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
   "properties": {
     "formatVersion": { "const": 1 },
     "packMeta": {
@@ -22,7 +54,7 @@
     },
     "forms": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 0,
       "maxItems": 50,
       "items": { "$ref": "#/definitions/packForm" }
     },
@@ -33,6 +65,101 @@
     }
   },
   "definitions": {
+    "hostedProject": {
+      "type": "object",
+      "required": [
+        "version",
+        "client",
+        "actions"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "client": {
+          "type": "object",
+          "required": [
+            "manifest.json"
+          ],
+          "maxProperties": 100,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 200000
+          }
+        },
+        "actions": {
+          "type": "object",
+          "maxProperties": 30,
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "source",
+              "access",
+              "mode"
+            ],
+            "properties": {
+              "source": {
+                "type": "string",
+                "maxLength": 50000
+              },
+              "access": {
+                "enum": [
+                  "owner",
+                  "member"
+                ]
+              },
+              "mode": {
+                "enum": [
+                  "read",
+                  "write"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "nativeProject": {
+      "type": "object",
+      "required": [
+        "files"
+      ],
+      "description": "Private Softn server API v1 source; the host validates paths, capabilities and migrations. No database rows or credentials.",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "home": {
+          "type": "boolean"
+        },
+        "access": {
+          "enum": [
+            "members",
+            "application"
+          ]
+        },
+        "files": {
+          "type": "object",
+          "required": [
+            "manifest.json"
+          ],
+          "maxProperties": 200,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 1000000
+          }
+        },
+        "assets": {
+          "type": "object",
+          "maxProperties": 100,
+          "additionalProperties": {
+            "type": "string",
+            "description": "Base64 media under assets/."
+          }
+        }
+      }
+    },
     "customScreen": {
       "type": "object",
       "description": "A sandboxed HTML/CSS/TypeScript frontend. Provide `ts` (single file) OR `files` (multi-file project). Compiled/bundled to `js` automatically.",
@@ -83,7 +210,7 @@
         "icon": { "type": ["string", "null"], "maxLength": 100 },
         "settings": { "type": "object" },
         "theme": { "type": "object" },
-        "logicScript": { "type": "string", "description": "QuickJS onSubmit(ctx) script (<= 100KB)." },
+        "logicScript": { "type": "string", "description": "ZIPP onSubmit(ctx) .logic source (<= 100KB)." },
         "customScreen": { "$ref": "#/definitions/customScreen" },
         "fields": { "type": "array", "maxItems": 200, "items": { "$ref": "#/definitions/field" } }
       }
@@ -201,6 +328,7 @@
     "packApp": {
       "type": "object",
       "required": ["packAppId", "name"],
+      "not": { "required": ["hostedProject", "nativeProject"] },
       "properties": {
         "packAppId": { "type": "string", "minLength": 1 },
         "name": { "type": "string", "minLength": 1 },
@@ -213,6 +341,8 @@
           "items": { "type": "object", "properties": { "formId": { "type": "string", "description": "'@pack:<key>' or omitted for a non-form nav item." } } }
         },
         "customScreen": { "$ref": "#/definitions/customScreen" },
+        "hostedProject": { "$ref": "#/definitions/hostedProject" },
+        "nativeProject": { "$ref": "#/definitions/nativeProject" },
         "forms": {
           "type": "array",
           "items": {

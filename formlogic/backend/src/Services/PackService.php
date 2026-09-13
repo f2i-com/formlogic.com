@@ -2936,6 +2936,28 @@ class PackService
         return (is_array($v) && $v === []) ? new \stdClass() : $v;
     }
 
+    /** Restore JSON map shapes after associative decoding; never rewrite signed catalogue payloads. */
+    public static function forJson(array $pack): array
+    {
+        $maps = static function (array $value, array $keys): array {
+            foreach ($keys as $key) if (array_key_exists($key, $value) && $value[$key] === []) $value[$key] = new \stdClass();
+            return $value;
+        };
+        foreach ($pack['forms'] ?? [] as $i => $form) {
+            $form = $maps($form, ['settings', 'theme']);
+            foreach ($form['fields'] ?? [] as $j => $field) $form['fields'][$j] = $maps($field, ['properties']);
+            $pack['forms'][$i] = $form;
+        }
+        foreach ($pack['apps'] ?? [] as $i => $app) {
+            $app = $maps($app, ['settings', 'theme']);
+            foreach ($app['forms'] ?? [] as $j => $form) $app['forms'][$j] = $maps($form, ['settings']);
+            if (isset($app['hostedProject'])) $app['hostedProject'] = $maps($app['hostedProject'], ['actions']);
+            if (isset($app['nativeProject'])) $app['nativeProject'] = $maps($app['nativeProject'], ['assets']);
+            $pack['apps'][$i] = $app;
+        }
+        return $pack;
+    }
+
     /** Slugify a name into a pack key (lowercase, hyphenated, max 50 chars). */
     private function slugify(string $name): string
     {

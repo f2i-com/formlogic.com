@@ -334,7 +334,7 @@ describe('DesktopConnectionPopover — no linked desktop', () => {
     await act(async () => {
       panelButton('Link a desktop')!.click();
     });
-    expect(h.lastLocation).toBe('/settings#linked-desktops');
+    expect(h.lastLocation).toBe('/settings#local-runtime');
     // No lifecycle traffic in the none state.
     expect(h.desktopClient.services.list).not.toHaveBeenCalled();
     expect(h.runDesktopOp).not.toHaveBeenCalled();

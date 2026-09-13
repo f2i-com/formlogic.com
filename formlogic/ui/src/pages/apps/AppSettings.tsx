@@ -791,7 +791,7 @@ export function AppSettings() {
                 description="Connect external builders or move the app’s structure between workspaces."
                 items={[
                   { label: 'Connect an AI', desc: 'Let an external AI build this app through MCP (Beta)', icon: Plug, onClick: () => setShowMcp(true) },
-                  { label: exporting ? 'Exporting…' : 'Export app', desc: 'Download forms, screens, scripts and roles as portable JSON', icon: Download, disabled: exporting, onClick: handleExport },
+                  { label: exporting ? 'Exporting…' : 'Export app', desc: 'Download forms, app source, backend scripts and roles as portable JSON', icon: Download, disabled: exporting, onClick: handleExport },
                 ]}
               />
             )}
@@ -799,7 +799,8 @@ export function AppSettings() {
             <strong className="font-medium text-gray-700 dark:text-slate-300">Export app is a structure bundle, not a data backup.</strong>{' '}
             It does not include collected responses or uploaded files. For app data, use{' '}
             <strong className="font-medium text-gray-700 dark:text-slate-300">Records → Export data</strong> (SQLite bundle, or a
-            MySQL / SQL Server dump with one table per form); for a restorable full-workspace backup, use Settings → Backup &amp; restore.
+            MySQL / SQL Server dump with one table per form). Settings → Backup &amp; restore covers workspace data;
+            hosted and native app databases also need operator backups as described in the hosting guide.
           </p>}
           </SettingsCard>
 {/* Included services (pack-declared; rendered only when the app's pack shipped any).

@@ -1,3 +1,5 @@
+> **Historical design reference.** This document describes the retired FormLogic Desktop host. For current OAIY setup and supported capabilities, use [AI setup](FREE_PLANS_AND_AI_SETUP.md) and [connected apps](CONNECTED_APPS.md). Routes, paths and proposed features below are not an installation guide for current OAIY.
+
 # Desktop AI Gateway + provider registry (AI-401..407)
 
 Bring your own AI: FormLogic can use cloud, local, or custom providers while

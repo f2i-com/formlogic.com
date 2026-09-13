@@ -86,7 +86,12 @@ class HostedAppService
         $files['manifest.json'] = json_encode([
             'name' => mb_substr((string) ($manifest['name'] ?? 'App'), 0, 120),
             'version' => '1.0.0', 'main' => $manifest['main'],
-            'files' => ['logic' => $logic],
+            // Keep module discovery intact when the exported archive becomes a source folder.
+            'files' => [
+                'ui' => array_values(array_filter(array_keys($files), static fn($path) => str_ends_with($path, '.ui'))),
+                'logic' => $logic,
+                'json' => array_values(array_filter(array_keys($files), static fn($path) => str_ends_with($path, '.json') && !in_array($path, ['manifest.json', 'permission.json'], true))),
+            ],
         ], JSON_THROW_ON_ERROR);
         $files['permission.json'] = '{"permissions":{}}';
         if (count($package['actions']) > 30) throw new InvalidArgumentException('An app can have at most 30 backend actions');

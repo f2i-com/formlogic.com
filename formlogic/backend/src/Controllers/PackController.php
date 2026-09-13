@@ -619,7 +619,7 @@ class PackController
         }
 
         try {
-            $pack = $this->packService->exportApp($appId, $userId);
+            $pack = PackService::forJson($this->packService->exportApp($appId, $userId));
 
             if ($this->auditService) {
                 $this->auditService->log(
@@ -732,7 +732,7 @@ class PackController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App ID is required'], 400);
         }
         try {
-            $pack = $this->packService->exportApp($appId, $userId);
+            $pack = PackService::forJson($this->packService->exportApp($appId, $userId));
             $slug = preg_replace('/[^a-z0-9-]/', '', strtolower((string) ($pack['apps'][0]['packAppId'] ?? 'app')));
             $slug = $slug !== '' ? $slug : 'app';
             if ($this->auditService) {

@@ -124,10 +124,16 @@ test('adding, editing and hiding a folder updates the live catalogue', async ({ 
     writeFileSync(resolve(folder, 'pack.json'), JSON.stringify(meta));
     detail = await (await request.get(`/api/packs/catalog/${id}`)).json();
     expect(detail.pack.name).toBe('Updated folder loading review');
+    const alias = 'updated-folder-loading-review';
+    const aliasDetail = await (await request.get(`/api/packs/catalog/${alias}`)).json();
+    expect(aliasDetail.pack.slug).toBe(id);
+    expect((await request.get(`/api/packs/catalog/${alias}/download`)).ok()).toBe(true);
     const listing = await (await request.get('/api/packs/catalog?search=Updated%20folder%20loading')).json();
     expect(listing.packs.map((p: {slug: string}) => p.slug)).toContain(id);
-    writeFileSync(resolve(folder, 'pack.json'), JSON.stringify({ formatVersion: 1, id, disabled: true }));
+    writeFileSync(resolve(folder, 'pack.json'), JSON.stringify({ ...meta, disabled: true }));
     expect((await request.get(`/api/packs/catalog/${id}`)).status()).toBe(404);
+    expect((await request.get(`/api/packs/catalog/${alias}`)).status()).toBe(404);
+    expect((await request.get(`/api/packs/catalog/${alias}/download`)).status()).toBe(404);
   } finally {
     // Only the test-created folder directly under the configured local pack root can be removed.
     expect(dirname(folder)).toBe(resolve(root));

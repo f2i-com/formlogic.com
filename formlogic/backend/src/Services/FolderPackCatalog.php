@@ -10,7 +10,7 @@ final class FolderPackCatalog
     public function load(): array
     {
         $root = dirname(__DIR__, 2);
-        $entries = []; $hidden = []; $errors = []; $reserved = [];
+        $entries = []; $hidden = []; $errors = []; $aliases = [];
         foreach ([$this->bundled ?? $root . '/resources/packs', $this->custom ?? $root . '/storage/pack-projects'] as $directory) {
             $folders = glob($directory . '/*', GLOB_ONLYDIR) ?: [];
             sort($folders, SORT_STRING);
@@ -20,10 +20,13 @@ final class FolderPackCatalog
                     if (is_link($folder) || !preg_match('/^[a-z0-9][a-z0-9-]{0,79}$/D', $id)) throw new \InvalidArgumentException('Invalid folder name');
                     $meta = $this->json($folder, 'pack.json');
                     if (($meta['id'] ?? null) !== $id || ($meta['formatVersion'] ?? null) !== 1) throw new \InvalidArgumentException('pack.json identity or version is invalid');
-                    $reserved[$id] = true;
                     $oldName = $meta['name'] ?? ($entries[$id]['name'] ?? $id);
-                    if (is_string($oldName)) $reserved[trim(preg_replace('/[\s-]+/', '-', preg_replace('/[^a-z0-9\s-]/', '', strtolower(trim($oldName)))), '-')] = true;
-                    if (($meta['disabled'] ?? false) === true) { unset($entries[$id]); $hidden[$id] = true; continue; }
+                    $legacySlug = is_string($oldName) ? trim(preg_replace('/[\s-]+/', '-', preg_replace('/[^a-z0-9\s-]/', '', strtolower(trim($oldName)))), '-') : '';
+                    if (($meta['disabled'] ?? false) === true) {
+                        $aliases[$id] = $id;
+                        if ($legacySlug !== '') $aliases[$legacySlug] = $id;
+                        unset($entries[$id]); $hidden[$id] = true; continue;
+                    }
                     if (!is_string($meta['name'] ?? null) || !trim($meta['name']) || strlen($meta['name']) > 200
                         || !is_string($meta['description'] ?? '') || !is_string($meta['version'] ?? null)
                         || !is_array($meta['tags'] ?? []) || !is_array($meta['projects'] ?? null)) throw new \InvalidArgumentException('Invalid pack metadata');
@@ -55,6 +58,9 @@ final class FolderPackCatalog
                     // Use the same structural validation as imports, without constructing database services.
                     if (strlen(json_encode($pack, JSON_THROW_ON_ERROR)) > 5 * 1024 * 1024) throw new \InvalidArgumentException('Pack exceeds 5 MB');
                     PackService::validateDefinition($pack);
+                    // Reserve legacy name-based URLs only after this folder validates.
+                    $aliases[$id] = $id;
+                    if ($legacySlug !== '') $aliases[$legacySlug] = $id;
                     $entries[$id] = [...$meta, 'pack' => $pack];
                     unset($hidden[$id]);
                 } catch (\Throwable $e) {
@@ -64,7 +70,14 @@ final class FolderPackCatalog
             }
             if (count($folders) > 200) $errors[] = 'Pack folder limit exceeded';
         }
-        return ['entries' => $entries, 'hidden' => array_keys($hidden), 'errors' => $errors, 'reserved' => array_keys($reserved)];
+        return ['entries' => $entries, 'hidden' => array_keys($hidden), 'errors' => $errors, 'reserved' => array_keys($aliases), 'aliases' => $aliases];
+    }
+
+    /** Old name-based catalogue URLs follow the same source and disabled state as their folder. */
+    public static function resolveSlug(array $catalog, string $slug): string
+    {
+        if (isset($catalog['entries'][$slug]) || in_array($slug, $catalog['hidden'], true)) return $slug;
+        return $catalog['aliases'][$slug] ?? $slug;
     }
 
     private function read(string $root, mixed $path): string
@@ -104,7 +117,7 @@ final class FolderPackCatalog
             return $project;
         }
         if (($config['formatVersion'] ?? null) !== 1 || !is_array($config['actions'] ?? null)) throw new \InvalidArgumentException('Invalid project configuration');
-        $names = array_unique(['manifest.json', 'permission.json', $manifest['main'] ?? '', ...($manifest['files']['ui'] ?? []), ...($manifest['files']['logic'] ?? [])]);
+        $names = array_unique(['manifest.json', 'permission.json', $manifest['main'] ?? '', ...($manifest['files']['ui'] ?? []), ...($manifest['files']['logic'] ?? []), ...($manifest['files']['json'] ?? [])]);
         $client = [];
         foreach ($names as $name) $client[$name] = $this->read($folder, $path . '/' . $name);
         $actions = [];

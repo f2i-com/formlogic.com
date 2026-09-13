@@ -1,3 +1,5 @@
+> **Historical design reference.** This document describes the retired FormLogic Desktop host. For current OAIY setup and supported capabilities, use [AI setup](FREE_PLANS_AND_AI_SETUP.md) and [connected apps](CONNECTED_APPS.md). Routes, paths and proposed features below are not an installation guide for current OAIY.
+
 # Native plugin lifecycle (Phase 1 — PLG-101..108)
 
 How FormLogic Desktop installs, enables/disables, updates, and removes native

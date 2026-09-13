@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Services\PackCatalogService;
+use FormLogic\Services\PackService;
 use FormLogic\Services\PackFileService;
 use FormLogic\Services\AuditService;
 use FormLogic\Helpers\IpResolver;
@@ -79,7 +80,7 @@ class PackCatalogController
     {
         try {
             $facets = $this->catalogService->getFacets();
-            return $this->jsonResponse($response, $facets);
+            return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), $facets);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to load facets'], 500);
         }
@@ -325,11 +326,12 @@ class PackCatalogController
     {
         $slug = $args['slug'] ?? '';
         $folders = (new \FormLogic\Services\FolderPackCatalog())->load();
+        $slug = \FormLogic\Services\FolderPackCatalog::resolveSlug($folders, $slug);
         if (isset($folders['entries'][$slug])) {
             $entry = $folders['entries'][$slug];
             if (!empty($request->getQueryParams()['version'])) return $this->jsonResponse($response, ['message' => 'Folder packs expose the current source version only.'], 404);
             return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), [
-                'pack' => $entry['pack'], 'version' => $entry['version'], 'catalogId' => null, 'versionId' => null,
+                'pack' => PackService::forJson($entry['pack']), 'version' => $entry['version'], 'catalogId' => null, 'versionId' => null,
             ]);
         }
         if (in_array($slug, $folders['hidden'], true)) return $this->jsonResponse($response, ['message' => 'Pack not found'], 404);

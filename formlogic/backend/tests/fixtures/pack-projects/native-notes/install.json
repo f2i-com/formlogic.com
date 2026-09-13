@@ -3,6 +3,7 @@
   "packMeta": {
     "id": "native-notes",
     "name": "Native notes example",
+    "description": "Editable notes app with private ZIPP routes and SQLite storage.",
     "version": "1.0.0"
   },
   "forms": [],

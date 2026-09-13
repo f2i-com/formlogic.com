@@ -7,6 +7,17 @@ use PHPUnit\Framework\TestCase;
 
 final class FolderPackCatalogTest extends TestCase
 {
+    public function testDownloadedMapsStayObjectsAndListsStayArrays(): void
+    {
+        $entry = (new FolderPackCatalog(null, '/nonexistent'))->load()['entries']['clinic-appointment-intake'];
+        $pack = json_decode(json_encode(\FormLogic\Services\PackService::forJson($entry['pack']), JSON_THROW_ON_ERROR));
+        self::assertIsArray($pack->forms);
+        self::assertIsArray($pack->apps);
+        foreach ($pack->forms as $form) foreach ($form->fields as $field) {
+            if (isset($field->properties)) self::assertIsObject($field->properties);
+        }
+        self::assertIsArray($pack->apps[0]->forms);
+    }
     public function testAllPackFeaturesSurviveConversion(): void
     {
         $root = dirname(__DIR__, 2) . '/resources';
@@ -37,11 +48,19 @@ final class FolderPackCatalogTest extends TestCase
         $catalog = new FolderPackCatalog(null, $dir);
         try {
             file_put_contents($file, json_encode(['id' => 'clinic-appointment-intake', 'formatVersion' => 1, 'disabled' => true]));
-            self::assertArrayNotHasKey('clinic-appointment-intake', $catalog->load()['entries']);
+            $disabled = $catalog->load();
+            self::assertArrayNotHasKey('clinic-appointment-intake', $disabled['entries']);
+            $bundled = json_decode(file_get_contents(dirname(__DIR__, 2) . '/resources/packs/clinic-appointment-intake/pack.json'), true);
+            $oldSlug = trim(preg_replace('/[\s-]+/', '-', preg_replace('/[^a-z0-9\s-]/', '', strtolower($bundled['name']))), '-');
+            self::assertSame('clinic-appointment-intake', FolderPackCatalog::resolveSlug($disabled, $oldSlug));
+            self::assertContains(FolderPackCatalog::resolveSlug($disabled, $oldSlug), $disabled['hidden']);
             file_put_contents($file, '{');
             $result = $catalog->load();
             self::assertArrayHasKey('clinic-appointment-intake', $result['entries'], 'Malformed override preserves bundled fallback');
             self::assertCount(1, $result['errors']);
+            file_put_contents($file, json_encode(['id' => 'clinic-appointment-intake', 'formatVersion' => 1, 'name' => 'Unrelated broken pack']));
+            $result = $catalog->load();
+            self::assertNotContains('unrelated-broken-pack', $result['reserved'], 'An invalid override cannot hide another catalogue entry');
             unlink($file);
             self::assertArrayHasKey('clinic-appointment-intake', $catalog->load()['entries']);
         } finally { if (is_file($file)) unlink($file); rmdir($folder); rmdir($dir); }

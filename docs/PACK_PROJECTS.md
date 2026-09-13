@@ -11,6 +11,7 @@ The Softn workspace provides navigation, search, recent records, record details 
 - Each folder needs `pack.json`, `install.json` and the project folders declared in its metadata. No TypeScript registry, frontend rebuild, database seeding or server restart is needed.
 - A valid operator folder with the same ID replaces the bundled catalogue entry. `{"formatVersion":1,"id":"clinic-appointment-intake","disabled":true}` hides it. A malformed override is logged and the valid bundled entry remains available.
 - Changes affect **future installs**. Existing copies, records and owner edits are not overwritten. Keep previous source folders in version control or backups; folder downloads expose the current source, not historical catalogue versions.
+- Older name-based catalogue links resolve to the bundled folder's current source and respect its disabled state. Use the stable folder ID in new links.
 
 ```text
 my-pack/
@@ -50,7 +51,7 @@ Optional `screenshots` metadata is an array of `{label,url}` entries referencing
 
 ## Connected workspaces and named backend actions
 
-In a project, `manifest.json` declares `main` and its `files.ui` / `files.logic` source lists. `permission.json` uses the hosted runtime's existing permission format. A connected project declares private named actions in `formlogic.json`:
+In a project, `manifest.json` declares `main` and its `files.ui` / `files.logic` source lists. Optional client JSON resources belong in `files.json`. Include every screen/module so folder loading preserves multi-screen edits. `permission.json` uses the hosted runtime's existing permission format. A connected project declares private named actions in `formlogic.json`:
 
 ```json
 {

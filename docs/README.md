@@ -27,6 +27,7 @@ Manual editing and starters do not require an AI provider. Site AI and payments 
 | Multiple portals using shared data with different permissions | [One backend, many portals](ONE_BACKEND_MANY_PORTALS.md) |
 | Flow definitions, event bindings, queues and run history | [FormLogic Flows contract](FORMLOGIC_FLOWS.md) |
 | Extension packages, contributed nodes and service bindings | [Extensions](EXTENSIONS.md) |
+| Add or edit installable Softn app folders, backends and metadata | [Editable app packs](PACK_PROJECTS.md) |
 | Pack v1 structure, cross-references and import/export boundaries | [Pack format](PACK_FORMAT.md), [JSON schema](pack-schema-v1.json) |
 | Existing custom screens, effects, connectors and app domains | [Custom app platform reference](CUSTOM_APP_PLATFORM.md) |
 | Browser/server form expression sandbox and engine builds | [Runtime developer guide](../formlogic/runtime/README.md) |
@@ -75,5 +76,3 @@ These documents retain design history and compatibility details. Use current sou
 | [Native Tauri runtime](NATIVE_RUNTIME_TAURI.md) | Optional app shell design; distinct from the OAIY desktop host. |
 
 When updating a feature, update its current task guide with the implementation and validation limits. Keep historical specifications labelled rather than presenting a proposed feature as available.
-
-- [Editable app pack folders](PACK_PROJECTS.md) — live catalogue metadata, Softn sources, server actions, native backends and installation.

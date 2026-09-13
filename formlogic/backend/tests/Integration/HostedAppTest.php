@@ -51,6 +51,18 @@ class HostedAppTest extends TestCase
         $this->expectExceptionCode(404);
         $this->host->run('app-a', 'save', ['id' => 'one', 'text' => 'secret'], 'member', false);
     }
+    public function testPortableManifestRetainsMultipleScreensAndJsonResources(): void
+    {
+        $package = $this->package();
+        $package['client']['ui/detail.ui'] = '<Text>Record details</Text>';
+        $package['client']['data/options.json'] = '{"choices":["First","Second"]}';
+        $this->host->publish('multi-screen', $package, 0);
+        $client = $this->host->get('multi-screen')['client'];
+        $manifest = json_decode($client['manifest.json'], true);
+        self::assertSame(['ui/main.ui', 'ui/detail.ui'], $manifest['files']['ui']);
+        self::assertSame(['data/options.json'], $manifest['files']['json']);
+        self::assertArrayNotHasKey('config', $manifest, 'Private manifest configuration stays excluded');
+    }
     public function testFailedScriptRollsBack(): void
     {
         $p = $this->package();

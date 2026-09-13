@@ -117,13 +117,14 @@ describe('app management navigation', () => {
   it('organizes the Manage page and links back to the App Studio', async () => {
     await renderAt('/apps/app-1/settings?tab=manage', <AppSettings />);
 
-    for (const heading of ['Content & data', 'People & access', 'Experience & delivery', 'Tools & portability']) {
+    for (const heading of ['Content & data', 'Experience & delivery', 'Tools & portability']) {
       expect(container.textContent).toContain(heading);
     }
-    expect(container.textContent).toContain('Manage Plumbing Operations');
+    expect(container.textContent).toContain('Plumbing Operations');
+    expect(Array.from(container.querySelectorAll('[role="tab"]')).some(tab => tab.textContent === 'Access')).toBe(true);
     expect(container.textContent).toContain('2');
 
-    const studio = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Open App Studio'))!;
+    const studio = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'App Studio')!;
     await act(async () => { studio.click(); });
     expect(routeRef.current).toBe('/apps/app-1/studio');
   });
