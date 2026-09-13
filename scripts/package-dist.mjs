@@ -19,8 +19,10 @@
  * npm (UI build), composer (backend prod vendor/), git (version), zip OR PowerShell (archive).
  *
  * Usage:
- *   node scripts/package-dist.mjs [--skip-ui-build] [--no-install] [--out <dir>] [--keep-staging] [--version <v>]
+ *   node scripts/package-dist.mjs [--require-signature] [--skip-ui-build] [--no-install] [--out <dir>] [--keep-staging] [--version <v>]
  *
+ *   --require-signature  require an Ed25519 signature for offline/custom distribution
+ *   --allow-unsigned  compatibility flag; GitHub-verified releases need no signing key
  *   --skip-ui-build  reuse the existing formlogic/ui/dist (must exist and contain .htaccess)
  *   --no-install     skip `npm ci` before the UI build (reuse existing node_modules)
  *   --out <dir>      output directory (default: <repo>/dist-package)
@@ -36,6 +38,9 @@ import { cpSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync,
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadReleaseSigner, signReleaseManifest } from './release-signing.mjs';
+import { checkReleaseRuntime } from './release-runtime.mjs';
+import { runtimeIdentity } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 
 const isWindows = process.platform === 'win32';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -83,18 +88,21 @@ const BACKEND_COPY_FILES = ['composer.json', 'composer.lock', '.env.example', '.
 const BACKEND_SKELETON_DIRS = [
   'logs',
   'storage/forms',
+  'storage/hosted-apps',
   'storage/packs',
   'storage/uploads',
   'storage/pack-screenshots',
 ];
 
 // --- tiny CLI ---------------------------------------------------------------
-const cli = { skipUiBuild: false, noInstall: false, keepStaging: false, out: null, version: null };
+const cli = { requireSignature: false, allowUnsigned: false, skipUiBuild: false, noInstall: false, keepStaging: false, out: null, version: null };
 {
   const args = process.argv.slice(2);
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--skip-ui-build') cli.skipUiBuild = true;
+    else if (a === '--require-signature') cli.requireSignature = true;
+    else if (a === '--allow-unsigned') cli.allowUnsigned = true;
     else if (a === '--no-install') cli.noInstall = true;
     else if (a === '--keep-staging') cli.keepStaging = true;
     else if (a === '--out') cli.out = args[++i];
@@ -102,7 +110,7 @@ const cli = { skipUiBuild: false, noInstall: false, keepStaging: false, out: nul
     else if (a === '--version') cli.version = args[++i];
     else if (a.startsWith('--version=')) cli.version = a.slice('--version='.length);
     else if (a === '--help' || a === '-h') {
-      console.log('Usage: node scripts/package-dist.mjs [--skip-ui-build] [--no-install] [--out <dir>] [--keep-staging] [--version <v>]');
+      console.log('Usage: node scripts/package-dist.mjs [--require-signature] [--skip-ui-build] [--no-install] [--out <dir>] [--keep-staging] [--version <v>]');
       process.exit(0);
     } else {
       fail(`Unknown argument: ${a} (see --help)`);
@@ -198,7 +206,7 @@ Requirements
 - Apache with mod_rewrite enabled and "AllowOverride All" for the web root
   (the shipped .htaccess does the /api routing AND the security hardening —
   it must be honoured).
-- PHP 8.1+ (8.3 recommended) with pdo_mysql, pdo_sqlite, mbstring, curl, gd, zip.
+- PHP 8.2+ (8.3 recommended) with pdo_mysql, pdo_sqlite, mbstring, curl, gd, zip.
 - MySQL 8.
 - HTTPS in production: auth uses Secure cookies, so login FAILS over plain HTTP.
 
@@ -262,7 +270,7 @@ Manual install (no wizard)
 Scheduled tasks (optional but recommended)
 ------------------------------------------
 The wizard prints these ready-to-paste; the crontab lines are (use the full
-path to your PHP 8.1+ CLI binary if plain "php" isn't on cron's PATH):
+path to your PHP 8.2+ CLI binary if plain "php" isn't on cron's PATH):
   * * * * *  php <web-root>/api/bin/webhook-worker.php       # webhook retry delivery (lock-guarded; or run once with --loop as a service)
   17 3 * * * php <web-root>/api/bin/idempotency-cleanup.php  # nightly offline-sync ledger prune (rows older than 30 days)
   23 3 * * * php <web-root>/api/bin/desktop-commands-cleanup.php  # nightly desktop-command relay prune (rows older than 7 days; also expires crashed/claimed rows)
@@ -348,6 +356,13 @@ If anything fails, restore the step-1 backup and retry.
 }
 
 // --- steps --------------------------------------------------------------------
+let releaseSigner;
+try { releaseSigner = loadReleaseSigner(process.env, cli); }
+catch (error) { fail(error.message); }
+// Keep signing credentials out of npm/composer and other child processes.
+delete process.env.FORMLOGIC_RELEASE_SIGNING_KEY;
+delete process.env.FORMLOGIC_RELEASE_SIGNING_KEY_PEM;
+const expectedRuntime = runtimeIdentity(JSON.parse(readFileSync(path.join(uiDir, 'vendor/zipp-wasm/SOURCE.json'), 'utf8')));
 const version = resolveVersion();
 const outDir = path.resolve(repoRoot, cli.out || 'dist-package');
 const staging = path.join(outDir, 'staging');
@@ -379,6 +394,9 @@ if (cli.skipUiBuild) {
 for (const f of ['index.html', '.htaccess', 'assets']) {
   if (!existsSync(path.join(distDir, f))) fail(`UI build incomplete: formlogic/ui/dist/${f} is missing`);
 }
+
+// Even --skip-ui-build must supply a complete, matching hosted runtime.
+await checkReleaseRuntime(path.join(distDir, 'hosted-runtime'), expectedRuntime);
 
 // [2] Stage the UI at the zip root ---------------------------------------------
 step('Staging the built UI at the zip root');
@@ -458,6 +476,8 @@ writeFileSync(path.join(staging, 'UPGRADE.txt'), upgradeTxt(version));
 // [7] Sanity checks on the staged tree ------------------------------------------
 step('Verifying the staged tree');
 const mustExist = [
+  'hosted-runtime/index.html',
+  'hosted-runtime/runtime-manifest.json',
   'index.html',
   '.htaccess',
   'install.php',
@@ -484,6 +504,8 @@ for (const p of mustNotExist) {
   if (existsSync(path.join(staging, p))) fail(`staged tree must NOT contain: ${p}`);
 }
 info(`all ${mustExist.length} required paths present; ${mustNotExist.length} excluded paths confirmed absent`);
+
+await checkReleaseRuntime(path.join(staging, 'hosted-runtime'), expectedRuntime);
 
 // [7.5] Integrity manifest --------------------------------------------------------
 // manifest.json makes the zip importable through the ADMIN PANEL's upgrade wizard:
@@ -517,33 +539,17 @@ step('Writing manifest.json (admin-panel upgrade import)');
 
 // [7.6] Release signature (review FL-006) -----------------------------------------
 // manifest.sig.json = Ed25519 over the EXACT manifest.json bytes. Servers pin the
-// release public key (UPGRADE_RELEASE_PUBKEY) and refuse unsigned/foreign-signed
-// packages in production. Key: FORMLOGIC_RELEASE_SIGNING_KEY = path to a PKCS8 PEM
+// release public key (UPGRADE_RELEASE_PUBKEY) for offline uploads. Official online
+// updates verify the GitHub release asset digest instead. Optional key: FORMLOGIC_RELEASE_SIGNING_KEY = path to a PKCS8 PEM
 // Ed25519 private key (generate one with scripts/generate-release-key.mjs).
 step('Signing manifest.json (release envelope)');
-{
-  const keyPath = process.env.FORMLOGIC_RELEASE_SIGNING_KEY || '';
-  if (keyPath === '') {
-    info('WARNING: FORMLOGIC_RELEASE_SIGNING_KEY not set — this package is UNSIGNED and');
-    info('WARNING: will be refused by production installs (dev installs need UPGRADE_ALLOW_UNSIGNED=true).');
-  } else {
-    const { createHash, createPrivateKey, createPublicKey, sign } = await import('node:crypto');
-    const priv = createPrivateKey(readFileSync(keyPath, 'utf8'));
-    if (priv.asymmetricKeyType !== 'ed25519') fail('FORMLOGIC_RELEASE_SIGNING_KEY must be an Ed25519 PKCS8 PEM key');
-    const manifestBytes = readFileSync(path.join(staging, 'manifest.json'));
-    const spki = createPublicKey(priv).export({ type: 'spki', format: 'der' });
-    const rawPub = spki.subarray(spki.length - 32); // raw 32-byte Ed25519 public key
-    const keyId = createHash('sha256').update(rawPub).digest('hex').slice(0, 16);
-    writeFileSync(path.join(staging, 'manifest.sig.json'), JSON.stringify({
-      algorithm: 'ed25519',
-      keyId,
-      // Informational only — verifiers trust their PINNED key, never this field.
-      publicKey: rawPub.toString('base64'),
-      signedFile: 'manifest.json',
-      signature: sign(null, manifestBytes, priv).toString('base64'),
-    }, null, 2));
-    info(`manifest signed (keyId ${keyId}); servers pin UPGRADE_RELEASE_PUBKEY=${rawPub.toString('base64')}`);
-  }
+if (releaseSigner) {
+  const bytes = readFileSync(path.join(staging, 'manifest.json'));
+  const envelope = signReleaseManifest(bytes, releaseSigner);
+  writeFileSync(path.join(staging, 'manifest.sig.json'), JSON.stringify(envelope, null, 2));
+  info(`manifest signed and verified (keyId ${envelope.keyId})`);
+} else {
+  info('No optional signature: publish this ZIP as an official GitHub release for verified online updates. Offline uploads require a signature.');
 }
 
 // [8] Zip ------------------------------------------------------------------------

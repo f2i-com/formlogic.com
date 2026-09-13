@@ -485,6 +485,16 @@ export function CustomDomainsPanel({ appId, published = true }: { appId: string;
         Run this app on your own domain, so it feels like your product — not a page inside FormLogic.
       </p>
 
+      <details className="mb-5 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-300">
+        <summary className="cursor-pointer font-medium text-gray-900 dark:text-white">How to connect your domain</summary>
+        <ol className="mt-3 list-decimal space-y-2 pl-5 leading-6">
+          <li>Add your domain here and create the TXT record shown below to verify ownership.</li>
+          <li>Point the domain at your hosting provider’s public server. For a subdomain, use its supplied CNAME hostname; enter a hostname, not a URL or app path. For a root domain, follow the provider’s A/AAAA or alias instructions.</li>
+          <li>The hosting server must accept your domain and provide its HTTPS certificate. Publish your app, then verify and open the domain.</li>
+        </ol>
+        <p className="mt-3 text-xs leading-5">The TXT record proves ownership; it does not route traffic or provision HTTPS. URL forwarding redirects visitors to another address. A custom domain keeps your address in the browser. A local development server is not a public hosting target.</p>
+      </details>
+
       {/* Add */}
       {/* A container row, not a viewport one: with the chat rail docked this panel has
           ~300-400px while `sm:` (viewport 640) had already fired, laying ~450px of

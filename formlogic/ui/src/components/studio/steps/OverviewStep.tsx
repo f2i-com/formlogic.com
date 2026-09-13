@@ -45,6 +45,7 @@ import type { Blueprint } from '../../../types/blueprints';
 export function OverviewStep({
   app,
   appForms,
+  nativeTableCount = 0,
   formsById,
   roles,
   flows,
@@ -57,6 +58,7 @@ export function OverviewStep({
 }: {
   app: App;
   appForms: AppForm[];
+  nativeTableCount?: number;
   formsById: Record<string, Form>;
   roles: AppRole[];
   flows: FlowDefinition[];
@@ -248,9 +250,9 @@ export function OverviewStep({
         <div className="mt-2 grid grid-cols-2 gap-2 @xl/studio:grid-cols-3 @3xl/studio:grid-cols-5 @2xl/studio:gap-3">
           <StatTile
             icon={Database}
-            value={String(appForms.length)}
-            label={appForms.length === 1 ? 'data type' : 'data types'}
-            detail={relationCount > 0 ? `${relationCount} ${relationCount === 1 ? 'relationship' : 'relationships'}` : 'The forms behind the app'}
+            value={String(appForms.length + nativeTableCount)}
+            label={nativeTableCount ? 'tables & forms' : appForms.length === 1 ? 'data type' : 'data types'}
+            detail={nativeTableCount ? `${nativeTableCount} database tables · ${appForms.length} forms` : relationCount > 0 ? `${relationCount} ${relationCount === 1 ? 'relationship' : 'relationships'}` : 'The forms behind the app'}
             onClick={() => onStepChange('data')}
           />
           <StatTile

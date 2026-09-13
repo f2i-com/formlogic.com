@@ -81,7 +81,7 @@ describe('adaptInstalledDefinition (FLOW-201)', () => {
     // exactly what the author must do rather than calling the node unrunnable.
     expect(spec.doc).toContain('Acme Media Tools');
     expect(spec.executable).toBe(true);
-    expect(spec.doc).toContain('service slot is bound');
+    expect(spec.doc).toContain('bound service slot');
   });
 
   it('RUN-301: core-preset contributions are executable (runs ride the server-compiled IR)', () => {
@@ -94,7 +94,7 @@ describe('adaptInstalledDefinition (FLOW-201)', () => {
       sideEffects: 'none',
     });
     expect(preset.executable).toBe(true);
-    expect(preset.doc).toContain('lowered to a built-in node');
+    expect(preset.doc).toContain('Compiled to a built-in node');
   });
 
   it('never serializes React: unknown icon ids fall back to the host default', () => {

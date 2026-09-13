@@ -151,6 +151,7 @@ export default defineConfig(({ mode }) => {
         //   would cost every visitor 5.5 MB up front, which is the worse trade.
         globIgnores: [
           'hosted-runtime/**',
+          'app-editors/**',
           '**/esbuild-*.wasm',
           '**/ts.worker-*.js',
           '**/editor.worker-*.js',
@@ -168,7 +169,7 @@ export default defineConfig(({ mode }) => {
         // iframe must load — serving index.html there would break every screen).
         // Was limited to '/app/', which broke offline routing for the platform
         // shell now that scope is '/'.
-        navigateFallbackAllowlist: [/^\/(?!api\/|hosted-runtime\/|screen-host\.html)/],
+        navigateFallbackAllowlist: [/^\/(?!api\/|app-editors\/|hosted-runtime\/|screen-host\.html)/],
         runtimeCaching: [
           // SECURITY: authenticated, tenant-scoped GET responses (/api/app/{slug},
           // .../forms/{id}, .../responses) are intentionally NOT cached. Workbox

@@ -227,9 +227,21 @@ class StubChatAiService extends AIService
 {
     public function __construct()
     {
-        $_ENV['AI_BASE_URL'] = 'http://127.0.0.1:9'; // keyless local endpoint → configured
-        parent::__construct();
-        unset($_ENV['AI_BASE_URL']);
+        $previousUrl = $_ENV['AI_BASE_URL'] ?? null;
+        $_ENV['AI_BASE_URL'] = 'http://127.0.0.1:9'; // keyless stub transport; no upstream request
+        try {
+            // These tests exercise hosted chat with Site AI explicitly enabled.
+            // A clean installation now defaults it off; never depend on developer storage.
+            parent::__construct(new class extends \FormLogic\Services\PlatformPlansService {
+                public function status(): array
+                {
+                    return array_replace(self::defaults(), ['siteAiEnabled' => true]);
+                }
+            });
+        } finally {
+            if ($previousUrl === null) unset($_ENV['AI_BASE_URL']);
+            else $_ENV['AI_BASE_URL'] = $previousUrl;
+        }
     }
 
     protected function chatCompletionsRequest(array $payload, bool $stream, ?callable $onDelta, ?callable $onHeartbeat): array

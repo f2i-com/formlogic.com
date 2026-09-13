@@ -170,11 +170,13 @@ function RolesView({
     if (!selectedId) return;
     // Already loaded this role at this retry token — keep the draft, unsaved edits and all.
     if (loadedTokens.current[selectedId] === retryToken) return;
-    loadedTokens.current[selectedId] = retryToken;
+    // Cache only a settled, accepted result. StrictMode replay and role switches
+    // cancel this effect; caching an in-flight request strands the next load.
     let cancelled = false;
     api.getAppRolePermissions(app.id, selectedId).then(
       (res) => {
         if (cancelled) return;
+        loadedTokens.current[selectedId] = retryToken;
         if (res.error) {
           // An unread permission set must NOT render as "this role has nothing":
           // saving over that view would revoke every grant the role really holds.
@@ -194,7 +196,9 @@ function RolesView({
         }));
       },
       () => {
-        if (!cancelled) setLoadError((s) => ({ ...s, [selectedId]: 'Could not read this role.' }));
+        if (cancelled) return;
+        loadedTokens.current[selectedId] = retryToken;
+        setLoadError((s) => ({ ...s, [selectedId]: 'Could not read this role.' }));
       }
     );
     return () => { cancelled = true; };

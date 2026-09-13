@@ -282,7 +282,9 @@ export function AppLogicPanel({ appId, initialLogic, onDirtyChange }: {
   // Minutes of editor work used to vanish on any Back click or reload, because the
   // page hosting this panel had no idea there were unsaved edits (and the panel is
   // collapsible, so they were often not even on screen).
-  const savedBundleRef = useRef(JSON.stringify(initialLogic ?? null));
+  // Compare against the same normalized defaults used by the editor. A missing
+  // bundle (or omitted optional keys) is not an unsaved edit.
+  const savedBundleRef = useRef(JSON.stringify(bundle));
   const dirty = JSON.stringify(bundle) !== savedBundleRef.current;
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);

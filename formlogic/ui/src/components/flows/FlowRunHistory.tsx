@@ -46,7 +46,7 @@ const RUN_ERROR_HELP: Record<FlowRunErrorCode, { cause: string; next: string }> 
   },
   runner_unavailable: {
     cause: 'Nothing was available to run it.',
-    next: 'If this automation runs on FormLogic Desktop, start Desktop and try again.',
+    next: 'Check the selected runtime and its connection. For local AI or Aokie steps, start OAIY and reconnect it.',
   },
 };
 

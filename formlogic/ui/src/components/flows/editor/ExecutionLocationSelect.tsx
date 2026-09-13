@@ -43,7 +43,7 @@ export function ExecutionLocationSelect({
           Auto
         </option>
         <option value="desktop" title={EXECUTION_LOCATION_DESCRIPTIONS.desktop}>
-          Desktop
+          Desktop relay
         </option>
         <option value="cloud" disabled={!!cloudDisabledReason} title={cloudTitle}>
           Cloud
@@ -77,7 +77,7 @@ export function ExecutionLocationNotice({
       >
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-none" />
         <p>
-          Cloud runs are unavailable here: {cloudDisabledReason} Switch Run on to Auto or Desktop, or pick Cloud again later.
+          Cloud runs are unavailable here: {cloudDisabledReason} Switch Run on to Auto or Desktop relay, or pick Cloud again later.
         </p>
       </div>
     );
@@ -92,7 +92,7 @@ export function ExecutionLocationNotice({
         <p>
           FormLogic Cloud can't run this flow yet — unsupported node{cloudUnsupportedNodes.length === 1 ? '' : 's'}:{' '}
           <span className="font-medium">{cloudUnsupportedNodes.join(', ')}</span>. The setting stays saved; cloud runs will
-          refuse until those nodes change. Switch to Auto or Desktop to run it now.
+          refuse until those nodes change. Use Auto with the required local services, or a compatible Desktop relay.
         </p>
       </div>
     );

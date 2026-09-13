@@ -78,7 +78,7 @@ export function SoftnExportPanel({ app, appForms = [], forms: suppliedForms, sou
     }>
       <div className="space-y-5 p-4 sm:p-6">
         <div className="rounded-xl bg-gray-50 dark:bg-slate-800 p-4 text-sm leading-6 text-gray-600 dark:text-slate-300">
-          <p>Your project includes editable screens and supported form fields. An empty app starts with a simple notes screen.</p>
+          <p>Each form becomes an editable screen with its own logic file. Select several forms to combine them in one app with navigation. A blank form stays blank; an app without forms starts with a notes screen.</p>
           <p className="mt-2">Records entered in this copy stay on the device. Existing responses, private forms, automations and account access are not included. It does not sync with your workspace.</p>
         </div>
         {!project && !suppliedForms && appForms.length > 0 && <fieldset disabled={busy}>
@@ -97,7 +97,7 @@ export function SoftnExportPanel({ app, appForms = [], forms: suppliedForms, sou
             <summary className="cursor-pointer font-medium">Review {project.warnings.length} conversion note{project.warnings.length === 1 ? '' : 's'}</summary>
             <ul className="mt-3 list-disc space-y-2 break-words pl-5">{project.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>
           </details>}
-          <p className="text-sm leading-6 text-gray-600 dark:text-slate-300">Download your project, then use Open in the app editor to customise it. The download includes your editable source files and instructions.</p>
+          <p className="text-sm leading-6 text-gray-600 dark:text-slate-300">Download your project, then use Open in the app editor to customise it. The .softn download includes separate screen and logic files for each form, plus instructions for reusing them in another app.</p>
           <a className="inline-flex min-h-11 items-center gap-2 text-sm font-medium text-primary-600 dark:text-primary-400" href="https://softn.com/builder/" target="_blank" rel="noopener noreferrer">Open app editor <ExternalLink className="h-4 w-4" /></a>
         </div>}
       </div>

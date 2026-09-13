@@ -20,12 +20,12 @@ export const STUDIO_STEPS: StudioStep[] = [
   // `plan` keeps its id so existing /studio/plan links, shortcuts and tests still
   // resolve; the section itself is now the app's Overview (identity, contents and
   // the planning tools that used to fill the slot on their own).
-  { id: 'plan', label: 'Overview', shortLabel: 'Overview', description: 'What this app is, what it holds, and how to plan it' },
-  { id: 'data', label: 'Data & forms', shortLabel: 'Data', description: 'The forms behind the app: fields and relationships' },
-  { id: 'screens', label: 'Screens', shortLabel: 'Screens', description: 'Home, navigation and the views members get' },
-  { id: 'automations', label: 'Automations', shortLabel: 'Automations', description: 'What happens when records arrive' },
-  { id: 'access', label: 'Users & roles', shortLabel: 'Access', description: 'Who can open the app and what they can do' },
-  { id: 'publish', label: 'Review & publish', shortLabel: 'Publish', description: 'Check the app over and release a version' },
+  { id: 'plan', label: 'Overview', shortLabel: 'Overview', description: 'Give your app a name and purpose. See what is already built and plan what to add.' },
+  { id: 'data', label: 'Data & forms', shortLabel: 'Data', description: 'Browse your app’s database tables and records, or add forms and link related information.' },
+  { id: 'screens', label: 'Screens', shortLabel: 'Screens', description: 'Design what people see: the home screen, pages, navigation and overall appearance.' },
+  { id: 'automations', label: 'Automations', shortLabel: 'Automations', description: 'Connect steps into flows that respond to form submissions, app events or a manual run.' },
+  { id: 'access', label: 'Users & roles', shortLabel: 'Access', description: 'Invite people and choose what each role can view, create or change.' },
+  { id: 'publish', label: 'Review & publish', shortLabel: 'Publish', description: 'Preview the app, resolve any checks and publish a version when you are ready.' },
 ];
 
 export function isStudioStep(value: string | undefined | null): value is StudioStepId {
@@ -35,6 +35,7 @@ export function isStudioStep(value: string | undefined | null): value is StudioS
 /** What the app actually contains — the source for every section badge. */
 export interface StudioSnapshot {
   formCount: number;
+  nativeTableCount?: number;
   flowCount: number;
   activeFlowCount: number;
   roleCount: number;
@@ -67,9 +68,9 @@ export function deriveSectionBadges(s: StudioSnapshot): Record<StudioStepId, Sec
     // something.
     plan: null,
     data: {
-      text: String(s.formCount),
-      tone: s.formCount === 0 ? 'attention' : 'muted',
-      title: s.formCount === 0 ? 'No data types yet' : plural(s.formCount, 'data type'),
+      text: String(s.formCount + (s.nativeTableCount ?? 0)),
+      tone: s.formCount + (s.nativeTableCount ?? 0) === 0 ? 'attention' : 'muted',
+      title: s.nativeTableCount ? `${plural(s.nativeTableCount, 'database table')} · ${plural(s.formCount, 'form')}` : s.formCount === 0 ? 'No data types yet' : plural(s.formCount, 'data type'),
     },
     // Every form contributes its generated screens; the home screen is always there.
     screens: {
@@ -374,6 +375,7 @@ export interface NextAction {
  */
 export function deriveNextAction(s: {
   formCount: number;
+  nativeTableCount?: number;
   fieldlessFormNames: string[];
   flowCount: number;
   memberCount: number;
@@ -382,7 +384,7 @@ export function deriveNextAction(s: {
   /** False when the member fetch failed — never suggest inviting on an unknown count. */
   memberCountKnown?: boolean;
 }): NextAction | null {
-  if (s.formCount === 0) {
+  if (s.formCount === 0 && !s.nativeTableCount) {
     return {
       step: 'data',
       title: 'Add your first data type',

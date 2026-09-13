@@ -3,7 +3,7 @@
 // Renders one graph node from its catalog spec: an accent icon chip, title, a one-line
 // plain-language summary, and the spec's handles (condition nodes expose True / False source
 // handles that the executor routes on). Desktop-service-backed nodes render a functional
-// "Runs on FormLogic Desktop" badge. Styling is native FormLogic Tailwind tokens, light + dark.
+// "Runs on OAIY" badge. Styling is native FormLogic Tailwind tokens, light + dark.
 //
 // Live Wire pass: brand color (primary-*) is reserved for "selected" and "executed" — the only
 // two things this canvas is allowed to say in brand color. The rainbow accent survives only on
@@ -170,7 +170,7 @@ function FlowNodeInner({ id, type, data, selected }: NodeProps) {
   return (
     <div
       className={cn(
-        'relative w-56 rounded-xl border bg-white dark:bg-slate-900 shadow-sm transition-shadow',
+        'relative w-56 rounded-xl border bg-white dark:bg-slate-900 shadow-sm transition-shadow hover:shadow-md',
         'border-gray-200 dark:border-slate-700',
         disabled && 'border-dashed opacity-70',
         ringCls,
@@ -189,7 +189,7 @@ function FlowNodeInner({ id, type, data, selected }: NodeProps) {
         />
       ))}
 
-      <div className="flex items-center gap-2.5 px-3 py-2.5">
+      <div className="flex items-center gap-2.5 px-3.5 py-3">
         <span className={cn('flex h-8 w-8 flex-none items-center justify-center rounded-lg', accentChip)}>
           <Icon className="h-4 w-4" />
         </span>
@@ -268,7 +268,7 @@ function FlowNodeInner({ id, type, data, selected }: NodeProps) {
             ? 'bg-amber-50/80 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300'
             : 'text-primary-600 dark:text-primary-300',
         )}>
-          <MonitorDown className="h-2.5 w-2.5 flex-none" /> Runs on FormLogic Desktop
+          <MonitorDown className="h-2.5 w-2.5 flex-none" /> Runs on OAIY
         </p>
       )}
       {disabled && (

@@ -21,7 +21,8 @@
     "test:zipp-sharing": "node scripts/check-zipp-sharing.mjs",
     "test:tooling": "node scripts/check-tooling.mjs",
     "test:hosted-runtime": "node --test scripts/hosted-runtime-artifact.test.mjs",
-    "build:hosted-runtime": "node scripts/build-hosted-runtime.mjs"
+    "build:hosted-runtime": "node scripts/build-hosted-runtime.mjs",
+    "build:app-editors": "node scripts/build-app-editors.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

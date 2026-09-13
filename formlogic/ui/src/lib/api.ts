@@ -1479,12 +1479,13 @@ class ApiClient {
     return null;
   }
 
-  /** GET /api/vault — the caller's wrapped vault, or null when none exists yet (404). */
+  /** GET /api/vault — the caller's wrapped vault, or null when none exists yet. */
   async getVault(): Promise<ApiResponse<{ vault: VaultWire | null }>> {
     const blocked = this.privateFormsBlocked();
     if (blocked) return { error: blocked, status: 403 };
     const res = await this.requestWithMeta('/vault');
-    if (res.status === 404) return { data: { vault: null } };
+    // Retain compatibility with older servers, but do not mask a missing route.
+    if (res.status === 404 && res.body?.code === 'vault_not_found') return { data: { vault: null } };
     if (!res.ok) {
       return { error: (res.body?.message as string) ?? `Server error (${res.status})`, status: res.status };
     }
@@ -1705,7 +1706,16 @@ class ApiClient {
     try {
       const res = await fetch(`${this.baseUrl}/health/deep`, { credentials: 'include' });
       if (res.status === 401) { this.handleUnauthorized(); return null; }
-      return await res.json();
+      // A degraded health report intentionally returns 503. Other error bodies
+      // (e.g. a 403 message) are not reports and must not crash the diagnostics UI.
+      if (!res.ok && res.status !== 503) return null;
+      const report = await res.json();
+      if (!report || !['ok', 'degraded'].includes(report.status)
+        || !report.checks || typeof report.checks !== 'object' || Array.isArray(report.checks)
+        || !Object.values(report.checks).every(check => check && typeof check === 'object'
+          && 'ok' in check && typeof check.ok === 'boolean'
+          && 'detail' in check && typeof check.detail === 'string')) return null;
+      return report;
     } catch {
       return null;
     }
@@ -1911,6 +1921,27 @@ class ApiClient {
     const url = URL.createObjectURL(await response.blob());
     const link = document.createElement('a'); link.href = url; link.download = 'app-database.sqlite'; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async getNativeEntry(slug: string): Promise<ApiResponse<{ home: boolean; access: 'application' | 'members' }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/entry`);
+  }
+  async getNativeProject(id: string): Promise<ApiResponse<{ available: boolean; project: import('./nativeHosting').NativeProject | null }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native`);
+  }
+  async saveNativeProject(id: string, project: import('./nativeHosting').NativeProject, expectedVersion: number): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native`, { method: 'PUT', body: JSON.stringify({ project, expectedVersion }) });
+  }
+  async getNativeRecords(id: string, table?: string, offset = 0): Promise<ApiResponse<import('./nativeHosting').NativeRecords>> {
+    const params = new URLSearchParams({ offset: String(offset) });
+    if (table) params.set('table', table);
+    return this.request(`/apps/${encodeURIComponent(id)}/native/records?${params}`);
+  }
+  async getNativeRuntime(slug: string): Promise<ApiResponse<{ name: string; project: import('./nativeHosting').NativeRuntimeProject }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/native`);
+  }
+  async runNativeRequest(slug: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<ApiResponse<{ result: { status: number; body: unknown } }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/native/request`, { method: 'POST', body: JSON.stringify(input), signal });
   }
 
   async getAppHosting(id: string): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment | null }>> {
@@ -4477,6 +4508,14 @@ class ApiClient {
     return this.request('/admin/upgrade/status');
   }
 
+  async adminUpgradeLatest(): Promise<ApiResponse<{ release: AdminOfficialRelease | null }>> {
+    return this.request('/admin/upgrade/latest');
+  }
+
+  async adminUpgradeDownload(release: Pick<AdminOfficialRelease, 'releaseId' | 'assetId' | 'digest'>): Promise<ApiResponse<{ staged: AdminStagedPackage }>> {
+    return this.request('/admin/upgrade/download', { method: 'POST', body: JSON.stringify({ releaseId: release.releaseId, assetId: release.assetId, digest: release.digest }) });
+  }
+
   /** Upload a release zip for the upgrade wizard (multipart — raw fetch like the other uploads). */
   async adminUpgradeUpload(file: File): Promise<ApiResponse<{ staged: AdminStagedPackage }>> {
     try {
@@ -4601,11 +4640,24 @@ export interface AdminUserDetail extends AdminUser {
   flows: Array<{ id: string; appId?: string | null; appName?: string | null; name: string; slug: string; enabled: boolean; version: number; updatedAt?: string }>;
 }
 
+export interface AdminOfficialRelease {
+  releaseId: number;
+  assetId: number;
+  version: string;
+  tag: string;
+  name: string;
+  sizeBytes: number;
+  digest: string;
+  publishedAt: string;
+  url: string;
+  isNewer: boolean;
+}
+
 export interface AdminStagedPackage {
   packageId: string;
   digest: string;
   version: string;
-  integrity: 'signed' | 'unsigned-dev-override' | 'verified' | 'unverified';
+  integrity: 'github-release' | 'signed' | 'unsigned-dev-override' | 'verified' | 'unverified';
   verifiedFiles: number;
   currentVersion: string;
   isDowngrade: boolean;

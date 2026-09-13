@@ -7,7 +7,7 @@
 // step, companion apps are created from an app's Forms manager.
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Boxes, Check, HardDrive, Package, RefreshCw, ShieldCheck } from 'lucide-react';
+import { ArrowRight, Boxes, Check, HardDrive, Package, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -130,11 +130,7 @@ export function AppCreateStart() {
     <div className="min-h-screen">
       <Header
         title="Create app"
-        actions={
-          <Button variant="ghost" size="sm" onClick={() => navigate('/apps')} leftIcon={<ArrowLeft className="h-4 w-4" />}>
-            Back
-          </Button>
-        }
+        back={{ onClick: () => navigate('/apps'), label: 'Back to apps' }}
       />
       <main className="mx-auto max-w-3xl px-4 pb-32 pt-6 sm:pb-16 sm:pt-8">
         {(

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { ArrowRight, Compass, RotateCcw, Sparkles } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Compass, RotateCcw, Sparkles } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { StudioTopBar } from '../../components/studio/StudioTopBar';
 import { StudioRail } from '../../components/studio/StudioRail';
@@ -30,6 +30,8 @@ import { getAiReadiness } from '../../client-runtime/flows/aiDefault';
 import { isDemoLocalId } from '../../lib/demoLocal';
 import { useKeyboardShortcuts, type KeyboardShortcut } from '../../hooks/useKeyboardShortcuts';
 import { cn } from '../../lib/utils';
+import { useNativeTables } from '../../components/studio/useNativeTables';
+import { useAdminActing } from '../../components/admin/AdminActingContext';
 
 /** One suggestion per section, offered only when a default AI can actually run. */
 const STEP_PROMPTS: Record<StudioStepId, string> = {
@@ -71,6 +73,11 @@ export function AppStudio() {
   };
 
   const activeStep: StudioStepId = isStudioStep(stepParam) ? stepParam : 'data';
+  const acting = useAdminActing();
+  const nativeDatabase = useNativeTables(appId && data.app && !isDemoLocalId(appId) && !acting ? appId : undefined, activeStep);
+
+  // Footer navigation should reveal the next section from its heading.
+  useEffect(() => { window.scrollTo(0, 0); }, [appId, activeStep]);
 
   // The save indicator starts clean per app — one app's failure must not haunt
   // the next one's top bar.
@@ -92,20 +99,6 @@ export function AppStudio() {
     return () => { cancelled = true; };
   }, []);
 
-  // /studio (no section) → the natural entry: a brand-new app opens on Overview
-  // (identity, then the planning tools), an app that already has data opens on
-  // Data. An unknown section in the URL is corrected too, so the address bar can
-  // never disagree with what is on screen.
-  useEffect(() => {
-    if (!appId) return;
-    if (stepParam === undefined) {
-      if (data.loading) return;
-      navigate(`/apps/${appId}/studio/${data.appForms.length === 0 ? 'plan' : 'data'}`, { replace: true });
-      return;
-    }
-    if (!isStudioStep(stepParam)) navigate(`/apps/${appId}/studio/data`, { replace: true });
-  }, [appId, stepParam, data.loading, data.appForms.length, navigate]);
-
   const changes = useMemo(() => {
     if (!data.app) return { everPublished: false, count: 0, changed: [] };
     return computeUnpublishedChanges(
@@ -122,6 +115,7 @@ export function AppStudio() {
     () =>
       deriveSectionBadges({
         formCount: data.appForms.length,
+        nativeTableCount: nativeDatabase.tables.length,
         flowCount: data.flows.length,
         activeFlowCount: data.flows.filter((f) => f.enabled).length,
         roleCount: data.roles.length,
@@ -129,7 +123,7 @@ export function AppStudio() {
         publishedVersion: data.app?.publishedVersion ?? 0,
         unpublishedCount: changes.everPublished ? changes.count : 0,
       }),
-    [data.appForms.length, data.app, data.flows, data.roles.length, changes]
+    [data.appForms.length, data.app, data.flows, data.roles.length, changes, nativeDatabase.tables.length]
   );
 
   const setStep = useCallback((step: StudioStepId) => {
@@ -138,6 +132,7 @@ export function AppStudio() {
 
   const activeIndex = STUDIO_STEPS.findIndex((s) => s.id === activeStep);
   const next = STUDIO_STEPS[activeIndex + 1];
+  const previous = STUDIO_STEPS[activeIndex - 1];
   const openPreview = useCallback(() => {
     if (!data.app) return;
     navigate(`/app/${data.app.slug}`, {
@@ -193,6 +188,7 @@ export function AppStudio() {
     if (!data.app || data.loading) return null;
     return deriveNextAction({
       formCount: data.appForms.length,
+      nativeTableCount: nativeDatabase.tables.length,
       fieldlessFormNames: data.appForms
         .filter((af) => (data.formsById[af.formId]?.fields.length ?? 1) === 0)
         .map((af) => af.displayName || data.formsById[af.formId]?.title || 'Untitled'),
@@ -204,7 +200,7 @@ export function AppStudio() {
       published: data.app.status === 'published',
       unpublishedCount: changes.everPublished ? changes.count : 0,
     });
-  }, [data.app, data.loading, data.appForms, data.formsById, data.flows.length, data.memberCount, data.membersFailed, changes]);
+  }, [data.app, data.loading, data.appForms, data.formsById, data.flows.length, data.memberCount, data.membersFailed, changes, nativeDatabase.tables.length]);
 
   if (!appId) return <Navigate to="/apps" replace />;
 
@@ -232,7 +228,7 @@ export function AppStudio() {
     );
   }
 
-  if (!data.app) {
+  if (!data.app || data.initialLoading) {
     return (
       <div className="flex items-center justify-center py-32" role="status" aria-label="Loading App Studio">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
@@ -246,10 +242,17 @@ export function AppStudio() {
     return <Navigate to={`/app/${data.app.slug}`} replace />;
   }
 
+  // Resolve the entry URL before mounting a section: the previous effect briefly
+  // mounted Data & forms while deciding that an empty app should open Overview.
+  if (!isStudioStep(stepParam)) {
+    const entry = stepParam === undefined && !data.formsFailed && data.appForms.length === 0 ? 'plan' : 'data';
+    return <Navigate to={`/apps/${appId}/studio/${entry}`} replace />;
+  }
+
   const active = STUDIO_STEPS[activeIndex];
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-gray-50 dark:bg-slate-950">
       {/*
         ONE sticky wrapper for both rows, instead of two that each recomputed the
         banner/offline offset by hand (which had already drifted once and let the top
@@ -330,10 +333,11 @@ export function AppStudio() {
       <div className="@container/studio mx-auto max-w-[1540px] px-5 py-5 pb-8 sm:p-7 sm:pb-28 lg:p-8 lg:pb-28">
         {/* The section's own name, painted. It was `sr-only`, so the studio had no
             visible page title at all and the flattest type hierarchy in the app. */}
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-gray-200/80 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
           <div className="min-w-0">
-            <h2 className="truncate text-xl font-semibold tracking-tight text-gray-900 dark:text-white">{active.label}</h2>
-            <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">{active.description}</p>
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-primary-600 dark:text-primary-300">App Studio · Section {activeIndex + 1} of {STUDIO_STEPS.length}</p>
+            <h2 className="text-xl font-semibold tracking-tight text-gray-900 dark:text-white sm:text-2xl">{active.label}</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-gray-600 dark:text-slate-400">{active.description}</p>
           </div>
           {aiAvailable && (
             <button
@@ -365,6 +369,7 @@ export function AppStudio() {
         {activeStep === 'plan' && (
           <OverviewStep
             app={data.app}
+            nativeTableCount={nativeDatabase.tables.length}
             appForms={data.appForms}
             formsById={data.formsById}
             roles={data.roles}
@@ -380,6 +385,7 @@ export function AppStudio() {
         {activeStep === 'data' && (
           <DataStep
             app={data.app}
+            nativeDatabase={nativeDatabase}
             appForms={data.appForms}
             formsById={data.formsById}
             unreadableFormIds={data.unreadableFormIds}
@@ -441,14 +447,10 @@ export function AppStudio() {
 
         {/* Forward movement lives at the END of the content, where a reader
             actually finishes — not pinned over it in a fixed bar. */}
-        {next && (
-          <div className="mt-6 flex justify-stretch border-t border-gray-200/70 pt-4 dark:border-white/[0.06] @xl/studio:justify-end">
-            <Button variant="ghost" size="sm" onClick={() => setStep(next.id)} className="w-full @xl/studio:w-auto">
-              Next: {next.label}
-              <ArrowRight className="ml-1.5 h-4 w-4" />
-            </Button>
-          </div>
-        )}
+        <nav aria-label="Previous and next Studio sections" className="mt-7 flex flex-col gap-3 border-t border-gray-200 pt-5 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+          {previous ? <Button variant="ghost" onClick={() => setStep(previous.id)} className="min-h-11 whitespace-normal text-left"><ArrowLeft className="mr-2 h-4 w-4 shrink-0" />Previous: {previous.label}</Button> : <span className="text-xs text-gray-500 dark:text-slate-400">You can return to any section as your app grows.</span>}
+          {next && <Button variant="outline" onClick={() => setStep(next.id)} className="min-h-11 whitespace-normal">Next: {next.label}<ArrowRight className="ml-2 h-4 w-4 shrink-0" /></Button>}
+        </nav>
       </div>
     </div>
   );

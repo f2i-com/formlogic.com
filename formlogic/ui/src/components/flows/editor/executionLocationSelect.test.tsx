@@ -44,8 +44,8 @@ describe('ExecutionLocationSelect', () => {
     const container = await render(<ExecutionLocationSelect value="auto" onChange={() => undefined} />);
     const select = selectOf(container);
     expect([...select.options].map((o) => o.value)).toEqual(['auto', 'desktop', 'cloud']);
-    expect(select.options[0].title).toBe('Let FormLogic decide (browser or your desktop)');
-    expect(select.options[1].title).toBe('Your FormLogic Desktop (private, unmetered)');
+    expect(select.options[0].title).toBe('Run in your browser, using connected OAIY tools when needed');
+    expect(select.options[1].title).toBe('Linked desktop with encrypted flow-relay support (private, unmetered)');
     expect(select.options[2].title).toBe('FormLogic Cloud (uses plan credits)');
     expect(select.value).toBe('auto');
   });

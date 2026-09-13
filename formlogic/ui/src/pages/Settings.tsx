@@ -44,6 +44,8 @@ import {
   UploadCloud,
   Recycle,
   Sparkles,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { useUIStore, type ThemeColor } from '../stores/uiStore';
 import { api } from '../lib/api';
@@ -53,7 +55,6 @@ import { MfaPanel } from '../components/settings/MfaPanel';
 import { VaultPanel } from '../components/vault/VaultPanel';
 import { AiSourceCard } from '../components/settings/AiSourceCard';
 import { passwordError as getPasswordError } from '../lib/passwordPolicy';
-import { resolveActiveScrollSection } from '../lib/settingsScrollSpy';
 
 // Local preferences stored in localStorage
 interface UserPreferences {
@@ -82,24 +83,20 @@ function savePreferences(prefs: UserPreferences): void {
   localStorage.setItem('formlogic_user_preferences', JSON.stringify(prefs));
 }
 
-// In-page anchor rail sections (order mirrors the cards below)
-const SECTIONS = [
-  { id: 'profile', label: 'Profile' },
-  { id: 'notifications', label: 'Notifications' },
-  { id: 'appearance', label: 'Appearance' },
-  { id: 'form-defaults', label: 'Form defaults' },
-  { id: 'ai', label: 'AI assistant' },
-  { id: 'security', label: 'Security' },
-  { id: 'api-keys', label: 'API keys' },
-  { id: 'local-runtime', label: 'OAIY & local desktop' },
-  { id: 'linked-desktops', label: 'Linked desktops' },
-  { id: 'mcp', label: 'External AI access' },
-  { id: 'audit', label: 'Audit trail' },
-  { id: 'your-data', label: 'Export a copy' },
-  { id: 'backup', label: 'Backup & restore' },
-  { id: 'trash', label: 'Recycle bin' },
-  { id: 'danger', label: 'Delete account' },
-] as const;
+// Keep section hashes stable for links from setup wizards and other pages.
+const SETTINGS_TABS = [
+  { id: 'account', label: 'Account', icon: User, description: 'Your profile, timezone and notification preferences.', sections: ['profile', 'notifications'] },
+  { id: 'workspace', label: 'Workspace', icon: Palette, description: 'Make FormLogic comfortable to use and choose defaults for new forms.', sections: ['appearance', 'form-defaults'] },
+  { id: 'connections', label: 'AI & devices', icon: Plug, description: 'Choose your AI, connect OAIY and manage access for external assistants.', sections: ['ai', 'local-runtime', 'linked-desktops', 'mcp'] },
+  { id: 'security', label: 'Security', icon: Shield, description: 'Protect your account, manage API keys and check your audit trail.', sections: ['security', 'api-keys', 'audit'] },
+  { id: 'data', label: 'Your data', icon: Archive, description: 'Download your data, restore a backup or recover deleted items.', sections: ['your-data', 'backup', 'trash', 'danger'] },
+];
+const SECTION_LABELS: Record<string, string> = {
+  profile: 'Profile', notifications: 'Notifications', appearance: 'Appearance', 'form-defaults': 'Form defaults',
+  ai: 'AI assistant', 'local-runtime': 'OAIY connection', 'linked-desktops': 'Linked desktops', mcp: 'External AI access',
+  security: 'Account protection', 'api-keys': 'API keys', audit: 'Audit trail',
+  'your-data': 'Export a copy', backup: 'Backup & restore', trash: 'Recycle bin', danger: 'Delete account',
+};
 
 // API-key expiry choices (days; 'never' = no expiresAt sent)
 const EXPIRY_OPTIONS = [
@@ -124,12 +121,12 @@ function SectionHeader({
   iconColor?: string;
 }) {
   return (
-    <div className="flex items-start gap-4 mb-6">
-      <div className={`p-2.5 rounded-lg ${iconBg}`}>
+    <div className="mb-5 flex items-start gap-3 border-b border-gray-100 pb-5 dark:border-white/[0.06]">
+      <div className={`shrink-0 rounded-xl p-2.5 ${iconBg}`}>
         <Icon className={`h-5 w-5 ${iconColor}`} />
       </div>
       <div>
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white tracking-tight">{title}</h2>
+        <h3 className="text-base font-semibold text-gray-900 dark:text-white tracking-tight sm:text-lg">{title}</h3>
         {description && (
           <p className="text-sm text-gray-500 dark:text-slate-400 mt-0.5">{description}</p>
         )}
@@ -144,58 +141,14 @@ export function Settings() {
   // Deep links like /settings#ai (Connect-AI wizard): SPA navigation doesn't fire
   // the browser's native fragment scroll, so address the card ourselves.
   const { hash } = useLocation();
-  const [activeSection, setActiveSection] = useState<(typeof SECTIONS)[number]['id']>(() => {
-    const requested = hash.slice(1);
-    return SECTIONS.some((section) => section.id === requested)
-      ? requested as (typeof SECTIONS)[number]['id']
-      : SECTIONS[0].id;
-  });
+  const requestedSection = hash.slice(1);
+  const activeTab = SETTINGS_TABS.find(tab => tab.sections.includes(requestedSection)) ?? SETTINGS_TABS[0];
+  const activeSection = activeTab.sections.includes(requestedSection) ? requestedSection : activeTab.sections[0];
   useEffect(() => {
-    if (!hash) return;
-    document.getElementById(hash.slice(1))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [hash]);
-  useEffect(() => {
-    let animationFrame = 0;
-    const sectionElements = SECTIONS.map((section) => document.getElementById(section.id))
-      .filter((element): element is HTMLElement => element !== null);
-
-    const updateActiveSection = () => {
-      window.cancelAnimationFrame(animationFrame);
-      animationFrame = window.requestAnimationFrame(() => {
-        const documentHeight = Math.max(
-          document.documentElement.scrollHeight,
-          document.body.scrollHeight
-        );
-        const next = resolveActiveScrollSection(
-          sectionElements.map((element) => ({
-            id: element.id,
-            top: element.getBoundingClientRect().top,
-          })),
-          {
-            scrollY: window.scrollY,
-            viewportHeight: window.innerHeight,
-            documentHeight,
-          }
-        ) as (typeof SECTIONS)[number]['id'] | null;
-        if (next) setActiveSection((current) => current === next ? current : next);
-      });
-    };
-
-    updateActiveSection();
-    window.addEventListener('scroll', updateActiveSection, { passive: true });
-    window.addEventListener('resize', updateActiveSection);
-    const resizeObserver = typeof ResizeObserver === 'undefined'
-      ? null
-      : new ResizeObserver(updateActiveSection);
-    sectionElements.forEach((element) => resizeObserver?.observe(element));
-
-    return () => {
-      window.cancelAnimationFrame(animationFrame);
-      window.removeEventListener('scroll', updateActiveSection);
-      window.removeEventListener('resize', updateActiveSection);
-      resizeObserver?.disconnect();
-    };
-  }, []);
+    if (!hash) { window.scrollTo(0, 0); return; }
+    const target = !requestedSection || requestedSection === activeTab.sections[0] ? 'settings-navigation' : activeSection;
+    document.getElementById(target)?.scrollIntoView({ block: 'start' });
+  }, [hash, requestedSection, activeSection, activeTab]);
   const user = useAuthStore((state) => state.user);
   const updateProfile = useAuthStore((state) => state.updateProfile);
 
@@ -209,6 +162,7 @@ export function Settings() {
 
   // Theme
   const themeColor = useUIStore((state) => state.themeColor);
+  const currentTheme = useUIStore((state) => state.theme);
 
   // Preferences state
   const [preferences, setPreferences] = useState<UserPreferences>(getStoredPreferences);
@@ -590,19 +544,43 @@ export function Settings() {
   ];
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-gray-50 dark:bg-slate-950">
       <Header title="Settings" />
 
-      {/* @container/settings: `lg:` fires at viewport 1024, but this page sits inside
-          AppShell's sidebar inset and can lose another 384px to a docked chat — at
-          1024px with both, `main` is 384px yet the row still split off a 176px rail,
-          leaving the settings cards ~144px wide and clipped (main is overflow-x-clip). */}
-      <div className="@container/settings flex-1 w-full p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto">
-        <div className="@3xl/settings:flex @3xl/settings:items-start @3xl/settings:gap-8">
-        <div className="min-w-0 flex-1 space-y-6">
-        {/* Profile Settings */}
-        <Card id="profile" className="overflow-hidden scroll-mt-24">
-          <CardContent className="p-6">
+      <div className="@container/settings mx-auto w-full max-w-5xl space-y-5 p-4 sm:p-6 lg:p-8">
+        <div className="rounded-2xl border border-gray-200/80 bg-white p-5 shadow-sm sm:p-6 dark:border-white/[0.08] dark:bg-slate-900/60">
+          <p className="text-xs font-semibold uppercase tracking-wider text-primary-600 dark:text-primary-400">Your FormLogic workspace</p>
+          <h2 className="mt-2 text-xl font-semibold text-gray-900 sm:text-2xl dark:text-white">Make it yours</h2>
+          <p className="mt-2 text-sm leading-relaxed text-gray-500 dark:text-slate-400">Manage your account, appearance, AI connections and data in one place.</p>
+        </div>
+        <div id="settings-navigation" role="tablist" aria-label="Settings categories" className="grid scroll-mt-24 grid-cols-3 gap-2 rounded-2xl border border-gray-200/80 bg-white p-2 shadow-sm @3xl/settings:grid-cols-5 dark:border-white/[0.08] dark:bg-slate-900/60">
+          {SETTINGS_TABS.map((tab, index) => (
+            <button key={tab.id} id={`settings-tab-${tab.id}`} type="button" role="tab" aria-controls={`settings-panel-${tab.id}`} aria-selected={activeTab.id === tab.id} tabIndex={activeTab.id === tab.id ? 0 : -1}
+              onClick={() => navigate(`#${tab.sections[0]}`)}
+              onKeyDown={event => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                event.preventDefault();
+                const next = event.key === 'Home' ? 0 : event.key === 'End' ? SETTINGS_TABS.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + SETTINGS_TABS.length) % SETTINGS_TABS.length;
+                const destination = SETTINGS_TABS[next];
+                navigate(`#${destination.sections[0]}`);
+                document.getElementById(`settings-tab-${destination.id}`)?.focus();
+              }}
+              className={`flex min-h-16 min-w-0 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl px-2 py-3 text-xs font-semibold transition focus-visible:outline-2 focus-visible:outline-primary-500 @3xl/settings:flex-row @3xl/settings:text-sm ${activeTab.id === tab.id ? 'bg-primary-50 text-primary-700 ring-1 ring-inset ring-primary-200 dark:bg-primary-500/15 dark:text-primary-300 dark:ring-primary-500/30' : 'text-gray-600 hover:bg-gray-50 dark:text-slate-300 dark:hover:bg-white/[0.04]'}`}>
+              <tab.icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>{tab.label}</span>
+            </button>
+          ))}
+        </div>
+        <div className="px-1">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{activeTab.label}</h2>
+          <p className="mt-1 text-sm leading-relaxed text-gray-500 dark:text-slate-400">{activeTab.description}</p>
+          <nav aria-label="Settings sections" className="mt-3 flex flex-wrap gap-2">
+            {activeTab.sections.map(section => <Link key={section} to={`#${section}`} aria-current={activeSection === section ? 'location' : undefined} className={`inline-flex min-h-11 items-center rounded-lg border px-3 text-xs font-medium focus-visible:outline-2 focus-visible:outline-primary-500 ${activeSection === section ? 'border-primary-200 bg-primary-50 text-primary-700 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-300' : 'border-gray-200 bg-white text-gray-600 hover:border-primary-300 dark:border-white/10 dark:bg-slate-900/50 dark:text-slate-300'}`}>{SECTION_LABELS[section]}</Link>)}
+          </nav>
+        </div>
+        <div id="settings-panel-account" role="tabpanel" aria-labelledby="settings-tab-account" hidden={activeTab.id !== 'account'} className="space-y-5" tabIndex={0}>
+        <Card id="profile" className="overflow-hidden rounded-2xl scroll-mt-24">
+          <CardContent className="p-5 sm:p-6">
             <SectionHeader
               icon={User}
               title="Profile"
@@ -610,7 +588,7 @@ export function Settings() {
               iconBg="bg-primary-50 dark:bg-primary-500/10"
               iconColor="text-primary-600 dark:text-primary-400"
             />
-            <div className="space-y-4 ml-0 sm:ml-14">
+            <div className="space-y-4 min-w-0">
               <Input
                 label="Name"
                 placeholder="Your name"
@@ -648,22 +626,22 @@ export function Settings() {
                 />
                 <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Record times (call logs, submissions) show in this zone across every app you use. Leave unset to follow each app's own timezone.</p>
               </div>
-              <div className="pt-2">
+              <div className="flex flex-wrap items-center gap-3 border-t border-gray-100 pt-4 dark:border-white/[0.06]">
                 <Button
                   onClick={handleSaveProfile}
                   disabled={!hasProfileChanges || isSavingProfile}
                   isLoading={isSavingProfile}
                 >
-                  Save changes
+                  Save profile
                 </Button>
+                <p role="status" className="text-xs text-gray-500 dark:text-slate-400">{hasProfileChanges ? 'You have unsaved profile changes.' : 'Your profile is up to date.'}</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Notification Settings */}
-        <Card id="notifications" className="overflow-hidden scroll-mt-24">
-          <CardContent className="p-6">
+        <Card id="notifications" className="overflow-hidden rounded-2xl scroll-mt-24">
+          <CardContent className="p-5 sm:p-6">
             <SectionHeader
               icon={Bell}
               title="Notifications"
@@ -671,7 +649,7 @@ export function Settings() {
               iconBg="bg-blue-50 dark:bg-blue-500/10"
               iconColor="text-blue-600 dark:text-blue-400"
             />
-            <div className="ml-0 sm:ml-14">
+            <div className="min-w-0">
               <div className="flex items-start gap-3 py-3 text-sm">
                 <div className="p-2 bg-gray-100 dark:bg-slate-800 rounded-lg shrink-0">
                   <Mail className="h-4 w-4 text-gray-500 dark:text-slate-400" />
@@ -687,10 +665,10 @@ export function Settings() {
             </div>
           </CardContent>
         </Card>
-
-        {/* Appearance Settings */}
-        <Card id="appearance" className="overflow-hidden scroll-mt-24">
-          <CardContent className="p-6">
+        </div>
+        <div id="settings-panel-workspace" role="tabpanel" aria-labelledby="settings-tab-workspace" hidden={activeTab.id !== 'workspace'} className="space-y-5" tabIndex={0}>
+        <Card id="appearance" className="overflow-hidden rounded-2xl scroll-mt-24">
+          <CardContent className="p-5 sm:p-6">
             <SectionHeader
               icon={Palette}
               title="Appearance"
@@ -698,7 +676,19 @@ export function Settings() {
               iconBg="bg-pink-50 dark:bg-pink-500/10"
               iconColor="text-pink-600 dark:text-pink-400"
             />
-            <div className="space-y-4 ml-0 sm:ml-14">
+            <div className="space-y-4 min-w-0">
+              <div>
+                <p className="text-sm font-medium text-gray-700 dark:text-slate-300">Display mode</p>
+                <div className="mt-3 grid grid-cols-2 gap-3" role="group" aria-label="Display mode">
+                  {([{ id: 'light', label: 'Light', icon: Sun }, { id: 'dark', label: 'Dark', icon: Moon }] as const).map(mode => (
+                    <button key={mode.id} type="button" aria-pressed={currentTheme === mode.id} onClick={() => useUIStore.getState().setTheme(mode.id)} className={`flex min-h-16 cursor-pointer items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-primary-500 ${currentTheme === mode.id ? 'border-primary-400 bg-primary-50 text-primary-700 dark:border-primary-500/50 dark:bg-primary-500/10 dark:text-primary-300' : 'border-gray-200 text-gray-600 dark:border-white/10 dark:text-slate-300'}`}>
+                      <mode.icon className="h-5 w-5" aria-hidden="true" />{mode.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-2 text-xs text-gray-500 dark:text-slate-400">Appearance changes are saved automatically in this browser.</p>
+              </div>
+
               <div>
                 <label className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2 block">
                   Accent Color
@@ -706,7 +696,7 @@ export function Settings() {
                 <p className="text-xs text-gray-500 dark:text-slate-400 -mt-1 mb-3">
                   Default adapts automatically — Indigo in light mode, Lime in dark mode.
                 </p>
-                <div className="grid grid-cols-3 sm:grid-cols-7 gap-3">
+                <div className="grid grid-cols-3 @2xl/settings:grid-cols-4 @4xl/settings:grid-cols-7 gap-3">
                   {[
                     { id: 'default', color: 'bg-gradient-to-br from-indigo-500 to-lime-400', label: 'Default', check: 'text-gray-900' },
                     { id: 'indigo', color: 'bg-indigo-500', label: 'Indigo', check: 'text-white' },
@@ -747,9 +737,8 @@ export function Settings() {
           </CardContent>
         </Card>
 
-        {/* Default Form Settings */}
-        <Card id="form-defaults" className="overflow-hidden scroll-mt-24">
-          <CardContent className="p-6">
+        <Card id="form-defaults" className="overflow-hidden rounded-2xl scroll-mt-24">
+          <CardContent className="p-5 sm:p-6">
             <SectionHeader
               icon={Settings2}
               title="Default Form Settings"
@@ -757,7 +746,7 @@ export function Settings() {
               iconBg="bg-green-50 dark:bg-green-500/10"
               iconColor="text-green-600 dark:text-green-400"
             />
-            <div className="space-y-1 ml-0 sm:ml-14">
+            <div className="space-y-1 min-w-0">
               <div className="flex items-center justify-between py-3 border-b border-gray-100 dark:border-slate-800">
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-gray-100 dark:bg-slate-800 rounded-lg">
@@ -793,10 +782,10 @@ export function Settings() {
             </div>
           </CardContent>
         </Card>
-
-        {/* AI Section — which AI answers chats and default-source flow nodes (Site AI plan §5.5) */}
-        <Card id="ai" className="overflow-hidden scroll-mt-24">
-          <CardContent className="p-6">
+        </div>
+        <div id="settings-panel-connections" role="tabpanel" aria-labelledby="settings-tab-connections" hidden={activeTab.id !== 'connections'} className="space-y-5" tabIndex={0}>
+        <Card id="ai" className="overflow-hidden rounded-2xl scroll-mt-24">
+          <CardContent className="p-5 sm:p-6">
             <SectionHeader
               icon={Sparkles}
               title="AI assistant"
@@ -804,16 +793,113 @@ export function Settings() {
               iconBg="bg-indigo-50 dark:bg-indigo-500/10"
               iconColor="text-indigo-600 dark:text-indigo-400"
             />
-            <div className="ml-0 sm:ml-14">
-              <Link to="/connect-ai" className="mb-5 inline-flex rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white">Start guided AI setup</Link>
+            <div className="min-w-0">
+              <Link to="/connect-ai" className="mb-5 inline-flex min-h-11 items-center rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-primary-foreground">Start guided AI setup</Link>
               <AiSourceCard />
             </div>
           </CardContent>
         </Card>
 
-        {/* Security Section */}
-        <Card id="security" className="overflow-hidden scroll-mt-24">
-          <CardContent className="p-6">
+        <section id="local-runtime" className="scroll-mt-24" aria-label="Local desktop connection"><LocalRuntimePanel /></section>
+
+        <Card id="linked-desktops" className="overflow-hidden rounded-2xl scroll-mt-24">
+          <CardContent className="p-5 sm:p-6">
+            <SectionHeader
+              icon={Laptop}
+              title="Linked Desktops"
+              description="FormLogic Desktop installs linked to your account. Each one can run your flows and relay live commands (like the Aokie phone bridge) even when you're not at that computer."
+              iconBg="bg-primary-50 dark:bg-primary-500/10"
+              iconColor="text-primary-600 dark:text-primary-400"
+            />
+            <div className="space-y-4 min-w-0">
+              {isLoadingDesktops ? (
+                <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-slate-400 py-4">
+                  <Spinner size="sm" /> <span>Loading linked desktops…</span>
+                </div>
+              ) : desktopLoadError ? (
+                <div className="py-6 text-center text-sm">
+                  <p className="text-gray-600 dark:text-slate-300">{desktopLoadError}</p>
+                  <button type="button" onClick={() => loadDesktopConnections()} className="mt-2 text-primary-600 dark:text-primary-400 hover:underline cursor-pointer">Try again</button>
+                </div>
+              ) : desktopConnections.length === 0 ? (
+                <EmptyState
+                  icon={Laptop}
+                  title="No desktops linked yet"
+                  description='Open FormLogic Desktop, go to Settings, and click "Link FormLogic account" to connect it here.'
+                  className="py-8"
+                />
+              ) : (
+                <div className="space-y-2">
+                  {desktopConnections.map((conn) => {
+                    const isOnline = conn.lastSeenAt !== null && now - parseServerDate(conn.lastSeenAt).getTime() < 90_000;
+                    return (
+                      <div
+                        key={conn.id}
+                        className="flex items-center justify-between p-3 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-sm font-medium text-gray-900 dark:text-white">{conn.deviceName}</p>
+                            {isOnline && (
+                              <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-300 font-medium">
+                                <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                                Online now
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
+                            {!isOnline && (
+                              <>
+                                {conn.lastSeenAt ? `Last seen ${formatRelativeTime(conn.lastSeenAt)}` : 'Never connected'}
+                                {' · '}
+                              </>
+                            )}
+                            Linked {formatRelativeTime(conn.createdAt)}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => setRevokeDesktopTarget({ id: conn.id, name: conn.deviceName })}
+                          className="flex-shrink-0 p-2 rounded-lg text-gray-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors ml-2"
+                          title="Unlink desktop"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {/* ROUTE-001: pick which machine services each connector's remote commands. */}
+              {!isLoadingDesktops && !desktopLoadError && desktopConnections.length > 0 && (
+                <ConnectorRoutingPanel />
+              )}
+              {/* Encrypted data nodes (docs/FORMLOGIC_DATA_NODES.md §11): enrolment roster +
+                  owner approval. Hides itself while the DATA_NODES flag is off. */}
+              <DataNodesPanel />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card id="mcp" className="overflow-hidden rounded-2xl scroll-mt-24">
+          <CardContent className="p-5 sm:p-6">
+            <SectionHeader
+              icon={Plug}
+              title="External AI access"
+              description="Let an AI app you use elsewhere (Claude, Cursor, …) build and edit your apps"
+              iconBg="bg-primary-50 dark:bg-primary-500/10"
+              iconColor="text-primary-600 dark:text-primary-400"
+            />
+            <div className="min-w-0">
+              <Button variant="outline" onClick={() => setShowMcp(true)} leftIcon={<Plug className="h-4 w-4" />}>
+                Manage AI connections
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+        </div>
+        <div id="settings-panel-security" role="tabpanel" aria-labelledby="settings-tab-security" hidden={activeTab.id !== 'security'} className="space-y-5" tabIndex={0}>
+        <Card id="security" className="overflow-hidden rounded-2xl scroll-mt-24">
+          <CardContent className="p-5 sm:p-6">
             <SectionHeader
               icon={Shield}
               title="Security"
@@ -821,7 +907,7 @@ export function Settings() {
               iconBg="bg-purple-50 dark:bg-purple-500/10"
               iconColor="text-purple-600 dark:text-purple-400"
             />
-            <div className="space-y-4 ml-0 sm:ml-14">
+            <div className="space-y-4 min-w-0">
               <div className="flex items-center gap-2 mb-2">
                 <Lock className="h-4 w-4 text-gray-500 dark:text-slate-400" />
                 <h3 className="font-medium text-gray-900 dark:text-white">Change Password</h3>
@@ -877,9 +963,8 @@ export function Settings() {
           </CardContent>
         </Card>
 
-        {/* API Keys Section */}
-        <Card id="api-keys" className="overflow-hidden scroll-mt-24">
-          <CardContent className="p-6">
+        <Card id="api-keys" className="overflow-hidden rounded-2xl scroll-mt-24">
+          <CardContent className="p-5 sm:p-6">
             <SectionHeader
               icon={Key}
               title="API Keys"
@@ -887,7 +972,7 @@ export function Settings() {
               iconBg="bg-primary-50 dark:bg-primary-500/10"
               iconColor="text-primary-600 dark:text-primary-400"
             />
-            <div className="space-y-4 ml-0 sm:ml-14">
+            <div className="space-y-4 min-w-0">
               {/* Created key display (one-time) */}
               {createdKey && (
                 <div className="p-4 rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10">
@@ -1069,108 +1154,8 @@ export function Settings() {
           </CardContent>
         </Card>
 
-        {/* Linked Desktops Section */}
-        <section id="local-runtime" className="scroll-mt-24" aria-label="Local desktop connection"><LocalRuntimePanel /></section>
-
-        <Card id="linked-desktops" className="overflow-hidden scroll-mt-24">
-          <CardContent className="p-6">
-            <SectionHeader
-              icon={Laptop}
-              title="Linked Desktops"
-              description="FormLogic Desktop installs linked to your account. Each one can run your flows and relay live commands (like the Aokie phone bridge) even when you're not at that computer."
-              iconBg="bg-primary-50 dark:bg-primary-500/10"
-              iconColor="text-primary-600 dark:text-primary-400"
-            />
-            <div className="space-y-4 ml-0 sm:ml-14">
-              {isLoadingDesktops ? (
-                <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-slate-400 py-4">
-                  <Spinner size="sm" /> <span>Loading linked desktops…</span>
-                </div>
-              ) : desktopLoadError ? (
-                <div className="py-6 text-center text-sm">
-                  <p className="text-gray-600 dark:text-slate-300">{desktopLoadError}</p>
-                  <button type="button" onClick={() => loadDesktopConnections()} className="mt-2 text-primary-600 dark:text-primary-400 hover:underline cursor-pointer">Try again</button>
-                </div>
-              ) : desktopConnections.length === 0 ? (
-                <EmptyState
-                  icon={Laptop}
-                  title="No desktops linked yet"
-                  description='Open FormLogic Desktop, go to Settings, and click "Link FormLogic account" to connect it here.'
-                  className="py-8"
-                />
-              ) : (
-                <div className="space-y-2">
-                  {desktopConnections.map((conn) => {
-                    const isOnline = conn.lastSeenAt !== null && now - parseServerDate(conn.lastSeenAt).getTime() < 90_000;
-                    return (
-                      <div
-                        key={conn.id}
-                        className="flex items-center justify-between p-3 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <p className="text-sm font-medium text-gray-900 dark:text-white">{conn.deviceName}</p>
-                            {isOnline && (
-                              <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-300 font-medium">
-                                <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
-                                Online now
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
-                            {!isOnline && (
-                              <>
-                                {conn.lastSeenAt ? `Last seen ${formatRelativeTime(conn.lastSeenAt)}` : 'Never connected'}
-                                {' · '}
-                              </>
-                            )}
-                            Linked {formatRelativeTime(conn.createdAt)}
-                          </p>
-                        </div>
-                        <button
-                          onClick={() => setRevokeDesktopTarget({ id: conn.id, name: conn.deviceName })}
-                          className="flex-shrink-0 p-2 rounded-lg text-gray-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors ml-2"
-                          title="Unlink desktop"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              {/* ROUTE-001: pick which machine services each connector's remote commands. */}
-              {!isLoadingDesktops && !desktopLoadError && desktopConnections.length > 0 && (
-                <ConnectorRoutingPanel />
-              )}
-              {/* Encrypted data nodes (docs/FORMLOGIC_DATA_NODES.md §11): enrolment roster +
-                  owner approval. Hides itself while the DATA_NODES flag is off. */}
-              <DataNodesPanel />
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Connect an AI (MCP) Section */}
-        <Card id="mcp" className="overflow-hidden scroll-mt-24">
-          <CardContent className="p-6">
-            <SectionHeader
-              icon={Plug}
-              title="External AI access"
-              description="Let an AI app you use elsewhere (Claude, Cursor, …) build and edit your apps"
-              iconBg="bg-primary-50 dark:bg-primary-500/10"
-              iconColor="text-primary-600 dark:text-primary-400"
-            />
-            <div className="ml-0 sm:ml-14">
-              <Button variant="outline" onClick={() => setShowMcp(true)} leftIcon={<Plug className="h-4 w-4" />}>
-                Manage AI connections
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Audit & Compliance Section */}
-        <Card id="audit" className="overflow-hidden scroll-mt-24">
-          <CardContent className="p-6">
+        <Card id="audit" className="overflow-hidden rounded-2xl scroll-mt-24">
+          <CardContent className="p-5 sm:p-6">
             <SectionHeader
               icon={Shield}
               title="Audit trail"
@@ -1178,7 +1163,7 @@ export function Settings() {
               iconBg="bg-emerald-50 dark:bg-emerald-500/10"
               iconColor="text-emerald-600 dark:text-emerald-400"
             />
-            <div className="space-y-4 ml-0 sm:ml-14">
+            <div className="space-y-4 min-w-0">
               <p className="text-sm text-gray-500 dark:text-slate-500">
                 The audit log uses cryptographic hash chaining to ensure entries cannot be tampered with.
                 Run a verification to confirm the chain is intact.
@@ -1222,10 +1207,10 @@ export function Settings() {
             </div>
           </CardContent>
         </Card>
-
-        {/* Your Data */}
-        <Card id="your-data" className="overflow-hidden scroll-mt-24">
-          <CardContent className="p-6">
+        </div>
+        <div id="settings-panel-data" role="tabpanel" aria-labelledby="settings-tab-data" hidden={activeTab.id !== 'data'} className="space-y-5" tabIndex={0}>
+        <Card id="your-data" className="overflow-hidden rounded-2xl scroll-mt-24">
+          <CardContent className="p-5 sm:p-6">
             <SectionHeader
               icon={Download}
               title="Your data"
@@ -1233,7 +1218,7 @@ export function Settings() {
               iconBg="bg-sky-50 dark:bg-sky-500/10"
               iconColor="text-sky-600 dark:text-sky-400"
             />
-            <div className="ml-0 sm:ml-14">
+            <div className="min-w-0">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60">
                 <div>
                   <p className="font-medium text-gray-900 dark:text-white">Download my data</p>
@@ -1251,9 +1236,8 @@ export function Settings() {
           </CardContent>
         </Card>
 
-        {/* Backup & restore */}
-        <Card id="backup" className="overflow-hidden scroll-mt-24">
-          <CardContent className="p-6">
+        <Card id="backup" className="overflow-hidden rounded-2xl scroll-mt-24">
+          <CardContent className="p-5 sm:p-6">
             <SectionHeader
               icon={Archive}
               title="Backup & restore"
@@ -1261,7 +1245,7 @@ export function Settings() {
               iconBg="bg-indigo-50 dark:bg-indigo-500/10"
               iconColor="text-indigo-600 dark:text-indigo-400"
             />
-            <div className="ml-0 sm:ml-14 space-y-3">
+            <div className="min-w-0 space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60">
                 <div>
                   <p className="font-medium text-gray-900 dark:text-white">Download full backup</p>
@@ -1308,9 +1292,8 @@ export function Settings() {
           </CardContent>
         </Card>
 
-        {/* Recycle bin */}
-        <Card id="trash" className="overflow-hidden scroll-mt-24">
-          <CardContent className="p-6">
+        <Card id="trash" className="overflow-hidden rounded-2xl scroll-mt-24">
+          <CardContent className="p-5 sm:p-6">
             <SectionHeader
               icon={Recycle}
               title="Recycle bin"
@@ -1318,7 +1301,7 @@ export function Settings() {
               iconBg="bg-emerald-50 dark:bg-emerald-500/10"
               iconColor="text-emerald-600 dark:text-emerald-400"
             />
-            <div className="ml-0 sm:ml-14">
+            <div className="min-w-0">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60">
                 <div>
                   <p className="font-medium text-gray-900 dark:text-white">
@@ -1336,9 +1319,8 @@ export function Settings() {
           </CardContent>
         </Card>
 
-        {/* Danger Zone */}
-        <Card id="danger" className="overflow-hidden scroll-mt-24 border-red-200/70 dark:border-red-500/30">
-          <CardContent className="p-6">
+        <Card id="danger" className="overflow-hidden rounded-2xl scroll-mt-24 border-red-200/70 dark:border-red-500/30">
+          <CardContent className="p-5 sm:p-6">
             <SectionHeader
               icon={AlertTriangle}
               title="Delete account"
@@ -1346,7 +1328,7 @@ export function Settings() {
               iconBg="bg-red-50 dark:bg-red-500/10"
               iconColor="text-red-600 dark:text-red-400"
             />
-            <div className="ml-0 sm:ml-14">
+            <div className="min-w-0">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-red-200/70 dark:border-red-500/30 bg-red-50/40 dark:bg-red-500/5">
                 <div>
                   <p className="font-medium text-gray-900 dark:text-white">Delete account</p>
@@ -1359,34 +1341,6 @@ export function Settings() {
             </div>
           </CardContent>
         </Card>
-        </div>
-
-        {/* Sticky anchor rail (lg+) */}
-        <nav aria-label="Settings sections" className="sticky top-24 hidden w-44 shrink-0 @3xl/settings:block">
-          <ul className="space-y-0.5 text-sm">
-            {SECTIONS.map((section) => (
-              <li key={section.id}>
-                <a
-                  href={`#${section.id}`}
-                  aria-current={activeSection === section.id ? 'location' : undefined}
-                  className={`relative block rounded-lg px-3 py-1.5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40 ${
-                    activeSection === section.id
-                      ? 'bg-primary-50 font-medium text-primary-700 dark:bg-primary-500/10 dark:text-primary-300'
-                      : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800/60 dark:hover:text-white'
-                  }`}
-                >
-                  {activeSection === section.id && (
-                    <span
-                      aria-hidden="true"
-                      className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-primary-500"
-                    />
-                  )}
-                  {section.label}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </nav>
         </div>
       </div>
 

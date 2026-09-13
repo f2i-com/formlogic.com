@@ -31,7 +31,7 @@ export function deriveConnectionView(presence: FlowsDesktopPresence, isDemo: boo
     };
   }
   if (presence.kind === 'local') {
-    return { kind: 'local', label: 'Desktop — this device', detail: 'FormLogic Desktop is running on this machine.' };
+    return { kind: 'local', label: 'Desktop — this device', detail: 'The legacy desktop companion is running on this machine.' };
   }
   if (presence.kind === 'remote') {
     const seen = describeFlowsLastSeen(presence.lastSeenMs, now);
@@ -44,7 +44,7 @@ export function deriveConnectionView(presence: FlowsDesktopPresence, isDemo: boo
   return {
     kind: 'none',
     label: 'No desktop',
-    detail: 'Link FormLogic Desktop to run its services and plugins from the browser.',
+    detail: 'Connect OAIY to use local AI, services, and plugins from the browser.',
   };
 }
 

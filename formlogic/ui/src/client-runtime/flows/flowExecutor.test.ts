@@ -80,7 +80,7 @@ describe('executeFlow — service_action (§7.6 paired-Desktop leg)', () => {
     const outcome = await executeFlow(svcGraph(svcData), { deps: fakeDeps() });
     expect(outcome.status).toBe('error');
     expect(outcome.error?.code).toBe('node_failed');
-    expect(outcome.error?.message).toMatch(/FormLogic Desktop/);
+    expect(outcome.error?.message).toMatch(/Service Platform support/);
     expect(outcome.error?.nodeId).toBe('svc');
   });
 
@@ -112,7 +112,7 @@ describe('executeFlow — service_action (§7.6 paired-Desktop leg)', () => {
     }));
     const outcome = await executeFlow(svcGraph(svcData), { deps: fakeDeps({ invokeServiceAction }) });
     expect(outcome.status).toBe('error');
-    expect(outcome.error?.message).toMatch(/service_action nodes run on FormLogic Desktop/);
+    expect(outcome.error?.message).toMatch(/service_action requires a paired desktop runtime/);
   });
 
   it("surfaces host refusals as the desktop runner's `code: detail` message shape", async () => {

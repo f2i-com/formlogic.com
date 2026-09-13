@@ -51,6 +51,7 @@ import { formatRelativeTime, parseServerDate } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { PackImportModal } from '../components/builder/PackImportModal';
 import { useFormPreview } from '../components/builder/useFormPreview';
+import { Modal } from '../components/ui/Modal';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { api } from '../lib/api';
 import { loadUiCache, saveUiCache } from '../lib/uiCache';
@@ -185,6 +186,7 @@ const FormCard = memo(function FormCard({
   onMenuClose,
   onNavigate,
   onPreview,
+  onRename,
   onDuplicate,
   onEmbed,
   onDelete,
@@ -201,6 +203,7 @@ const FormCard = memo(function FormCard({
   onNavigate: (path: string) => void;
   /** In-app forms open the real app runtime at this form (new tab); standalone forms use /preview. */
   onPreview: (id: string) => void;
+  onRename: (form: Form) => void;
   onDuplicate: (id: string) => void;
   onEmbed: (id: string, title: string, status: Form['status']) => void;
   onDelete: (id: string, title: string) => void;
@@ -326,6 +329,13 @@ const FormCard = memo(function FormCard({
                     className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
                   >
                     <Pencil className="h-4 w-4" /> Edit
+                  </button>
+                  <button
+                    onClick={() => { onMenuClose(); onRename(form); }}
+                    role="menuitem"
+                    className="flex min-h-11 items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    <Pencil className="h-4 w-4" /> Rename
                   </button>
                   <button
                     onClick={() => { onPreview(form.id); onMenuClose(); }}
@@ -468,12 +478,14 @@ const FormListRow = memo(function FormListRow({
   packName,
   onNavigate,
   onPreview,
+  onRename,
 }: {
   form: Form;
   responseCount: number;
   packName: string | null;
   onNavigate: (path: string) => void;
   onPreview: (formId: string) => void;
+  onRename: (form: Form) => void;
 }) {
   return (
     <div
@@ -507,7 +519,8 @@ const FormListRow = memo(function FormListRow({
         </div>
       </div>
       <StatusPill status={form.status} />
-      <div className="flex flex-none items-center gap-1" onClick={(e) => e.stopPropagation()}>
+      <div className="flex flex-none items-center gap-1" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+        <button type="button" onClick={() => onRename(form)} title="Rename form" aria-label={`Rename ${form.title}`} className="min-h-11 rounded-lg px-2 text-xs font-medium text-primary-600 hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-500/10">Rename</button>
         <button
           type="button"
           onClick={() => onNavigate(`/responses/${form.id}`)}
@@ -576,6 +589,28 @@ export function FormsList() {
     try { localStorage.setItem('formsList.viewMode', mode); } catch { /* ignore */ }
   };
   const [activeMenu, setActiveMenu] = useState<{ id: string; rect: DOMRect } | null>(null);
+  const [renameTarget, setRenameTarget] = useState<Form | null>(null);
+  const [renameTitle, setRenameTitle] = useState('');
+  const [renaming, setRenaming] = useState(false);
+  const [renameError, setRenameError] = useState('');
+  const renameLock = useRef(false);
+  const openRename = useCallback((form: Form) => {
+    setRenameTarget(form); setRenameTitle(form.title); setRenameError('');
+  }, []);
+  const saveRename = async () => {
+    if (!renameTarget || renameLock.current) return;
+    renameLock.current = true;
+    setRenaming(true); setRenameError('');
+    try {
+      updateForm(renameTarget.id, { title: renameTitle.trim() || 'Untitled Form' });
+      const { ok } = await flushFormSaves(renameTarget.id);
+      if (!ok) throw new Error('The name could not be saved. Please try again.');
+      setRenameTarget(null);
+      toast.success('Form renamed');
+    } catch (error) {
+      setRenameError(error instanceof Error ? error.message : 'Could not rename the form. Please try again.');
+    } finally { renameLock.current = false; setRenaming(false); }
+  };
   const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string; status: Form['status'] } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   // Unpublish and Archive take a live public link offline. They fired straight from a
@@ -988,6 +1023,7 @@ export function FormsList() {
       onMenuClose={handleMenuClose}
       onNavigate={handleNavigate}
       onPreview={handlePreview}
+      onRename={openRename}
       onDuplicate={handleDuplicate}
       onEmbed={handleEmbed}
       onDelete={handleDelete}
@@ -1012,6 +1048,7 @@ export function FormsList() {
             packName={formPackMap[form.id] ?? null}
             onNavigate={handleNavigate}
             onPreview={handlePreview}
+            onRename={openRename}
           />
         ))}
       </div>
@@ -1355,6 +1392,18 @@ export function FormsList() {
       </div>
 
       {/* Embed Modal */}
+      <Modal isOpen={!!renameTarget} onClose={() => { if (!renameLock.current) setRenameTarget(null); }} title="Rename form" description="This updates the form name wherever it is used. App-specific display labels stay the same." size="sm" footer={
+        <div className="flex justify-end gap-3">
+          <Button variant="outline" disabled={renaming} onClick={() => setRenameTarget(null)}>Cancel</Button>
+          <Button isLoading={renaming} disabled={renaming} onClick={() => void saveRename()}>Save name</Button>
+        </div>
+      }>
+        <form className="space-y-3 p-4 sm:p-6" onSubmit={(event) => { event.preventDefault(); void saveRename(); }}>
+          <Input label="Form name" value={renameTitle} onChange={event => setRenameTitle(event.target.value)} onFocus={event => event.target.select()} maxLength={120} placeholder="Untitled Form" disabled={renaming} />
+          <p className="text-sm text-gray-500 dark:text-slate-400">An empty name will be saved as Untitled Form.</p>
+          {renameError && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{renameError}</p>}
+        </form>
+      </Modal>
       {embedModalForm && (
         <EmbedModal
           isOpen={true}

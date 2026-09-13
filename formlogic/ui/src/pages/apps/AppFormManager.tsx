@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useReturnTo } from '../../hooks/useReturnTo';
-import { ArrowLeft, Plus, X, Pencil, Link2, ArrowLeftIcon, ChevronUp, ChevronDown, Check, Search, Tag, Share2, Layers } from 'lucide-react';
+import { Plus, X, Pencil, Link2, ArrowLeftIcon, ChevronUp, ChevronDown, Check, Search, Tag, Share2, Layers } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useFormStore } from '../../stores/formStore';
 import { toast } from '../../stores/toastStore';
@@ -380,11 +380,7 @@ export function AppFormManager() {
     <div className="min-h-screen">
       <Header
         title="Manage forms"
-        actions={
-          <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path, { state: backTo.state })} leftIcon={<ArrowLeft className="h-4 w-4" />}>
-            {backTo.label ? `Back to ${backTo.label}` : 'Back'}
-          </Button>
-        }
+        back={{ onClick: () => navigate(backTo.path, { state: backTo.state }), label: backTo.label ? `Back to ${backTo.label}` : 'Back to app settings' }}
       />
       <div className="@container/page w-full flex-1 p-4 @xl/page:p-6 @3xl/page:p-8">
       <div className="max-w-5xl mx-auto">

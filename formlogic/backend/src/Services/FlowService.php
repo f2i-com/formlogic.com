@@ -2838,6 +2838,47 @@ class FlowService
      * the snapshot stores the raw event ({event:{name,data:{formId,responseId,answers}}}) and no
      * user expression runs server-side. Returns the number of runs enqueued.
      */
+    /** Capture the enabled targets at write time; newly added bindings must not replay old signups. */
+    public function nativeRecordSubscriptions(string $appId): array
+    {
+        $stmt = $this->mysql->prepare("SELECT b.id, b.event_name FROM app_flow_bindings b JOIN flow_definitions f ON f.id=b.flow_definition_id AND f.app_id=b.app_id WHERE b.app_id=? AND b.enabled=1 AND f.enabled=1 AND b.mode != 'manual' AND b.event_name LIKE 'app.record.%' ORDER BY b.id LIMIT 100");
+        $stmt->execute([$appId]);
+        $subscriptions = [];
+        foreach ($stmt->fetchAll() as $row) {
+            if (!preg_match('/^app\.record\.(created|updated|deleted)\.([A-Za-z][A-Za-z0-9_]{0,62})$/D', $row['event_name'])) continue;
+            $subscriptions[$row['event_name']][] = $row['id'];
+        }
+        $result = [];
+        foreach ($subscriptions as $event => $bindings) $result[] = ['event' => $event, 'bindings' => $bindings];
+        return $result;
+    }
+
+    /** Durable outbox delivery: duplicate deliveries reuse the same flow run. */
+    public function enqueueNativeRecordEvent(string $appId, string $eventId, string $event, array $data, array $bindingIds): int
+    {
+        if (!preg_match('/^[a-f0-9]{32}$/D', $eventId) || !preg_match('/^app\.record\.(created|updated|deleted)\.[A-Za-z][A-Za-z0-9_]{0,62}$/D', $event)) throw new \InvalidArgumentException('Invalid native record event');
+        $stmt = $this->mysql->prepare('SELECT b.id AS binding_id, f.* FROM app_flow_bindings b JOIN flow_definitions f ON f.id=b.flow_definition_id AND f.app_id=b.app_id WHERE b.app_id=? AND b.event_name=? AND b.enabled=1 AND f.enabled=1 AND b.mode != \'manual\' ORDER BY b.sort_order,b.id LIMIT 100');
+        $stmt->execute([$appId, $event]);
+        $snapshot = ['event' => ['name' => $event, 'data' => array_merge($data, ['appId' => $appId, 'eventId' => $eventId])]];
+        // A record preview can contain multibyte strings. Keep the complete event envelope
+        // even when JSON escaping pushes the bounded preview over the flow snapshot limit.
+        if (strlen(json_encode($snapshot, JSON_THROW_ON_ERROR)) > self::MAX_INPUT_SNAPSHOT_BYTES) {
+            $snapshot['event']['data']['record'] = [];
+            $snapshot['event']['data']['recordTruncated'] = true;
+        }
+        $count = 0;
+        foreach ($stmt->fetchAll() as $row) {
+            if (!in_array($row['binding_id'], $bindingIds, true)) continue;
+            $result = $this->enqueueRun($this->formatFlow($row), [
+                'triggerEvent' => $event, 'correlationId' => 'native-' . $eventId,
+                'idempotencyKey' => 'native:' . $eventId . ':' . $row['binding_id'],
+                'inputSnapshot' => $snapshot, 'bindingId' => $row['binding_id'],
+            ]);
+            if ($result['created']) $count++;
+        }
+        return $count;
+    }
+
     public function enqueueSubmissionBindings(string $formId, string $responseId, array $answers): int
     {
         $stmt = $this->mysql->prepare("

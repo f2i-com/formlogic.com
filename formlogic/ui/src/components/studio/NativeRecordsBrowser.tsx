@@ -1,0 +1,67 @@
+import { useEffect, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, Database, RefreshCw, Search, Table2, X } from 'lucide-react';
+import { api } from '../../lib/api';
+import type { NativeRecords } from '../../lib/nativeHosting';
+import { Button } from '../ui/Button';
+
+const valueText = (value: unknown) => value === null || value === undefined ? '—' : String(value);
+
+export function NativeRecordsBrowser({ appId, version, initialTable = '' }: { appId: string; version: number; initialTable?: string }) {
+  const [table, setTable] = useState(initialTable);
+  const [offset, setOffset] = useState(0);
+  const [records, setRecords] = useState<NativeRecords | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [reload, setReload] = useState(0);
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState<number | null>(null);
+  const detail = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true); setError(''); setSelected(null); setQuery('');
+    void api.getNativeRecords(appId, table || undefined, offset).then(result => {
+      if (cancelled) return;
+      setLoading(false);
+      if (result.error) { setError(result.error); return; }
+      setRecords(result.data ?? null);
+    }).catch(() => { if (!cancelled) { setLoading(false); setError('Could not load these records. Please try again.'); } });
+    return () => { cancelled = true; };
+  }, [appId, version, table, offset, reload]);
+  useEffect(() => { if (selected !== null) detail.current?.focus(); }, [selected]);
+  const columns = records?.columns ?? [];
+  const rows = records?.rows ?? [];
+  const visibleRows = rows.map((row, index) => ({ row, index })).filter(({ row }) => !query.trim() || columns.some(column => valueText(row[column]).toLowerCase().includes(query.trim().toLowerCase())));
+  const shownRecord = selected === null ? null : rows[selected];
+  const control = 'min-h-11 w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 text-base text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
+  const page = Math.floor(offset / 50) + 1;
+  const hasData = !!table && !loading && !error;
+  const pagination = <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 dark:border-slate-700">
+    <p aria-live="polite" className="text-sm text-slate-500 dark:text-slate-400">Page {page}{hasData && rows.length > 0 ? ` · Rows ${offset + 1}–${offset + rows.length}` : ''}</p>
+    <div className="flex gap-2"><Button variant="secondary" className="min-h-11" disabled={loading || offset === 0} onClick={() => setOffset(Math.max(0, offset - 50))} leftIcon={<ChevronLeft className="h-4 w-4" />}>Previous</Button><Button variant="secondary" className="min-h-11" disabled={loading || !!error || !records?.hasMore} onClick={() => setOffset(offset + 50)} rightIcon={<ChevronRight className="h-4 w-4" />}>Next</Button></div>
+  </div>;
+  return <section aria-label="Database records browser" className="space-y-4">
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900">
+      <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white"><Database className="h-4 w-4" />App database<span className="ml-auto rounded-full border border-slate-300 px-2 py-1 text-xs font-normal text-slate-600 dark:border-slate-600 dark:text-slate-300">Read-only view</span></div>
+      <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-400">Browse the SQLite records used by this app. Changes go through its backend code so the app’s validation still applies.</p>
+    </div>
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+      <label className="block min-w-0 flex-1 text-sm font-medium text-slate-800 dark:text-slate-200">Table<select aria-label="Database table" className={`${control} mt-2`} value={table} disabled={loading && !records} onChange={event => { setTable(event.target.value); setOffset(0); setRecords(current => current ? { tables: current.tables } : null); }}><option value="">Choose a table ({records?.tables.length ?? 0})</option>{records?.tables.map(name => <option key={name} value={name}>{name}</option>)}</select></label>
+      <Button variant="secondary" className="min-h-11" isLoading={loading} disabled={loading} onClick={() => setReload(value => value + 1)} leftIcon={<RefreshCw className="h-4 w-4" />}>Refresh records</Button>
+    </div>
+    {error && <div role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{error} <button className="min-h-11 underline" onClick={() => setReload(value => value + 1)}>Try again</button></div>}
+    {loading && <div role="status" className="rounded-xl border border-slate-200 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">Loading records…</div>}
+    {!table && !loading && !error && <div className="rounded-xl border border-dashed border-slate-300 px-5 py-9 text-center dark:border-slate-700"><Table2 className="mx-auto h-7 w-7 text-slate-400" /><h4 className="mt-3 font-medium text-slate-900 dark:text-white">Choose a table to explore</h4><p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{records?.tables.length ? `${records.tables.length} tables are available in this app.` : 'This app has no application tables yet.'}</p></div>}
+    {hasData && <>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><h4 className="break-words font-semibold text-slate-900 dark:text-white">{table}</h4><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{columns.length} fields shown · up to 50 records per page</p></div>
+        {rows.length > 0 && <label className="relative block min-w-0 sm:w-64"><Search aria-hidden className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-slate-400" /><span className="sr-only">Filter records on this page</span><input type="search" aria-label="Filter records on this page" value={query} onChange={event => { setQuery(event.target.value); setSelected(null); }} placeholder="Filter this page…" className={`${control} pl-9`} /></label>}
+      </div>
+      {rows.length === 0 ? <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center dark:border-slate-700"><p className="text-sm text-slate-600 dark:text-slate-400">{columns.length === 0 ? 'This table has no displayable columns.' : offset ? 'No more records on this page. Go back to the previous page.' : 'No records in this table yet.'}</p></div> : visibleRows.length === 0 ? <p className="rounded-xl bg-slate-50 p-5 text-sm text-slate-500 dark:bg-slate-900 dark:text-slate-400">No matching records on this page. Clear the filter or try another page.</p> : <>
+        <div className="hidden max-h-[52vh] overflow-auto rounded-xl border border-slate-200 dark:border-slate-700 sm:block"><table className="w-full text-left text-sm"><thead className="sticky top-0 z-10 bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"><tr><th className="p-3"><span className="sr-only">Record details</span></th>{columns.map(column => <th className="whitespace-nowrap p-3 font-medium" key={column}>{column}</th>)}</tr></thead><tbody>{visibleRows.map(({ row, index }) => <tr key={index} className="border-t border-slate-200 text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800/50"><td className="p-2"><button aria-label={`View record ${offset + index + 1}`} className="min-h-11 rounded-lg px-3 text-indigo-700 underline dark:text-indigo-300" onClick={() => setSelected(index)}>View</button></td>{columns.map(column => <td key={column} className="min-w-28 max-w-72 p-3 align-top"><span className="line-clamp-3 break-words">{valueText(row[column])}</span></td>)}</tr>)}</tbody></table></div>
+        <div className="space-y-3 sm:hidden">{visibleRows.map(({ row, index }) => <article key={index} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700"><div className="flex items-center justify-between gap-2"><h5 className="text-sm font-semibold text-slate-900 dark:text-white">Record {offset + index + 1}</h5><button className="min-h-11 text-sm text-indigo-700 underline dark:text-indigo-300" onClick={() => setSelected(index)}>View details</button></div><dl className="mt-2 space-y-3">{columns.slice(0, 3).map(column => <div key={column}><dt className="break-words text-xs text-slate-500 dark:text-slate-400">{column}</dt><dd className="mt-1 line-clamp-3 break-words text-sm text-slate-800 dark:text-slate-200">{valueText(row[column])}</dd></div>)}</dl>{columns.length > 3 && <p className="mt-3 text-xs text-slate-500">+{columns.length - 3} more fields in details</p>}</article>)}</div>
+      </>}
+      {pagination}
+      {shownRecord && <div ref={detail} tabIndex={-1} aria-label={`Record ${offset + selected! + 1} details`} className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 focus:outline-none dark:border-indigo-500/40 dark:bg-indigo-950/20"><div className="flex items-center justify-between gap-3"><h4 className="font-semibold text-slate-900 dark:text-white">Record {offset + selected! + 1}</h4><button aria-label="Close record details" className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800" onClick={() => setSelected(null)}><X className="h-5 w-5" /></button></div><dl className="mt-2 divide-y divide-slate-200 dark:divide-slate-700">{columns.map(column => <div key={column} className="grid min-w-0 gap-1 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] sm:gap-4"><dt className="break-words text-xs font-medium text-slate-500 dark:text-slate-400">{column}</dt><dd className="min-w-0 whitespace-pre-wrap break-words text-sm text-slate-900 [overflow-wrap:anywhere] dark:text-slate-200">{valueText(shownRecord[column])}</dd></div>)}</dl></div>}
+      <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">Common authentication secrets and host metadata are hidden. Text values are previews of up to 400 characters; binary values are labelled. Filtering searches this page only.</p>
+    </>}
+  </section>;
+}

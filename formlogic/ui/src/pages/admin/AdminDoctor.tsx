@@ -20,7 +20,7 @@ function severityOf(c: DeepHealthCheck): Severity {
 
 const LABELS: Record<string, string> = {
   database: 'Database',
-  quickjs: 'QuickJS runtime',
+  quickjs: 'ZIPP runtime',
   paypal: 'Billing (PayPal)',
   webhook_worker: 'Webhook retry worker',
   scheduled_backup: 'Nightly backups',
@@ -40,7 +40,7 @@ function humanize(key: string): string {
 // dual_store carry their remedy in the warning, so they're intentionally omitted here).
 const REMEDIATION: Record<string, string> = {
   database: 'Check DB credentials/connectivity in the backend .env.',
-  quickjs: 'Ensure the vendored qjs binary, harness, and prelude are present in backend/bin + resources.',
+  quickjs: 'Check the ZIPP launcher in backend/bin/runtime and resources/formlogic-prelude.js. If using a custom installation, check FORMLOGIC_RUNTIME_BIN. The launcher must be executable on Linux.',
 };
 
 const ORDER: Record<Severity, number> = { fail: 0, warn: 1, ok: 2 };
@@ -79,11 +79,11 @@ export function AdminDoctor() {
 
   return (
     <div>
-      <div className="flex items-center justify-between gap-3 mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div className="flex items-center gap-2.5 min-w-0">
           <Stethoscope className="h-5 w-5 text-primary-600 dark:text-primary-400 shrink-0" />
           <p className="text-sm text-gray-500 dark:text-slate-400">
-            System diagnostics from <code className="fl-mono text-xs">/api/health/deep</code>.
+            Checks for database access, storage, and connected services.
           </p>
         </div>
         <Button variant="secondary" size="sm" onClick={refresh} disabled={loading}>
@@ -97,7 +97,7 @@ export function AdminDoctor() {
         </div>
       ) : error ? (
         <Card className="p-6 text-center">
-          <p className="text-red-600 dark:text-red-400 mb-3">Couldn't load diagnostics.</p>
+          <p role="alert" className="text-red-600 dark:text-red-400 mb-3">Couldn't load diagnostics.</p>
           <Button variant="secondary" size="sm" onClick={refresh}>Try again</Button>
         </Card>
       ) : data ? (

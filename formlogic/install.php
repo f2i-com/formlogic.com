@@ -277,6 +277,7 @@ function checkRequirements(): array
     $isWin = stripos(PHP_OS, 'WIN') === 0;
     $dirsToCheck = [
         $backendRel . '/storage/forms',
+        $backendRel . '/storage/hosted-apps',
         $backendRel . '/storage/packs',
         $backendRel . '/storage/uploads',
         $backendRel . '/storage/pack-screenshots',
@@ -455,6 +456,7 @@ function runInstall(array $data): array
     // 1. Create storage directories
     $dirs = [
         $backendDir . '/storage/forms',
+        $backendDir . '/storage/hosted-apps',
         $backendDir . '/storage/packs',
         $backendDir . '/storage/uploads',
         $backendDir . '/storage/pack-screenshots',

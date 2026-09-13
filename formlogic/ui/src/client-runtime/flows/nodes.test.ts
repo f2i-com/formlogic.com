@@ -647,7 +647,7 @@ describe('llm_chat endpoint resolution', () => {
     await executeNode(ctxFor(llmNode({}), deps)).catch((err: FlowExecError) => {
       expect(err.code).toBe('node_failed');
       expect(err.message).toMatch(/endpoint/i);
-      expect(err.message).toMatch(/Desktop/i);
+      expect(err.message).toMatch(/OAIY/);
     });
   });
 
@@ -1009,7 +1009,7 @@ describe('browser_action', () => {
     await executeNode(ctxFor(node, browserDeps(okBrowserFetchUnused(), null))).catch((err: FlowExecError) => {
       expect(err).toBeInstanceOf(FlowExecError);
       expect(err.code).toBe('node_failed');
-      expect(err.message).toMatch(/FormLogic Desktop/);
+      expect(err.message).toMatch(/OAIY/);
       expect(err.message).toMatch(/Playwright Browser/);
       expect(err.message).not.toMatch(/coming soon/i);
     });

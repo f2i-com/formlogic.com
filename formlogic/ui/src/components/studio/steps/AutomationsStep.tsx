@@ -24,9 +24,10 @@ import { trackStudioSave } from '../studioSaveState';
 import type { App, AppForm } from '../../../types/app';
 import type { Form } from '../../../types/form';
 import type { FlowBinding, FlowDefinition } from '../../../types/flows';
+import { NativeRecordTriggers, nativeRecordEventLabel } from '../NativeRecordTriggers';
 
 function eventLabel(event: string): string {
-  return FLOW_EVENT_CATALOG.find((e) => e.event === event)?.label ?? event;
+  return nativeRecordEventLabel(event) ?? FLOW_EVENT_CATALOG.find((e) => e.event === event)?.label ?? event;
 }
 
 function nodeLabel(type: string | undefined): string {
@@ -150,6 +151,8 @@ export function AutomationsStep({
           )}
         </div>
       </div>
+
+      <NativeRecordTriggers key={app.id} appId={app.id} flows={flows} bindings={bindings} onReload={onReloadFlows} />
 
       {flows.length === 0 ? (
         <section className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-300 dark:border-white/15 px-6 py-16 text-center">

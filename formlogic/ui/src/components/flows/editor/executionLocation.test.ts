@@ -42,8 +42,8 @@ describe('runLocationLabel', () => {
 
 describe('EXECUTION_LOCATION_DESCRIPTIONS', () => {
   it('carries the plan §5.7 copy for every selectable location', () => {
-    expect(EXECUTION_LOCATION_DESCRIPTIONS.auto).toBe('Let FormLogic decide (browser or your desktop)');
-    expect(EXECUTION_LOCATION_DESCRIPTIONS.desktop).toBe('Your FormLogic Desktop (private, unmetered)');
+    expect(EXECUTION_LOCATION_DESCRIPTIONS.auto).toBe('Run in your browser, using connected OAIY tools when needed');
+    expect(EXECUTION_LOCATION_DESCRIPTIONS.desktop).toBe('Linked desktop with encrypted flow-relay support (private, unmetered)');
     expect(EXECUTION_LOCATION_DESCRIPTIONS.cloud).toBe('FormLogic Cloud (uses plan credits)');
   });
 });

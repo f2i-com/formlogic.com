@@ -82,3 +82,14 @@ describe('subscribeOaiyStatus', () => {
     expect(seen).toEqual([]);
   });
 });
+
+it('keeps passive indicators quiet but still relays an explicit discovery result', async () => {
+  mockHealth(() => ({ status: 200, body: healthy }));
+  const seen: boolean[] = [];
+  const unsubscribe = subscribeOaiyStatus(info => seen.push(info.available), { probe: false });
+  await Promise.resolve();
+  expect(fetch).not.toHaveBeenCalled();
+  await refreshOaiyStatus();
+  expect(seen).toEqual([false, true]);
+  unsubscribe();
+});

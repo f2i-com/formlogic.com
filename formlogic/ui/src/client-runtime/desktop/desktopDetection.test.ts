@@ -195,3 +195,36 @@ describe('desktop detection', () => {
     unsubscribe();
   });
 });
+
+
+describe('background desktop status', () => {
+  it('keeps passive shell subscriptions quiet and starts only for active consumers', async () => {
+    vi.useFakeTimers();
+    const fetchMock = setFetch(vi.fn(() => Promise.reject(new Error('ECONNREFUSED'))));
+    const passive = subscribeDesktopStatus(() => {}, { probe: false });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const active = subscribeDesktopStatus(() => {});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(DESKTOP_BASE_URL_CANDIDATES.length);
+    active();
+    const count = fetchMock.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(count);
+    passive();
+  });
+
+  it('shares an in-flight discovery across remounts and manual refreshes', async () => {
+    let respond!: (response: Response) => void;
+    const fetchMock = setFetch(vi.fn(() => new Promise<Response>(resolve => { respond = resolve; })));
+    const stopFirst = subscribeDesktopStatus(() => {});
+    stopFirst();
+    const stopSecond = subscribeDesktopStatus(() => {});
+    const refresh = refreshDesktopStatus();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    respond(await healthResponse({ companion: 'formlogic-desktop', version: '1.0.0' }));
+    await refresh;
+    expect(getDesktopInfo().available).toBe(true);
+    stopSecond();
+  });
+});

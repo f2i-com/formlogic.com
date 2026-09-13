@@ -51,6 +51,7 @@ class UpgradeService
         ?string $releasePublicKeyB64 = null,
         ?bool $allowUnsigned = null,
         ?bool $isProduction = null,
+        private ?GitHubReleaseService $githubReleases = null,
     ) {
         $this->pdo = $mysql->getConnection();
         $keyB64 = $releasePublicKeyB64 ?? (string) ($_ENV['UPGRADE_RELEASE_PUBKEY'] ?? '');
@@ -134,6 +135,37 @@ class UpgradeService
         ];
     }
 
+    private function github(): GitHubReleaseService
+    {
+        return $this->githubReleases ??= new GitHubReleaseService();
+    }
+
+    public function latestOfficialRelease(): ?array
+    {
+        $release = $this->github()->latest();
+        if ($release !== null) {
+            $release['isNewer'] = version_compare($release['version'], $this->normalizeVersion($this->currentVersion()), '>');
+        }
+        return $release;
+    }
+
+    public function stageOfficialRelease(int $releaseId, int $assetId, string $digest): array
+    {
+        @set_time_limit(240);
+        $release = $this->github()->resolve($releaseId, $assetId, $digest);
+        if (!is_dir($this->uploadsDir()) && !@mkdir($this->uploadsDir(), 0750, true)) {
+            throw new \RuntimeException('Cannot create the release download directory.');
+        }
+        $download = tempnam($this->uploadsDir(), '.github-');
+        if ($download === false) throw new \RuntimeException('Cannot create the release download file.');
+        try {
+            $this->github()->download($release, $download);
+            return $this->stageArchive($download, $release);
+        } finally {
+            @unlink($download);
+        }
+    }
+
     // ── upload + validate + stage ───────────────────────────────────────────
 
     /**
@@ -141,8 +173,8 @@ class UpgradeService
      * package directory, and fully verify it (review FL-006/FL-008): a signed
      * manifest whose inventory covers every file exactly once, verified against
      * the pinned release key. Unsigned/incomplete packages are refused — the
-     * only exception is the conspicuous development override, which cannot be
-     * enabled in production. Returns the staged-package report (packageId +
+     * development override cannot be enabled in production. Official downloads
+     * use the separate GitHub-verified staging path. Returns the staged-package report (packageId +
      * digest bind the later apply to these exact bytes).
      *
      * @throws \RuntimeException on any validation failure (staging is cleared)
@@ -150,10 +182,16 @@ class UpgradeService
      */
     public function stageUploadedPackage(string $zipPath): array
     {
+        return $this->stageArchive($zipPath);
+    }
+
+    private function stageArchive(string $zipPath, ?array $officialRelease = null): array
+    {
         if (!class_exists(\ZipArchive::class)) {
             throw new \RuntimeException('The PHP zip extension is required for upgrades');
         }
-        return $this->withUpgradeLock(function () use ($zipPath): array {
+        return $this->withUpgradeLock(function () use ($zipPath, $officialRelease): array {
+            $trustedManifest = $officialRelease === null ? null : $this->github()->verifyArchive($zipPath, $officialRelease);
             $digest = (string) hash_file('sha256', $zipPath);
             $packageId = 'pkg-' . substr($digest, 0, 32);
             $dir = $this->packagesDir() . '/' . $packageId;
@@ -168,7 +206,12 @@ class UpgradeService
                     throw new \RuntimeException('The uploaded file is not a readable zip archive');
                 }
                 // Zip-slip guard: refuse entries that escape the staging dir.
+                $expandedBytes = 0;
+                if ($zip->numFiles > 50000) throw new \RuntimeException('The release archive contains too many entries.');
                 for ($i = 0; $i < $zip->numFiles; $i++) {
+                    $entryStat = $zip->statIndex($i);
+                    $expandedBytes += $entryStat['size'] ?? 0;
+                    if ($expandedBytes > 2 * 1024 * 1024 * 1024) throw new \RuntimeException('The expanded release exceeds 2 GiB.');
                     $name = (string) $zip->getNameIndex($i);
                     $norm = str_replace('\\', '/', $name);
                     if (str_contains($norm, '../') || str_starts_with($norm, '/') || preg_match('/^[a-zA-Z]:/', $norm)) {
@@ -180,7 +223,7 @@ class UpgradeService
                 }
                 $zip->close();
 
-                $report = $this->verifyPackageTree($dir);
+                $report = $this->verifyPackageTree($dir, $trustedManifest);
 
                 $info = [
                     'packageId' => $packageId,
@@ -192,13 +235,18 @@ class UpgradeService
                     'isDowngrade' => version_compare($this->normalizeVersion($report['version']), $this->normalizeVersion($this->currentVersion()), '<'),
                     'stagedAt' => gmdate('c'),
                     'state' => 'verified',
+                    'officialRelease' => $officialRelease,
                 ];
+                if ($officialRelease !== null && !copy($zipPath, $this->officialArchivePath())) {
+                    throw new \RuntimeException('Cannot retain the verified release ZIP for installation.');
+                }
                 $encoded = (string) json_encode($info);
                 if (file_put_contents("{$dir}/.staged-info.json", $encoded) === false
                     || file_put_contents($this->pointerFile(), $encoded) === false
                 ) {
                     throw new \RuntimeException('Could not record the staged package');
                 }
+                if ($officialRelease === null) @unlink($this->officialArchivePath());
                 // Exactly one staged package at a time: retire the others.
                 foreach (scandir($this->packagesDir()) ?: [] as $entry) {
                     if ($entry !== '.' && $entry !== '..' && $entry !== $packageId) {
@@ -223,12 +271,13 @@ class UpgradeService
      *  - NO unlisted regular file anywhere in the tree;
      *  - an Ed25519 signature over the exact manifest bytes by the PINNED
      *    release key (unknown key IDs and bad signatures are refused).
-     * Without a pinned key, production refuses outright; development refuses
-     * unless the explicit UPGRADE_ALLOW_UNSIGNED override is set.
+     * Official downloads may instead supply the manifest hash from an archive
+     * independently matched to GitHub's digest. Uploaded ZIPs still require a
+     * pinned signature, except for the explicit development override.
      *
      * @return array{integrity: string, verifiedFiles: int, version: string}
      */
-    private function verifyPackageTree(string $dir): array
+    private function verifyPackageTree(string $dir, ?string $trustedManifest = null): array
     {
         foreach (['index.html', 'api/public/index.php', 'api/vendor/autoload.php', 'api/database/schema.sql'] as $required) {
             if (!is_file("{$dir}/{$required}")) {
@@ -253,7 +302,12 @@ class UpgradeService
             throw new \RuntimeException('manifest.json is present but malformed');
         }
 
-        if ($this->releasePublicKeyRaw !== null) {
+        if ($trustedManifest !== null) {
+            if (!hash_equals($trustedManifest, hash('sha256', $manifestBytes))) {
+                throw new \RuntimeException('The staged manifest no longer matches the verified GitHub release.');
+            }
+            $integrity = 'github-release';
+        } elseif ($this->releasePublicKeyRaw !== null) {
             $sigPath = "{$dir}/manifest.sig.json";
             if (!is_file($sigPath)) {
                 throw new \RuntimeException('This package is unsigned (manifest.sig.json is missing) — refused');
@@ -279,7 +333,7 @@ class UpgradeService
         } else {
             throw new \RuntimeException(
                 $this->production
-                    ? 'No release signing key is pinned (UPGRADE_RELEASE_PUBKEY) — production refuses unverifiable self-updates'
+                    ? 'Production refuses unverifiable uploaded ZIPs. Use Download and verify for an official GitHub release, or pin UPGRADE_RELEASE_PUBKEY to verify uploaded ZIPs'
                     : 'No release signing key is pinned — set UPGRADE_RELEASE_PUBKEY, or UPGRADE_ALLOW_UNSIGNED=true on a development install'
             );
         }
@@ -329,7 +383,7 @@ class UpgradeService
             return null;
         }
         $info = json_decode((string) file_get_contents($file), true);
-        if (!is_array($info) || !is_string($info['packageId'] ?? null)) {
+        if (!is_array($info) || !is_string($info['packageId'] ?? null) || !preg_match('/^pkg-[0-9a-f]{32}$/D', $info['packageId'])) {
             return null;
         }
         if (!is_dir($this->packagesDir() . '/' . $info['packageId'])) {
@@ -346,6 +400,7 @@ class UpgradeService
                 $this->rrmdir($this->packagesDir() . '/' . $info['packageId']);
             }
             @unlink($this->pointerFile());
+            @unlink($this->officialArchivePath());
             $this->rrmdir($this->legacyStagingDir());
             return true;
         });
@@ -393,8 +448,16 @@ class UpgradeService
             $staging = $this->packagesDir() . '/' . $staged['packageId'];
 
             // Re-verify the immutable tree RIGHT before touching the live code:
-            // signature, complete inventory, no unlisted file (FL-006/FL-008).
-            $report = $this->verifyPackageTree($staging);
+            // signature or fresh GitHub archive verification, complete inventory, no unlisted file.
+            $trustedManifest = null;
+            if (($staged['integrity'] ?? null) === 'github-release') {
+                $selection = $staged['officialRelease'] ?? [];
+                $release = $this->github()->resolve(
+                    (int) ($selection['releaseId'] ?? 0), (int) ($selection['assetId'] ?? 0), (string) ($staged['digest'] ?? '')
+                );
+                $trustedManifest = $this->github()->verifyArchive($this->officialArchivePath(), $release);
+            }
+            $report = $this->verifyPackageTree($staging, $trustedManifest);
             if ($report['version'] !== ($staged['version'] ?? null)) {
                 throw new StagedPackageMismatchException('the package version changed on disk');
             }
@@ -662,6 +725,12 @@ class UpgradeService
     public function uploadsDir(): string
     {
         return $this->apiRoot . '/storage/upgrades';
+    }
+
+    /** Original official ZIP stays outside the extracted tree and never enters the web root. */
+    private function officialArchivePath(): string
+    {
+        return $this->uploadsDir() . '/official-release.zip';
     }
 
     /** Immutable per-digest package directories (review FL-008). */

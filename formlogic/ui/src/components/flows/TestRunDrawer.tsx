@@ -345,7 +345,7 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
           )}
           {location === 'desktop' && (
             <Button size="sm" onClick={runDesktop} isLoading={running} disabled={running} leftIcon={<Laptop className="h-4 w-4" />}>
-              Run on Desktop
+              Run via Desktop relay
             </Button>
           )}
           {location === 'cloud' && (
@@ -366,7 +366,7 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
         </div>
         <p className="text-[11px] text-gray-400 dark:text-slate-500">
           {location === 'desktop'
-            ? 'Desktop runs travel end-to-end encrypted to your FormLogic Desktop and are unmetered; queue position and node progress appear live below.'
+            ? 'Desktop runs travel end-to-end encrypted to a linked runtime that supports encrypted flow relays. For OAIY tools in this browser, choose Auto. Queue position and node progress appear below.'
             : location === 'cloud'
               ? 'Cloud runs execute on FormLogic Cloud and use plan credits.'
               : 'Browser runs use the real QuickJS sandbox and your session\'s permissions, exactly like a live run, but are not written to history.'}
@@ -405,7 +405,7 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
                 >
                   Upgrade your plan
                 </button>
-                , or switch Run on to Auto or Desktop — those are unmetered.
+                , or switch Run on to Auto or Desktop relay — those are unmetered.
               </p>
             ) : cloudError.kind === 'unsupported' ? (
               <p>

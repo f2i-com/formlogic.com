@@ -37,17 +37,17 @@ test.describe('demo flows (IndexedDB overlay, no server error)', () => {
     // Watch for the demo read-only error toast specifically.
     page.on('domcontentloaded', () => {});
 
-    const newFlow = page.getByRole('button', { name: /new flow|create flow|\+ ?flow/i }).first();
+    const newFlow = page.getByRole('button', { name: /new flow|create a? ?flow|\+ ?flow/i }).first();
     await expect(newFlow).toBeVisible({ timeout: 30_000 });
     await newFlow.click();
 
     await expect(page.getByText(/new flow/i).first()).toBeVisible({ timeout: 15_000 });
-    const nameInput = page.getByPlaceholder(/blank flow|flow name/i).first();
+    const nameInput = page.getByLabel('Automation name');
     if (await nameInput.isVisible().catch(() => false)) {
       await nameInput.fill('Demo Local Flow');
     }
     await page.getByText('Blank flow', { exact: true }).first().click().catch(() => {});
-    await page.getByRole('button', { name: /create flow/i }).click();
+    await page.getByRole('button', { name: 'Create automation', exact: true }).click();
 
     // The editor canvas mounts — creation succeeded (would have errored against the server).
     await expect(page.locator('.react-flow').first()).toBeVisible({ timeout: 20_000 });

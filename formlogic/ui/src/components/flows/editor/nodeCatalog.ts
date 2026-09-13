@@ -10,9 +10,9 @@
 // the nodeCatalog↔executor parity test asserts this set matches the executor exactly:
 //   (a) BROWSER-SAFE — input/output/logic/AI/formlogic/connector/storage nodes the browser runner
 //       executes directly (storage_get/storage_set flow KV, docs §9; aokie_speak connector sugar).
-//   (b) DESKTOP-SERVICE-BACKED ("Requires FormLogic Desktop") — browser_action / image_gen drive
-//       a LOCAL FormLogic Desktop service over its loopback HTTP API; they declare
-//       `requiresDesktopService` and render a "Runs on FormLogic Desktop" badge. Speech nodes are
+//   (b) DESKTOP-SERVICE-BACKED ("Requires OAIY") — browser_action / image_gen drive
+//       a LOCAL OAIY service over its loopback HTTP API; they declare
+//       `requiresDesktopService` and render a "Runs on OAIY" badge. Speech nodes are
 //       endpoint-based AI nodes; their optional Desktop service id just resolves an endpoint.
 //       Reachable → real execution; unreachable → an actionable "install & start it" node_failed.
 import {
@@ -63,7 +63,7 @@ export const NODE_CATEGORIES: NodeCategoryMeta[] = [
   { id: 'ai', label: 'AI' },
   { id: 'connector', label: 'Connectors' },
   { id: 'storage', label: 'Flow storage' },
-  { id: 'desktop', label: 'Requires FormLogic Desktop', hint: 'Runs on a local FormLogic Desktop service' },
+  { id: 'desktop', label: 'Local tools', hint: 'OAIY services and compatible desktop actions' },
   // ADR-010: contributed nodes from installed Application Package v2 extensions. Visible in the
   // palette (with provenance) but not insertable until flow-compilation support lands.
   { id: 'installed', label: 'Installed extensions', hint: 'Contributed by installed packages' },
@@ -301,8 +301,8 @@ export interface NodeSpec {
   requiresConnector?: string;
   /**
    * Desktop-service-backed nodes (browser_action / image_gen / stt_transcribe / tts_speak) name
-   * the FormLogic Desktop service they drive (a human name). The palette + canvas render a
-   * "Runs on FormLogic Desktop" badge; the node executes for real against that local loopback
+   * the OAIY service they drive (a human name). The palette + canvas render a
+   * "Runs on OAIY" badge; the node executes for real against that local loopback
    * service (client-runtime/flows/nodes.ts), failing with an actionable "install & start it"
    * message when it isn't reachable.
    */
@@ -497,7 +497,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     type: 'template',
     label: 'Template',
     category: 'logic',
-    description: 'Interpolate a {{path}} template against the run scope into a string.',
+    description: 'Create text by filling a template with data from earlier steps.',
     icon: Braces,
     accent: 'amber',
     executable: true,
@@ -546,8 +546,8 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     type: 'llm_chat',
     label: 'LLM chat',
     category: 'ai',
-    description: 'Call an OpenAI-compatible chat endpoint (FormLogic Desktop local model or the configured AI provider).',
-    doc: 'Sends a system + user prompt to an OpenAI-compatible chat model and returns the reply. The model, sampling and endpoint are optional advanced settings — by default the paired FormLogic Desktop model or the app-configured AI provider is used. Reference the reply text downstream as $nodes.<id>.content.',
+    description: 'Call an OpenAI-compatible chat endpoint (OAIY local model or the configured AI provider).',
+    doc: 'Sends a system + user prompt to an OpenAI-compatible chat model and returns the reply. The model, sampling and endpoint are optional advanced settings — by default the paired OAIY model or the app-configured AI provider is used. Reference the reply text downstream as $nodes.<id>.content.',
     icon: Sparkles,
     accent: 'violet',
     executable: true,
@@ -572,7 +572,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
         type: 'aiProvider',
         capability: 'chat',
         help:
-          "Route this step through an AI service configured in this browser (Flows -> AI services). Leave on Auto to use a paired FormLogic Desktop service or the app's AI base. When the flow runs on FormLogic Desktop, the desktop's own services are used.",
+          "Route this step through an AI service configured in this browser (Flows -> AI services). Leave on Auto to use a paired OAIY service or the app's AI base. When the flow runs on OAIY, the desktop's own services are used.",
       },
       { key: 'advanced', label: 'Show model & endpoint options', type: 'boolean', help: 'Reveal the model, sampling and endpoint override. Leave off to use the default provider.' },
       {
@@ -615,7 +615,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
         type: 'desktopService',
         placeholder: 'e.g. llama-cpp — leave blank to call an absolute URL below',
         help:
-          "Target a named service running in FormLogic Desktop (llama.cpp, Ollama, a custom script service, …) " +
+          "Target a named service running in OAIY (llama.cpp, Ollama, a custom script service, …) " +
           "by id instead of hand-typing its loopback URL. When set, 'URL' below becomes a PATH under that " +
           "service (e.g. /predict) rather than an absolute URL, and only that service's resolved loopback " +
           'port is reachable — the Desktop/API URL allow-list does not apply for this node. Fixed at ' +
@@ -811,7 +811,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
   },
 
   // ── Desktop-service-backed nodes (docs §4) — REAL + executable ─────────────────────────────
-  // Each drives a local FormLogic Desktop service over its loopback HTTP API (the browser
+  // Each drives a local OAIY service over its loopback HTTP API (the browser
   // resolves it via the paired Desktop's GET /api/services; the desktop runner via its services
   // registry). Unreachable → an actionable "install & start the service" node_failed. The
   // browser executor (client-runtime/flows/nodes.ts) and the desktop Rust runner
@@ -887,7 +887,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     doc:
       'The generic service-action node (extensible-flows plan §7): stores only stable references — a service definition id, an action id, and the Desktop AI provider profile that holds the credential. '
       + 'Desktop resolves the action from its catalog, validates your input against the action’s declared inputSchema, injects credentials via its provider gateway, and validates the output. '
-      + 'Runs on FormLogic Desktop; a browser-run flow reaches it too when this machine’s paired Desktop is running (anywhere else the node refuses with a typed Desktop-only message).',
+      + 'Requires a paired desktop runtime with Service Platform support. The OAIY bridge does not currently expose this action catalog.',
     icon: Layers,
     accent: 'slate',
     executable: true,
@@ -910,7 +910,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     doc:
       'Awaited flow-to-flow composition (extensible-flows plan §8, v1): the child flow is referenced by its STABLE id (never its slug), runs with the mapped input, and gets its own run-log entry. '
       + 'Success routes the Success handle with { status, result, runId }; with Failure mode “Route”, a failed child routes the Failure handle carrying the structured error instead of failing this flow. '
-      + 'Recursion and depth (max 8 awaited levels) are guarded; a flow already in the awaited chain is refused. Runs in ALL THREE runtimes: the browser (app runtime and workspace, Test Run included), FormLogic Desktop (children inline on the same worker), and FormLogic Cloud (children metered, sharing the parent’s time budget).',
+      + 'Recursion and depth (max 8 awaited levels) are guarded; a flow already in the awaited chain is refused. Runs in ALL THREE runtimes: the browser (app runtime and workspace, Test Run included), a compatible desktop runtime (children inline on the same worker), and FormLogic Cloud (children metered, sharing the parent’s time budget).',
     icon: Workflow,
     accent: 'slate',
     executable: true,
@@ -941,7 +941,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     type: 'stt_transcribe',
     label: 'Speech → text',
     category: 'ai',
-    description: 'Transcribe audio to text via any OpenAI-compatible endpoint — e.g. one running on FormLogic Desktop.',
+    description: 'Transcribe audio to text via any OpenAI-compatible endpoint — e.g. one running on OAIY.',
     icon: Mic,
     accent: 'slate',
     executable: true,
@@ -966,7 +966,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     type: 'tts_speak',
     label: 'Text → speech',
     category: 'ai',
-    description: 'Synthesise speech from text via any OpenAI-compatible endpoint — e.g. one running on FormLogic Desktop.',
+    description: 'Synthesise speech from text via any OpenAI-compatible endpoint — e.g. one running on OAIY.',
     icon: Volume2,
     accent: 'slate',
     executable: true,
@@ -993,7 +993,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     label: 'Desktop services',
     category: 'ai',
     description:
-      "List FormLogic Desktop's managed services (id, status, port, loopback URL when running) — lets a logic block resolve a picked service to a live endpoint at run time. No Desktop → an empty list, never an error.",
+      "List OAIY's managed services (id, status, port, loopback URL when running) — lets a logic block resolve a picked service to a live endpoint at run time. No Desktop → an empty list, never an error.",
     icon: Server,
     accent: 'slate',
     executable: true,

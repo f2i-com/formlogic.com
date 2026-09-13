@@ -72,7 +72,7 @@ class FlowRunController
             if (!$hasEph && !$hasEnvelope) {
                 return $this->jsonError(
                     $response,
-                    'This flow runs on your FormLogic Desktop — its inputs must be sealed in the browser first. Run it from the flow editor (or POST the sealed envelope to /api/desktop/flows/run).',
+                    'This flow runs on your linked desktop runtime — its inputs must be sealed in the browser first. Run it from the flow editor (or POST the sealed envelope to /api/desktop/flows/run).',
                     409,
                     'use_desktop_relay',
                 );

@@ -60,6 +60,13 @@ describe('studioSteps', () => {
       expect(badges.plan).toBeNull();
     });
 
+    it('includes native database tables without inventing forms or generated screens', () => {
+      const badges = deriveSectionBadges({ ...empty, nativeTableCount: 28 });
+      expect(badges.data).toEqual({ text: '28', tone: 'muted', title: '28 database tables · 0 forms' });
+      expect(badges.screens?.text).toBe('1');
+      expect(deriveNextAction({ ...empty, nativeTableCount: 28, fieldlessFormNames: [], memberCount: 1 })?.step).not.toBe('data');
+    });
+
     it('publish reports the live version, pending changes, or an unpublished draft', () => {
       expect(deriveSectionBadges(empty).publish).toMatchObject({ text: 'Draft', tone: 'attention' });
       expect(deriveSectionBadges({ ...empty, published: true, publishedVersion: 4 }).publish)

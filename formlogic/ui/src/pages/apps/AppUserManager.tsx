@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useReturnTo } from '../../hooks/useReturnTo';
-import { ArrowLeft, UserPlus, Trash2, Pencil, Users, Check, Copy } from 'lucide-react';
+import { UserPlus, Trash2, Pencil, Users, Check, Copy } from 'lucide-react';
 import { useAppUserStore } from '../../stores/appUserStore';
 import { useAppStore } from '../../stores/appStore';
 import { useResourcePaths } from '../../components/admin/AdminActingContext';
@@ -27,7 +27,7 @@ export function AppUserManager() {
   const navigate = useNavigate();
   const paths = useResourcePaths();
   // Origin-relative Back: opened from the App Studio this returns to its step.
-  const backTo = useReturnTo(paths.appSub(`${appId}`, 'settings?tab=manage'));
+  const backTo = useReturnTo(paths.appSub(`${appId}`, 'settings?tab=access'));
   const [loading, setLoading] = useState(true);
   const { users, invitations, groups, fetchUsers, fetchInvitations, fetchGroups, inviteUser, revokeInvitation, removeUser, updateUser, createGroup, deleteGroup, addGroupMember, removeGroupMember } = useAppUserStore();
   const { fetchRoles } = useAppStore();
@@ -207,12 +207,10 @@ export function AppUserManager() {
     <div className="min-h-screen">
       <Header
         title="Users & access"
+        back={{ onClick: () => navigate(backTo.path, { state: backTo.state }), label: backTo.label ? `Back to ${backTo.label}` : 'Back to app settings' }}
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path, { state: backTo.state })} leftIcon={<ArrowLeft className="h-4 w-4" />}>
-              {backTo.label ? `Back to ${backTo.label}` : 'Back'}
-            </Button>
-            <Button size="sm" onClick={() => setShowInviteModal(true)} leftIcon={<UserPlus className="h-4 w-4" />}>Invite user</Button>
+            <Button size="sm" aria-label="Invite user" onClick={() => setShowInviteModal(true)} leftIcon={<UserPlus className="h-4 w-4" />}><span className="hidden @xl/header:inline">Invite user</span></Button>
           </>
         }
       />

@@ -3,7 +3,7 @@
 // Ported from f2i-web's NodePalette: nodes grouped by category, searchable, drag-to-add onto the
 // canvas (or click-to-add at the viewport centre). Desktop-service-backed nodes (browser_action /
 // image_gen / stt_transcribe / tts_speak) are fully insertable and render a functional "Runs on
-// FormLogic Desktop" badge — they execute against a local Desktop service at run time.
+// OAIY" badge — they execute against a local Desktop service at run time.
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, FolderPlus, MonitorDown, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings2, X } from 'lucide-react';
 import { cn } from '../../../lib/utils';
@@ -24,7 +24,7 @@ import { FlowDesktopPresenceContext } from './flowNodeContext';
 // Tiles carry only icon + name now — the description lives in this hover popover, so it
 // should appear promptly (but still late enough that drag-pickups don't flash it).
 const HOVER_DELAY_MS = 300;
-const DESKTOP_OFFLINE_NODE_TOOLTIP = 'FormLogic Desktop is offline — this node will fail at run time';
+const DESKTOP_OFFLINE_NODE_TOOLTIP = 'OAIY is offline — this node will fail at run time';
 
 /** Compact "In / Out" handle summary for the hover popover. */
 function handleSummary(handles: { label: string }[]): string {
@@ -54,7 +54,7 @@ function PaletteDoc({ spec, anchor, degraded }: { spec: NodeSpec; anchor: DOMRec
       )}
       {spec.requiresDesktopService && (
         <p className="mt-1.5 flex items-center gap-1 text-[10px] font-medium text-primary-600 dark:text-primary-300">
-          <MonitorDown className="h-2.5 w-2.5" /> Runs on the {spec.requiresDesktopService} service in FormLogic Desktop
+          <MonitorDown className="h-2.5 w-2.5" /> Runs on the {spec.requiresDesktopService} service in OAIY
         </p>
       )}
       {degraded && (
@@ -147,7 +147,7 @@ function PaletteItem({
       disabled={disabled}
       aria-label={disabled ? `${spec.label} (not available)` : `Add ${spec.label} node`}
       className={cn(
-        'group relative flex w-full flex-col items-center gap-1.5 rounded-xl border border-transparent px-1.5 py-2.5 text-center transition-colors',
+        'group relative flex w-full items-start gap-2.5 rounded-xl border border-gray-100 px-3 py-3 text-left dark:border-slate-800 transition-colors',
         disabled
           ? 'cursor-not-allowed opacity-55'
           : cn(
@@ -168,12 +168,10 @@ function PaletteItem({
           <MonitorDown className="h-3 w-3" />
         </span>
       )}
-      <span className={cn('flex h-10 w-10 flex-none items-center justify-center rounded-xl', ACCENT_CHIP[spec.accent] ?? ACCENT_CHIP.slate)}>
+      <span className={cn('flex h-9 w-9 flex-none items-center justify-center rounded-lg', ACCENT_CHIP[spec.accent] ?? ACCENT_CHIP.slate)}>
         <Icon className="h-5 w-5" />
       </span>
-      <span className="line-clamp-2 block w-full text-[11px] font-medium leading-tight text-gray-800 dark:text-slate-200">
-        {spec.label}
-      </span>
+      <span className="min-w-0 flex-1"><span className="block text-xs font-semibold leading-relaxed text-gray-800 dark:text-slate-200">{spec.label}</span><span className="mt-0.5 line-clamp-2 block text-[11px] leading-relaxed text-gray-500 dark:text-slate-400">{spec.description}</span></span>
     </button>
     {organising && (
       // In organise mode the tile is not for inserting — it is for filing. A select rather than
@@ -314,7 +312,7 @@ function NodeGroupSection({
             Empty — pick this group under a node below to file it here.
           </p>
         ) : (
-          <div className="grid gap-1.5 [grid-template-columns:repeat(auto-fill,minmax(6.25rem,1fr))]">
+          <div className="grid grid-cols-1 gap-2">
             {specs.map((spec) => (
               <PaletteItem
                 key={spec.type}
@@ -416,16 +414,17 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
   }
 
   return (
-    <div className={cn('flex h-full min-h-0 w-64 flex-none flex-col bg-gray-100/50 dark:bg-slate-900/50', className)}>
-      <div className="flex items-center gap-1.5 p-2.5">
+    <div className={cn('flex h-full min-h-0 w-64 flex-none flex-col border-r border-gray-200/80 bg-white dark:border-slate-800 dark:bg-slate-900', className)}>
+      <div className="px-4 pt-4 pb-1"><h3 className="text-sm font-semibold text-gray-900 dark:text-white">Steps</h3><p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-slate-400">Choose a step to add to your flow.</p></div>
+      <div className="flex items-center gap-1.5 p-3">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search nodes"
+            placeholder="Search steps"
             aria-label="Search flow nodes"
-            className="w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 py-1.5 pl-8 pr-2.5 text-xs text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+            className="w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 py-2.5 pl-8 pr-2.5 text-base md:py-1.5 md:text-xs text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
           />
         </div>
         <Button
@@ -470,7 +469,7 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
               placeholder="New group name"
               aria-label="New node group name"
               maxLength={40}
-              className="w-full rounded-lg border border-gray-300 bg-white py-1.5 pl-8 pr-2.5 text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+              className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-8 pr-2.5 text-base md:py-1.5 md:text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
             />
           </div>
           <Button type="submit" variant="outline" size="sm" disabled={!newGroupName.trim()} className="flex-none">
@@ -517,7 +516,7 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
             </div>
             {/* Icon tiles — auto-fill so the same palette works in the w-64 rail (2-up)
                 and the full-width mobile sheet (3+-up). */}
-            <div className="grid gap-1.5 [grid-template-columns:repeat(auto-fill,minmax(6.25rem,1fr))]">
+            <div className="grid grid-cols-1 gap-2">
               {specs.map((spec) => (
                 <PaletteItem
                   key={spec.type}

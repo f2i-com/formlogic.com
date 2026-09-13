@@ -1,7 +1,7 @@
 // FormLogic Flows — first-class workspace (/flows).
 //
-// Two views on one route: with no flow open, the start page (FlowsOverview — hero, flow
-// list, readiness, recent runs, templates); with ?flow=<id> set, the FULL-PAGE editor
+// Creation opens by default; ?view=existing shows the paginated library and optional
+// connection/run details. With ?flow=<id> set, the FULL-PAGE editor
 // (FlowEditor — React Flow canvas, node palette, properties, autosave) with a back link
 // in its toolbar, plus measured-width inline panels or the shared slide-over drawer for
 // triggers/history/test-run. Deep-linked by ?flow=<id> from the app-level Flows panel.
@@ -50,7 +50,8 @@ function bindingReferencesFlow(binding: FlowBinding, flow: FlowDefinition): bool
 }
 
 export function FlowsWorkspace() {
-  const [, setSearchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const libraryVisible = searchParams.get('view') === 'existing' && searchParams.get('new') !== '1';
   const navigate = useNavigate();
   // Origin-relative Back: opened as /flows?flow=X FROM another surface (App
   // Studio Automations), the editor's back link returns there; otherwise it
@@ -58,13 +59,12 @@ export function FlowsWorkspace() {
   // the workspace replaces the history entry without state, so the origin only
   // applies to the entry the user arrived on.
   const backTo = useReturnTo('');
-  const desktopPresence = useFlowsDesktopPresence();
+  const desktopPresence = useFlowsDesktopPresence(true);
   const [groups, setGroups] = useState<FlowGroup[]>([]);
   const [apps, setApps] = useState<AppListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [showNew, setShowNew] = useState(false);
+  const selectedId = searchParams.get('flow');
   const [showAiServices, setShowAiServices] = useState(false);
   const [newFlowInitialTemplate, setNewFlowInitialTemplate] = useState<FlowStarterTemplate | null>(null);
   const [creating, setCreating] = useState(false);
@@ -277,27 +277,19 @@ export function FlowsWorkspace() {
       const params = new URLSearchParams(window.location.search);
       const target = params.get('flow');
       if (target && nextGroups.some((group) => group.flows.some((flow) => flow.id === target))) {
-        setSelectedId(target);
+
         // ?panel= opens the requested side panel with the flow, so a link that
         // promises "run history" actually lands on the run history.
         const panel = params.get('panel');
         if (panel === 'history' || panel === 'triggers' || panel === 'test') setRightPanel(panel);
       }
-      // ?new=1 (the mobile + quick menu) opens the New-flow dialog straight away, once.
-      if (params.get('new') === '1') {
-        setShowNew(true);
-        setSearchParams((prev) => {
-          const next = new URLSearchParams(prev);
-          next.delete('new');
-          return next;
-        }, { replace: true });
-      }
+
     } catch (error) {
       if (isCancelled()) return;
       setLoading(false);
       setLoadError(error instanceof Error ? error.message : 'Failed to load flows');
     }
-  }, [setSearchParams]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -312,12 +304,14 @@ export function FlowsWorkspace() {
   }, []);
 
   const selectFlow = (id: string | null) => {
-    setSelectedId(id);
+
     setRightPanel(null);
     setNodeStatus({}); // clear stale run pills when switching flows
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       if (id) next.set('flow', id); else next.delete('flow');
+      next.set('view', 'existing');
+      next.delete('panel');
       return next;
     }, { replace: true });
   };
@@ -385,7 +379,8 @@ export function FlowsWorkspace() {
 
   const openNewFlow = (template: FlowStarterTemplate | null = null) => {
     setNewFlowInitialTemplate(template);
-    setShowNew(true);
+    setRightPanel(null);
+    setSearchParams({}, { replace: true });
   };
 
   const createFlow = async ({ name, slug, description, template, appId }: { name: string; slug: string; description: string; template: FlowStarterTemplate; appId: string | null }) => {
@@ -397,19 +392,24 @@ export function FlowsWorkspace() {
     let n = 1;
     while (takenSlugs.has(uniqueSlug)) {
       n += 1;
-      uniqueSlug = `${slug}-${n}`.slice(0, 60);
+      uniqueSlug = `${slug.slice(0, 60 - String(n).length - 1)}-${n}`;
     }
     const uniqueName = n > 1 && !name.trim().match(/\d$/) ? `${name} ${n}` : name;
     const body = { name: uniqueName, slug: uniqueSlug, description, flowJson: template.flowJson, enabled: true, nodeCapabilities: template.nodeCapabilities };
-    const flow = api.isDemoMode()
-      ? await demoCreateFlow({ ...body, appId })
-      : appId
-        ? (await api.createFlow(appId, body)).data?.flow
-        : (await api.createWorkspaceFlow(body)).data?.flow;
-    setCreating(false);
-    if (!flow) {
-      toast.error('Failed to create flow');
+    let flow: FlowDefinition;
+    try {
+      if (api.isDemoMode()) {
+        flow = await demoCreateFlow({ ...body, appId });
+      } else {
+        const response = appId ? await api.createFlow(appId, body) : await api.createWorkspaceFlow(body);
+        if (response.error || !response.data?.flow) throw new Error(typeof response.error === 'string' ? response.error : 'Please try again.');
+        flow = response.data.flow;
+      }
+    } catch (error) {
+      toast.error('Failed to create flow', error instanceof Error ? error.message : 'Please try again.');
       return;
+    } finally {
+      setCreating(false);
     }
     setGroups((gs) => {
       let found = false;
@@ -423,7 +423,6 @@ export function FlowsWorkspace() {
       if (flow.appId && !app) return next;
       return [...next, { app, flows: [flow] }];
     });
-    setShowNew(false);
     setNewFlowInitialTemplate(null);
     selectFlow(flow.id);
     toast.success('Flow created', flow.name);
@@ -468,21 +467,23 @@ export function FlowsWorkspace() {
     const flow = pendingToggle;
     setPendingToggle(null);
     if (!flow) return;
-    await toggleEnabled(flow, !flow.enabled);
+    const updated = await toggleEnabled(flow, !flow.enabled);
+    if (!updated) return;
     toast.success(flow.enabled ? 'Flow disabled' : 'Flow enabled', flow.name);
   };
 
   const toggleEnabled = async (flow: FlowDefinition, enabled: boolean) => {
     if (api.isDemoMode()) {
       upsertFlow(await demoUpdateFlow(flow, { enabled }));
-      return;
+      return true;
     }
     const res = flow.appId ? await api.updateFlow(flow.appId, flow.id, { enabled }) : await api.updateWorkspaceFlow(flow.id, { enabled });
     if (res.error || !res.data) {
       toast.error('Failed to update flow', typeof res.error === 'string' ? res.error : undefined);
-      return;
+      return false;
     }
     upsertFlow(res.data.flow);
+    return true;
   };
 
   const confirmDelete = async () => {
@@ -529,10 +530,7 @@ export function FlowsWorkspace() {
             actions={
               <>
                 <AiServicesChip onClick={() => setShowAiServices(true)} />
-                <Button size="sm" onClick={() => openNewFlow()} leftIcon={<Plus className="h-4 w-4" />}>
-                  <span className="hidden sm:inline">New flow</span>
-                  <span className="sm:hidden">New</span>
-                </Button>
+
               </>
             }
           />
@@ -588,22 +586,38 @@ export function FlowsWorkspace() {
             <EmptyState icon={Workflow} title="Loading flows..." description="" />
           </div>
         ) : (
-          <FlowsOverview
-            groups={groups}
-            desktopPresence={desktopPresence}
-            availableConnectorIds={availableConnectorIds}
-            onNewFlow={openNewFlow}
-            onOpenFlow={selectFlow}
-            onOpenAiServices={() => setShowAiServices(true)}
-            onOpenRunFlow={(flowId) => {
-              selectFlow(flowId);
-              setRightPanel('history');
-            }}
-            onDuplicate={duplicateFlow}
-            onRename={renameFlow}
-            onRequestToggleEnabled={setPendingToggle}
-            onDelete={setPendingDelete}
-          />
+          <div className="min-w-0 flex-1 overflow-y-auto bg-gray-50 px-4 pt-5 pb-24 dark:bg-slate-950 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8">
+            <div className="mx-auto grid max-w-6xl items-start gap-5 xl:grid-cols-[190px_minmax(0,1fr)]">
+              <nav aria-label="Automation workspace" className="space-y-2 xl:sticky xl:top-0">
+                <Button className="w-full justify-start" onClick={() => openNewFlow()} disabled={creating} leftIcon={<Plus className="h-4 w-4" />} aria-current={!libraryVisible ? 'page' : undefined}>Create a flow</Button>
+                <Button className="w-full justify-start" variant={libraryVisible ? 'outline' : 'ghost'} disabled={creating} onClick={() => selectFlow(null)} leftIcon={<Workflow className="h-4 w-4" />} aria-current={libraryVisible ? 'page' : undefined}>Existing flows <span className="ml-auto text-xs opacity-70">{allFlows.length}</span></Button>
+              </nav>
+              <div className="min-w-0">
+                <div hidden={libraryVisible}>
+                  <NewFlowDialog embedded isOpen onClose={() => selectFlow(null)} onCreate={createFlow} creating={creating} apps={apps} initialTemplate={newFlowInitialTemplate} />
+                  <p className="mt-4 px-1 text-xs leading-relaxed text-gray-500 dark:text-slate-400">Using local AI or Aokie? Connect OAIY in <button className="font-medium text-primary-600 underline underline-offset-2 dark:text-primary-300" onClick={() => navigate('/settings#local-runtime')}>Settings</button>. You can create your flow first.</p>
+                </div>
+                {libraryVisible && (
+                  <FlowsOverview
+                    groups={groups}
+                    desktopPresence={desktopPresence}
+                    availableConnectorIds={availableConnectorIds}
+                    onNewFlow={openNewFlow}
+                    onOpenFlow={selectFlow}
+                    onOpenAiServices={() => setShowAiServices(true)}
+                    onOpenRunFlow={(flowId) => {
+                      selectFlow(flowId);
+                      setRightPanel('history');
+                    }}
+                    onDuplicate={duplicateFlow}
+                    onRename={renameFlow}
+                    onRequestToggleEnabled={setPendingToggle}
+                    onDelete={setPendingDelete}
+                  />
+                )}
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Right panel: triggers / history / test run. No border here — the panel's white bg vs the
@@ -678,17 +692,6 @@ export function FlowsWorkspace() {
         </FlowMobileDrawer>
       )}
 
-      <NewFlowDialog
-        isOpen={showNew}
-        onClose={() => {
-          setShowNew(false);
-          setNewFlowInitialTemplate(null);
-        }}
-        onCreate={createFlow}
-        creating={creating}
-        apps={apps}
-        initialTemplate={newFlowInitialTemplate}
-      />
       <Suspense fallback={null}>
         {showAiServices && (
           <AiServicesDialog

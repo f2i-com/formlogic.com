@@ -20,6 +20,7 @@ const BACKOFF_AFTER_FAILURES = 3;
 type Listener = (info: OaiyInfo) => void;
 
 const listeners = new Set<Listener>();
+const probingListeners = new Set<Listener>();
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let running = false;
 let consecutiveFailures = 0;
@@ -99,20 +100,26 @@ export async function refreshOaiyStatus(): Promise<OaiyInfo> {
 /**
  * Subscribe to OAIY-status changes. Starts detection on the first subscriber and
  * stops it when the last one unsubscribes (detection never runs globally at boot).
+ * Pass {probe:false} for a passive shell indicator; explicit connection controls
+ * and paired runtimes keep the normal discovery/reconnection loop.
  * The listener fires only when availability/version change — not on every poll —
  * and is called immediately with the current status.
  */
-export function subscribeOaiyStatus(listener: Listener): () => void {
+export function subscribeOaiyStatus(listener: Listener, options: { probe?: boolean } = {}): () => void {
   listeners.add(listener);
   try {
     listener(getOaiyInfo());
   } catch (e) {
     console.warn('[oaiy-detect] initial listener call threw:', e);
   }
-  startOaiyDetection();
+  if (options.probe !== false) {
+    probingListeners.add(listener);
+    startOaiyDetection();
+  }
   return () => {
     listeners.delete(listener);
-    if (listeners.size === 0) stopOaiyDetection();
+    probingListeners.delete(listener);
+    if (probingListeners.size === 0) stopOaiyDetection();
   };
 }
 

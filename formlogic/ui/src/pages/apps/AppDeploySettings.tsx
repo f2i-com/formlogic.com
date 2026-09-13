@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useReturnTo } from '../../hooks/useReturnTo';
-import { ArrowLeft, Copy, Check, Globe, Smartphone, ExternalLink, CheckCircle2, Package, Download } from 'lucide-react';
+import { Copy, Check, Globe, Smartphone, ExternalLink, CheckCircle2, Package, Download } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useAdminActing, useResourcePaths } from '../../components/admin/AdminActingContext';
 import { api } from '../../lib/api';
@@ -180,11 +180,7 @@ export function AppDeploySettings() {
     <div className="min-h-screen">
       <Header
         title="Deploy & share"
-        actions={
-          <Button variant="ghost" size="sm" onClick={() => { if (dirty) setPendingNav(backTo.path); else navigate(backTo.path, { state: backTo.state }); }} leftIcon={<ArrowLeft className="h-4 w-4" />}>
-            {backTo.label ? `Back to ${backTo.label}` : 'Back'}
-          </Button>
-        }
+        back={{ onClick: () => { if (dirty) setPendingNav(backTo.path); else navigate(backTo.path, { state: backTo.state }); }, label: backTo.label ? `Back to ${backTo.label}` : 'Back to app settings' }}
       />
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
       <div className="max-w-3xl mx-auto">

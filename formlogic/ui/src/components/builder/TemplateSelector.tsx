@@ -136,8 +136,9 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
           {/* Templates Grid */}
           <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6">
             <div className="mb-5 grid gap-4 sm:grid-cols-2">
-              <label className="text-sm font-medium text-gray-700 dark:text-slate-200">Form name
-                <input value={name} onChange={e => setName(e.target.value)} maxLength={120} disabled={isCreating} placeholder="e.g. Customer enquiries" className="mt-1 block w-full min-h-11 rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 p-3 text-base" />
+              <label className="text-sm font-medium text-gray-700 dark:text-slate-200">Form name <span className="font-normal text-gray-500 dark:text-slate-400">(optional)</span>
+                <input value={name} onChange={e => setName(e.target.value)} maxLength={120} disabled={isCreating} placeholder={selected?.name || "Untitled Form"} className="mt-1 block w-full min-h-11 rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 p-3 text-base" />
+                <span className="mt-1.5 block text-xs font-normal text-gray-500 dark:text-slate-400">Leave blank to start now. Rename it in the builder or your forms list.</span>
               </label>
               <label className="text-sm font-medium text-gray-700 dark:text-slate-200">Find a template
                 <input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search templates" className="mt-1 block w-full min-h-11 rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 p-3 text-base" />
@@ -244,7 +245,7 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
             <Button variant="outline" onClick={onClose} disabled={isCreating}>
               Cancel
             </Button>
-            <Button onClick={() => onSelectTemplate(selected, makePrivate, name.trim())} disabled={!name.trim() || isCreating} isLoading={isCreating}>Create form</Button>
+            <Button onClick={() => onSelectTemplate(selected, makePrivate, name.trim())} disabled={isCreating} isLoading={isCreating}>Create form</Button>
           </div>
 
         </div>

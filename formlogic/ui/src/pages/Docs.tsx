@@ -503,7 +503,7 @@ export function Docs() {
                 <li><strong className="text-gray-900 dark:text-white">Apps</strong> — <C>list_apps</C>, <C>create_app</C>, <C>update_app</C> (name, slug, publish), <C>add_form_to_app</C>, <C>set_app_home</C> (a no-code widget dashboard, or a custom code screen)</li>
                 <li><strong className="text-gray-900 dark:text-white">Reports</strong> — <C>create_report</C> (charts, KPIs, tables) and <C>create_document</C> (exportable PDF pages)</li>
                 <li><strong className="text-gray-900 dark:text-white">Responses</strong> — <C>list_responses</C> (only with the <C>responses:read</C> scope)</li>
-                <li><strong className="text-gray-900 dark:text-white">Hosted apps</strong> — <C>get_workspace_template</C>, <C>get_app_project</C>, <C>publish_app_project</C> and <C>compose_apps</C></li>
+                <li><strong className="text-gray-900 dark:text-white">Hosted apps</strong> — <C>get_workspace_template</C>, <C>get_app_project</C>, <C>publish_app_project</C> and <C>compose_apps</C>. Native apps use <C>get_native_app_template</C>, <C>get_native_app_project</C>, <C>publish_native_app_project</C>, <C>update_native_app_files</C> and <C>list_native_app_records</C></li>
                 <li><strong className="text-gray-900 dark:text-white">Aokie and roles</strong> — install a starter, create app roles and set form permissions and reviewed connector grants</li>
                 <li><strong className="text-gray-900 dark:text-white">OAIY</strong> — <C>desktop_status</C> and <C>connector_command</C> operate approved connectors, including the Aokie phone bridge; command access is off by default</li>
               </ul>
@@ -574,6 +574,19 @@ function _init() {
 }`}</CodeBlock>
               <P>Private actions use bounded <C>ctx.db.get</C>, <C>list</C>, <C>put</C> and <C>remove</C> operations inside a transaction. They do not expose arbitrary SQL or network access. A member action must check <C>ctx.user.id</C> itself when records need finer ownership rules.</P>
               <Tip><strong>Choose the right export.</strong> Download client contains public interface files. Save project copy includes private action source. Download database includes the deployment and records. Downloaded clients need a compatible authenticated FormLogic host for live records; they contain neither credentials nor an offline database.</Tip>
+              <h3 className="text-lg font-semibold mt-6 mb-3">Host an existing app with its own backend</h3>
+              <P>Open <C>Data &amp; forms → Records</C> for direct access to <C>Backend code</C> and <C>Database records</C>. Backend edits publish a new source version while preserving the app’s SQLite records.</P>
+              <P>Use <C>Screens → Hosting &amp; app tools → Native app hosting</C> for a complete app with private <C>.logic</C> handlers and SQLite migrations. Its backend runs in ZIPP, and the Records tab shows the same database used by the app.</P>
+              <Steps items={[
+                <>Import the <C>.softn</C> project and review its interface, backend and migrations before installing.</>,
+                <>Keep the app&apos;s own sign-in, or require FormLogic membership and configure registration in <C>Users &amp; roles</C>. Project administration remains separate from visitor accounts.</>,
+                <>Choose <C>Use this app as the website home</C> to open it at the normal app address. Connected domains in direct-app mode use this entry point after publication.</>,
+                <>Edit source in Screens and Backend, and browse its SQLite tables in Records. Open Visual Builder for layout changes, or AI Studio for source and AI editing, including on mobile. Studio uses your FormLogic AI settings. Review changes returns a draft; publish it when ready. Download editable project keeps a portable copy.</>,
+              ]} />
+              <h3 className="text-lg font-semibold mt-6 mb-3">Run a flow when a record changes</h3>
+              <P>In <C>Automations → Connect database event</C>, choose a table, a created/updated/deleted change, and a flow. For a signup flow, choose the table where the app creates verified users. The flow receives <C>record</C>, <C>table</C> and <C>operation</C> inputs. Use the trigger editor for conditions, such as checking that an account is verified.</P>
+              <P>Only future committed changes on enabled flows and triggers are captured. Failed or rolled-back writes do not trigger a flow. Record previews omit common secret fields and shorten long values. Keep OAIY connected for unattended execution, or open the app’s authenticated FormLogic member runtime. Run history shows whether work is queued or completed.</P>
+              <Tip>The native host is a local preview requiring a compatible server runtime and the native record recovery dispatcher for interrupted deliveries. Importing does not configure SMS delivery, photo uploads, public DNS or HTTPS, and does not publish the parent app. Downloaded projects exclude database records and server credentials.</Tip>
               <P>Local app storage, hosted app databases and existing form response databases are separate. Importing a client does not migrate its records or automatically wire local forms to backend actions. <GuideLink file="docs/HOSTED_APPS.md">Hosting API, examples, limits and backups</GuideLink> · <GuideLink file="docs/CONNECTED_APPS.md">Connected dashboard guide</GuideLink>.</P>
             </section>
 
@@ -633,6 +646,7 @@ function _init() {
               <P><strong>Prepare a source checkout before running an installer.</strong> Keep <C>softn.com</C> beside <C>formlogic.com</C>, install dependencies in the Softn repository and in <C>formlogic/ui</C>, then run this from <C>formlogic/ui</C>:</P>
               <CodeBlock title="required before the frontend build or CLI installer">{`npm run build:hosted-runtime`}</CodeBlock>
               <P>Every frontend build checks for these generated assets. A fresh clone without them cannot complete <C>npm run build</C> or the CLI installer. A deployment using prepared build artifacts must include the matching runtime directory.</P>
+              <P><strong>Updates after installation:</strong> open <C>Admin → Updates</C>, choose <C>Check for updates</C>, then <C>Download and verify</C>. Review the release before selecting <C>Install</C>. FormLogic verifies the official GitHub release digest and backs up your database and code before applying it. No signing-key setup is needed for official downloads; signed ZIP uploads remain available for offline or custom releases. See the <GuideLink file="docs/UPGRADING.md">upgrade guide</GuideLink>.</P>
               <P>Then choose an assisted installer in <C>formlogic/</C>:</P>
               <Bullets items={[
                 <><strong className="text-gray-900 dark:text-white">Web wizard</strong> — serve the repo and open <C>.../formlogic/install.php</C>. It checks requirements, tests the database, writes config, and (optionally) seeds the marketplace with the ready-made app packs plus a no-signup demo.</>,

@@ -10,6 +10,7 @@ import {
   PencilRuler,
   Plus,
   RotateCcw,
+  Search,
   ShieldCheck,
   Share2,
   Table2,
@@ -35,6 +36,8 @@ import { useAdminActing } from '../../admin/AdminActingContext';
 import { saveFormFields } from '../../../lib/formFields';
 import type { App, AppForm } from '../../../types/app';
 import type { FieldType, Form, FormField } from '../../../types/form';
+import { NativeDatabaseTables } from '../NativeDatabaseTables';
+import type { NativeTableState } from '../useNativeTables';
 
 const FIELD_TYPE_LABELS: Record<string, string> = {
   short_text: 'Short text',
@@ -101,6 +104,7 @@ export function DataStep({
   formsResolving,
   formsFailed = false,
   onReloadForms,
+  nativeDatabase,
 }: {
   app: App;
   appForms: AppForm[];
@@ -112,6 +116,7 @@ export function DataStep({
   /** True when the attachment list itself failed to load — unknown, not zero. */
   formsFailed?: boolean;
   onReloadForms: () => Promise<void>;
+  nativeDatabase?: NativeTableState;
 }) {
   const navigate = useNavigate();
   const acting = useAdminActing();
@@ -122,6 +127,12 @@ export function DataStep({
   const isDemo = useAuthStore((s) => !!s.user?.isDemo);
   const isPrivateDefault = app.settings?.defaultFormPrivacy === 'private';
   const [selectedFormId, setSelectedFormId] = useState<string | null>(null);
+  const [formSearch, setFormSearch] = useState('');
+  const matchingForms = appForms.filter(af =>
+    [af.displayName, formsById[af.formId]?.title, af.formId].some(value =>
+      value?.toLocaleLowerCase().includes(formSearch.trim().toLocaleLowerCase())
+    )
+  );
   const [sharedWith, setSharedWith] = useState<Record<string, string[]>>({});
   const [tab, setTab] = useState<'fields' | 'relationships'>('fields');
   const [showAddType, setShowAddType] = useState(false);
@@ -376,10 +387,11 @@ export function DataStep({
 
   return (
     <div className="grid gap-4 @2xl/studio:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] @2xl/studio:gap-5 @5xl/studio:grid-cols-[minmax(0,20.5rem)_minmax(0,1fr)]">
+      {!acting && nativeDatabase && <NativeDatabaseTables key={app.id} app={app} database={nativeDatabase} />}
       {/* Data types rail */}
       <section className="h-fit overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
-        <div className="flex items-center justify-between border-b border-gray-200/80 p-4 dark:border-white/[0.06]">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Data types</h3>
+        <div className="flex flex-col gap-3 border-b border-gray-200/80 p-4 dark:border-white/[0.06]">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">App forms</h3>
           <div className="flex items-center gap-1">
             {/* The section that owns the app's data is where an owner looks for the
                 data itself. Exporting it was four hops away, under App settings →
@@ -404,8 +416,22 @@ export function DataStep({
             </Button>
           </div>
         </div>
+        <p className="px-4 pt-3 pb-1 text-xs leading-relaxed text-gray-500 dark:text-slate-400">Each form stores a set of records, such as customers or appointments. Select one to edit its fields.</p>
+        {appForms.length > 0 && (
+          <div className="px-4 py-3">
+            <Input type="search" aria-label="Search app forms" placeholder="Find a form…" value={formSearch} onChange={event => setFormSearch(event.target.value)} leftIcon={<Search className="h-4 w-4" />} className="min-h-11 text-base sm:text-sm" />
+            {formSearch.trim() && <p role="status" className="mt-2 text-xs text-gray-500 dark:text-slate-400">{matchingForms.length} of {appForms.length} forms</p>}
+          </div>
+        )}
         <div className="scrollbar-thin grid max-h-none @2xl/studio:max-h-[560px] grid-cols-1 gap-1 overflow-y-auto p-2 @xl/studio:grid-cols-2 @2xl/studio:grid-cols-1">
-          {appForms.map((af) => {
+          {appForms.length > 0 && matchingForms.length === 0 && (
+            <div className="col-span-full rounded-xl bg-gray-50 px-3 py-5 text-center dark:bg-white/[0.03]">
+              <p className="text-sm font-medium text-gray-800 dark:text-slate-200">No matching forms</p>
+              <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Try another name or clear your search.</p>
+              <Button variant="ghost" size="sm" className="mt-2" onClick={() => setFormSearch('')}>Clear search</Button>
+            </div>
+          )}
+          {matchingForms.map((af) => {
             const form = formsById[af.formId];
             const isSelected = selected?.id === af.formId;
             const shared = sharedWith[af.formId];
@@ -477,16 +503,16 @@ export function DataStep({
       ) : appForms.length === 0 ? (
         <section className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-300 px-6 py-16 text-center dark:border-white/15">
           <Database className="h-8 w-8 text-gray-400 dark:text-slate-500" />
-          <p className="mt-3 text-sm font-semibold text-gray-900 dark:text-white">No data types yet</p>
+          <p className="mt-3 text-sm font-semibold text-gray-900 dark:text-white">{nativeDatabase?.installed ? 'Add a FormLogic form when you need one' : 'No data types yet'}</p>
           <p className="mt-1 max-w-sm text-sm text-gray-500 dark:text-slate-400">
-            Every app is built on forms. Create your first data type, or sketch the whole app in Plan.
+            {nativeDatabase?.installed ? 'Your app already stores data in the tables above. Forms are optional and use separate response storage.' : 'Create your first form data type, import an app with its own database, or describe your app in Overview.'}
           </p>
           <Button className="mt-4" onClick={() => setShowAddType(true)} leftIcon={<Plus className="h-4 w-4" />}>
             Add data type
           </Button>
         </section>
       ) : selected?.form ? (
-        <section className="overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
+        <section className="@container/field-editor overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
           <div className="flex flex-col gap-4 border-b border-gray-200/80 p-5 @xl/studio:flex-row @xl/studio:items-start @xl/studio:justify-between dark:border-white/[0.06]">
             <div className="flex min-w-0 items-start gap-3">
               <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400">
@@ -554,6 +580,14 @@ export function DataStep({
                   id={`data-tab-${item.id}`}
                   aria-selected={tab === item.id}
                   aria-controls={`data-panel-${item.id}`}
+                  tabIndex={tab === item.id ? 0 : -1}
+                  onKeyDown={event => {
+                    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                    event.preventDefault();
+                    const next = event.key === 'Home' ? 'fields' : event.key === 'End' ? 'relationships' : item.id === 'fields' ? 'relationships' : 'fields';
+                    setTab(next);
+                    document.getElementById(`data-tab-${next}`)?.focus();
+                  }}
                   onClick={() => setTab(item.id)}
                   className={cn(
                     'relative min-h-11 cursor-pointer text-xs font-semibold',
@@ -578,7 +612,7 @@ export function DataStep({
 
           {tab === 'fields' && (
             <div id="data-panel-fields" role="tabpanel" aria-labelledby="data-tab-fields" className="p-4 sm:p-5">
-              <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="mb-4 flex flex-col items-start justify-between gap-3 @lg/field-editor:flex-row">
                 <p className="text-xs text-gray-500 dark:text-slate-400">
                   Screens update automatically. Open the builder for validation, logic and reordering.
                 </p>
@@ -589,41 +623,52 @@ export function DataStep({
                   aria-expanded={addingField}
                   leftIcon={<Plus className="h-4 w-4" />}
                 >
-                  Add field
+                  {addingField ? 'Close field editor' : 'Add field'}
                 </Button>
               </div>
 
               {addingField && (
-                <div className="mb-3 flex flex-col gap-2 rounded-xl border border-primary-200 bg-primary-50/50 p-3 dark:border-primary-500/25 dark:bg-primary-500/[0.06] sm:flex-row sm:items-center">
-                  <Input
-                    ref={fieldLabelRef}
-                    value={newFieldLabel}
-                    onChange={(e) => setNewFieldLabel(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') void addField();
-                      if (e.key === 'Escape') setAddingField(false);
-                    }}
-                    placeholder="Field label"
-                    aria-label="New field label"
-                    className="flex-1"
-                    autoFocus
-                  />
-                  <select
-                    value={newFieldType}
-                    onChange={(e) => setNewFieldType(e.target.value as FieldType)}
-                    aria-label="New field type"
-                    className="h-10 min-w-0 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-primary-500 max-sm:h-11 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
-                  >
-                    {QUICK_ADD_TYPES.filter((t) => !selected.form!.isPrivate || t.type !== 'file_upload').map((t) => (
-                      <option key={t.type} value={t.type}>{t.label}</option>
-                    ))}
-                  </select>
-                  <Button size="sm" onClick={addField} isLoading={savingField} disabled={!newFieldLabel.trim()}>
-                    Add
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setAddingField(false)}>
-                    Done
-                  </Button>
+                <div className="mb-4 space-y-4 rounded-xl border border-primary-200 bg-primary-50/50 p-4 dark:border-primary-500/25 dark:bg-primary-500/[0.06]">
+                  <div>
+                    <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Add a field</h4>
+                    <p className="mt-1 text-xs leading-relaxed text-gray-600 dark:text-slate-400">Name the information you need, then choose how people answer. You can add another field after saving.</p>
+                  </div>
+                  <div className="grid items-start gap-3 @lg/field-editor:grid-cols-[minmax(0,1fr)_minmax(0,12rem)]">
+                    <Input
+                      ref={fieldLabelRef}
+                      value={newFieldLabel}
+                      onChange={(e) => setNewFieldLabel(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void addField();
+                        if (e.key === 'Escape') setAddingField(false);
+                      }}
+                      label="Field name"
+                      placeholder="e.g. Customer name"
+                      className="min-h-11 text-base"
+                      autoFocus
+                    />
+                    <div>
+                      <label htmlFor="studio-new-field-type" className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-slate-300">Answer type</label>
+                      <select
+                        id="studio-new-field-type"
+                        value={newFieldType}
+                        onChange={(e) => setNewFieldType(e.target.value as FieldType)}
+                        className="h-11 w-full min-w-0 rounded-lg border border-gray-300 bg-white px-3 text-base text-gray-900 outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                      >
+                        {QUICK_ADD_TYPES.filter((t) => !selected.form!.isPrivate || t.type !== 'file_upload').map((t) => (
+                          <option key={t.type} value={t.type}>{t.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={addField} isLoading={savingField} disabled={!newFieldLabel.trim()} leftIcon={<Plus className="h-4 w-4" />}>
+                      Save field
+                    </Button>
+                    <Button variant="ghost" onClick={() => setAddingField(false)} disabled={savingField}>
+                      Close
+                    </Button>
+                  </div>
                 </div>
               )}
 

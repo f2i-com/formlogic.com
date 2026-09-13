@@ -12,6 +12,7 @@ import {
   Background,
   BackgroundVariant,
   Controls,
+  ControlButton,
   MiniMap,
   MarkerType,
   SelectionMode,
@@ -26,6 +27,7 @@ import {
   type ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import './FlowCanvas.css';
 import { CopyPlus, LayoutGrid, Maximize, MousePointerClick, Search, Trash2 } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { FlowNode } from './FlowNode';
@@ -330,11 +332,11 @@ export function FlowCanvas({
         onPaneContextMenu={onPaneContextMenu}
         onInit={(instance) => {
           instanceRef.current = instance;
-          instance.fitView({ padding: 0.2, duration: 0 });
         }}
         defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
         proOptions={PRO_OPTIONS}
         fitView
+        fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
         minZoom={0.2}
         maxZoom={2}
         deleteKeyCode={DELETE_KEYS}
@@ -342,10 +344,10 @@ export function FlowCanvas({
         selectionKeyCode={SELECTION_KEY}
         selectionMode={SelectionMode.Partial}
         panOnDrag={PAN_ON_DRAG}
-        className="bg-gray-50 dark:bg-slate-950"
+        className="fl-flow-canvas bg-gray-50 dark:bg-slate-950"
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} className="!text-gray-300 dark:!text-slate-800" />
-        <Controls className="!shadow-md" showInteractive={false} />
+        <Controls position="top-left" orientation="horizontal" className="!shadow-sm" showInteractive={false}><ControlButton onClick={runAutoLayout} title="Arrange steps" aria-label="Arrange steps"><LayoutGrid /></ControlButton></Controls>
         <MiniMap
           nodeColor={miniMapNodeColor}
           nodeClassName={miniMapNodeClassName}

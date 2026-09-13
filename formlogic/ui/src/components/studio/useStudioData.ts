@@ -12,6 +12,8 @@ const NO_FORM_IDS: string[] = [];
 
 export interface StudioData {
   app: App | null;
+  /** True until this app’s initial parallel load settles; later refreshes keep editors mounted. */
+  initialLoading: boolean;
   /** True once the app fetch settled (distinguishes "loading" from a resolved outcome). */
   appLoaded: boolean;
   /**
@@ -93,6 +95,7 @@ export function useStudioData(appId: string | undefined): StudioData {
   const [domainsFailed, setDomainsFailed] = useState(false);
   const [membersFailed, setMembersFailed] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
 
   const reloadApp = useCallback(async () => {
     if (!appId) return;
@@ -234,7 +237,10 @@ export function useStudioData(appId: string | undefined): StudioData {
     try {
       await Promise.all([reloadApp(), reloadForms(), reloadFlows(), reloadAux()]);
     } finally {
-      if (token === loadToken.current) setLoading(false);
+      if (token === loadToken.current) {
+        setLoading(false);
+        setInitialLoading(false);
+      }
     }
   }, [reloadApp, reloadForms, reloadFlows, reloadAux]);
 
@@ -262,6 +268,7 @@ export function useStudioData(appId: string | undefined): StudioData {
     setDomainsFailed(false);
     setMembersFailed(false);
     setLoading(true);
+    setInitialLoading(true);
   }
   useEffect(() => {
     loadToken.current += 1;
@@ -275,6 +282,7 @@ export function useStudioData(appId: string | undefined): StudioData {
   return useMemo(
     () => ({
       app,
+      initialLoading,
       appLoaded,
       appError,
       appForms,
@@ -300,6 +308,6 @@ export function useStudioData(appId: string | undefined): StudioData {
       reloadApp,
       reloadRoles,
     }),
-    [app, appLoaded, appError, appForms, formsById, unreadableFormIds, formsResolving, formsFailed, flows, bindings, roles, blueprint, versions, domains, memberCount, auxFailed, versionsFailed, domainsFailed, membersFailed, loading, reload, reloadFlows, reloadForms, reloadApp, reloadRoles]
+    [app, initialLoading, appLoaded, appError, appForms, formsById, unreadableFormIds, formsResolving, formsFailed, flows, bindings, roles, blueprint, versions, domains, memberCount, auxFailed, versionsFailed, domainsFailed, membersFailed, loading, reload, reloadFlows, reloadForms, reloadApp, reloadRoles]
   );
 }

@@ -7,18 +7,23 @@ import { Card, CardContent } from "../../components/ui/Card";
 
 export function AdminPlansCard() {
   const [plans, setPlans] = useState<PlatformPlans | null>(null);
+  const [savedPlans, setSavedPlans] = useState<PlatformPlans | null>(null);
   const [price, setPrice] = useState("5.00");
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const load = async () => {
+    setLoading(true);
     setError("");
     const result = await api.adminGetPlans();
+    setLoading(false);
     if (!result.data) {
       setError(result.error || "Could not load plans.");
       return;
     }
     setPlans(result.data.plans);
+    setSavedPlans(result.data.plans);
     setPrice((result.data.plans.pricePerMonthCents / 100).toFixed(2));
   };
   useEffect(() => deferEffect(() => {
@@ -46,12 +51,22 @@ export function AdminPlansCard() {
         return;
       }
       setPlans(result.data.plans);
+      setSavedPlans(result.data.plans);
+      setPrice((result.data.plans.pricePerMonthCents / 100).toFixed(2));
       setMessage(
         "Plan settings saved. The landing page and checkout use these settings.",
       );
     } finally {
       setBusy(false);
     }
+  };
+  const dirty = !!plans && !!savedPlans && (JSON.stringify(plans) !== JSON.stringify(savedPlans) || price !== (savedPlans.pricePerMonthCents / 100).toFixed(2));
+  const reset = () => {
+    if (!savedPlans) return;
+    setPlans(savedPlans);
+    setPrice((savedPlans.pricePerMonthCents / 100).toFixed(2));
+    setError('');
+    setMessage('');
   };
   return (
     <Card>
@@ -71,12 +86,12 @@ export function AdminPlansCard() {
             {error}
           </p>
         )}
-        {!plans ? (
+        {!plans && loading ? <p role="status" className="text-sm text-gray-500 dark:text-slate-400">Loading plan settings…</p> : !plans ? (
           <Button variant="outline" onClick={() => void load()}>
             Retry loading plans
           </Button>
         ) : (
-          <fieldset disabled={busy} className="min-w-0 space-y-5">
+          <fieldset disabled={busy} onChange={() => setMessage('')} className="min-w-0 space-y-5">
             <div className="grid gap-5 sm:grid-cols-2">
               <Input
                 label="Free plan name"
@@ -130,7 +145,7 @@ export function AdminPlansCard() {
                 <strong className="block text-sm">
                   Enable optional paid plan
                 </strong>
-                <span className="text-sm text-gray-500">
+                <span className="text-sm text-gray-500 dark:text-slate-400">
                   Off by default. Checkout also requires configured PayPal
                   credentials. Public beta mode keeps checkout disabled.
                 </span>
@@ -149,16 +164,18 @@ export function AdminPlansCard() {
                 <strong className="block text-sm">
                   Offer operator-funded Site AI
                 </strong>
-                <span className="text-sm text-gray-500">
+                <span className="text-sm text-gray-500 dark:text-slate-400">
                   Off by default. Users bring their own AI. Enabling this
                   permits use of your configured server AI provider and may
                   incur provider charges.
                 </span>
               </span>
             </label>
-            <Button onClick={() => void save()} isLoading={busy}>
-              Save plan settings
-            </Button>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button onClick={() => void save()} isLoading={busy} disabled={!dirty}>Save plan settings</Button>
+              {dirty && <Button variant="ghost" onClick={reset}>Discard changes</Button>}
+              {dirty && <span className="text-xs text-amber-700 dark:text-amber-300">Unsaved changes</span>}
+            </div>
             {message && (
               <p
                 role="status"

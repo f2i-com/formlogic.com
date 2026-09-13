@@ -1,0 +1,100 @@
+import { expect, test } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+
+test('Builder and Studio return an editable native app without losing its backend', async ({ page, context }) => {
+  test.setTimeout(180000);
+  page.on('pageerror', e => console.log('PAGE ERROR', e.message));
+  page.on('console', m => { if (m.type() === 'error') console.log('CONSOLE ERROR', m.text().slice(0,400)); });
+  test.skip(!process.env.FORMLOGIC_REVIEW_PASSWORD, 'Local review account required.');
+  await context.request.post('/api/auth/login', { data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
+  const headers = { 'X-CSRF-Token': (await context.cookies()).find(c => c.name === 'formlogic_csrf')!.value };
+  const apps = (await (await context.request.get('/api/apps')).json()).apps;
+  let app = apps.find((a: {slug: string}) => a.slug === 'editor-integration-review');
+  if (!app) app = (await (await context.request.post('/api/apps', { headers, data: { name: 'Editor integration review', slug: 'editor-integration-review' } })).json()).app;
+  const project = JSON.parse(readFileSync('../backend/resources/native-app-starter.json', 'utf8'));
+  const installed = (await (await context.request.get(`/api/apps/${app.id}/native`)).json()).project;
+  const save = await context.request.put(`/api/apps/${app.id}/native`, { headers, data: { project, expectedVersion: installed?.version ?? 0 } });
+  expect(save.ok(), await save.text()).toBe(true);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`/apps/${app.id}/records`);
+  await page.getByRole('button', { name: 'Native app hosting', exact: true }).click();
+  let aiRequests = 0;
+  await page.route('**/api/ai/preferences', route => route.fulfill({ json: { data: { aiSource: 'site', chatToolMode: 'off' } } }));
+  await page.route('**/api/ai/chat', async route => {
+    aiRequests++;
+    expect(route.request().postDataJSON().messages.some((m: { content: string }) => m.content.includes('Update the heading'))).toBe(true);
+    const source = project.files['ui/main.ui'].replace('My app', 'AI edited app').replace('Save example item', 'Save edited item');
+    await route.fulfill({ json: { data: { content: `Updated the heading.\n<softn-file path="ui/main.ui">${source}</softn-file>` } } });
+  });
+  for (const kind of ['Visual Builder', 'AI Studio']) {
+    await page.getByRole('button', { name: `Open ${kind}`, exact: true }).click();
+    const editor = page.getByRole('dialog', { name: kind, exact: true });
+    await expect(editor.getByRole('button', { name: 'Review changes', exact: true })).toBeEnabled({ timeout: 60000 });
+    const frame = page.frameLocator(kind === 'Visual Builder' ? 'iframe[title="App visual editor"]' : 'iframe[title="App AI editor"]');
+    if (kind === 'Visual Builder') {
+      await frame.getByRole('treeitem', { name: 'Select Button component', exact: true }).click();
+      await frame.getByLabel('Text Content', { exact: true }).fill('Save edited item');
+      await frame.getByLabel('Text Content', { exact: true }).press('Tab');
+    } else {
+      await frame.getByRole('button', { name: 'AI', exact: true }).click();
+      await frame.getByRole('textbox', { name: 'Message to AI' }).fill('Update the heading to AI edited app, preserving all other files.');
+      await frame.getByRole('button', { name: 'Send message', exact: true }).click();
+      await expect(frame.getByText('Updated the heading.', { exact: true })).toBeVisible({ timeout: 30000 });
+      expect(aiRequests).toBe(1);
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(frame.getByRole('button', { name: 'AI Chat', exact: true })).toBeVisible();
+      await frame.getByRole('button', { name: 'AI Chat', exact: true }).click();
+      await expect(frame.getByRole('textbox', { name: 'Message to AI' })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      await page.screenshot({ path: '../../../ecosystem-audit/embedded-studio-mobile.png' });
+      await page.setViewportSize({ width: 1440, height: 1000 });
+    }
+    await page.screenshot({ path: `../../../ecosystem-audit/embedded-${kind.replace(' ', '-').toLowerCase()}.png` });
+    await editor.getByRole('button', { name: 'Review changes', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'Native app hosting', exact: true })).toBeVisible({ timeout: 20000 });
+    await page.getByRole('button', { name: 'Publish changes', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Publish changes', exact: true })).toBeDisabled({ timeout: 20000 });
+    const returned = (await (await context.request.get(`/api/apps/${app.id}/native`)).json()).project;
+    expect(returned.files['server/main.logic']).toBe(project.files['server/main.logic']);
+    expect(returned.files['server/migrations/001.sql']).toBe(project.files['server/migrations/001.sql']);
+    expect(JSON.parse(returned.files['manifest.json']).server).toEqual(JSON.parse(project.files['manifest.json']).server);
+    expect(returned.files['ui/main.ui']).toContain('Save edited item');
+    expect(returned.files['ui/main.ui']).toContain('function saveItem');
+    if (kind === 'AI Studio') expect(returned.files['ui/main.ui']).toContain('AI edited app');
+  }
+  await page.goto(`/app/${app.slug}`);
+  const runtime = page.frameLocator('iframe[title="Hosted app"]');
+  await runtime.getByRole('button', { name: 'Save edited item', exact: true }).click();
+  await expect(runtime.getByText('Item saved in your app database', { exact: true })).toBeVisible();
+  const records = (await (await context.request.get(`/api/apps/${app.id}/native/records?table=items`)).json()).rows;
+  expect(records.some((r: {title: string}) => r.title === 'My first item')).toBe(true);
+});
+
+test('Existing hosted apps keep private actions when edited in Builder and Studio', async ({ page, context }) => {
+  test.setTimeout(90000);
+  test.skip(!process.env.FORMLOGIC_REVIEW_PASSWORD, 'Local review account required.');
+  await context.request.post('/api/auth/login', { data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
+  const headers = { 'X-CSRF-Token': (await context.cookies()).find(c => c.name === 'formlogic_csrf')!.value };
+  const apps = (await (await context.request.get('/api/apps')).json()).apps;
+  let app = apps.find((a: {slug: string}) => a.slug === 'hosted-editor-review');
+  if (!app) app = (await (await context.request.post('/api/apps', { headers, data: { name: 'Hosted editor review', slug: 'hosted-editor-review' } })).json()).app;
+  const pkg = JSON.parse(readFileSync('../backend/resources/connected-workspace.json', 'utf8'));
+  pkg.actions = { hello: { access: 'owner', mode: 'read', source: 'function onRequest(ctx) { return {message:"Preserved private action"}; }' } };
+  const old = (await (await context.request.get(`/api/apps/${app.id}/hosting`)).json()).deployment;
+  const saved = await context.request.put(`/api/apps/${app.id}/hosting`, { headers, data: { package: pkg, expectedVersion: old?.version ?? 0 } });
+  expect(saved.ok(), await saved.text()).toBe(true);
+  await page.goto(`/apps/${app.id}/studio/screens`);
+  await page.getByText('Hosting & app tools', { exact: true }).click();
+  await page.getByRole('button', { name: 'App hosting', exact: true }).click();
+  for (const kind of ['Visual Builder', 'AI Studio']) {
+    await page.getByRole('button', { name: `Open ${kind}`, exact: true }).click();
+    const editor = page.getByRole('dialog', { name: kind, exact: true });
+    await expect(editor.getByRole('button', { name: 'Review changes', exact: true })).toBeEnabled({ timeout: 30000 });
+    await editor.getByRole('button', { name: 'Review changes', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'App hosting', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Publish changes', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Publish changes', exact: true })).toBeDisabled();
+    const returned = (await (await context.request.get(`/api/apps/${app.id}/hosting`)).json()).deployment;
+    expect(returned.actions).toEqual(pkg.actions);
+  }
+});

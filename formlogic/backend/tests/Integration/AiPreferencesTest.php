@@ -116,8 +116,9 @@ class AiPreferencesTest extends TestCase
 
     public function testDefaultsWhenNoRowExists(): void
     {
+        // New accounts bring their own AI; hosted Site AI is an explicit opt-in.
         $prefs = self::$settings->get($this->userId);
-        $this->assertSame('site', $prefs['aiSource']);
+        $this->assertSame('custom', $prefs['aiSource']);
         $this->assertNull($prefs['desktopProviderId']);
         $this->assertNull($prefs['desktopModel']);
         $this->assertNull($prefs['customProviderId']);
@@ -178,7 +179,7 @@ class AiPreferencesTest extends TestCase
             $this->assertStringContainsString('desktopProviderId', $e->getMessage());
         }
         // Nothing was persisted by the rejected writes.
-        $this->assertSame('site', self::$settings->get($this->userId)['aiSource']);
+        $this->assertSame('custom', self::$settings->get($this->userId)['aiSource']);
     }
 
     // ── session controller ──
@@ -191,7 +192,7 @@ class AiPreferencesTest extends TestCase
         $this->assertSame(401, $noAuth->getStatusCode());
 
         $get = self::decode($ctrl->getPreferences($this->sessionRequest('GET', '/api/ai/preferences', null, $this->userId), (new ResponseFactory())->createResponse()));
-        $this->assertSame('site', $get['data']['aiSource']);
+        $this->assertSame('custom', $get['data']['aiSource']);
         $this->assertSame(['used' => 0, 'limit' => 500], $get['data']['usage']);
 
         $put = $ctrl->putPreferences(

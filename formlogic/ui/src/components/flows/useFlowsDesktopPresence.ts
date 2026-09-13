@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { getDesktopInfo, subscribeDesktopStatus } from '../../client-runtime/desktop/desktopDetection';
 import { isDesktopPaired, subscribeDesktopPaired } from '../../client-runtime/desktop/desktopPairing';
+import { isOaiyPaired, oaiyRouteAvailable, subscribeOaiyPaired } from '../../client-runtime/oaiy/oaiyRuntime';
 import { subscribeOaiyStatus } from '../../client-runtime/oaiy/oaiyDetection';
 import { api } from '../../lib/api';
 import {
@@ -18,7 +19,7 @@ import {
 export type FlowsDesktopPresenceKind = 'local' | 'remote' | 'none';
 
 export type FlowsDesktopPresence =
-  | { kind: 'local'; label?: string; lastSeenMs?: undefined }
+  | { kind: 'local'; runtime?: 'oaiy'; label?: string; lastSeenMs?: undefined }
   | { kind: 'remote'; label: string; lastSeenMs?: number }
   | { kind: 'none'; label?: undefined; lastSeenMs?: undefined };
 
@@ -80,28 +81,35 @@ export function describeFlowsLastSeen(lastSeenMs: number | undefined, now: numbe
   return `${Math.round(minutes / 60)}h ago`;
 }
 
-export function useFlowsDesktopPresence(): FlowsDesktopPresence {
-  const [localBridge, setLocalBridge] = useState(() => hasLocalDesktopBridge());
+/** The legacy popover opts out because its controls use the legacy transport. */
+export function localFlowRuntime(includeOaiy = false): FlowsDesktopPresence {
+  if (includeOaiy && oaiyRouteAvailable()) return { kind: 'local', runtime: 'oaiy', label: 'OAIY' };
+  return hasLocalDesktopBridge() ? { kind: 'local' } : { kind: 'none' };
+}
+
+export function useFlowsDesktopPresence(includeOaiy = false, discoverLocal = true): FlowsDesktopPresence {
+  const [local, setLocal] = useState(() => localFlowRuntime(includeOaiy));
+  const localBridge = local.kind === 'local';
+  const legacyPaired = isDesktopPaired();
+  const oaiyPaired = isOaiyPaired();
   const [remote, setRemote] = useState<FlowsDesktopPresence | null>(null);
 
-  // Recompute the local-bridge signal on a FormLogic Desktop detection OR pairing
-  // change (previously only detection — so pairing while the workspace was open
-  // didn't flip it until the next tick). Separately keep OAIY detection warm here
-  // so a flow run finds OAIY even if the user never opened the runtime panel; this
-  // does NOT change the presence signal (see hasLocalDesktopBridge).
+  // Pairing and detection changes update the editor immediately. The legacy
+  // connection popover keeps its own transport-specific presence by opting out.
   useEffect(() => {
     const recompute = () => {
-      const local = hasLocalDesktopBridge();
-      setLocalBridge(local);
-      if (local) setRemote(null);
+      const next = localFlowRuntime(includeOaiy);
+      setLocal(next);
+      if (next.kind === 'local') setRemote(null);
     };
     const unsubs = [
-      subscribeDesktopStatus(recompute),
+      subscribeDesktopStatus(recompute, { probe: discoverLocal || legacyPaired }),
       subscribeDesktopPaired(recompute),
-      subscribeOaiyStatus(() => {}), // keep-warm only
+      subscribeOaiyStatus(recompute, { probe: discoverLocal || oaiyPaired }),
+      subscribeOaiyPaired(recompute),
     ];
     return () => unsubs.forEach((u) => u());
-  }, []);
+  }, [includeOaiy, discoverLocal, legacyPaired, oaiyPaired]);
 
   useEffect(() => {
     if (localBridge) return;
@@ -118,6 +126,6 @@ export function useFlowsDesktopPresence(): FlowsDesktopPresence {
     };
   }, [localBridge]);
 
-  if (localBridge) return { kind: 'local' };
+  if (localBridge) return local;
   return remote ?? { kind: 'none' };
 }

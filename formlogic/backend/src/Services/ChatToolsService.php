@@ -35,6 +35,9 @@ class ChatToolsService
         'list_apps' => 'apps:read', 'get_app' => 'apps:read', 'create_app' => 'apps:write',
         'get_app_project' => 'apps:read', 'get_workspace_template' => 'apps:read',
         'publish_app_project' => 'apps:write', 'compose_apps' => 'apps:write',
+        'get_native_app_template' => 'apps:read', 'get_native_app_project' => 'apps:read',
+        'publish_native_app_project' => 'apps:write', 'update_native_app_files' => 'apps:write',
+        'list_native_app_records' => 'responses:read',
         'list_app_roles' => 'apps:read', 'create_app_role' => 'apps:write',
         'set_app_role_permissions' => 'apps:write', 'set_app_role_connector_grants' => 'apps:write',
         'get_aokie_starter' => 'apps:read', 'install_aokie_starter' => 'apps:write',
@@ -72,6 +75,8 @@ class ChatToolsService
         // and update_app lets the chat publish/rename/hideNav the app it just built
         // (archiving refused by callChatTool, mirroring the update_form guard).
         'set_form_screen', 'set_app_home', 'update_app',
+        'get_workspace_template', 'get_app_project', 'publish_app_project',
+        'get_native_app_template', 'get_native_app_project', 'publish_native_app_project', 'update_native_app_files', 'list_native_app_records',
     ];
 
     public function __construct(
@@ -90,6 +95,7 @@ class ChatToolsService
         private ?AppCompositionService $composition = null,
         private ?PackService $packs = null,
         private ?AppUserService $appUsers = null,
+        private ?NativeAppService $native = null,
     ) {}
 
     // ── Chat-surface entry (subset-restricted) ──────────────────────────────────────────
@@ -352,6 +358,42 @@ class ChatToolsService
                 $file = $template === 'aokie' ? 'aokie-workspace' : 'connected-workspace';
                 $data = json_decode(file_get_contents(dirname(__DIR__, 2) . '/resources/' . $file . '.json'), true, 512, JSON_THROW_ON_ERROR);
                 break;
+            case 'get_native_app_template':
+                $data = ['project' => json_decode(file_get_contents(dirname(__DIR__, 2) . '/resources/native-app-starter.json'), true, 64, JSON_THROW_ON_ERROR)];
+                break;
+            case 'get_native_app_project':
+            case 'publish_native_app_project':
+            case 'update_native_app_files':
+            case 'list_native_app_records': {
+                $id = (string) ($args['appId'] ?? $scopedApp ?? '');
+                $this->assertAppScope($ctx, $id);
+                $this->ownApp($id, $userId);
+                $native = $this->native ??= new NativeAppService();
+                if ($name === 'list_native_app_records') {
+                    $ctx->requireScope('apps:read');
+                    $data = $native->records($id, isset($args['table']) ? (string) $args['table'] : null, (int) ($args['offset'] ?? 0));
+                } elseif ($name === 'get_native_app_project') {
+                    $project = $native->get($id);
+                    if (isset($args['file'])) {
+                        if (!$project || !is_string($args['file']) || !isset($project['files'][$args['file']])) throw new \InvalidArgumentException('Project file not found');
+                        $data = ['version' => $project['version'], 'file' => $args['file'], 'source' => $project['files'][$args['file']], 'files' => array_keys($project['files'])];
+                    } else $data = ['project' => $project];
+                } else {
+                    $ctx->requireScope('screens:write');
+                    if (!is_int($args['expectedVersion'] ?? null) || $args['expectedVersion'] < 0) throw new \InvalidArgumentException('Provide the last read expectedVersion (0 for first installation)');
+                    $project = $args['project'] ?? null;
+                    if ($name === 'update_native_app_files') {
+                        $project = $native->get($id);
+                        if (!$project || !is_array($args['files'] ?? null) || !$args['files']) throw new \InvalidArgumentException('Provide changed source files for an installed project');
+                        $project['files'] = array_merge($project['files'], $args['files']);
+                    }
+                    if (!is_array($project)) throw new \InvalidArgumentException('Provide the complete native app project');
+                    $saved = $native->install($id, $project, $args['expectedVersion']);
+                    $data = ['appId' => $id, 'version' => $saved['version'], 'files' => array_keys($saved['files']), 'access' => $saved['access'], 'home' => $saved['home'] ?? false, 'editorUrl' => '/apps/' . $id . '/studio/screens'];
+                    $ctx->audit($name, ['appId' => $id, 'version' => $saved['version']]);
+                }
+                break;
+            }
             case 'publish_app_project': {
                 $ctx->requireScope('screens:write');
                 $id = (string)($args['appId'] ?? $scopedApp ?? '');
@@ -1110,6 +1152,11 @@ class ChatToolsService
             ['name' => 'set_app_role_connector_grants', 'scope' => 'apps:write', 'description' => 'Replace only a role connector capabilities with the complete explicitly reviewed permissions list; also requires connector:command. Built-in permissions are preserved. Use specific connector commands rather than wildcards. The system Owner role is immutable.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'roleId' => ['type' => 'string'], 'permissions' => ['type' => 'array', 'items' => $obj(['permission' => ['type' => 'string'], 'formId' => ['type' => 'string']], ['permission'])]], ['appId', 'roleId', 'permissions'])],
             ['name' => 'install_aokie_starter', 'scope' => 'apps:write', 'description' => 'Install the bundled Aokie forms, screens and flows as a new app. Requires forms:write and screens:write; non-empty connector grants also require connector:command. Explicit approvedConnectorGrants is mandatory; unapproved grants stay withheld. Honors verified-package policy and form quotas. Then use compose_apps to integrate into an existing app. Native OAIY plugin installation and device pairing are separate steps.', 'inputSchema' => $obj(['approvedConnectorGrants' => ['type' => 'array', 'items' => ['type' => 'string']]], ['approvedConnectorGrants'])],
             ['name' => 'get_app', 'scope' => 'apps:read', 'description' => 'Read an owned app including its settings, custom logic, dashboard and attached form identities. Read before editing or composing.', 'inputSchema' => $obj(['appId' => ['type' => 'string']], ['appId'])],
+            ['name' => 'get_native_app_template', 'scope' => 'apps:read', 'description' => 'Start here to create a portable .softn app with an editable interface, private ZIPP .logic backend and SQLite. Returns a working notes project. Create an app container, customize this project, then publish_native_app_project. Membership is required by default; application access preserves an existing app sign-in.', 'inputSchema' => $obj([])],
+            ['name' => 'get_native_app_project', 'scope' => 'apps:read', 'description' => 'Read a native .softn project and its current version. Optional file reads just one source file plus the file list. Backend files are private. Read before changing source; records and server credentials are not part of the project.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'file' => ['type' => 'string']], ['appId'])],
+            ['name' => 'publish_native_app_project', 'scope' => 'apps:write', 'description' => 'Install or update a complete native app project: {files:{path:source},assets:{path:base64},access:members|application,home:boolean}. Requires apps and screen editing permission. Backend .logic runs in ZIPP; SQLite records survive updates. Read current version first; expectedVersion=0 only for first installation. This does not publish the parent app to visitors. The interface can then be edited with Visual Builder or AI Studio in FormLogic.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'expectedVersion' => ['type' => 'integer', 'minimum' => 0], 'project' => ['type' => 'object']], ['appId','expectedVersion','project'])],
+            ['name' => 'update_native_app_files', 'scope' => 'apps:write', 'description' => 'Update only named source files in an installed native app, preserving other files, assets, access and records. Read the source and version first. Existing SQL migrations are immutable: add a numbered migration and update manifest.json to change schema. Provide files as {path:source}.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'expectedVersion' => ['type' => 'integer', 'minimum' => 1], 'files' => ['type' => 'object', 'additionalProperties' => ['type' => 'string']]], ['appId','expectedVersion','files'])],
+            ['name' => 'list_native_app_records', 'scope' => 'responses:read', 'description' => 'List native SQLite tables, or read a table page (50 rows, offset). Uses the app owner record permissions. Common secret columns are hidden and long values are previews. Record triggers use app.record.created.TABLE, app.record.updated.TABLE or app.record.deleted.TABLE with create_flow_binding.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'table' => ['type' => 'string'], 'offset' => ['type' => 'integer', 'minimum' => 0]], ['appId'])],
             ['name' => 'get_app_project', 'scope' => 'apps:read', 'description' => 'Read the editable hosted app project: public .ui/.logic client, PRIVATE backend actions and current deployment version. Never place private actions or credentials in client files.', 'inputSchema' => $obj(['appId' => ['type' => 'string']], ['appId'])],
             ['name' => 'get_workspace_template', 'scope' => 'apps:read', 'description' => 'Get an editable Softn dashboard package connected to the current app forms, records and Aokie tools. Publish the returned package with publish_app_project. The workspaceInfo/workspaceRecords/workspaceOpen host callbacks are scoped to that app.', 'inputSchema' => $obj(['template' => ['type' => 'string', 'enum' => ['workspace', 'aokie'], 'description' => 'Choose a generic dashboard or the Aokie front desk with calls, transcripts, logs and appointments.']])],
             ['name' => 'publish_app_project', 'scope' => 'apps:write', 'description' => 'Publish a Softn client and private .logic backend actions with per-app SQLite. Also requires screens:write. Read get_app_project first; expectedVersion prevents overwriting newer work (0 for first publish). Package: {version:1,client:{"manifest.json":"...","ui/main.ui":"...","logic/main.logic":"..."},actions:{name:{source:"function onRequest(ctx) {...}",access:"owner|member",mode:"read|write"}}}. Private actions use ctx.db.get/list/put/remove. Open /app/<slug>/project after publishing.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'expectedVersion' => ['type' => 'integer', 'minimum' => 0], 'package' => ['type' => 'object']], ['appId', 'expectedVersion', 'package'])],

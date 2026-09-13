@@ -86,6 +86,7 @@ export function PublishStep({
   const [publishing, setPublishing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showAllVersions, setShowAllVersions] = useState(false);
+  const [showPassedChecks, setShowPassedChecks] = useState(false);
   const [justPublished, setJustPublished] = useState<number | null>(null);
 
   const appUrl = `${window.location.origin}/app/${app.slug}`;
@@ -127,7 +128,12 @@ export function PublishStep({
     });
     return browserOnlyDemo ? preflight.filter((check) => check.id !== 'members') : preflight;
   }, [app.settings, app.customScreen, app.logoUrl, app.theme?.logoUrl, appForms, formsById, flows, roles, domains, memberCount, memberCountKnown, formCountKnown, browserOnlyDemo]);
-  const { blocking, optional, passed, scored, ready } = useMemo(() => summarizePreflight(checks), [checks]);
+  const { blocking, optional, ready } = useMemo(() => summarizePreflight(checks), [checks]);
+  const passedChecks = checks.filter(check => check.state === 'complete');
+  const visibleChecks = checks.filter(check => showPassedChecks || check.state !== 'complete').sort((a, b) => {
+    const rank = (check: typeof a) => check.state === 'complete' ? 3 : check.severity === 'blocking' ? 0 : check.severity === 'recommended' ? 1 : 2;
+    return rank(a) - rank(b);
+  });
   const releaseSummary = useMemo(() => {
     if (changes.everPublished) {
       return changes.changed.map((item) => ({
@@ -248,7 +254,7 @@ export function PublishStep({
         </div>
       )}
 
-      <div className="grid gap-4 @2xl/studio:gap-5 @4xl/studio:grid-cols-[minmax(0,1fr)_minmax(0,21rem)] @6xl/studio:grid-cols-[minmax(0,1fr)_23.75rem]">
+      <div className="grid grid-cols-1 gap-4 @2xl/studio:gap-5 @4xl/studio:grid-cols-[minmax(0,1fr)_minmax(0,21rem)] @6xl/studio:grid-cols-[minmax(0,1fr)_23.75rem]">
         <div className="min-w-0 space-y-4 @2xl/studio:space-y-5">
           {/* Preflight */}
           <section className="overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 shadow-sm">
@@ -267,7 +273,7 @@ export function PublishStep({
                       teaches owners to ignore amber when it does mean something. */}
                   <Badge variant={blocking.length > 0 ? 'error' : ready ? 'success' : 'warning'} size="sm">
                     <CheckCircle2 className="mr-1 inline h-3 w-3" />
-                    {passed}/{scored} checks
+                    {passedChecks.length} passed
                   </Badge>
                   {optional.length > 0 && (
                     <span className="text-[11px] text-gray-500 dark:text-slate-400">
@@ -284,8 +290,8 @@ export function PublishStep({
                 </p>
               </div>
             </div>
-            <div className="divide-y divide-gray-100 dark:divide-white/[0.06]">
-              {checks.map((check) => {
+            <div id="studio-publish-checks" className="divide-y divide-gray-100 dark:divide-white/[0.06]">
+              {visibleChecks.map((check) => {
                 const isBlocking = check.state === 'warning' && check.severity === 'blocking';
                 const isOptional = check.state === 'warning' && check.severity === 'optional';
                 return (
@@ -309,8 +315,8 @@ export function PublishStep({
                         : <AlertTriangle className="h-4 w-4" />}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1.5">
-                      <span className="block text-xs font-bold text-gray-800 dark:text-slate-200">{check.title}</span>
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      <span className="block text-sm font-semibold text-gray-800 dark:text-slate-200">{check.title}</span>
                       {check.state === 'warning' && check.severity && (
                         <span
                           className={cn(
@@ -326,7 +332,7 @@ export function PublishStep({
                         </span>
                       )}
                     </span>
-                    <span className="mt-0.5 block text-[10px] text-gray-500 dark:text-slate-400">{check.detail}</span>
+                    <span className="mt-1 block text-xs leading-relaxed text-gray-500 dark:text-slate-400">{check.detail}</span>
                   </span>
                   {check.state === 'warning' && check.step && (
                     <button
@@ -373,6 +379,14 @@ export function PublishStep({
                 );
               })}
             </div>
+            {passedChecks.length > 0 && (
+              <div className="border-t border-gray-100 px-4 py-3 dark:border-white/[0.06] sm:px-5">
+                <button type="button" aria-expanded={showPassedChecks} aria-controls="studio-publish-checks" onClick={() => setShowPassedChecks(value => !value)} className="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-lg text-left text-sm font-medium text-emerald-700 focus-visible:outline-2 focus-visible:outline-primary-500 dark:text-emerald-300">
+                  <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  {showPassedChecks ? 'Hide passed checks' : `Show ${passedChecks.length} passed ${passedChecks.length === 1 ? 'check' : 'checks'}`}
+                </button>
+              </div>
+            )}
           </section>
 
           {/* What's in this release */}
@@ -414,9 +428,9 @@ export function PublishStep({
 
         {/* Stacked (narrow container) the publish card leads — it is the point of the
             section; in the two-column layout it returns to the right rail. */}
-        <div className="order-first min-w-0 space-y-4 @2xl/studio:space-y-5 @4xl/studio:order-none">
+        <div className="contents @4xl/studio:block @4xl/studio:min-w-0 @4xl/studio:space-y-5">
           {/* Publish card */}
-          <section className="rounded-xl border border-primary-200 dark:border-primary-500/20 bg-gradient-to-br from-primary-50 to-white dark:from-primary-500/[0.09] dark:to-slate-900/60 p-5 shadow-sm">
+          <section className="order-first rounded-xl border border-primary-200 dark:border-primary-500/20 bg-gradient-to-br from-primary-50 to-white dark:from-primary-500/[0.09] dark:to-slate-900/60 p-5 shadow-sm">
             <div className="flex items-center justify-between">
               <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary-600 text-primary-foreground shadow-lg shadow-primary-600/20">
                 {hasChanges ? <Rocket className="h-5 w-5" /> : <Check className="h-5 w-5" />}
@@ -499,14 +513,14 @@ export function PublishStep({
                 type="button"
                 onClick={copyLink}
                 aria-label="Copy app link"
-                className="p-2 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 cursor-pointer"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 cursor-pointer"
               >
                 {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
               </button>
             </div>
             <div className="mt-3 grid grid-cols-1 gap-2 @xs/studio:grid-cols-2">
               <Button variant="secondary" size="sm" onClick={() => window.open(appUrl, '_blank', 'noopener,noreferrer')} leftIcon={<ExternalLink className="h-4 w-4" />}>
-                Open app
+                {published ? 'Open app' : 'Preview app'}
               </Button>
               <Button
                 variant="secondary"
@@ -590,6 +604,7 @@ export function PublishStep({
         releaseSummary={releaseSummary}
         publishing={publishing}
         browserOnly={browserOnlyDemo}
+        published={published}
         onClose={() => setDialogOpen(false)}
         onConfirm={doPublish}
       />
@@ -614,6 +629,7 @@ function PublishDialog({
   releaseSummary,
   publishing,
   browserOnly,
+  published,
   onClose,
   onConfirm,
 }: {
@@ -623,6 +639,7 @@ function PublishDialog({
   releaseSummary: Array<{ id: string; kind: 'app' | 'form' | 'flow'; text: string }>;
   publishing: boolean;
   browserOnly: boolean;
+  published: boolean;
   onClose: () => void;
   onConfirm: (label: string) => void;
 }) {
@@ -646,10 +663,12 @@ function PublishDialog({
         <p className="text-sm leading-6 text-gray-500 dark:text-slate-400">
           {browserOnly
             ? `Records version ${nextVersion} of ${appName} in this browser's preview. Existing records are unchanged.`
-            : `Records version ${nextVersion} for ${appName}, with the changes below as its release note. Saved edits are already live; existing records are unchanged.`}
+            : published
+              ? `Records version ${nextVersion} for ${appName}. Saved edits are already live; publishing adds a release note to the history. Existing records are unchanged.`
+              : `Makes ${appName} available at its app link and records version ${nextVersion}. Access follows your Users & roles settings. Existing records are unchanged.`}
         </p>
         <div className="rounded-xl bg-gray-50 dark:bg-white/[0.04] p-3">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">Changed since the last release</p>
+          <p className="text-xs font-semibold text-gray-600 dark:text-slate-300">{published ? 'Changes in this release' : 'Included in your app'}</p>
           <ul className="mt-2 space-y-1.5 text-xs text-gray-600 dark:text-slate-300">
             {releaseSummary.length > 0 ? (
               releaseSummary.slice(0, 5).map((item) => (
@@ -678,7 +697,7 @@ function PublishDialog({
               <button
                 type="button"
                 onClick={() => setLabel(suggestedLabel)}
-                className="cursor-pointer text-[10px] font-bold text-primary-600 hover:underline dark:text-primary-300"
+                className="min-h-11 shrink-0 cursor-pointer rounded px-2 text-xs font-semibold text-primary-600 hover:underline dark:text-primary-300"
               >
                 Use summary
               </button>
@@ -692,7 +711,7 @@ function PublishDialog({
             maxLength={160}
           />
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row">
           <Button variant="secondary" className="flex-1" onClick={onClose}>
             Keep editing
           </Button>

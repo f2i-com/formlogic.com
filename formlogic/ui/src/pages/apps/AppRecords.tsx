@@ -4,7 +4,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useReturnTo } from '../../hooks/useReturnTo';
-import { ArrowLeft, BarChart3, ExternalLink, Inbox, Search, Table } from 'lucide-react';
+import { BarChart3, ExternalLink, Inbox, Search, Table } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -18,6 +18,7 @@ import { api } from '../../lib/api';
 import { useFormStore } from '../../stores/formStore';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
 import type { AppForm } from '../../types/app';
+import { NativeAppPanel } from '../../components/studio/NativeAppPanel';
 
 export function AppRecords() {
   const { appId } = useParams<{ appId: string }>();
@@ -83,21 +84,15 @@ export function AppRecords() {
 
   return (
     <div className="min-h-screen">
-      <Header title="Records" />
+      <Header title="Records" back={{ onClick: () => navigate(backTo.path, { state: backTo.state }), label: `Back to ${backTo.label ?? "App settings"}` }} />
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto">
-        <button
-          type="button"
-          onClick={() => navigate(backTo.path, { state: backTo.state })}
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 hover:text-gray-800 dark:text-slate-400 dark:hover:text-white transition-colors cursor-pointer mb-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded"
-        >
-          <ArrowLeft className="h-4 w-4" /> {backTo.label ?? `${app?.name ?? 'App'} settings`}
-        </button>
+        {!acting && app && <div className="mb-5"><NativeAppPanel key={app.id} app={app} /></div>}
 
         <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight">Data in {app?.name ?? 'this app'}</h1>
             <p className="text-sm text-gray-500 dark:text-slate-400 mt-0.5">
-              {loading ? 'Loading…' : `${rows.length} form${rows.length === 1 ? '' : 's'} · ${totalRecords} record${totalRecords === 1 ? '' : 's'} total`}
+              {loading ? 'Loading…' : `${rows.length} form${rows.length === 1 ? '' : 's'} · ${totalRecords} form record${totalRecords === 1 ? '' : 's'}`}
             </p>
           </div>
           <div className="flex items-center gap-2">

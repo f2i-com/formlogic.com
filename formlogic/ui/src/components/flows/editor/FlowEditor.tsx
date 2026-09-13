@@ -87,7 +87,7 @@ interface FlowEditorProps {
   context?: FlowEditorContext;
   /** Live per-node run status from the current Test Run's onNodeStatus (drives the canvas pills). */
   nodeStatus?: NodeStatusMap;
-  /** FormLogic Desktop presence for editor-only affordances. */
+  /** Local runtime presence for editor-only affordances. */
   desktopPresence?: FlowsDesktopPresence;
   /** Bindings targeting this flow, rendered as Trigger node chips (view state only). */
   bindings?: FlowBinding[];
@@ -507,15 +507,17 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-gray-900 dark:text-white">{flow.name}</p>
               <p className="truncate text-[10px] text-gray-400 dark:text-slate-500">
-                {nodes.length} node{nodes.length === 1 ? '' : 's'} · {scopeLabel ?? (flow.appId ? 'App flow' : 'Workspace flow')}
+                {nodes.length} step{nodes.length === 1 ? '' : 's'} · {scopeLabel ?? (flow.appId ? 'App flow' : 'Workspace flow')}
               </p>
             </div>
+            <Button size="sm" onClick={onOpenTestRun} aria-label="Test run" title="Test run" className="h-9 w-9 flex-none px-0"><PlayCircle className="h-4 w-4" /></Button>
             <SaveStatus dirty={dirty} saving={saving} failed={saveFailed} onRetry={() => void save()} compact />
             <Button
               size="sm"
               onClick={() => void save()}
               isLoading={saving}
               disabled={!dirty && !saving}
+              variant="outline"
               aria-label="Save flow"
               title="Save flow"
               className="h-9 w-9 flex-none px-0"
@@ -524,161 +526,50 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
             </Button>
           </div>
 
-          <div
-            className="scrollbar-thin flex min-h-12 items-center gap-1.5 overflow-x-auto overscroll-x-contain border-t border-gray-100 px-2 py-1.5 dark:border-white/[0.06]"
-            aria-label="Flow editor actions"
-          >
-            {onExecutionLocationChange && (
-              <ExecutionLocationSelect
-                value={flowExecutionLocation(flow)}
-                onChange={onExecutionLocationChange}
-                cloudDisabledReason={cloudDisabledReason}
-                compact
-              />
-            )}
-            <ToolbarDivider />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setMobilePaletteOpen(true)}
-              leftIcon={<Plus className="h-4 w-4" />}
-              className="min-h-9 flex-none whitespace-nowrap"
-              aria-label="Add node"
-            >
-              Add node
-            </Button>
-            <Button variant="ghost" size="sm" onClick={undo} disabled={!canUndo} aria-label="Undo" title="Undo" className="min-h-9 flex-none px-2.5">
-              <Undo2 className="h-4 w-4" />
-            </Button>
-            <Button variant="ghost" size="sm" onClick={redo} disabled={!canRedo} aria-label="Redo" title="Redo" className="min-h-9 flex-none px-2.5">
-              <Redo2 className="h-4 w-4" />
-            </Button>
-            <Button
-              variant={triggersOpen ? 'secondary' : 'ghost'}
-              size="sm"
-              onClick={onToggleTriggers}
-              disabled={!onToggleTriggers}
-              leftIcon={<Zap className="h-4 w-4" />}
-              aria-pressed={triggersOpen}
-              className="min-h-9 flex-none whitespace-nowrap"
-            >
-              Triggers
-              <span className="ml-1 rounded-full bg-primary-100 px-1.5 py-0.5 text-[10px] font-semibold text-primary-700 dark:bg-primary-500/20 dark:text-primary-200">
-                {triggerCount}
-              </span>
-            </Button>
-            <Button
-              variant={historyOpen ? 'secondary' : 'ghost'}
-              size="sm"
-              onClick={onToggleHistory}
-              leftIcon={<History className="h-4 w-4" />}
-              aria-pressed={historyOpen}
-              className="min-h-9 flex-none whitespace-nowrap"
-            >
-              History
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onOpenTestRun}
-              leftIcon={<PlayCircle className="h-4 w-4" />}
-              className="min-h-9 flex-none whitespace-nowrap"
-              aria-label="Test run"
-            >
-              Test run
-            </Button>
+          <div className="space-y-1 border-t border-gray-100 px-2 py-2 dark:border-slate-800" aria-label="Flow editor actions">
+            <div className="grid grid-cols-3 gap-1.5">
+              <Button variant="outline" size="sm" onClick={() => setMobilePaletteOpen(true)} leftIcon={<Plus className="h-4 w-4" />} className="min-h-11 px-2" aria-label="Add node">Add step</Button>
+              <Button variant={triggersOpen ? 'secondary' : 'ghost'} size="sm" onClick={onToggleTriggers} disabled={!onToggleTriggers} leftIcon={<Zap className="h-4 w-4" />} aria-pressed={triggersOpen} aria-label="Triggers" className="min-h-11 px-2">Triggers <span className="text-xs opacity-60">{triggerCount}</span></Button>
+              <Button variant={historyOpen ? 'secondary' : 'ghost'} size="sm" onClick={onToggleHistory} leftIcon={<History className="h-4 w-4" />} aria-pressed={historyOpen} aria-label="History" className="min-h-11 px-2">History</Button>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              {onExecutionLocationChange && <ExecutionLocationSelect value={flowExecutionLocation(flow)} onChange={onExecutionLocationChange} cloudDisabledReason={cloudDisabledReason} />}
+              <div className="flex gap-1">
+                <Button variant="ghost" size="sm" onClick={undo} disabled={!canUndo} aria-label="Undo" title="Undo" className="h-11 w-11 px-0"><Undo2 className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="sm" onClick={redo} disabled={!canRedo} aria-label="Redo" title="Redo" className="h-11 w-11 px-0"><Redo2 className="h-4 w-4" /></Button>
+              </div>
+            </div>
           </div>
         </div>
       ) : (
-      <div className="flex items-center gap-2 overflow-hidden border-b border-gray-200/80 bg-white/70 px-3 py-2 dark:border-slate-700/60 dark:bg-slate-900/50">
-        <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
-          {onBack && (
-            <button
-              type="button"
-              onClick={onBack}
-              aria-label="Back to flows"
-              title="Back to flows"
-              className="-ml-1 flex h-8 flex-none items-center gap-1 rounded-lg px-2 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
-            >
-              <ArrowLeft className="h-4 w-4 flex-none" />
-              {editorLayout.toolbar === 'full' && <span>Flows</span>}
-            </button>
-          )}
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-gray-900 dark:text-white">{flow.name}</p>
-            <p className="hidden truncate font-mono text-[11px] text-gray-400 dark:text-slate-500 sm:block">
-              {scopeLabel ?? (flow.appId ? 'app flow' : 'workspace flow')} · {flow.slug} · {nodes.length} node{nodes.length === 1 ? '' : 's'}
-            </p>
+      <div className="border-b border-gray-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex min-h-18 items-center gap-3 px-4 py-3">
+          {onBack && <button type="button" onClick={onBack} aria-label="Back to flows" title="Back to flows"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gray-200 text-gray-500 transition-colors hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"><ArrowLeft className="h-4 w-4" /></button>}
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-base font-semibold tracking-tight text-gray-900 dark:text-white" title={flow.name}>{flow.name}</h2>
+            <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-slate-400">{scopeLabel ?? (flow.appId ? 'App flow' : 'Workspace flow')} · {nodes.length} step{nodes.length === 1 ? '' : 's'}</p>
           </div>
-          <div className="flex flex-none">
-            <SaveStatus dirty={dirty} saving={saving} failed={saveFailed} onRetry={() => void save()} compact={editorLayout.toolbar !== 'full'} />
-          </div>
-          {onExecutionLocationChange && (
-            <ExecutionLocationSelect
-              value={flowExecutionLocation(flow)}
-              onChange={onExecutionLocationChange}
-              cloudDisabledReason={cloudDisabledReason}
-              compact={editorLayout.toolbar !== 'full'}
-            />
-          )}
-        </div>
-
-        {editorLayout.toolbar === 'full' && <ToolbarDivider />}
-        <div className="flex flex-none items-center gap-1 whitespace-nowrap">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setMobilePaletteOpen(true)}
-            leftIcon={<Plus className="h-4 w-4" />}
-            className={cn('whitespace-nowrap', editorLayout.palette === 'inline' && 'hidden')}
-            aria-label="Add node"
-          >
-            {editorLayout.toolbar === 'full' && <span>Add node</span>}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={undo} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)">
-            <Undo2 className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="sm" onClick={redo} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)">
-            <Redo2 className="h-4 w-4" />
-          </Button>
-        </div>
-
-        {editorLayout.toolbar === 'full' && <ToolbarDivider />}
-        <div className="flex flex-none items-center gap-1 whitespace-nowrap">
-          <Button
-            variant={triggersOpen ? 'secondary' : 'ghost'}
-            size="sm"
-            onClick={onToggleTriggers}
-            disabled={!onToggleTriggers}
-            leftIcon={<Zap className="h-4 w-4" />}
-            aria-pressed={triggersOpen}
-            aria-label="Triggers"
-          >
-            {editorLayout.toolbar === 'full' && <span>Triggers</span>}
-            <span className="ml-1 rounded-full bg-primary-100 px-1.5 py-0.5 text-[10px] font-semibold text-primary-700 dark:bg-primary-500/20 dark:text-primary-200">
-              {triggerCount}
-            </span>
-          </Button>
-          <Button
-            variant={historyOpen ? 'secondary' : 'ghost'}
-            size="sm"
-            onClick={onToggleHistory}
-            leftIcon={<History className="h-4 w-4" />}
-            aria-pressed={historyOpen}
-            aria-label="History"
-          >
-            {editorLayout.toolbar === 'full' && <span>History</span>}
-          </Button>
-          <Button variant="outline" size="sm" onClick={onOpenTestRun} leftIcon={<PlayCircle className="h-4 w-4" />} className="whitespace-nowrap" aria-label="Test run">
-            {editorLayout.toolbar === 'full' && <span>Test run</span>}
-          </Button>
-        </div>
-
-        {editorLayout.toolbar === 'full' && <ToolbarDivider />}
-        <div className="flex flex-none items-center gap-1 whitespace-nowrap">
-          <Button size="sm" onClick={() => void save()} isLoading={saving} disabled={!dirty && !saving} leftIcon={<Save className="h-4 w-4" />} aria-label="Save flow">
+          <SaveStatus dirty={dirty} saving={saving} failed={saveFailed} onRetry={() => void save()} compact={editorLayout.toolbar !== 'full'} />
+          <Button variant="outline" size="sm" onClick={() => void save()} isLoading={saving} disabled={!dirty && !saving} leftIcon={<Save className="h-4 w-4" />} aria-label="Save flow">
             {editorLayout.toolbar !== 'tiny' && <span>Save</span>}
           </Button>
+          <Button size="sm" onClick={onOpenTestRun} leftIcon={<PlayCircle className="h-4 w-4" />} className="shrink-0 whitespace-nowrap" aria-label="Test run">Test run</Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-gray-100 bg-gray-50/60 px-4 py-2 dark:border-slate-800 dark:bg-slate-950/30" aria-label="Flow editor actions">
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="sm" onClick={() => setMobilePaletteOpen(true)} leftIcon={<Plus className="h-4 w-4" />} className={cn(editorLayout.palette === 'inline' && 'hidden')} aria-label="Add node">Add step</Button>
+            <Button variant="ghost" size="sm" onClick={undo} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)"><Undo2 className="h-4 w-4" /></Button>
+            <Button variant="ghost" size="sm" onClick={redo} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)"><Redo2 className="h-4 w-4" /></Button>
+          </div>
+          <ToolbarDivider />
+          {onExecutionLocationChange && <ExecutionLocationSelect value={flowExecutionLocation(flow)} onChange={onExecutionLocationChange} cloudDisabledReason={cloudDisabledReason} />}
+          <div className="ml-auto flex items-center gap-1">
+            <Button variant={triggersOpen ? 'secondary' : 'ghost'} size="sm" onClick={onToggleTriggers} disabled={!onToggleTriggers} leftIcon={<Zap className="h-4 w-4" />} aria-pressed={triggersOpen} aria-label="Triggers">
+              Triggers <span className="ml-1 rounded-md bg-gray-200/60 px-1.5 py-0.5 text-[10px] dark:bg-slate-700">{triggerCount}</span>
+            </Button>
+            <Button variant={historyOpen ? 'secondary' : 'ghost'} size="sm" onClick={onToggleHistory} leftIcon={<History className="h-4 w-4" />} aria-pressed={historyOpen} aria-label="History">History</Button>
+          </div>
         </div>
       </div>
       )}
@@ -750,6 +641,7 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
               data={(selectedNode.data ?? {}) as Record<string, unknown>}
               onPatch={patchSelected}
               onDelete={deleteSelected}
+              onClose={() => setSelectedId(null)}
               forms={forms}
               context={context}
               insertHints={insertHints}
@@ -758,7 +650,7 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
           </div>
         )}
       </div>
-      <BottomSheet title="Add node" open={mobilePaletteOpen} onClose={() => setMobilePaletteOpen(false)}>
+      <BottomSheet expanded title="Add step" open={mobilePaletteOpen} onClose={() => setMobilePaletteOpen(false)}>
         <NodePalette
           onAddNode={(type) => {
             addNodeCenter(type);
@@ -772,7 +664,7 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
         />
       </BottomSheet>
       {selectedNode && editorLayout.properties === 'sheet' && (
-        <BottomSheet title={`${flowNodeRegistry.resolveNodeSpec(String(selectedNode.type)).label} settings`} open onClose={() => setSelectedId(null)}>
+        <BottomSheet expanded title={`${flowNodeRegistry.resolveNodeSpec(String(selectedNode.type)).label} settings`} open onClose={() => setSelectedId(null)}>
           <NodeProperties
             nodeId={selectedNode.id}
             type={String(selectedNode.type)}

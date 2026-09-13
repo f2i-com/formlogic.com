@@ -227,6 +227,9 @@ const APP_STUDIO_STEP_BY_TOOL: Record<string, string | null> = {
   create_flow_binding: 'automations',
   update_flow_binding: 'automations',
   update_app: 'publish',
+  publish_native_app_project: 'screens',
+  update_native_app_files: 'screens',
+  publish_app_project: 'screens',
 };
 
 /** Bounded scan of a tool result for the first appId-shaped value. */
@@ -315,6 +318,14 @@ function toolLinkFromResult(toolName: string, result: unknown): ChatToolActivity
  * rather than nothing.
  */
 const TOOL_LABELS: Record<string, string> = {
+  get_native_app_template: 'Start an app with a backend and database',
+  get_native_app_project: 'Read the app source',
+  publish_native_app_project: 'Install the app project',
+  update_native_app_files: 'Save app source changes',
+  list_native_app_records: 'Look at app database records',
+  get_workspace_template: 'Get a connected dashboard starter',
+  get_app_project: 'Read the hosted app project',
+  publish_app_project: 'Save the hosted app project',
   list_apps: 'Look at your apps',
   create_app: 'Create an app',
   update_app: 'Update the app',
@@ -813,7 +824,7 @@ export async function sendChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDe
         : kind === 'appScreen'
           ? `Page context: the user is in the custom-screen Studio for the HOME screen of app ${id}. When they say "this screen" or ask for pages/changes without naming a target, they mean this app's customScreen: read the app's forms with list_forms/get_form, write the screen with set_app_home (appId ${id}) — send the COMPLETE screen (all files) each time.`
           : kind === 'appStudio'
-            ? `Page context: the user is in the APP STUDIO for app ${id}${studioStep ? ` on the "${studioStep}" step` : ''} — FormLogic's six-step app wizard (every step is prefilled from real state and skippable; changes save immediately). When they ask where to do something, point them at the right step; when they ask you to build or change something, use your tools with appId ${id} — the result appears in the matching step. The steps: 1) Plan — optionally sketch the app as a diagram (blueprint tools) or plan it in this chat. 2) Data & forms — the app's data types; each is a form (create_app_form to add one, update_form for fields; linked_record fields are the relationships). 3) Screens — the app home (set_app_home: a no-code widget dashboard or a custom code screen) plus the generated form/list/record views, menu visibility and the landing screen. 4) Automations — flows and their triggers (create_flow, then create_flow_binding e.g. on form.submitted). 5) Users & roles — roles, the per-form permission matrix, invites and member sign-up; there are no chat tools for these yet, so GUIDE the user through that step instead of attempting it. 6) Review & publish — preflight checks, the app link, and versioned publishing (update_app {status:'published'} publishes it; the step's Publish button also records a version with a release note).`
+            ? `Page context: the user is in the APP STUDIO for app ${id}${studioStep ? ` on the "${studioStep}" step` : ''} — FormLogic's six-step app wizard (every step is prefilled from real state and skippable; changes save immediately). When they ask where to do something, point them at the right step; when they ask you to build or change something, use your tools with appId ${id} — the result appears in the matching step. The steps: 1) Plan — optionally sketch the app as a diagram (blueprint tools) or plan it in this chat. 2) Data & forms — forms and native SQLite tables. Use list_native_app_records for native records. Form data types each use a form (create_app_form to add one, update_form for fields; linked_record fields are the relationships). 3) Screens — native apps can be created with get_native_app_template and publish_native_app_project, read with get_native_app_project and edited with update_native_app_files. Use the current version for updates. Visual Builder and AI Studio open from Native app hosting. Preserve the existing hosting model when editing an installed app. The app home (set_app_home: a no-code widget dashboard or a custom code screen) plus the generated form/list/record views, menu visibility and the landing screen. 4) Automations — flows and their triggers (create_flow, then create_flow_binding e.g. on form.submitted). 5) Users & roles — roles, the per-form permission matrix, invites and member sign-up; there are no chat tools for these yet, so GUIDE the user through that step instead of attempting it. 6) Review & publish — preflight checks, the app link, and versioned publishing (update_app {status:'published'} publishes it; the step's Publish button also records a version with a release note).`
             : `Page context: the user is currently viewing ${kind} with id ${id}. When they say "this ${kind}" or ask for changes without naming a target, use this id with your tools.`;
     opts = {
       ...opts,

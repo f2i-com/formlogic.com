@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useReturnTo, type ReturnToState } from '../../hooks/useReturnTo';
-import { ArrowLeft, Plus, Trash2, Shield, X, Pencil, Check } from 'lucide-react';
+import { Plus, Trash2, Shield, X, Pencil, Check } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useResourcePaths } from '../../components/admin/AdminActingContext';
 import { Header } from '../../components/layout/Header';
@@ -25,7 +25,7 @@ function AppRoleEditorContent() {
   const navigate = useNavigate();
   const paths = useResourcePaths();
   // Origin-relative Back: opened from the App Studio this returns to its step.
-  const backTo = useReturnTo(paths.appSub(`${appId}`, 'settings?tab=manage'));
+  const backTo = useReturnTo(paths.appSub(`${appId}`, 'settings?tab=access'));
   const { fetchRoles, createRole, deleteRole, updateRole, fetchAppForms, getApp } = useAppStore();
   const userId = useAuthStore((s) => s.user?.id);
   const [roles, setRoles] = useState<AppRole[]>([]);
@@ -192,11 +192,7 @@ function AppRoleEditorContent() {
     <div className="min-h-screen">
       <Header
         title="Roles & permissions"
-        actions={
-          <Button variant="ghost" size="sm" onClick={() => navGuarded(backTo.path, backTo.state)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
-            {backTo.label ? `Back to ${backTo.label}` : 'Back'}
-          </Button>
-        }
+        back={{ onClick: () => navGuarded(backTo.path, backTo.state), label: backTo.label ? `Back to ${backTo.label}` : 'Back to app settings' }}
       />
       <div className="@container/roles w-full flex-1 p-4 @xl/roles:p-6 @3xl/roles:p-8">
       <div className="max-w-6xl mx-auto">

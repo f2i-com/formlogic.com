@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -12,7 +12,6 @@ import {
   GitBranch,
   GitCompareArrows,
   Home,
-  LayoutDashboard,
   List,
   Loader2,
   LockKeyhole,
@@ -42,6 +41,7 @@ import { trackStudioSave } from '../studioSaveState';
 import { statusLabel } from '../../../lib/appStatus';
 import { AppLookPanel } from './AppLookPanel';
 import { HostedAppPanel } from '../HostedAppPanel';
+import { NativeAppPanel } from '../NativeAppPanel';
 import { ConnectedWorkspacePanel } from '../ConnectedWorkspacePanel';
 import { AppCompositionPanel } from '../AppCompositionPanel';
 import { SoftnExportPanel } from '../SoftnExportPanel';
@@ -131,7 +131,17 @@ export function ScreensStep({
   // The builder / screen studios return here when opened from this section.
   const studioReturn = returnToState(`/apps/${app.id}/studio/screens`, 'App Studio');
   const updateApp = useAppStore((s) => s.updateApp);
-  const [selection, setSelection] = useState<ScreenSelection>({ kind: 'home' });
+  const [nativeHome, setNativeHome] = useState(false);
+  const [nativeRevision, setNativeRevision] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    void api.getNativeEntry(app.slug).then(result => { if (!cancelled && result.data) setNativeHome(!!result.data.home); });
+    return () => { cancelled = true; };
+  }, [app.slug]);
+  const [requestedSelection, setSelection] = useState<ScreenSelection>({ kind: 'home' });
+  const selection = useMemo<ScreenSelection>(() => requestedSelection.kind === 'form' && !appForms.some(form => form.formId === requestedSelection.formId)
+    ? { kind: 'home' }
+    : requestedSelection, [requestedSelection, appForms]);
   // A phone user's first sight of their app should not be a 520px desktop mock
   // inside a horizontal scroller. Lazy initialiser, so an explicit later choice
   // wins and no effect re-derives it. Read the viewport directly so a delayed
@@ -153,6 +163,7 @@ export function ScreensStep({
   } | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const settingsHeading = useRef<HTMLHeadingElement>(null);
 
   const selectedRole = roles.find((r) => r.id === roleId) ?? roles.find((r) => r.name === 'Owner') ?? roles[0] ?? null;
   const ownerLike = !selectedRole || selectedRole.name === 'Owner';
@@ -269,9 +280,17 @@ export function ScreensStep({
   const selectedAttachment = selection.kind === 'form' ? appForms.find((af) => af.formId === selection.formId) ?? null : null;
   const selectedFormId = selection.kind === 'form' ? selection.formId : null;
   const selectedRoleCanView = selection.kind !== 'form' || canSee(selection.formId);
+  const screenLabel = selection.kind === 'home' ? 'App home' : selectedAttachment?.displayName || selectedForm?.title || 'Screen';
+  const previewUnavailable = selection.kind === 'home' ? null
+    : selectedAttachment?.isVisible === false ? 'This form is excluded from the app. Its records are kept, but members cannot open it here.'
+    : (selectedAttachment?.settings as { hidden?: boolean } | undefined)?.hidden ? 'This form stores records only. Choose a menu placement in Screen settings to give it a screen.'
+    : !selectedForm ? 'This form could not be loaded. Try reloading the app before editing its screen.'
+    : !ownerLike && !currentPerms ? 'Loading role permissions…'
+    : !selectedRoleCanView ? `This screen is not available to ${selectedRole?.name ?? 'this role'}. Review access in Users & roles.`
+    : null;
 
   useEffect(() => {
-    if (previewData !== 'real' || !selectedFormId) return;
+    if (previewData !== 'real' || !selectedFormId || previewUnavailable) return;
     let cancelled = false;
     api.getResponses(selectedFormId, { limit: 3 }).then(
       (res) => {
@@ -291,7 +310,7 @@ export function ScreensStep({
       }
     );
     return () => { cancelled = true; };
-  }, [previewData, selectedFormId]);
+  }, [previewData, selectedFormId, previewUnavailable]);
 
   const previewRecordsLoading = previewData === 'real'
     && !!selectedFormId
@@ -319,12 +338,17 @@ export function ScreensStep({
       return saved;
     };
     setBusy(true);
-    const ok = await trackStudioSave('Landing screen', () => write(landingPage), (saved) => !!saved);
-    setBusy(false);
-    if (ok && previous !== landingPage) {
-      toast.undo('Landing screen updated', () => {
-        void trackStudioSave('Landing screen', () => write(previous), (saved) => !!saved);
-      });
+    try {
+      const ok = await trackStudioSave('Landing screen', () => write(landingPage), (saved) => !!saved);
+      if (ok && previous !== landingPage) {
+        toast.undo('Landing screen updated', () => {
+          void trackStudioSave('Landing screen', () => write(previous), (saved) => !!saved);
+        });
+      }
+    } catch {
+      toast.error('Could not change the landing screen', 'Please try again.');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -344,26 +368,43 @@ export function ScreensStep({
     if (next === 'data-only') settings.hidden = true;
     const name = af.displayName || formsById[af.formId]?.title || 'Screen';
     const previous = attachmentState(af);
-    const res = await trackStudioSave(
-      `${name} placement`,
-      async () => {
-        const result = await api.updateAppForm(app.id, af.formId, {
-          settings,
-          isVisible: next !== 'off',
-        });
-        if (!result.error) await onReloadForms();
-        return result;
-      },
-      (result) => !result.error
-    );
-    setBusy(false);
-    if (res.error) {
-      toast.error('Could not update where this appears', typeof res.error === 'string' ? res.error : undefined);
-      return;
+    try {
+      const res = await trackStudioSave(
+        `${name} placement`,
+        async () => {
+          const result = await api.updateAppForm(app.id, af.formId, {
+            settings,
+            isVisible: next !== 'off',
+          });
+          if (!result.error) await onReloadForms();
+          return result;
+        },
+        (result) => !result.error
+      );
+      if (res.error) {
+        toast.error('Could not update where this appears', typeof res.error === 'string' ? res.error : undefined);
+        return;
+      }
+      toast.undo(`${name}: ${NAV_STATES.find((n) => n.id === next)?.label ?? next}`, () => {
+        void (async () => {
+          try {
+            const current = await api.getAppForms(app.id);
+            const attachment = current.data?.forms.find(form => form.formId === af.formId);
+            if (current.error || !attachment) {
+              toast.error('Could not undo placement', 'Reload the app and check this form’s current settings.');
+              return;
+            }
+            await setNavState(attachment, previous);
+          } catch {
+            toast.error('Could not undo placement', 'Please try again.');
+          }
+        })();
+      });
+    } catch {
+      toast.error('Could not update where this appears', 'Please try again.');
+    } finally {
+      setBusy(false);
     }
-    toast.undo(`${name}: ${NAV_STATES.find((n) => n.id === next)?.label ?? next}`, () => {
-      void setNavState({ ...af }, previous);
-    });
   };
 
   const customiseScreen = () => {
@@ -388,25 +429,20 @@ export function ScreensStep({
   };
 
   return (
-    <div className="grid gap-5 @3xl/studio:grid-cols-[minmax(0,18rem)_minmax(0,1fr)] @5xl/studio:grid-cols-[minmax(0,19.5rem)_minmax(0,1fr)]">
-      {/* Screens + their settings share one rail, so the controls for the selected
-          screen are never a preview-height below the fold at laptop widths. In the
-          middle band they sit side by side rather than as one tall stacked column.
-          Below @3xl the column goes LAST: stacked, the rail put the screen list, the
-          settings card and the appearance panel all above the preview, so the point
-          of the section sat about two screens down. (PublishStep uses the same
-          order-first/order-none idiom.) */}
-      <div className="order-last grid gap-4 @xl/studio:grid-cols-2 @3xl/studio:order-none @3xl/studio:grid-cols-1 @3xl/studio:content-start">
-        <section className="overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
+    <div className="grid grid-cols-1 items-start gap-5 @3xl/studio:grid-cols-[14rem_minmax(0,1fr)] @5xl/studio:grid-cols-[15rem_minmax(0,1fr)]">
+      {/* Keep only screen navigation in the sidebar. Editing tools sit below the
+          preview, where the wider content column can balance them side by side. */}
+      <section className="hidden overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm @3xl/studio:block dark:border-white/[0.06] dark:bg-slate-900/50">
           <div className="border-b border-gray-200/80 p-5 dark:border-white/[0.06]">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">App screens</h3>
           </div>
+          <p className="px-4 pt-3 text-xs leading-relaxed text-gray-500 dark:text-slate-400">Choose a screen to change its layout and appearance.</p>
           <div className="scrollbar-thin flex snap-x gap-1.5 overflow-x-auto p-3 @xl/studio:block @xl/studio:max-h-[340px] @xl/studio:space-y-1 @xl/studio:overflow-x-visible @xl/studio:overflow-y-auto">
             <ScreenItem
               icon={Home}
               label="App home"
-              status={SCREEN_KIND_LABEL[homeKind]}
-              custom={homeKind !== 'default'}
+              status={nativeHome ? 'Imported website' : SCREEN_KIND_LABEL[homeKind]}
+              custom={nativeHome || homeKind !== 'default'}
               selected={selection.kind === 'home'}
               onClick={() => setSelection({ kind: 'home' })}
             />
@@ -431,7 +467,7 @@ export function ScreensStep({
             })}
             {appForms.length === 0 && (
               <p className="px-3 py-4 text-xs text-gray-500 dark:text-slate-400">
-                Screens are generated from your data types — add one in Data & forms first.
+                {nativeHome ? 'Edit the website’s files and browse its database in Native app hosting below. Add data types for any extra FormLogic forms.' : 'Screens are generated from your data types — add one in Data & forms first.'}
               </p>
             )}
             <button
@@ -443,155 +479,45 @@ export function ScreensStep({
             </button>
           </div>
         </section>
-
-        <HostedAppPanel app={app} />
-        <ConnectedWorkspacePanel app={app} />
-        <AppCompositionPanel app={app} onComplete={() => { void onReloadForms(); void onReloadApp(); }} />
-        <SoftnExportPanel key={app.id} app={app} appForms={appForms.map(form => ({ ...form, displayName: form.displayName || formsById[form.formId]?.title }))} />
-
-        {/* Screen settings */}
-        <section className="h-fit overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
-          <div className="flex items-center justify-between border-b border-gray-200/80 p-5 dark:border-white/[0.06]">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
-              {selection.kind === 'home' ? 'Home settings' : 'Screen settings'}
-            </h3>
-            <Settings2 className="h-4 w-4 text-gray-500 dark:text-slate-400" aria-hidden="true" />
+      <div className="min-w-0 space-y-5">
+      {nativeHome && selection.kind === 'home' ? <section className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4"><div><h3 className="font-semibold text-slate-900 dark:text-white">Website preview</h3><p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-400">Your installed interface is the app home. This is a live preview using its current session and records.</p></div><a className="inline-flex min-h-11 items-center text-sm font-medium text-indigo-600 dark:text-indigo-300" href={`/app/${app.slug}`} target="_blank" rel="noopener noreferrer">Open website</a></div>
+        <iframe key={nativeRevision} title="Installed website preview" src={`/app/${encodeURIComponent(app.slug)}/native`} className="h-[620px] w-full border-0 bg-white" />
+      </section> : <section className="h-fit overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
+        <div className="space-y-4 border-b border-gray-200/80 p-4 dark:border-white/[0.06]">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Screen preview</h3>
+              <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Check the layout here. Open the app to try the full screen.</p>
+            </div>
+            <Button variant="secondary" size="sm" disabled={selection.kind === 'form' && !selectedForm} onClick={customiseScreen} leftIcon={<PencilRuler className="h-4 w-4" />}>
+              {selection.kind === 'home' ? 'Edit home screen' : 'Edit selected screen'}
+            </Button>
           </div>
-          <div className="space-y-5 p-5">
-            {selection.kind === 'home' ? (
-              <>
-                <div className="rounded-xl border border-gray-200 p-3 dark:border-white/10">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">Members see</p>
-                  <div className="mt-2 space-y-1.5">
-                    <ScreenTypeRow icon={Sparkles} label="Built-in screen" selected={homeKind === 'sdk'} />
-                    <ScreenTypeRow icon={Code2} label="Custom code" selected={homeKind === 'code'} />
-                    <ScreenTypeRow icon={LayoutDashboard} label="Widget dashboard" selected={homeKind === 'dashboard'} />
-                    <ScreenTypeRow icon={List} label="Default dashboard" selected={homeKind === 'default'} />
-                  </div>
-                  {app.customScreen && homeKind === 'default' && (
-                    <p className="mt-2 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
-                      A custom screen is saved but switched off, so members get the default dashboard.
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <label htmlFor="studio-landing" className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">
-                    Members land on
-                  </label>
-                  <select
-                    id="studio-landing"
-                    value={app.settings?.landingPage ?? 'dashboard'}
-                    onChange={(e) => void setLanding(e.target.value)}
-                    disabled={busy}
-                    className="mt-1.5 h-10 w-full min-w-0 cursor-pointer rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700 outline-none max-sm:h-11 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200"
-                  >
-                    <option value="dashboard">App home</option>
-                    {appForms.map((af) => {
-                      // Data-only forms render no screen: the runtime bounces members
-                      // straight back to the dashboard, so they are not landing targets.
-                      const dataOnly = attachmentState(af) === 'data-only' || attachmentState(af) === 'off';
-                      return (
-                        <option key={af.formId} value={af.formId} disabled={dataOnly}>
-                          {af.displayName || formsById[af.formId]?.title || 'Untitled'}
-                          {dataOnly ? ' — data only, cannot be a landing screen' : ''}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </div>
-                <Button className="w-full" onClick={customiseScreen} leftIcon={<WandSparkles className="h-4 w-4" />}>
-                  {homeKind === 'dashboard' ? 'Edit dashboard in the app' : 'Customise home screen'}
-                </Button>
-                {homeKind !== 'code' && (
-                  <Button variant="secondary" className="w-full" onClick={() => navigate(`/apps/${app.id}/home/edit`, { state: studioReturn })} leftIcon={<Code2 className="h-4 w-4" />}>
-                    Open home studio
-                  </Button>
-                )}
-              </>
-            ) : selectedAttachment && selectedForm ? (
-              <>
-                {/* One control for all FOUR states this attachment can be in. It used
-                    to be a two-state switch plus two paragraphs telling the owner to
-                    go to the Forms manager — for settings that are one field each. */}
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">
-                    Where this appears
-                  </p>
-                  <div className="mt-2 space-y-1.5">
-                    {NAV_STATES.map((state) => {
-                      const current = attachmentState(selectedAttachment);
-                      return (
-                        <button
-                          key={state.id}
-                          type="button"
-                          disabled={busy || current === state.id}
-                          onClick={() => void setNavState(selectedAttachment, state.id)}
-                          aria-current={current === state.id ? 'true' : undefined}
-                          className={cn(
-                            'flex min-h-11 w-full items-start gap-2.5 rounded-xl border p-2.5 text-left transition',
-                            current === state.id
-                              ? 'border-primary-300 bg-primary-50 dark:border-primary-500/30 dark:bg-primary-500/[0.09]'
-                              : 'cursor-pointer border-gray-200 hover:border-primary-300 hover:bg-gray-50 dark:border-white/10 dark:hover:border-primary-500/30 dark:hover:bg-white/[0.03]'
-                          )}
-                        >
-                          <state.icon className={cn(
-                            'mt-0.5 h-4 w-4 shrink-0',
-                            current === state.id ? 'text-primary-600 dark:text-primary-400' : 'text-gray-400 dark:text-slate-500'
-                          )} />
-                          <span className="min-w-0">
-                            <span className="block text-xs font-semibold text-gray-800 dark:text-slate-200">{state.label}</span>
-                            <span className="mt-0.5 block text-[11px] leading-4 text-gray-500 dark:text-slate-400">{state.detail}</span>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {hideNav && (
-                    <p className="mt-2 rounded-xl bg-gray-50 p-2.5 text-[11px] leading-4 text-gray-600 dark:bg-white/[0.04] dark:text-slate-300">
-                      This app runs full-screen, so menu placement has no effect — members reach
-                      records from the floating Records button. Turn the menu back on under
-                      Look &amp; feel.
-                    </p>
-                  )}
-                </div>
-                {attachmentState(selectedAttachment) !== 'off' && attachmentState(selectedAttachment) !== 'data-only' && (
-                  <Switch
-                    label="Landing screen"
-                    description="Members land here when they open the app"
-                    checked={app.settings?.landingPage === selectedAttachment.formId}
-                    onChange={(v) => void setLanding(v ? selectedAttachment.formId : 'dashboard')}
-                    disabled={busy}
-                  />
-                )}
-                <div className="rounded-xl border border-gray-200 p-3 dark:border-white/10">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">Generated views</p>
-                  <ul className="mt-2 space-y-1 text-xs text-gray-600 dark:text-slate-300">
-                    <li className="flex items-center gap-2"><FileText className="h-3.5 w-3.5 text-primary-500" /> Submit form</li>
-                    <li className="flex items-center gap-2"><Table2 className="h-3.5 w-3.5 text-primary-500" /> Records list &amp; detail</li>
-                    <li className="flex items-center gap-2"><BarChart3 className="h-3.5 w-3.5 text-primary-500" /> Analytics</li>
-                  </ul>
-                </div>
-                <Button className="w-full" onClick={customiseScreen} leftIcon={<WandSparkles className="h-4 w-4" />}>
-                  Customise this screen
-                </Button>
-                <Button variant="secondary" className="w-full" onClick={() => navigate(`/builder/${selectedForm.id}`, { state: studioReturn })} leftIcon={<PencilRuler className="h-4 w-4" />}>
-                  Open form builder
-                </Button>
-              </>
-            ) : (
-              <p className="text-xs text-gray-500 dark:text-slate-400">Select a screen to configure it.</p>
-            )}
+          <div className="space-y-2 @3xl/studio:hidden">
+            <label htmlFor="studio-screen-picker" className="block text-xs font-semibold text-gray-700 dark:text-slate-200">Screen to edit</label>
+            <select
+              id="studio-screen-picker"
+              value={selection.kind === 'home' ? 'home' : `form:${selection.formId}`}
+              onChange={(event) => setSelection(event.target.value === 'home' ? { kind: 'home' } : { kind: 'form', formId: event.target.value.slice(5) })}
+              className="h-11 w-full min-w-0 rounded-lg border border-gray-200 bg-white px-3 text-base text-gray-900 focus:outline-2 focus:outline-primary-500 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+            >
+              <option value="home">App home</option>
+              {appForms.map(af => (
+                <option key={af.formId} value={`form:${af.formId}`}>
+                  {af.displayName || formsById[af.formId]?.title || 'Untitled'}
+                  {attachmentState(af) === 'off' ? ' — excluded from app' : attachmentState(af) === 'data-only' ? ' — data only' : ''}
+                </option>
+              ))}
+            </select>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" size="sm" onClick={() => {
+                settingsHeading.current?.scrollIntoView({ block: 'start' });
+                settingsHeading.current?.focus({ preventScroll: true });
+              }} leftIcon={<Settings2 className="h-4 w-4" />}>Screen settings</Button>
+              <Button variant="ghost" size="sm" onClick={() => navigate(`/apps/${app.id}/studio/data`)} leftIcon={<Plus className="h-4 w-4" />}>Add a form</Button>
+            </div>
           </div>
-        </section>
-
-        {/* The app's look lives beside the preview that draws it, not on a settings
-            tab whose only preview was a white card with a sample button. */}
-        <AppLookPanel app={app} onReloadApp={onReloadApp} />
-      </div>
-
-      {/* Preview — first on a phone, where it is the whole point of the section. */}
-      <section className="order-first overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm @3xl/studio:order-none dark:border-white/[0.06] dark:bg-slate-900/50">
-        <div className="space-y-3 border-b border-gray-200/80 p-4 dark:border-white/[0.06]">
           <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
             <span className="flex min-w-0 items-center gap-2">
               <span className="truncate text-xs font-semibold text-gray-800 dark:text-slate-200">
@@ -603,7 +529,7 @@ export function ScreensStep({
             </span>
             {changes.everPublished && changes.count > 0 && (
               <Button variant="ghost" size="sm" onClick={() => setCompareOpen(true)} leftIcon={<GitCompareArrows className="h-3.5 w-3.5" />}>
-                Compare with live
+                Review saved changes
               </Button>
             )}
           </div>
@@ -682,7 +608,8 @@ export function ScreensStep({
             records={previewRecords}
             recordsLoading={previewRecordsLoading}
             recordsError={previewRecordsError}
-            canViewSelected={selectedRoleCanView}
+            unavailableReason={previewUnavailable}
+            screenLabel={screenLabel}
             onUseSample={() => setPreviewData('sample')}
             onOpenScreen={customiseScreen}
           />
@@ -700,12 +627,163 @@ export function ScreensStep({
           Preview uses this draft's navigation, theme and role permissions. Records are read with your
           own access, so a role that only sees its own submissions will see fewer than shown here.
         </p>
-      </section>
+      </section>}
+        <div className="grid grid-cols-1 items-start gap-5 @5xl/studio:grid-cols-2">
+        {/* Screen settings */}
+        <section className="h-fit overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
+          <div className="flex items-center justify-between border-b border-gray-200/80 p-5 dark:border-white/[0.06]">
+            <h3 ref={settingsHeading} tabIndex={-1} className="scroll-mt-64 rounded text-sm font-semibold text-gray-900 focus-visible:outline-2 focus-visible:outline-primary-500 dark:text-white">
+              {selection.kind === 'home' ? 'Home settings' : 'Screen settings'}
+            </h3>
+            <Settings2 className="h-4 w-4 text-gray-500 dark:text-slate-400" aria-hidden="true" />
+          </div>
+          <div className="space-y-5 p-5">
+            {selection.kind === 'home' && nativeHome ? <div className="space-y-3 text-sm leading-6 text-slate-600 dark:text-slate-400"><p className="font-semibold text-slate-900 dark:text-white">Imported app</p><p>The installed interface is your website home. Open Native app hosting below to edit its screens, backend, access mode and records, or restore the standard home by switching off the website-home option.</p></div> : selection.kind === 'home' ? (
+              <>
+                <div className="rounded-xl border border-gray-200 p-3 dark:border-white/10">
+                  <p className="text-xs font-medium text-gray-500 dark:text-slate-400">Current home screen</p>
+                  <p className="mt-2 text-sm font-semibold text-gray-900 dark:text-white">{homeKind === 'default' ? 'Default dashboard' : SCREEN_KIND_LABEL[homeKind]}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-slate-400">{homeKind === 'default' ? 'An overview generated from your app’s forms and records.' : homeKind === 'dashboard' ? 'A dashboard built from your saved widgets. Open the app to edit them.' : 'Your saved custom screen is used as the app home.'}</p>
+                  {app.customScreen && homeKind === 'default' && (
+                    <p className="mt-2 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
+                      A custom screen is saved but switched off, so members get the default dashboard.
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label htmlFor="studio-landing" className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">
+                    Members land on
+                  </label>
+                  <select
+                    id="studio-landing"
+                    value={app.settings?.landingPage ?? 'dashboard'}
+                    onChange={(e) => void setLanding(e.target.value)}
+                    disabled={busy}
+                    className="mt-1.5 h-10 w-full min-w-0 cursor-pointer rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700 outline-none max-sm:h-11 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200"
+                  >
+                    <option value="dashboard">App home</option>
+                    {appForms.map((af) => {
+                      // Data-only forms render no screen: the runtime bounces members
+                      // straight back to the dashboard, so they are not landing targets.
+                      const dataOnly = attachmentState(af) === 'data-only' || attachmentState(af) === 'off';
+                      return (
+                        <option key={af.formId} value={af.formId} disabled={dataOnly}>
+                          {af.displayName || formsById[af.formId]?.title || 'Untitled'}
+                          {dataOnly ? ' — data only, cannot be a landing screen' : ''}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+                <Button className="w-full" onClick={customiseScreen} leftIcon={<WandSparkles className="h-4 w-4" />}>
+                  {homeKind === 'dashboard' ? 'Edit dashboard in the app' : 'Customise home screen'}
+                </Button>
+                {homeKind === 'dashboard' && (
+                  <Button variant="secondary" className="w-full" onClick={() => navigate(`/apps/${app.id}/home/edit`, { state: studioReturn })} leftIcon={<Code2 className="h-4 w-4" />}>
+                    Replace home screen
+                  </Button>
+                )}
+              </>
+            ) : selectedAttachment && selectedForm ? (
+              <>
+                {/* One control for all FOUR states this attachment can be in. It used
+                    to be a two-state switch plus two paragraphs telling the owner to
+                    go to the Forms manager — for settings that are one field each. */}
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">
+                    Where this appears
+                  </p>
+                  <div className="mt-2 space-y-1.5">
+                    {NAV_STATES.map((state) => {
+                      const current = attachmentState(selectedAttachment);
+                      return (
+                        <button
+                          key={state.id}
+                          type="button"
+                          disabled={busy || current === state.id}
+                          onClick={() => void setNavState(selectedAttachment, state.id)}
+                          aria-current={current === state.id ? 'true' : undefined}
+                          className={cn(
+                            'flex min-h-11 w-full items-start gap-2.5 rounded-xl border p-2.5 text-left transition',
+                            current === state.id
+                              ? 'border-primary-300 bg-primary-50 dark:border-primary-500/30 dark:bg-primary-500/[0.09]'
+                              : 'cursor-pointer border-gray-200 hover:border-primary-300 hover:bg-gray-50 dark:border-white/10 dark:hover:border-primary-500/30 dark:hover:bg-white/[0.03]'
+                          )}
+                        >
+                          <state.icon className={cn(
+                            'mt-0.5 h-4 w-4 shrink-0',
+                            current === state.id ? 'text-primary-600 dark:text-primary-400' : 'text-gray-400 dark:text-slate-500'
+                          )} />
+                          <span className="min-w-0">
+                            <span className="block text-xs font-semibold text-gray-800 dark:text-slate-200">{state.label}</span>
+                            <span className="mt-0.5 block text-[11px] leading-4 text-gray-500 dark:text-slate-400">{state.detail}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {hideNav && (
+                    <p className="mt-2 rounded-xl bg-gray-50 p-2.5 text-[11px] leading-4 text-gray-600 dark:bg-white/[0.04] dark:text-slate-300">
+                      This app runs full-screen, so menu placement has no effect — members reach
+                      records from the floating Records button. Turn the menu back on under
+                      Look &amp; feel.
+                    </p>
+                  )}
+                </div>
+                {attachmentState(selectedAttachment) !== 'off' && attachmentState(selectedAttachment) !== 'data-only' && (
+                  <Switch
+                    label="Landing screen"
+                    description="Members land here when they open the app"
+                    checked={app.settings?.landingPage === selectedAttachment.formId}
+                    onChange={(v) => void setLanding(v ? selectedAttachment.formId : 'dashboard')}
+                    disabled={busy}
+                  />
+                )}
+                <div className="rounded-xl border border-gray-200 p-3 dark:border-white/10">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">Generated views</p>
+                  <ul className="mt-2 space-y-1 text-xs text-gray-600 dark:text-slate-300">
+                    <li className="flex items-center gap-2"><FileText className="h-3.5 w-3.5 text-primary-500" /> Submit form</li>
+                    <li className="flex items-center gap-2"><Table2 className="h-3.5 w-3.5 text-primary-500" /> Records list &amp; detail</li>
+                    <li className="flex items-center gap-2"><BarChart3 className="h-3.5 w-3.5 text-primary-500" /> Analytics</li>
+                  </ul>
+                </div>
+                <Button className="w-full" onClick={customiseScreen} leftIcon={<WandSparkles className="h-4 w-4" />}>
+                  Customise this screen
+                </Button>
+                <Button variant="secondary" className="w-full" onClick={() => navigate(`/builder/${selectedForm.id}`, { state: studioReturn })} leftIcon={<PencilRuler className="h-4 w-4" />}>
+                  Open form builder
+                </Button>
+              </>
+            ) : (
+              <p className="text-xs text-gray-500 dark:text-slate-400">Select a screen to configure it.</p>
+            )}
+          </div>
+        </section>
+        <AppLookPanel app={app} onReloadApp={onReloadApp} />
+        </div>
+        <details className="group h-fit min-w-0 rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
+          <summary className="flex min-h-14 cursor-pointer list-none items-center gap-3 rounded-xl p-4 focus-visible:outline-2 focus-visible:outline-primary-500 [&::-webkit-details-marker]:hidden">
+            <Code2 className="h-5 w-5 shrink-0 text-primary-500" aria-hidden="true" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-gray-900 dark:text-white">Hosting &amp; app tools</span>
+              <span className="mt-1 block text-xs leading-relaxed text-gray-500 dark:text-slate-400">Connect a workspace, merge apps or download your app.</span>
+            </span>
+            <ChevronRight className="h-4 w-4 shrink-0 text-gray-400 transition-transform group-open:rotate-90" aria-hidden="true" />
+          </summary>
+          <div className="space-y-3 border-t border-gray-100 p-3 dark:border-white/[0.06]">
+            <NativeAppPanel app={app} onInstalled={home => { setNativeHome(home); setNativeRevision(revision => revision + 1); }} />
+              <HostedAppPanel app={app} />
+            <ConnectedWorkspacePanel app={app} />
+            <AppCompositionPanel app={app} onComplete={() => { void onReloadForms(); void onReloadApp(); }} />
+            <SoftnExportPanel key={app.id} app={app} appForms={appForms.map(form => ({ ...form, displayName: form.displayName || formsById[form.formId]?.title }))} />
+          </div>
+        </details>
+      </div>
 
       <Modal
         isOpen={compareOpen}
         onClose={() => setCompareOpen(false)}
-        title="Compare draft with live"
+        title="Changes since last publish"
         description={`Saved edits are already live. Publishing records them as ${statusLabel(app) === 'Live' ? 'the next version' : `version ${(app.publishedVersion ?? 0) + 1}`}.`}
         size="lg"
       >
@@ -722,7 +800,7 @@ export function ScreensStep({
                 </span>
               </div>
               <p className="mt-3 text-xs leading-5 text-emerald-800/80 dark:text-emerald-200/80">
-                This is what members keep using while you review the draft. No saved Studio change replaces it until Publish.
+                {app.status === 'published' ? 'Members see saved changes immediately in a published app. Publishing again records a new version in its history.' : 'This app is not currently published. Review your saved changes, then publish when you are ready to share it.'}
               </p>
             </section>
             <section className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-400/20 dark:bg-amber-400/[0.06]">
@@ -738,14 +816,14 @@ export function ScreensStep({
                 </span>
               </div>
               <p className="mt-3 text-xs leading-5 text-amber-800/80 dark:text-amber-200/80">
-                The preview on this section renders these saved changes as the app owner, before they reach members.
+                The preview shows your current saved changes. Use the role selector to check navigation and permissions before sharing the app.
               </p>
             </section>
           </div>
 
           <section className="overflow-hidden rounded-xl border border-gray-200 dark:border-white/10">
             <div className="border-b border-gray-100 bg-gray-50 px-3 py-2.5 dark:border-white/[0.06] dark:bg-white/[0.03]">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">Draft resources that differ</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">Changed since last publish</p>
             </div>
             <div className="divide-y divide-gray-100 dark:divide-white/[0.06]">
               {changes.changed.map((item) => (
@@ -819,29 +897,13 @@ function ScreenItem({
   );
 }
 
-function ScreenTypeRow({ icon: Icon, label, selected }: { icon: typeof LayoutDashboard; label: string; selected: boolean }) {
-  return (
-    <div
-      className={cn(
-        'flex min-h-9 items-center gap-2 rounded-lg px-2 text-xs font-semibold',
-        selected
-          ? 'bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300'
-          : 'text-gray-500 dark:text-slate-400'
-      )}
-    >
-      <Icon className="h-3.5 w-3.5" />
-      <span className="flex-1">{label}</span>
-      {selected && <span className="text-[9px] font-bold uppercase">Active</span>}
-    </div>
-  );
-}
-
 function DeviceButton({ active, label, icon: Icon, onClick }: { active: boolean; label: string; icon: typeof Monitor; onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-label={label}
+      title={label}
       aria-pressed={active}
       className={cn(
         'flex h-8 w-8 cursor-pointer items-center justify-center rounded-md transition max-sm:h-11 max-sm:w-11',
@@ -884,7 +946,8 @@ function AppPreview({
   records,
   recordsLoading,
   recordsError,
-  canViewSelected,
+  unavailableReason,
+  screenLabel,
   onUseSample,
   onOpenScreen,
 }: {
@@ -902,11 +965,13 @@ function AppPreview({
   records: Array<{ id: string; answers: Record<string, unknown>; submittedAt: string }>;
   recordsLoading: boolean;
   recordsError: string | null;
-  canViewSelected: boolean;
+  unavailableReason: string | null;
+  screenLabel: string;
   onUseSample: () => void;
   onOpenScreen: () => void;
 }) {
   const accent = app.theme?.primaryColor || '#6366f1';
+  const logo = app.logoUrl || app.theme?.logoUrl;
   const onAccent = readableForegroundColor(accent);
   const initial = (app.name?.trim().charAt(0) || '?').toUpperCase();
   const appIcon = (app.settings as { icon?: string } | undefined)?.icon ?? null;
@@ -927,6 +992,7 @@ function AppPreview({
     <div
       role="region"
       aria-label={`${device} app preview`}
+      style={{ fontFamily: app.theme?.fontFamily }}
       className={cn(
         'shrink-0 overflow-hidden rounded-[18px] border border-gray-300 bg-white shadow-2xl shadow-gray-950/15 transition-all duration-300 dark:border-white/15 dark:bg-slate-950',
         // A minimum width per device so the mock stays readable in a narrow column;
@@ -957,8 +1023,8 @@ function AppPreview({
                 className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-lg text-[10px] font-bold"
                 style={{ backgroundColor: accent, color: onAccent }}
               >
-                {app.logoUrl
-                  ? <img src={app.logoUrl} alt="" className="h-full w-full object-cover" />
+                {logo
+                  ? <img src={logo} alt="" className="h-full w-full object-cover" />
                   : <DynamicIcon name={appIcon} className="h-3.5 w-3.5" fallback={<span>{initial}</span>} />}
               </span>
               <span className="truncate text-[10px] font-bold text-gray-900 dark:text-white">{app.name}</span>
@@ -991,7 +1057,7 @@ function AppPreview({
                 Preview as {roleName} · {previewData === 'real' ? 'Real records' : 'Sample content'}
               </p>
               <h4 className="mt-1 truncate text-sm font-bold text-gray-900 dark:text-white">
-                {selection.kind === 'home' ? app.name : selectedForm?.title ?? 'Screen'}
+                {selection.kind === 'home' ? app.name : screenLabel}
               </h4>
             </div>
             <span
@@ -1004,19 +1070,24 @@ function AppPreview({
 
           {/* A custom or SDK screen is real code — drawing the generic mock in its place
               means reviewing a screen that does not exist. Say so and offer to open it. */}
-          {screenKind === 'code' || screenKind === 'sdk' ? (
+          {unavailableReason ? (
+            <div className="mt-4 flex min-h-52 flex-col items-center justify-center rounded-xl border border-dashed border-amber-200 bg-amber-50/60 p-4 text-center dark:border-amber-400/20 dark:bg-amber-400/[0.06]" role="status">
+              <LockKeyhole className="h-6 w-6 text-amber-600 dark:text-amber-300" aria-hidden="true" />
+              <p className="mt-3 text-xs leading-relaxed text-amber-800 dark:text-amber-200">{unavailableReason}</p>
+            </div>
+          ) : screenKind !== 'default' ? (
             <div className="mt-4 flex min-h-52 flex-col items-center justify-center rounded-xl border border-dashed border-gray-300 p-4 text-center dark:border-white/15">
               <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-300">
                 {screenKind === 'sdk' ? <Sparkles className="h-4 w-4" /> : <Code2 className="h-4 w-4" />}
               </span>
               <p className="mt-2 text-[11px] font-bold text-gray-800 dark:text-slate-200">
-                {screenKind === 'sdk' ? 'Built-in screen' : 'Custom code screen'}
+                {SCREEN_KIND_LABEL[screenKind]}
               </p>
               <p className="mt-1 max-w-52 text-[10px] leading-4 text-gray-500 dark:text-slate-400">
-                This screen runs real code, so it is not drawn here. Open it to see and edit it.
+                This screen uses a custom layout. Open the app to preview it, or open its editor to make changes.
               </p>
               <button type="button" onClick={onOpenScreen} className="mt-2 cursor-pointer text-[10px] font-bold text-primary-600 hover:underline dark:text-primary-300">
-                Open the screen
+                Open screen editor
               </button>
             </div>
           ) : selection.kind === 'home' ? (
@@ -1042,20 +1113,10 @@ function AppPreview({
                 )}
               </div>
             </>
-          ) : selectedForm && !canViewSelected ? (
-            <div className="mt-4 flex min-h-52 flex-col items-center justify-center rounded-xl border border-dashed border-amber-200 bg-amber-50/60 p-4 text-center dark:border-amber-400/20 dark:bg-amber-400/[0.06]">
-              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-400/15 dark:text-amber-200">
-                <LockKeyhole className="h-4 w-4" />
-              </span>
-              <p className="mt-2 text-[10px] font-bold text-amber-900 dark:text-amber-100">No access for {roleName}</p>
-              <p className="mt-1 max-w-48 text-[9px] leading-4 text-amber-700 dark:text-amber-300">
-                This role holds no permission on {selectedForm.title}, so the app never shows it.
-              </p>
-            </div>
           ) : selectedForm && previewData === 'real' ? (
             <div className="mt-4 rounded-xl border border-gray-200 bg-white p-3 dark:border-white/[0.08] dark:bg-slate-950/70">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-[10px] font-bold text-gray-800 dark:text-slate-200">Recent {selectedForm.title} records</p>
+                <p className="text-[10px] font-bold text-gray-800 dark:text-slate-200">Recent {screenLabel} records</p>
                 <span className="text-[9px] font-semibold text-gray-500 dark:text-slate-400">{records.length} shown</span>
               </div>
               {recordsLoading ? (
@@ -1097,7 +1158,7 @@ function AppPreview({
             </div>
           ) : selectedForm ? (
             <div className="mt-4 rounded-xl border border-gray-200 bg-white p-3 dark:border-white/[0.08] dark:bg-slate-950/70">
-              <p className="text-[10px] font-bold text-gray-800 dark:text-slate-200">{selectedForm.title}</p>
+              <p className="text-[10px] font-bold text-gray-800 dark:text-slate-200">{screenLabel}</p>
               <div className="mt-2 space-y-2">
                 {selectedForm.fields.slice(0, 4).map((field) => (
                   <div key={field.id}>

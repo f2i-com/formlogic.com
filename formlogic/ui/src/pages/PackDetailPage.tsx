@@ -1,8 +1,7 @@
 import { starterCatalog } from '../lib/starterCatalog';
 import '../styles/landing-v2.css';
 import '../styles/landing-refresh.css';
-import { LandingNav } from '../components/landing-v2/LandingNav';
-import { LandingFooter } from '../components/landing-v2/LandingFooter';
+import { MarketplaceLayout } from '../components/layout/MarketplaceLayout';
 import { useState, useEffect, useCallback } from 'react';
 import { parseServerDate } from '../lib/utils';
 import { useParams, useNavigate, Link } from 'react-router-dom';
@@ -347,15 +346,15 @@ function PackDetailContent() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-white dark:bg-slate-950">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-      </div>
+      <MarketplaceLayout><div className="flex min-h-[50vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-gray-400" role="status" aria-label="Loading template" />
+      </div></MarketplaceLayout>
     );
   }
 
   if (!pack) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-white px-4 dark:bg-slate-950">
+      <MarketplaceLayout><div className="flex min-h-[50vh] items-center justify-center px-4">
         {loadError ? (
           <div className="w-full max-w-md">
             <LoadFailure
@@ -376,17 +375,18 @@ function PackDetailContent() {
             </Button>
           </div>
         )}
-      </div>
+      </div></MarketplaceLayout>
     );
   }
 
+  const publishedDate = parseServerDate(pack.createdAt);
+  const hasPublishedDate = Number.isFinite(publishedDate.getTime());
   const formTitles = pack.formTitles ?? [];
   const appNames = pack.appNames ?? [];
 
   return (
-    <div className="lv2 fl-marketplace min-h-screen overflow-x-clip bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-50">
-      <LandingNav />
-      {bundledPreview && <p role="status" className="mx-auto max-w-4xl px-6 pt-5 text-sm text-slate-500">Bundled starter preview. Connect to the live marketplace to install this app.</p>}
+    <MarketplaceLayout>
+      {bundledPreview && <p role="status" className="mx-auto max-w-4xl px-6 pt-5 text-sm text-slate-600 dark:text-slate-300">Bundled starter preview. Connect to the live marketplace to install this app.</p>}
       {/* Breadcrumb */}
       <div className="border-b border-gray-100 dark:border-slate-800/60 bg-white/85 dark:bg-slate-950/75 backdrop-blur-xl">
         <div className="fl-mono mx-auto flex h-12 max-w-4xl items-center gap-2 px-4 text-xs uppercase tracking-wider text-gray-500 dark:text-slate-400 sm:px-6">
@@ -395,7 +395,7 @@ function PackDetailContent() {
             className="inline-flex items-center gap-1.5 rounded transition-colors hover:text-gray-900 dark:hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
           >
             <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-            Marketplace
+            {user ? 'Templates' : 'Marketplace'}
           </Link>
           <span className="text-gray-300 dark:text-slate-700">/</span>
           <span className="truncate normal-case tracking-normal font-medium text-gray-900 dark:text-white">{pack.name}</span>
@@ -427,16 +427,16 @@ function PackDetailContent() {
                   {pack.category}
                 </p>
               )}
-              <h1 className="fl-display text-3xl text-gray-900 dark:text-white sm:text-4xl">{pack.name}</h1>
+              <h1 className={user ? "text-2xl font-semibold tracking-tight text-gray-900 dark:text-white sm:text-3xl" : "fl-display text-3xl text-gray-900 dark:text-white sm:text-4xl"}>{pack.name}</h1>
               <div className="fl-mono mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-gray-500 dark:text-slate-400">
                 <span className="inline-flex items-center gap-1.5">
                   <User className="h-3.5 w-3.5" aria-hidden="true" />
                   {pack.publisherName || 'Unknown'}
                 </span>
-                <span className="inline-flex items-center gap-1.5">
+                {hasPublishedDate && <span className="inline-flex items-center gap-1.5">
                   <Calendar className="h-3.5 w-3.5" aria-hidden="true" />
-                  Published {parseServerDate(pack.createdAt).toLocaleDateString()}
-                </span>
+                  Published {publishedDate.toLocaleDateString()}
+                </span>}
                 {pack.latestVersion && (
                   <span className="rounded-full border border-gray-200 dark:border-slate-700 px-2 py-0.5">
                     v{pack.latestVersion}
@@ -764,7 +764,6 @@ function PackDetailContent() {
           </p>
         )}
       </div>
-      <LandingFooter />
-    </div>
+    </MarketplaceLayout>
   );
 }

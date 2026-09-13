@@ -1205,7 +1205,11 @@ export default function FormBuilder() {
               onBlur={flushTitle}
               onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
               aria-label="Form title"
-              className="border-none bg-transparent font-semibold text-base sm:text-lg focus:ring-0 p-0 min-w-0 w-full sm:w-48 md:w-auto"
+              title="Rename form — click to edit"
+              placeholder="Untitled Form"
+              maxLength={120}
+              onFocus={(e) => { if (localTitle === 'Untitled Form') e.target.select(); }}
+              className="border border-transparent bg-transparent font-semibold text-base sm:text-lg hover:border-gray-300 dark:hover:border-slate-600 focus:ring-2 focus:ring-primary-500 px-2 py-1 min-h-11 min-w-0 w-full sm:w-48 md:w-auto"
             />
             {/* Save indicator — reflects the real storage mode (cloud vs local) and
                 is announced to screen readers. Full at lg+, compact below, and clipped

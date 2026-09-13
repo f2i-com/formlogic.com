@@ -94,7 +94,12 @@ class CloudFlowRunnerTest extends TestCase
         self::$commands = new DesktopCommandService($conn);
         // A custom (keyless) endpoint makes AIService::isConfigured() true without a key.
         $_ENV['AI_BASE_URL'] = 'http://127.0.0.1:9/v1';
-        self::$ai = new CloudFlowRunnerFakeAi();
+        self::$ai = new CloudFlowRunnerFakeAi(new class extends \FormLogic\Services\PlatformPlansService {
+            public function status(): array
+            {
+                return array_replace(self::defaults(), ['siteAiEnabled' => true]);
+            }
+        });
     }
 
     protected function setUp(): void

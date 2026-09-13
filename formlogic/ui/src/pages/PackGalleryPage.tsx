@@ -3,8 +3,8 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import '../styles/landing-v2.css';
 import '../styles/landing-refresh.css';
-import { LandingNav } from '../components/landing-v2/LandingNav';
-import { LandingFooter } from '../components/landing-v2/LandingFooter';
+import { MarketplaceLayout } from '../components/layout/MarketplaceLayout';
+import { useAuthStore } from '../stores/authStore';
 import {
   Package,
   Search,
@@ -126,6 +126,7 @@ function PackCardSkeleton() {
 
 export default function PackGalleryPage() {
   const navigate = useNavigate();
+  const signedIn = useAuthStore(state => !!state.user);
   const [featuredPacks, setFeaturedPacks] = useState<CatalogPack[]>(starterCatalog.filter(pack => pack.featured));
   const [categories, setCategories] = useState<PackFacet[]>([]);
   const [tags, setTags] = useState<PackFacet[]>([]);
@@ -139,8 +140,8 @@ export default function PackGalleryPage() {
   useReveal();
 
   useEffect(() => {
-    document.title = 'Marketplace — FormLogic';
-  }, []);
+    document.title = signedIn ? 'Templates — FormLogic' : 'Marketplace — FormLogic';
+  }, [signedIn]);
 
   const filtering = Boolean(searchQuery || categoryFilter || tagFilter);
 
@@ -192,20 +193,32 @@ export default function PackGalleryPage() {
   }, []);
 
   const chipClass = (active: boolean) =>
-    `fl-mono px-3 py-1.5 rounded-full text-[11px] uppercase tracking-wider border transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
+    `fl-mono min-h-11 px-3 py-1.5 rounded-full text-[11px] uppercase tracking-wider border transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
       active
         ? 'border-primary-500/50 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'
         : 'border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-700 hover:text-gray-700 dark:hover:text-slate-200'
     }`;
 
   return (
-    <div className="lv2 fl-marketplace min-h-screen overflow-x-clip bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-50">
-      <a href="#marketplace-content" className="fl-skip">Skip to apps</a>
-      <LandingNav />
-      <main id="marketplace-content">
+    <MarketplaceLayout>
       {error && <div role="status" className="mx-auto max-w-6xl px-6 pt-5 text-sm text-slate-600 dark:text-slate-300">Browsing the bundled starter catalogue. Live marketplace details and installation need a connection. <button className="min-h-11 underline" onClick={() => loadPacks()}>Retry live catalogue</button></div>}
 
       {/* Hero — same blueprint-grid + glow grammar as the landing page */}
+      {signedIn ? (
+        <section className="mx-auto max-w-6xl px-4 pt-6 sm:px-6 lg:px-8 lg:pt-8">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="max-w-2xl">
+              <h1 className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">Templates for your workspace</h1>
+              <p className="mt-2 text-sm leading-6 text-gray-500 dark:text-slate-400">Start with a ready-made app, then customize its forms, dashboard, and automations. Review what’s included before adding it to your workspace.</p>
+            </div>
+            <Button variant="outline" onClick={() => navigate('/apps')} rightIcon={<ArrowRight className="h-4 w-4" />}>My apps</Button>
+          </div>
+          <div className="relative mt-6 max-w-xl">
+            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" aria-hidden="true" />
+            <input type="search" value={searchQuery} onChange={e => { setSearchQuery(e.target.value); setPage(1); }} placeholder="Search templates…" aria-label="Search packs" className="min-h-11 w-full rounded-xl border border-gray-200 bg-white py-3 pl-10 pr-4 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white" />
+          </div>
+        </section>
+      ) : (
       <section className="relative overflow-hidden border-b border-gray-100 dark:border-slate-800/60 px-4 pt-14 pb-12 sm:px-6 sm:pt-20 sm:pb-16 lg:px-8">
         <div
           className="fl-grid pointer-events-none absolute inset-0"
@@ -250,9 +263,10 @@ export default function PackGalleryPage() {
           </div>
         </div>
       </section>
+      )}
 
-      <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-        {!filtering && <section aria-label="Build with connected apps" className="mb-10 grid gap-4 rounded-2xl border border-sky-200 bg-sky-50 p-6 sm:grid-cols-3 sm:p-8 dark:border-sky-900 dark:bg-sky-950/30">
+      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
+        {!signedIn && !filtering && <section aria-label="Build with connected apps" className="mb-10 grid gap-4 rounded-2xl border border-sky-200 bg-sky-50 p-6 sm:grid-cols-3 sm:p-8 dark:border-sky-900 dark:bg-sky-950/30">
           <div><span className="fl-mono text-xs text-sky-600 dark:text-sky-300">01 / START</span><h2 className="mt-2 font-semibold">Choose your starting point</h2><p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">Browse a complete workspace for your business. Review its forms and capabilities before installing.</p></div>
           <div><span className="fl-mono text-xs text-sky-600 dark:text-sky-300">02 / CONNECT</span><h2 className="mt-2 font-semibold">Bring your tools together</h2><p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">Share forms with another app or move Aokie’s automations into an existing workspace.</p><Link to="/aokie" className="mt-2 inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-sky-700 dark:text-sky-300">Explore Aokie <ArrowRight size={15}/></Link></div>
           <div><span className="fl-mono text-xs text-sky-600 dark:text-sky-300">03 / MAKE IT YOURS</span><h2 className="mt-2 font-semibold">Keep building your app</h2><p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">Customize your workspace and build an editable app with Softn, hosted on FormLogic.</p><a href="/#live-demo" className="mt-2 inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-sky-700 dark:text-sky-300">Try the live workspace <ArrowRight size={15}/></a></div>
@@ -265,7 +279,7 @@ export default function PackGalleryPage() {
               <span>Featured</span>
               <span className="h-px flex-1 bg-primary-500/20" />
             </div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 @2xl/packs:grid-cols-2 @4xl/packs:grid-cols-3">
               {featuredPacks.map((pack) => (
                 <PackCard key={pack.id} pack={pack} onOpen={() => navigate(`/packs/${pack.slug}`)} />
               ))}
@@ -297,7 +311,7 @@ export default function PackGalleryPage() {
             value={sortBy}
             onChange={(e) => { setSortBy(e.target.value); setPage(1); }}
             aria-label="Sort packs"
-            className="rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-sm text-gray-900 dark:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+            className="min-h-11 rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-sm text-gray-900 dark:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
           >
             <option value="popular">Popular</option>
             <option value="top_rated">Top rated</option>
@@ -335,7 +349,7 @@ export default function PackGalleryPage() {
 
         {/* Active filter summary */}
         {filtering && (
-          <div className="mb-4 flex items-center gap-2 text-sm text-gray-500 dark:text-slate-400">
+          <div className="mb-4 flex flex-wrap items-center gap-2 break-words text-sm text-gray-500 dark:text-slate-400">
             <span>
               {categoryFilter && <>Category: <strong className="text-gray-700 dark:text-slate-200">{categoryFilter}</strong></>}
               {tagFilter && <>Tag: <strong className="text-gray-700 dark:text-slate-200">{tagFilter}</strong></>}
@@ -352,7 +366,7 @@ export default function PackGalleryPage() {
 
         {/* Pack grid */}
         {loading ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" aria-label="Loading apps">
+          <div className="grid grid-cols-1 gap-4 @2xl/packs:grid-cols-2 @4xl/packs:grid-cols-3" aria-busy="true" aria-label="Loading apps">
             {Array.from({ length: 6 }).map((_, i) => (
               <PackCardSkeleton key={i} />
             ))}
@@ -365,7 +379,7 @@ export default function PackGalleryPage() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 @2xl/packs:grid-cols-2 @4xl/packs:grid-cols-3">
               {packs.map((pack) => (
                 <PackCard key={pack.id} pack={pack} onOpen={() => navigate(`/packs/${pack.slug}`)} />
               ))}
@@ -388,8 +402,6 @@ export default function PackGalleryPage() {
           </>
         )}
       </div>
-      </main>
-      <LandingFooter />
-    </div>
+    </MarketplaceLayout>
   );
 }

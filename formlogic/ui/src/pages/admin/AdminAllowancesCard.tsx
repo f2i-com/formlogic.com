@@ -133,7 +133,7 @@ export function AdminAllowancesCard() {
                     <p className="text-sm font-medium text-gray-900 dark:text-white capitalize">{row.plan}</p>
                     <p className="text-xs text-gray-500 dark:text-slate-400">{metricLabel(row.metric)}</p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <input
                       type="number"
                       min={0}

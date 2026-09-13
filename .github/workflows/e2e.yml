@@ -50,7 +50,7 @@ jobs:
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
           php-version: '8.3'
-          extensions: pdo, pdo_mysql, pdo_sqlite, mbstring, curl, gd, zip
+          extensions: pdo, pdo_mysql, pdo_sqlite, sodium, mbstring, curl, gd, zip
           coverage: none
 
       - name: Set up Node
@@ -60,6 +60,9 @@ jobs:
           cache: npm
           cache-dependency-path: formlogic/ui/package-lock.json
 
+      - name: Prepare hosted app runtime
+        uses: ./.github/actions/prepare-hosted-runtime
+
       - name: Install backend dependencies
         working-directory: formlogic/backend
         run: composer install --no-interaction --prefer-dist --no-progress
@@ -67,7 +70,7 @@ jobs:
       - name: Backend config (.env) + storage dirs
         working-directory: formlogic/backend
         run: |
-          mkdir -p storage/forms storage/packs storage/uploads storage/pack-screenshots logs
+          mkdir -p storage/forms storage/hosted-apps storage/packs storage/uploads storage/pack-screenshots logs
           cat > .env <<EOF
           APP_ENV=development
           DB_HOST=127.0.0.1

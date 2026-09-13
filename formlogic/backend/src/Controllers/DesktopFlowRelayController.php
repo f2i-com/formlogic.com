@@ -79,7 +79,7 @@ class DesktopFlowRelayController
         if ($resolved['error'] === 'ambiguous_desktop') {
             return $this->jsonError(
                 $response,
-                'More than one FormLogic Desktop is online for this workspace — the owner must assign the flow lane to one machine before runs can be routed.',
+                'More than one linked desktop runtime is online for this workspace — the owner must assign the flow lane to one machine before runs can be routed.',
                 409,
                 'ambiguous_desktop',
                 ['desktops' => $resolved['desktops']],
@@ -476,7 +476,7 @@ class DesktopFlowRelayController
         if (!in_array('flows:relay', $scopes, true) && !in_array('connector:relay', $scopes, true)) {
             return [null, $this->jsonError(
                 $response,
-                'Insufficient scope. Required: flows:relay — relink FormLogic Desktop to grant it.',
+                'Insufficient scope. Required: flows:relay — relink linked desktop runtime to grant it.',
                 403,
                 'insufficient_scope',
             )];

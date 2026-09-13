@@ -21,7 +21,7 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
   const [fresh, setFresh] = useState<NewToken | null>(null);
   // The OAuth paste-the-URL path is primary; the manual flm_ token flow lives behind this.
   const [showManual, setShowManual] = useState(false);
-  // Opt-in: also let the AI drive this account's FormLogic Desktop connectors (e.g. the Aokie phone).
+  // Opt-in: also let the AI drive this account's OAIY connectors (e.g. the Aokie phone).
   const [connectorAccess, setConnectorAccess] = useState(false);
   // Opt-in: also let the AI read submitted responses/data (`responses:read`).
   const [responsesAccess, setResponsesAccess] = useState(false);
@@ -158,7 +158,7 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
                         <> — <span className="font-medium">cannot {cannotParts.join(' or ')}</span></>
                       )}.
                       {connectorAccess && (
-                        <> Also lets it <span className="font-medium text-gray-700 dark:text-slate-300">control your linked FormLogic Desktop and its connectors</span> — that access covers your whole account, not just {creator ? 'the app it creates' : appId ? 'this app' : 'the apps you build'}.</>
+                        <> Also lets it <span className="font-medium text-gray-700 dark:text-slate-300">control your linked OAIY and its connectors</span> — that access covers your whole account, not just {creator ? 'the app it creates' : appId ? 'this app' : 'the apps you build'}.</>
                       )}
                     </p>
                   )}
@@ -190,7 +190,7 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
                     <>
                       <label className="flex items-start gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
                         <input type="checkbox" checked={connectorAccess} onChange={(e) => setConnectorAccess(e.target.checked)} className="mt-0.5 accent-primary-600" />
-                        <span>Also let this AI <span className="font-medium">control your FormLogic Desktop</span> connectors — e.g. answer/hang up calls on the Aokie phone (<code>connector_command</code>). Needs a linked, running desktop.</span>
+                        <span>Also let this AI <span className="font-medium">control your OAIY</span> connectors — e.g. answer/hang up calls on the Aokie phone (<code>connector_command</code>). Needs a linked, running desktop.</span>
                       </label>
                       <label className="flex items-start gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
                         <input type="checkbox" checked={responsesAccess || responsesWriteAccess} disabled={responsesWriteAccess} onChange={(e) => setResponsesAccess(e.target.checked)} className="mt-0.5 accent-primary-600" />

@@ -33,7 +33,7 @@ export const FlowNodeSignalsContext = createContext<FlowNodeSignals>(EMPTY_NODE_
 export const EMPTY_DESKTOP_PRESENCE: FlowsDesktopPresence = { kind: 'none' };
 
 /**
- * Current FormLogic Desktop presence for editor-only affordances (palette degradation and node
+ * Current Local runtime presence for editor-only affordances (palette degradation and node
  * badges). Like node signals, this is view state and must never be serialized into node data.
  */
 export const FlowDesktopPresenceContext = createContext<FlowsDesktopPresence>(EMPTY_DESKTOP_PRESENCE);

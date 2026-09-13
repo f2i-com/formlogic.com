@@ -7,7 +7,7 @@
 // description and an "Output:" hint (from the catalog) so the shape is visible while authoring.
 // Nothing here executes — it only mutates the stored graph.
 import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent } from 'react';
-import { AlertTriangle, Info, Plus, Search, Sparkles, Trash2, Zap } from 'lucide-react';
+import { AlertTriangle, Info, Plus, Search, Sparkles, Trash2, X, Zap } from 'lucide-react';
 import { checkFlowCallInput, serviceActionContract, type FlowCallIssue } from './flowCallChecks';
 import { cn } from '../../../lib/utils';
 import { Button } from '../../ui/Button';
@@ -60,10 +60,10 @@ const AOKIE_QUICK_INPUTS: Array<{ name: string; example: string }> = [
 ];
 
 const INPUT_CLS =
-  'w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2.5 py-1.5 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500';
+  'w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2.5 text-base md:py-2 md:text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500';
 const MONO_CLS = INPUT_CLS + ' font-mono text-xs';
 const LABEL_CLS = 'block text-xs font-medium text-gray-600 dark:text-slate-300 mb-1';
-const HELP_CLS = 'mt-1 text-[11px] leading-snug text-gray-400 dark:text-slate-500';
+const HELP_CLS = 'mt-1 text-xs leading-relaxed text-gray-500 dark:text-slate-400';
 const LINK_CLS =
   'text-[11px] font-medium text-primary-600 dark:text-primary-400 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded';
 
@@ -135,6 +135,7 @@ interface NodePropertiesProps {
   insertHints?: string[];
   /** Opens the flow's Triggers panel — surfaced on the Trigger node so events are definable from here. */
   onOpenTriggers?: () => void;
+  onClose?: () => void;
   className?: string;
 }
 
@@ -1242,7 +1243,7 @@ function InsertHints({ hints, onInsert }: { hints: string[]; onInsert: (h: strin
   );
 }
 
-export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, context = EMPTY_FLOW_EDITOR_CONTEXT, insertHints = [], onOpenTriggers, className }: NodePropertiesProps) {
+export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, context = EMPTY_FLOW_EDITOR_CONTEXT, insertHints = [], onOpenTriggers, onClose, className }: NodePropertiesProps) {
   // Registry resolution (never undefined): unknown types get the §4.5 missing-definition
   // placeholder — the panel explains the situation and shows the raw config read-only.
   const spec = flowNodeRegistry.resolveNodeSpec(type, context);
@@ -1279,15 +1280,15 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
   const visibleProps = spec ? spec.properties.filter((p) => evalShowIf(p.showIf, effective) || fieldHasValue(data[p.key])) : [];
 
   return (
-    <div className={cn('flex h-full min-h-0 w-80 flex-none flex-col border-l border-gray-200/80 bg-gray-50/60 dark:border-slate-700/60 dark:bg-slate-900/40', className)}>
-      <div className="flex items-center justify-between border-b border-gray-200/80 dark:border-slate-700/60 px-3 py-2.5">
+    <div className={cn('flex h-full min-h-0 w-80 flex-none flex-col border-l border-gray-200/80 bg-white dark:border-slate-700/60 dark:bg-slate-900', className)}>
+      <div className="flex items-center justify-between border-b border-gray-200/80 dark:border-slate-700/60 px-4 py-4">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{spec?.label ?? type}</p>
           <p className="truncate font-mono text-[11px] text-gray-400 dark:text-slate-500">{nodeId} · {type}</p>
         </div>
-        <Button variant="ghost" size="sm" onClick={onDelete} aria-label="Delete node">
+        <div className="flex items-center gap-1"><Button variant="ghost" size="sm" onClick={onDelete} aria-label="Delete node" title="Delete step">
           <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-500" />
-        </Button>
+        </Button>{onClose && <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close step settings" title="Close settings"><X className="h-4 w-4" /></Button>}</div>
       </div>
 
       {/* key={nodeId} remounts the field widgets (form-picker mode, adders) when the selection changes. */}

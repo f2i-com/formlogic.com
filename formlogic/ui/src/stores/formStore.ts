@@ -412,24 +412,8 @@ export const useFormStore = create<FormState>()(
       }
     };
 
-    // Remove empty/untouched forms (no fields, default title, no content)
-    const purgeEmptyForms = () => {
-      // NEVER while a platform admin is acting on another user's account: the
-      // owner's legitimately-empty drafts are not ours to garbage-collect.
-      if (api.isAdminActing()) return;
-      const { forms, storageMode } = get();
-      const emptyIds = forms
-        .filter(f => !(f as Form & { _adminForeign?: boolean })._adminForeign)
-        .filter(f => f.fields.length === 0 && f.title === 'Untitled Form' && !f.description && !f.logicScript)
-        .map(f => f.id);
-      if (emptyIds.length === 0) return;
-      set(s => ({ forms: s.forms.filter(f => !emptyIds.includes(f.id)) }));
-      if (storageMode === 'api' && !api.isDemoMode()) {
-        for (const id of emptyIds) {
-          api.deleteForm(id).catch(() => {});
-        }
-      }
-    };
+    // Empty, untitled forms are deliberate drafts. Only an explicit delete
+    // action may remove them; loading the workspace must preserve them.
 
     // ---- In-builder undo/redo (per form; ephemeral — never persisted) ----
     const HISTORY_CAP = 50;
@@ -494,7 +478,6 @@ export const useFormStore = create<FormState>()(
                 isInitialized: true,
                 error: null,
               });
-              purgeEmptyForms();
               return;
             }
             // fetchAllForms() returned null: the READ FAILED. In cloud mode the persist
@@ -503,7 +486,6 @@ export const useFormStore = create<FormState>()(
             // showed a first-time-user hero to an owner whose 47 forms had just failed to
             // load. Record the failure so consumers can tell "empty" from "broken".
             set({ error: 'Failed to load forms', isLoading: false, isInitialized: true });
-            purgeEmptyForms();
             return;
           }
 
@@ -518,7 +500,6 @@ export const useFormStore = create<FormState>()(
             isInitialized: true,
           });
         }
-        purgeEmptyForms();
       },
 
       setStorageMode: (mode: StorageMode) => {

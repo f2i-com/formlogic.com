@@ -358,7 +358,7 @@ class E2eeVaultTest extends E2eeTestCase
 
         // Reads stay available so a disabled beta never bricks an existing vault.
         $out = $ctrl->getVault($this->requestWith(['userId' => $this->userId]), new SlimResponse());
-        $this->assertSame(404, $out->getStatusCode());
-        $this->assertSame('vault_not_found', $this->decode($out)['code'] ?? null);
+        $this->assertSame(200, $out->getStatusCode());
+        $this->assertSame(['data' => ['vault' => null]], $this->decode($out));
     }
 }

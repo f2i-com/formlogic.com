@@ -92,12 +92,12 @@ class VaultApiTest extends TestCase
 
     // ── GET / PUT round trip ──
 
-    public function testGetWithoutVaultIs404Typed(): void
+    public function testGetWithoutVaultReturnsSuccessfulEmptyState(): void
     {
         $userId = $this->insertUser(self::$pdo);
         $resp = self::$controller->getVault($this->request('GET', null, $userId), new SlimResponse());
-        $this->assertSame(404, $resp->getStatusCode());
-        $this->assertSame('vault_not_found', $this->decode($resp)['code'] ?? null);
+        $this->assertSame(200, $resp->getStatusCode());
+        $this->assertSame(['data' => ['vault' => null]], $this->decode($resp));
     }
 
     public function testCreateRoundTripsAndSecondCreateConflicts(): void
@@ -165,7 +165,8 @@ class VaultApiTest extends TestCase
 
         // Nothing was stored by any of the rejected attempts.
         $get = self::$controller->getVault($this->request('GET', null, $userId), new SlimResponse());
-        $this->assertSame(404, $get->getStatusCode());
+        $this->assertSame(200, $get->getStatusCode());
+        $this->assertSame(['data' => ['vault' => null]], $this->decode($get));
     }
 
     // ── Passphrase change (version CAS) ──

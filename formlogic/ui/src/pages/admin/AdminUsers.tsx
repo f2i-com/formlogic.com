@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Badge } from '../../components/ui/Badge';
 import { DataTable, type Column } from '../../components/ui/DataTable';
@@ -6,6 +6,7 @@ import { api, type AdminUser } from '../../lib/api';
 import { formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
 import { formatRelativeTime } from '../../lib/utils';
 import { AdminError } from './adminUi';
+import { useAdminQuery } from './useAdminQuery';
 
 /**
  * /admin/users — the user directory (counts only, never record data).
@@ -14,27 +15,13 @@ import { AdminError } from './adminUi';
 export function AdminUsers() {
   const navigate = useNavigate();
   const tz = useAdminTimezone();
-  const [rows, setRows] = useState<AdminUser[]>([]);
-  const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // setState only inside the promise callback so the effect body stays render-clean
-  // (loading starts true; later searches keep the previous rows visible).
-  // PAGE_SIZE is passed to BOTH the API call and the table: the server slices
-  // pages by the request limit while DataTable computes page math from its own
-  // pageSize — mismatched values render oversized first pages + wrong counts.
   const PAGE_SIZE = 25;
-  const load = useCallback(() => {
-    api.adminListUsers(search, page + 1, PAGE_SIZE).then((r) => {
-      if (r.data) { setRows(r.data.users); setTotal(r.data.total); setError(null); }
-      else { setError(r.error || 'Could not load users'); }
-      setLoading(false);
-    });
-  }, [search, page]);
-  useEffect(() => { load(); }, [load]);
+  const fetchUsers = useCallback(() => api.adminListUsers(search, page + 1, PAGE_SIZE), [search, page]);
+  const { data, loading, error, refresh } = useAdminQuery(fetchUsers);
+  const rows = data?.users ?? [];
+  const total = data?.total ?? 0;
 
   const columns: Column<AdminUser>[] = useMemo(() => [
     {
@@ -77,12 +64,10 @@ export function AdminUsers() {
     { key: 'plan', label: 'Plan', render: (u) => <span className="text-xs">{u.plan}</span> },
   ], [tz]);
 
-  // A failed fetch must not masquerade as the empty "No users match" state.
-  if (error && rows.length === 0) {
-    return <AdminError message={error} onRetry={() => { setLoading(true); load(); }} />;
-  }
-
   return (
+    <div className="space-y-4 rounded-2xl border border-gray-200 bg-white p-4 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
+      <p className="text-sm text-gray-500 dark:text-slate-400">Find an account to manage access, view its resources, or restore a backup.</p>
+      {error && <AdminError message={error} onRetry={refresh} />}
     <DataTable<AdminUser & Record<string, unknown>>
       data={rows as Array<AdminUser & Record<string, unknown>>}
       columns={columns as Column<AdminUser & Record<string, unknown>>[]}
@@ -97,7 +82,8 @@ export function AdminUsers() {
       searchPlaceholder="Search email or name…"
       isLoading={loading}
       onRowClick={(u) => navigate(`/admin/users/${String(u.id)}`)}
-      emptyMessage="No users match"
+      emptyMessage={error ? "User list unavailable" : search ? "No users match your search" : "No users yet"}
     />
+    </div>
   );
 }

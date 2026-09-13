@@ -17,8 +17,8 @@ export function flowExecutionLocation(flow: { executionLocation?: unknown } | nu
 
 /** One-line option copy (plan §5.7). */
 export const EXECUTION_LOCATION_DESCRIPTIONS: Record<FlowExecutionLocation, string> = {
-  auto: 'Let FormLogic decide (browser or your desktop)',
-  desktop: 'Your FormLogic Desktop (private, unmetered)',
+  auto: 'Run in your browser, using connected OAIY tools when needed',
+  desktop: 'Linked desktop with encrypted flow-relay support (private, unmetered)',
   cloud: 'FormLogic Cloud (uses plan credits)',
 };
 

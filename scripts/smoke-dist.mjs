@@ -172,7 +172,8 @@ async function main() {
     // ── 3. Structural sweep ──
     for (const required of [
       'index.html', '.htaccess', 'install.php', 'INSTALL.txt', 'UPGRADE.txt', 'VERSION',
-      'manifest.json',
+      'manifest.json', 'hosted-runtime/index.html', 'hosted-runtime/runtime-manifest.json',
+      'api/storage/hosted-apps/.gitkeep',
       'api/public/index.php', 'api/public/.htaccess', 'api/config/settings.php',
       'api/database/schema.sql', 'api/database/migrate.php', 'api/composer.json',
       'api/vendor/autoload.php', 'api/.env.example', 'api/bin/upgrade.php', 'api/bin/provision-demo.php', 'api/VERSION',
@@ -227,7 +228,7 @@ async function main() {
       if (keyId !== sig.keyId) fail('manifest.sig.json keyId does not match its public key');
       console.log(`smoke-dist: release signature OK (keyId ${keyId})`);
     } else {
-      console.log('smoke-dist: package is UNSIGNED (production installs will refuse it)');
+      console.log('smoke-dist: no optional signature; online production updates require this ZIP to match an official GitHub release digest');
     }
     console.log(`smoke-dist: integrity OK (version ${versionFile}, ${hashChecked} checksums verified)`);
 

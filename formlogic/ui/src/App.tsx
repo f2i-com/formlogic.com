@@ -55,6 +55,7 @@ function lazyWithRetry(factory: () => Promise<{ default: React.ComponentType<any
 }
 
 const HostedAppPage = lazyWithRetry(() => import('./pages/apps/HostedAppPage'));
+const NativeAppPage = lazyWithRetry(() => import('./pages/apps/NativeAppPage'));
 
 // Lazy load pages for better performance
 const Dashboard = lazyWithRetry(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
@@ -106,7 +107,7 @@ const AppRelationsManager = lazyWithRetry(() => import('./pages/apps/AppRelation
 const AppRecords = lazyWithRetry(() => import('./pages/apps/AppRecords').then(m => ({ default: m.AppRecords })));
 
 // Lazy load app runtime
-const AppRuntimeRoot = lazyWithRetry(() => import('./components/app-runtime/AppRuntimeRoot').then(m => ({ default: m.AppRuntimeRoot })));
+const AppRuntimeRoot = lazyWithRetry(() => import('./components/app-runtime/AppEntryRouter').then(m => ({ default: m.AppEntryRouter })));
 
 // Lazy load pack marketplace pages
 const PackGalleryPage = lazyWithRetry(() => import('./pages/PackGalleryPage'));
@@ -315,6 +316,7 @@ function AppRoutes() {
         {/* Platform-aware app download page — the launch-page "Get the app" fallback (FL-NATIVE-001) */}
         <Route path="/download" element={<DownloadPage />} />
         {/* App runtime - accessible with platform auth */}
+        <Route path="/app/:appSlug/native" element={<NativeAppPage />} />
         <Route path="/app/:appSlug/project" element={<HostedAppPage />} />
         <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
         {/* 404 catch-all */}
@@ -342,6 +344,8 @@ function AppRoutes() {
 
         {/* The FormLogic platform — Dashboard at /dashboard because "/" is the landing */}
         <Route element={<AppShell />}>
+          <Route path="/packs" element={<PackGalleryPage />} />
+          <Route path="/packs/:slug" element={<PackDetailPage />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/forms" element={<FormsList />} />
           <Route path="/settings" element={<Settings />} />
@@ -383,8 +387,8 @@ function AppRoutes() {
         {/* Public content (same as signed-out) */}
         <Route path="/accept-invite" element={<AcceptInvite />} />
         <Route path="/oauth/authorize" element={<OAuthAuthorize />} />
-        <Route path="/packs" element={<PackGalleryPage />} />
-        <Route path="/packs/:slug" element={<PackDetailPage />} />
+
+
         <Route path="/docs" element={<Docs />} />
         <Route path="/ai-setup" element={<AiSetupPage />} />
         <Route path="/aokie" element={<AokieGuidePage />} />
@@ -393,6 +397,7 @@ function AppRoutes() {
         <Route path="/form/:formId" element={<FormResponse />} />
         <Route path="/open/app/:appSlug/*" element={<OpenInApp />} />
         <Route path="/download" element={<DownloadPage />} />
+        <Route path="/app/:appSlug/native" element={<NativeAppPage />} />
         <Route path="/app/:appSlug/project" element={<HostedAppPage />} />
         <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
 
@@ -407,6 +412,8 @@ function AppRoutes() {
     <Routes>
       {/* Main app routes with sidebar */}
       <Route element={<AppShell />}>
+          <Route path="/packs" element={<PackGalleryPage />} />
+          <Route path="/packs/:slug" element={<PackDetailPage />} />
         <Route path="/" element={<Dashboard />} />
         <Route path="/forms" element={<FormsList />} />
         <Route path="/flows" element={<FlowsWorkspace />} />
@@ -496,9 +503,7 @@ function AppRoutes() {
       <Route path="/forms/:formId/screen/edit" element={<CustomScreenStudio />} />
       <Route path="/apps/:appId/home/edit" element={<AppHomeStudio />} />
 
-      {/* Pack marketplace */}
-      <Route path="/packs" element={<PackGalleryPage />} />
-      <Route path="/packs/:slug" element={<PackDetailPage />} />
+
 
       {/* Docs */}
       <Route path="/docs" element={<Docs />} />
@@ -518,7 +523,8 @@ function AppRoutes() {
       <Route path="/open/app/:appSlug/*" element={<OpenInApp />} />
       <Route path="/download" element={<DownloadPage />} />
       {/* App runtime (full screen, separate layout) */}
-      <Route path="/app/:appSlug/project" element={<HostedAppPage />} />
+      <Route path="/app/:appSlug/native" element={<NativeAppPage />} />
+        <Route path="/app/:appSlug/project" element={<HostedAppPage />} />
       <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
 
       {/* 404 catch-all */}

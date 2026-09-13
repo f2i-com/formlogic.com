@@ -92,7 +92,8 @@ function ActionButton({
 export function DesktopConnectionPopover() {
   const user = useAuthStore((s) => s.user);
   const isDemo = !!user?.isDemo;
-  const presence = useFlowsDesktopPresence();
+  const [open, setOpen] = useState(false);
+  const presence = useFlowsDesktopPresence(false, open);
   const view = deriveConnectionView(presence, isDemo);
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const isMobile = useUIStore((s) => s.isMobile);
@@ -100,7 +101,6 @@ export function DesktopConnectionPopover() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [loadedLists, setLists] = useState<LoadedLists>({ kind: null, services: null, plugins: null, error: null });
   const [listsLoading, setListsLoading] = useState(false);
@@ -298,13 +298,13 @@ export function DesktopConnectionPopover() {
           {view.kind === 'none' && (
             <div className="rounded-xl border border-dashed border-gray-300 p-3 text-center dark:border-slate-700">
               <p className="text-xs text-gray-500 dark:text-slate-400">
-                Services, plugins and Desktop AI run in the free FormLogic Desktop app.
+                Local AI, services, and plugins run in OAIY.
               </p>
               <button
                 type="button"
                 onClick={() => {
                   setOpen(false);
-                  navigate('/settings#linked-desktops');
+                  navigate('/settings#local-runtime');
                 }}
                 className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-700"
               >

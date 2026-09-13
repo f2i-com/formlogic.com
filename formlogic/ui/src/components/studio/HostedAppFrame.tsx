@@ -3,6 +3,8 @@ import { api } from "../../lib/api";
 import { workspaceBridge } from "../../lib/softn/workspaceBridge";
 import { getZippWasmBytes, matchesZippRuntime } from "../../lib/formlogic/zipp-bytes";
 
+import { nativeAppStorage } from "../../lib/nativeAppStorage";
+
 const navigate = (path: string) => window.location.assign(path);
 // The frame bootstraps once. Its DOM lifetime must match the effect's client
 // identity, including replacing source without changing a deployment version.
@@ -21,10 +23,12 @@ export function HostedAppFrame({
   slug,
   client,
   version,
+  native,
 }: {
   slug: string;
   client: Record<string, string>;
   version: number;
+  native?: { assets: Record<string, string>; origins?: string[] };
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
 
@@ -35,6 +39,7 @@ export function HostedAppFrame({
     let initializing = false;
     let expired = false;
     let inFlight = 0;
+    const storage = native ? nativeAppStorage(slug) : undefined;
     const controller = new AbortController();
     const timeout = window.setTimeout(
       () => {
@@ -52,6 +57,11 @@ export function HostedAppFrame({
         channel || initializing || expired
       )
         return;
+      if (native && event.data.nativeProtocol !== 1) {
+        clearTimeout(timeout);
+        setError("This hosted runtime does not support native apps yet. Update the hosted app runtime and reload.");
+        return;
+      }
       if (!matchesZippRuntime(event.data.zipp)) {
         clearTimeout(timeout);
         setError("This app runtime is out of date. Please update the hosted app runtime and reload.");
@@ -68,6 +78,12 @@ export function HostedAppFrame({
         return;
       }
       if (!active || expired) return;
+      let savedStorage: Record<string, string> | undefined;
+      try { savedStorage = storage?.read(); } catch {
+        clearTimeout(timeout);
+        setError("This app’s saved browser session could not be read. Check browser storage and reload.");
+        return;
+      }
       setError("");
       channel = new MessageChannel();
       channel.port1.onmessage = async (event) => {
@@ -103,6 +119,19 @@ export function HostedAppFrame({
         }
         inFlight++;
         try {
+          if (storage && action === "nativeStorage") {
+            reply({ result: storage.mutate(input) });
+            return;
+          }
+          if (native && action === "nativeRequest") {
+            if (typeof input.url !== "string" || !input.options || typeof input.options !== "object" || Array.isArray(input.options)) throw new Error("Invalid app request");
+            const url = new URL(input.url, window.location.origin);
+            if (url.origin !== window.location.origin && !native.origins?.includes(url.origin)) throw new Error("This URL is not part of the app backend");
+            const options = input.options as Record<string, unknown>;
+            const result = await api.runNativeRequest(slug, { path: url.pathname, query: Object.fromEntries(url.searchParams), method: options.method || "GET", headers: options.headers || {}, body: options.body || {} }, controller.signal);
+            reply(result.error ? { error: result.error } : result.data);
+            return;
+          }
           if (["workspaceInfo", "workspaceRecords", "workspaceOpen"].includes(action)) {
             reply({ result: await workspaceBridge(slug, action, input, navigate) });
             return;
@@ -124,7 +153,10 @@ export function HostedAppFrame({
         {
           type: "formlogic:init",
           client,
-          appId: `hosted-${slug}-${version}`,
+          appId: native ? `native-${slug}` : `hosted-${slug}-${version}`,
+          native: !!native,
+          assets: native?.assets,
+          storage: savedStorage,
           dark: document.documentElement.classList.contains("dark"),
           // Clone the public bytes; never transfer/detach the page's cache.
           zippWasm,
@@ -142,7 +174,7 @@ export function HostedAppFrame({
       window.removeEventListener("message", receive);
       channel?.port1.close();
     };
-  }, [slug, client, version]);
+  }, [slug, client, version, native]);
   return (
     <div className="flex h-full min-h-[420px] min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-950">
       {error && (

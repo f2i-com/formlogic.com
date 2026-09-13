@@ -20,10 +20,10 @@ export function RuntimeConnectionControl() {
   const { pathname } = useLocation();
   useEffect(() => {
     if (isDemo) return;
-    const stopDetection = subscribeOaiyStatus(setOaiy);
+    const stopDetection = subscribeOaiyStatus(setOaiy, { probe: paired || oaiy.available });
     const stopPairing = subscribeOaiyPaired(setPaired);
     return () => { stopDetection(); stopPairing(); };
-  }, [isDemo]);
+  }, [isDemo, paired, oaiy.available]);
   if (isDemo || !oaiy.available) return <DesktopConnectionPopover />;
   if (isMobile && pathClaimsBottomEdge(pathname)) return null;
   const label = paired ? 'OAIY connected' : 'Connect OAIY';

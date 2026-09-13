@@ -325,6 +325,31 @@ class FlowWorkspaceQueueTest extends TestCase
         $this->assertSame($answers, $run['inputSnapshot']['event']['data']['answers']);
     }
 
+    public function testNativeRecordSubscriptionsQueueOnlyCapturedTargetsAndDeduplicateRetries(): void
+    {
+        $flow = self::$flows->createFlow($this->appId, $this->userA, [
+            'name' => 'Welcome', 'slug' => 'welcome', 'enabled' => true,
+            'flowJson' => ['nodes' => [['id' => 'in', 'type' => 'input']], 'edges' => []],
+        ]);
+        $binding = self::$flows->createBinding($this->appId, ['flow' => 'welcome', 'event' => 'app.record.created.users', 'mode' => 'async', 'enabled' => true, 'inputMap' => ['record' => '$event.data.record']]);
+        $this->assertSame([['event' => 'app.record.created.users', 'bindings' => [$binding['id']]]], self::$flows->nativeRecordSubscriptions($this->appId));
+        // A second trigger added after the signup must not receive that old event.
+        self::$flows->createBinding($this->appId, ['flow' => 'welcome', 'event' => 'app.record.created.users', 'mode' => 'async', 'enabled' => true]);
+        $id = bin2hex(random_bytes(16));
+        $data = ['table' => 'users', 'operation' => 'created', 'record' => ['id' => 7, 'name' => 'Local signup'], 'recordPreview' => true];
+        $this->assertSame(1, self::$flows->enqueueNativeRecordEvent($this->appId, $id, 'app.record.created.users', $data, [$binding['id']]));
+        $this->assertSame(0, self::$flows->enqueueNativeRecordEvent($this->appId, $id, 'app.record.created.users', $data, [$binding['id']]));
+        $runs = self::$flows->listQueuedRuns($this->appId);
+        $this->assertCount(1, $runs);
+        $run = self::$flows->claimRun($this->appId, $runs[0]['runId'], ['runtime' => 'browser']);
+        $this->assertSame($binding['id'], $run['bindingId']);
+        $this->assertSame($data['record'], $run['inputSnapshot']['event']['data']['record']);
+        $this->assertSame($this->appId, $run['inputSnapshot']['event']['data']['appId']);
+        self::$flows->updateFlow($this->appId, $flow['id'], ['enabled' => false]);
+        $this->assertSame([], self::$flows->nativeRecordSubscriptions($this->appId));
+        $this->assertSame(0, self::$flows->enqueueNativeRecordEvent($this->appId, bin2hex(random_bytes(16)), 'app.record.created.users', $data, [$binding['id']]));
+    }
+
     public function testSubmissionBindingEnqueueCappedAtFive(): void
     {
         $this->makeWorkspaceFlow($this->userA);

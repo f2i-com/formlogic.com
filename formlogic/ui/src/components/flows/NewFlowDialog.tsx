@@ -3,7 +3,7 @@
 // Picks a starter template, creation scope (Workspace or an installed app), and name. Templates
 // that rely on an Aokie connector can auto-target the only installed app that grants Aokie.
 import { useId, useMemo, useState } from 'react';
-import { Check, ClipboardList, FileText, MessageSquare, PhoneIncoming, Plug, Workflow, type LucideIcon } from 'lucide-react';
+import { ArrowRight, Check, ClipboardList, FileText, MessageSquare, PhoneIncoming, Plug, Workflow, type LucideIcon } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { cn } from '../../lib/utils';
@@ -37,6 +37,7 @@ export function NewFlowDialog({
   apps = [],
   initialTemplate = null,
   fixedAppId,
+  embedded = false,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -46,6 +47,8 @@ export function NewFlowDialog({
   initialTemplate?: FlowStarterTemplate | null;
   /** App Studio creates automations in the app the author is editing. */
   fixedAppId?: string;
+  /** Reuse the creation form as the Automations workspace landing view. */
+  embedded?: boolean;
 }) {
   const formId = useId();
   const availableConnectorIds = useMemo(() => connectorIdsForApps(apps), [apps]);
@@ -91,28 +94,21 @@ export function NewFlowDialog({
     onCreate({ ...buildFlowCreateInput(template.id, name), appId: scopeAppId });
   };
 
-  return (
-    <Modal
-      isOpen={isOpen}
-      onClose={() => { if (!creating) onClose(); }}
-      title="Create an automation"
-      description="Choose a starting point. Then add steps, test the result and connect a trigger."
-      size="xl"
-      footer={<div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs text-gray-500 dark:text-slate-400">You will review the flow before connecting a trigger.</p>
+  const footer = (<div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-gray-500 dark:text-slate-400">Next: connect and test your steps in the editor.</p>
         <div className="flex gap-2">
-          <Button type="button" variant="ghost" onClick={onClose} disabled={creating}>Cancel</Button>
-          <Button type="submit" form={formId} isLoading={creating} disabled={creating || !canCreate}>Create automation</Button>
+          <Button type="button" variant="ghost" onClick={onClose} disabled={creating}>{embedded ? 'Existing flows' : 'Cancel'}</Button>
+          <Button type="submit" form={formId} isLoading={creating} disabled={creating || !canCreate}>Create automation <ArrowRight className="ml-2 h-4 w-4" /></Button>
         </div>
-      </div>}
-    >
+      </div>);
+  const content = (
       <form id={formId}
         onSubmit={(e) => { e.preventDefault(); submit(); }}
-        className="space-y-5 p-4 sm:p-6"
+        className="space-y-7 p-5 sm:p-7"
       >
         <div>
-          <label className="mb-1.5 block text-xs font-medium text-gray-600 dark:text-slate-300" htmlFor="new-flow-name">
-            Automation name
+          <label className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-slate-200" htmlFor="new-flow-name">
+            <span aria-hidden="true" className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-xs text-gray-500 dark:bg-slate-800 dark:text-slate-400">1</span> Automation name
           </label>
           <input
             id="new-flow-name"
@@ -127,7 +123,7 @@ export function NewFlowDialog({
         </div>
 
         <fieldset>
-          <legend className="mb-2 text-xs font-medium text-gray-600 dark:text-slate-300">Create in</legend>
+          <legend className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-slate-200"><span aria-hidden="true" className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-xs text-gray-500 dark:bg-slate-800 dark:text-slate-400">2</span> Create in</legend>
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
             {!fixedAppId && <ScopeButton
               active={scopeAppId === null}
@@ -154,7 +150,7 @@ export function NewFlowDialog({
               so this is a one-way choice. State it here rather than letting the owner
               discover it when the trigger they want is not offered. */}
           <p className="mt-2 text-[11px] text-gray-500 dark:text-slate-400">
-            You can&apos;t move an automation between these later — pick the app if you want its events.
+            Choose an app to use its events and connectors. This location cannot be changed later.
           </p>
           {autoScopeAppId && !scopeEdited && scopeAppId === autoScopeAppId && (
             <p className="mt-2 text-[11px] text-primary-600 dark:text-primary-300">
@@ -164,7 +160,7 @@ export function NewFlowDialog({
         </fieldset>
 
         <fieldset>
-          <legend className="mb-2 text-xs font-medium text-gray-600 dark:text-slate-300">Start from</legend>
+          <legend className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-slate-200"><span aria-hidden="true" className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-xs text-gray-500 dark:bg-slate-800 dark:text-slate-400">3</span> Choose a starting point</legend>
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
             {visibleTemplates.map((t) => {
               const active = t.id === template.id;
@@ -216,6 +212,22 @@ export function NewFlowDialog({
 
         {connectorUnavailable && <p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">Choose an app with Aokie access for this template, or select a different starting point.</p>}
       </form>
+  );
+  if (embedded) return (
+    <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-700/60 dark:bg-slate-900">
+      <div className="border-b border-gray-100 bg-gradient-to-br from-primary-50/60 to-white p-5 dark:border-slate-800 dark:from-primary-500/5 dark:to-slate-900 sm:p-7">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-primary-600 dark:text-primary-300">Flow setup</p>
+        <h2 className="text-xl font-semibold tracking-tight text-gray-900 dark:text-white sm:text-2xl">Create a new flow</h2>
+        <p className="mt-2 max-w-xl text-sm leading-relaxed text-gray-600 dark:text-slate-400">Set up your flow here, then build it visually. Nothing runs until you test it or connect a trigger.</p>
+      </div>
+      {content}
+      <div className="border-t border-gray-100 bg-gray-50/70 p-5 dark:border-slate-800 dark:bg-slate-800/30 sm:p-6">{footer}</div>
+    </section>
+  );
+  return (
+    <Modal isOpen={isOpen} onClose={() => { if (!creating) onClose(); }} title="Create an automation"
+      description="Choose a starting point. Then add steps, test the result and connect a trigger." size="xl" footer={footer}>
+      {content}
     </Modal>
   );
 }

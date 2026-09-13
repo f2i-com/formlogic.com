@@ -12,7 +12,7 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 
 /**
  * E2EE vault API (docs/E2EE_PRIVATE_FORMS_PLAN.md §16-P2):
- *   GET  /api/vault                    → the caller's vault (404 vault_not_found)
+ *   GET  /api/vault                    → the caller's vault, or null when not set up
  *   PUT  /api/vault                    → create-only (409 vault_exists)
  *   POST /api/vault/change-passphrase  → version-CAS passphrase rewrap
  *
@@ -39,9 +39,8 @@ class VaultController
         }
         $userId = (string) $request->getAttribute('userId');
         $vault = $this->vaultService->getVault($userId);
-        if ($vault === null) {
-            return $this->jsonError($response, 'No vault exists for this account.', 404, 'vault_not_found');
-        }
+        // An optional vault is normal for accounts that have not enabled encryption.
+        // Return a successful empty state so shell status checks do not report errors.
         return $this->jsonResponse($response, ['data' => ['vault' => $vault]]);
     }
 

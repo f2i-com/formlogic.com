@@ -1,0 +1,23 @@
+name: Build pinned hosted app runtime
+description: Build and verify the compatible Softn runtime from a clean source checkout
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: f2i-com/softn.com
+        ref: 9a36d78a219f8d160b76f7437c0016a492528c81
+        path: .runtime-source/softn.com
+        persist-credentials: false
+    - name: Install pinned runtime dependencies
+      shell: bash
+      working-directory: ${{ github.workspace }}/.runtime-source/softn.com
+      run: npm ci
+    - name: Build and verify hosted runtime
+      shell: bash
+      working-directory: ${{ github.workspace }}/formlogic/ui
+      env:
+        SOFTN_REPO: ${{ github.workspace }}/.runtime-source/softn.com
+      run: |
+        npm run build:hosted-runtime
+        npm run test:hosted-runtime

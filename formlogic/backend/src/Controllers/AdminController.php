@@ -696,6 +696,32 @@ class AdminController
         return $this->jsonResponse($response, $this->upgrade->status());
     }
 
+    public function upgradeLatest(Request $request, Response $response): Response
+    {
+        try {
+            return $this->jsonResponse($response, ['release' => $this->upgrade->latestOfficialRelease()]);
+        } catch (\RuntimeException $error) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $error->getMessage()], 502);
+        }
+    }
+
+    public function upgradeDownload(Request $request, Response $response): Response
+    {
+        $body = $request->getParsedBody() ?? [];
+        if (!is_int($body['releaseId'] ?? null) || !is_int($body['assetId'] ?? null) || !is_string($body['digest'] ?? null)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Select a release using Check for updates first.'], 400);
+        }
+        try {
+            $info = $this->upgrade->stageOfficialRelease($body['releaseId'], $body['assetId'], $body['digest']);
+        } catch (\FormLogic\Services\UpgradeInProgressException $error) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $error->getMessage(), 'code' => 'upgrade_in_progress'], 409);
+        } catch (\RuntimeException $error) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $error->getMessage()], 400);
+        }
+        $this->audit($request, 'admin.upgrade_download', null, ['version' => $info['version'], 'digest' => $info['digest']]);
+        return $this->jsonResponse($response, ['staged' => $info]);
+    }
+
     public function upgradeUpload(Request $request, Response $response): Response
     {
         $files = $request->getUploadedFiles();

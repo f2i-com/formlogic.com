@@ -227,7 +227,7 @@ describe('TestRunDrawer — run dispatch per executionLocation', () => {
       });
     });
     const container = await renderDrawer({}, 'desktop');
-    await click(buttonByText(container, 'Run on Desktop'));
+    await click(buttonByText(container, 'Run via Desktop relay'));
     await flush();
 
     // Mid-flight: the queue position line and the live node timeline are visible.
@@ -251,7 +251,7 @@ describe('TestRunDrawer — run dispatch per executionLocation', () => {
       error: { code: 'desktop_offline', message: 'Desktop is offline' },
     });
     const container = await renderDrawer({}, 'desktop');
-    await click(buttonByText(container, 'Run on Desktop'));
+    await click(buttonByText(container, 'Run via Desktop relay'));
     await flush();
     expect(container.textContent).toContain('desktop_offline: Desktop is offline');
   });

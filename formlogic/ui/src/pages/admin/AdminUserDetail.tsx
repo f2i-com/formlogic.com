@@ -1,15 +1,16 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Archive, ArrowLeft, Boxes, FileJson, FileText, KeyRound, Recycle, ShieldCheck, Workflow } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { Input } from '../../components/ui/Input';
-import { api, type AdminUserDetail as AdminUserDetailData, type ScheduledBackupRun } from '../../lib/api';
+import { api, type ScheduledBackupRun } from '../../lib/api';
 import { formatDateInZone, formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
 import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
-import { AdminSpinner } from './adminUi';
+import { AdminError, AdminSpinner } from './adminUi';
+import { useAdminQuery } from './useAdminQuery';
 import { AdminAccountTools } from './AdminAccountTools';
 
 /**
@@ -21,22 +22,23 @@ import { AdminAccountTools } from './AdminAccountTools';
  */
 export function AdminUserDetail() {
   const { userId = '' } = useParams();
+  return <AdminUserDetailPage key={userId} userId={userId} />;
+}
+
+function AdminUserDetailPage({ userId }: { userId: string }) {
   const navigate = useNavigate();
   const me = useAuthStore((s) => s.user);
   const tz = useAdminTimezone();
-  const [user, setUser] = useState<AdminUserDetailData | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const fetchUser = useCallback(() => api.adminGetUser(userId), [userId]);
+  const { data, error, refresh: load } = useAdminQuery(fetchUser);
+  const user = data?.user;
   const [confirmAdmin, setConfirmAdmin] = useState<boolean | null>(null);
-
-  const load = useCallback(() => {
-    api.adminGetUser(userId).then((r) => {
-      if (r.data) { setUser(r.data.user); setError(null); } else { setError(r.error || 'Could not load this user'); }
-    });
-  }, [userId]);
-  useEffect(() => { load(); }, [load]);
+  const [adminBusy, setAdminBusy] = useState(false);
 
   const toggleAdmin = async (next: boolean) => {
+    setAdminBusy(true);
     const r = await api.adminSetAdmin(userId, next);
+    setAdminBusy(false);
     if (r.error) toast.error('Could not update', r.error);
     else { toast.success(next ? 'Administrator access granted' : 'Administrator access removed'); load(); }
     setConfirmAdmin(null);
@@ -79,19 +81,11 @@ export function AdminUserDetail() {
   };
 
   // Scheduled-backup recovery: which retained days hold a zip for THIS account.
-  const [backupDays, setBackupDays] = useState<ScheduledBackupRun[] | null>(null);
+  const fetchBackups = useCallback(() => api.adminListScheduledBackups(), []);
+  const { data: backupData, error: backupError, refresh: reloadBackups } = useAdminQuery(fetchBackups);
+  const backupDays: ScheduledBackupRun[] | null = backupData ? backupData.runs.filter(run => run.accounts.some(account => account.id === userId && !account.error)) : null;
   const [restoreDate, setRestoreDate] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(false);
-
-  useEffect(() => {
-    api.adminListScheduledBackups().then((r) => {
-      if (r.data) {
-        setBackupDays(r.data.runs.filter((run) =>
-          run.accounts.some((a) => a.id === userId && !a.error)
-        ));
-      }
-    });
-  }, [userId]);
 
   const restoreFromBackup = async () => {
     const date = restoreDate;
@@ -123,7 +117,7 @@ export function AdminUserDetail() {
       </Link>
 
       {error ? (
-        <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+        <AdminError message={error} onRetry={load} />
       ) : !user ? (
         <AdminSpinner label="Loading user" />
       ) : (
@@ -155,7 +149,7 @@ export function AdminUserDetail() {
             </div>
           </div>
 
-          <section>
+          <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-1.5">
               <Boxes className="h-4 w-4" /> Apps ({user.apps.length})
             </h3>
@@ -173,7 +167,7 @@ export function AdminUserDetail() {
             )}
           </section>
 
-          <section>
+          <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-1.5">
               <FileText className="h-4 w-4" /> Forms ({user.forms.length})
             </h3>
@@ -191,8 +185,8 @@ export function AdminUserDetail() {
             )}
           </section>
 
-          <section>
-            <div className="flex items-center justify-between mb-2">
+          <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white flex items-center gap-1.5">
                 <Workflow className="h-4 w-4" /> Flows ({user.flows.length})
               </h3>
@@ -215,8 +209,8 @@ export function AdminUserDetail() {
               </div>
             )}
           </section>
-          <section>
-            <div className="flex items-center justify-between mb-2">
+          <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white flex items-center gap-1.5">
                 <Recycle className="h-4 w-4" /> Recycle bin
               </h3>
@@ -228,11 +222,11 @@ export function AdminUserDetail() {
               Things this user deleted in the last 30 days — restorable on their behalf (names and counts only; snapshot contents stay private).
             </p>
           </section>
-          <section>
+          <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-1.5">
               <Archive className="h-4 w-4" /> Restore from backup
             </h3>
-            {backupDays === null ? (
+            {backupError ? <AdminError message={backupError} onRetry={reloadBackups} /> : backupDays === null ? (
               <p className="text-xs text-gray-400 dark:text-slate-500">Loading backups…</p>
             ) : backupDays.length === 0 ? (
               <p className="text-xs text-gray-400 dark:text-slate-500">
@@ -266,6 +260,7 @@ export function AdminUserDetail() {
           {/* Support tools: password reset, email change, payments/complimentary,
               and the heavily-gated full account deletion. */}
           <AdminAccountTools
+            key={userId}
             userId={userId}
             email={user.email}
             isAdmin={!!user.isAdmin}
@@ -306,7 +301,8 @@ export function AdminUserDetail() {
 
       <ConfirmDialog
         isOpen={confirmAdmin !== null}
-        onClose={() => setConfirmAdmin(null)}
+        onClose={() => { if (!adminBusy) setConfirmAdmin(null); }}
+        isLoading={adminBusy}
         onConfirm={() => confirmAdmin !== null && toggleAdmin(confirmAdmin)}
         title={confirmAdmin ? 'Grant administrator access?' : 'Remove administrator access?'}
         message={confirmAdmin

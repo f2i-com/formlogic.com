@@ -1,15 +1,12 @@
 // FormLogic Flows workspace — the start page at /flows (no flow open).
 //
-// One responsive surface owns everything that used to be split between the library rail
-// and the old overview panel: a compact hero, the flow list (search + scope filter +
-// per-flow actions) as the main column, readiness + recent runs in a side rail on large
-// screens, and starter templates. Opening a flow leaves this page for the full-page editor.
+// Searchable, paginated flow library with optional connection status and recent runs.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
-  ClipboardList, Copy, FileText, Laptop, Loader2, MessageSquare, MoreVertical, Pencil, PhoneIncoming,
-  Play, Plus, Power, RefreshCw, Search, Sparkles, Trash2, Workflow, Zap, type LucideIcon,
+  Copy, Laptop, Loader2, MoreVertical, Pencil,
+  Play, Plus, Power, RefreshCw, Search, Sparkles, Trash2, Workflow,
 } from 'lucide-react';
 import { listProviders } from '../../client-runtime/flows/aiProviders';
 import { getOaiyStatus, subscribeOaiyStatus } from '../../client-runtime/oaiy/oaiyDetection';
@@ -20,7 +17,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { Button } from '../ui/Button';
 import { formatAbsoluteTimeTitle, formatRelativeTime } from './relativeTime';
 import { statusChipStyle } from './runHistoryChip';
-import { flowStarterTemplatesForConnectors, type FlowStarterTemplate } from './starterTemplates';
+import { type FlowStarterTemplate } from './starterTemplates';
 import {
   describeFlowsLastSeen,
   type FlowsDesktopPresence,
@@ -33,13 +30,6 @@ export interface FlowGroup {
   app: AppListItem | null;
   flows: FlowDefinition[];
 }
-
-const TEMPLATE_ICON: Record<string, LucideIcon> = {
-  blank: FileText,
-  'caller-lookup': PhoneIncoming,
-  'call-summary': ClipboardList,
-  'sms-auto-draft': MessageSquare,
-};
 
 interface FlowsOverviewProps {
   groups: FlowGroup[];
@@ -64,7 +54,7 @@ function RunStatusChip({ run }: { run: FlowRunLog }) {
 }
 
 export function FlowsOverview({
-  groups, desktopPresence, availableConnectorIds = [], onNewFlow, onOpenFlow, onOpenRunFlow, onOpenAiServices,
+  groups, desktopPresence, onNewFlow, onOpenFlow, onOpenRunFlow, onOpenAiServices,
   onDuplicate, onRename, onRequestToggleEnabled, onDelete,
 }: FlowsOverviewProps) {
   const flows = useMemo(() => groups.flatMap((group) => group.flows), [groups]);
@@ -79,7 +69,6 @@ export function FlowsOverview({
     for (const flow of flows) if (!map.has(flow.slug)) map.set(flow.slug, flow);
     return map;
   }, [flows]);
-  const visibleTemplates = useMemo(() => flowStarterTemplatesForConnectors(availableConnectorIds), [availableConnectorIds]);
 
   const loadRuns = useCallback(async () => {
     setLoadingRuns(true);
@@ -134,75 +123,24 @@ export function FlowsOverview({
     return run.flow ? flowBySlug.get(run.flow) ?? null : null;
   };
 
-  const enabledCount = flows.filter((flow) => flow.enabled).length;
 
   return (
-    <div className="scrollbar-thin h-full min-h-0 w-full overflow-y-auto">
+    <div className="min-w-0 w-full">
       {/* pb-28 keeps the last rows clear of the floating Desktop-connection chip (fixed
           bottom-left) and the chat launcher (bottom-right). */}
       {/* @container/flows: viewport breakpoints split off a fixed 21–24rem right rail while
           the real content box could be 640px (sidebar 256 + docked chat 384 at 1280), which
           left the flow list ~250px wide and clipped by AppShell's overflow-x-clip. */}
-      <div className="@container/flows mx-auto w-full max-w-7xl px-5 pb-28 pt-6 sm:px-7 sm:pt-7 lg:px-8">
-        {/* Hero — one glance: what flows do plus how many are live. */}
-        <section className="relative overflow-hidden rounded-2xl border border-gray-200/80 bg-white p-5 dark:border-slate-700/60 dark:bg-slate-900 sm:p-6">
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-x-0 top-0 h-32 opacity-[0.07] blur-2xl dark:opacity-[0.12]"
-            style={{ background: 'radial-gradient(70% 100% at 20% 0%, rgb(var(--primary-500)) 0%, transparent 70%)' }}
-          />
-          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 items-start gap-3.5">
-              <span className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-primary-600 text-primary-foreground shadow-sm">
-                <Workflow className="h-6 w-6" />
-              </span>
-              <div className="min-w-0">
-                <h2 className="text-xl font-semibold tracking-tight text-gray-900 dark:text-white sm:text-2xl">Automate the busywork</h2>
-                <p className="mt-1 max-w-2xl text-sm leading-relaxed text-gray-600 dark:text-slate-400">
-                  An automation is a flow of steps: collect an input, do the work and return a result. Start with a form response or run it yourself.
-                </p>
-              </div>
-            </div>
-            {flows.length > 0 && (
-              <div className="flex flex-none flex-wrap items-center gap-2 sm:flex-col sm:items-end">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-medium text-gray-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300">
-                  <Workflow className="h-3.5 w-3.5" /> {flows.length} flow{flows.length === 1 ? '' : 's'}
-                </span>
-                <span
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium',
-                    enabledCount > 0
-                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300'
-                      : 'border-gray-200 bg-gray-50 text-gray-500 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-400',
-                  )}
-                >
-                  <Zap className="h-3.5 w-3.5" /> {enabledCount} enabled
-                </span>
-              </div>
-            )}
-          </div>
-        </section>
-
-        <ol aria-label="How to build an automation" className="mt-5 grid gap-3 @2xl/flows:grid-cols-3">
-          {[
-            ['Choose a starting point', 'Begin with a template or a blank flow.'],
-            ['Build and test', 'Connect steps and try them with sample inputs.'],
-            ['Connect a trigger', 'Choose what starts the flow, then review its run history.'],
-          ].map(([title, detail], index) => <li key={title} className="flex gap-3 rounded-xl border border-gray-200/80 bg-white p-5 dark:border-slate-700/60 dark:bg-slate-900">
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary-50 text-xs font-semibold text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">{index + 1}</span>
-            <div className="min-w-0"><h3 className="text-sm font-semibold text-gray-900 dark:text-white">{title}</h3><p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-slate-400">{detail}</p></div>
-          </li>)}
-        </ol>
-
+      <div className="@container/flows mx-auto w-full max-w-7xl pb-12">
         {/* Main grid: flow list + templates | readiness + recent runs. Single column below lg. */}
-        <div className="mt-5 grid items-start gap-5 @4xl/flows:grid-cols-[minmax(0,1fr),21rem] @6xl/flows:grid-cols-[minmax(0,1fr),24rem]">
+        <div className="grid items-start gap-5">
           <div className="min-w-0 space-y-5">
             {flows.length === 0 ? (
               <section className="rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
                 <Workflow className="mx-auto mb-3 h-8 w-8 text-gray-300 dark:text-slate-600" />
                 <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">Your first automation starts here</p>
                 <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-gray-500 dark:text-slate-400">
-                  Create your first flow from scratch, or start from a template below.
+                  Create your first flow from scratch, or use a starter template.
                 </p>
                 <Button size="sm" className="mt-4" onClick={() => onNewFlow()} leftIcon={<Plus className="h-4 w-4" />}>
                   New flow
@@ -221,36 +159,10 @@ export function FlowsOverview({
               />
             )}
 
-            <section className="rounded-xl border border-gray-200/80 bg-white p-5 dark:border-slate-700/60 dark:bg-slate-900">
-              <div className="mb-3">
-                <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Start from a template</h3>
-                <p className="text-xs text-gray-500 dark:text-slate-400">Choose a useful starting point and adapt it to your app.</p>
-              </div>
-              <div className="grid grid-cols-1 gap-2.5 @xl/flows:grid-cols-2">
-                {visibleTemplates.map((template) => {
-                  const Icon = TEMPLATE_ICON[template.id] ?? FileText;
-                  return (
-                    <button
-                      key={template.id}
-                      type="button"
-                      onClick={() => onNewFlow(template)}
-                      className="group flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 p-3 text-left transition-colors hover:border-primary-300 hover:bg-primary-50/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:hover:border-primary-500/40 dark:hover:bg-primary-500/10"
-                    >
-                      <span className="mt-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-primary-50 text-primary-600 transition-colors group-hover:bg-primary-100 dark:bg-primary-500/10 dark:text-primary-300 dark:group-hover:bg-primary-500/20">
-                        <Icon className="h-4 w-4" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-semibold text-gray-900 dark:text-white">{template.name}</span>
-                        <span className="mt-0.5 block text-[11px] leading-snug text-gray-500 dark:text-slate-400">{template.summary}</span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
+
           </div>
 
-          <aside className="min-w-0 space-y-5">
+          <details className="min-w-0 space-y-4 rounded-xl border border-gray-200 p-4 dark:border-slate-700/60"><summary className="cursor-pointer text-sm font-medium text-gray-700 dark:text-slate-300">Connections and recent runs</summary>
             <DesktopStatusCard presence={desktopPresence} />
             <AiServicesStatusCard providerCount={providerCount} presence={desktopPresence} onOpen={onOpenAiServices} />
 
@@ -307,7 +219,7 @@ export function FlowsOverview({
                 </div>
               )}
             </section>
-          </aside>
+          </details>
         </div>
       </div>
     </div>
@@ -333,6 +245,7 @@ function FlowListCard({
   const [query, setQuery] = useState('');
   // Scope filter: 'all' | 'workspace' | an app id — refines the list when flows pile up.
   const [scope, setScope] = useState('all');
+  const [page, setPage] = useState(1);
 
   const q = query.trim().toLowerCase();
   const scoped = scope === 'all'
@@ -341,6 +254,15 @@ function FlowListCard({
   const filtered = scoped
     .map((g) => ({ ...g, flows: g.flows.filter((f) => q === '' || f.name.toLowerCase().includes(q) || f.slug.toLowerCase().includes(q)) }))
     .filter((g) => g.flows.length > 0);
+  const filteredTotal = filtered.reduce((n, g) => n + g.flows.length, 0);
+  const pageCount = Math.max(1, Math.ceil(filteredTotal / 8));
+  const currentPage = Math.min(page, pageCount);
+  let offset = 0;
+  const visibleGroups = filtered.map(g => {
+    const start = offset;
+    offset += g.flows.length;
+    return { ...g, flows: g.flows.slice(Math.max(0, (currentPage - 1) * 8 - start), Math.max(0, currentPage * 8 - start)) };
+  }).filter(g => g.flows.length > 0);
   const scopedTotal = scoped.reduce((n, g) => n + g.flows.length, 0);
 
   return (
@@ -357,7 +279,7 @@ function FlowListCard({
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
             <input
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => { setQuery(e.target.value); setPage(1); }}
               placeholder="Search flows"
               aria-label="Search flows"
               className="w-full rounded-lg border border-gray-300 bg-white py-1.5 pl-8 pr-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
@@ -366,7 +288,7 @@ function FlowListCard({
           {groups.length > 1 && (
             <select
               value={scope}
-              onChange={(e) => setScope(e.target.value)}
+              onChange={(e) => { setScope(e.target.value); setPage(1); }}
               aria-label="Show automations from"
               className="max-w-40 min-h-9 flex-none cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 max-sm:min-h-11 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
             >
@@ -387,7 +309,7 @@ function FlowListCard({
             {scopedTotal === 0 ? 'No flows in this scope yet.' : `No flows match "${query}".`}
           </p>
         ) : (
-          filtered.map((g) => (
+          visibleGroups.map((g) => (
             <div key={g.app?.id ?? 'workspace'}>
               <div className="mb-1.5 flex items-center gap-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">
                 <p className="min-w-0 flex-1 truncate">{g.app ? g.app.name : 'Workspace'}</p>
@@ -409,6 +331,13 @@ function FlowListCard({
             </div>
           ))
         )}
+        <nav aria-label="Flow pages" className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4 dark:border-slate-800">
+          <p aria-live="polite" className="text-xs text-gray-500 dark:text-slate-400">{filteredTotal === 0 ? '0 flows' : `${(currentPage - 1) * 8 + 1}–${Math.min(currentPage * 8, filteredTotal)} of ${filteredTotal} flows`} · Page {currentPage} of {pageCount}</p>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>Previous</Button>
+            <Button size="sm" variant="outline" disabled={currentPage === pageCount} onClick={() => setPage(currentPage + 1)}>Next</Button>
+          </div>
+        </nav>
         <div className="px-1 pt-1">
           <button
             type="button"
@@ -690,7 +619,7 @@ function DesktopStatusCard({ presence }: { presence: FlowsDesktopPresence }) {
   const oaiyConnected = oaiy.available && paired;
   const label = oaiyConnected ? 'OAIY Desktop connected' : oaiy.available ? 'OAIY Desktop detected' :
     presence.kind === 'local'
-      ? 'FormLogic Desktop connected'
+      ? 'Legacy desktop connected'
       : presence.kind === 'remote'
         ? `Desktop online - ${presence.label}`
         : 'Connect OAIY Desktop';
@@ -718,7 +647,7 @@ function DesktopStatusCard({ presence }: { presence: FlowsDesktopPresence }) {
           {oaiy.available && <p className="mt-2 text-xs leading-relaxed text-gray-500 dark:text-slate-400">{paired ? 'Connected for this browser session. Available actions depend on your installed plugins and services.' : 'Connect this browser to use its plugins and local services.'}</p>}
           {!oaiy.available && presence.kind === 'local' && (
             <p className="mt-1 text-xs leading-snug text-gray-500 dark:text-slate-400">
-              This browser is paired to FormLogic Desktop on this machine.
+              This browser is paired to the legacy desktop companion on this machine.
             </p>
           )}
           {!oaiy.available && presence.kind === 'remote' && (

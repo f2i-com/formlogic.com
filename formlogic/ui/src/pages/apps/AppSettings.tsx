@@ -1,7 +1,7 @@
-import { useState, useEffect, type CSSProperties } from 'react';
+import { useState, useEffect, useRef, type CSSProperties, type ReactNode } from 'react';
 import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { forwardReturnTo, useReturnTo, type ReturnToState } from '../../hooks/useReturnTo';
-import { ArrowLeft, Save, Check, ChevronRight, ExternalLink, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay, Plug, Download, Trash2, Layers, Table, PencilRuler } from 'lucide-react';
+import { Save, Check, ChevronRight, ExternalLink, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay, Plug, Download, Trash2, Layers, Table, PencilRuler } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
@@ -21,10 +21,11 @@ import type { App, AppRole, AppForm, AppKind, AppNavItem } from '../../types/app
 import { DEFAULT_APP_THEME, KIND_LABELS } from '../../types/app';
 
 const tabs = [
-  { label: 'General', value: 'general', icon: Settings },
-  { label: 'Theme', value: 'theme', icon: Palette },
-  { label: 'Menu', value: 'menu', icon: Link2 },
-  { label: 'Manage', value: 'manage', icon: LayoutGrid },
+  { label: 'General', value: 'general', icon: Settings, description: 'Name your app and set its address and timezone.' },
+  { label: 'Appearance', value: 'theme', icon: Palette, description: 'Give your app its own logo, colors and typography.' },
+  { label: 'Navigation', value: 'menu', icon: Link2, description: 'Choose the first screen and help members find their way around.' },
+  { label: 'Access', value: 'access', icon: Shield, description: 'Decide how people join and manage their permissions.' },
+  { label: 'Manage', value: 'manage', icon: LayoutGrid, description: 'Manage content, connected services, publishing and exports.' },
 ];
 
 const TAB_VALUES = tabs.map((t) => t.value);
@@ -71,6 +72,7 @@ export function AppSettings() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
   const [slugError, setSlugError] = useState<string | null>(null);
+  const invalidField = useRef<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [roles, setRoles] = useState<AppRole[]>([]);
   const [appForms, setAppForms] = useState<AppForm[]>([]);
@@ -91,6 +93,22 @@ export function AppSettings() {
       if (value === 'general') next.delete('tab'); else next.set('tab', value);
       return next;
     }, { replace: true });
+  };
+
+  // Wait for General to mount before focusing a validation error from another tab.
+  useEffect(() => {
+    if (activeTab === 'general' && invalidField.current) {
+      document.getElementById(invalidField.current)?.focus();
+      invalidField.current = null;
+    }
+  }, [activeTab]);
+
+  const revealInvalidField = (id: string) => {
+    if (activeTab === 'general') document.getElementById(id)?.focus();
+    else {
+      invalidField.current = id;
+      setActiveTab('general');
+    }
   };
 
   useEffect(() => {
@@ -152,13 +170,15 @@ export function AppSettings() {
   }
 
   const handleSave = async () => {
-    if (!appId) return;
+    if (!appId || saving) return;
     if (app.name.trim().length < 2) {
       setNameError('Name must be at least 2 characters');
+      revealInvalidField('app-name');
       return;
     }
     if (!/^[a-z0-9][a-z0-9-]{0,60}$/.test(app.slug)) {
       setSlugError('Use lowercase letters, digits, and hyphens (start with a letter or digit).');
+      revealInvalidField('app-slug');
       return;
     }
     setNameError(null);
@@ -266,33 +286,13 @@ export function AppSettings() {
   };
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-gray-50/80 dark:bg-slate-950">
       <Header
         title="App settings"
-        actions={
-          <>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => navGuarded(backTo.path, backTo.state)}
-              leftIcon={<ArrowLeft className="h-4 w-4" />}
-              aria-label={backTo.label ? `Back to ${backTo.label}` : 'Back'}
-              title={backTo.label ? `Back to ${backTo.label}` : 'Back'}
-            >
-              <span className="hidden sm:inline">{backTo.label ? `Back to ${backTo.label}` : 'Back'}</span>
-            </Button>
-            {/* Save stays mounted on every tab. Hiding it on Manage made edits made on
-                Theme look already-committed, and clicking any Manage tile then asked to
-                "discard unsaved changes" the user believed were saved. Disabled-when-clean
-                is a self-explaining control; a vanishing one is not. */}
-            <Button size="sm" onClick={handleSave} disabled={saving || !dirty} leftIcon={saveSuccess ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />}>
-              {saving ? 'Saving...' : saveSuccess ? 'Saved!' : dirty ? 'Save' : 'Saved'}
-            </Button>
-          </>
-        }
+        back={{ onClick: () => navGuarded(backTo.path, backTo.state), label: backTo.label ? `Back to ${backTo.label}` : 'Back to apps' }}
       />
-      <div className="@container/appsettings w-full flex-1 p-4 @xl/appsettings:p-6 @3xl/appsettings:p-8">
-      <div className="max-w-4xl mx-auto">
+      <div className="@container/appsettings w-full flex-1 p-4 sm:p-6 lg:p-8">
+      <div className="max-w-5xl mx-auto">
 
       {/* Identity + quick actions: opening the running app and jumping to Deploy are the two
           things owners do most from here — surface them above the settings tabs instead of
@@ -365,26 +365,28 @@ export function AppSettings() {
 
       {/* Tab navigation */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList variant="underline" aria-label="App settings sections" className="mb-6 w-full">
+        <TabsList aria-label="App settings sections" className="mb-6 grid w-full grid-cols-3 gap-1 rounded-2xl p-1.5 @3xl/appsettings:grid-cols-5">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             return (
               <TabsTrigger
                 key={tab.value}
                 value={tab.value}
-                variant="underline"
-                className="w-1/4 justify-center px-0.5 text-xs sm:w-auto sm:px-4 sm:text-sm"
+                className="min-h-16 min-w-0 justify-center whitespace-normal rounded-xl px-1.5 py-2 text-xs @3xl/appsettings:text-sm"
               >
-                <span className="flex items-center gap-1 sm:gap-2"><Icon className="h-4 w-4" />{tab.label}</span>
+                <span className="flex flex-col items-center gap-1.5"><Icon className="h-4 w-4" aria-hidden="true" />{tab.label}</span>
               </TabsTrigger>
             );
           })}
         </TabsList>
 
-        <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">
-          <TabsContent value="general">
-          <div className="space-y-4">
-            <div>
+        <div className="mb-5 px-1">
+          <h2 className="text-xl font-semibold tracking-tight text-gray-900 dark:text-white">{tabs.find(tab => tab.value === activeTab)?.label}</h2>
+          <p className="mt-1 text-sm leading-6 text-gray-500 dark:text-slate-400">{tabs.find(tab => tab.value === activeTab)?.description}</p>
+        </div>
+          <TabsContent value="general" className="space-y-5">
+            <SettingsCard title="App details" description="The name and description help people recognize this app.">
+              <div>
               <label htmlFor="app-name" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">App name</label>
               <input id="app-name" type="text" value={app.name}
                 onChange={(e) => { setApp({ ...app, name: e.target.value }); if (nameError) setNameError(null); }}
@@ -394,7 +396,29 @@ export function AppSettings() {
                 className={cn('w-full px-3.5 py-2.5 border rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200', nameError ? 'border-red-400 dark:border-red-500/60' : 'border-gray-300 dark:border-slate-600')} />
               {nameError && <p id="app-name-error" className="mt-1 text-sm text-red-600 dark:text-red-400">{nameError}</p>}
             </div>
-            <div>
+              <div>
+              <label htmlFor="app-description" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Description</label>
+              <textarea id="app-description" value={app.description || ''} onChange={(e) => setApp({ ...app, description: e.target.value })}
+                rows={3} className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 resize-none" />
+            </div>
+              <div>
+              <label htmlFor="app-kind" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">App type</label>
+              <select
+                id="app-kind"
+                value={(app.settings?.appKind as string) || ''}
+                onChange={(e) => updateSetting('appKind', e.target.value || undefined)}
+                className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              >
+                <option value="">Not set</option>
+                {(Object.keys(KIND_LABELS) as AppKind[]).map((k) => (
+                  <option key={k} value={k}>{KIND_LABELS[k]}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Used for dashboard templates and labels — apps of any type can share the same forms.</p>
+            </div>
+            </SettingsCard>
+            <SettingsCard title="Address & region" description="Set where members find your app and how dates are displayed.">
+              <div>
               <label htmlFor="app-slug" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Public URL slug</label>
               <input
                 id="app-slug"
@@ -419,44 +443,29 @@ export function AppSettings() {
                 ? <p id="app-slug-error" className="mt-1 text-sm text-red-600 dark:text-red-400">{slugError}</p>
                 : <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Your app is served at <span className="font-mono">/app/{app.slug || '…'}</span>. Must be unique — changing it breaks old links.</p>}
             </div>
-            <div>
-              <label htmlFor="app-description" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Description</label>
-              <textarea id="app-description" value={app.description || ''} onChange={(e) => setApp({ ...app, description: e.target.value })}
-                rows={3} className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 resize-none" />
-            </div>
-            <div>
-              <label htmlFor="app-status" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Status</label>
-              {/* "Published" is deliberately NOT offered here: going live has to run the
-                  readiness checks and record a version, which only the App Studio's
-                  Review & publish does. A raw flip left the app live with no version and
-                  no history, and disabled the Studio's own Publish button. */}
-              <select id="app-status" value={app.status} onChange={(e) => setApp({ ...app, status: e.target.value as App['status'] })}
-                className="px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200">
-                {/* Acting admins have no Studio route, so they keep the raw option. */}
-                {(acting || app.status === 'published') && <option value="published">Published</option>}
-                <option value="draft">Draft</option>
-                <option value="archived">Archived</option>
-              </select>
-              <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
-                Archived: hidden from members; data kept.{' '}
-                {!acting && app.status !== 'published' && (
-                  <button
-                    type="button"
-                    onClick={() => navGuarded(paths.appSub(`${appId}`, 'studio/publish'))}
-                    className="cursor-pointer font-semibold text-primary-600 hover:underline dark:text-primary-400"
-                  >
-                    Publish in the App Studio
-                  </button>
-                )}
-              </p>
-            </div>
-            <div>
+              <div>
+                <label htmlFor="app-timezone" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Timezone</label>
+                <TimezoneSelect
+                  id="app-timezone"
+                  value={(app.settings?.timezone as string) || ''}
+                  onChange={(tz) => updateSetting('timezone', tz || undefined)}
+                  emptyLabel="UTC (default)"
+                  className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                />
+                <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Record times (call logs, submissions) display in this zone for members without their own timezone set. Also used for report date grouping.</p>
+              </div>
+            </SettingsCard>
+          </TabsContent>
+
+          <TabsContent value="theme" className="space-y-5">
+            <SettingsCard title="App identity" description="Use a logo, or choose an icon for app cards and tiles.">
+              <div>
               <label htmlFor="app-logo" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Logo URL</label>
               <input id="app-logo" type="text" value={app.logoUrl || ''} onChange={(e) => setApp({ ...app, logoUrl: e.target.value })}
                 placeholder="https://example.com/logo.png"
                 className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200" />
             </div>
-            <div>
+              <div>
               <span className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">App icon</span>
               <div className="flex items-center gap-3">
                 {/* Live preview: the icon on a tile tinted with the app's accent color. */}
@@ -486,158 +495,26 @@ export function AppSettings() {
                 <p className="text-xs text-gray-500 dark:text-slate-400 min-w-0">Shown on the app card and tiles when there's no logo.</p>
               </div>
             </div>
-            <div>
-              <label htmlFor="app-kind" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">App type</label>
-              <select
-                id="app-kind"
-                value={(app.settings?.appKind as string) || ''}
-                onChange={(e) => updateSetting('appKind', e.target.value || undefined)}
-                className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-              >
-                <option value="">Not set</option>
-                {(Object.keys(KIND_LABELS) as AppKind[]).map((k) => (
-                  <option key={k} value={k}>{KIND_LABELS[k]}</option>
-                ))}
-              </select>
-              <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Used for dashboard templates and labels — apps of any type can share the same forms.</p>
-            </div>
-
-            {/* Membership */}
-            <div className="pt-2 border-t border-gray-100 dark:border-slate-800 space-y-4">
-              <h3 className="text-sm font-medium text-gray-900 dark:text-white">Membership</h3>
-              <Switch
-                checked={app.settings?.allowSelfRegistration === true}
-                onChange={(checked) => updateSetting('allowSelfRegistration', checked)}
-                label="Allow self-registration"
-                description="Let any signed-in user join this app from its link"
-              />
-              {app.settings?.allowSelfRegistration && (
-                <>
-                  <Switch
-                    checked={app.settings?.requireApproval === true}
-                    onChange={(checked) => updateSetting('requireApproval', checked)}
-                    label="Require approval"
-                    description="New members start as 'pending' until an admin approves them"
-                  />
-                  <div>
-                    <label htmlFor="app-default-role" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Default role for new members</label>
-                    <select
-                      id="app-default-role"
-                      value={(app.settings?.defaultRoleId as string) || ''}
-                      onChange={(e) => updateSetting('defaultRoleId', e.target.value || undefined)}
-                      className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                    >
-                      <option value="">Lowest-privilege role (automatic)</option>
-                      {roles.filter((r) => !(r.isSystem && r.name === 'Owner')).map((r) => (
-                        <option key={r.id} value={r.id}>{r.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                </>
-              )}
-              <div>
-                <label htmlFor="app-landing-page" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Landing page</label>
-                {/* The Studio stores the default as the token 'dashboard'; an empty-string
-                    option meant a landing page chosen there rendered this select blank. */}
-                <select
-                  id="app-landing-page"
-                  value={(app.settings?.landingPage as string) || 'dashboard'}
-                  onChange={(e) => updateSetting('landingPage', e.target.value)}
-                  className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                >
-                  <option value="dashboard">Dashboard (default)</option>
-                  {appForms.map((f) => (
-                    <option key={f.formId} value={f.formId}>{f.displayName}</option>
-                  ))}
-                </select>
-                <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Where members land when they open the app.</p>
-              </div>
-              <div>
-                <label htmlFor="app-timezone" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Timezone</label>
-                <TimezoneSelect
-                  id="app-timezone"
-                  value={(app.settings?.timezone as string) || ''}
-                  onChange={(tz) => updateSetting('timezone', tz || undefined)}
-                  emptyLabel="UTC (default)"
-                  className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                />
-                <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Record times (call logs, submissions) display in this zone for members without their own timezone set. Also used for report date grouping.</p>
-              </div>
-            </div>
-
-            {/* Layout */}
-            <div className="pt-2 border-t border-gray-100 dark:border-slate-800 space-y-4">
-              <h3 className="text-sm font-medium text-gray-900 dark:text-white">Layout</h3>
-              <Switch
-                checked={app.settings?.hideNav === true}
-                onChange={(checked) => updateSetting('hideNav', checked)}
-                label="Hide app navigation"
-                description="Render the app full-screen without the sidebar and menu — for self-contained apps (e.g. a single custom home screen). Members navigate from within the screen."
-              />
-            </div>
-
-            {/* Included services (pack-declared; rendered only when the app's pack shipped any).
-                Each toggle gates the service's backend endpoints — e.g. turning the Companion
-                relay off makes its admission endpoints refuse with `service_disabled`. */}
-            {app.settings?.services && Object.keys(app.settings.services).length > 0 && (
-              <div className="pt-2 border-t border-gray-100 dark:border-slate-800 space-y-4">
-                <h3 className="text-sm font-medium text-gray-900 dark:text-white">Included services</h3>
-                <p className="text-xs text-gray-500 dark:text-slate-400">
-                  Services this app's pack ships. Turning one off blocks its connections as soon as you save.
-                </p>
-                {Object.entries(app.settings.services).map(([id, svc]) => (
-                  <Switch
-                    key={id}
-                    checked={svc?.enabled !== false}
-                    onChange={(checked) =>
-                      updateSetting('services', {
-                        ...app.settings?.services,
-                        [id]: { ...svc, enabled: checked },
-                      })
-                    }
-                    label={svc?.title || id}
-                    description={svc?.description}
-                  />
-                ))}
-              </div>
-            )}
-
-            {/* Danger zone */}
-            <div className="pt-4 border-t border-gray-100 dark:border-slate-800">
-              <h3 className="text-sm font-medium text-red-700 dark:text-red-400 mb-3">Danger zone</h3>
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-red-200/80 dark:border-red-500/20 bg-red-50/50 dark:bg-red-500/5 p-4">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-900 dark:text-white">Delete this app</p>
-                  <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">Moves the app, its roles and memberships to the recycle bin for 30 days. Forms and their records stay in your workspace.</p>
-                </div>
-                <Button variant="danger" size="sm" className="flex-shrink-0 self-start sm:self-auto" onClick={() => setShowDelete(true)} leftIcon={<Trash2 className="h-4 w-4" />}>
-                  Delete app
-                </Button>
-              </div>
-            </div>
-          </div>
-          </TabsContent>
-
-          <TabsContent value="theme">
-          <div className="space-y-6">
+            </SettingsCard>
+          <SettingsCard title="Colors & typography" description="Preview your choices before saving them to the app.">
             <div className="grid grid-cols-1 gap-4 @xl/appsettings:grid-cols-2">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Accent color</label>
                 <div className="flex gap-2 items-center">
-                  <input type="color" aria-label="Accent color picker" value={app.theme?.primaryColor || '#6366f1'} onChange={(e) => setApp({ ...app, theme: { ...app.theme, primaryColor: e.target.value } })} className="h-10 w-10 rounded-lg border border-gray-200 dark:border-slate-600 cursor-pointer" />
+                  <input type="color" aria-label="Accent color picker" value={app.theme?.primaryColor || '#6366f1'} onChange={(e) => setApp({ ...app, theme: { ...app.theme, primaryColor: e.target.value } })} className="h-11 w-11 shrink-0 rounded-lg border border-gray-200 dark:border-slate-600 cursor-pointer" />
                   <input type="text" aria-label="Accent color hex value" value={app.theme?.primaryColor || '#6366f1'} onChange={(e) => setApp({ ...app, theme: { ...app.theme, primaryColor: e.target.value } })}
                     onBlur={(e) => { if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(e.target.value)) setApp({ ...app, theme: { ...app.theme, primaryColor: '#6366f1' } }); }}
-                    className="flex-1 px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm font-mono focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200" />
+                    className="min-w-0 flex-1 px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm font-mono focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200" />
                 </div>
                 <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Buttons, links and highlights inside the app.</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Background color</label>
                 <div className="flex gap-2 items-center">
-                  <input type="color" aria-label="Background color picker" value={app.theme?.backgroundColor || '#ffffff'} onChange={(e) => setApp({ ...app, theme: { ...app.theme, backgroundColor: e.target.value } })} className="h-10 w-10 rounded-lg border border-gray-200 dark:border-slate-600 cursor-pointer" />
+                  <input type="color" aria-label="Background color picker" value={app.theme?.backgroundColor || '#ffffff'} onChange={(e) => setApp({ ...app, theme: { ...app.theme, backgroundColor: e.target.value } })} className="h-11 w-11 shrink-0 rounded-lg border border-gray-200 dark:border-slate-600 cursor-pointer" />
                   <input type="text" aria-label="Background color hex value" value={app.theme?.backgroundColor || '#ffffff'} onChange={(e) => setApp({ ...app, theme: { ...app.theme, backgroundColor: e.target.value } })}
                     onBlur={(e) => { if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(e.target.value)) setApp({ ...app, theme: { ...app.theme, backgroundColor: '#ffffff' } }); }}
-                    className="flex-1 px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm font-mono focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200" />
+                    className="min-w-0 flex-1 px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm font-mono focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200" />
                 </div>
               </div>
             </div>
@@ -677,7 +554,7 @@ export function AppSettings() {
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Font family</label>
               <select aria-label="Font family" value={app.theme?.fontFamily || DEFAULT_APP_THEME.fontFamily} onChange={(e) => setApp({ ...app, theme: { ...app.theme, fontFamily: e.target.value } })}
-                className="px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200">
+                className="max-w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200">
                 <option value="DM Sans">DM Sans</option>
                 <option value="Plus Jakarta Sans">Plus Jakarta Sans</option>
                 <option value="system-ui">System</option>
@@ -703,14 +580,39 @@ export function AppSettings() {
                 </div>
               </div>
             </div>
-          </div>
+          </SettingsCard>
           </TabsContent>
 
-          <TabsContent value="menu">
-          <div className="space-y-6">
+          <TabsContent value="menu" className="space-y-5">
+            <SettingsCard title="Starting screen & layout" description="Choose what members see when they open the app.">
+              <div>
+                <label htmlFor="app-landing-page" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Starting screen</label>
+                {/* The Studio stores the default as the token 'dashboard'; an empty-string
+                    option meant a landing page chosen there rendered this select blank. */}
+                <select
+                  id="app-landing-page"
+                  value={(app.settings?.landingPage as string) || 'dashboard'}
+                  onChange={(e) => updateSetting('landingPage', e.target.value)}
+                  className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                >
+                  <option value="dashboard">Dashboard (default)</option>
+                  {appForms.map((f) => (
+                    <option key={f.formId} value={f.formId}>{f.displayName || 'Untitled form'}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Where members land when they open the app.</p>
+              </div>
+              <Switch
+                checked={app.settings?.hideNav === true}
+                onChange={(checked) => updateSetting('hideNav', checked)}
+                label="Hide app navigation"
+                description="Render the app full-screen without the sidebar and menu — for self-contained apps (e.g. a single custom home screen). Members navigate from within the screen."
+              />
+            </SettingsCard>
+          <SettingsCard title="Menu links" description="Add shortcuts alongside the app’s forms.">
             {(() => {
               // Custom LINK entries live in navConfig (kind 'link'); form entries keep
-              // app_forms as their single source of truth (Manage → Forms edits name/
+              // app_forms as their single source of truth (Manage forms edits name/
               // order/visibility incl. Unlisted and Data-only) — no drift between the two.
               const navLinks = (app.navConfig || []).filter((n): n is AppNavItem => !!n && n.kind === 'link');
               const otherNav = (app.navConfig || []).filter((n) => !n || n.kind !== 'link');
@@ -730,7 +632,7 @@ export function AppSettings() {
                       inside the app (<code className="font-mono">records</code>, <code className="font-mono">reports</code>,{' '}
                       <code className="font-mono">form/&lt;form-id&gt;</code>). Form entries themselves — name, order, and
                       visibility (including <em>Unlisted</em> and <em>Data-only</em>) — are managed under{' '}
-                      <button type="button" className="underline cursor-pointer" onClick={() => navigate(paths.appSub(`${appId}`, 'forms'))}>Manage → Forms</button>.
+                      <button type="button" className="underline cursor-pointer" onClick={() => navGuarded(paths.appSub(`${appId}`, 'forms'))}>Manage forms</button>.
                     </p>
                   </div>
                   {navLinks.length === 0 && (
@@ -741,9 +643,10 @@ export function AppSettings() {
                       <div key={l.id || l.displayName} className="rounded-xl border border-gray-200 dark:border-slate-700 p-4 space-y-3">
                         <div className="grid grid-cols-1 gap-3 @xl/appsettings:grid-cols-2">
                           <div>
-                            <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Label</label>
+                            <label htmlFor={`menu-label-${l.id}`} className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Label</label>
                             <input
                               type="text"
+                              id={`menu-label-${l.id}`}
                               value={l.displayName}
                               onChange={(e) => patchLink(l.id!, { displayName: e.target.value })}
                               placeholder="Help centre"
@@ -751,9 +654,10 @@ export function AppSettings() {
                             />
                           </div>
                           <div>
-                            <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Link</label>
+                            <label htmlFor={`menu-url-${l.id}`} className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Link</label>
                             <input
                               type="text"
+                              id={`menu-url-${l.id}`}
                               value={l.url || ''}
                               onChange={(e) => patchLink(l.id!, { url: e.target.value })}
                               placeholder="https://example.com or records"
@@ -770,9 +674,10 @@ export function AppSettings() {
                             <IconPicker value={l.icon} onChange={(name) => patchLink(l.id!, { icon: name ?? undefined })} />
                           </div>
                           <div>
-                            <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1" title="0 puts the link at the top of the Forms group; higher numbers sit further down among the form entries.">Position</label>
+                            <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1" htmlFor={`menu-position-${l.id}`} title="0 puts the link at the top of the Forms group; higher numbers sit further down among the form entries.">Position</label>
                             <input
                               type="number"
+                              id={`menu-position-${l.id}`}
                               min={0}
                               value={Number.isFinite(l.sortOrder) ? l.sortOrder : 0}
                               onChange={(e) => patchLink(l.id!, { sortOrder: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
@@ -801,36 +706,63 @@ export function AppSettings() {
                   </Button>
                   <p className="text-xs text-gray-500 dark:text-slate-400">
                     Only <code className="font-mono">https://</code> sites and in-app targets ever render — anything else is
-                    ignored by the menu. Save with the button above.
+                    ignored by the menu. Choose Save changes to apply your menu edits.
                   </p>
                 </>
               );
             })()}
-          </div>
+          </SettingsCard>
           </TabsContent>
 
-          <TabsContent value="manage">
-          <div className="space-y-7">
-            <div className="flex flex-col gap-3 rounded-2xl border border-primary-200/70 bg-primary-50/60 p-4 dark:border-primary-500/20 dark:bg-primary-500/[0.07] sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <h2 className="text-base font-semibold text-gray-900 dark:text-white">Manage {app.name}</h2>
-                <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-slate-400">
-                  Jump directly to the app’s data, people, permissions, delivery and advanced tools.
-                </p>
-              </div>
-              {!acting && (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  leftIcon={<PencilRuler className="h-4 w-4" />}
-                  onClick={() => navGuarded(paths.appSub(`${appId}`, 'studio'))}
-                  className="w-full shrink-0 sm:w-auto"
-                >
-                  Open App Studio
-                </Button>
+          <TabsContent value="access" className="space-y-5">
+            <SettingsCard title="Joining this app" description="Keep access invite-only or let signed-in users request to join.">
+              <Switch
+                checked={app.settings?.allowSelfRegistration === true}
+                onChange={(checked) => updateSetting('allowSelfRegistration', checked)}
+                label="Let people join from the app link"
+                description="Let any signed-in user join this app from its link"
+              />
+              {app.settings?.allowSelfRegistration && (
+                <>
+                  <Switch
+                    checked={app.settings?.requireApproval === true}
+                    onChange={(checked) => updateSetting('requireApproval', checked)}
+                    label="Require approval"
+                    description="New members start as 'pending' until an admin approves them"
+                  />
+                  <div>
+                    <label htmlFor="app-default-role" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Default role for new members</label>
+                    <select
+                      id="app-default-role"
+                      value={(app.settings?.defaultRoleId as string) || ''}
+                      onChange={(e) => updateSetting('defaultRoleId', e.target.value || undefined)}
+                      className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    >
+                      <option value="">Lowest-privilege role (automatic)</option>
+                      {roles.filter((r) => !(r.isSystem && r.name === 'Owner')).map((r) => (
+                        <option key={r.id} value={r.id}>{r.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
               )}
-            </div>
+            </SettingsCard>
+            <SettingsCard title="Members & permissions" description="Invite people and review what they can do.">
+            <ManageAppGroup
+              title="People & access"
+              description="Control who can use the app and what each role is allowed to do."
+              items={[
+                { label: 'Users', desc: 'Invite members and manage existing access', icon: Users, onClick: () => navGuarded(paths.appSub(`${appId}`, 'users')) },
+                { label: 'Roles', desc: 'Configure permissions and default access', icon: Shield, meta: `${roles.length}`, onClick: () => navGuarded(paths.appSub(`${appId}`, 'roles')) },
+              ]}
+            />
 
+
+            </SettingsCard>
+          </TabsContent>
+
+          <TabsContent value="manage" className="space-y-5">
+          <SettingsCard title="App tools" description="Open a tool to work on a specific part of this app.">
             <ManageAppGroup
               title="Content & data"
               description="Work with the forms, records and relationships that power this app."
@@ -840,15 +772,6 @@ export function AppSettings() {
                   : { label: 'Records', desc: 'Browse and export collected app data', icon: Table, onClick: () => navGuarded(paths.appSub(`${appId}`, 'records')) },
                 { label: 'Forms', desc: 'Attach, remove, rename and reorder forms', icon: LayoutGrid, meta: `${appForms.length}`, onClick: () => navGuarded(paths.appSub(`${appId}`, 'forms')) },
                 { label: 'Relations', desc: 'Connect records across the app’s forms', icon: Link2, onClick: () => navGuarded(paths.appSub(`${appId}`, 'relations')) },
-              ]}
-            />
-
-            <ManageAppGroup
-              title="People & access"
-              description="Control who can use the app and what each role is allowed to do."
-              items={[
-                { label: 'Users', desc: 'Invite members and manage existing access', icon: Users, onClick: () => navGuarded(paths.appSub(`${appId}`, 'users')) },
-                { label: 'Roles', desc: 'Configure permissions and default access', icon: Shield, meta: `${roles.length}`, onClick: () => navGuarded(paths.appSub(`${appId}`, 'roles')) },
               ]}
             />
 
@@ -872,16 +795,84 @@ export function AppSettings() {
                 ]}
               />
             )}
-          </div>
           {!acting && <p className="mt-5 rounded-xl bg-gray-50 px-3.5 py-3 text-xs leading-5 text-gray-500 dark:bg-white/[0.035] dark:text-slate-400">
             <strong className="font-medium text-gray-700 dark:text-slate-300">Export app is a structure bundle, not a data backup.</strong>{' '}
             It does not include collected responses or uploaded files. For app data, use{' '}
             <strong className="font-medium text-gray-700 dark:text-slate-300">Records → Export data</strong> (SQLite bundle, or a
             MySQL / SQL Server dump with one table per form); for a restorable full-workspace backup, use Settings → Backup &amp; restore.
           </p>}
+          </SettingsCard>
+{/* Included services (pack-declared; rendered only when the app's pack shipped any).
+                Each toggle gates the service's backend endpoints — e.g. turning the Companion
+                relay off makes its admission endpoints refuse with `service_disabled`. */}
+            {app.settings?.services && Object.keys(app.settings.services).length > 0 && (
+              <SettingsCard title="Included services" description="Services included with this app’s pack. Turning one off blocks its connections after you save.">
+                {Object.entries(app.settings.services).map(([id, svc]) => (
+                  <Switch
+                    key={id}
+                    checked={svc?.enabled !== false}
+                    onChange={(checked) =>
+                      updateSetting('services', {
+                        ...app.settings?.services,
+                        [id]: { ...svc, enabled: checked },
+                      })
+                    }
+                    label={svc?.title || id}
+                    description={svc?.description}
+                  />
+                ))}
+              </SettingsCard>
+            )}
+            <SettingsCard title="App availability" description="Draft and archived apps are unavailable to members. Publish through App Studio when you’re ready.">
+              <div>
+              <label htmlFor="app-status" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Status</label>
+              {/* "Published" is deliberately NOT offered here: going live has to run the
+                  readiness checks and record a version, which only the App Studio's
+                  Review & publish does. A raw flip left the app live with no version and
+                  no history, and disabled the Studio's own Publish button. */}
+              <select id="app-status" value={app.status} onChange={(e) => setApp({ ...app, status: e.target.value as App['status'] })}
+                className="max-w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200">
+                {/* Acting admins have no Studio route, so they keep the raw option. */}
+                {(acting || app.status === 'published') && <option value="published">Published</option>}
+                <option value="draft">Draft</option>
+                <option value="archived">Archived</option>
+              </select>
+              <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
+                Archived: hidden from members; data kept.{' '}
+                {!acting && app.status !== 'published' && (
+                  <button
+                    type="button"
+                    onClick={() => navGuarded(paths.appSub(`${appId}`, 'studio/publish'))}
+                    className="cursor-pointer font-semibold text-primary-600 hover:underline dark:text-primary-400"
+                  >
+                    Publish in the App Studio
+                  </button>
+                )}
+              </p>
+            </div>
+            </SettingsCard>
+            <SettingsCard title="Delete app" description="Remove the app while keeping its forms and records.">
+<div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-red-200/80 dark:border-red-500/20 bg-red-50/50 dark:bg-red-500/5 p-4">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-900 dark:text-white">Delete this app</p>
+                  <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">Moves the app, its roles and memberships to the recycle bin for 30 days. Forms and their records stay in your workspace.</p>
+                </div>
+                <Button variant="danger" size="sm" className="flex-shrink-0 self-start sm:self-auto" onClick={() => setShowDelete(true)} leftIcon={<Trash2 className="h-4 w-4" />}>
+                  Delete app
+                </Button>
+              </div>
+            </SettingsCard>
           </TabsContent>
-        </div>
       </Tabs>
+      <div className="sticky bottom-[calc(var(--fl-mobile-reserve)+0.75rem)] md:bottom-16 z-20 mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-white/95 p-4 shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
+        <div className="min-w-0 flex-1" role="status" aria-live="polite">
+          <p className="text-sm font-semibold text-gray-900 dark:text-white">{saving ? 'Saving your changes…' : dirty ? 'You have unsaved changes' : 'All changes saved'}</p>
+          <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">Changes in any section save together.</p>
+        </div>
+        <Button onClick={handleSave} disabled={saving || !dirty} leftIcon={saveSuccess ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />}>
+          {saving ? 'Saving…' : 'Save changes'}
+        </Button>
+      </div>
     </div>
     </div>
       <ConfirmDialog
@@ -964,6 +955,18 @@ function ManageAppGroup({
           </button>
         ))}
       </div>
+    </section>
+  );
+}
+
+function SettingsCard({ title, description, children }: { title: string; description: string; children: ReactNode }) {
+  return (
+    <section className="min-w-0 rounded-2xl border border-gray-200/80 bg-white p-5 dark:border-slate-700/60 dark:bg-slate-900/50 sm:p-6">
+      <div className="mb-5 border-b border-gray-100 pb-4 dark:border-slate-800">
+        <h3 className="text-base font-semibold text-gray-900 dark:text-white">{title}</h3>
+        <p className="mt-1 text-sm leading-6 text-gray-500 dark:text-slate-400">{description}</p>
+      </div>
+      <div className="space-y-5">{children}</div>
     </section>
   );
 }

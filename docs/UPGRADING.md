@@ -7,19 +7,18 @@ production checklist, full backup/restore detail, and health checks see
 
 ## The easiest path: the admin panel
 
-A platform administrator (an account with the durable `users.is_admin=1` flag) can upgrade
-entirely from the browser: **Admin → Upgrade → upload the release zip**
-(the same `formlogic-vX.Y.Z.zip` the CI attaches to each GitHub release). The wizard then:
+A platform administrator can update from **Admin → Updates → Check for updates**.
+FormLogic checks the latest published stable release in `f2i-com/formlogic.com` and shows its
+version, size and release-notes link. Choose **Download and verify**, review the staged version,
+then choose **Install** and confirm. Downloading alone never changes the running installation.
 
-1. verifies the package's **signed release envelope**: `manifest.sig.json` is an Ed25519
-   signature over the exact `manifest.json` bytes by the release key your install pins via
-   `UPGRADE_RELEASE_PUBKEY` in `api/.env`. Every listed file is sha256-checked after
-   extraction, the inventory must cover **every** file in the package (an unlisted file is a
-   refusal), and unsigned/foreign-signed packages are refused. Production installs never
-   accept unsigned packages; a development install may set `UPGRADE_ALLOW_UNSIGNED=true`
-   (the override is ignored when `APP_ENV=production`). Release engineers: generate the
-   keypair with `node scripts/generate-release-key.mjs` and give the packager the PEM via
-   `FORMLOGIC_RELEASE_SIGNING_KEY`;
+No GitHub token or release-signing key is required for this official online update path. The wizard:
+
+1. downloads the built release ZIP over HTTPS from the fixed official repository, verifies its
+   size and SHA-256 against GitHub's release metadata, and checks its complete file manifest.
+   Before applying, it re-fetches metadata for the **exact release and asset you reviewed**, hashes
+   the retained ZIP again, and checks the extracted manifest against that original archive.
+   A changed, unavailable or unverifiable release stops before maintenance or live-file changes;
 2. closes the site for maintenance (a file flag, so it holds even mid-migration),
 3. **exports the MySQL database and snapshots the current code automatically** into
    `api/storage/backups/<id>/`,
@@ -36,6 +35,65 @@ backup (the database is deliberately NOT auto-restored — records created since
 kept; a separate, heavily-confirmed "Restore DB" exists for genuine corruption).
 
 The manual paths below remain fully supported and are what the wizard automates.
+
+## Official release requirements
+
+The updater uses published stable `vX.Y.Z`/`X.Y.Z` releases and their built
+`formlogic-X.Y.Z.zip` (or `formlogic-vX.Y.Z.zip`) asset. Source archives, drafts and prereleases
+are not offered. A release needs exactly one matching ZIP, at most 512 MiB, with a GitHub
+`sha256:` asset digest. Older assets without a digest must be uploaded again by the publisher.
+Expanded packages are limited to 2 GiB and 50,000 entries.
+
+The server needs outbound HTTPS and PHP curl and zip extensions. Public GitHub API rate limits
+apply; an unavailable API leaves the installation untouched and can be retried later. GitHub
+repository access and HTTPS are the release-authenticity trust source for this path. Keep control
+of the official repository and its release publishing permissions.
+
+An older installation without this GitHub update screen needs a one-time manual upgrade using
+the steps below, or a signed ZIP accepted by its existing updater. After that, use the online flow.
+
+## Building and publishing releases
+
+The Package workflow remains manual and **needs no signing secrets**. It checks PHP 8.2 compatibility
+as well as the main PHP 8.3 suite, and builds the hosted runtime from the exact Softn commit in
+[prepare-hosted-runtime](../.github/actions/prepare-hosted-runtime/action.yml). The packager verifies
+its complete inventory, JavaScript and matching ZIPP binary, including with `--skip-ui-build`.
+Development source maps are excluded.
+
+Run `node scripts/package-dist.mjs` locally, or dispatch Package for a release tag. The workflow
+uploads the ZIP, compares GitHub's reported asset digest and size against the local ZIP, and then
+publishes a new draft release. Branch runs produce a workflow artifact only, which is not yet
+trusted by the online updater. Compatible Softn and ZIPP versions stay pinned inside each release.
+
+## Optional signed uploads and offline upgrades
+
+**Upload a signed package instead** remains available for offline/custom distributions. This path
+requires an Ed25519 `manifest.sig.json` verified against `UPGRADE_RELEASE_PUBKEY` in the server's
+`api/.env`, as well as the complete file inventory. Arbitrary unsigned uploads are refused in
+production. The development-only `UPGRADE_ALLOW_UNSIGNED=true` override remains ignored in production.
+
+For signed builds, set `FORMLOGIC_RELEASE_SIGNING_KEY` to a private PEM **file path** locally, or
+`FORMLOGIC_RELEASE_SIGNING_KEY_PEM` to its PEM contents; do not set both. Use
+`node scripts/package-dist.mjs --require-signature` when an offline package must be signed.
+Invalid supplied keys fail the build; the packager never silently drops a configured signature.
+
+Optional GitHub Actions configuration:
+
+- Secret `FORMLOGIC_RELEASE_SIGNING_KEY`: private Ed25519 PEM contents.
+- Variable `FORMLOGIC_RELEASE_PUBLIC_KEY`: matching base64 raw public key, to check the intended pin.
+
+The private PEM is loaded in memory and removed from the packager environment before npm/Composer
+run. It is not written into the release or logs. Signatures are self-verified before ZIP creation.
+Use an existing trusted key for installed servers. For a new trust setup,
+`node scripts/generate-release-key.mjs` generates a keypair; keep its private key outside Git.
+
+## Verification commands
+
+`node --test scripts/release-signing.test.mjs` checks optional signing, explicit offline signing,
+runtime inventory and installer behavior, including interoperability with the real PHP verifier.
+PHP with Sodium must be on PATH. Backend `GitHubReleaseServiceTest` and `AdminPanelTest` exercise
+official release selection, reviewed asset binding, checksum checks, backup and rollback using local
+fixtures; no test installs a remote release over the development checkout.
 
 ## The deployed layout
 
@@ -164,7 +222,7 @@ needed — if the app can reach the database, so can the CLI.
 - **Source checkout instead of a release zip?** The backend lives at `formlogic/backend`, so the
   same command is `php formlogic/backend/bin/upgrade.php --check`. After pulling new code, also
   run `composer install` in `formlogic/backend` and rebuild the UI (`cd formlogic/ui && npm
-  ci && npm run build`) — the release zip ships both pre-built.
+  ci && npm run build:hosted-runtime && npm run build`) — the release zip ships both pre-built.
 - **Idempotent by design**: every schema step is guarded, so re-running the CLI (or letting the web
   app re-run the same migrations) never double-applies anything.
 - `schema_meta` is only stamped by deliberate upgrades — `upgrade_source=cli` (this CLI) or

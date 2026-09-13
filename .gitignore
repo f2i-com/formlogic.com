@@ -19,3 +19,19 @@ node_modules/
 
 # Isolated local booking test database files
 formlogic/backend/storage/booking-test/
+
+# Pinned runtime source checkout used by manual build workflows
+.runtime-source/
+
+# Default output of the release-key generator (keep private keys outside Git).
+/formlogic-release-signing.pem
+
+# Generated shared native app runtime; rebuild with node scripts/prepare-native-runtime.mjs
+/formlogic/backend/resources/softn-native/
+/formlogic/backend/storage/native-apps/
+
+/formlogic/ui/public/app-editors/
+/formlogic/ui/public/.app-editors-*/
+
+# Private hosted app databases created by local/runtime use
+/formlogic/backend/storage/hosted-apps/

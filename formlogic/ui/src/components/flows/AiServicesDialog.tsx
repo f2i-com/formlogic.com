@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Download, Eye, EyeOff, Laptop, Pencil, Plus, RefreshCw, Sparkles, Trash2, Upload } from 'lucide-react';
+import { listOaiyServices } from '../../client-runtime/oaiy/oaiyServices';
 import { desktopClient, type DesktopServiceSnapshot } from '../../client-runtime/desktop/desktopClient';
 import {
   AI_CAPABILITIES,
@@ -346,7 +347,7 @@ export default function AiServicesDialog({ isOpen, onClose, desktopPresence, api
         description={
           editor
             ? 'Configuration is stored only in this browser — never on the server.'
-            : apiOnly ? 'Add your own API provider, save its settings and test the connection.' : 'Manage browser-stored API services and inspect FormLogic Desktop services for flows.'
+            : apiOnly ? 'Add your own API provider, save its settings and test the connection.' : 'Manage browser-stored API services and inspect OAIY services for flows.'
         }
       >
         {editor ? (
@@ -365,7 +366,7 @@ export default function AiServicesDialog({ isOpen, onClose, desktopPresence, api
         ) : (
         <div className="space-y-4 p-4 sm:p-6">
           {/* Keyed by presence.kind: a presence change remounts with fresh loading state. */}
-          {!apiOnly && <DesktopServicesSection key={desktopPresence.kind} presence={desktopPresence} />}
+          {!apiOnly && <DesktopServicesSection key={desktopPresence.kind === 'local' ? desktopPresence.runtime ?? 'legacy' : desktopPresence.kind} presence={desktopPresence} />}
 
           <section className="rounded-xl border border-gray-200/80 bg-white p-4 dark:border-slate-700/60 dark:bg-slate-900">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -471,13 +472,19 @@ export default function AiServicesDialog({ isOpen, onClose, desktopPresence, api
  */
 function DesktopServicesSection({ presence }: { presence: FlowsDesktopPresence }) {
   const navigate = useNavigate();
+  const runtime = presence.kind === 'local' ? presence.runtime : undefined;
   const [services, setServices] = useState<DesktopServiceSnapshot[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (presence.kind !== 'local') return;
     let cancelled = false;
-    desktopClient.services.list().then((res) => {
+    const request = runtime === 'oaiy'
+      ? listOaiyServices().then(data => data === null
+        ? { ok: false as const, error: { message: 'Could not load OAIY services. Check the connection and try again.' } }
+        : { ok: true as const, data })
+      : desktopClient.services.list();
+    request.then((res) => {
       if (cancelled) return;
       if (res.ok) {
         setServices(res.data);
@@ -489,7 +496,7 @@ function DesktopServicesSection({ presence }: { presence: FlowsDesktopPresence }
     return () => {
       cancelled = true;
     };
-  }, [presence.kind]);
+  }, [presence.kind, runtime]);
 
   return (
     <section className="rounded-xl border border-gray-200/80 bg-white p-4 dark:border-slate-700/60 dark:bg-slate-900">
@@ -498,9 +505,9 @@ function DesktopServicesSection({ presence }: { presence: FlowsDesktopPresence }
           <Laptop className="h-5 w-5" />
         </span>
         <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">FormLogic Desktop services</h3>
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{runtime === 'oaiy' || presence.kind === 'none' ? 'OAIY services' : 'Local runtime services'}</h3>
           <p className="mt-1 text-xs leading-snug text-gray-500 dark:text-slate-400">
-            Managed in FormLogic Desktop -&gt; Services -- add or edit services there via JSON templates.
+            Manage local models and tools in OAIY → Services.
           </p>
 
           {presence.kind === 'local' && (
@@ -508,12 +515,12 @@ function DesktopServicesSection({ presence }: { presence: FlowsDesktopPresence }
               {services === null ? (
                 <p className="flex items-center gap-2 text-xs text-gray-400 dark:text-slate-500">
                   <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                  Loading Desktop services...
+                  Loading local services…
                 </p>
               ) : error ? (
                 <p className="text-xs text-amber-700 dark:text-amber-300">{error}</p>
               ) : services.length === 0 ? (
-                <p className="text-xs text-gray-500 dark:text-slate-400">No Desktop services were reported by the local pairing.</p>
+                <p className="text-xs text-gray-500 dark:text-slate-400">No services are configured in the connected runtime yet.</p>
               ) : (
                 <div className="divide-y divide-gray-100 rounded-lg border border-gray-200/70 dark:divide-slate-800 dark:border-slate-700/60">
                   {services.map((service) => (
@@ -540,9 +547,9 @@ function DesktopServicesSection({ presence }: { presence: FlowsDesktopPresence }
 
           {presence.kind === 'none' && (
             <div className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-slate-800/50 dark:text-slate-300">
-              <p>Link FormLogic Desktop to use default local speech services and Desktop-managed AI tools.</p>
-              <Button size="sm" variant="outline" className="mt-2" onClick={() => navigate('/settings#linked-desktops')}>
-                Set up linked Desktop
+              <p>Connect OAIY to use local speech services and AI tools.</p>
+              <Button size="sm" variant="outline" className="mt-2" onClick={() => navigate('/settings#local-runtime')}>
+                Connect OAIY
               </Button>
             </div>
           )}

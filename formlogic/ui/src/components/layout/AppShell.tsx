@@ -73,7 +73,7 @@ export function AppShell() {
   }
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-gray-50 dark:bg-slate-950">
       {/* Skip to content (visible on keyboard focus) */}
       <a
         href="#main-content"

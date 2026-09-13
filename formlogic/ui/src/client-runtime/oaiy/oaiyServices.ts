@@ -35,9 +35,9 @@ interface OaiyServiceItem {
  * convention — the universal OpenAI-compatible assumption.
  */
 export async function listOaiyServices(): Promise<DesktopServiceSnapshot[] | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     const token = getOaiyToken();
     const resp = await fetch(`${getOaiyBaseUrl()}/api/services`, {
       method: 'GET',
@@ -49,7 +49,6 @@ export async function listOaiyServices(): Promise<DesktopServiceSnapshot[] | nul
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
-    clearTimeout(timer);
     if (!resp.ok) return null;
     const body = (await resp.json().catch(() => null)) as { services?: OaiyServiceItem[] } | null;
     if (!Array.isArray(body?.services)) return null;
@@ -65,5 +64,7 @@ export async function listOaiyServices(): Promise<DesktopServiceSnapshot[] | nul
     }));
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }

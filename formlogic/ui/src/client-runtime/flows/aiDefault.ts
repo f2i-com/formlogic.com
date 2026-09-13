@@ -136,7 +136,7 @@ function readCsrfToken(): string | null {
  * header on writes, typed `code` preserved from the standard error envelope). Used
  * only until lib/api grows its own preferences/AI-chat methods.
  */
-async function contractFetch(method: 'GET' | 'POST', endpoint: string, body?: unknown): Promise<RawFetchOutcome> {
+async function contractFetch(method: 'GET' | 'POST', endpoint: string, body?: unknown, signal?: AbortSignal): Promise<RawFetchOutcome> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (method !== 'GET') {
     const csrf = readCsrfToken();
@@ -148,6 +148,7 @@ async function contractFetch(method: 'GET' | 'POST', endpoint: string, body?: un
       method,
       headers,
       credentials: 'include',
+      signal,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (e) {
@@ -421,8 +422,7 @@ async function defaultSiteChat(
       data = res.data;
     }
   } else {
-    void signal; // the interim contract fetch has no abort support; the api method will honor it
-    const res = await contractFetch('POST', '/ai/chat', { messages, stream: false });
+    const res = await contractFetch('POST', '/ai/chat', { messages, stream: false }, signal);
     status = res.status || undefined;
     code = res.code;
     message = res.message;

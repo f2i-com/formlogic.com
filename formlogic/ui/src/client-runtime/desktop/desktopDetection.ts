@@ -39,6 +39,7 @@ function initialInfo(): DesktopInfo {
 
 let current: DesktopInfo = initialInfo();
 const listeners = new Set<Listener>();
+const probingListeners = new Set<Listener>();
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let running = false;
 let consecutiveFailures = 0;
@@ -56,9 +57,9 @@ function isRecognisedCompanion(id: unknown): boolean {
  * running the other one was told there was no desktop at all.
  */
 async function probeBase(base: string): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     const resp = await fetch(`${base}/api/health`, {
       method: 'GET',
       signal: controller.signal,
@@ -67,7 +68,6 @@ async function probeBase(base: string): Promise<boolean> {
       credentials: 'omit',
       cache: 'no-store',
     });
-    clearTimeout(timeout);
     if (resp.ok) {
       const body = (await resp.json().catch(() => null)) as Partial<DesktopHealth> | null;
       const recognised = isRecognisedCompanion(body?.companion);
@@ -95,6 +95,8 @@ async function probeBase(base: string): Promise<boolean> {
   } catch {
     // Network error, timeout, or CORS rejection — all mean "not here". Never
     // logged: this probe runs on a loop and would flood the console.
+  } finally {
+    clearTimeout(timeout);
   }
   return false;
 }
@@ -111,6 +113,16 @@ async function probeOnce(): Promise<void> {
   // Report the base we would try first next time, not a loop variable that is
   // out of scope here — nothing answered on any of them.
   publish({ available: false, baseUrl: pinned, lastChange: Date.now() });
+}
+
+/** Subscriptions, StrictMode remounts and manual refresh share an in-flight probe. */
+function sharedProbe(): Promise<void> {
+  if (pollPromise) return pollPromise;
+  const promise = probeOnce().finally(() => {
+    if (pollPromise === promise) pollPromise = null;
+  });
+  pollPromise = promise;
+  return promise;
 }
 
 function publish(next: DesktopInfo): void {
@@ -137,7 +149,7 @@ function scheduleNext(): void {
   const interval = consecutiveFailures >= BACKOFF_AFTER_FAILURES ? BACKOFF_INTERVAL_MS : POLL_INTERVAL_MS;
   pollTimer = setTimeout(() => {
     pollTimer = null;
-    pollPromise = probeOnce().finally(() => scheduleNext());
+    void sharedProbe().finally(() => scheduleNext());
   }, interval);
 }
 
@@ -149,7 +161,7 @@ function scheduleNext(): void {
 export function startDesktopDetection(): void {
   if (running) return;
   running = true;
-  pollPromise = probeOnce().finally(() => scheduleNext());
+  void sharedProbe().finally(() => scheduleNext());
 }
 
 /** Stop the periodic probe. */
@@ -169,20 +181,26 @@ export function getDesktopInfo(): DesktopInfo {
 /**
  * Subscribe to desktop-status changes. Starts detection on the first subscriber and
  * stops it when the last one unsubscribes (detection never runs globally at boot).
+ * Pass {probe:false} for a passive shell indicator; explicit connection controls
+ * and paired runtimes keep the normal discovery/reconnection loop.
  * The listener fires only when availability/companion/version change — not on every
  * poll — and is called immediately with the current status.
  */
-export function subscribeDesktopStatus(listener: Listener): () => void {
+export function subscribeDesktopStatus(listener: Listener, options: { probe?: boolean } = {}): () => void {
   listeners.add(listener);
   try {
     listener(current);
   } catch (e) {
     console.warn('[desktop-detect] initial listener call threw:', e);
   }
-  startDesktopDetection();
+  if (options.probe !== false) {
+    probingListeners.add(listener);
+    startDesktopDetection();
+  }
   return () => {
     listeners.delete(listener);
-    if (listeners.size === 0) stopDesktopDetection();
+    probingListeners.delete(listener);
+    if (probingListeners.size === 0) stopDesktopDetection();
   };
 }
 
@@ -191,7 +209,7 @@ export function subscribeDesktopStatus(listener: Listener): () => void {
  * launches Desktop and clicks "Check again".
  */
 export async function refreshDesktopStatus(): Promise<DesktopInfo> {
-  await probeOnce();
+  await sharedProbe();
   return current;
 }
 
@@ -204,6 +222,7 @@ export function _currentProbePromise(): Promise<void> | null {
 export function __resetDesktopDetectionForTests(): void {
   stopDesktopDetection();
   listeners.clear();
+  probingListeners.clear();
   consecutiveFailures = 0;
   pollPromise = null;
   current = initialInfo();

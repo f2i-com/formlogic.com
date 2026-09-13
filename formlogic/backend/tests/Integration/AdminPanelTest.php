@@ -848,4 +848,59 @@ class AdminPanelTest extends TestCase
         $this->assertSame('JWT_SECRET=rotated-after-upgrade', (string) file_get_contents($apiRoot . '/.env'), 'rollback must not clobber .env');
         $this->assertSame('PRECIOUS-USER-RECORDS', (string) file_get_contents($apiRoot . '/storage/forms/user-data.sqlite'));
     }
+    public function testOfficialUnsignedReleaseCanBeReviewedAppliedAndRolledBackInProduction(): void
+    {
+        [$webRoot, $apiRoot] = $this->buildFakeInstall();
+        $maintenance = new MaintenanceService($apiRoot . '/storage/maintenance.json');
+        $zip = $this->buildFakePackage('2.0.0', sign: false);
+        $github = new \FormLogic\Tests\Support\GitHubReleaseFixture($zip);
+        $svc = new UpgradeService($apiRoot, self::$mysql, $maintenance, '', false, true, $github);
+        $release = $svc->latestOfficialRelease();
+        $staged = $svc->stageOfficialRelease($release['releaseId'], $release['assetId'], $release['digest']);
+        $this->assertSame('github-release', $staged['integrity']);
+        $this->assertFalse($maintenance->enabled(), 'download alone must not close the site');
+        $this->assertFileExists($apiRoot . '/storage/upgrades/official-release.zip');
+        $result = $svc->apply($this->adminId, false, $staged['packageId'], $staged['digest']);
+        $this->assertTrue($result['ok']);
+        $this->assertSame('PRECIOUS-USER-RECORDS', file_get_contents($apiRoot . '/storage/forms/user-data.sqlite'));
+        $this->assertFileDoesNotExist($webRoot . '/official-release.zip');
+        $this->assertFileExists($apiRoot . '/storage/backups/' . $result['backupId'] . '/database.sql.gz');
+        $this->assertTrue($svc->rollback($result['backupId'], $this->adminId)['ok']);
+        $svc->discardStagedPackage();
+        $this->assertFileDoesNotExist($apiRoot . '/storage/upgrades/official-release.zip');
+    }
+
+    public function testOfficialReleaseIsRecheckedBeforeMaintenanceOrWrites(): void
+    {
+        [, $apiRoot] = $this->buildFakeInstall();
+        $maintenance = new MaintenanceService($apiRoot . '/storage/maintenance.json');
+        $github = new \FormLogic\Tests\Support\GitHubReleaseFixture($this->buildFakePackage('2.0.0', sign: false));
+        $svc = new UpgradeService($apiRoot, self::$mysql, $maintenance, '', false, true, $github);
+        $release = $svc->latestOfficialRelease();
+        $info = $svc->stageOfficialRelease($release['releaseId'], $release['assetId'], $release['digest']);
+        $github->metadata['assets'][0]['digest'] = 'sha256:' . str_repeat('0', 64);
+        try {
+            $svc->apply($this->adminId, false, $info['packageId'], $info['digest']);
+            $this->fail('A changed GitHub asset must be reviewed again.');
+        } catch (\RuntimeException $error) {
+            $this->assertStringContainsString('changed', $error->getMessage());
+        }
+        $this->assertFalse($maintenance->enabled());
+        $this->assertSame([], $svc->listBackups());
+    }
+
+    public function testEditedOfficialStagingManifestDoesNotGrantTrust(): void
+    {
+        [, $apiRoot] = $this->buildFakeInstall();
+        $maintenance = new MaintenanceService($apiRoot . '/storage/maintenance.json');
+        $github = new \FormLogic\Tests\Support\GitHubReleaseFixture($this->buildFakePackage('2.0.0', sign: false));
+        $svc = new UpgradeService($apiRoot, self::$mysql, $maintenance, '', false, true, $github);
+        $release = $svc->latestOfficialRelease();
+        $info = $svc->stageOfficialRelease($release['releaseId'], $release['assetId'], $release['digest']);
+        $manifest = $apiRoot . '/storage/upgrades/packages/' . $info['packageId'] . '/manifest.json';
+        file_put_contents($manifest, file_get_contents($manifest) . ' ');
+        $this->expectExceptionMessage('staged manifest no longer matches');
+        $svc->apply($this->adminId, false, $info['packageId'], $info['digest']);
+    }
+
 }

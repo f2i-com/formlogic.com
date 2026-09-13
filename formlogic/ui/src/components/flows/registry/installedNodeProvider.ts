@@ -125,8 +125,8 @@ export function adaptInstalledDefinition(def: FlowNodeDefinitionV1, packageName?
   const kind = def.handler?.kind;
   const runnable = kind === 'core-preset' || kind === 'service-action';
   const runNote = kind === 'service-action'
-    ? 'Runs on FormLogic Desktop (or a paired browser) once this extension’s service slot is bound — bind it under Details on the installed extension.'
-    : 'Runs wherever flows run — lowered to a built-in node by the server compiler (FormLogic Desktop needs an up-to-date build).';
+    ? 'Requires a desktop runtime with Service Platform support and a bound service slot. Bind the slot under Details on the installed extension. The OAIY bridge does not currently expose Service Platform actions.'
+    : 'Compiled to a built-in node by the server. Available runtimes depend on that node’s requirements.';
   // Replacing a built-in in the palette is DECLARED, never inferred from what a node lowers to.
   // Most packages use a core preset as an implementation detail — a specialised "Greet someone"
   // built on `template` is not the Template node, and inferring otherwise made it silently take
@@ -174,7 +174,7 @@ function hostCategoryFor(declared: unknown): NodeCategory {
     (category) => category.id === wanted || category.label.toLowerCase() === wanted
   );
   // 'installed' stays the home for anything unrecognised, and a package cannot claim the
-  // desktop section — that one means "needs a local FormLogic Desktop service", which is a
+  // desktop section — that one means "needs a local OAIY service", which is a
   // host fact about how the node runs, not a label an author gets to choose.
   if (!match || match.id === 'desktop') return 'installed';
   return match.id;

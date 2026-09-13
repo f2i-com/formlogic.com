@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppStudio } from './AppStudio';
 import { useAuthStore } from '../../stores/authStore';
 import { api } from '../../lib/api';
+import { toast } from '../../stores/toastStore';
 
 type AuthUser = NonNullable<ReturnType<typeof useAuthStore.getState>['user']>;
 
@@ -46,10 +47,13 @@ const h = vi.hoisted(() => {
 
 vi.mock('../../lib/api', () => ({
   api: {
+    getNativeRecords: vi.fn(async () => ({ data: { installed: false, tables: [] } })),
+    getNativeEntry: vi.fn(async () => ({ data: { home: false } })),
     getApp: vi.fn(async () => ({ data: { app: h.app } })),
     getAppForms: vi.fn(async () => ({
       data: { forms: [{ id: 'af1', appId: 'a1', formId: 'f1', displayName: 'Repair request', sortOrder: 0, isVisible: true, settings: {} }] },
     })),
+    updateAppForm: vi.fn(async () => ({ data: {} })),
     getForm: vi.fn(async () => ({ data: { form: h.form } })),
     listFlows: vi.fn(async () => ({
       data: { flows: [{ id: 'fl1', ownerUserId: 'u1', appId: 'a1', name: 'Notify dispatch', slug: 'notify', description: null, engine: 'v1', flowJson: { nodes: [{ id: 'trigger', type: 'input' }, { id: 'out', type: 'output' }], edges: [] }, inputSchema: null, outputSchema: null, nodeCapabilities: [], version: 1, enabled: true, createdAt: '2026-07-01 00:00:00', updatedAt: '2026-07-19 10:00:00' }] },
@@ -107,6 +111,7 @@ function PathProbe() {
 beforeEach(() => {
   vi.clearAllMocks();
   pathRef.current = '';
+  vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
   useAuthStore.setState({ user: { id: 'u1', email: 'o@example.com', name: 'Owner' } as unknown as AuthUser });
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -137,6 +142,77 @@ async function renderStudio(path: string) {
 }
 
 describe('AppStudio', () => {
+  it.each(['/apps/a1/studio/plan', '/apps/a1/studio'])('waits for initial data and opens Overview without mounting Data: %s', async path => {
+    let finishForms!: (value: Awaited<ReturnType<typeof api.getAppForms>>) => void;
+    vi.mocked(api.getAppForms).mockReturnValueOnce(new Promise(resolve => { finishForms = resolve; }));
+    await renderStudio(path);
+    expect(container.querySelector('[aria-label="Loading App Studio"]')).toBeTruthy();
+    expect(container.querySelector('h2')).toBeNull();
+    expect(api.getAppsFormUsage).not.toHaveBeenCalled();
+    await act(async () => { finishForms({ data: { forms: [] } }); });
+    expect(pathRef.current).toBe('/apps/a1/studio/plan');
+    expect(container.querySelector('h2')?.textContent).toBe('Overview');
+    expect(api.getAppsFormUsage).not.toHaveBeenCalled();
+    expect(api.getApp).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { visible: false, settings: {}, message: 'This form is excluded from the app.' },
+    { visible: true, settings: { hidden: true }, message: 'This form stores records only.' },
+  ])('explains unavailable screens before rendering custom content: $message', async ({ visible, settings, message }) => {
+    vi.mocked(api.getAppForms).mockResolvedValueOnce({ data: { forms: [{ id: 'af1', appId: 'a1', formId: 'f1', displayName: 'Service bookings', sortOrder: 0, isVisible: visible, settings }] } } as never);
+    vi.mocked(api.getForm).mockResolvedValueOnce({ data: { form: { ...h.form, customScreen: { enabled: true, html: '<h1>Custom content</h1>' } } } } as never);
+    await renderStudio('/apps/a1/studio/screens');
+    const screen = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.startsWith('Service bookings'))!;
+    await act(async () => { screen.click(); });
+    const preview = container.querySelector('[aria-label="desktop app preview"]')!;
+    expect(preview.textContent).toContain('Service bookings');
+    expect(preview.textContent).toContain(message);
+    expect(preview.textContent).not.toContain('Open screen editor');
+    const source = container.querySelector('select[aria-label="Preview data"]') as HTMLSelectElement;
+    await act(async () => { source.value = 'real'; source.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(api.getResponses).not.toHaveBeenCalled();
+  });
+
+  it('identifies custom dashboards instead of drawing a generated home', async () => {
+    vi.mocked(api.getApp).mockResolvedValueOnce({ data: { app: { ...h.app, customScreen: { kind: 'dashboard', dashboard: { widgets: [{ id: 'w1', type: 'metric' }] } }, theme: { ...h.app.theme, fontFamily: 'Georgia', logoUrl: '/app-logo.png' } } } } as never);
+    await renderStudio('/apps/a1/studio/screens');
+    const preview = container.querySelector('[aria-label="desktop app preview"]') as HTMLElement;
+    expect(preview.style.fontFamily).toBe('Georgia');
+    expect(preview.querySelector('img')?.getAttribute('src')).toBe('/app-logo.png');
+    expect(preview.textContent).toContain('Widget dashboard');
+    expect(preview.textContent).not.toContain('Quick actions');
+    expect(preview.textContent).toContain('Open screen editor');
+  });
+
+  it('undoes a placement change using fresh settings', async () => {
+    const getForms = vi.mocked(api.getAppForms);
+    const original = getForms.getMockImplementation()!;
+    const update = vi.mocked(api.updateAppForm);
+    let attachment = { id: 'af1', appId: 'a1', formId: 'f1', displayName: 'Repair request', sortOrder: 0, isVisible: true, settings: { otherSetting: 'kept' } as Record<string, unknown> };
+    getForms.mockImplementation(async () => ({ data: { forms: [attachment] } }) as never);
+    update.mockImplementation(async (_app, _form, patch) => { attachment = { ...attachment, ...patch } as typeof attachment; return { data: {} } as never; });
+    const undo = vi.spyOn(toast, 'undo').mockImplementation(() => 'test-undo');
+    try {
+      await renderStudio('/apps/a1/studio/screens');
+      const screen = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.startsWith('Repair requestGenerated'))!;
+      await act(async () => { screen.click(); });
+      const exclude = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.startsWith('Not in this app'))!;
+      await act(async () => { exclude.click(); });
+      expect(attachment.isVisible).toBe(false);
+      attachment.settings.otherSetting = 'changed elsewhere';
+      const revert = undo.mock.calls[0][1];
+      await act(async () => { revert(); await Promise.resolve(); });
+      expect(attachment.isVisible).toBe(true);
+      expect(attachment.settings.otherSetting).toBe('changed elsewhere');
+      expect(update).toHaveBeenCalledTimes(2);
+    } finally {
+      getForms.mockImplementation(original);
+      update.mockReset();
+      undo.mockRestore();
+    }
+  });
+
   it('renders the Data step with the app identity and real form data', async () => {
     await renderStudio('/apps/a1/studio/data');
     expect(container.textContent).toContain('Plumbing Operations');
@@ -157,6 +233,11 @@ describe('AppStudio', () => {
   it('renders the Publish step with preflight and version history', async () => {
     await renderStudio('/apps/a1/studio/publish');
     expect(container.textContent).toContain('Review & publish');
+    expect(container.textContent).not.toContain('1 data type configured');
+    const passedChecks = Array.from(container.querySelectorAll('button')).find(button => /Show \d+ passed checks/.test(button.textContent ?? ''))!;
+    expect(passedChecks.getAttribute('aria-expanded')).toBe('false');
+    await act(async () => { passedChecks.click(); });
+    expect(passedChecks.getAttribute('aria-expanded')).toBe('true');
     expect(container.textContent).toContain('1 data type configured');
     expect(container.textContent).toContain('Release log');
     expect(container.textContent).toContain('First release');
@@ -165,7 +246,7 @@ describe('AppStudio', () => {
     expect(container.textContent).toContain('Updated the Repair request form');
   });
 
-  it('makes draft preview state explicit and compares it with the live release', async () => {
+  it('explains that saved changes in a published app are already live', async () => {
     await renderStudio('/apps/a1/studio/screens');
 
     expect(container.textContent).toContain('Saved edits are already live for members');
@@ -173,10 +254,12 @@ describe('AppStudio', () => {
     expect(container.querySelector('button[aria-label="Tablet preview"]')).toBeTruthy();
     expect(container.querySelector('select[aria-label="Preview data"]')).toBeTruthy();
 
-    const compare = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Compare with live')!;
+    const compare = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Review saved changes')!;
     expect(compare).toBeTruthy();
     await act(async () => { compare.click(); });
-    expect(document.body.textContent).toContain('Compare draft with live');
+    expect(document.body.textContent).toContain('Changes since last publish');
+    expect(document.body.textContent).toContain('Members see saved changes immediately in a published app.');
+    expect(document.body.textContent).not.toContain('No saved Studio change replaces it until Publish.');
     expect(document.body.textContent).toContain('Live v2');
     expect(document.body.textContent).toContain('Repair request');
   });
@@ -243,11 +326,12 @@ describe('AppStudio', () => {
     const dataTab = Array.from(nav.querySelectorAll('button')).find((b) => b.textContent?.startsWith('Data'))!;
     // The badge number carries an sr-only expansion, so its meaning is not
     // trapped in a hover title on a touch screen.
-    expect(dataTab.textContent).toBe('Data11 data type');
+    expect(dataTab.textContent).toContain('Data & forms');
+    expect(dataTab.getAttribute('aria-describedby')).toBe(dataTab.querySelector('.sr-only')!.id);
     expect(dataTab.querySelector('.sr-only')!.textContent).toBe('1 data type');
     expect(dataTab.getAttribute('aria-label')).toBe('Data & forms');
     expect(dataTab.getAttribute('aria-current')).toBe('page');
-    const publishBtn = Array.from(nav.querySelectorAll('button')).find((b) => b.textContent?.includes('Publish'))!;
+    const publishBtn = Array.from(nav.querySelectorAll('button')).find((b) => b.getAttribute('aria-label') === 'Review & publish')!;
     await act(async () => { publishBtn.click(); });
     await act(async () => { await Promise.resolve(); });
     expect(container.textContent).toContain('Review & publish');

@@ -71,7 +71,7 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
       if (cancelled) return;
       // Without the else branch a failed read left "Loading payments…" up permanently,
       // which reads as "still working" rather than "this did not load".
-      if (r.data) setPayments(r.data);
+      if (r.data) { setPayments(r.data); setPaymentsFailed(false); }
       else setPaymentsFailed(true);
     });
     return () => { cancelled = true; };
@@ -116,7 +116,7 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
 
   return (
     <>
-      <section>
+      <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-1.5">
           <KeyRound className="h-4 w-4" /> Account tools
         </h3>
@@ -133,11 +133,11 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
               <p className="text-xs font-medium text-amber-800 dark:text-amber-300 mb-1.5">
                 Temporary password — hand it to the user securely; it won't be shown again:
               </p>
-              <div className="flex items-center gap-2">
-                <code className="font-mono text-sm px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900/60 border border-amber-200/80 dark:border-amber-500/20 select-all">{tempPassword}</code>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="break-all font-mono text-sm px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900/60 border border-amber-200/80 dark:border-amber-500/20 select-all">{tempPassword}</code>
                 <button
                   type="button"
-                  onClick={() => { void navigator.clipboard.writeText(tempPassword).then(() => toast.success('Copied')); }}
+                  onClick={() => { void navigator.clipboard.writeText(tempPassword).then(() => toast.success('Copied')).catch(() => toast.error('Could not copy', 'Select and copy the temporary password manually.')); }}
                   aria-label="Copy temporary password"
                   className="p-1.5 rounded-lg text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-500/20 cursor-pointer"
                 >
@@ -149,7 +149,7 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
           )}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2.5">
             <div className="min-w-0">
-              <p className="text-sm text-gray-900 dark:text-white flex items-center gap-1.5"><Mail className="h-3.5 w-3.5 text-gray-400" /> {email}</p>
+              <p className="break-all text-sm text-gray-900 dark:text-white flex items-center gap-1.5"><Mail className="h-3.5 w-3.5 text-gray-400" /> {email}</p>
               <p className="text-xs text-gray-500 dark:text-slate-400">Change the account's sign-in email address.</p>
             </div>
             <Button size="sm" variant="outline" onClick={() => { setNewEmail(''); setEmailOpen(true); }}>Change email</Button>
@@ -157,7 +157,7 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
         </div>
       </section>
 
-      <section>
+      <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-1.5">
           <Wallet className="h-4 w-4" /> Payments
           {payments?.complimentary && <Badge variant="success">complimentary</Badge>}
@@ -172,10 +172,11 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
                   ? `until ${formatDateInZone(payments.cloudUntil, tz)}`
                   : 'not active'}
             </p>
-            <Button size="sm" variant="outline" onClick={() => setCompOpen(!(payments?.complimentary ?? false))}>
+            <Button size="sm" variant="outline" disabled={!payments || paymentsFailed || compBusy} onClick={() => setCompOpen(!(payments?.complimentary ?? false))}>
               {payments?.complimentary ? 'Remove complimentary access' : 'Make complimentary (free)'}
             </Button>
           </div>
+          {payments && paymentsFailed && <p role="alert" className="px-3 py-3 text-sm text-amber-700 dark:text-amber-300">Could not refresh payments. <button type="button" className="underline" onClick={() => setPayTick(n => n + 1)}>Try again</button></p>}
           {!payments ? (
             paymentsFailed ? (
               <p className="px-3 py-3 text-xs text-amber-700 dark:text-amber-300">
@@ -196,7 +197,7 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
                     <p className="text-sm text-gray-900 dark:text-white">
                       {money(p.amountCents, p.currency)} · {p.months} month{p.months === 1 ? '' : 's'} · {p.provider}
                     </p>
-                    <p className="text-xs text-gray-400 dark:text-slate-500">
+                    <p className="break-all text-xs text-gray-400 dark:text-slate-500">
                       {formatDateTimeInZone(p.createdAt, tz)} · order {p.orderId}
                     </p>
                   </div>
@@ -209,7 +210,7 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
       </section>
 
       {!isSelf && (
-        <section>
+        <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
           <h3 className="text-sm font-semibold text-red-700 dark:text-red-400 mb-2 flex items-center gap-1.5">
             <AlertTriangle className="h-4 w-4" /> Danger zone
           </h3>

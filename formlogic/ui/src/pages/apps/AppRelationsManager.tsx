@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { forwardReturnTo, useReturnTo } from '../../hooks/useReturnTo';
-import { ArrowLeft, ArrowRight, Plus, Trash2, Link2, ExternalLink, X } from 'lucide-react';
+import { ArrowRight, Plus, Trash2, Link2, ExternalLink, X } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useResourcePaths } from '../../components/admin/AdminActingContext';
 import { Header } from '../../components/layout/Header';
@@ -139,13 +139,11 @@ export function AppRelationsManager() {
     <div className="min-h-screen">
       <Header
         title="Relations"
+        back={{ onClick: () => navigate(backTo.path, { state: backTo.state }), label: backTo.label ? `Back to ${backTo.label}` : 'Back to app settings' }}
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path, { state: backTo.state })} leftIcon={<ArrowLeft className="h-4 w-4" />}>
-              {backTo.label ? `Back to ${backTo.label}` : 'Back'}
-            </Button>
-            <Button size="sm" onClick={handleAdd} disabled={appForms.length < 2} title={appForms.length < 2 ? 'Add at least two forms to this app first' : undefined} leftIcon={<Plus className="h-4 w-4" />}>
-              Add relation
+            <Button size="sm" aria-label="Add relation" onClick={handleAdd} disabled={appForms.length < 2} title={appForms.length < 2 ? 'Add at least two forms to this app first' : undefined} leftIcon={<Plus className="h-4 w-4" />}>
+              <span className="hidden @xl/header:inline">Add relation</span>
             </Button>
           </>
         }
@@ -172,7 +170,7 @@ export function AppRelationsManager() {
                   ? 'A relation links records between two forms. Add at least two forms to this app first.'
                   : 'Relations link records between forms. Create one to connect your data.'}
               </p>
-              <Button size="sm" onClick={handleAdd} disabled={appForms.length < 2} leftIcon={<Plus className="h-4 w-4" />}>
+              <Button size="sm" aria-label="Add relation" onClick={handleAdd} disabled={appForms.length < 2} leftIcon={<Plus className="h-4 w-4" />}>
                 Add relation
               </Button>
             </div>

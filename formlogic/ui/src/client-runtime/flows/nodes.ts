@@ -5,7 +5,7 @@
 // (c) the injected FlowExecutorDeps — the SAME capability boundary as app-logic effects:
 // expressions run in the QuickJS sandbox (never eval), formlogic.* writes go through the
 // viewer's authenticated session, connector requests through the standard permission-gated
-// connector client, and HTTP is allow-listed to FormLogic Desktop + the FormLogic API only.
+// connector client, and HTTP is allow-listed to OAIY + the FormLogic API only.
 // Unsupported node types fail the run with `invalid_flow` naming the node — flows authored
 // in the full F2I editor degrade loudly, never silently.
 import { getDesktopBaseUrl } from '../desktop/desktopTypes';
@@ -28,7 +28,7 @@ export const FLOW_NODE_BUDGET = 50;
  * declared contract — it MUST stay in lock-step with the `switch (node.type)` in executeNode
  * below (adding a case here without a case there, or vice-versa, is caught by the
  * nodeCatalog↔executor parity test). The editor's node catalog marks exactly these types
- * `executable`; every other palette node is display-only ("Requires FormLogic Desktop").
+ * `executable`; every other palette node is display-only ("Requires OAIY").
  */
 export const EXECUTABLE_NODE_TYPES = [
   'input',
@@ -38,7 +38,7 @@ export const EXECUTABLE_NODE_TYPES = [
   'logic_block',
   'llm_chat',
   // Generic ServiceDefinition action (extensible-flows plan §7). Executable contract-wise,
-  // but v1 executes only on FormLogic Desktop — the browser case is a typed, actionable
+  // but v1 executes only on OAIY — the browser case is a typed, actionable
   // refusal until the browser→Desktop invoke route lands.
   'service_action',
   // Awaited flow-to-flow composition (plan §8, browser v1) — the child invoker lives in
@@ -53,8 +53,8 @@ export const EXECUTABLE_NODE_TYPES = [
   'storage_set',
   'aokie_speak',
   // Desktop-service-backed nodes (docs §4). Real + executable: they drive a local
-  // FormLogic Desktop service over its loopback HTTP API. Unreachable → an ACTIONABLE
-  // node_failed ("install & start the service in FormLogic Desktop → Services").
+  // OAIY service over its loopback HTTP API. Unreachable → an ACTIONABLE
+  // node_failed ("install & start the service in OAIY → Services").
   'browser_action',
   'image_gen',
   'stt_transcribe',
@@ -169,7 +169,7 @@ export interface FlowExecutorDeps {
   /** One KV scope's entries as a plain {key: value} object (logic_block's read-only ctx.kv snapshot). */
   kvList?(scope: string): Promise<Record<string, unknown>>;
   /**
-   * Resolve a running FormLogic Desktop local AI service exposing an OpenAI-compatible
+   * Resolve a running OAIY local AI service exposing an OpenAI-compatible
    * chat endpoint (GET /api/services on the paired Desktop). Null when Desktop is absent,
    * unpaired, or runs no suitable service.
    */
@@ -180,7 +180,7 @@ export interface FlowExecutorDeps {
    */
   resolveAiProvider?(capability: AiCapability, providerId: string): Promise<ResolvedAiProvider | null>;
   /**
-   * Invoke a named chat provider through paired FormLogic Desktop. Desktop
+   * Invoke a named chat provider through paired OAIY. Desktop
    * attaches the credential; the browser sends only the provider id and request
    * body. `null` means no matching paired provider, so legacy browser/local
    * resolution may continue. A thrown error means a matched provider failed and
@@ -205,11 +205,11 @@ export interface FlowExecutorDeps {
   /** Configured app-level OpenAI-compatible AI base URL, when the app provides one. */
   getAppAiBase?(): string | null;
   /**
-   * Resolve a running FormLogic Desktop local SERVICE's loopback base URL by its id
+   * Resolve a running OAIY local SERVICE's loopback base URL by its id
    * (e.g. 'playwright-browser', 'krea2') via the paired Desktop's GET /api/services.
    * Backs the desktop-service nodes (browser_action / image_gen). Null when Desktop is
    * absent, unpaired, or the service isn't running — the node then fails with an
-   * actionable "install & start the service in FormLogic Desktop" message.
+   * actionable "install & start the service in OAIY" message.
    */
   resolveDesktopServiceBase?(serviceId: string): Promise<string | null>;
   /**
@@ -291,7 +291,7 @@ export interface FlowNodeContext {
 }
 
 /**
- * HTTP allow-list (docs §4): FormLogic Desktop's loopback base URL and the same-origin
+ * HTTP allow-list (docs §4): OAIY's loopback base URL and the same-origin
  * FormLogic API only. Anything else is a capability_denied — flows can never exfiltrate
  * to arbitrary hosts from the viewer's browser.
  */
@@ -543,7 +543,7 @@ function matchesFilterOp(fieldValue: unknown, op: FlowFilterOp, filterValue: unk
 /**
  * llm_chat endpoint resolution (docs §4), in order:
  *   1. the node's own data.endpoint  — allow-listed exactly as before (Desktop base / FormLogic API);
- *   2. a running FormLogic Desktop local AI service (paired Desktop's GET /api/services —
+ *   2. a running OAIY local AI service (paired Desktop's GET /api/services —
  *      OpenAI-compatible, loopback-only endpoints);
  *   3. the app's configured AI base URL (appContext.aiBaseUrl), '<base>/chat/completions'.
  * No candidate → node_failed with a message naming all three options.
@@ -583,7 +583,7 @@ async function resolveLlmChatEndpoint(ctx: FlowNodeContext): Promise<string> {
   throw new FlowExecError(
     'node_failed',
     `Node '${node.id}' llm_chat has no AI endpoint — set the node's 'endpoint', ` +
-      `start a local AI service in FormLogic Desktop (paired), or configure the app's AI base URL`,
+      `start a local AI service in OAIY (paired), or configure the app's AI base URL`,
     node.id
   );
 }
@@ -968,7 +968,7 @@ async function runHttpRequest(ctx: FlowNodeContext): Promise<unknown> {
 }
 
 // ── Desktop-service-backed nodes (docs §4) ─────────────────────────────────────────────────
-// browser_action / image_gen drive LOCAL FormLogic Desktop services over loopback HTTP. Speech
+// browser_action / image_gen drive LOCAL OAIY services over loopback HTTP. Speech
 // nodes use configured OpenAI-compatible endpoints; their optional Desktop service id only
 // resolves a base URL. The browser path is best-effort: resolve the service base (node
 // data.endpoint override, else the paired Desktop's GET /api/services), then a short loopback
@@ -979,15 +979,15 @@ async function runHttpRequest(ctx: FlowNodeContext): Promise<unknown> {
 /** The actionable failure raised when a desktop service can't be reached (never "coming soon"). */
 function desktopServiceUnavailable(node: WorkflowGraphNode, service: string, bundled: boolean): FlowExecError {
   const msg = bundled
-    ? `This step runs on FormLogic Desktop. Install and start the ${service} service in FormLogic Desktop → Services, then run the flow there.`
-    : `This step needs a ${service} service. Set the step's 'endpoint' to a running ${service} endpoint (or start one in FormLogic Desktop → Services), then run the flow there.`;
+    ? `This step runs on OAIY. Install and start the ${service} service in OAIY → Services, then run the flow there.`
+    : `This step needs a ${service} service. Set the step's 'endpoint' to a running ${service} endpoint (or start one in OAIY → Services), then run the flow there.`;
   return new FlowExecError('node_failed', `Node '${node.id}': ${msg}`, node.id);
 }
 
 /**
  * Resolve a desktop service's loopback BASE url for browser_action / image_gen:
  *   1. the node's own data.endpoint (allow-listed to Desktop base / FormLogic API / loopback);
- *   2. the paired FormLogic Desktop's running service by id (deps.resolveDesktopServiceBase).
+ *   2. the paired OAIY's running service by id (deps.resolveDesktopServiceBase).
  * No candidate → the actionable node_failed above (bundled service).
  */
 async function resolveServiceBase(
@@ -1376,7 +1376,7 @@ async function runTtsSpeak(ctx: FlowNodeContext): Promise<unknown> {
 function serviceActionRefusal(nodeId: string): FlowExecError {
   return new FlowExecError(
     'node_failed',
-    `Node '${nodeId}': service_action nodes run on FormLogic Desktop — set the flow's "Run on" to Desktop (or wire a desktop-executed trigger)`,
+    `Node '${nodeId}': service_action requires a paired desktop runtime with Service Platform support. This action is not available through the OAIY bridge yet`,
     nodeId,
   );
 }
@@ -1559,7 +1559,7 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
       return await runLlmChat(ctx);
 
     // Generic ServiceDefinition action (extensible-flows plan §7). The ServiceActionHost
-    // lives on FormLogic Desktop; a browser context with a paired SAME-MACHINE Desktop
+    // lives on OAIY; a browser context with a paired SAME-MACHINE Desktop
     // invokes it through the dispatcher-wired §7.6 route (deps.invokeServiceAction).
     // Everything else keeps the typed, actionable refusal (§15.5).
     case 'service_action':

@@ -4,7 +4,7 @@ import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Card, CardContent } from '../../components/ui/Card';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
-import { api, type AdminUpgradeStatus } from '../../lib/api';
+import { api, type AdminOfficialRelease, type AdminUpgradeStatus } from '../../lib/api';
 import { formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
 import { toast } from '../../stores/toastStore';
 import { AdminError, AdminSpinner } from './adminUi';
@@ -17,6 +17,9 @@ import { AdminError, AdminSpinner } from './adminUi';
 export function AdminUpgrade() {
   const tz = useAdminTimezone();
   const [status, setStatus] = useState<AdminUpgradeStatus | null>(null);
+  const [release, setRelease] = useState<AdminOfficialRelease | null | undefined>(undefined);
+  const [checking, setChecking] = useState(false);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [applying, setApplying] = useState(false);
   const [confirmApply, setConfirmApply] = useState(false);
@@ -40,6 +43,31 @@ export function AdminUpgrade() {
     setUploading(false);
     if (r.error) toast.error('Package rejected', r.error);
     else toast.success(`Package v${r.data!.staged.version} staged`, r.data!.staged.integrity === 'signed' ? 'Release signature and every file checksum verified.' : 'Unsigned development package — allowed only by the local override.');
+    load();
+  };
+
+  const checkForUpdates = async () => {
+    setChecking(true);
+    setReleaseError(null);
+    const result = await api.adminUpgradeLatest();
+    setChecking(false);
+    if (result.error) {
+      setRelease(undefined);
+      setReleaseError(result.error);
+    } else {
+      setRelease(result.data!.release);
+    }
+  };
+
+  const downloadRelease = async () => {
+    if (!release) return;
+    setUploading(true);
+    setJournal(null);
+    setReleaseError(null);
+    const result = await api.adminUpgradeDownload(release);
+    setUploading(false);
+    if (result.error) setReleaseError(result.error);
+    else toast.success(`Version ${result.data!.staged.version} is ready`, 'Official GitHub release and every file checksum verified. Review it below before installing.');
     load();
   };
 
@@ -115,18 +143,47 @@ export function AdminUpgrade() {
             </p>
           )}
 
-          <div className="space-y-3">
+          <div className="space-y-4">
             <p className="text-sm text-gray-600 dark:text-slate-300">
-              <strong>How it works:</strong> upload the release zip from GitHub (the same <code>formlogic-vX.Y.Z.zip</code> the CI attaches to
-              each release) → the wizard verifies its checksums → applying closes the site, <strong>exports the database and snapshots the
-              current code automatically</strong>, swaps the files and reopens. Your users&apos; form databases, uploads and .env are never touched.
+              Get the latest published release from the official FormLogic GitHub repository. We verify the download,
+              then let you review it before installing. Installation automatically backs up your database and code.
+              Your settings, uploads and app databases are preserved.
             </p>
-            <label className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-primary-foreground cursor-pointer hover:bg-primary-700">
-              <UploadCloud className="h-4 w-4" />
-              {uploading ? 'Validating…' : 'Upload release zip'}
-              <input type="file" accept=".zip" className="hidden" disabled={uploading}
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = ''; }} />
-            </label>
+            <Button variant="outline" onClick={() => void checkForUpdates()} isLoading={checking}
+              disabled={uploading || applying} leftIcon={<DownloadCloud className="h-4 w-4" />}>
+              {checking ? 'Checking GitHub…' : 'Check for updates'}
+            </Button>
+            {releaseError && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{releaseError}</p>}
+            {release === null && (
+              <p className="text-sm text-gray-600 dark:text-slate-300">No installable stable release is published yet. Check again after a release ZIP is published.</p>
+            )}
+            {release && (
+              <div className="rounded-xl border border-gray-200 dark:border-slate-700 p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-semibold text-gray-900 dark:text-white">FormLogic {release.version}</p>
+                  <a href={release.url} target="_blank" rel="noreferrer" className="text-sm text-primary-600 dark:text-primary-400 underline">Release notes</a>
+                </div>
+                <p className="text-sm text-gray-600 dark:text-slate-300">
+                  {(release.sizeBytes / 1024 / 1024).toFixed(1)} MB · Published {formatDateTimeInZone(release.publishedAt, tz)}
+                </p>
+                {release.isNewer ? (
+                  <Button onClick={() => void downloadRelease()} isLoading={uploading} disabled={applying || checking}>
+                    {uploading ? 'Downloading and verifying…' : 'Download and verify'}
+                  </Button>
+                ) : <p className="text-sm text-gray-600 dark:text-slate-300">Your installation is up to date.</p>}
+                <p className="text-xs text-gray-500 dark:text-slate-400">Verified against GitHub’s SHA-256 digest. No signing-key setup required.</p>
+              </div>
+            )}
+            <details className="text-sm text-gray-600 dark:text-slate-300">
+              <summary className="cursor-pointer py-2 font-medium">Upload a signed package instead</summary>
+              <p className="mb-3">For offline or custom releases, upload a ZIP signed with your configured release key.</p>
+              <label className="inline-flex items-center gap-2 rounded-lg border border-gray-300 dark:border-slate-600 px-4 py-2 font-semibold cursor-pointer">
+                <UploadCloud className="h-4 w-4" />
+                {uploading ? 'Validating…' : 'Upload signed ZIP'}
+                <input type="file" accept=".zip" className="hidden" disabled={uploading || applying || checking}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = ''; }} />
+              </label>
+            </details>
           </div>
 
           {status.staged && (
@@ -134,8 +191,8 @@ export function AdminUpgrade() {
               <p className="text-sm font-semibold text-gray-900 dark:text-white">
                 Ready to install: v{status.staged.version}
                 <span className="ml-2 text-xs font-normal text-gray-500 dark:text-slate-400">
-                  (currently v{status.staged.currentVersion} · integrity {status.staged.integrity}
-                  {status.staged.integrity === 'signed' && ` · ${status.staged.verifiedFiles} files checked`})
+                  (currently v{status.staged.currentVersion} · {status.staged.integrity === 'github-release' ? 'GitHub verified' : status.staged.integrity}
+                  {['signed', 'github-release'].includes(status.staged.integrity) && ` · ${status.staged.verifiedFiles} files checked`})
                 </span>
               </p>
               {status.staged.isDowngrade && (
@@ -144,10 +201,10 @@ export function AdminUpgrade() {
                 </p>
               )}
               <div className="flex gap-2">
-                <Button onClick={() => setConfirmApply(true)} isLoading={applying} disabled={!status.layout.supported} leftIcon={<Package className="h-4 w-4" />}>
+                <Button onClick={() => setConfirmApply(true)} isLoading={applying} disabled={!status.layout.supported || uploading || checking} leftIcon={<Package className="h-4 w-4" />}>
                   {applying ? 'Applying…' : `Install v${status.staged.version}`}
                 </Button>
-                <Button variant="outline" onClick={async () => { await api.adminUpgradeDiscard(); load(); }}>Discard</Button>
+                <Button variant="outline" disabled={uploading || applying} onClick={async () => { const result = await api.adminUpgradeDiscard(); if (result.error) toast.error('Could not discard package', result.error); load(); }}>Discard</Button>
               </div>
             </div>
           )}

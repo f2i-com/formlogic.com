@@ -32,6 +32,7 @@ afterEach(() => {
   setOaiyToken(null);
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe('listOaiyServices', () => {
@@ -85,8 +86,22 @@ describe('listOaiyServices', () => {
   });
 
   it('returns null when unreachable (so the caller can fall back)', async () => {
+    vi.useFakeTimers();
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('offline'); }));
     expect(await listOaiyServices()).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('keeps the timeout active while reading the body and clears it afterwards', async () => {
+    vi.useFakeTimers();
+    let finishBody!: (body: unknown) => void;
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: () => new Promise(resolve => { finishBody = resolve; }) })));
+    const pending = listOaiyServices();
+    await Promise.resolve();
+    expect(vi.getTimerCount()).toBe(1);
+    finishBody({ services: [] });
+    expect(await pending).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('returns null on a non-ok response or a malformed body', async () => {

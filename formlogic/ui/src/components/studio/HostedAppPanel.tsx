@@ -11,6 +11,8 @@ import {
   Upload,
 } from "lucide-react";
 import { api } from "../../lib/api";
+import { reviewAppArchive, type AppImportReview } from "../../lib/appImportReview";
+import { Link } from "react-router-dom";
 import {
   downloadHostedClient,
   hostedStarter,
@@ -21,6 +23,8 @@ import { Button } from "../ui/Button";
 import { Modal } from "../ui/Modal";
 import { HostedAppFrame } from "./HostedAppFrame";
 import { cn } from "../../lib/utils";
+import { zipSync, strToU8, strFromU8 } from "fflate";
+import { AppEditorDialog, type AppEditorKind } from "./AppEditorDialog";
 
 export function HostedAppPanel({
   app,
@@ -69,12 +73,14 @@ function HostingEditor({
   onClose: () => void;
 }) {
   const [pkg, setPkg] = useState<HostedPackage>(() => hostedStarter(app.name));
+  const [editor, setEditor] = useState<{kind: AppEditorKind; bundle: Uint8Array} | null>(null);
   const [deployment, setDeployment] = useState<HostedDeployment | null>(null);
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState("");
+  const [importReview, setImportReview] = useState<AppImportReview | null>(null);
   const [notice, setNotice] = useState("");
   const [tab, setTab] = useState<"interface" | "backend" | "preview">(
     "interface",
@@ -118,7 +124,7 @@ function HostingEditor({
     setNotice("");
   }
   async function publish() {
-    if (lock.current || !loaded) return;
+    if (lock.current || !loaded || importReview) return;
     lock.current = true;
     setSaving(true);
     setError("");
@@ -150,10 +156,11 @@ function HostingEditor({
     setImporting(true);
     lock.current = true;
     try {
-      if (file.size > 2 * 1024 * 1024)
-        throw new Error("Choose a project under 2 MB.");
+      if (file.size > 32 * 1024 * 1024)
+        throw new Error("Choose a project under 32 MB for import review.");
       let next: HostedPackage;
-      if (file.name.endsWith(".json")) {
+      if (/\.json$/i.test(file.name)) {
+        if (file.size > 2 * 1024 * 1024) throw new Error("Choose a hosting project under 2 MB.");
         const parsed = JSON.parse(await file.text());
         if (
           parsed?.version !== 1 ||
@@ -165,20 +172,14 @@ function HostingEditor({
           throw new Error("Choose an exported hosting project.");
         next = parsed;
       } else {
-        const { unzipSync, strFromU8 } = await import("fflate");
-        let size = 0;
-        let count = 0;
-        const files = unzipSync(new Uint8Array(await file.arrayBuffer()), {
-          filter: (entry) => {
-            size += entry.originalSize;
-            count++;
-            if (size > 2 * 1024 * 1024 || count > 100)
-              throw new Error(
-                "This project exceeds the hosting limit (2 MB / 100 files).",
-              );
-            return !entry.name.endsWith("/");
-          },
-        });
+        const { strFromU8 } = await import("fflate");
+        const { review, files } = reviewAppArchive(new Uint8Array(await file.arrayBuffer()));
+        if (!alive.current) return;
+        if (review.blockers.length) {
+          setImportReview(review);
+          setNotice("");
+          return;
+        }
         const client: Record<string, string> = {};
         for (const [path, bytes] of Object.entries(files)) {
           if (/^(server|backend|private)\//i.test(path))
@@ -226,6 +227,7 @@ function HostingEditor({
       if (!next.client[manifest.main])
         throw new Error("The main interface file is missing.");
       if (!alive.current) return;
+      setImportReview(null);
       change(next);
       setFile(manifest.main);
       setAction(Object.keys(next.actions)[0] || "");
@@ -254,6 +256,20 @@ function HostingEditor({
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   const selected = pkg.actions[action];
+  if (editor) return <AppEditorDialog kind={editor.kind} name={app.name} bundle={editor.bundle} onClose={() => setEditor(null)} onApply={async bytes => {
+    const { files, review } = reviewAppArchive(bytes);
+    if (review.blockers.length) throw new Error(review.blockers.join(' '));
+    const client: Record<string, string> = {};
+    for (const [path, content] of Object.entries(files)) {
+      if (/^(README|LICENSE|NOTICE)(\.|$)/i.test(path)) continue;
+      if (/^(server|backend|private)\//i.test(path) || !/\.(ui|logic|json)$/.test(path)) throw new Error('This hosted client accepts text interface files. Use native app hosting for a complete backend or media project.');
+      client[path] = strFromU8(content);
+    }
+    if (!client['manifest.json'] || !client[JSON.parse(client['manifest.json']).main]) throw new Error('The main interface file is missing.');
+    change({ ...pkg, client });
+    setFile(JSON.parse(client['manifest.json']).main);
+    setNotice('Editor changes returned to your draft. Private backend actions are preserved. Review and publish when ready.');
+  }} />;
   return (
     <Modal
       isOpen
@@ -280,7 +296,7 @@ function HostingEditor({
             <Button
               className="min-h-11 flex-1"
               disabled={
-                !loaded || saving || importing || (!!deployment && !dirty)
+                !loaded || saving || importing || !!importReview || (!!deployment && !dirty)
               }
               onClick={() => void publish()}
             >
@@ -343,6 +359,25 @@ function HostingEditor({
             Members can use the project when this app is published. App
             membership controls access.
           </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Manage your app</h3>
+              <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-slate-400">Your FormLogic account manages the interface, private actions and database. Visitor accounts remain separate from workspace administration.</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Choose who can join</h3>
+              <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-slate-400">The current host uses FormLogic membership. Allow registration for visitors, or keep the app invite-only, in Users &amp; roles.</p>
+              <Link className="mt-2 inline-flex min-h-11 items-center text-sm font-medium text-indigo-600 dark:text-indigo-300" to={`/apps/${app.id}/studio/access`}>Manage users &amp; roles</Link>
+            </div>
+          </div>
+          {importReview && <section aria-label="Import compatibility" className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/30">
+            <h3 className="break-words font-semibold text-amber-950 dark:text-amber-100">{importReview.name}: hosting support needed</h3>
+            <p className="text-sm text-amber-900 dark:text-amber-200">{importReview.fileCount} files · {importReview.assets} assets · {importReview.routes} backend routes · {importReview.migrations} migrations</p>
+            <p className="text-sm leading-6 text-amber-900 dark:text-amber-200">The project was inspected locally. Your current draft has not changed. Its private backend and sign-in have not been removed or converted.</p>
+            <ul className="list-disc space-y-2 pl-5 text-sm leading-6 text-amber-900 dark:text-amber-200">{importReview.blockers.map(message => <li key={message}>{message}</li>)}</ul>
+            {importReview.capabilities.length > 0 && <p className="break-words text-xs text-amber-800 dark:text-amber-300">Required backend capabilities: {importReview.capabilities.join(', ')}</p>}
+            <Button variant="secondary" size="sm" onClick={() => setImportReview(null)}>Keep current draft</Button>
+          </section>}
           {error && (
             <p
               role="alert"
@@ -447,6 +482,7 @@ function HostingEditor({
               </button>
             ))}
           </div>
+          <div className="flex flex-wrap gap-2">{(['builder', 'studio'] as const).map(kind => <Button key={kind} variant="secondary" disabled={!loaded || saving || importing} onClick={() => { try { setEditor({ kind, bundle: zipSync(Object.fromEntries(Object.entries(pkg.client).map(([path, source]) => [path, strToU8(source)]))) }); } catch { setError('Could not prepare this project for the editor.'); } }}>{kind === 'builder' ? 'Open Visual Builder' : 'Open AI Studio'}</Button>)}</div>
           {tab === "interface" && (
             <div className="space-y-3">
               <p className="text-sm text-slate-500 dark:text-slate-400">

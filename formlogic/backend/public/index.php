@@ -1164,6 +1164,8 @@ $multipart = ['multipart/form-data'];
 $app->add(new BodySizeLimitMiddleware(
     2 * 1024 * 1024,
     [
+        // Native projects include base64 media; the service separately caps decoded content at 16 MB.
+        ['path' => '#^/api/apps/[a-zA-Z0-9_-]+/native$#', 'method' => 'PUT', 'maxBytes' => 24 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => true],
         ['path' => '#^/api/account/backup/import$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
         ['path' => '#^/api/admin/upgrade/upload$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
         ['path' => '#^/api/(application-packages/import|packs/catalog/upload)$#', 'maxBytes' => $packMax + (4 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
@@ -1413,6 +1415,12 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     // snapshot + maintenance window) → rollback / restore-db from the backup.
     $group->get('/upgrade/status', function ($request, $response) use ($ctrl) {
         return $ctrl()->upgradeStatus($request, $response);
+    });
+    $group->get('/upgrade/latest', function ($request, $response) use ($ctrl) {
+        return $ctrl()->upgradeLatest($request, $response);
+    });
+    $group->post('/upgrade/download', function ($request, $response) use ($ctrl) {
+        return $ctrl()->upgradeDownload($request, $response);
     });
     $group->post('/upgrade/upload', function ($request, $response) use ($ctrl) {
         return $ctrl()->upgradeUpload($request, $response);
@@ -2951,6 +2959,27 @@ $app->get('/api/app/{slug}/hosting', function ($request, $response) use ($contai
 $app->post('/api/app/{slug}/actions/{action}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\HostedAppController::class)->runtime($request, $response, $getArgs($request));
 })->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+
+// Native SoftN app administration and isolated application requests.
+$app->get('/api/apps/{id}/native', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
+})->add($hostingLimiter)->add($authRequired);
+$app->put('/api/apps/{id}/native', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+$app->get('/api/apps/{id}/native/{operation:records}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
+})->add($hostingLimiter)->add($authRequired);
+$nativeLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'native_apps', true, true);
+$app->get('/api/app/{slug}/entry', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->entry($request, $response, $getArgs($request));
+})->add($nativeLimiter)->add($authOptional);
+$app->get('/api/app/{slug}/native', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->runtime($request, $response, $getArgs($request));
+})->add($nativeLimiter)->add($authOptional);
+$app->post('/api/app/{slug}/native/request', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->runtime($request, $response, $getArgs($request));
+})->add($nativeLimiter)->add($authOptional);
 
 // App Admin routes (protected - require authentication + ownership)
 $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, $getArgs) {

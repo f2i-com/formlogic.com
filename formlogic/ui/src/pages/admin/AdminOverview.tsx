@@ -1,65 +1,67 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Activity, Boxes, FileText, LogOut, Package, RefreshCw, Users, Workflow, Wrench } from 'lucide-react';
+import { useCallback } from 'react';
+import { Link } from 'react-router-dom';
+import { ArrowUpRight, Boxes, FileText, Package, RefreshCw, Users, Workflow, Wrench, Stethoscope } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { StatCard } from '../../components/ui/StatCard';
-import { api, type AdminOverview as AdminOverviewData } from '../../lib/api';
-import { loadUiCache, saveUiCache } from '../../lib/uiCache';
+import { api } from '../../lib/api';
 import { formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
 import { useAuthStore } from '../../stores/authStore';
-import { AdminSpinner } from './adminUi';
+import { AdminError, AdminSpinner } from './adminUi';
+import { useAdminQuery } from './useAdminQuery';
 
-/**
- * /admin — instance counters (structure/statistics only, never record data).
- * Hydrates instantly from the last visit's cached stats (SWR), then refreshes.
- */
+const shortcuts = [
+  { to: '/admin/users', icon: Users, title: 'Manage users', detail: 'Account access, resources, and recovery' },
+  { to: '/admin/platform', icon: Wrench, title: 'Configure your platform', detail: 'Plans, AI, notices, and scheduled backups' },
+  { to: '/admin/upgrade', icon: Package, title: 'Review updates', detail: 'Official releases and installation backups' },
+  { to: '/admin/doctor', icon: Stethoscope, title: 'Check system health', detail: 'Service checks and troubleshooting' },
+];
+
 export function AdminOverview() {
-  const meId = useAuthStore((s) => s.user?.id);
+  const meId = useAuthStore(s => s.user?.id);
   const tz = useAdminTimezone();
-  const [data, setData] = useState<AdminOverviewData | null>(() => loadUiCache<AdminOverviewData>('admin-overview', meId)?.data ?? null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(() => {
-    api.adminOverview().then((r) => {
-      if (r.data) {
-        setData(r.data);
-        setError(null);
-        saveUiCache('admin-overview', meId, r.data);
-      } else {
-        setError(r.error || 'Could not load');
-      }
-    });
-  }, [meId]);
-  useEffect(() => { load(); }, [load]);
-
-  if (error && !data) return <p className="text-sm text-red-600 dark:text-red-400">{error}</p>;
-  if (!data) return <AdminSpinner label="Loading overview" />;
-
+  // Changing accounts also changes the query, so statistics never cross sessions.
+  const fetchOverview = useCallback(() => meId ? api.adminOverview() : Promise.resolve({ error: 'Please sign in again.' }), [meId]);
+  const { data, error, loading, refresh } = useAdminQuery(fetchOverview);
+  if (!data) return error ? <AdminError message={error} onRetry={refresh} /> : <AdminSpinner label="Loading overview" />;
   const s = data.stats;
   const iconBg = 'bg-primary-100 dark:bg-primary-500/15';
   const iconColor = 'text-primary-700 dark:text-primary-300';
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard icon={Users} iconBg={iconBg} iconColor={iconColor} value={s.users} label="Users"
-          subtext={`${s.signups7d} new this week · ${s.admins} admin${s.admins === 1 ? '' : 's'}`} />
-        <StatCard icon={Activity} iconBg={iconBg} iconColor={iconColor} value={s.onlineUsers} label="Online now"
-          subtext="seen in the last 5 minutes" />
-        <StatCard icon={Boxes} iconBg={iconBg} iconColor={iconColor} value={s.apps} label="Apps" />
-        <StatCard icon={FileText} iconBg={iconBg} iconColor={iconColor} value={s.forms} label="Forms"
-          subtext={`${s.responses.toLocaleString()} records`} />
-        <StatCard icon={Workflow} iconBg={iconBg} iconColor={iconColor} value={s.flows} label="Flows" />
-        <StatCard icon={Package} iconBg={iconBg} iconColor={iconColor} value={<span className="text-base sm:text-lg font-semibold leading-snug break-all">{data.version}</span>} label="Version" />
-        <StatCard icon={Wrench} iconBg={iconBg} iconColor={iconColor} value={data.maintenance.enabled ? 'ON' : 'off'} label="Maintenance" />
-        {/* A full datetime at StatCard's heading size wraps to three lines and
-            dwarfs the numeric tiles — downsize the value node (child text size
-            wins over the tile's text-2xl/3xl). */}
-        <StatCard icon={LogOut} iconBg={iconBg} iconColor={iconColor}
-          value={data.sessionEpoch > 0
-            ? <span className="text-base sm:text-lg font-semibold leading-snug">{formatDateTimeInZone(new Date(data.sessionEpoch * 1000), tz)}</span>
-            : 'never'}
-          label="Session boot" subtext="last global sign-out" />
+    <div className="space-y-6">
+      {error && <AdminError message={`Showing the last loaded overview. ${error}`} onRetry={refresh} />}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-gray-500 dark:text-slate-400">{s.onlineUsers} online in the last 5 minutes · {s.signups7d} new users this week</p>
+        <Button variant="outline" size="sm" onClick={refresh} isLoading={loading} leftIcon={<RefreshCw className="h-4 w-4" />}>Refresh overview</Button>
       </div>
-      <Button variant="outline" size="sm" onClick={load} leftIcon={<RefreshCw className="h-4 w-4" />}>Refresh</Button>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-busy={loading}>
+        <StatCard icon={Users} iconBg={iconBg} iconColor={iconColor} value={s.users} label="Users" subtext={`${s.admins} administrator${s.admins === 1 ? '' : 's'}`} />
+        <StatCard icon={Boxes} iconBg={iconBg} iconColor={iconColor} value={s.apps} label="Apps" />
+        <StatCard icon={FileText} iconBg={iconBg} iconColor={iconColor} value={s.forms} label="Forms" subtext={`${s.responses.toLocaleString()} records`} />
+        <StatCard icon={Workflow} iconBg={iconBg} iconColor={iconColor} value={s.flows} label="Automations" />
+      </div>
+      <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white">Installation status</h2>
+          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${data.maintenance.enabled ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300'}`}>
+            {data.maintenance.enabled ? 'Closed for maintenance' : 'Open to users'}
+          </span>
+        </div>
+        {data.maintenance.enabled && <p className="mt-3 break-words text-sm text-amber-800 dark:text-amber-300">{data.maintenance.message || 'Maintenance mode is enabled.'} <Link className="font-medium underline" to="/admin/platform#availability">Manage availability</Link></p>}
+        <dl className="mt-5 grid gap-5 border-t border-gray-100 pt-5 sm:grid-cols-2 dark:border-slate-800">
+          <div><dt className="text-xs text-gray-500 dark:text-slate-400">Installed version</dt><dd className="mt-1 break-all text-sm font-medium text-gray-900 dark:text-white">{data.version}</dd></div>
+          <div><dt className="text-xs text-gray-500 dark:text-slate-400">Last sign-out of all users</dt><dd className="mt-1 text-sm font-medium text-gray-900 dark:text-white">{data.sessionEpoch > 0 ? formatDateTimeInZone(new Date(data.sessionEpoch * 1000), tz) : 'No global sign-out recorded'}</dd></div>
+        </dl>
+      </section>
+      <section>
+        <h2 className="mb-3 text-base font-semibold text-gray-900 dark:text-white">Manage your installation</h2>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {shortcuts.map(({ to, icon: Icon, title, detail }) => <Link key={to} to={to} className="group flex items-start gap-3 rounded-2xl border border-gray-200 bg-white p-5 transition-colors hover:border-primary-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-primary-500">
+            <Icon className="mt-0.5 h-5 w-5 shrink-0 text-primary-600 dark:text-primary-400" />
+            <div className="min-w-0 flex-1"><h3 className="text-sm font-semibold text-gray-900 dark:text-white">{title}</h3><p className="mt-1 text-xs leading-5 text-gray-500 dark:text-slate-400">{detail}</p></div>
+            <ArrowUpRight className="h-4 w-4 shrink-0 text-gray-400 group-hover:text-primary-600" />
+          </Link>)}
+        </div>
+      </section>
     </div>
   );
 }

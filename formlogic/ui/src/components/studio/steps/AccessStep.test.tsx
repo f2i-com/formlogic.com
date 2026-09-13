@@ -42,6 +42,7 @@ let root: Root;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(api.getAppRolePermissions).mockReset().mockResolvedValue({ data: { permissions: [{ formId: null, permission: 'manage_users' }] } });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -52,9 +53,9 @@ afterEach(async () => {
   container.remove();
 });
 
-function renderStep(stepRoles: AppRole[]) {
+function renderStep(stepRoles: AppRole[], strict = false) {
   return act(async () => {
-    root.render(
+    const element = (
       <MemoryRouter>
         <AccessStep
           app={app}
@@ -66,6 +67,7 @@ function renderStep(stepRoles: AppRole[]) {
         />
       </MemoryRouter>
     );
+    root.render(strict ? <React.StrictMode>{element}</React.StrictMode> : element);
   });
 }
 
@@ -133,4 +135,30 @@ describe('AccessStep', () => {
     await act(async () => { await Promise.resolve(); });
     expect(container.textContent).toContain('People with access');
   });
+});
+
+
+it('finishes loading Owner permissions after StrictMode replays the effect', async () => {
+  await renderStep(roles, true);
+  expect(container.querySelector('[aria-label="Loading permissions"]')).toBeNull();
+  expect(container.textContent).toContain('Everything in this app');
+  expect(container.textContent).toContain('The Owner role always has every permission');
+});
+
+it('retries a cancelled load when returning to a role before its request finishes', async () => {
+  let resolveFirst!: (result: Awaited<ReturnType<typeof api.getAppRolePermissions>>) => void;
+  vi.mocked(api.getAppRolePermissions).mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve; }));
+  await renderStep(roles);
+  expect(container.querySelector('[aria-label="Loading permissions"]')).not.toBeNull();
+  const clickRole = async (name: string) => {
+    const button = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes(name))!;
+    await act(async () => button.click());
+  };
+  await clickRole('Member');
+  await clickRole('Owner');
+  expect(api.getAppRolePermissions).toHaveBeenCalledTimes(3);
+  expect(container.querySelector('[aria-label="Loading permissions"]')).toBeNull();
+  await act(async () => resolveFirst({ error: 'Outdated request failed' }));
+  expect(container.textContent).toContain('Everything in this app');
+  expect(container.textContent).not.toContain('Outdated request failed');
 });

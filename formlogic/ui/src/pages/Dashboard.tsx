@@ -1401,26 +1401,26 @@ export function Dashboard() {
               <CardContent className="p-6 sm:p-8">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
                   <div className="p-4 bg-white/20 rounded-2xl">
-                    <Sparkles className="h-8 w-8 text-primary-foreground" />
+                    <Sparkles className="h-8 w-8 text-primary-foreground dark:text-primary-200" />
                   </div>
                   <div className="flex-1">
-                    <h3 className="text-xl font-bold text-primary-foreground mb-2">
+                    <h3 className="text-xl font-bold text-primary-foreground dark:text-white mb-2">
                       Get started with FormLogic
                     </h3>
-                    <p className="text-primary-foreground/80 mb-4">
+                    <p className="text-primary-foreground/80 dark:text-slate-200 mb-4">
                       Create your first form in seconds. Choose from templates or start from scratch.
                     </p>
                     <div className="flex flex-wrap gap-3">
                       <Button
                         onClick={handleCreateForm}
-                        className="bg-white text-primary-600 hover:bg-white/90"
+                        className="bg-white text-primary-600 hover:bg-white/90 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:hover:text-slate-900"
                       >
                         <Plus className="h-4 w-4 mr-2" />
                         Create your first form
                       </Button>
                       <Button
                         variant="ghost"
-                        className="text-primary-foreground hover:bg-white/10"
+                        className="text-primary-foreground hover:bg-white/10 dark:text-slate-100 dark:hover:bg-white/10 dark:hover:text-white"
                         onClick={() => handleCreateForm()}
                       >
                         <BookOpen className="h-4 w-4 mr-2" />

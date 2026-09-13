@@ -18,7 +18,7 @@ export function AdminSpinner({ label = 'Loading' }: { label?: string }) {
 export function AdminError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div className="rounded-xl border border-red-200 dark:border-red-500/30 bg-red-50/60 dark:bg-red-500/10 p-6 text-center space-y-3">
-      <p className="text-sm text-red-700 dark:text-red-300">{message}</p>
+      <p role="alert" className="text-sm text-red-700 dark:text-red-300">{message}</p>
       <Button variant="outline" size="sm" onClick={onRetry} leftIcon={<RefreshCw className="h-4 w-4" />}>
         Try again
       </Button>

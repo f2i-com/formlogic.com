@@ -527,6 +527,7 @@ export function flowEventsForGroup(group: FlowEventGroupId): readonly FlowEventC
  * entries with no documented payload (callers fall back to their generic hint list).
  */
 export function payloadHintsForEvent(event: string): readonly string[] | null {
+  if (/^app\.record\.(created|updated|deleted)\.[A-Za-z][A-Za-z0-9_]{0,62}$/.test(event)) return ['record', 'table', 'operation', 'appId', 'eventId', 'recordPreview', 'recordTruncated'];
   const entry = FLOW_EVENT_CATALOG.find((candidate) => candidate.kind === 'event' && candidate.event === event);
   return entry && entry.payloadHints.length > 0 ? entry.payloadHints : null;
 }

@@ -8,11 +8,13 @@ export function BottomSheet({
   open,
   onClose,
   children,
+  expanded = false,
 }: {
   title: string;
   open: boolean;
   onClose: () => void;
   children: ReactNode;
+  expanded?: boolean;
 }) {
   if (!open) return null;
   return (
@@ -22,15 +24,15 @@ export function BottomSheet({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="fixed inset-x-0 bottom-0 z-[90] flex max-h-[70dvh] min-h-0 flex-col overflow-hidden rounded-t-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+        className={`fixed inset-x-0 bottom-0 z-[90] flex ${expanded ? 'h-[82dvh] max-h-[calc(100dvh-1rem)]' : 'max-h-[70dvh]'} min-h-0 flex-col overflow-hidden rounded-t-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900`}
       >
-        <div className="flex items-center justify-between border-b border-gray-200/80 px-3 py-2 dark:border-slate-700/60">
+        <div className="flex items-center justify-between border-b border-gray-200/80 px-4 py-3 dark:border-slate-700/60">
           <h4 className="truncate text-sm font-semibold text-gray-900 dark:text-white">{title}</h4>
           <button
             type="button"
             onClick={onClose}
             aria-label={`Close ${title}`}
-            className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+            className="flex h-11 w-11 items-center justify-center rounded-xl p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
           >
             <X className="h-4 w-4" />
           </button>

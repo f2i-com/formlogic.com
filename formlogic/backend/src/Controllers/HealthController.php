@@ -17,7 +17,7 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 
 /**
  * Health endpoints. basic() is a public heartbeat; deep() is a protected "Doctor"
- * that surfaces operational problems (broken DB, unwritable dirs, missing QuickJS,
+ * that surfaces operational problems (broken DB, unwritable dirs, missing ZIPP,
  * billing misconfig) that would otherwise fail silently.
  */
 class HealthController
@@ -96,6 +96,8 @@ class HealthController
         // Writable storage/log directories.
         $dirs = [
             'storage/forms' => $this->settings['sqlite']['storage_path'] ?? ($base . '/storage/forms'),
+            'storage/hosted-apps' => $base . '/storage/hosted-apps',
+            'storage/pack-screenshots' => $base . '/storage/pack-screenshots',
             'storage/uploads' => $base . '/storage/uploads',
             'storage/packs' => $this->settings['packs']['storagePath'] ?? ($base . '/storage/packs'),
             'logs' => dirname((string) ($this->settings['logger']['path'] ?? ($base . '/logs/app.log'))),
@@ -120,8 +122,8 @@ class HealthController
             'critical' => true,
             'name' => 'sandboxRuntime',
             'detail' => $sandboxOk
-                ? 'sandbox launcher executable + prelude present'
-                : 'sandbox launcher missing, not executable, or prelude missing',
+                ? 'ZIPP runtime launcher executable + shared prelude present'
+                : 'ZIPP runtime launcher missing, not executable, or shared prelude missing',
         ];
 
         // Billing — only critical when plan enforcement is on.

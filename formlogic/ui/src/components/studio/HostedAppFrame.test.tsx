@@ -62,6 +62,15 @@ describe('hosted app engine handoff', () => {
     expect(iframe.getAttribute('sandbox')).toBe('allow-scripts');
   });
 
+  it('requests a runtime update when native hosting support is missing', async () => {
+    root = createRoot(container);
+    await act(async () => root!.render(<HostedAppFrame slug="notes" client={{ 'manifest.json': '{}' }} version={1} native={{ assets: {} }} />));
+    const iframe = container.querySelector('iframe')!;
+    await act(async () => sendReady(iframe));
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('does not support native apps yet');
+    expect(getBytes).not.toHaveBeenCalled();
+  });
+
   it('clones cached bytes once and transfers only the private message port', async () => {
     let finish!: (bytes: ArrayBuffer) => void;
     getBytes.mockImplementation(() => new Promise(resolve => { finish = resolve; }));

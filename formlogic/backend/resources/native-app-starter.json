@@ -1,0 +1,12 @@
+{
+  "version": 0,
+  "home": true,
+  "access": "members",
+  "assets": {},
+  "files": {
+    "manifest.json": "{\n  \"id\": \"formlogic.starter.notes\",\n  \"name\": \"My app\",\n  \"version\": \"1.0.0\",\n  \"main\": \"ui/main.ui\",\n  \"config\": {\n    \"server\": {\n      \"allowedOrigins\": [\n        \"https://app.example\"\n      ]\n    }\n  },\n  \"server\": {\n    \"entry\": \"server/main.logic\",\n    \"requires\": {\n      \"apiVersion\": 1,\n      \"capabilities\": [\n        \"sql\"\n      ]\n    },\n    \"database\": {\n      \"kind\": \"private-sqlite\",\n      \"migrations\": [\n        \"server/migrations/001.sql\"\n      ]\n    },\n    \"routes\": [\n      {\n        \"path\": \"/api/items\",\n        \"method\": \"POST\",\n        \"handler\": \"createItem\",\n        \"transaction\": \"write\",\n        \"authorization\": \"anonymous\"\n      },\n      {\n        \"path\": \"/api/items\",\n        \"method\": \"GET\",\n        \"handler\": \"listItems\",\n        \"transaction\": \"read\",\n        \"authorization\": \"anonymous\"\n      }\n    ]\n  }\n}",
+    "ui/main.ui": "<logic>\nvar message = 'Ready to save your first item';\nfunction saveItem() {\n  softn.net.fetch('https://app.example/api/items', {method:'POST',body:{title:'My first item'}}, function(response) {\n    message = response.ok ? 'Item saved in your app database' : 'Could not save the item';\n  });\n}\n</logic>\n<Stack padding=\"24\" gap=\"16\"><Text>My app</Text><Text>Your interface, backend and records together.</Text><Button onClick={saveItem}>Save example item</Button><Text>{message}</Text></Stack>",
+    "server/main.logic": "function createItem(req) {\n  let title = req.body.title;\n  if (typeof title != \"string\" || title.length == 0 || title.length > 200) return {status:422,body:{error:\"Provide a title of 1 to 200 characters\"}};\n  softn.sql.execute(\"INSERT INTO items(title) VALUES(?)\",[title]);\n  return {status:201,body:softn.sql.first(\"SELECT id,title FROM items ORDER BY id DESC LIMIT 1\",[])};\n}\nfunction listItems(req) {\n  return {status:200,body:{items:softn.sql.query(\"SELECT id,title FROM items ORDER BY id DESC LIMIT 50\",[])}};\n}",
+    "server/migrations/001.sql": "CREATE TABLE items(id INTEGER PRIMARY KEY, title TEXT NOT NULL);"
+  }
+}
