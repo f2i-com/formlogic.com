@@ -32,6 +32,7 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose }: {
   const lock = useRef(false);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [aiPending, setAiPending] = useState(false);
   const [error, setError] = useState('');
   const applyRef = useRef<() => void>(() => {});
   function request(method: string, data: Record<string, unknown> = {}): Promise<unknown> {
@@ -44,7 +45,7 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose }: {
     });
   }
   async function apply() {
-    if (!ready || lock.current) return;
+    if (!ready || lock.current || aiPending) return;
     lock.current = true; setBusy(true); setError('');
     try {
       const result = await request('export');
@@ -66,17 +67,17 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose }: {
       const channel = new MessageChannel();
       port.current = channel.port1;
       channel.port1.onmessage = ({ data }) => {
-        if (data?.kind === 'ai-cancel' && typeof data.id === 'string') { aiRequests.get(data.id)?.abort(); return; }
+        if (data?.kind === 'ai-cancel' && typeof data.id === 'string') { aiRequests.get(data.id)?.abort(); aiRequests.delete(data.id); setAiPending(false); return; }
         if (data?.kind === 'ai-request' && typeof data.id === 'string') {
           const reply = (ok: boolean, value: string) => { if (!disposed) channel.port1.postMessage({ kind: 'ai-response', id: data.id, ok, ...(ok ? { value } : { error: value }) }); };
           if (kind !== 'studio' || aiRequests.size || !Array.isArray(data.messages) || data.messages.length > 100 || !data.messages.every((m: { role?: unknown; content?: unknown }) => ['system', 'user', 'assistant'].includes(String(m?.role)) && typeof m?.content === 'string') || JSON.stringify(data.messages).length > 1000000) {
             reply(false, 'AI is busy or the request is too large.'); return;
           }
-          const controller = new AbortController(); aiRequests.set(data.id, controller);
+          const controller = new AbortController(); aiRequests.set(data.id, controller); setAiPending(true);
           void resolveDefaultLlm({ messages: data.messages, signal: controller.signal }).then(result => {
             if (controller.signal.aborted) return;
             if (result.ok) reply(true, result.data.content); else reply(false, result.error.message);
-          }).catch(error => reply(false, error instanceof Error ? error.message : 'Could not contact your AI provider.')).finally(() => aiRequests.delete(data.id));
+          }).catch(error => reply(false, error instanceof Error ? error.message : 'Could not contact your AI provider.')).finally(() => { aiRequests.delete(data.id); if (!disposed) setAiPending(aiRequests.size > 0); });
           return;
         }
         if (data?.kind === 'save-requested') { applyRef.current(); return; }
@@ -107,8 +108,9 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose }: {
   return createPortal(<div role="dialog" aria-modal="true" aria-label={kind === 'builder' ? 'Visual Builder' : 'AI Studio'} className="fixed inset-0 z-[1000] flex h-dvh flex-col bg-white text-slate-900 dark:bg-slate-950 dark:text-white">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-3 dark:border-slate-700 sm:px-5">
       <div className="flex min-w-0 items-center gap-3"><Button variant="ghost" disabled={busy} onClick={() => { if (!ready || window.confirm('Return without applying editor changes? Use “Review changes” to keep your work.')) onClose(); }} leftIcon={<ArrowLeft className="h-4 w-4" />}>Back</Button><div className="min-w-0"><h2 className="truncate text-sm font-semibold">{kind === 'builder' ? 'Visual Builder' : 'AI Studio'} · {name}</h2><p className="text-xs text-slate-500 dark:text-slate-400">Edit and preview here. Review, publish, then test the backend in your app.</p></div></div>
-      <Button disabled={!ready || busy} isLoading={busy} onClick={() => void apply()} leftIcon={<Check className="h-4 w-4" />}>Review changes</Button>
+      <Button disabled={!ready || busy || aiPending} isLoading={busy} onClick={() => void apply()} leftIcon={<Check className="h-4 w-4" />}>Review changes</Button>
     </header>
+    {aiPending && <p role="status" className="border-b border-slate-200 px-4 py-2 text-sm dark:border-slate-700">AI is editing your draft. Wait for it to finish, or choose Stop generating in Studio.</p>}
     {error && <p role="alert" className="border-b border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-200">{error}</p>}
     <div className="relative min-h-0 flex-1">{!ready && !error && <p role="status" className="absolute inset-0 z-10 flex items-center justify-center bg-white dark:bg-slate-950">Opening your app…</p>}{busy && <div className="absolute inset-0 z-10 bg-white/50 dark:bg-slate-950/50" />}
       <iframe ref={frame} title={kind === 'builder' ? 'App visual editor' : 'App AI editor'} src={`/app-editors/${kind}/index.html?formlogicEditor=1`} className="h-full w-full border-0" />

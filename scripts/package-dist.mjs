@@ -39,7 +39,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadReleaseSigner, signReleaseManifest } from './release-signing.mjs';
-import { checkReleaseRuntime } from './release-runtime.mjs';
+import { checkReleaseRuntime, checkAppEditors, checkNativeRuntime } from './release-runtime.mjs';
 import { runtimeIdentity } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 
 const isWindows = process.platform === 'win32';
@@ -397,6 +397,8 @@ for (const f of ['index.html', '.htaccess', 'assets']) {
 
 // Even --skip-ui-build must supply a complete, matching hosted runtime.
 await checkReleaseRuntime(path.join(distDir, 'hosted-runtime'), expectedRuntime);
+await checkAppEditors(path.join(distDir, 'app-editors'), expectedRuntime);
+await checkNativeRuntime(path.join(backendDir, 'resources/softn-native'), expectedRuntime);
 
 // [2] Stage the UI at the zip root ---------------------------------------------
 step('Staging the built UI at the zip root');
@@ -476,6 +478,9 @@ writeFileSync(path.join(staging, 'UPGRADE.txt'), upgradeTxt(version));
 // [7] Sanity checks on the staged tree ------------------------------------------
 step('Verifying the staged tree');
 const mustExist = [
+  'app-editors/builder/index.html',
+  'app-editors/studio/index.html',
+  'app-editors/manifest.json',
   'hosted-runtime/index.html',
   'hosted-runtime/runtime-manifest.json',
   'index.html',
@@ -489,6 +494,10 @@ const mustExist = [
   'api/config/settings.php',
   'api/database/schema.sql',
   'api/bin/runtime/formlogic-runtime-linux-x86_64',
+  'api/resources/softn-native/runner.mjs',
+  'api/resources/softn-native/host-protocol.json',
+  'api/resources/softn-native/record-events.mjs',
+  'api/resources/softn-native/wasm/zipp_wasm_bg.wasm',
   'api/resources/formlogic-prelude.js',
   'VERSION',
   'api/VERSION',
@@ -506,6 +515,8 @@ for (const p of mustNotExist) {
 info(`all ${mustExist.length} required paths present; ${mustNotExist.length} excluded paths confirmed absent`);
 
 await checkReleaseRuntime(path.join(staging, 'hosted-runtime'), expectedRuntime);
+await checkAppEditors(path.join(staging, 'app-editors'), expectedRuntime);
+await checkNativeRuntime(path.join(staging, 'api/resources/softn-native'), expectedRuntime);
 
 // [7.5] Integrity manifest --------------------------------------------------------
 // manifest.json makes the zip importable through the ADMIN PANEL's upgrade wizard:

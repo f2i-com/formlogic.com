@@ -10,7 +10,7 @@
     "dev": "vite",
     "capture:dashboard-preview": "node scripts/capture-dashboard-preview.mjs",
     "sync:prelude": "node scripts/sync-prelude.mjs",
-    "prebuild": "node scripts/sync-prelude.mjs && node scripts/check-hosted-runtime.mjs && node scripts/clean-dist.mjs",
+    "prebuild": "node scripts/sync-prelude.mjs && node scripts/check-hosted-runtime.mjs && node scripts/check-app-editors.mjs && node scripts/clean-dist.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -20,7 +20,7 @@
     "test:e2e": "playwright test",
     "test:zipp-sharing": "node scripts/check-zipp-sharing.mjs",
     "test:tooling": "node scripts/check-tooling.mjs",
-    "test:hosted-runtime": "node --test scripts/hosted-runtime-artifact.test.mjs",
+    "test:hosted-runtime": "node --test scripts/hosted-runtime-artifact.test.mjs scripts/check-app-editors.test.mjs",
     "build:hosted-runtime": "node scripts/build-hosted-runtime.mjs",
     "build:app-editors": "node scripts/build-app-editors.mjs"
   },

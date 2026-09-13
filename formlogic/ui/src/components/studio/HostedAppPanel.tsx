@@ -255,6 +255,7 @@ function HostingEditor({
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+  const close = () => { if (!saving && !importing && (!dirty || window.confirm('Close without saving this draft?'))) onClose(); };
   const selected = pkg.actions[action];
   if (editor) return <AppEditorDialog kind={editor.kind} name={app.name} bundle={editor.bundle} onClose={() => setEditor(null)} onApply={async bytes => {
     const { files, review } = reviewAppArchive(bytes);
@@ -273,9 +274,7 @@ function HostingEditor({
   return (
     <Modal
       isOpen
-      onClose={() => {
-        if (!saving && !importing) onClose();
-      }}
+      onClose={close}
       title="App hosting"
       size="2xl"
       footer={
@@ -289,7 +288,7 @@ function HostingEditor({
             <Button
               variant="secondary"
               disabled={saving || importing}
-              onClick={onClose}
+              onClick={close}
             >
               Close
             </Button>

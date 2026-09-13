@@ -377,7 +377,7 @@ Coffee.Dating's original source/archive and production records remain untouched.
 phone-code login is preserved, but real sign-in still needs an operator SMS delivery adapter
 and credentials. Development codes are disabled. Photo upload processing is not connected;
 `/api/meta` reports `photos:false`. No live SMS, photos, dating accounts or public domain were
-created by these checks. Native database export/restore UI, automated release packaging and production load testing remain follow-up work.
+created by these checks. Native database export/restore UI and production load testing remain follow-up work.
 
 
 ### AI creation and embedded editor installation
@@ -395,6 +395,27 @@ Build editor assets from the compatible Softn source checkout containing
 its shared packages, then run `npm run build:app-editors` before `npm run build`.
 This generates `public/app-editors/{builder,studio}`; deploy that directory with the UI.
 Generated editor assets are ignored by Git and excluded from the FormLogic PWA precache.
-The existing pinned release-runtime checkout must be advanced to the matching Softn editor
-commit before release automation can generate these new assets. Local builds use the
-checked-out sources; do not substitute an older release without the embedding bridge.
+The shared release preparation action pins a compatible Softn commit and builds all three
+artifacts: hosted runtime, embedded editors and native backend runtime. The UI prebuild checks
+editor manifests and asset hashes; packaging repeats those checks and validates native runtime
+modules. Missing assets or a mixed ZIPP version stop the build. Local development uses the
+checked-out sources; both repositories' matching commits must be pushed before running the
+remote package workflow. No workflow is started by this local preparation.
+
+
+### Editing checks and draft safety
+
+Studio cannot return a draft while an AI turn is generating. Wait for completion, or use
+Stop generating before Review changes. Cancelling a request releases the FormLogic bridge
+for the next turn and late replies do not change the draft. Closing an unpublished hosting
+draft asks before discarding it. Existing version checks still apply when publishing.
+
+The local integration suite (`ui/e2e/app-editors.spec.ts`) covers canvas property edits,
+AI cancellation/retry with a deterministic provider response, mobile chat, publishing and
+a subsequent real SQLite write. It also checks private named actions and a separate copy
+of Coffee.Dating with media, backend source, routes and application-managed sign-in preserved.
+Real provider/model quality and production load testing are separate checks.
+
+Embedded Builder’s Data tab directs hosted database changes to FormLogic. Its standalone
+XDB designer remains available when Builder is run independently; local XDB collections
+are not a substitute for the native app’s SQL migrations or existing hosted records.

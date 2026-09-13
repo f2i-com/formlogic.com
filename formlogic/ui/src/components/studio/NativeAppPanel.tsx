@@ -75,6 +75,7 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
   if (editor && project) return <AppEditorDialog kind={editor.kind} name={app.name} bundle={editor.bundle} onClose={() => setEditor(null)} onApply={async bytes => {
     const draft = await importNativeProject(new File([new Uint8Array(bytes)], `${app.slug}.softn`));
     setProject({ ...draft, version, home: project.home, access: project.access });
+    setSourceFile(current => draft.files[current] !== undefined ? current : Object.keys(draft.files).find(path => path.startsWith('server/') && path.endsWith('.logic')) || '');
     setDirty(true); setNotice('Editor changes returned to your draft. Review the source, then publish when ready.');
   }} />;
   const close = () => { if (!lock.current && (!dirty || window.confirm('Close without saving this draft?'))) onClose(); };

@@ -1,4 +1,5 @@
-import { access, cp, lstat, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { access, cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { runtimeIdentity, assertMatchingRuntime, writeRuntimeManifest, checkRuntimeArtifact } from './hosted-runtime-artifact.mjs';
 import { spawnSync } from 'node:child_process';
 import { dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +11,8 @@ const output = resolve(publicDir, 'app-editors');
 if (dirname(output) !== publicDir || basename(output) !== 'app-editors') throw new Error('Unexpected editor output.');
 if ((await lstat(output).catch(() => null))?.isSymbolicLink()) throw new Error('Editor output must not be a link.');
 await access(resolve(softn, 'apps/shared/hostedEditor.ts'));
+const expected = runtimeIdentity(JSON.parse(await readFile(resolve(ui, 'vendor/zipp-wasm/SOURCE.json'), 'utf8')));
+assertMatchingRuntime(runtimeIdentity(JSON.parse(await readFile(resolve(softn, 'packages/@softn/core/wasm-zipp/SOURCE.json'), 'utf8'))), expected);
 const stage = await mkdtemp(resolve(publicDir, '.app-editors-'));
 try {
   for (const kind of ['builder', 'studio']) {
@@ -22,9 +25,15 @@ try {
   }
   await writeFile(resolve(stage, 'manifest.json'), JSON.stringify({ protocol: 1, editors: ['builder', 'studio'], builtAt: new Date().toISOString() }) + '\n');
   await cp(resolve(softn, 'LICENSE'), resolve(stage, 'LICENSE'));
+  await cp(resolve(softn, 'NOTICE'), resolve(stage, 'NOTICE'));
+  await rm(output, { recursive: true, force: true });
   await mkdir(output, { recursive: true });
   await cp(stage, output, { recursive: true, filter: path => !path.endsWith('.map') });
-  console.log('FormLogic app editors built at public/app-editors.');
+  for (const kind of ['builder', 'studio']) {
+    await writeRuntimeManifest(resolve(output, kind), expected);
+    await checkRuntimeArtifact(resolve(output, kind), expected);
+  }
+  console.log('FormLogic app editors built and verified at public/app-editors.');
 } finally {
   const resolved = await realpath(stage);
   if (dirname(resolved) !== publicDir || !basename(resolved).startsWith('.app-editors-')) throw new Error('Unexpected editor staging directory.');
