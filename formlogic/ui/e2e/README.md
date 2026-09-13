@@ -38,9 +38,23 @@ Failures capture a screenshot + trace (open with `npx playwright show-trace <tra
 - Not yet covered (tracked in `LAUNCH_CHECKLIST.md`): app-runtime RBAC golden paths, CSV/JSON
   export authorization, billing-disabled self-host. App RBAC is also covered by backend
   integration tests.
-- CI: `.github/workflows/e2e.yml` runs this suite nightly + on demand (`workflow_dispatch`). It
+- CI: automatic runs are paused. `.github/workflows/e2e.yml` runs on demand (`workflow_dispatch`)
+  or when called by the manual package workflow (`workflow_call`). The nightly schedule is commented out. It
   brings up MySQL + PHP and serves the built SPA and the API on ONE origin
   (`formlogic/ci/router.php`, `VITE_API_URL=/api`) so cookies are same-origin over HTTP, seeds the
   `test@example.com` account, runs against `http://127.0.0.1:8080`, and uploads traces on failure. It
   is intentionally NOT on every PR (slow full-stack gate). Locally it still runs against the WAMP
   stack as described above.
+
+## Local review fixtures
+
+The design specs for admin, App Studio, settings, automations and packs intercept API calls with
+fixtures. They check navigation, save/error states and responsive layouts without changing server
+data. The folder-pack, template and native-hosting specs instead exercise the real local backend.
+Use a disposable review account and an isolated test database for data-changing tests; never point
+the backend integration suite at a workspace whose records you want to keep.
+
+Set `FORMLOGIC_REVIEW_PASSWORD` for specs using `admin@formlogic.local`; this is separate from the
+golden-path `E2E_EMAIL` / `E2E_PASSWORD` settings. Specs that write operator template/pack folders
+also require a local checkout matching the running server. A skipped account-dependent test is
+not a successful integration check.

@@ -171,4 +171,38 @@ final class NativeAppServiceTest extends TestCase
         $this->assertSame('Keep this note', $this->service->records('notes', 'notes')['rows'][0]['title']);
         $this->assertSame(201, $this->createNote('Still writable')['status']);
     }
+
+    public function testCapabilityUpdatesPreserveKeysAndRollBackWithFailedSource(): void
+    {
+        $project = $this->project();
+        $this->service->install('notes', $project, 0);
+        $configPath = $this->storage . '/' . hash('sha256', 'notes') . '/private/config.json';
+        $original = json_decode(file_get_contents($configPath), true);
+        $manifest = json_decode($project['files']['manifest.json'], true);
+        $manifest['server']['requires']['capabilities'][] = 'time';
+        $project['files']['manifest.json'] = json_encode($manifest);
+        $project['files']['server/main.logic'] = 'function createNote(req) { return {status:200,body:{now:softn.time.now()}}; }';
+        $this->service->install('notes', $project, 1);
+        $updated = json_decode(file_get_contents($configPath), true);
+        self::assertSame(['sql', 'time'], $updated['capabilities']);
+        self::assertSame($original['keyHex'], $updated['keyHex']);
+        self::assertSame($original['cryptoDomains'], $updated['cryptoDomains']);
+        self::assertGreaterThan(0, $this->createNote('Clock')['body']['now']);
+
+        $manifest['server']['requires']['capabilities'] = ['sql'];
+        $broken = $project;
+        $broken['files']['manifest.json'] = json_encode($manifest);
+        $broken['files']['server/main.logic'] = 'function createNote( {';
+        try { $this->service->install('notes', $broken, 2); self::fail('Broken source was installed'); }
+        catch (\RuntimeException $error) { self::assertSame(422, $error->getCode()); }
+        self::assertSame($updated, json_decode(file_get_contents($configPath), true));
+        self::assertSame(2, $this->service->get('notes')['version']);
+        self::assertGreaterThan(0, $this->createNote('Clock after rollback')['body']['now']);
+
+        $project['files']['manifest.json'] = json_encode($manifest);
+        $project['files']['server/main.logic'] = $this->project()['files']['server/main.logic'];
+        $this->service->install('notes', $project, 2);
+        self::assertSame(['sql'], json_decode(file_get_contents($configPath), true)['capabilities']);
+        self::assertSame(201, $this->createNote('Still writable')['status']);
+    }
 }

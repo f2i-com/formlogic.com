@@ -446,6 +446,12 @@ project. One previous source version is retained; discarded staging files are cl
 If restoring a snapshot fails, `private/recovery-required` stops runtime/database access until
 an operator restores the named snapshot. Do not delete that marker without completing recovery.
 
+Owner-authorized project updates refresh the host's supported capability list while retaining its
+identity, encryption key and crypto domains. A failed update restores the previous configuration
+alongside the source/database rollback. Configuration replacement is atomic to protect keys from
+partial writes. If configuration recovery fails, the same recovery marker blocks the app until
+the operator restores the previous manifest's capabilities.
+
 ### Coffee.Dating validation and remaining integrations
 
 The local review imports Coffee.Dating Cafe 0.5.0, preserves its 37 routes and 3 migrations,

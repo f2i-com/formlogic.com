@@ -32,6 +32,17 @@ class NativeAppService
         if (!is_dir($path) && !mkdir($path, 0700, true) && !is_dir($path)) throw new RuntimeException('App storage is unavailable');
     }
 
+    /** Replace private configuration atomically so a failed write cannot truncate its keys. */
+    private function writeHostConfig(string $path, string $source): void
+    {
+        $pending = $path . '.pending';
+        try {
+            if (file_put_contents($pending, $source) !== strlen($source) || !chmod($pending, 0600) || !rename($pending, $path)) {
+                throw new RuntimeException('Could not save host configuration');
+            }
+        } finally { if (is_file($pending)) unlink($pending); }
+    }
+
     /** Source inspection requires owner authorization at the controller. Keys and database contents are never included. */
     public function get(string $appId): ?array
     {
@@ -114,6 +125,9 @@ class NativeAppService
         $backup = null;
         $activated = false;
         $snapshot = null;
+        $configPath = $root . '/private/config.json';
+        $originalConfig = null;
+        $configChanged = false;
         try {
             if (is_file($root . '/private/recovery-required')) throw new RuntimeException('Restore the app database before installing another update');
             $old = $this->get($appId);
@@ -124,15 +138,19 @@ class NativeAppService
                 $this->directory(dirname($staging . '/' . $path));
                 if (file_put_contents($staging . '/' . $path, $source) === false) throw new RuntimeException('Could not stage app source');
             }
-            $configPath = $root . '/private/config.json';
             if (!is_file($configPath)) {
                 $config = ['appId' => $manifest['id'], 'development' => false, 'keyHex' => bin2hex(random_bytes(32)), 'capabilities' => $capabilities, 'cryptoDomains' => ['hmac' => $manifest['id'] . ':hmac:v1', 'seal' => $manifest['id'] . ':seal:v1']];
-                file_put_contents($configPath, json_encode($config, JSON_THROW_ON_ERROR));
-                chmod($configPath, 0600);
+                $this->writeHostConfig($configPath, json_encode($config, JSON_THROW_ON_ERROR));
             }
-            $config = json_decode(file_get_contents($configPath), true, 64, JSON_THROW_ON_ERROR);
+            $originalConfig = file_get_contents($configPath);
+            if ($originalConfig === false) throw new RuntimeException('Could not read host configuration');
+            $config = json_decode($originalConfig, true, 64, JSON_THROW_ON_ERROR);
+            // Owner-authorized updates use the same validated capabilities as a new install.
+            // Retain the app identity and cryptographic keys across source updates.
+            $config['capabilities'] = $capabilities;
             $config['enableHostContext'] = true;
-            if (file_put_contents($configPath, json_encode($config, JSON_THROW_ON_ERROR)) === false) throw new RuntimeException('Could not save host configuration');
+            $this->writeHostConfig($configPath, json_encode($config, JSON_THROW_ON_ERROR));
+            $configChanged = true;
             $database = $root . '/private/data/application.sqlite';
             if (is_file($database)) {
                 $snapshot = $root . '/private/pre-install-' . bin2hex(random_bytes(8)) . '.sqlite';
@@ -157,6 +175,13 @@ class NativeAppService
             if ($snapshot !== null) { unlink($snapshot); $snapshot = null; }
             return $saved;
         } catch (\Throwable $error) {
+            if ($configChanged && is_string($originalConfig)) {
+                try { $this->writeHostConfig($configPath, $originalConfig); }
+                catch (\Throwable $configError) {
+                    file_put_contents($root . '/private/recovery-required', 'Restore private/config.json capabilities from the previous manifest before resuming.');
+                    error_log('Native app configuration recovery required');
+                }
+            }
             if ($activated && $snapshot !== null && is_file($snapshot)) {
                 try {
                     $db = new PDO('sqlite:' . $root . '/private/data/application.sqlite', null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
