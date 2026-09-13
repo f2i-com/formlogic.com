@@ -1,0 +1,99 @@
+{
+  "id": "bug-report",
+  "name": "Bug Report",
+  "description": "Collect detailed bug reports from users",
+  "category": "feedback",
+  "icon": "Bug",
+  "estimatedTime": "3 min",
+  "fields": [
+    {
+      "type": "email",
+      "label": "Your Email",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "dropdown",
+      "label": "Bug Severity",
+      "required": true,
+      "properties": {
+        "options": [
+          {
+            "id": "19217c55-acf3-44fc-a275-871fd13c4fae",
+            "label": "Critical - System Unusable",
+            "value": "critical_-_system_unusable"
+          },
+          {
+            "id": "445cd05d-b06e-4551-a0c6-84570a99715f",
+            "label": "High - Major Feature Broken",
+            "value": "high_-_major_feature_broken"
+          },
+          {
+            "id": "a2923f99-076e-4efa-9827-204c064d7e96",
+            "label": "Medium - Feature Impaired",
+            "value": "medium_-_feature_impaired"
+          },
+          {
+            "id": "23076fd6-3906-4862-8b8b-78028e7927f6",
+            "label": "Low - Minor Issue",
+            "value": "low_-_minor_issue"
+          }
+        ]
+      }
+    },
+    {
+      "type": "short_text",
+      "label": "Bug Summary",
+      "placeholder": "Brief description of the issue",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "long_text",
+      "label": "Steps to Reproduce",
+      "description": "Please describe the steps to reproduce this bug",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "long_text",
+      "label": "Expected Behavior",
+      "placeholder": "What should have happened?",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "long_text",
+      "label": "Actual Behavior",
+      "placeholder": "What actually happened?",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "file_upload",
+      "label": "Screenshots",
+      "description": "Upload screenshots if applicable",
+      "required": false,
+      "properties": {
+        "acceptedFileTypes": [
+          ".png",
+          ".jpg",
+          ".jpeg",
+          ".gif"
+        ],
+        "maxFileSize": 10485760,
+        "allowMultiple": true
+      }
+    },
+    {
+      "type": "short_text",
+      "label": "Browser/Device",
+      "placeholder": "e.g., Chrome 120 on Windows 11",
+      "required": false,
+      "properties": {}
+    }
+  ],
+  "categoryLabel": "Feedback",
+  "categoryIcon": "MessageCircle",
+  "order": 5
+}

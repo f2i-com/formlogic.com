@@ -6,6 +6,7 @@ Build a form, connect your AI, publish an app, or operate the connected desktop.
 
 | I want to… | Read |
 |---|---|
+| Add or customise form builder starters | [Folder-backed form templates](FORM_TEMPLATES.md) |
 | Run FormLogic locally or build the web app | [Developer setup](../formlogic/README.md) |
 | Connect OAIY, an API provider or an external AI | [Free access and AI setup](FREE_PLANS_AND_AI_SETUP.md) |
 | Configure free access, optional support plans and Site AI | [Administrator controls](FREE_PLANS_AND_AI_SETUP.md#administrator-controls) |

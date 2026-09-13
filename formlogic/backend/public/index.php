@@ -2215,6 +2215,13 @@ $app->get('/api/packs/catalog/mine', function ($request, $response) use ($contai
     return $container->get(PackCatalogController::class)->myPacks($request, $response);
 })->add($authRequired);
 
+// Folder-backed form starters are public definitions, independent of installed packs.
+$app->get('/api/form-templates', function ($request, $response) {
+    $catalog = (new \FormLogic\Services\FormTemplateCatalog())->load();
+    $response->getBody()->write(json_encode($catalog, JSON_THROW_ON_ERROR));
+    return $response->withHeader('Content-Type', 'application/json')->withHeader('Cache-Control', 'no-store');
+})->add($authOptional);
+
 $app->get('/api/packs/catalog', function ($request, $response) use ($container) {
     return $container->get(PackCatalogController::class)->browse($request, $response);
 })->add($authOptional);

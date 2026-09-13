@@ -1,0 +1,56 @@
+{
+  "id": "newsletter-signup",
+  "name": "Newsletter Signup",
+  "description": "Grow your email list with a simple signup form",
+  "category": "business",
+  "icon": "Newspaper",
+  "estimatedTime": "30 sec",
+  "fields": [
+    {
+      "type": "email",
+      "label": "Email Address",
+      "placeholder": "Enter your email",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "short_text",
+      "label": "First Name",
+      "placeholder": "Your first name (optional)",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "checkboxes",
+      "label": "Topics of Interest",
+      "required": false,
+      "properties": {
+        "options": [
+          {
+            "id": "93d38685-4d8c-417c-8016-f4c82be6de21",
+            "label": "Product Updates",
+            "value": "product_updates"
+          },
+          {
+            "id": "14dbde64-b024-4807-9fa6-49eafc6ee863",
+            "label": "Industry News",
+            "value": "industry_news"
+          },
+          {
+            "id": "0ff89fcc-be21-4a80-a88b-a0cfea57e061",
+            "label": "Tips & Tutorials",
+            "value": "tips_&_tutorials"
+          },
+          {
+            "id": "ec7791fd-f9cd-4bb4-90f6-7d4a1de3ae85",
+            "label": "Special Offers",
+            "value": "special_offers"
+          }
+        ]
+      }
+    }
+  ],
+  "categoryLabel": "Business",
+  "categoryIcon": "Building",
+  "order": 4
+}

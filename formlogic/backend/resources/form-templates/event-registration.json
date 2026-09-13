@@ -1,0 +1,108 @@
+{
+  "id": "event-registration",
+  "name": "Event Registration",
+  "description": "Register attendees for your event",
+  "category": "events",
+  "icon": "CalendarDays",
+  "estimatedTime": "2 min",
+  "fields": [
+    {
+      "type": "short_text",
+      "label": "Full Name",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "email",
+      "label": "Email Address",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "phone",
+      "label": "Phone Number",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "short_text",
+      "label": "Organization/Company",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "dropdown",
+      "label": "Ticket Type",
+      "required": true,
+      "properties": {
+        "options": [
+          {
+            "id": "22cce3a1-086a-4dc6-b8d8-57201752219f",
+            "label": "General Admission",
+            "value": "general_admission"
+          },
+          {
+            "id": "3067296a-fa4a-4d94-a653-88b1c4ff1563",
+            "label": "VIP",
+            "value": "vip"
+          },
+          {
+            "id": "96a2e599-7c20-4401-af4e-eeffd27c9ef5",
+            "label": "Student",
+            "value": "student"
+          },
+          {
+            "id": "d95b58bd-e617-4466-b411-3da7f2b6bf63",
+            "label": "Group (5+)",
+            "value": "group_(5+)"
+          }
+        ]
+      }
+    },
+    {
+      "type": "checkboxes",
+      "label": "Sessions of Interest",
+      "description": "Select the sessions you plan to attend",
+      "required": false,
+      "properties": {
+        "options": [
+          {
+            "id": "ee0e54ea-9739-4563-8617-c02a1c21ec0f",
+            "label": "Opening Keynote",
+            "value": "opening_keynote"
+          },
+          {
+            "id": "05b0aab7-a8a6-4f09-a1f9-d60ffdd64cf8",
+            "label": "Workshop A",
+            "value": "workshop_a"
+          },
+          {
+            "id": "dd0e6e1a-860f-4119-8e8d-49beaa9ab0ae",
+            "label": "Workshop B",
+            "value": "workshop_b"
+          },
+          {
+            "id": "6b1402d2-ee05-4170-a263-5373dc492ecb",
+            "label": "Networking Lunch",
+            "value": "networking_lunch"
+          },
+          {
+            "id": "ef1c3b62-d8b7-4cbe-bafe-40ba1f24a3db",
+            "label": "Closing Session",
+            "value": "closing_session"
+          }
+        ]
+      }
+    },
+    {
+      "type": "long_text",
+      "label": "Dietary Requirements",
+      "placeholder": "Please let us know of any dietary restrictions...",
+      "required": false,
+      "properties": {}
+    }
+  ],
+  "categoryLabel": "Events",
+  "categoryIcon": "CalendarDays",
+  "order": 2
+}

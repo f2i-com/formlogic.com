@@ -35,3 +35,6 @@ formlogic/backend/storage/booking-test/
 
 # Private hosted app databases created by local/runtime use
 /formlogic/backend/storage/hosted-apps/
+
+# Operator-managed form starters (preserved during upgrades, not shipped as defaults)
+/formlogic/backend/storage/form-templates/

@@ -1,0 +1,109 @@
+{
+  "id": "feedback-survey",
+  "name": "Customer Feedback",
+  "description": "Collect feedback about your product or service",
+  "category": "feedback",
+  "icon": "MessageCircle",
+  "estimatedTime": "3 min",
+  "fields": [
+    {
+      "type": "rating",
+      "label": "Overall Satisfaction",
+      "description": "How satisfied are you with our product/service?",
+      "required": true,
+      "properties": {
+        "maxStars": 5
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "label": "How did you hear about us?",
+      "required": false,
+      "properties": {
+        "options": [
+          {
+            "id": "40c5dc4e-5b99-4793-abba-b455fc893382",
+            "label": "Search Engine",
+            "value": "search_engine"
+          },
+          {
+            "id": "db0feacb-7892-4e4c-a3da-ea13e6a6f9a5",
+            "label": "Social Media",
+            "value": "social_media"
+          },
+          {
+            "id": "c575fd18-cc13-4164-b0db-9e94a9d2db46",
+            "label": "Friend/Colleague",
+            "value": "friend/colleague"
+          },
+          {
+            "id": "8ad3c4d8-09a9-4555-b0fc-e96bc3708822",
+            "label": "Advertisement",
+            "value": "advertisement"
+          },
+          {
+            "id": "7f7205f4-4974-4f77-98f6-ebfa6aa78b5d",
+            "label": "Other",
+            "value": "other"
+          }
+        ]
+      }
+    },
+    {
+      "type": "scale",
+      "label": "Likelihood to Recommend",
+      "description": "How likely are you to recommend us to a friend?",
+      "required": true,
+      "properties": {
+        "scaleStart": 0,
+        "scaleEnd": 10,
+        "scaleStartLabel": "Not likely",
+        "scaleEndLabel": "Very likely"
+      }
+    },
+    {
+      "type": "checkboxes",
+      "label": "What do you like about us?",
+      "required": false,
+      "properties": {
+        "options": [
+          {
+            "id": "d5ea8a17-88ab-4278-a63d-d8434709046a",
+            "label": "Product Quality",
+            "value": "product_quality"
+          },
+          {
+            "id": "4caa1d09-b709-48b2-b336-475785e60015",
+            "label": "Customer Service",
+            "value": "customer_service"
+          },
+          {
+            "id": "509b3432-b1cb-4efd-98a4-bc2eaabacbff",
+            "label": "Pricing",
+            "value": "pricing"
+          },
+          {
+            "id": "a99956e4-7606-40d5-b7f1-6d8eb196ccac",
+            "label": "Ease of Use",
+            "value": "ease_of_use"
+          },
+          {
+            "id": "0c89ef26-c124-48f1-9287-f3567ccd5daf",
+            "label": "Speed/Performance",
+            "value": "speed/performance"
+          }
+        ]
+      }
+    },
+    {
+      "type": "long_text",
+      "label": "Additional Comments",
+      "placeholder": "Share any other feedback...",
+      "required": false,
+      "properties": {}
+    }
+  ],
+  "categoryLabel": "Feedback",
+  "categoryIcon": "MessageCircle",
+  "order": 1
+}

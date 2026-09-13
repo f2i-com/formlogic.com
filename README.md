@@ -163,6 +163,8 @@ The complete model is documented in [One backend, many portals](docs/ONE_BACKEND
 
 Build focused public forms or complete data models with short and long text, email, phone, number, date/time, choices, ratings, signatures, uploads, locations, calculated values, hidden values and linked records. Add validation, conditional logic, version history, webhooks and a server-side `onSubmit` script.
 
+Form starters load from JSON folders at runtime. Add a custom file or override a bundled template without rebuilding the frontend; categories follow the available files. [Extend the template library](docs/FORM_TEMPLATES.md).
+
 ### Dashboards without dashboard code
 
 Compose KPI, bar, line, area, pie, donut, table, record-list and activity widgets in a drag-and-drop grid. Give the app home screen and each form section its own operational view, then turn the same data into printable PDF reports.

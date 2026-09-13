@@ -1935,6 +1935,9 @@ class ApiClient {
   async manageNativeRecord(id: string, input: { table: string; action: 'read' | 'create' | 'update' | 'delete'; key?: Record<string, string>; revision?: string; values?: Record<string, string | null> }): Promise<ApiResponse<{ saved?: boolean; record?: import('./nativeHosting').NativeRecordDetail }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/native/records`, { method: 'POST', body: JSON.stringify(input) });
   }
+  async getFormTemplates(signal?: AbortSignal): Promise<ApiResponse<import('../data/formTemplates').FormTemplateCatalog>> {
+    return this.request('/form-templates', { cache: 'no-store', signal });
+  }
   async getNativeRecords(id: string, table?: string, offset = 0): Promise<ApiResponse<import('./nativeHosting').NativeRecords>> {
     const params = new URLSearchParams({ offset: String(offset) });
     if (table) params.set('table', table);

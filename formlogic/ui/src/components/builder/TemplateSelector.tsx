@@ -5,7 +5,8 @@ import { X, Plus, Clock, LayoutGrid, Building, MessageCircle, CalendarDays, User
 import { Button } from '../ui/Button';
 import { EmptyState } from '../ui/EmptyState';
 import { cn } from '../../lib/utils';
-import { formTemplates, templateCategories, type FormTemplate } from '../../data/formTemplates';
+import type { FormTemplate } from '../../data/formTemplates';
+import { useFormTemplates } from '../../hooks/useFormTemplates';
 
 interface TemplateSelectorProps {
   isOpen: boolean;
@@ -37,12 +38,6 @@ const categoryIconMap: Record<string, React.ReactNode> = {
   GraduationCap: <GraduationCap className="h-4 w-4" />,
 };
 
-// Display-only sentence-case overrides for category labels (data file stays untouched).
-const categoryLabelOverrides: Record<string, string> = {
-  all: 'All templates',
-  hr: 'HR & recruiting',
-};
-
 const categoryColors: Record<string, string> = {
   business: 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400',
   feedback: 'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400',
@@ -69,13 +64,17 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose, isCreating]);
 
+  const { templates: formTemplates, categories: templateCategories, loading, error, skipped, refresh } = useFormTemplates(isOpen);
+  const currentTemplate = formTemplates.find(template => template.id === selected?.id) ?? null;
+  const category = templateCategories.some(category => category.id === selectedCategory) ? selectedCategory : 'all';
+
   const panelRef = useRef<HTMLDivElement>(null);
   useFocusTrap(panelRef, isOpen);
 
   if (!isOpen) return null;
 
   const filteredTemplates = formTemplates.filter(t =>
-    (selectedCategory === 'all' || t.category === selectedCategory) &&
+    (category === 'all' || t.category === category) &&
     `${t.name} ${t.description}`.toLowerCase().includes(query.trim().toLowerCase())
   );
 
@@ -114,13 +113,13 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
                   onClick={() => setSelectedCategory(category.id)}
                   className={cn(
                     'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg motion-safe:transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
-                    selectedCategory === category.id
+                    (templateCategories.some(item => item.id === selectedCategory) ? selectedCategory : 'all') === category.id
                       ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400 font-medium'
                       : 'text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800'
                   )}
                 >
-                  {categoryIconMap[category.icon]}
-                  {categoryLabelOverrides[category.id] ?? category.label}
+                  {categoryIconMap[category.icon] || <LayoutGrid className="h-4 w-4" />}
+                  {category.label}
                 </button>
               ))}
             </nav>
@@ -128,8 +127,8 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
 
           <label className="md:hidden flex items-center gap-3 flex-shrink-0 px-4 py-2 text-sm text-gray-600 dark:text-slate-300 border-b border-gray-200 dark:border-slate-800">
             Category
-            <select value={selectedCategory} onChange={event => setSelectedCategory(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 min-h-11 text-base">
-              {templateCategories.map(category => <option key={category.id} value={category.id}>{categoryLabelOverrides[category.id] ?? category.label}</option>)}
+            <select value={category} onChange={event => setSelectedCategory(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 min-h-11 text-base">
+              {templateCategories.map(category => <option key={category.id} value={category.id}>{category.label}</option>)}
             </select>
           </label>
 
@@ -172,14 +171,14 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
               <button
                 onClick={() => setSelected(null)}
                 disabled={isCreating}
-                aria-pressed={selected === null}
+                aria-pressed={currentTemplate === null}
                 className="w-full flex items-center gap-4 p-4 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl hover:border-primary-500 dark:hover:border-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/10 motion-safe:transition-all group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900"
               >
                 <div className="p-3 bg-gray-100 dark:bg-slate-800 rounded-lg group-hover:bg-primary-100 dark:group-hover:bg-primary-900/30 motion-safe:transition-colors">
                   <Plus className="h-6 w-6 text-gray-600 dark:text-slate-400 group-hover:text-primary-600 dark:group-hover:text-primary-400" />
                 </div>
                 <div className="text-left min-w-0">
-                  <h3 className="font-medium text-gray-900 dark:text-white">Blank form {selected === null ? '✓' : ''}</h3>
+                  <h3 className="font-medium text-gray-900 dark:text-white">Blank form {currentTemplate === null ? '✓' : ''}</h3>
                   <p className="text-sm text-gray-500 dark:text-slate-400">Start from scratch with an empty form</p>
                 </div>
               </button>
@@ -190,7 +189,10 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
               <h3 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-4">
                 Templates
               </h3>
-              {filteredTemplates.length === 0 ? (
+              {loading && <p role="status" className="mb-4 text-sm text-gray-500 dark:text-slate-400">Loading templates…</p>}
+              {error && <div role="alert" className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">{error} You can still start with a blank form. <button type="button" onClick={refresh} className="min-h-11 px-2 underline">Try again</button></div>}
+              {skipped > 0 && <p role="status" className="mb-4 text-sm text-amber-700 dark:text-amber-300">Some templates could not be loaded. The administrator can check the template files and server log.</p>}
+              {!loading && !error && filteredTemplates.length === 0 ? (
                 <EmptyState
                   icon={LayoutGrid}
                   title="No matching templates"
@@ -203,22 +205,22 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
                       key={template.id}
                       onClick={() => { setSelected(template); if (!name.trim() || name === selected?.name) setName(template.name); }}
                       disabled={isCreating}
-                      aria-pressed={selected?.id === template.id}
+                      aria-pressed={currentTemplate?.id === template.id}
                       onMouseEnter={() => setHoveredTemplate(template.id)}
                       onMouseLeave={() => setHoveredTemplate(null)}
                       className={cn(
                         'text-left p-4 border rounded-xl motion-safe:transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900',
-                        hoveredTemplate === template.id || selected?.id === template.id
+                        hoveredTemplate === template.id || currentTemplate?.id === template.id
                           ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/10 shadow-sm motion-safe:-translate-y-0.5'
                           : 'border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-800/50 hover:border-gray-300 dark:hover:border-slate-700'
                       )}
                     >
                       <div className="flex items-start gap-3">
-                        <div className={cn('p-2 rounded-lg flex-shrink-0', categoryColors[template.category])}>
+                        <div className={cn('p-2 rounded-lg flex-shrink-0', categoryColors[template.category] || categoryColors.other)}>
                           {iconMap[template.icon] || <FileText className="h-6 w-6" />}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <h4 className="font-medium text-gray-900 dark:text-white break-words">{template.name} {selected?.id === template.id ? '✓' : ''}</h4>
+                          <h4 className="font-medium text-gray-900 dark:text-white break-words">{template.name} {currentTemplate?.id === template.id ? '✓' : ''}</h4>
                           <p className="text-sm text-gray-500 dark:text-slate-400 line-clamp-2 mt-0.5">
                             {template.description}
                           </p>
@@ -245,7 +247,7 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
             <Button variant="outline" onClick={onClose} disabled={isCreating}>
               Cancel
             </Button>
-            <Button onClick={() => onSelectTemplate(selected, makePrivate, name.trim())} disabled={isCreating} isLoading={isCreating}>Create form</Button>
+            <Button onClick={() => onSelectTemplate(currentTemplate, makePrivate, name.trim())} disabled={isCreating || (loading && selected !== null)} isLoading={isCreating}>Create form</Button>
           </div>
 
         </div>

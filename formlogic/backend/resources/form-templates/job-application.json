@@ -1,0 +1,113 @@
+{
+  "id": "job-application",
+  "name": "Job Application",
+  "description": "Collect job applications from candidates",
+  "category": "hr",
+  "icon": "Briefcase",
+  "estimatedTime": "5 min",
+  "fields": [
+    {
+      "type": "short_text",
+      "label": "Full Name",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "email",
+      "label": "Email Address",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "phone",
+      "label": "Phone Number",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "url",
+      "label": "LinkedIn Profile",
+      "placeholder": "https://linkedin.com/in/yourprofile",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "dropdown",
+      "label": "Position Applied For",
+      "required": true,
+      "properties": {
+        "options": [
+          {
+            "id": "894638cd-2c2d-4105-9b76-956ee315a76b",
+            "label": "Software Engineer",
+            "value": "software_engineer"
+          },
+          {
+            "id": "7074d6ad-a303-427c-9957-76f1a009a495",
+            "label": "Product Manager",
+            "value": "product_manager"
+          },
+          {
+            "id": "7be8d31f-45d3-4f77-804b-e21c7b797f3a",
+            "label": "Designer",
+            "value": "designer"
+          },
+          {
+            "id": "4e74de7e-2830-483b-afe6-913f40ed2a8d",
+            "label": "Marketing",
+            "value": "marketing"
+          },
+          {
+            "id": "4577a1c2-64f4-489b-88f7-dfb6726c14cc",
+            "label": "Sales",
+            "value": "sales"
+          },
+          {
+            "id": "538971e9-a933-4027-8835-2a0ecb446ce8",
+            "label": "Other",
+            "value": "other"
+          }
+        ]
+      }
+    },
+    {
+      "type": "number",
+      "label": "Years of Experience",
+      "required": true,
+      "properties": {
+        "min": 0,
+        "max": 50
+      }
+    },
+    {
+      "type": "file_upload",
+      "label": "Resume/CV",
+      "description": "Upload your resume (PDF, DOC, DOCX)",
+      "required": true,
+      "properties": {
+        "acceptedFileTypes": [
+          ".pdf",
+          ".doc",
+          ".docx"
+        ],
+        "maxFileSize": 5242880
+      }
+    },
+    {
+      "type": "long_text",
+      "label": "Cover Letter",
+      "description": "Tell us why you would be a great fit",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "date",
+      "label": "Available Start Date",
+      "required": true,
+      "properties": {}
+    }
+  ],
+  "categoryLabel": "HR & Recruiting",
+  "categoryIcon": "Users",
+  "order": 3
+}

@@ -1,0 +1,65 @@
+{
+  "id": "rsvp-form",
+  "name": "RSVP Form",
+  "description": "Quick RSVP for events and gatherings",
+  "category": "events",
+  "icon": "PartyPopper",
+  "estimatedTime": "1 min",
+  "fields": [
+    {
+      "type": "short_text",
+      "label": "Your Name",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "email",
+      "label": "Email Address",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "multiple_choice",
+      "label": "Will you attend?",
+      "required": true,
+      "properties": {
+        "options": [
+          {
+            "id": "13e5bd93-b5dd-4da3-b8b2-1454df43b572",
+            "label": "Yes, I will attend",
+            "value": "yes,_i_will_attend"
+          },
+          {
+            "id": "fce45ee8-7978-4107-862b-bfd07a6087a1",
+            "label": "No, I cannot attend",
+            "value": "no,_i_cannot_attend"
+          },
+          {
+            "id": "6e6edc54-2a25-4a35-ac90-da8a7b501b0e",
+            "label": "Maybe",
+            "value": "maybe"
+          }
+        ]
+      }
+    },
+    {
+      "type": "number",
+      "label": "Number of Guests",
+      "description": "Including yourself",
+      "required": false,
+      "properties": {
+        "min": 1,
+        "max": 10
+      }
+    },
+    {
+      "type": "long_text",
+      "label": "Dietary Restrictions or Notes",
+      "required": false,
+      "properties": {}
+    }
+  ],
+  "categoryLabel": "Events",
+  "categoryIcon": "CalendarDays",
+  "order": 7
+}

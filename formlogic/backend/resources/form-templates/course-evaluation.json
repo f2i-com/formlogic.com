@@ -1,0 +1,93 @@
+{
+  "id": "course-evaluation",
+  "name": "Course Evaluation",
+  "description": "Get feedback on courses or training sessions",
+  "category": "education",
+  "icon": "GraduationCap",
+  "estimatedTime": "3 min",
+  "fields": [
+    {
+      "type": "short_text",
+      "label": "Course Name",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "short_text",
+      "label": "Instructor Name",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "rating",
+      "label": "Overall Course Rating",
+      "required": true,
+      "properties": {
+        "maxStars": 5
+      }
+    },
+    {
+      "type": "scale",
+      "label": "Content Quality",
+      "description": "How would you rate the quality of the course content?",
+      "required": true,
+      "properties": {
+        "scaleStart": 1,
+        "scaleEnd": 5,
+        "scaleStartLabel": "Poor",
+        "scaleEndLabel": "Excellent"
+      }
+    },
+    {
+      "type": "scale",
+      "label": "Instructor Effectiveness",
+      "description": "How effective was the instructor at teaching the material?",
+      "required": true,
+      "properties": {
+        "scaleStart": 1,
+        "scaleEnd": 5,
+        "scaleStartLabel": "Poor",
+        "scaleEndLabel": "Excellent"
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "label": "Course Pace",
+      "required": true,
+      "properties": {
+        "options": [
+          {
+            "id": "5dc90ac3-2f3e-451f-9916-47c8c46b5860",
+            "label": "Too Slow",
+            "value": "too_slow"
+          },
+          {
+            "id": "5e1549b1-75b0-4c3e-b78c-1fca80196942",
+            "label": "Just Right",
+            "value": "just_right"
+          },
+          {
+            "id": "17f402cf-e40f-477c-b73d-286a90e2adda",
+            "label": "Too Fast",
+            "value": "too_fast"
+          }
+        ]
+      }
+    },
+    {
+      "type": "long_text",
+      "label": "What did you like most?",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "long_text",
+      "label": "What could be improved?",
+      "required": false,
+      "properties": {}
+    }
+  ],
+  "categoryLabel": "Education",
+  "categoryIcon": "GraduationCap",
+  "order": 6
+}

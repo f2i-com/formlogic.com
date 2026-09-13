@@ -334,6 +334,8 @@ export function Docs() {
             {/* Builder */}
             <section className="mb-14">
               <H2 id="builder" icon={LayoutGrid}>The form builder</H2>
+              <P><C>Create new form</C> offers a blank form or a starter from the site’s template folder. Form names are optional; rename an untitled form later in the builder or forms list. The catalogue refreshes each time the picker opens.</P>
+              <Tip>Self-hosting operators can add JSON files to <C>backend/storage/form-templates/</C> to extend or override the bundled starters without rebuilding the website. Categories come from the files. Existing forms stay unchanged. <GuideLink file="docs/FORM_TEMPLATES.md">Template format and setup</GuideLink>.</Tip>
               <P>The builder has three areas: the <strong className="text-gray-900 dark:text-white">field palette</strong> on the left, the <strong className="text-gray-900 dark:text-white">canvas</strong> in the middle, and a contextual <strong className="text-gray-900 dark:text-white">settings panel</strong> on the right.</P>
               <Bullets items={[
                 <>Click <C>Add Field</C> (or a palette item) to add a field; drag the handle to reorder.</>,

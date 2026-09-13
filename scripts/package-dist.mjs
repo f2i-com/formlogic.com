@@ -88,6 +88,7 @@ const BACKEND_COPY_FILES = ['composer.json', 'composer.lock', '.env.example', '.
 const BACKEND_SKELETON_DIRS = [
   'logs',
   'storage/forms',
+  'storage/form-templates',
   'storage/hosted-apps',
   'storage/packs',
   'storage/uploads',

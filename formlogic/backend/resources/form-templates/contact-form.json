@@ -1,0 +1,75 @@
+{
+  "id": "contact-form",
+  "name": "Contact Form",
+  "description": "Simple contact form for visitors to reach out",
+  "category": "business",
+  "icon": "Mail",
+  "estimatedTime": "1 min",
+  "fields": [
+    {
+      "type": "short_text",
+      "label": "Full Name",
+      "placeholder": "Enter your name",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "email",
+      "label": "Email Address",
+      "placeholder": "your@email.com",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "phone",
+      "label": "Phone Number",
+      "placeholder": "",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "dropdown",
+      "label": "Subject",
+      "required": true,
+      "properties": {
+        "options": [
+          {
+            "id": "140fb1c2-979e-44b2-bd37-0b29aff87379",
+            "label": "General Inquiry",
+            "value": "general_inquiry"
+          },
+          {
+            "id": "f17d089b-b182-4c0d-9916-1b392cc4f6eb",
+            "label": "Support Request",
+            "value": "support_request"
+          },
+          {
+            "id": "c0fe4cbf-5228-4e98-ba31-6caf70f3b9fe",
+            "label": "Sales Question",
+            "value": "sales_question"
+          },
+          {
+            "id": "5c867b16-5041-4391-9f79-bb08663daf65",
+            "label": "Partnership",
+            "value": "partnership"
+          },
+          {
+            "id": "62c34e65-7aaf-4619-ac52-ed60657526a6",
+            "label": "Other",
+            "value": "other"
+          }
+        ]
+      }
+    },
+    {
+      "type": "long_text",
+      "label": "Message",
+      "placeholder": "How can we help you?",
+      "required": true,
+      "properties": {}
+    }
+  ],
+  "categoryLabel": "Business",
+  "categoryIcon": "Building",
+  "order": 0
+}
