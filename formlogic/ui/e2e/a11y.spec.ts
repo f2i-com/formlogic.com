@@ -22,13 +22,17 @@ const PASSWORD = process.env.E2E_PASSWORD || 'password123';
 // prefers-color-scheme. Seed the store so a surface can be scanned under BOTH palettes —
 // a dark-only scan let gray-400-on-white copy through for weeks.
 async function setTheme(page: Page, theme: 'light' | 'dark') {
-  await page.evaluate((t) => {
+  const seed = (t: 'light' | 'dark') => {
     const key = 'formlogic-ui-storage';
     const raw = localStorage.getItem(key);
     const parsed = raw ? JSON.parse(raw) : { state: {}, version: 0 };
     parsed.state = { ...(parsed.state ?? {}), theme: t };
     localStorage.setItem(key, JSON.stringify(parsed));
-  }, theme);
+  };
+  // A pending store update on the current page can overwrite localStorage before
+  // navigation. Seed again before the next document hydrates, then assert its palette.
+  await page.addInitScript(seed, theme);
+  await page.evaluate(seed, theme);
 }
 
 async function ensureOwnsAForm(page: Page) {
@@ -131,10 +135,33 @@ test.describe('accessibility smoke (axe)', () => {
 
   test('dashboard', async ({ page }) => {
     await login(page);
+    await ensureOwnsAForm(page);
     await page.goto('/');
     await page.getByRole('main').waitFor();
+    await page.getByRole('heading', { name: 'My forms', exact: true }).waitFor();
+    await page.waitForLoadState('networkidle');
     await expectNoSeriousViolations(page, 'dashboard');
   });
+
+  for (const theme of ['dark', 'light'] as const) {
+    test(`first-run welcome (${theme})`, async ({ page }) => {
+      // Other specs share this account and create forms. Keep the empty-account
+      // presentation deterministic without deleting anyone's data. Scan the welcome
+      // separately so a late first-run fade cannot race the dashboard scan.
+      await page.route(/\/api\/forms(?:\?[^#]*)?$/, route => route.fulfill({
+        json: { forms: [], count: 0 },
+      }));
+      await login(page);
+      await page.waitForLoadState('networkidle');
+      await setTheme(page, theme);
+      await page.goto('/');
+      await page.getByRole('dialog', { name: 'Welcome to FormLogic 👋' }).waitFor();
+      await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b)/);
+      await expectNoSeriousViolations(page, `first-run welcome (${theme})`, '[role="dialog"]');
+      await page.getByRole('button', { name: "I'll explore on my own" }).click();
+      await expect(page.getByRole('dialog')).toBeHidden();
+    });
+  }
 
   test('settings (switches, modals, AI card)', async ({ page }) => {
     test.setTimeout(90_000);

@@ -1714,7 +1714,7 @@ export function Dashboard() {
                             <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
                               {response.formTitle}
                             </p>
-                            <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5">
+                            <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
                               New submission · <span className="font-mono">{formatRelativeTime(response.submittedAt)}</span>
                             </p>
                           </div>

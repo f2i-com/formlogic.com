@@ -23,7 +23,7 @@ export function ShowMore({ shown, total, onShowMore, noun = 'items', className }
       <Button variant="outline" size="sm" onClick={onShowMore}>
         Show more {noun}
       </Button>
-      <span className="text-xs text-gray-400 dark:text-slate-500">Showing {shown} of {total}</span>
+      <span className="text-xs text-gray-500 dark:text-slate-400">Showing {shown} of {total}</span>
     </div>
   );
 }

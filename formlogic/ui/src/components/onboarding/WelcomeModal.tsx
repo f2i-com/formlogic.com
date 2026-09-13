@@ -57,7 +57,7 @@ export function WelcomeModal({ isOpen, onClose, onBlank, onTemplate, onAI }: Wel
           ))}
         </div>
         <div className="mt-7 pt-5 border-t border-gray-100 dark:border-slate-800 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs text-gray-400 dark:text-slate-500 min-w-0">You can publish and share your form the moment it's ready.</p>
+          <p className="text-xs text-gray-500 dark:text-slate-400 min-w-0">You can publish and share your form the moment it's ready.</p>
           <button type="button" onClick={onClose} className="shrink-0 self-start sm:self-auto text-sm font-medium text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors cursor-pointer">
             I'll explore on my own
           </button>
