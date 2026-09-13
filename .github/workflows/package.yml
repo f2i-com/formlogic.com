@@ -105,8 +105,11 @@ jobs:
             fi
           done
 
+      - name: Test fresh and repeated marketplace setup
+        run: php scripts/test-installer-marketplace.php
+
       - name: Test release contracts and PHP signature interoperability
-        run: node --test scripts/release-signing.test.mjs
+        run: node --test scripts/release-signing.test.mjs scripts/installer-browser.test.mjs
 
       - name: Frontend gates (lint, tests, build, budget, invariants, audit)
         working-directory: formlogic/ui

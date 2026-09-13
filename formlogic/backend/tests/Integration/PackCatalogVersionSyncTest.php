@@ -110,6 +110,26 @@ final class PackCatalogVersionSyncTest extends TestCase
         $this->assertSame(2, $this->versionCount($catalogId));
     }
 
+    public function testLatestLargePackDoesNotSortItsJsonPayload(): void
+    {
+        $pack = $this->pack('1.0.0', 'large payload', 1);
+        $published = self::$catalog->publishPack($pack, $this->userId, [
+            'slug' => 'large-version-' . bin2hex(random_bytes(4)),
+            'name' => 'Large version test', 'version' => '1.0.0',
+        ]);
+        $pack['packMeta']['description'] = str_repeat('large source ', 100000);
+        self::$pdo->prepare('UPDATE pack_versions SET pack_data = ? WHERE id = ?')
+            ->execute([json_encode($pack, JSON_THROW_ON_ERROR), $published['versionId']]);
+        $original = (int) self::$pdo->query('SELECT @@session.sort_buffer_size')->fetchColumn();
+        try {
+            self::$pdo->exec('SET SESSION sort_buffer_size = 32768');
+            $result = self::$catalog->getPackVersion($published['catalogId']);
+            $this->assertSame($pack['packMeta']['description'], $result['pack_data']['packMeta']['description']);
+        } finally {
+            self::$pdo->exec('SET SESSION sort_buffer_size = ' . $original);
+        }
+    }
+
     /** @return array<string,mixed> */
     private function pack(string $version, string $description, int $formCount): array
     {

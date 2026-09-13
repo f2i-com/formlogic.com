@@ -588,11 +588,15 @@ class PackCatalogService
             $stmt = $this->mysql->prepare("SELECT * FROM pack_versions WHERE id = :id AND catalog_id = :catalog_id");
             $stmt->execute(['id' => $versionId, 'catalog_id' => $catalogId]);
         } else {
-            // Latest version
+            // Sort only the small identifier, then fetch the selected payload.
+            // Sorting SELECT * includes large app-project JSON and can exceed
+            // MySQL's default sort buffer even when only one row is requested.
             $stmt = $this->mysql->prepare("
-                SELECT * FROM pack_versions WHERE catalog_id = :catalog_id ORDER BY created_at DESC LIMIT 1
+                SELECT id FROM pack_versions WHERE catalog_id = :catalog_id ORDER BY created_at DESC, id DESC LIMIT 1
             ");
             $stmt->execute(['catalog_id' => $catalogId]);
+            $latestId = $stmt->fetchColumn();
+            return $latestId === false ? null : $this->getPackVersion($catalogId, (string) $latestId);
         }
 
         $row = $stmt->fetch();

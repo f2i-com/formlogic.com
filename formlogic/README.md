@@ -577,3 +577,13 @@ Some server-side generation routes still require operator-funded Site AI. For th
 ## License
 
 Proprietary, source-available. Free to self-host and modify for your own use; selling or offering it as a paid/hosted service requires a commercial agreement. See [LICENSE](../LICENSE).
+
+### Installer recovery and marketplace setup
+
+The web installer publishes the installable marketplace catalogue using a bounded `--catalog-only` run. Bulk demo-account installation and sample records run separately from a shell to avoid hosting/Cloudflare request timeouts:
+
+```sh
+php api/bin/provision-demo.php
+```
+
+Use `backend/bin/provision-demo.php` in a source checkout. The command is idempotent. If catalogue setup could not finish during web installation, rerun it with `--catalog-only` to publish only the catalogue. Failures show an error reference in the wizard and are logged in the hosting PHP error log and, when writable, `api/logs/installer.log`. The browser retains the last request error for that tab. After an interrupted install, preserve `.env` and storage; reload the wizard and use its existing-installation checks before retrying. Never enable environment replacement merely to recover from a timeout.

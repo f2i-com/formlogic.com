@@ -21,9 +21,9 @@
 // (emitLocalDesktopEvent), so demos/tests work with no Desktop at all.
 import { logger } from '../../lib/logger';
 import { getDesktopBaseUrl, type DesktopEventEnvelope } from './desktopTypes';
-import { getDesktopToken } from './desktopPairing';
+import { getDesktopToken, isDesktopPaired, subscribeDesktopPaired } from './desktopPairing';
 import { getDesktopInfo, subscribeDesktopStatus } from './desktopDetection';
-import { oaiyRouteAvailable, subscribeOaiyPaired } from '../oaiy/oaiyRuntime';
+import { oaiyRouteAvailable, isOaiyPaired, subscribeOaiyPaired } from '../oaiy/oaiyRuntime';
 import { subscribeOaiyStatus } from '../oaiy/oaiyDetection';
 import { startOaiyEventPolling, stopOaiyEventPolling } from '../oaiy/oaiyEvents';
 
@@ -230,11 +230,23 @@ function syncOaiyPolling(): void {
 export function subscribeDesktopEvents(listener: DesktopEventListener): () => void {
   listeners.add(listener);
   if (!unsubscribeDetection) {
-    unsubscribeDetection = subscribeDesktopStatus(() => connectIfReady());
+    // App/flow event listeners may exist without local hardware. Discover only
+    // paired runtimes; the connection panel explicitly probes during setup.
+    let offStatus = subscribeDesktopStatus(() => connectIfReady(), { probe: isDesktopPaired() });
+    const offPaired = subscribeDesktopPaired(() => {
+      offStatus();
+      offStatus = subscribeDesktopStatus(() => connectIfReady(), { probe: isDesktopPaired() });
+      connectIfReady();
+    });
+    unsubscribeDetection = () => { offStatus(); offPaired(); };
   }
   if (!unsubscribeOaiy) {
-    const offStatus = subscribeOaiyStatus(() => syncOaiyPolling());
-    const offPaired = subscribeOaiyPaired(() => syncOaiyPolling());
+    let offStatus = subscribeOaiyStatus(() => syncOaiyPolling(), { probe: isOaiyPaired() });
+    const offPaired = subscribeOaiyPaired(() => {
+      offStatus();
+      offStatus = subscribeOaiyStatus(() => syncOaiyPolling(), { probe: isOaiyPaired() });
+      syncOaiyPolling();
+    });
     unsubscribeOaiy = () => {
       offStatus();
       offPaired();

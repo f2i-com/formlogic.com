@@ -34,7 +34,10 @@ function buildAppShellCsp(apiUrl: string | undefined): string {
   }
   return [
     "default-src 'self'",
-    "script-src 'self' 'wasm-unsafe-eval' https://www.paypal.com",
+    // Cloudflare may inject its analytics beacon when enabled by the site owner.
+    // This permits that provider in the shell; it does not install analytics or
+    // relax the isolated app/custom-screen runtime policies.
+    "script-src 'self' 'wasm-unsafe-eval' https://www.paypal.com https://static.cloudflareinsights.com",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' data: https://fonts.gstatic.com",
     `img-src 'self' data: blob:${apiOrigin} https://www.paypal.com https://www.paypalobjects.com`,
@@ -51,7 +54,7 @@ function buildAppShellCsp(apiUrl: string | undefined): string {
     //
     // The bridges still enforce pairing-token auth (LOCAL-SEC-001); this only
     // lets the browser ask.
-    `connect-src 'self' wss:${apiOrigin} ${DESKTOP_LOOPBACK_ORIGINS.join(' ')} https://www.paypal.com`,
+    `connect-src 'self' wss:${apiOrigin} ${DESKTOP_LOOPBACK_ORIGINS.join(' ')} https://www.paypal.com https://cloudflareinsights.com`,
     // Per-app PWA manifests are served by the API (AppRuntimeRoot injects
     // <link rel="manifest"> to /api/app/{slug}/manifest.json), which is a
     // separate origin on split-host installs.

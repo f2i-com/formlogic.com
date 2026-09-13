@@ -38,6 +38,9 @@ Options -Indexes
   SetEnvIf Request_URI "^/form/" IS_FORM_RUNTIME
   Header always unset X-Frame-Options env=IS_FORM_RUNTIME
   Header always set Content-Security-Policy "frame-ancestors *; base-uri 'self'; object-src 'none'" env=IS_FORM_RUNTIME
+  # Internal SPA rewrites prefix request environment variables with REDIRECT_.
+  Header always unset X-Frame-Options env=REDIRECT_IS_FORM_RUNTIME
+  Header always set Content-Security-Policy "frame-ancestors *; base-uri 'self'; object-src 'none'" env=REDIRECT_IS_FORM_RUNTIME
   # The sandboxed custom-screen host is framed SAME-ORIGIN by the app shell
   # (CustomScreenRuntime.tsx). 'self' — deliberately NOT * — every ancestor must
   # be our origin: an externally framed, UNsandboxed screen-host that accepted a
@@ -46,6 +49,11 @@ Options -Indexes
   SetEnvIf Request_URI "^/screen-host\.html$" IS_SCREEN_HOST
   Header always set X-Frame-Options "SAMEORIGIN" env=IS_SCREEN_HOST
   Header always set Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" env=IS_SCREEN_HOST
+  # FormLogic embeds its hosted apps and authoring tools from these entry points.
+  # Keep the dashboard protected; only these documents accept same-origin frames.
+  SetEnvIf Request_URI "^/(hosted-runtime/(index\.html)?|app-editors/(builder|studio)/(index\.html)?)$" IS_APP_FRAME
+  Header always set X-Frame-Options "SAMEORIGIN" env=IS_APP_FRAME
+  Header always set Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" env=IS_APP_FRAME
 </IfModule>
 
 # ---- Never serve secrets or server files over HTTP -------------------------

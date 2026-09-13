@@ -7,6 +7,9 @@ import {
   subscribeDesktopEvents,
 } from './desktopEvents';
 import { __resetDesktopDetectionForTests } from './desktopDetection';
+import { clearDesktopToken } from './desktopPairing';
+import { setOaiyToken, __resetOaiyDetectionForTests } from '../oaiy/oaiyRuntime';
+import { __resetOaiyDetectionLoopForTests } from '../oaiy/oaiyDetection';
 import type { DesktopEventEnvelope } from './desktopTypes';
 
 // Event hub: minimal envelope validation, central dedupe on idempotencyKey (LRU 512),
@@ -29,6 +32,11 @@ function envelope(overrides: Partial<DesktopEventEnvelope> = {}): DesktopEventEn
 afterEach(() => {
   __resetDesktopEventsForTests();
   __resetDesktopDetectionForTests();
+  __resetOaiyDetectionLoopForTests();
+  __resetOaiyDetectionForTests();
+  clearDesktopToken();
+  setOaiyToken(null);
+  vi.useRealTimers();
   vi.restoreAllMocks();
   delete (globalThis as unknown as { fetch?: unknown }).fetch;
 });
@@ -47,6 +55,35 @@ describe('isValidDesktopEvent', () => {
 });
 
 describe('desktop event hub', () => {
+  it('does not probe localhost just because an unpaired app subscribes to events', async () => {
+    vi.useFakeTimers();
+    clearDesktopToken();
+    setOaiyToken(null);
+    const fetch = vi.fn().mockRejectedValue(new Error('offline'));
+    globalThis.fetch = fetch;
+    const unsubscribe = subscribeDesktopEvents(() => {});
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetch).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
+  it('starts discovery on pairing and stops it on disconnect', async () => {
+    vi.useFakeTimers();
+    setOaiyToken(null);
+    const fetch = vi.fn().mockRejectedValue(new Error('offline'));
+    globalThis.fetch = fetch;
+    const unsubscribe = subscribeDesktopEvents(() => {});
+    expect(fetch).not.toHaveBeenCalled();
+    setOaiyToken('test-pairing-token');
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(fetch).toHaveBeenCalled();
+    setOaiyToken(null);
+    const calls = fetch.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetch).toHaveBeenCalledTimes(calls);
+    unsubscribe();
+  });
+
   it('dispatches a valid envelope to every subscriber', () => {
     // No desktop is detected in tests, so subscribing must not open any connection —
     // guard by making any (unexpected) fetch fail loudly-but-quietly.

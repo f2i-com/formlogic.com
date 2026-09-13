@@ -135,35 +135,91 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         exit;
     }
 
-    switch ($_POST['action']) {
-        case 'check_requirements':
-            echo json_encode(checkRequirements());
-            exit;
-
-        case 'test_database':
-            echo json_encode(testDatabase($_POST));
-            exit;
-
-        case 'run_install':
-            echo json_encode(runInstall($_POST));
-            exit;
-
-        case 'detect_install':
-            echo json_encode(detectExistingInstall());
-            exit;
-
-        case 'run_upgrade':
-            echo json_encode(runUpgrade());
-            exit;
-    }
-
-    echo json_encode(['success' => false, 'message' => 'Unknown action']);
+    // Keep PHP warnings/fatals out of JSON, and return an actionable reference.
+    ini_set('display_errors', '0');
+    ob_start();
+    $completed = false;
+    register_shutdown_function(static function () use (&$completed): void {
+        if ($completed) return;
+        $last = error_get_last();
+        if (!$last || !in_array($last['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) return;
+        while (ob_get_level() > 0) ob_end_clean();
+        http_response_code(500);
+        header('Content-Type: application/json');
+        $failure = flInstallerFailure(new RuntimeException($last['message']));
+        echo json_encode($failure, JSON_INVALID_UTF8_SUBSTITUTE);
+    });
+    $result = flInstallerAction((string) $_POST['action'], $_POST);
+    ob_end_clean();
+    $completed = true;
+    if (isset($result['errorId'])) http_response_code(500);
+    echo json_encode($result, JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
     exit;
 }
 
 // ---------------------------------------------------------------------------
 // Input sanitization helpers
 // ---------------------------------------------------------------------------
+/** Record diagnostics privately; never echo raw PHP exceptions into the wizard. */
+function flInstallerFailure(Throwable $error): array
+{
+    $id = str_replace('.', '', uniqid('install-', true));
+    $line = '[' . $id . '] ' . get_class($error) . ': ' . $error->getMessage();
+    error_log($line);
+    $log = flBackendDir() . '/logs';
+    if (is_dir($log) && is_writable($log)) @error_log($line . PHP_EOL, 3, $log . '/installer.log');
+    return ['success' => false, 'errorId' => $id,
+        'message' => 'Setup stopped unexpectedly. Reference: ' . $id . '. Check the hosting PHP error log or ' . basename(flBackendDir()) . '/logs/installer.log. Existing files may already have been created; reload and use Upgrade to resume without replacing configuration.'];
+}
+
+function flInstallerAction(string $action, array $data): array
+{
+    try {
+        return match ($action) {
+            'check_requirements' => checkRequirements(),
+            'test_database' => testDatabase($data),
+            'run_install' => runInstall($data),
+            'detect_install' => detectExistingInstall(),
+            'run_upgrade' => runUpgrade(),
+            default => ['success' => false, 'message' => 'Unknown action'],
+        };
+    } catch (Throwable $error) {
+        return flInstallerFailure($error);
+    }
+}
+
+/** Bound optional provisioning below common proxy timeouts; terminate timed-out work. */
+function flRunInstallerCommand(array $command, string $cwd, float $timeout = 20.0): array
+{
+    if (!function_exists('proc_open')) return ['exitCode' => -1, 'timedOut' => false, 'output' => 'PHP proc_open is disabled.'];
+    // File-backed output avoids blocking pipe reads on Windows PHP.
+    $capture = tempnam(sys_get_temp_dir(), 'fl-install-');
+    if ($capture === false) return ['exitCode' => -1, 'timedOut' => false, 'output' => 'Could not create a private command log.'];
+    @chmod($capture, 0600);
+    try {
+        $process = @proc_open($command, [0 => ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'r'], 1 => ['file', $capture, 'w'], 2 => ['redirect', 1]], $pipes, $cwd, null, ['bypass_shell' => true]);
+        if (!is_resource($process)) return ['exitCode' => -1, 'timedOut' => false, 'output' => 'Could not start PHP CLI.'];
+        $started = microtime(true);
+        $timedOut = false;
+        do {
+            $status = proc_get_status($process);
+            if (!$status['running']) break;
+            if (microtime(true) - $started >= $timeout) {
+                $timedOut = true;
+                proc_terminate($process, 9);
+                break;
+            }
+            usleep(50000);
+        } while (true);
+        $closed = proc_close($process);
+        clearstatcache(true, $capture);
+        $output = file_get_contents($capture, false, null, max(0, (int) filesize($capture) - 8192));
+        return ['exitCode' => $timedOut ? -1 : ($status['exitcode'] >= 0 ? $status['exitcode'] : $closed), 'timedOut' => $timedOut, 'output' => $output === false ? '' : $output];
+    } finally {
+        @unlink($capture);
+    }
+}
+
 function sanitizeIdentifier(string $value): string
 {
     // Only allow alphanumeric, underscore, hyphen for DB identifiers
@@ -571,8 +627,16 @@ function runInstall(array $data): array
 
             // Create database if needed (dbName is already sanitized to alphanumeric/underscore/hyphen)
             $safeName = str_replace('`', '', $dbName);
-            $pdo->exec("CREATE DATABASE IF NOT EXISTS `$safeName` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-            $steps[] = ['label' => "Create database '$safeName'", 'status' => 'ok'];
+            $exists = $pdo->prepare('SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?');
+            $exists->execute([$safeName]);
+            if ($exists->fetchColumn() === false) {
+                $pdo->exec("CREATE DATABASE `$safeName` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+                $steps[] = ['label' => "Create database '$safeName'", 'status' => 'ok'];
+            } else {
+                // Shared-hosting accounts often cannot CREATE DATABASE, even when
+                // the control panel has already provisioned their database.
+                $steps[] = ['label' => "Use existing database '$safeName'", 'status' => 'ok'];
+            }
 
             // Switch to the database
             $pdo->exec("USE `$safeName`");
@@ -639,46 +703,27 @@ function runInstall(array $data): array
     // 8. Check the FormLogic script runtime launcher (on Linux: also fix/report the execute bit)
     $steps[] = flScriptRuntimeStep();
 
-    // 9. Optionally set up the demo + marketplace catalog (installable sample app packs + example
-    //    data) by running the idempotent provisioning script. Best-effort: it needs a ready schema,
-    //    Composer deps, and exec(); when any is missing we surface the manual command in Next steps.
-    $demoManual = false;
-    if (!empty($data['seed_demo'])) {
+    // Publish the installable catalogue without creating thousands of optional demo
+    // records in one HTTP request. Full sample-data setup belongs in the CLI.
+    $demoManual = !empty($data['seed_demo']);
+    if ($demoManual) {
         $provision = $backendDir . '/bin/provision-demo.php';
-        $disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
-        $canExec = function_exists('exec') && !in_array('exec', $disabled, true);
-        if (!$dbSchemaReady) {
-            $steps[] = ['label' => 'Demo & marketplace', 'status' => 'skip', 'message' => 'Database not initialized yet — seed it once the schema exists (see next steps)'];
-            $demoManual = true;
-        } elseif (!is_dir($backendDir . '/vendor')) {
-            $steps[] = ['label' => 'Demo & marketplace', 'status' => 'skip', 'message' => 'Composer dependencies not installed yet — seed it after `composer install` (see next steps)'];
-            $demoManual = true;
-        } elseif (!file_exists($provision)) {
-            $steps[] = ['label' => 'Demo & marketplace', 'status' => 'warn', 'message' => 'bin/provision-demo.php not found — cannot seed the marketplace'];
-        } elseif (!$canExec) {
-            $steps[] = ['label' => 'Demo & marketplace', 'status' => 'skip', 'message' => 'PHP exec() is disabled here — seed it from a shell (see next steps)'];
-            $demoManual = true;
+        if (!$dbSchemaReady || !is_file($backendDir . '/vendor/autoload.php') || !is_file($provision)) {
+            $steps[] = ['label' => 'Marketplace', 'status' => 'warn', 'message' => 'Finish database/dependency setup, then run the marketplace command shown below.'];
         } else {
-            // Seeding the 30+ sample apps + example data can take a while; don't let PHP time out.
-            @set_time_limit(0);
-            $out = [];
-            $rc = 1;
-            exec('php ' . escapeshellarg($provision) . ' 2>&1', $out, $rc);
-            if ($rc === 0) {
-                // Surface the script's own summary line ("Done. Demo apps: N") when present.
-                $summary = 'Installed the sample app packs into the marketplace and seeded the demo.';
-                foreach (array_reverse($out) as $line) {
-                    if (stripos($line, 'Demo apps') !== false) { $summary = trim($line); break; }
-                }
-                $steps[] = ['label' => 'Set up demo & marketplace', 'status' => 'ok', 'message' => $summary];
+            $php = PHP_BINDIR . '/php' . (PHP_OS_FAMILY === 'Windows' ? '.exe' : '');
+            if (!is_file($php)) $php = 'php';
+            $seed = flRunInstallerCommand([$php, $provision, '--catalog-only'], $backendDir);
+            if ($seed['exitCode'] === 0) {
+                $steps[] = ['label' => 'Marketplace', 'status' => 'ok', 'message' => 'Published the installable app catalogue. Optional demo accounts and example records can be populated with the command below.'];
             } else {
-                $steps[] = ['label' => 'Demo & marketplace', 'status' => 'warn', 'message' => 'Could not run automatically (is the `php` CLI on PATH?) — seed it manually (see next steps)'];
-                $demoManual = true;
+                $reference = flInstallerFailure(new RuntimeException('Marketplace provisioning: ' . $seed['output']));
+                $steps[] = ['label' => 'Marketplace', 'status' => 'warn', 'message' => ($seed['timedOut'] ? 'Reached the web setup time limit.' : 'Automatic catalogue setup could not finish.') . ' Core setup is preserved. Run the command below to complete it. Reference: ' . $reference['errorId']];
             }
         }
     }
 
-    // 10. Verify the freshly-written .env is not fetchable over HTTP (where testable).
+    // Confirm that configuration files cannot be downloaded.
     $steps[] = flCheckEnvExposure();
 
     $hasErrors = false;
@@ -959,7 +1004,7 @@ function runUpgrade(): array
     }
 
     // The migration proper. Big tables can take a while — don't let PHP time out mid-migration.
-    @set_time_limit(0);
+    if (function_exists('set_time_limit')) @set_time_limit(0);
     try {
         $mysql->initializeSchema();
         $steps[] = ['label' => 'Ensure base schema', 'status' => 'ok', 'message' => 'MySQLConnection::initializeSchema()'];
@@ -1130,6 +1175,7 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
 </head>
 <body>
 <div class="container">
+  <div id="installer-error" class="alert alert-error hidden" role="alert"></div>
   <div class="logo">
     <h1>FormLogic</h1>
     <p>Installation Wizard</p>
@@ -1241,9 +1287,9 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
     <?php if ($canSeedDemo): ?>
     <div class="checkbox-group">
       <input type="checkbox" id="seed_demo" checked />
-      <label for="seed_demo" style="font-size:13px;">Set up the demo &amp; marketplace — installs the ready-made sample app packs and seeds example data</label>
+      <label for="seed_demo" style="font-size:13px;">Populate the marketplace — publish the ready-made apps for installation</label>
     </div>
-    <p class="help-text" style="margin-top:6px;">Recommended. Populates the marketplace with installable apps and a no-signup live demo. Needs Composer dependencies installed first; if it can't run now, you'll get a one-line command to do it later.</p>
+    <p class="help-text" style="margin-top:6px;">Publishes installable apps during setup. Optional demo accounts and sample records are created separately using the command shown after setup, so hosting timeouts cannot interrupt the installation.</p>
     <?php endif; ?>
     <div class="checkbox-group" style="margin-top:10px;">
       <input type="checkbox" id="beta_mode" checked />
@@ -1396,6 +1442,7 @@ const ALREADY_INSTALLED = <?= json_encode($alreadyInstalled) ?>;
 
 // Check requirements on page load; when an existing install was detected, inspect it too.
 document.addEventListener('DOMContentLoaded', () => {
+  try { const previous = sessionStorage.getItem('formlogic-install-error'); if (previous) { const notice = document.getElementById('installer-error'); notice.textContent = 'Previous attempt: ' + previous; notice.classList.remove('hidden'); } } catch {}
   checkRequirements();
   if (ALREADY_INSTALLED) detectInstall();
 });
@@ -1437,7 +1484,7 @@ function detectInstall() {
       chooseMode('fresh');
     }
     el.innerHTML = parts.join('<br>');
-  }).catch(() => {
+  }).catch(error => {
     el.className = 'alert alert-warn';
     el.textContent = 'Could not inspect the existing installation — choose a mode below.';
   });
@@ -1494,11 +1541,12 @@ function runUpgrade() {
     } else {
       resultDiv.innerHTML = '<div class="alert alert-error">' + esc(result.message) + '</div>';
     }
-  }).catch(() => {
+  }).catch(error => {
     btn.disabled = false;
     btn.innerHTML = 'Run Upgrade';
     resultDiv.classList.remove('hidden');
-    resultDiv.innerHTML = '<div class="alert alert-error">Request failed. Check the browser console for details.</div>';
+    stepsList.innerHTML = '';
+    resultDiv.innerHTML = '<div class="alert alert-error">' + esc(error.message) + '</div>';
   });
 }
 
@@ -1508,13 +1556,32 @@ function esc(str) {
   return d.innerHTML;
 }
 
-function post(action, data = {}) {
+async function post(action, data = {}) {
   const form = new URLSearchParams();
   form.append('action', action);
   form.append('csrf', CSRF_TOKEN);
   for (const [k, v] of Object.entries(data)) form.append(k, v);
-  return fetch('install.php', { method: 'POST', body: form })
-    .then(r => r.json());
+  try {
+    const response = await fetch('install.php', { method: 'POST', body: form, signal: AbortSignal.timeout(90_000) });
+    const text = await response.text();
+    let result;
+    try { result = JSON.parse(text); } catch {
+      throw new Error(`Installer returned HTTP ${response.status} without a JSON result. Your host or Cloudflare may have timed out. Check the hosting PHP error log; reload and inspect the existing installation before retrying.`);
+    }
+    if (!response.ok || !result || typeof result !== 'object' || Array.isArray(result)) {
+      throw new Error(result?.message || `Installer request failed (HTTP ${response.status}).`);
+    }
+    if (result.success === false && !Array.isArray(result.steps)) throw new Error(result.message || 'The installer could not complete this step.');
+    return result;
+  } catch (error) {
+    const message = error.name === 'TimeoutError' || error.name === 'AbortError'
+      ? 'The installer request timed out. The server may still be finishing. Reload and inspect the existing installation before retrying; check the hosting PHP error log.'
+      : error instanceof TypeError ? 'Could not reach the installer. Check your connection and hosting PHP error log before retrying.' : error.message;
+    try { sessionStorage.setItem('formlogic-install-error', message); } catch {}
+    const notice = document.getElementById('installer-error');
+    if (notice) { notice.textContent = message; notice.classList.remove('hidden'); }
+    throw new Error(message);
+  }
 }
 
 function checkRequirements() {
@@ -1544,6 +1611,10 @@ function checkRequirements() {
     }
 
     document.getElementById('req-loading').classList.add('hidden');
+    document.getElementById('req-results').classList.remove('hidden');
+  }).catch(error => {
+    document.getElementById('req-loading').classList.add('hidden');
+    document.getElementById('req-message').textContent = error.message;
     document.getElementById('req-results').classList.remove('hidden');
   });
 }
@@ -1577,11 +1648,11 @@ function testDb() {
       statusDiv.className = 'connection-status alert-error';
       statusDiv.textContent = result.message;
     }
-  }).catch(() => {
+  }).catch(error => {
     btn.disabled = false;
     btn.textContent = 'Test Connection';
     statusDiv.className = 'connection-status alert-error';
-    statusDiv.textContent = 'Request failed. Is PHP running?';
+    statusDiv.textContent = error.message;
   });
 }
 
@@ -1630,11 +1701,12 @@ function runInstall() {
     } else {
       resultDiv.innerHTML = '<div class="alert alert-error">' + esc(result.message) + '</div>';
     }
-  }).catch(() => {
+  }).catch(error => {
     btn.disabled = false;
     btn.innerHTML = 'Run Installation';
     resultDiv.classList.remove('hidden');
-    resultDiv.innerHTML = '<div class="alert alert-error">Request failed. Check the browser console for details.</div>';
+    stepsList.innerHTML = '';
+    resultDiv.innerHTML = '<div class="alert alert-error">' + esc(error.message) + '</div>';
   });
 }
 </script>

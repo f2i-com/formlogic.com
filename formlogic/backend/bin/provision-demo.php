@@ -10,7 +10,7 @@
  * 3. Installs each catalog pack into the Demo account, publishes its apps, and seeds realistic
  *    demo responses so the dashboards are populated when a visitor tries the live demo.
  *
- * Usage (from backend/):  php scripts/provision-demo.php
+ * Usage (from backend/):  php bin/provision-demo.php [--catalog-only]
  */
 
 declare(strict_types=1);
@@ -132,8 +132,9 @@ function niceCategory(string $slug, array $tags): string
     return ucwords(str_replace('-', ' ', $first)) ?: 'General';
 }
 
+$catalogOnly = in_array('--catalog-only', $argv ?? [], true);
 $officialId = ensureUser($pdo, $_ENV['OFFICIAL_EMAIL'] ?? 'official@formlogic.local', 'FormLogic');
-$demoId = ensureUser($pdo, $_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local', 'Demo');
+$demoId = $catalogOnly ? '' : ensureUser($pdo, $_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local', 'Demo');
 
 // ── Collect pack sources ────────────────────────────────────────────────────
 $sources = [];
@@ -166,6 +167,10 @@ out(count($sources) . " pack source(s) found.");
 // ── Seed catalog + provision Demo ───────────────────────────────────────────
 foreach ($sources as $s) {
     $existing = $catalog->getCatalogBySlug($s['slug']);
+    if ($existing && $existing['publisher_id'] !== $officialId) {
+        out("catalog: '{$s['slug']}' belongs to another publisher; preserved without changes");
+        continue;
+    }
     if ($existing) {
         $catalogId = $existing['id'];
         // A version row must never say "1.0.0" while carrying a 1.0.1 pack.
@@ -198,6 +203,8 @@ foreach ($sources as $s) {
         out("catalog: '{$s['slug']}' published");
     }
 
+    if ($catalogOnly) continue;
+
     if ($packs->isCatalogPackInstalled($catalogId, $demoId)) {
         // Already installed — just refresh the demo apps' custom screens to the latest pack (e.g. after
         // re-authoring dashboards) without wiping the seeded response data.
@@ -220,6 +227,11 @@ foreach ($sources as $s) {
     $n = seedResponses($forms, $responses, $res['forms'] ?? []);
     $GLOBALS['demoDataChanged'] = true;
     out("  demo: installed " . count($res['forms'] ?? []) . " forms / " . count($res['apps'] ?? []) . " apps, seeded $n responses");
+}
+
+if ($catalogOnly) {
+    out('Done. Marketplace apps: ' . count($sources));
+    return;
 }
 
 // ── Prune packs that left the source set ────────────────────────────────────

@@ -257,14 +257,15 @@ Manual install (no wizard)
 8. Create your account: the sign-up page registers the first user. You can
    start from a blank workspace or install a ready-made app from the
    marketplace (Apps -> Create app / Import).
-9. Marketplace + demo (optional, recommended): the wizard offers "Set up the
-   demo & marketplace"; from a shell it is
+9. Marketplace + demo (optional, recommended): the wizard publishes the
+   installable marketplace catalogue with a bounded setup request. Bulk
+   demo accounts and sample records run separately to avoid hosting and
+   proxy timeouts. From a shell, complete the optional demo setup with:
      cd api && php bin/provision-demo.php
-   It publishes the 29 bundled app packs to the marketplace, creates the
-   shared no-signup "Demo" account with every pack installed and example
-   data, and is safe to re-run. Without it, the marketplace fills itself
-   with the bundled packs the first time a signed-in user opens
-   Apps -> Import, but there is no demo account.
+   For the catalogue only, add --catalog-only. Both modes are safe to re-run;
+   packs belonging to another publisher are preserved. If setup stops,
+   use the error reference shown in the wizard to check the hosting PHP
+   error log or api/logs/installer.log. Preserve .env and storage on retry.
 10. Free sign-ups: the wizard's "Free public beta" option writes
    BETA_MODE=true (sign-ups open, 90 days of Cloud per account, billing
    off). To change it later, edit BETA_MODE in api/.env.
