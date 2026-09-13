@@ -1,0 +1,30 @@
+{
+  "id": "finance-os-us",
+  "name": "Finance OS (United States)",
+  "description": "Complete United States-focused onboarding, compliance, and advisory workflow for RIAs, broker-dealers, and wealth managers. Includes 12 forms and 2 apps.",
+  "tags": [
+    "finance",
+    "compliance",
+    "onboarding",
+    "united-states"
+  ],
+  "icon": "DollarSign",
+  "formatVersion": 1,
+  "version": "1.0.0",
+  "category": "Business apps",
+  "featured": false,
+  "projects": {
+    "onboarding-nav": "projects/onboarding-nav",
+    "transition-hub": "projects/transition-hub"
+  },
+  "screenshots": [
+    {
+      "label": "Reports dashboard",
+      "url": "/api/packs/screenshots/finance-os-us-2.png"
+    },
+    {
+      "label": "Additional app dashboard",
+      "url": "/api/packs/screenshots/finance-os-us.png"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "id": "pawroute-pet-care",
+  "name": "PawRoute — Dog Walking & Pet Care",
+  "description": "A studio manager for dog walkers and pet-care businesses: keep pet and client profiles, schedule walks, drop-in visits and pet sitting, dispatch walkers, and log incidents and care notes. Includes 5 forms and 1 app.",
+  "tags": [
+    "pets",
+    "dog-walking",
+    "pet-care",
+    "scheduling",
+    "clients"
+  ],
+  "icon": "PawPrint",
+  "formatVersion": 1,
+  "version": "1.0.0",
+  "category": "Business apps",
+  "featured": false,
+  "projects": {
+    "pawroute": "projects/pawroute"
+  },
+  "screenshots": [
+    {
+      "label": "Reports dashboard",
+      "url": "/api/packs/screenshots/pawroute-pet-care.png"
+    }
+  ]
+}

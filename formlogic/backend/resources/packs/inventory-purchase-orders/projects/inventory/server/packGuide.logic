@@ -1,0 +1,3 @@
+function onRequest(ctx) {
+  return {"name": "Inventory", "forms": [{"alias": "product", "name": "Product"}, {"alias": "supplier", "name": "Supplier"}, {"alias": "purchase-order", "name": "Purchase Order"}, {"alias": "po-line-item", "name": "PO Line Item"}, {"alias": "stock-movement", "name": "Stock Movement"}], "steps": ["Choose a form or tool to get started.", "Use Dashboard & reports for the original reports and workflows.", "Edit forms, permissions, automations and this app in App Studio."]};
+}

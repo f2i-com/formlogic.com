@@ -1,0 +1,3 @@
+function onRequest(ctx) {
+  return {"name": "BrewDesk", "forms": [{"alias": "menu-item", "name": "Menu Item"}, {"alias": "order", "name": "Cafe Order"}, {"alias": "barista-ticket", "name": "Barista Ticket"}, {"alias": "stock-item", "name": "Stock Item"}, {"alias": "staff-shift", "name": "Roster Shift"}, {"alias": "daily-close", "name": "Daily Close"}], "steps": ["Choose a form or tool to get started.", "Use Dashboard & reports for the original reports and workflows.", "Edit forms, permissions, automations and this app in App Studio."]};
+}

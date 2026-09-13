@@ -1,3 +1,4 @@
+import { nativeRecordEventLabel } from './nativeRecordEvents';
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Database, Plus } from 'lucide-react';
@@ -5,10 +6,6 @@ import { api } from '../../lib/api';
 import type { FlowBinding, FlowDefinition } from '../../types/flows';
 import { Button } from '../ui/Button';
 
-export function nativeRecordEventLabel(event: string): string | null {
-  const match = /^app\.record\.(created|updated|deleted)\.([A-Za-z][A-Za-z0-9_]{0,62})$/.exec(event);
-  return match ? `${match[2]} · record ${match[1]}` : null;
-}
 
 /** Uses the same binding API as the full editor; no separate automation configuration. */
 export function NativeRecordTriggers({ appId, flows, bindings, onReload }: {

@@ -1,0 +1,26 @@
+{
+  "id": "grillstack-burger-ops",
+  "name": "GrillStack — Burger Shop Command Center",
+  "description": "A burger shop command center: run the order board and kitchen pass, track prep and stock, manage shifts, and reconcile the daily close. Includes 6 forms and 1 app.",
+  "tags": [
+    "burgers",
+    "kitchen",
+    "orders",
+    "restaurant",
+    "hospitality"
+  ],
+  "icon": "Flame",
+  "formatVersion": 1,
+  "version": "1.0.0",
+  "category": "Business apps",
+  "featured": false,
+  "projects": {
+    "grillstack": "projects/grillstack"
+  },
+  "screenshots": [
+    {
+      "label": "Reports dashboard",
+      "url": "/api/packs/screenshots/grillstack-burger-ops.png"
+    }
+  ]
+}

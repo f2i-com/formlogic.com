@@ -43,7 +43,7 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
   const [versionsExpanded, setVersionsExpanded] = useState(false);
   // Pre-install capability review: the downloaded pack + its server-computed trust/capabilities,
   // held so the user can review what will be installed BEFORE committing.
-  const [consent, setConsent] = useState<{ dl: PackData; catalogId: string; versionId: string; review: PackDescribeResult | null } | null>(null);
+  const [consent, setConsent] = useState<{ dl: PackData; catalogId: string | null; versionId: string | null; review: PackDescribeResult | null } | null>(null);
   // APP-502: the connector grants the user has ticked to approve in the review.
   const [approvedGrants, setApprovedGrants] = useState<Set<string>>(new Set());
   // MKT: a proposed install plan for a v2 aggregate. Held separately from `consent` because the
@@ -67,11 +67,13 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
     let cancelled = false;
 
     async function load() {
+      let folderSource = false;
       setLoading(true);
       try {
         const result = await api.getPackDetail(slug);
         if (!cancelled && result.data?.pack) {
           setPack(result.data.pack);
+          folderSource = result.data.pack.folderSource === true;
         }
       } catch {
         if (!cancelled) toast.error('Failed to load pack details');
@@ -79,6 +81,7 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
         if (!cancelled) setLoading(false);
       }
 
+      if (folderSource) return;
       try {
         const result = await api.getPackRatings(slug);
         if (!cancelled && result.data) {
@@ -137,7 +140,7 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
   // Import the already-downloaded pack (shared by the direct + consent-confirmed paths).
   // SAFE-001: `approvedConnectorGrants` is ALWAYS explicit — the reviewed set from the consent
   // panel, or [] when the server review showed nothing to approve. The server fails closed without it.
-  const doImport = useCallback(async (dl: PackData, catalogId: string, versionId: string, approvedConnectorGrants: string[]) => {
+  const doImport = useCallback(async (dl: PackData, catalogId: string | null, versionId: string | null, approvedConnectorGrants: string[]) => {
     setInstalling(true);
     try {
       const importResult = await api.importPack(dl, { catalogId, versionId, approvedConnectorGrants });
@@ -588,7 +591,7 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
       )}
 
       {/* Ratings & Reviews */}
-      <div className="border-t border-gray-200 dark:border-slate-800 pt-3 space-y-3">
+      {!pack.folderSource && <div className="border-t border-gray-200 dark:border-slate-800 pt-3 space-y-3">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Ratings & Reviews</h3>
 
         {/* User rating form */}
@@ -660,7 +663,7 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
         ) : (
           <p className="text-xs text-gray-400 dark:text-slate-500">No reviews yet.</p>
         )}
-      </div>
+      </div>}
     </div>
   );
 }

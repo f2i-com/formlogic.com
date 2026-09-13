@@ -38,3 +38,6 @@ formlogic/backend/storage/booking-test/
 
 # Operator-managed form starters (preserved during upgrades, not shipped as defaults)
 /formlogic/backend/storage/form-templates/
+
+# Operator-maintained app pack folders survive deployments.
+formlogic/backend/storage/pack-projects/

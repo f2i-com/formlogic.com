@@ -8,7 +8,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/status-public_beta-7657F6?style=for-the-badge&labelColor=090F1D" alt="Public beta" />
-  <img src="https://img.shields.io/badge/marketplace-29_apps-4CC7D8?style=for-the-badge&labelColor=090F1D" alt="29 marketplace apps" />
+  <img src="https://img.shields.io/badge/marketplace-29_app_packs-4CC7D8?style=for-the-badge&labelColor=090F1D" alt="29 marketplace app packs" />
   <img src="https://img.shields.io/badge/form_builder-23_field_types-C9FB68?style=for-the-badge&labelColor=090F1D" alt="23 form field types" />
   <img src="https://img.shields.io/badge/deploy-cloud_%7C_self--hosted-8268FF?style=for-the-badge&labelColor=090F1D" alt="Cloud or self-hosted" />
 </p>
@@ -31,6 +31,8 @@
 ---
 
 ## From a form to a connected app
+
+**Install an editable app.** The 29 business packs now include 32 Softn workspaces, their linked forms, record stores, roles, reports and workflows. Download the complete source ZIP or customise an installed copy in App Studio. Operators can add or change pack folders without rebuilding the site. Packs can also carry native `.logic` routes and SQLite migrations. [Pack folders and project format](docs/PACK_PROJECTS.md).
 
 1. **Start with your data.** Create a form visually, use AI, or choose a marketplace starter.
 2. **Build the workspace.** Add screens, dashboards, reports, branding, members and roles in App Studio.

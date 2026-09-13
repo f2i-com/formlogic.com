@@ -75,3 +75,5 @@ These documents retain design history and compatibility details. Use current sou
 | [Native Tauri runtime](NATIVE_RUNTIME_TAURI.md) | Optional app shell design; distinct from the OAIY desktop host. |
 
 When updating a feature, update its current task guide with the implementation and validation limits. Keep historical specifications labelled rather than presenting a proposed feature as available.
+
+- [Editable app pack folders](PACK_PROJECTS.md) — live catalogue metadata, Softn sources, server actions, native backends and installation.

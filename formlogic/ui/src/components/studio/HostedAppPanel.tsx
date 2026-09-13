@@ -1,3 +1,4 @@
+import { hostedPackageFromArchive } from '../../lib/hostedActionArchive';
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,
@@ -180,6 +181,9 @@ function HostingEditor({
           setNotice("");
           return;
         }
+        if (review.backend === "actions") {
+          next = hostedPackageFromArchive(files);
+        } else {
         const client: Record<string, string> = {};
         for (const [path, bytes] of Object.entries(files)) {
           if (/^(server|backend|private)\//i.test(path))
@@ -195,6 +199,7 @@ function HostingEditor({
           client[path] = strFromU8(bytes);
         }
         next = { ...pkg, client };
+        }
       }
       if (
         !next.client["manifest.json"] ||

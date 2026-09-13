@@ -1,0 +1,12 @@
+{
+  "formatVersion": 1,
+  "hosting": "native",
+  "access": "members",
+  "files": [
+    "manifest.json",
+    "ui/main.ui",
+    "server/main.logic",
+    "server/migrations/001.sql"
+  ],
+  "assets": []
+}

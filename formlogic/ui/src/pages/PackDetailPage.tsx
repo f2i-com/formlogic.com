@@ -1,3 +1,4 @@
+import { downloadPackProjects } from '../lib/packProjectDownload';
 import { starterCatalog } from '../lib/starterCatalog';
 import '../styles/landing-v2.css';
 import '../styles/landing-refresh.css';
@@ -68,9 +69,10 @@ function PackDetailContent() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
   const [installed, setInstalled] = useState(false);
+  const [downloadingSources, setDownloadingSources] = useState(false);
   const [versionsExpanded, setVersionsExpanded] = useState(false);
   // Pre-install capability review (spec §30.1): the downloaded pack + server-computed trust/capabilities.
-  const [consent, setConsent] = useState<{ dl: PackData; catalogId: string; versionId: string; review: PackDescribeResult | null; planId?: string; planDigest?: string } | null>(null);
+  const [consent, setConsent] = useState<{ dl: PackData; catalogId: string | null; versionId: string | null; review: PackDescribeResult | null; planId?: string; planDigest?: string } | null>(null);
   // APP-502: the connector grants the user has ticked to approve in the review.
   const [approvedGrants, setApprovedGrants] = useState<Set<string>>(new Set());
 
@@ -155,12 +157,20 @@ function PackDetailContent() {
     }
   }, [slug]);
 
+  const ratingsSlug = pack && !pack.folderSource ? pack.slug : null;
+  useEffect(() => deferEffect(() => {
+    if (!ratingsSlug) return;
+    let cancelled = false;
+    void loadRatings(() => !cancelled);
+    return () => { cancelled = true; };
+  }), [ratingsSlug, loadRatings]);
+
   const checkInstalled = useCallback(async () => {
     try {
       const result = await api.getInstalledPacks();
       const installs = result.data?.installations ?? [];
       if (pack) {
-        setInstalled(installs.some((i) => i.catalogId === pack.id));
+        setInstalled(installs.some((i) => i.catalogId === pack.id || (pack.folderSource === true && i.packId === pack.slug)));
       }
     } catch {
       // silently fail
@@ -172,7 +182,6 @@ function PackDetailContent() {
     let cancelled = false;
     const shouldApply = () => !cancelled;
     void loadPackDetail(shouldApply);
-    void loadRatings(shouldApply);
     api.getDemoApps().then((r) => {
       if (cancelled) return;
       setDemoApps((r.data?.apps ?? [])
@@ -189,7 +198,7 @@ function PackDetailContent() {
   // Import an already-downloaded pack (shared by the direct + consent-confirmed paths).
   // SAFE-001: `approvedConnectorGrants` is ALWAYS explicit — the reviewed set from the consent
   // panel, or [] when the server review showed nothing to approve. The server fails closed without it.
-  const doImport = useCallback(async (dl: PackData, catalogId: string, versionId: string, approvedConnectorGrants: string[], planId?: string, planDigest?: string) => {
+  const doImport = useCallback(async (dl: PackData, catalogId: string | null, versionId: string | null, approvedConnectorGrants: string[], planId?: string, planDigest?: string) => {
     setInstalling(true);
     try {
       // MKT-601: an Application Package v2 aggregate installs through the install-plan lane,
@@ -495,6 +504,13 @@ function PackDetailContent() {
                 {demoApps.length > 1 ? `View ${d.name} demo` : 'View demo'}
               </Button>
             ))}
+            {pack.folderSource && <Button variant="outline" isLoading={downloadingSources} onClick={async () => {
+              if (downloadingSources) return;
+              setDownloadingSources(true);
+              try { await downloadPackProjects(pack.slug); }
+              catch (error) { toast.error('Download failed', error instanceof Error ? error.message : 'Please try again.'); }
+              finally { setDownloadingSources(false); }
+            }}>Download app sources</Button>}
             {/* The demo account has everything pre-installed — offer only the live view, not install. */}
             {!isDemo && (installed ? (
               <Button variant="outline" disabled>
@@ -510,6 +526,7 @@ function PackDetailContent() {
           </div>
         </div>
 
+        {pack.folderSource && <p className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm leading-6 text-indigo-950 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-100">Includes an editable app workspace, linked forms and record storage. Install to create your own copy, then customise its screens, backend actions, forms and automations in App Studio. The source download includes each app as a .softn project and the complete installation package.</p>}
         {/* Pre-install capability review + server-computed trust (spec §30.1) */}
         {consent && (
           <div className="space-y-3 rounded-2xl border border-amber-200 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/5 p-4 sm:p-5">
@@ -667,7 +684,7 @@ function PackDetailContent() {
 
         {/* Ratings & reviews. With no reviews this collapses to a single quiet
             line so an empty pack page isn't dominated by an empty ratings block. */}
-        {ratings.length > 0 || userRating || showRatingForm ? (
+        {!pack.folderSource && (ratings.length > 0 || userRating || showRatingForm ? (
           <div className="space-y-4 rounded-2xl border border-gray-200/80 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-4 sm:p-5">
             <h2 className="font-semibold text-gray-900 dark:text-white">Ratings and reviews</h2>
 
@@ -762,7 +779,7 @@ function PackDetailContent() {
               Be the first to review this pack
             </button>
           </p>
-        )}
+        ))}
       </div>
     </MarketplaceLayout>
   );

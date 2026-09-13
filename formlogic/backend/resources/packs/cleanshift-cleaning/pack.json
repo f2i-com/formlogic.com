@@ -1,0 +1,26 @@
+{
+  "id": "cleanshift-cleaning",
+  "name": "CleanShift — Cleaning Business Scheduler",
+  "description": "A scheduler for residential and commercial cleaning: manage clients and teams, book and dispatch jobs, run quality checks, keep supplies stocked, and resolve client issues. Includes 6 forms and 1 app.",
+  "tags": [
+    "cleaning",
+    "scheduling",
+    "teams",
+    "quality",
+    "field-service"
+  ],
+  "icon": "Sparkles",
+  "formatVersion": 1,
+  "version": "1.0.0",
+  "category": "Business apps",
+  "featured": false,
+  "projects": {
+    "cleanshift": "projects/cleanshift"
+  },
+  "screenshots": [
+    {
+      "label": "Reports dashboard",
+      "url": "/api/packs/screenshots/cleanshift-cleaning.png"
+    }
+  ]
+}

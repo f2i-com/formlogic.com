@@ -331,7 +331,8 @@ class ChatToolsService
             }
             case 'get_aokie_starter':
             case 'install_aokie_starter': {
-                $resource = json_decode(file_get_contents(dirname(__DIR__, 2) . '/resources/marketplace-packs/aokie-receptionist.json'), true, 512, JSON_THROW_ON_ERROR);
+                $resource = (new FolderPackCatalog())->load()['entries']['aokie-receptionist'] ?? null;
+                if (!$resource) throw new \RuntimeException('The Aokie starter is not available in this server catalogue.');
                 $pack = $resource['pack'];
                 if ($name === 'get_aokie_starter') {
                     $data = ['name' => $resource['name'], 'description' => $resource['description'], 'capabilities' => \FormLogic\Helpers\PackCapabilities::describe($pack), 'forms' => array_column($pack['forms'], 'title')];

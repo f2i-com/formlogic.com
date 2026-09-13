@@ -1,0 +1,31 @@
+{
+  "id": "finance-os-au",
+  "name": "Finance OS (Australia)",
+  "description": "Comprehensive advisory workflow for Australian AFSLs, covering client onboarding, Best Interest Duty compliance, superannuation, and AUSTRAC requirements. Includes 10 forms and 2 apps.",
+  "tags": [
+    "finance",
+    "compliance",
+    "onboarding",
+    "australia",
+    "afsl"
+  ],
+  "icon": "Wallet",
+  "formatVersion": 1,
+  "version": "1.0.0",
+  "category": "Business apps",
+  "featured": false,
+  "projects": {
+    "au-onboarding": "projects/au-onboarding",
+    "au-portfolio-hub": "projects/au-portfolio-hub"
+  },
+  "screenshots": [
+    {
+      "label": "Reports dashboard",
+      "url": "/api/packs/screenshots/finance-os-au-2.png"
+    },
+    {
+      "label": "Additional app dashboard",
+      "url": "/api/packs/screenshots/finance-os-au.png"
+    }
+  ]
+}

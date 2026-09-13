@@ -1,0 +1,3 @@
+function onRequest(ctx) {
+  return {"name": "Quality & Compliance", "forms": [{"alias": "audit-report", "name": "Audit Report"}, {"alias": "car", "name": "Corrective Action Request"}, {"alias": "ncr", "name": "Non-Conformance Report"}, {"alias": "complaint-report", "name": "Complaint Report"}, {"alias": "action-item", "name": "Action Item"}, {"alias": "training-record", "name": "Training Record"}, {"alias": "contractor-approval", "name": "Contractor Approval"}], "steps": ["Choose a form or tool to get started.", "Use Dashboard & reports for the original reports and workflows.", "Edit forms, permissions, automations and this app in App Studio."]};
+}

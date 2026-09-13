@@ -1,0 +1,10 @@
+{
+  "formatVersion": 1,
+  "id": "native-notes",
+  "name": "Native notes example",
+  "version": "1.0.0",
+  "description": "An editable app with a ZIPP backend and private SQLite migrations.",
+  "projects": {
+    "notes": "projects/notes"
+  }
+}

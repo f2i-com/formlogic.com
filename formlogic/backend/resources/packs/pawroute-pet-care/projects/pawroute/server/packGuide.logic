@@ -1,0 +1,3 @@
+function onRequest(ctx) {
+  return {"name": "PawRoute", "forms": [{"alias": "client", "name": "Client"}, {"alias": "pet", "name": "Pet"}, {"alias": "team-member", "name": "Team Member"}, {"alias": "walk", "name": "Walk & Visit"}, {"alias": "incident", "name": "Incident & Care Note"}], "steps": ["Choose a form or tool to get started.", "Use Dashboard & reports for the original reports and workflows.", "Edit forms, permissions, automations and this app in App Studio."]};
+}

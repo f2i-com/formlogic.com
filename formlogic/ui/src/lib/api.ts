@@ -3685,7 +3685,7 @@ class ApiClient {
   // grant_review_required) without it. Send the reviewed set; [] approves none.
   async importPack(
     pack: PackData,
-    opts: { catalogId?: string; versionId?: string; approvedConnectorGrants: string[] },
+    opts: { catalogId?: string | null; versionId?: string | null; approvedConnectorGrants: string[] },
   ): Promise<ApiResponse<PackImportResult>> {
     return this.request('/packs/import', {
       method: 'POST',
@@ -3972,7 +3972,7 @@ class ApiClient {
     return this.request('/packs/catalog/mine');
   }
 
-  async downloadPack(slug: string, versionId?: string): Promise<ApiResponse<{ pack: PackData; version: string; catalogId: string; versionId: string }>> {
+  async downloadPack(slug: string, versionId?: string): Promise<ApiResponse<{ pack: PackData; version: string; catalogId: string | null; versionId: string | null }>> {
     const qs = versionId ? `?version=${encodeURIComponent(versionId)}` : '';
     return this.request(`/packs/catalog/${slug}/download${qs}`);
   }
@@ -5141,6 +5141,7 @@ interface PackInstallation {
 }
 
 interface CatalogPack {
+  folderSource?: boolean;
   id: string;
   slug: string;
   name: string;

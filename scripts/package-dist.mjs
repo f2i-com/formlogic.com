@@ -89,6 +89,7 @@ const BACKEND_SKELETON_DIRS = [
   'logs',
   'storage/forms',
   'storage/form-templates',
+  'storage/pack-projects',
   'storage/hosted-apps',
   'storage/packs',
   'storage/uploads',

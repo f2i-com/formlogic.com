@@ -1,0 +1,3 @@
+function onRequest(ctx) {
+  return {"name": "GrillStack", "forms": [{"alias": "menu-item", "name": "Menu Item"}, {"alias": "order", "name": "Order"}, {"alias": "kitchen-ticket", "name": "Kitchen Ticket"}, {"alias": "prep-stock", "name": "Prep & Stock Item"}, {"alias": "staff-shift", "name": "Staff Shift"}, {"alias": "daily-close", "name": "Daily Close"}], "steps": ["Choose a form or tool to get started.", "Use Dashboard & reports for the original reports and workflows.", "Edit forms, permissions, automations and this app in App Studio."]};
+}

@@ -65,7 +65,7 @@ class PackCatalogController
 
         try {
             $result = $this->catalogService->listPublicPacks($filters, $sort, $page, $limit);
-            return $this->jsonResponse($response, $result);
+            return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), $result);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to browse packs'], 500);
         }
@@ -100,7 +100,7 @@ class PackCatalogController
             if (!$pack) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack not found'], 404);
             }
-            return $this->jsonResponse($response, ['pack' => $pack]);
+            return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), ['pack' => $pack]);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to get pack detail'], 500);
         }
@@ -324,6 +324,15 @@ class PackCatalogController
     public function download(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'] ?? '';
+        $folders = (new \FormLogic\Services\FolderPackCatalog())->load();
+        if (isset($folders['entries'][$slug])) {
+            $entry = $folders['entries'][$slug];
+            if (!empty($request->getQueryParams()['version'])) return $this->jsonResponse($response, ['message' => 'Folder packs expose the current source version only.'], 404);
+            return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), [
+                'pack' => $entry['pack'], 'version' => $entry['version'], 'catalogId' => null, 'versionId' => null,
+            ]);
+        }
+        if (in_array($slug, $folders['hidden'], true)) return $this->jsonResponse($response, ['message' => 'Pack not found'], 404);
         $catalog = $this->catalogService->getCatalogBySlug($slug);
         if (!$catalog) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack not found'], 404);
@@ -410,33 +419,15 @@ class PackCatalogController
     }
 
     /**
-     * POST /api/packs/catalog/seed
-     * Seed official packs (admin only).
-     */
-    /**
-     * The deployment's own official packs, read from `resources/marketplace-packs/*.json`
-     * (emitted from the authored TypeScript catalog). Malformed or non-pack files are skipped
-     * rather than failing the bootstrap; ordering is stable so seeding is deterministic.
+     * Only bundled extensions need database seeding. Editable application packs are
+     * loaded directly from their source folders on every catalogue request.
      *
      * @return list<array<string,mixed>>
      */
     private function loadOfficialPacks(): array
     {
-        $dir = dirname(__DIR__, 2) . '/resources/marketplace-packs';
-        if (!is_dir($dir)) {
-            return [];
-        }
-        $files = glob($dir . '/*.json') ?: [];
-        sort($files, SORT_STRING);
-        $packs = [];
-        foreach ($files as $file) {
-            $decoded = json_decode((string) file_get_contents($file), true);
-            if (!is_array($decoded) || !is_string($decoded['name'] ?? null) || !is_array($decoded['pack'] ?? null)) {
-                continue;
-            }
-            $packs[] = $decoded;
-        }
-        return array_merge($packs, $this->loadBundledExtensions());
+        // Folder packs are read live, not copied into stale database versions.
+        return $this->loadBundledExtensions();
     }
 
     /**

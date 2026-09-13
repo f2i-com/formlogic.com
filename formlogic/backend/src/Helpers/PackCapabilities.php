@@ -106,6 +106,10 @@ class PackCapabilities
                         'defaultEnabled' => ($svc['defaultEnabled'] ?? true) !== false,
                     ];
                 }
+                if (is_array($a['hostedProject'] ?? null) || is_array($a['nativeProject'] ?? null)) {
+                    $hasScreens = true;
+                    $logicScripts += max(1, count($a['hostedProject']['actions'] ?? []));
+                }
                 if (!empty($a['customScreen'])) {
                     $hasScreens = true;
                 }

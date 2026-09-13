@@ -25,8 +25,41 @@ class PackCatalogService
      */
     public function listPublicPacks(array $filters = [], string $sort = 'popular', int $page = 1, int $limit = 20): array
     {
+        $page = max(1, min(10000, $page));
+        $limit = max(1, min(100, $limit));
+        $catalog = (new FolderPackCatalog())->load();
+        $entries = $catalog['entries'];
+        $filters['_folderSlugs'] = $catalog['reserved'];
+        $folder = array_values(array_filter(array_map([FolderPackCatalog::class, 'summary'], $entries), static function ($p) use ($filters) {
+            if (!empty($filters['search']) && !str_contains(strtolower($p['name'] . ' ' . $p['description'] . ' ' . implode(' ', $p['tags'])), strtolower((string)$filters['search']))) return false;
+            foreach (['category', 'itemType', 'trustLevel'] as $key) if (!empty($filters[$key]) && $p[$key] !== $filters[$key]) return false;
+            return empty($filters['tag']) || in_array($filters['tag'], $p['tags'], true);
+        }));
+        // Only the prefix needed for this page is fetched from SQL. Folder entries use the same ordering.
+        $db = $this->listDatabasePacks($filters, $sort, 1, $page * $limit);
+        $all = [...$db['packs'], ...$folder];
+        usort($all, static function ($a, $b) use ($sort) {
+            $order = match ($sort) {
+                'name' => strcasecmp($a['name'], $b['name']),
+                'newest' => strcmp($b['createdAt'], $a['createdAt']),
+                'top_rated' => ($b['avgRating'] <=> $a['avgRating']) ?: ($b['ratingCount'] <=> $a['ratingCount']),
+                default => ($b['downloadCount'] <=> $a['downloadCount']) ?: ($b['featured'] <=> $a['featured']),
+            };
+            return $order ?: strcmp($a['id'], $b['id']);
+        });
+        $total = $db['total'] + count($folder);
+        return ['packs' => array_slice($all, ($page - 1) * $limit, $limit), 'total' => $total, 'page' => $page, 'limit' => $limit, 'totalPages' => (int)ceil($total / $limit)];
+    }
+
+    private function listDatabasePacks(array $filters, string $sort, int $page, int $limit): array
+    {
         $where = ["pc.status = 'published'"];
         $params = [];
+        if (!empty($filters['_folderSlugs'])) {
+            $slots = [];
+            foreach ($filters['_folderSlugs'] as $i => $slug) { $key = 'folder' . $i; $slots[] = ':' . $key; $params[$key] = $slug; }
+            $where[] = 'pc.slug NOT IN (' . implode(',', $slots) . ')';
+        }
 
         // Only show public packs for browse (unlisted accessible by direct slug)
         $where[] = "pc.visibility = 'public'";
@@ -71,10 +104,10 @@ class PackCatalogService
         $whereClause = implode(' AND ', $where);
 
         $orderBy = match ($sort) {
-            'newest' => 'pc.created_at DESC',
-            'top_rated' => 'pc.avg_rating DESC, pc.rating_count DESC',
-            'name' => 'pc.name ASC',
-            default => 'pc.download_count DESC', // popular
+            'newest' => 'pc.created_at DESC, pc.id ASC',
+            'top_rated' => 'pc.avg_rating DESC, pc.rating_count DESC, pc.id ASC',
+            'name' => 'pc.name ASC, pc.id ASC',
+            default => 'pc.download_count DESC, pc.featured DESC, pc.id ASC', // popular
         };
 
         $offset = ($page - 1) * $limit;
@@ -88,7 +121,6 @@ class PackCatalogService
         $sql = "
             SELECT pc.*,
                    u.name AS publisher_name,
-                   u.email AS publisher_email,
                    u.email AS publisher_email,
                    pv.version AS latest_version,
                    pv.format_version,
@@ -136,53 +168,23 @@ class PackCatalogService
      */
     public function getFacets(): array
     {
-        $where = "pc.status = 'published' AND pc.visibility = 'public'";
-
-        // Categories: a single indexed column, aggregate in SQL.
-        $catStmt = $this->mysql->query(
-            "SELECT pc.category AS name, COUNT(*) AS cnt
-             FROM pack_catalog pc
-             WHERE {$where} AND pc.category IS NOT NULL AND pc.category <> ''
-             GROUP BY pc.category
-             ORDER BY cnt DESC, name ASC"
-        );
-        $categories = array_map(
-            fn($r) => ['name' => (string)$r['name'], 'count' => (int)$r['cnt']],
-            $catStmt->fetchAll()
-        );
-
-        // Tags live in a JSON array column; aggregate in PHP (the public catalog is small).
-        $tagStmt = $this->mysql->query("SELECT pc.tags FROM pack_catalog pc WHERE {$where}");
-        $counts = [];
-        foreach ($tagStmt->fetchAll() as $row) {
-            $tags = json_decode($row['tags'] ?? '[]', true);
-            if (!is_array($tags)) {
-                continue;
-            }
-            foreach ($tags as $tag) {
-                if (!is_string($tag)) {
-                    continue;
-                }
-                $tag = trim($tag);
-                if ($tag === '') {
-                    continue;
-                }
-                $counts[$tag] = ($counts[$tag] ?? 0) + 1;
-            }
+        $folders = (new FolderPackCatalog())->load();
+        $rows = $this->mysql->query("SELECT slug, category, tags FROM pack_catalog WHERE status='published' AND visibility='public'")->fetchAll();
+        $visible = [];
+        foreach ($rows as $row) {
+            if (!in_array($row['slug'], $folders['reserved'], true)) $visible[] = ['category' => $row['category'], 'tags' => json_decode($row['tags'] ?? '[]', true) ?: []];
         }
-        // Sort by count desc, then name asc for stable display.
-        uksort($counts, function ($a, $b) use ($counts) {
-            if ($counts[$a] !== $counts[$b]) {
-                return $counts[$b] <=> $counts[$a];
-            }
-            return strcasecmp($a, $b);
-        });
-        $tags = [];
-        foreach ($counts as $name => $cnt) {
-            $tags[] = ['name' => $name, 'count' => $cnt];
+        foreach ($folders['entries'] as $entry) $visible[] = $entry;
+        $categories = []; $tags = [];
+        foreach ($visible as $entry) {
+            if (!empty($entry['category'])) $categories[$entry['category']] = ($categories[$entry['category']] ?? 0) + 1;
+            foreach (array_unique($entry['tags'] ?? []) as $tag) if (is_string($tag) && $tag !== '') $tags[$tag] = ($tags[$tag] ?? 0) + 1;
         }
-
-        return ['categories' => $categories, 'tags' => $tags];
+        $format = static function ($counts) {
+            uksort($counts, static fn($a, $b) => ($counts[$b] <=> $counts[$a]) ?: strcasecmp($a, $b));
+            $result = []; foreach ($counts as $name => $count) $result[] = ['name' => $name, 'count' => $count]; return $result;
+        };
+        return ['categories' => $format($categories), 'tags' => $format($tags)];
     }
 
     /**
@@ -208,10 +210,12 @@ class PackCatalogService
      */
     public function getPackDetail(string $slug, ?string $viewerId = null): ?array
     {
+        $folders = (new FolderPackCatalog())->load();
+        if (isset($folders['entries'][$slug])) return FolderPackCatalog::summary($folders['entries'][$slug]);
+        if (in_array($slug, $folders['hidden'], true)) return null;
         $stmt = $this->mysql->prepare("
             SELECT pc.*,
                    u.name AS publisher_name,
-                   u.email AS publisher_email,
                    u.email AS publisher_email,
                    pv.version AS latest_version,
                    pv.form_count,
@@ -546,7 +550,6 @@ class PackCatalogService
         $stmt = $this->mysql->prepare("
             SELECT pc.*,
                    u.name AS publisher_name,
-                   u.email AS publisher_email,
                    u.email AS publisher_email,
                    pv.version AS latest_version,
                    pv.form_count,

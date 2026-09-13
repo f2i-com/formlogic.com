@@ -1,0 +1,3 @@
+function onRequest(ctx) {
+  return {"name": "Safety Management", "forms": [{"alias": "incident-report", "name": "Incident Report"}, {"alias": "injury-record", "name": "Injury Record"}, {"alias": "hazard-identification", "name": "Hazard Identification"}, {"alias": "action-item", "name": "Action Item"}, {"alias": "meeting-record", "name": "Meeting / Toolbox Talk"}, {"alias": "plant-equipment", "name": "Plant & Equipment Register"}, {"alias": "contractor-approval", "name": "Contractor Approval"}, {"alias": "training-record", "name": "Training Record"}], "steps": ["Choose a form or tool to get started.", "Use Dashboard & reports for the original reports and workflows.", "Edit forms, permissions, automations and this app in App Studio."]};
+}

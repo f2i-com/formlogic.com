@@ -1,0 +1,1 @@
+{"schema":"formlogic.workspace/v1","storage":"formlogic-api","credentials":"host-session","actions":["workspaceInfo","workspaceRecords","workspaceOpen"]}

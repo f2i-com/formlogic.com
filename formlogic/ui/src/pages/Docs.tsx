@@ -649,6 +649,9 @@ function _init() {
             {/* Packs */}
             <section className="mb-14">
               <H2 id="packs" icon={Package}>Packs &amp; templates</H2>
+              <P>The 29 bundled packs include 32 editable app workspaces. Installation creates a draft with its forms, linked record stores, roles, reports and workflows. Open App Studio to customise the screens, backend actions and automations, then publish when ready. Dashboard &amp; reports retains access to each pack’s specialist tools.</P>
+              <P>Choose <C>Download app sources</C> on a pack’s detail page for an installable ZIP containing a separate <C>.softn</C> project for each app. Import the outer ZIP to recreate the complete pack. Downloads contain source and definitions; existing records and account credentials stay on the server.</P>
+              <Tip>Operators can add or edit <C>backend/storage/pack-projects/&lt;id&gt;/</C> with <C>pack.json</C>, <C>install.json</C> and app project folders. The live catalogue refreshes without a rebuild. Existing installations stay unchanged. Packs also support native <C>.logic</C> routes and SQLite migrations. <GuideLink file="docs/PACK_PROJECTS.md">Folder format, backend options and examples</GuideLink>.</Tip>
               <P>Packs provide starter forms, screens and workflows for a business use case. Browse <Link to="/packs" className="text-primary-600 dark:text-primary-400 underline underline-offset-4">Starter apps</Link> without signing in, including Aokie, trades, hospitality, customer service and team operations.</P>
               <Figure src="/images/docs/starter-apps.jpg" alt="The public FormLogic starter-app catalogue" caption="The current starter-app catalogue, available before sign-in." />
               <Bullets items={[

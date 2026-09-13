@@ -1,3 +1,4 @@
+import { nativeRecordEventLabel } from '../nativeRecordEvents';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -24,7 +25,7 @@ import { trackStudioSave } from '../studioSaveState';
 import type { App, AppForm } from '../../../types/app';
 import type { Form } from '../../../types/form';
 import type { FlowBinding, FlowDefinition } from '../../../types/flows';
-import { NativeRecordTriggers, nativeRecordEventLabel } from '../NativeRecordTriggers';
+import { NativeRecordTriggers } from '../NativeRecordTriggers';
 
 function eventLabel(event: string): string {
   return nativeRecordEventLabel(event) ?? FLOW_EVENT_CATALOG.find((e) => e.event === event)?.label ?? event;

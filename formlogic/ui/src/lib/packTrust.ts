@@ -20,6 +20,8 @@ export function packHasCodeScreen(pack: PackData): boolean {
     ...((pack.forms ?? []) as Record<string, unknown>[]),
     ...((pack.apps ?? []) as Record<string, unknown>[]),
   ].some((entity) => {
+    if (entity.nativeProject && typeof entity.nativeProject === 'object') return true;
+    if (entity.hostedProject && typeof entity.hostedProject === 'object') return true;
     const cs = entity.customScreen as Record<string, unknown> | undefined;
     if (!cs || !cs.enabled || cs.kind === 'dashboard') return false;
     return !!(cs.html || cs.js || cs.ts || (Array.isArray(cs.files) && cs.files.length > 0));

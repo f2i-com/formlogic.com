@@ -1,0 +1,26 @@
+{
+  "id": "repairbench-device-repair",
+  "name": "RepairBench — Device Repair Shop",
+  "description": "An electronics repair shop workflow: intake devices and customers, run repair jobs through a full diagnosis-to-pickup pipeline, order parts, and sign off quality checks. Includes 6 forms and 1 app.",
+  "tags": [
+    "repairs",
+    "devices",
+    "electronics",
+    "workshop",
+    "service"
+  ],
+  "icon": "CircuitBoard",
+  "formatVersion": 1,
+  "version": "1.0.0",
+  "category": "Business apps",
+  "featured": false,
+  "projects": {
+    "repairbench": "projects/repairbench"
+  },
+  "screenshots": [
+    {
+      "label": "Reports dashboard",
+      "url": "/api/packs/screenshots/repairbench-device-repair.png"
+    }
+  ]
+}

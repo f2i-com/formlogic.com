@@ -132,7 +132,7 @@ export function HostedAppFrame({
             reply(result.error ? { error: result.error } : result.data);
             return;
           }
-          if (["workspaceInfo", "workspaceRecords", "workspaceOpen"].includes(action)) {
+          if (["workspaceInfo", "workspaceRecords", "workspaceOpen", "workspaceDashboard"].includes(action)) {
             reply({ result: await workspaceBridge(slug, action, input, navigate) });
             return;
           }

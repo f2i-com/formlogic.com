@@ -1,0 +1,9 @@
+function createItem(req) {
+  let title = req.body.title;
+  if (typeof title != "string" || title.length == 0 || title.length > 200) return {status:422,body:{error:"Provide a title of 1 to 200 characters"}};
+  softn.sql.execute("INSERT INTO items(title) VALUES(?)",[title]);
+  return {status:201,body:softn.sql.first("SELECT id,title FROM items ORDER BY id DESC LIMIT 1",[])};
+}
+function listItems(req) {
+  return {status:200,body:{items:softn.sql.query("SELECT id,title FROM items ORDER BY id DESC LIMIT 50",[])}};
+}

@@ -39,9 +39,9 @@ class NativeAppService
         return is_file($file) ? json_decode(file_get_contents($file), true, 64, JSON_THROW_ON_ERROR) : null;
     }
 
-    public function install(string $appId, array $project, int $expectedVersion): array
+    /** Source/schema validation only; never starts a VM, applies migrations or writes storage. */
+    public static function validateProject(array $project): array
     {
-        if (!$this->available()) throw new RuntimeException('Prepare the native app runtime before importing this project');
         $files = $project['files'] ?? null;
         if (!is_array($files) || count($files) > 200 || !is_string($files['manifest.json'] ?? null)) throw new InvalidArgumentException('Include the app manifest and at most 200 source files');
         $bytes = 0;
@@ -70,6 +70,40 @@ class NativeAppService
         foreach ($server['database']['migrations'] ?? [] as $migration) {
             if (!is_string($migration) || !str_starts_with($migration, 'server/migrations/') || !str_ends_with($migration, '.sql') || !isset($files[$migration])) throw new InvalidArgumentException('A declared migration is missing');
         }
+        return [$files, $decoded, $manifest, $capabilities];
+    }
+
+    /** Caller must own and be deleting this app, or be rolling back its newly generated ID. */
+    public function remove(string $appId): void
+    {
+        $root = $this->root($appId);
+        if (!is_dir($root)) return;
+        $resolved = realpath($root);
+        $parent = realpath(dirname($root));
+        if (!$resolved || !$parent || is_link($root) || dirname($resolved) !== $parent || basename($resolved) !== hash('sha256', $appId)) throw new RuntimeException('Unexpected new installation directory');
+        $lockPath = $resolved . '/private/manage.lock';
+        $lock = is_dir($resolved . '/private') ? fopen($lockPath, 'c') : null;
+        if ($lock === false) throw new RuntimeException('Could not lock app storage for removal');
+        if ($lock && !flock($lock, LOCK_EX | LOCK_NB)) { fclose($lock); throw new RuntimeException('The app is busy. Try removing it again shortly.', 409); }
+        try {
+            $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($resolved, \FilesystemIterator::SKIP_DOTS), \RecursiveIteratorIterator::CHILD_FIRST);
+            foreach ($iterator as $entry) {
+                $path = str_replace('\\', '/', $entry->getPathname());
+                if ($lock && ($path === str_replace('\\', '/', $lockPath) || $path === str_replace('\\', '/', $resolved . '/private'))) continue;
+                if ($entry->isLink() || !$entry->isDir()) { if (!unlink($entry->getPathname())) throw new RuntimeException('Could not remove app storage'); }
+                elseif (!rmdir($entry->getPathname())) throw new RuntimeException('Could not remove app storage');
+            }
+        } finally { if ($lock) { flock($lock, LOCK_UN); fclose($lock); } }
+        if (is_file($lockPath)) unlink($lockPath);
+        if (is_dir($resolved . '/private')) rmdir($resolved . '/private');
+        if (!rmdir($resolved)) throw new RuntimeException('Could not remove app storage');
+    }
+
+    public function install(string $appId, array $project, int $expectedVersion): array
+    {
+        if (!$this->available()) throw new RuntimeException('Prepare the native app runtime before importing this project');
+        [$files, $decoded, $manifest, $capabilities] = self::validateProject($project);
+        $assets = $project['assets'] ?? [];
         $root = $this->root($appId);
         $this->directory($root);
         $this->directory($root . '/private');

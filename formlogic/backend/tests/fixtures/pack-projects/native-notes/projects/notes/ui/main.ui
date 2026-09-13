@@ -1,0 +1,9 @@
+<logic>
+var message = 'Ready to save your first item';
+function saveItem() {
+  softn.net.fetch('https://app.example/api/items', {method:'POST',body:{title:'My first item'}}, function(response) {
+    message = response.ok ? 'Item saved in your app database' : 'Could not save the item';
+  });
+}
+</logic>
+<Stack padding="24" gap="16"><Text>My app</Text><Text>Your interface, backend and records together.</Text><Button onClick={saveItem}>Save example item</Button><Text>{message}</Text></Stack>

@@ -1,0 +1,26 @@
+{
+  "id": "fitstudio-coaching",
+  "name": "FitStudio — Personal Training & Gym Coaching",
+  "description": "A coaching manager for personal trainers and studios: manage clients and trainers, book sessions, log assessments, build training programs, and track payments. Includes 6 forms and 1 app.",
+  "tags": [
+    "fitness",
+    "training",
+    "coaching",
+    "gym",
+    "clients"
+  ],
+  "icon": "Dumbbell",
+  "formatVersion": 1,
+  "version": "1.0.0",
+  "category": "Business apps",
+  "featured": false,
+  "projects": {
+    "fitstudio": "projects/fitstudio"
+  },
+  "screenshots": [
+    {
+      "label": "Reports dashboard",
+      "url": "/api/packs/screenshots/fitstudio-coaching.png"
+    }
+  ]
+}

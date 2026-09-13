@@ -1,3 +1,4 @@
+import { hasHostedActions, hostedPackageFromArchive } from './hostedActionArchive';
 import { unzipSync, strFromU8 } from 'fflate';
 
 export interface AppImportReview {
@@ -48,7 +49,9 @@ export function reviewAppArchive(bytes: Uint8Array): { review: AppImportReview; 
   const names = Object.keys(files);
   const server = object(manifest.server);
   const requirements = object(server.requires);
-  const native = Object.keys(server).length > 0 || names.some(path => privatePath.test(path));
+  const namedActions = hasHostedActions(files) && Object.keys(server).length === 0;
+  if (namedActions) hostedPackageFromArchive(files);
+  const native = Object.keys(server).length > 0 || (!namedActions && names.some(path => privatePath.test(path)));
   const assets = names.filter(path => !textExtensions.test(path) && !metadata.test(path) && !privatePath.test(path));
   const expandedBytes = Object.values(files).reduce((sum, value) => sum + value.length, 0);
   let permissions: Record<string, unknown> = {};
@@ -61,7 +64,7 @@ export function reviewAppArchive(bytes: Uint8Array): { review: AppImportReview; 
   if (expandedBytes > 2 * 1024 * 1024 || names.length > 100 || names.some(path => textExtensions.test(path) && files[path].length > 200000)) blockers.push('This app exceeds the current hosting limits (2 MB total, 100 files, 200 KB per text file).');
   return { files, review: {
     name: typeof manifest.name === 'string' ? manifest.name.slice(0, 120) : 'Imported app', root, fileCount: names.length, expandedBytes,
-    assets: assets.length, backend: native ? 'native' : 'client', routes: list(server.routes).length,
+    assets: assets.length, backend: native ? 'native' : namedActions ? 'actions' : 'client', routes: list(server.routes).length,
     migrations: list(object(server.database).migrations).length,
     capabilities: list(requirements.capabilities).filter((value): value is string => typeof value === 'string'), blockers,
   } };

@@ -1,0 +1,44 @@
+{
+  "id": "formlogic.starter.notes",
+  "name": "My app",
+  "version": "1.0.0",
+  "main": "ui/main.ui",
+  "config": {
+    "server": {
+      "allowedOrigins": [
+        "https://app.example"
+      ]
+    }
+  },
+  "server": {
+    "entry": "server/main.logic",
+    "requires": {
+      "apiVersion": 1,
+      "capabilities": [
+        "sql"
+      ]
+    },
+    "database": {
+      "kind": "private-sqlite",
+      "migrations": [
+        "server/migrations/001.sql"
+      ]
+    },
+    "routes": [
+      {
+        "path": "/api/items",
+        "method": "POST",
+        "handler": "createItem",
+        "transaction": "write",
+        "authorization": "anonymous"
+      },
+      {
+        "path": "/api/items",
+        "method": "GET",
+        "handler": "listItems",
+        "transaction": "read",
+        "authorization": "anonymous"
+      }
+    ]
+  }
+}

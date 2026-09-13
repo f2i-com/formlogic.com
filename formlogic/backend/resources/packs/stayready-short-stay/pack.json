@@ -1,0 +1,26 @@
+{
+  "id": "stayready-short-stay",
+  "name": "StayReady — Short-Stay Turnover",
+  "description": "A turnover manager for Airbnb and short-stay hosts: track properties and bookings, schedule cleaner turnovers between checkout and check-in, run inspections, and keep per-property supplies stocked. Includes 6 forms and 1 app.",
+  "tags": [
+    "airbnb",
+    "short-stay",
+    "turnovers",
+    "cleaning",
+    "property"
+  ],
+  "icon": "BedDouble",
+  "formatVersion": 1,
+  "version": "1.0.0",
+  "category": "Business apps",
+  "featured": false,
+  "projects": {
+    "stayready": "projects/stayready"
+  },
+  "screenshots": [
+    {
+      "label": "Reports dashboard",
+      "url": "/api/packs/screenshots/stayready-short-stay.png"
+    }
+  ]
+}

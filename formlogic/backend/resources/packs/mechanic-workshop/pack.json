@@ -1,0 +1,26 @@
+{
+  "id": "mechanic-workshop",
+  "name": "Mechanic Workshop Manager",
+  "description": "Run an auto mechanic workshop end to end: manage customers and their vehicles, track job cards through the bay, log parts used, and raise invoices from one linked dashboard. Includes 5 forms and 1 app.",
+  "tags": [
+    "mechanic",
+    "automotive",
+    "workshop",
+    "repairs",
+    "vehicles"
+  ],
+  "icon": "Car",
+  "formatVersion": 1,
+  "version": "1.0.0",
+  "category": "Business apps",
+  "featured": false,
+  "projects": {
+    "workshop": "projects/workshop"
+  },
+  "screenshots": [
+    {
+      "label": "Reports dashboard",
+      "url": "/api/packs/screenshots/mechanic-workshop.png"
+    }
+  ]
+}

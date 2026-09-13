@@ -271,7 +271,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
   };
 
   const installedCatalogIds = new Set(
-    installations.filter((i) => i.catalogId).map((i) => i.catalogId!)
+    installations.flatMap(i => [...(i.catalogId ? [i.catalogId] : []), ...(i.packId ? ['folder-' + i.packId] : [])])
   );
 
   const resetState = useCallback(() => {

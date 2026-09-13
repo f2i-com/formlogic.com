@@ -1,0 +1,13 @@
+{
+  "name": "Aokie Receptionist",
+  "version": "1.0.0",
+  "main": "ui/main.ui",
+  "files": {
+    "ui": [
+      "ui/main.ui"
+    ],
+    "logic": [
+      "logic/main.logic"
+    ]
+  }
+}

@@ -1,0 +1,3 @@
+function onRequest(ctx) {
+  return {"name": "Service Desk", "forms": [{"alias": "support-ticket", "name": "Support Ticket"}, {"alias": "bug-report", "name": "Bug Report"}, {"alias": "feature-request", "name": "Feature Request"}, {"alias": "escalation-form", "name": "Escalation Form"}, {"alias": "refund-request", "name": "Refund / Return Request"}, {"alias": "customer-feedback", "name": "Customer Feedback Survey"}, {"alias": "knowledge-base-entry", "name": "Knowledge Base Entry"}], "steps": ["Choose a form or tool to get started.", "Use Dashboard & reports for the original reports and workflows.", "Edit forms, permissions, automations and this app in App Studio."]};
+}

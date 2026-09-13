@@ -1,0 +1,26 @@
+{
+  "id": "counterflow-retail-ops",
+  "name": "CounterFlow — Retail Store Operations",
+  "description": "The operational layer around the till for boutiques and specialty retail: products and suppliers, stock movements, store tasks, staff and returns, with low-stock alerts and a stock-value estimate. Includes 6 forms and 1 app.",
+  "tags": [
+    "retail",
+    "stock",
+    "store-ops",
+    "suppliers",
+    "tasks"
+  ],
+  "icon": "Store",
+  "formatVersion": 1,
+  "version": "1.0.0",
+  "category": "Business apps",
+  "featured": false,
+  "projects": {
+    "counterflow": "projects/counterflow"
+  },
+  "screenshots": [
+    {
+      "label": "Reports dashboard",
+      "url": "/api/packs/screenshots/counterflow-retail-ops.png"
+    }
+  ]
+}

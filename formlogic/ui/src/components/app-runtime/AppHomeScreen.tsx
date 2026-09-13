@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { AppCustomScreenRuntime } from '../custom-screen/AppCustomScreenRuntime';
 import { SdkScreenRuntime } from '../custom-screen/SdkScreenRuntime';
@@ -17,6 +17,7 @@ import { useDesktopConnectorEvents } from '../../client-runtime/desktop/useDeskt
  */
 export function AppHomeScreen() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const config = useAppRuntimeStore((s) => s.config);
   const appSlug = useAppRuntimeStore((s) => s.appSlug);
   const cs = config?.app?.customScreen;
@@ -30,7 +31,7 @@ export function AppHomeScreen() {
   useDesktopConnectorEvents({ appSlug, enabled: logicEnabled, runConnectorEvent });
 
   if (!config) return null;
-  if (config.app.settings?.hostedDashboard === true) return <HostedDashboardHome slug={config.app.slug} />;
+  if (config.app.settings?.hostedDashboard === true && params.get('dashboard') !== 'classic') return <HostedDashboardHome slug={config.app.slug} />;
 
   if (config.app.settings?.aokieWorkspace === true) return <AokieWorkspace listen={false} />;
 

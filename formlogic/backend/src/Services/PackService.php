@@ -20,7 +20,9 @@ class PackService
         MySQLConnection $mysql,
         FormService $formService,
         AppService $appService,
-        AppUserService $appUserService
+        AppUserService $appUserService,
+        private ?HostedAppService $hosting = null,
+        private ?NativeAppService $native = null
     ) {
         $this->mysql = $mysql->getConnection();
         $this->formService = $formService;
@@ -58,8 +60,16 @@ class PackService
     ): array
     {
         // Validate structure
-        $this->validatePack($packData);
+        self::validateDefinition($packData);
 
+        $hosting = $this->hosting ??= new HostedAppService(new SandboxRunner());
+        foreach ($packData['apps'] ?? [] as $app) {
+            if (isset($app['hostedProject'])) $hosting->validate($app['hostedProject']);
+            if (isset($app['nativeProject'])) NativeAppService::validateProject($app['nativeProject']);
+            if (isset($app['nativeProject'], $app['hostedProject'])) throw new \InvalidArgumentException('Choose one hosted project per app');
+        }
+        $createdHostedIds = [];
+        $createdNativeIds = [];
         $createdFormIds = [];
         $createdAppIds = [];
 
@@ -160,6 +170,7 @@ class PackService
                 // and defer defaultRoleId until roles exist (carried as defaultRoleName).
                 $appSettings = is_array($packApp['settings'] ?? null) ? $packApp['settings'] : [];
                 unset($appSettings['notifications']);
+                if (!isset($packApp['hostedProject'])) unset($appSettings['hostedDashboard']);
                 $lp = $appSettings['landingPage'] ?? null;
                 if (is_string($lp) && str_starts_with($lp, '@pack:')) {
                     $appSettings['landingPage'] = $formIdMap[substr($lp, 6)] ?? 'dashboard';
@@ -360,6 +371,16 @@ class PackService
                     }
                 }
 
+                if (isset($packApp['hostedProject'])) {
+                    $createdHostedIds[] = $appId;
+                    $hosting->publish($appId, $packApp['hostedProject'], 0);
+                    $appSettings['hostedDashboard'] = true;
+                    $this->appService->updateApp($appId, ['settings' => $appSettings]);
+                }
+                if (isset($packApp['nativeProject'])) {
+                    $createdNativeIds[] = $appId;
+                    ($this->native ??= new NativeAppService())->install($appId, $packApp['nativeProject'], 0);
+                }
                 $appSummary[] = ['id' => $appId, 'name' => $packApp['name']];
             }
 
@@ -401,9 +422,16 @@ class PackService
                 'withheldGrants' => $withheld,
             ];
 
-        } catch (\Exception $e) {
-            $this->mysql->rollBack();
+        } catch (\Throwable $e) {
+            if ($this->mysql->inTransaction()) $this->mysql->rollBack();
             $this->releaseInstallLock($installLock);
+            foreach ($createdHostedIds as $id) {
+                try { $hosting->remove($id); } catch (\Throwable $cleanupError) { error_log("Pack project cleanup failed"); }
+            }
+
+            foreach ($createdNativeIds as $id) {
+                try { $this->native?->remove($id); } catch (\Throwable $cleanupError) { error_log('New native pack cleanup failed'); }
+            }
 
             // Clean up any created forms (SQLite databases)
             foreach ($createdFormIds as $fid) {
@@ -671,9 +699,7 @@ class PackService
             $packForms[] = $entry;
         }
 
-        if (empty($packForms)) {
-            throw new \RuntimeException('This app has no forms to export');
-        }
+        if (empty($packForms) && !($this->native ??= new NativeAppService())->get($appId) && !($this->hosting ??= new HostedAppService(new SandboxRunner()))->get($appId)) throw new \RuntimeException('This app has no forms or project to export');
 
         // Roles (for default-role name mapping + exporting custom roles).
         $roles = $this->appUserService->getRoles($appId);
@@ -778,6 +804,12 @@ class PackService
             'forms' => $packAppForms,
             'roles' => $packRoles,
         ];
+        $hosted = ($this->hosting ??= new HostedAppService(new SandboxRunner()))->get($appId, true);
+        if ($hosted) {
+            $packApp['hostedProject'] = ['version' => 1, 'client' => $hosted['client'], 'actions' => $hosted['actions']];
+        }
+        $nativeProject = ($this->native ??= new NativeAppService())->get($appId);
+        if ($nativeProject) { unset($nativeProject['updatedAt']); $nativeProject['version'] = 0; $packApp['nativeProject'] = $nativeProject; unset($packApp['hostedProject']); }
         if ($exportServices !== []) {
             $packApp['services'] = $exportServices;
         }
@@ -819,7 +851,7 @@ class PackService
         }
 
         // Fail fast with a clear message if the app exceeds pack size caps.
-        $this->validatePack($pack);
+        self::validateDefinition($pack);
 
         return $pack;
     }
@@ -1634,17 +1666,21 @@ class PackService
 
         // Delete apps first (they reference forms via app_forms)
         // Verify ownership before deleting to prevent deletion of other users' resources
+        $failedApps = [];
         foreach ($appIds as $appId) {
             try {
-                $checkStmt = $this->mysql->prepare("SELECT id FROM apps WHERE id = :id AND owner_id = :owner_id");
-                $checkStmt->execute(['id' => $appId, 'owner_id' => $userId]);
-                if (!$checkStmt->fetch()) continue; // Skip if not owned or already deleted
-                $this->appService->deleteApp($appId);
-                $appsDeleted++;
-            } catch (\Exception $e) {
-                // App may have been manually deleted already
-            }
+                $checkStmt = $this->mysql->prepare("SELECT owner_id FROM apps WHERE id = :id");
+                $checkStmt->execute(['id' => $appId]);
+                $owner = $checkStmt->fetchColumn();
+                if ($owner !== false && $owner !== $userId) continue;
+                if ($owner !== false) $this->appService->deleteApp($appId);
+                // A retry also cleans storage after the app row was already removed.
+                ($this->hosting ??= new HostedAppService(new SandboxRunner()))->remove($appId);
+                ($this->native ??= new NativeAppService())->remove($appId);
+                if ($owner !== false) $appsDeleted++;
+            } catch (\Throwable $e) { $failedApps[] = $appId; }
         }
+        if ($failedApps) throw new \RuntimeException('Some app storage could not be removed yet. Retry uninstall to finish; the installation has been retained.');
 
         // Delete forms (and their SQLite databases)
         // Verify ownership before deleting
@@ -1681,7 +1717,7 @@ class PackService
      */
     public function adoptExistingPack(array $packData, string $userId): array
     {
-        $this->validatePack($packData);
+        self::validateDefinition($packData);
 
         $meta = $packData['packMeta'];
         $packId = $meta['id'] ?? $meta['name'] ?? 'custom';
@@ -1834,7 +1870,9 @@ class PackService
     /**
      * Validate pack data structure
      */
-    private function validatePack(array $packData): void
+    private function validatePack(array $packData): void { self::validateDefinition($packData); }
+
+    public static function validateDefinition(array $packData): void
     {
         if (($packData['formatVersion'] ?? null) !== 1) {
             throw new \RuntimeException('Unsupported pack format version');
@@ -1844,9 +1882,8 @@ class PackService
             throw new \RuntimeException('Pack is missing packMeta');
         }
 
-        if (empty($packData['forms']) || !is_array($packData['forms'])) {
-            throw new \RuntimeException('Pack must contain at least one form');
-        }
+        if (!is_array($packData['forms'] ?? null)) throw new \RuntimeException('Pack must contain a forms array');
+        if (!$packData['forms'] && !array_filter($packData['apps'] ?? [], static fn($a) => isset($a['nativeProject']) || isset($a['hostedProject']))) throw new \RuntimeException('Pack must contain a form or an app project');
 
         // Enforce size limits to prevent resource exhaustion
         if (count($packData['forms']) > 50) {

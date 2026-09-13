@@ -1,0 +1,26 @@
+{
+  "id": "aokie-receptionist",
+  "name": "Aokie Receptionist",
+  "description": "An AI phone receptionist powered by FormLogic Desktop and the Aokie Bluetooth phone bridge: live call console with answer/hang-up/speak controls, automatic call, transcript and SMS records, caller lookup, call summaries, SMS reply drafts and follow-up tasks via starter FormLogic Flows. Includes 10 forms and 1 app.",
+  "tags": [
+    "receptionist",
+    "phone",
+    "aokie",
+    "desktop",
+    "flows"
+  ],
+  "icon": "PhoneCall",
+  "formatVersion": 1,
+  "version": "1.0.2",
+  "category": "Business apps",
+  "featured": true,
+  "projects": {
+    "aokie-receptionist": "projects/aokie-receptionist"
+  },
+  "screenshots": [
+    {
+      "label": "Reports dashboard",
+      "url": "/api/packs/screenshots/aokie-receptionist.png"
+    }
+  ]
+}

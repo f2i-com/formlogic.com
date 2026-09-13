@@ -1,0 +1,3 @@
+function onRequest(ctx) {
+  return {"name": "Maintenance", "forms": [{"alias": "property", "name": "Property"}, {"alias": "tenant", "name": "Tenant"}, {"alias": "maintenance-request", "name": "Maintenance Request"}, {"alias": "work-order", "name": "Work Order"}, {"alias": "inspection", "name": "Inspection"}], "steps": ["Choose a form or tool to get started.", "Use Dashboard & reports for the original reports and workflows.", "Edit forms, permissions, automations and this app in App Studio."]};
+}

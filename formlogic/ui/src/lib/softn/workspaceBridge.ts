@@ -11,10 +11,14 @@ export async function workspaceBridge(slug: string, action: string, input: Recor
     aokie: config.app.customLogic?.connector?.manifest?.connectorId === 'aokie',
     forms: config.forms.map(form => ({
       id: form.formId, alias: form.packFormId || '', name: form.displayName, description: form.description || '', hidden: form.hidden === true,
-      tool: form.customScreen?.enabled === true,
+      tool: form.customScreen?.enabled === true && form.customScreen.kind !== 'dashboard',
       canRead: [...(config.permissions.appLevel || []), ...(config.permissions.formLevel[form.formId] || [])].some(permission => ['view_all_responses', 'view_own_responses'].includes(permission)),
     })),
   };
+  if (action === 'workspaceDashboard') {
+    navigate(`/app/${encodeURIComponent(slug)}?dashboard=classic`);
+    return { opened: true };
+  }
   const form = config.forms.find(form => form.formId === input.formId);
   if (!form) throw new Error('This form is not available in this app.');
   if (action === 'workspaceOpen') {

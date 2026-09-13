@@ -34,6 +34,15 @@ class HostedAppService
         return $db;
     }
 
+    /** Remove a newly created deployment during a failed pack installation. */
+    public function remove(string $appId): void
+    {
+        if (!preg_match('/^[a-zA-Z0-9_-]{1,100}$/D', $appId)) throw new InvalidArgumentException('Invalid app identity');
+        $root = $this->storagePath ?? dirname(__DIR__, 2) . '/storage/hosted-apps';
+        $path = $root . '/' . hash('sha256', $appId) . '.sqlite';
+        if (is_file($path) && !unlink($path)) throw new RuntimeException('Cannot remove app deployment');
+    }
+
     /** A consistent SQLite snapshot, including private actions; owner download only. */
     public function snapshot(string $appId): string
     {
@@ -98,6 +107,9 @@ class HostedAppService
 
     public function get(string $appId, bool $private = false): ?array
     {
+        if (!preg_match('/^[a-zA-Z0-9_-]{1,100}$/D', $appId)) throw new InvalidArgumentException('Invalid app identity');
+        $root = $this->storagePath ?? dirname(__DIR__, 2) . '/storage/hosted-apps';
+        if (!is_file($root . '/' . hash('sha256', $appId) . '.sqlite')) return null;
         $db = $this->database($appId);
         $row = $db->query('SELECT * FROM deployment WHERE id=1')->fetch();
         if (!$row) return null;

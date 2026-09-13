@@ -1,0 +1,17 @@
+{
+  "formatVersion": 1,
+  "packMeta": {
+    "id": "native-notes",
+    "name": "Native notes example",
+    "version": "1.0.0"
+  },
+  "forms": [],
+  "apps": [
+    {
+      "packAppId": "notes",
+      "name": "Native notes example",
+      "forms": [],
+      "roles": []
+    }
+  ]
+}
