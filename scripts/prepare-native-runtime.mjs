@@ -26,5 +26,6 @@ for (const [from, to] of [['zipp_wasm.js','wasm/zipp_wasm.mjs'],['zipp_wasm_bg.w
   await copyFile(new URL(from, wasm), new URL(to, target));
 }
 for (const name of ['LICENSE','NOTICE']) await copyFile(new URL(name, repository), new URL(name, target));
+await copyFile(new URL('THIRD_PARTY_LICENSES.txt', wasm), new URL('ZIPP-THIRD-PARTY-LICENSES.txt', target));
 await writeFile(new URL('provenance.json',target), JSON.stringify({ source:'softn.com/apps/softn-php/runtime',nativeProtocol:1,zipp:identity,modules:hashes },null,2)+'\n');
 console.log('Prepared native app runtime: '+fileURLToPath(target));

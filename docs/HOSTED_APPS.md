@@ -147,7 +147,7 @@ npm run build
 
 The first command checks that FormLogic and Softn vendor the same ZIPP version and binary hash, builds the shared core/components and `softn.com/apps/formlogic-host`, then replaces `public/hosted-runtime` with the verified output. A complete asset manifest detects missing, modified or obsolete files. These generated files are ignored by Git; preserve the entire artifact, including `runtime-manifest.json`, if frontend deployment runs without the sibling source checkout. A normal UI build rejects a missing or mismatched runtime. Deploy the parent UI and hosted runtime together. The runtime is excluded from the main PWA precache and SPA fallback.
 
-Both browser integrations currently use ZIPP v0.0.17. FormLogic downloads and verifies the binary lazily once per page, then passes cloned bytes to its expression worker and each hosted Softn app. Each context keeps its own WASM instance, memory and permissions. Failed downloads can retry; worker restarts, additional apps and source replacements reuse the cached bytes. The shell announces its version and hash before initialization, so a stale shell displays an update error rather than running mismatched glue. The browser check covers both loading orders, concurrent startup, separate app state, backend actions, source replacement and download recovery using only local fixture data.
+Both browser integrations currently use the same locally built ZIPP v0.0.18 JavaScript/Python artifact. Its exact commit and checksum are recorded in `formlogic/ui/vendor/zipp-wasm/SOURCE.json`. FormLogic downloads and verifies the binary lazily once per page, then passes cloned bytes to its expression worker and each hosted Softn app. Each context keeps its own WASM instance, memory and permissions. Failed downloads can retry; worker restarts, additional apps and source replacements reuse the cached bytes. The shell announces its version and hash before initialization, so a stale shell displays an update error rather than running mismatched glue. The browser check covers both loading orders, concurrent startup, separate app state, backend actions, source replacement and download recovery using only local fixture data.
 
 Hosted apps use main-thread script execution. The iframe's existing opaque origin and `worker-src blob:` policy do not permit Softn's additional URL-based sandbox workers; sharing engine bytes does not change those capabilities.
 
@@ -505,3 +505,9 @@ Real provider/model quality and production load testing are separate checks.
 Embedded Builder’s Data tab directs hosted database changes to FormLogic. Its standalone
 XDB designer remains available when Builder is run independently; local XDB collections
 are not a substitute for the native app’s SQL migrations or existing hosted records.
+
+### Updating the shared engine locally
+
+In the sibling Softn checkout, run `npm run build:zipp-wasm -w @softn/core`. Then, from the FormLogic repository root, run `node scripts/sync-zipp-from-softn.mjs` and `node scripts/prepare-native-runtime.mjs`. From `formlogic/ui`, rebuild with `npm run build:hosted-runtime`, `npm run build:app-editors`, and `npm run build`. The sync script verifies the source checksum and running engine profile before copying the matching binary and JavaScript bindings.
+
+The combined engine supports experimental Python through its host API. FormLogic expressions, hosted reactive `.logic` screens and native backend handlers still use JavaScript; Python is not yet a selectable screen or backend language. No CPython environment, pip packages or GPU host adapter is installed by this update.
