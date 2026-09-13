@@ -30,7 +30,7 @@ test('Coffee.Dating native import, ZIPP backend and database administration', as
   expect(Object.keys(exported).sort()).toEqual(Object.keys(original).sort());
   for (const path of Object.keys(original)) expect(Buffer.compare(Buffer.from(exported[path]), Buffer.from(original[path])), path).toBe(0);
   await dialog.getByRole('tab', { name: 'backend', exact: true }).click();
-  await expect(dialog.getByRole('textbox', { name: 'Private backend source', exact: true })).toHaveValue(/softn\.sql/);
+  await expect(dialog.getByRole('region', { name: 'Private backend source editor' }).locator('.monaco-editor')).toBeVisible();
   await dialog.getByRole('tab', { name: 'records', exact: true }).click();
   const tables = dialog.getByRole('combobox', { name: 'Database table', exact: true });
   await expect(tables.locator('option')).toHaveCount(29);

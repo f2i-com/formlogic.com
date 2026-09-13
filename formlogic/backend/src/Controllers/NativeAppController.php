@@ -21,6 +21,17 @@ class NativeAppController
         if ($blocked = $this->blockIfDemo($request, $response, 'Native hosting is unavailable in the shared demo.')) return $blocked;
         return $this->respond($response, function () use ($request, $app, $args) {
             if (($args['operation'] ?? '') === 'records') {
+                if ($request->getMethod() === 'POST') {
+                    $input = $request->getParsedBody();
+                    if (!is_array($input)) throw new \InvalidArgumentException('Provide a record action');
+                    if (($input['action'] ?? '') !== 'read' && $this->plans->isEnforced() && !$this->plans->isCloudActive($app['ownerId'])) throw new \RuntimeException('Cloud access has expired. Records remain available to read.', 402);
+                    $result = $this->native->manageRecord($app['id'], $input, $this->flows->nativeRecordSubscriptions($app['id']));
+                    if (($input['action'] ?? '') !== 'read') {
+                        try { $this->native->dispatchRecordEvents($app['id'], fn($id, $event, $data, $bindings) => $this->flows->enqueueNativeRecordEvent($app['id'], $id, $event, $data, $bindings)); }
+                        catch (\Throwable $error) { error_log('Native record automation delivery pending for app ' . $app['id']); }
+                    }
+                    return $result;
+                }
                 $query = $request->getQueryParams();
                 if (!$this->native->get($app['id']) && !isset($query['table'])) return ['installed' => false, 'tables' => []];
                 return $this->native->records($app['id'], isset($query['table']) && is_string($query['table']) ? $query['table'] : null, (int) ($query['offset'] ?? 0));

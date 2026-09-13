@@ -2,12 +2,14 @@
 // No account, backend, AI provider or desktop runtime is contacted.
 import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, copyFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 const origin = process.env.PREVIEW_ORIGIN || 'http://127.0.0.1:5173';
 const output = new URL('../public/images/dashboard-demo/', import.meta.url);
 await mkdir(output, { recursive: true });
+const readmeOutput = new URL('../../../docs/images/', import.meta.url);
+await mkdir(readmeOutput, { recursive: true });
 const user = { id: 'studio-preview', name: 'Alex Morgan', email: 'alex@example.test', mfaEnabled: true };
 const now = Date.now();
 const ago = (days) => new Date(now - days * 86400000).toISOString();
@@ -76,6 +78,7 @@ try {
       assert.deepEqual(errors, []);
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
       await page.screenshot({ path: fileURLToPath(new URL(`${device}-${theme}.jpg`, output)), type: 'jpeg', quality: 90, animations: 'disabled' });
+      if (theme === 'dark') await copyFile(new URL(`${device}-${theme}.jpg`, output), new URL(`dashboard-${device}.jpg`, readmeOutput));
       console.log(`Captured real dashboard: ${device} / ${theme}`);
       await context.close();
     }

@@ -4,6 +4,10 @@ import * as monaco from 'monaco-editor';
 import editorWorker from 'monaco-editor/editor/editor.worker?worker';
 import tsWorker from 'monaco-editor/language/typescript/ts.worker?worker';
 import type { CodeEditorProps } from './CodeEditor';
+import { useUIStore } from '../../stores/uiStore';
+import { registerSoftnLanguage } from './softnLanguage';
+
+registerSoftnLanguage(monaco);
 
 // Use the BUNDLED monaco (no CDN — works offline / self-hosted) and wire its web workers for Vite.
 (self as unknown as { MonacoEnvironment: unknown }).MonacoEnvironment = {
@@ -130,7 +134,7 @@ declare const FormLogic: FlAppSdk;
 
 let compilerConfigured = false;
 
-export default function MonacoEditorImpl({ value, onChange, language = 'typescript', sdk = 'form', height, path, onMount: onMountProp }: CodeEditorProps) {
+export default function MonacoEditorImpl({ value, onChange, language = 'typescript', sdk = 'form', height, path, onMount: onMountProp, readOnly = false, ariaLabel, wordWrap = 'off' }: CodeEditorProps) {
   const onMount: OnMount = useCallback((editor) => {
     // Monaco 0.55 moved language-feature namespaces out of `languages`.
     const ts = monaco.typescript;
@@ -150,12 +154,14 @@ export default function MonacoEditorImpl({ value, onChange, language = 'typescri
       ts.typescriptDefaults.setDiagnosticsOptions({ noSemanticValidation: false, noSyntaxValidation: false, diagnosticCodesToIgnore: [1375, 1378] });
       compilerConfigured = true;
     }
-    ts.typescriptDefaults.addExtraLib(sdk === 'app' ? APP_SDK_DTS : FORM_SDK_DTS, 'ts:formlogic-sdk.d.ts');
-    ts.typescriptDefaults.addExtraLib(VENDOR_DTS, 'ts:formlogic-screen-vendor.d.ts');
+    if (sdk !== 'none') {
+      ts.typescriptDefaults.addExtraLib(sdk === 'app' ? APP_SDK_DTS : FORM_SDK_DTS, 'ts:formlogic-sdk.d.ts');
+      ts.typescriptDefaults.addExtraLib(VENDOR_DTS, 'ts:formlogic-screen-vendor.d.ts');
+    }
     onMountProp?.(editor);
   }, [sdk, onMountProp]);
 
-  const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+  const dark = useUIStore(state => state.theme === 'dark');
 
   return (
     <Editor
@@ -164,10 +170,16 @@ export default function MonacoEditorImpl({ value, onChange, language = 'typescri
       path={path}
       theme={dark ? 'vs-dark' : 'light'}
       value={value}
-      onChange={(v) => onChange(v ?? '')}
+      onChange={(v) => { if (!readOnly) onChange(v ?? ''); }}
       onMount={onMount}
       options={{
+        readOnly,
+        domReadOnly: readOnly,
+        ariaLabel,
+        wordWrap,
+        accessibilitySupport: 'auto',
         minimap: { enabled: false },
+        scrollbar: { alwaysConsumeMouseWheel: false },
         fontSize: 13,
         scrollBeyondLastLine: false,
         automaticLayout: true,

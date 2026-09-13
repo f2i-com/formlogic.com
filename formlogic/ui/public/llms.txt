@@ -35,6 +35,31 @@ Private actions define onRequest(ctx); ctx.db provides get/list/put/remove over 
 app's SQLite records. Keep private action source in package.actions, not client files.
 Downloaded client projects require a compatible authenticated host for backend calls.
 
+## Native projects, editors and SQLite records
+Use get_native_app_template for a working starter. Read get_native_app_project before
+editing; publish_native_app_project and update_native_app_files require the current
+expectedVersion. Native projects include .ui screens, private .logic route handlers,
+manifest routes and numbered SQL migrations. Keep the app's own authentication or
+choose FormLogic membership explicitly; owner administration is separate from visitors.
+
+In App Studio, open Screens > Hosting & app tools > Native app hosting. Open Visual
+Builder for layout or Open AI Studio for source/AI work. Review changes returns an
+unpublished draft; Publish changes preserves database records. Editor previews do not
+execute the hosted backend. Screens and Backend provide highlighted source editors.
+
+list_native_app_records inspects the app's tables and record previews. For owner CRUD
+through the UI, open Data & forms > Records > Database records: Add record creates,
+View > Edit record loads full values, and Delete record requires confirmation. Writes
+apply database constraints and connected record automations, but bypass the app's
+backend validation functions. Do not use shortened list previews as replacement values.
+Keep primary keys unchanged and handle stale-record conflicts by reloading, not by
+blindly retrying. The owner session API is documented at /docs#native-records and in
+docs/HOSTED_APPS.md#owner-record-api; do not assume a scoped MCP token is a web session.
+
+Connect app.record.created.<table>, app.record.updated.<table> or
+app.record.deleted.<table> through app flow bindings. Only committed future changes
+on enabled bindings queue runs. Check run history; queued is not the same as completed.
+
 ## Compose apps and Aokie
 Call get_aokie_starter to review its forms and capabilities, then
 install_aokie_starter with an explicit approvedConnectorGrants list (empty is allowed).

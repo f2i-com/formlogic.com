@@ -83,6 +83,13 @@ function saveNote() {
   const history = await (await context.request.get(`/api/apps/${app.id}/flow-runs?flowId=${flow.id}`)).json();
   const completed = history.runs.find((run: { inputSnapshot?: { event?: { data?: { record?: { title?: string } } } } }) => run.inputSnapshot?.event?.data?.record?.title === title);
   expect(JSON.stringify(completed.result)).toContain(title);
+  const adminTitle = `Owner-created ${Date.now()}`;
+  const adminWrite = await context.request.post(`/api/apps/${app.id}/native/records`, { headers, data: { table: 'notes', action: 'create', values: { title: adminTitle } } });
+  expect(adminWrite.ok(), await adminWrite.text()).toBe(true);
+  await expect.poll(async () => {
+    const runs = await (await context.request.get(`/api/apps/${app.id}/flow-runs?flowId=${flow.id}`)).json();
+    return runs.runs.some((run: { inputSnapshot?: { event?: { data?: { record?: { title?: string } } } } }) => run.inputSnapshot?.event?.data?.record?.title === adminTitle);
+  }).toBe(true);
   await page.goto(`/apps/${app.id}/records`);
   await page.getByRole('button', { name: 'Database records', exact: true }).click();
   await page.getByLabel('Database table', { exact: true }).selectOption('notes');
@@ -105,8 +112,11 @@ function saveNote() {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole('tab', { name: 'backend', exact: true }).click();
   const source = page.getByLabel('Private backend source', { exact: true });
-  await expect(source).toContainText('function createNote');
-  await source.fill((await source.inputValue()) + '\n// Saved through the FormLogic backend editor.\n');
+  await expect(page.getByRole('region', { name: 'Private backend source editor' })).toContainText('createNote');
+  await page.getByRole('region', { name: 'Private backend source editor' }).locator('.view-lines').click();
+  await source.press('Control+End');
+  await source.press('Enter');
+  await page.keyboard.insertText('// Saved through the FormLogic backend editor.');
   await page.getByRole('button', { name: 'Publish changes', exact: true }).click();
   await expect(page.getByText('Installed. The app uses its private SQLite database and ZIPP backend. Existing records were preserved.', { exact: true })).toBeVisible();
   const updated = await (await context.request.get(`/api/apps/${app.id}/native`)).json();

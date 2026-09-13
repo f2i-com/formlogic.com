@@ -256,12 +256,29 @@ class NativeAppService
         finally { flock($lock, LOCK_UN); fclose($lock); }
     }
 
+    public function manageRecord(string $appId, array $input, array $subscriptions = []): array
+    {
+        $root = $this->root($appId);
+        $path = $root . '/private/data/application.sqlite';
+        if (!$this->get($appId) || !is_file($path)) throw new RuntimeException('App database not found', 404);
+        if (is_file($root . '/private/recovery-required')) throw new RuntimeException('The app database needs operator recovery');
+        $lock = fopen($root . '/private/manage.lock', 'c');
+        if (!$lock || !flock($lock, LOCK_SH | LOCK_NB)) {
+            if ($lock) fclose($lock);
+            throw new RuntimeException('The app is being updated. Try again shortly.', 409);
+        }
+        try {
+            $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
+            return (new NativeRecordStore($db))->operate($input, $subscriptions);
+        } finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
     private function readRecords(string $appId, ?string $table, int $offset): array
     {
         $path = $this->root($appId) . '/private/data/application.sqlite';
         if (!$this->get($appId) || !is_file($path)) throw new RuntimeException('App database not found', 404);
         $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
-        $db->exec('PRAGMA query_only=ON; PRAGMA busy_timeout=1500');
+        $db->exec('PRAGMA query_only=ON; PRAGMA busy_timeout=1500; BEGIN');
         $tables = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND substr(name,1,1) != '_' ORDER BY name")->fetchAll(PDO::FETCH_COLUMN);
         if ($table === null) return ['installed' => true, 'tables' => $tables];
         if (!in_array($table, $tables, true)) throw new RuntimeException('Table not found', 404);
@@ -282,6 +299,13 @@ class NativeAppService
         $more = count($rows) > 50;
         $rows = array_slice($rows, 0, 50);
         foreach ($rows as &$row) foreach ($row as &$value) if (is_string($value) && strlen($value) > 4000) $value = mb_strcut($value, 0, 4000) . '…';
-        return ['tables' => $tables, 'columns' => $visible, 'rows' => $rows, 'hasMore' => $more];
+        $schema = (new NativeRecordStore($db))->schema($table);
+        $keys = [];
+        if ($schema['primaryKey']) {
+            $keySelect = implode(',', array_map(static fn($name) => 'CAST("' . str_replace('"', '""', $name) . '" AS TEXT) AS "' . str_replace('"', '""', $name) . '"', $schema['primaryKey']));
+            $keys = $db->query('SELECT ' . $keySelect . ' FROM ' . $quoted . ' ORDER BY ' . $order . ' LIMIT 50 OFFSET ' . min(100000, max(0, $offset)))->fetchAll();
+            $keys = array_map(static fn($key) => in_array(null, $key, true) ? null : $key, $keys);
+        }
+        return ['tables' => $tables, 'columns' => $visible, 'rows' => $rows, 'hasMore' => $more, 'schema' => $schema, 'keys' => $keys];
     }
 }

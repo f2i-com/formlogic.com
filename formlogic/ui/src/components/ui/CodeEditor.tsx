@@ -8,7 +8,10 @@ export interface CodeEditorProps {
   /** Model path (e.g. 'index.tsx') — the extension tells the TS worker to parse JSX in .tsx files. */
   path?: string;
   /** Which FormLogic SDK type defs to surface for autocomplete (only meaningful for the code tab). */
-  sdk?: 'form' | 'app';
+  sdk?: 'form' | 'app' | 'none';
+  readOnly?: boolean;
+  ariaLabel?: string;
+  wordWrap?: 'on' | 'off';
   height?: string | number;
   /** Called once with the mounted editor instance (e.g. to insert selectors at the cursor). */
   onMount?: (editor: import('monaco-editor').editor.IStandaloneCodeEditor) => void;

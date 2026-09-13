@@ -11,6 +11,30 @@ back up, replace files (keep `api/.env` + `api/storage/`), then run the `api/bin
 
 ---
 
+## Native apps and embedded editors
+
+A source deployment must prepare the browser runtime and editors before the UI build.
+From `formlogic/ui`, with matching sibling Softn dependencies installed, run:
+
+```sh
+npm run build:hosted-runtime
+npm run build:app-editors
+node ../../scripts/prepare-native-runtime.mjs
+npm run build
+```
+
+Deploy the generated `hosted-runtime/` and `app-editors/` assets with the UI, and the prepared
+`backend/resources/softn-native/` modules with the API. The pinned release preparation action
+builds these for packaged releases. Native backend execution requires PHP 8.2+, PDO SQLite,
+`proc_open` and a compatible Node runtime (use the repository's pinned version); configure
+`FORMLOGIC_NODE_BIN` for the PHP worker environment. OAIY is a separate optional desktop host.
+
+Back up `backend/storage/native-apps/`, including private configuration and SQLite-consistent
+database snapshots. These records are not included in ordinary form exports. Schedule
+`php bin/native-record-dispatch.php` from the backend directory to retry committed database
+events after interrupted delivery. An execution runtime must still process the queued flows.
+See [native hosting operations](docs/HOSTED_APPS.md#preparing-the-optional-native-runtime).
+
 ## 1. Production launch checklist
 
 Work top to bottom before exposing the app publicly. Most of these live in

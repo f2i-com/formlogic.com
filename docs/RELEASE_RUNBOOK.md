@@ -5,21 +5,30 @@ has the detailed procedures (secrets, HTTPS, backups, webhook worker, PayPal, re
 **[LAUNCH_CHECKLIST.md](../LAUNCH_CHECKLIST.md)** tracks the open launch items. Do these in order.
 Anything unchecked is a launch blocker.
 
-## 0. Gate — CI must be green
+## 0. Gate — complete the manual release checks
 
-- [ ] `ci` workflow green on the release commit (PHPUnit + tsc + eslint + build).
+Automatic push/PR and scheduled checks are paused. Run checks locally or explicitly dispatch
+the retained workflows; record results for the exact release commit. Manual packaging still
+requires its release verification jobs.
+
+- [ ] PHP tests, TypeScript, ESLint and production build pass on the release commit (local checks or a manually dispatched `CI` workflow).
 - [ ] **`E2E (Playwright) — release gate` workflow green** on the release commit/tag (run it from the
-      Actions tab or by pushing the `v*` tag). What it **automates today**: auth login/logout;
+      Actions tab; manual packaging also invokes it). What it **automates today**: auth login/logout;
       build → publish → submit-public → view; required validation; hidden-field authority; field-aware
       upload rejection; `onSubmit` reject/computed write. RBAC/CSP/file-RBAC boundaries are covered by
       unit/integration tests (`AppRbacTest`, `AppMemberFilterTest`, `FileAccessRbacTest`,
-      `check-security-invariants.mjs`) in the fast `ci` workflow.
+      `check-security-invariants.mjs`) in the manually available `CI` workflow.
 - [ ] **Manual smoke** the product-differentiator flows that are NOT yet automated (see §4 and the
       "Golden-path coverage" list in LAUNCH_CHECKLIST.md): pack install → dashboard, submit → dashboard
       updates, export/import, live-demo isolation, billing-disabled/self-host, MCP token flow. These are
       tracked follow-up specs — until they land, they are a **manual** gate, not an automated one.
 - [ ] Dependency audits clean: `cd formlogic/backend && composer audit` and
       `cd formlogic/ui && npm audit --audit-level=high`. Triage anything flagged.
+
+For native app changes, also run `e2e/native-source-record-editor.spec.ts` and
+`e2e/native-notes-hosting.spec.ts` against the isolated local review setup. These cover source
+publication, desktop/mobile CRUD, full-value editing, and record-trigger delivery. They are
+local review checks, not proof that a production deployment has been validated.
 
 ## 1. Environment & secrets
 

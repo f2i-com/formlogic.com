@@ -11,7 +11,7 @@ The web application lives in this directory:
 
 OAIY is the separate desktop host for local AI, services, plugins and background flows. Aokie runs as an OAIY plugin and connects its call, message and appointment records to FormLogic. Their source lives in the sibling `oaiy.com` and `aokie.com` repositories; the optional `native-runtime/` shell here is not OAIY. See [connected apps](../docs/CONNECTED_APPS.md) for pairing, account linking and app bindings.
 
-Hosted app interfaces use Softn. Building their shared browser runtime requires the sibling `softn.com` checkout, or a previously generated runtime artifact. This is a build dependency; PHP hosting does not require an OAIY or Node process.
+Hosted app interfaces use Softn. Building their shared browser runtime requires the sibling `softn.com` checkout, or a previously generated runtime artifact. The native app backend also requires a compatible Node runtime on the server; OAIY is optional and supplies local AI/device services rather than the hosted backend.
 
 ## Prerequisites
 
@@ -21,11 +21,11 @@ Hosted app interfaces use Softn. Building their shared browser runtime requires 
 | PHP extensions | pdo_mysql, pdo_sqlite, mbstring, json, openssl, fileinfo, sodium | `php -m` |
 | Composer | any | `composer --version` |
 | MySQL | 8.0+ | `mysql --version` |
-| Node.js | 20.19+ / 22.12+ (Vite 7) | `node -v` |
+| Node.js | Use `.node-version` (24.19.0); frontend supports ^22.22.2, ^24.15.0 or >=26 | `node -v` |
 | npm | any | `npm -v` |
 | Git | any | `git --version` |
 
-Node.js is a **build-time** dependency only. The server-side script sandbox uses the vendored zipp WebAssembly guest and wasmtime launcher — no Node.js on the API server. When building from a fresh source checkout, prepare the hosted runtime below before the first UI build, including builds started by an installer.
+Node.js builds the UI. **Native app hosting also uses Node on the API server**, with `node:sqlite`, to run the trusted ZIPP backend host. Use the pinned Node version for this path and set `FORMLOGIC_NODE_BIN` when it is not on the PHP process PATH. Standard form scripts and named hosted actions use the vendored ZIPP guest and wasmtime launcher. When building from a fresh source checkout, prepare the hosted runtime below before the first UI build, including builds started by an installer.
 
 ## Install
 
@@ -59,6 +59,8 @@ npm install
 cd ../formlogic.com/formlogic/ui
 npm install
 npm run build:hosted-runtime
+npm run build:app-editors
+node ../../scripts/prepare-native-runtime.mjs
 cd ..
 chmod +x install.sh
 ./install.sh
@@ -133,9 +135,11 @@ cd ../../../softn.com
 npm install
 cd ../formlogic.com/formlogic/ui
 npm run build:hosted-runtime
+npm run build:app-editors
+node ../../scripts/prepare-native-runtime.mjs
 ```
 
-This builds Softn core/components and `apps/formlogic-host`, then copies the result into `ui/public/hosted-runtime/`. Generated runtime assets are ignored by Git. A normal UI build checks they exist; deploy them with the UI, or restore a compatible build artifact when the Softn source is unavailable. See [hosted app deployment](../docs/HOSTED_APPS.md#build-and-operate) for the iframe's static-asset CORS requirements.
+The hosted-runtime command builds Softn core/components and `apps/formlogic-host`, then copies the result into `ui/public/hosted-runtime/`. Generated runtime assets are ignored by Git. The editor build generates `ui/public/app-editors/`; the native preparation script assembles `backend/resources/softn-native/`. These directories are also generated, not committed. A normal UI build checks runtime and editor assets exist; deploy them with the UI, or restore a compatible build artifact when the Softn source is unavailable. See [hosted app deployment](../docs/HOSTED_APPS.md#build-and-operate) for the iframe's static-asset CORS requirements.
 
 When editing the canonical workspace or Aokie client templates in Softn, also run `node scripts/sync-workspace-project.mjs` from `ui/` to refresh the UI and PHP resource copies. See [maintaining shared clients](../docs/CONNECTED_APPS.md#maintain-the-shared-clients).
 
@@ -349,7 +353,7 @@ The default `E2E_BASE_URL` is `http://formlogic.local` (see `ui/playwright.confi
 | Layer | Technology |
 |-------|-----------|
 | Framework | React 19 + TypeScript |
-| Build | Vite 7 |
+| Build | Vite 8 |
 | Styling | Tailwind CSS 4 |
 | State | Zustand 5 (persisted stores) |
 | Routing | React Router 7 |
@@ -544,7 +548,7 @@ Three ways in, all documented elsewhere:
 Keep `VITE_API_URL=/api`; confirm the PHP server is running and Vite's proxy target reaches it. Restart Vite after editing `.env`. In production, route `/api` to PHP before the SPA fallback. If you deliberately use a separate API origin, configure `CORS_ORIGIN`/`CORS_ALLOWED_ORIGINS` for the frontend and verify cookie policy.
 
 ### Hosted preview is blank or a build reports a missing hosted runtime
-Run `npm run build:hosted-runtime` with the sibling Softn dependencies installed, then rebuild the UI. Check that `/hosted-runtime/index.html` and its JS/WASM assets are deployed. The static runtime needs the CORS headers above; missing files must not return the landing page. See [hosting troubleshooting](../docs/HOSTED_APPS.md#troubleshooting).
+Run `npm run build:hosted-runtime` and `npm run build:app-editors` with the sibling Softn dependencies installed, then rebuild the UI. For native backend hosting, also run `node ../../scripts/prepare-native-runtime.mjs` from `ui/` and verify `FORMLOGIC_NODE_BIN`. Check that `/hosted-runtime/index.html` and its JS/WASM assets are deployed. The static runtime needs the CORS headers above; missing files must not return the landing page. See [hosting troubleshooting](../docs/HOSTED_APPS.md#troubleshooting).
 
 ### Scripting (form logic / validation / calculations) not running
 - **Browser:** ensure the vendored `ui/vendor/zipp-wasm/` files are present and the built WASM asset loads successfully in the worker. It is bundled by Vite; no `quickjs-emscripten` download is required.

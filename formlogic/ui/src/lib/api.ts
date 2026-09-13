@@ -1932,6 +1932,9 @@ class ApiClient {
   async saveNativeProject(id: string, project: import('./nativeHosting').NativeProject, expectedVersion: number): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/native`, { method: 'PUT', body: JSON.stringify({ project, expectedVersion }) });
   }
+  async manageNativeRecord(id: string, input: { table: string; action: 'read' | 'create' | 'update' | 'delete'; key?: Record<string, string>; revision?: string; values?: Record<string, string | null> }): Promise<ApiResponse<{ saved?: boolean; record?: import('./nativeHosting').NativeRecordDetail }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/records`, { method: 'POST', body: JSON.stringify(input) });
+  }
   async getNativeRecords(id: string, table?: string, offset = 0): Promise<ApiResponse<import('./nativeHosting').NativeRecords>> {
     const params = new URLSearchParams({ offset: String(offset) });
     if (table) params.set('table', table);

@@ -56,6 +56,7 @@ const SECTIONS = [
   { id: 'cloud', title: 'Free access & support', icon: Cloud },
   { id: 'apps', title: 'Apps & permissions', icon: Boxes },
   { id: 'hosted-apps', title: 'Host an editable app', icon: Code2 },
+  { id: 'native-records', title: 'Manage app database records', icon: Inbox },
   { id: 'aokie', title: 'Aokie calls & appointments', icon: Phone },
   { id: 'packs', title: 'Packs & templates', icon: Package },
   { id: 'flows', title: 'Automations & OAIY', icon: Workflow },
@@ -68,6 +69,7 @@ const START_PATHS = [
   { id: 'quick-start', title: 'Create your first form', description: 'Build, publish and collect a response.', icon: Rocket },
   { id: 'connect-ai', title: 'Bring your own AI', description: 'Use OAIY, a provider API or your AI client.', icon: Plug },
   { id: 'hosted-apps', title: 'Build a connected app', description: 'An editable interface, private logic and data.', icon: Code2 },
+  { id: 'native-records', title: 'Manage app database records', icon: Inbox },
   { id: 'aokie', title: 'Set up a front desk', description: 'Connect calls, messages and appointments.', icon: Phone },
 ];
 
@@ -110,13 +112,23 @@ function CodeBlock({ title, children }: { title?: string; children: React.ReactN
 
 // Bump when the /screenshots images are replaced: Apache serves them without Cache-Control,
 // so browsers heuristically cache by Last-Modified and would keep showing the old captures.
-const SCREENSHOT_VERSION = '2026-09-12';
+const SCREENSHOT_VERSION = '2026-09-13';
+const SCREENSHOT_SIZES: Record<string, [number, number]> = {
+  '/images/dashboard-demo/desktop-dark.jpg': [2880, 2000],
+  '/images/docs/connect-ai.jpg': [2880, 2000],
+  '/images/docs/aokie-front-desk.png': [1440, 1000],
+  '/images/docs/starter-apps.jpg': [2160, 1560],
+  '/images/docs/native-backend.jpg': [896, 990],
+  '/images/docs/native-screens.jpg': [896, 990],
+  '/images/docs/native-records.jpg': [1024, 970],
+  '/images/docs/native-record-editor-mobile.jpg': [358, 629],
+};
 
 function Figure({ src, alt, caption }: { src: string; alt: string; caption: string }) {
   return (
     <figure className="my-6">
       <div className="rounded-xl overflow-hidden border border-gray-200/80 dark:border-slate-800 shadow-xl shadow-gray-900/[0.06] dark:shadow-black/30 bg-gray-50 dark:bg-slate-900">
-        <img src={`${src}?v=${SCREENSHOT_VERSION}`} alt={alt} loading="lazy" className="w-full block" />
+        <a href={`${src}?v=${SCREENSHOT_VERSION}`} target="_blank" rel="noopener noreferrer" aria-label={`Open full-size screenshot: ${alt}`} className="block focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500"><img src={`${src}?v=${SCREENSHOT_VERSION}`} alt={alt} width={SCREENSHOT_SIZES[src]?.[0]} height={SCREENSHOT_SIZES[src]?.[1]} loading="lazy" decoding="async" className="w-full h-auto block" /></a>
       </div>
       <figcaption className="fl-mono text-xs text-gray-500 dark:text-slate-400 mt-2.5 text-center">{caption}</figcaption>
     </figure>
@@ -583,11 +595,32 @@ function _init() {
                 <>Choose <C>Use this app as the website home</C> to open it at the normal app address. Connected domains in direct-app mode use this entry point after publication.</>,
                 <>Edit source in Screens and Backend, and browse its SQLite tables in Records. Open Visual Builder for layout changes, or AI Studio for source and AI editing, including on mobile. Studio uses your FormLogic AI settings. Review changes returns a draft; publish it when ready. Download editable project keeps a portable copy.</>,
               ]} />
+              <h3 className="text-lg font-semibold mt-6 mb-3">Edit the interface and its backend</h3>
+              <P><C>Screens</C> highlights interface tags, embedded client logic and styles. <C>Backend</C> highlights private <C>.logic</C> files and read-only SQL migrations. Both include line numbers, wrapping, light/dark themes and <C>Ctrl/Cmd+F</C> search. Switch files without losing your draft, then choose <C>Publish changes</C>. Existing records are preserved.</P>
+              <Figure src="/images/docs/native-backend.jpg" alt="Native app hosting Backend tab with syntax-highlighted private logic and Publish changes" caption="Private backend source in the running app. Fictional Service desk project; select any screenshot to open it full size." />
+              <P><C>Open Visual Builder</C> edits layouts and components. <C>Open AI Studio</C> provides source and AI tools using your FormLogic AI settings. Choose <C>Review changes</C> to bring edits back into a draft, then publish. Builder is best on a larger screen; use Studio or the source tabs on mobile. Publish and open the hosted app to test its backend; an editor preview does not run the hosted database.</P>
+              <Figure src="/images/docs/native-screens.jpg" alt="Screens tab with highlighted interface markup and client logic in the same editor" caption="Interface and client logic stay together in the editable project." />
               <h3 className="text-lg font-semibold mt-6 mb-3">Run a flow when a record changes</h3>
               <P>In <C>Automations → Connect database event</C>, choose a table, a created/updated/deleted change, and a flow. For a signup flow, choose the table where the app creates verified users. The flow receives <C>record</C>, <C>table</C> and <C>operation</C> inputs. Use the trigger editor for conditions, such as checking that an account is verified.</P>
               <P>Only future committed changes on enabled flows and triggers are captured. Failed or rolled-back writes do not trigger a flow. Record previews omit common secret fields and shorten long values. Keep OAIY connected for unattended execution, or open the app’s authenticated FormLogic member runtime. Run history shows whether work is queued or completed.</P>
               <Tip>The native host is a local preview requiring a compatible server runtime and the native record recovery dispatcher for interrupted deliveries. Importing does not configure SMS delivery, photo uploads, public DNS or HTTPS, and does not publish the parent app. Downloaded projects exclude database records and server credentials.</Tip>
               <P>Local app storage, hosted app databases and existing form response databases are separate. Importing a client does not migrate its records or automatically wire local forms to backend actions. <GuideLink file="docs/HOSTED_APPS.md">Hosting API, examples, limits and backups</GuideLink> · <GuideLink file="docs/CONNECTED_APPS.md">Connected dashboard guide</GuideLink>.</P>
+            </section>
+
+            <section className="mb-14">
+              <H2 id="native-records" icon={Inbox}>Manage app database records</H2>
+              <P>In <C>App Studio → Data &amp; forms</C>, open a native table, or choose <C>Records → Database records</C>. The owner can manage the same SQLite database used by the hosted app. This is separate from FormLogic form responses.</P>
+              <Steps items={[
+                <>Choose a table. Browse 50 records per page, filter the current page, and open <C>View</C> (or <C>View details</C> on mobile).</>,
+                <>Select <C>Add record</C> to create an entry. Enter required fields and leave automatic IDs and defaults to the database. <C>No value (NULL)</C> is different from empty text.</>,
+                <>Choose <C>View → Edit record</C> to load full field values and save changes. Primary keys remain unchanged. If the record changed while you were editing, close the editor and refresh before trying again.</>,
+                <>Inside the editor, choose <C>Delete record</C> and review the confirmation. Database relationships may also delete dependent records.</>,
+              ]} />
+              <Figure src="/images/docs/native-records.jpg" alt="Database Records with a table selector, Add record, page filtering and three fictional service requests" caption="Browse and maintain the app’s real SQLite records from FormLogic." />
+              <Tip>Owner edits save directly to SQLite and queue connected record automations. Database constraints apply, but these controls do not call the app’s backend validation functions. Use the app itself when those business rules are required.</Tip>
+              <P>List cells preview up to 400 characters. Editing loads full text up to 100 KB per field. Secret columns stay hidden; binary and generated fields remain read-only. Existing records need a complete visible primary key for editing or deletion. If creation requires private or binary fields, create the record through the app.</P>
+              <div className="mx-auto max-w-sm"><Figure src="/images/docs/native-record-editor-mobile.jpg" alt="Mobile record editor with a read-only ID, editable request title, Save record and Delete record controls" caption="The same record editor at phone width. All pictured requests are fictional." /></div>
+              <P><GuideLink file="docs/HOSTED_APPS.md#owner-record-api">Owner record API and database maintenance reference</GuideLink>.</P>
             </section>
 
             <section className="mb-14">
@@ -642,10 +675,12 @@ function _init() {
             {/* Self-hosting */}
             <section className="mb-14">
               <H2 id="self-hosting" icon={Server}>Self-hosting</H2>
-              <P>FormLogic can run on your infrastructure: PHP 8.2+, MySQL 8+, SQLite for form responses and hosted apps, and a static frontend. Node.js is needed for building the frontend, not for running the PHP API. Include the packaged sandbox binaries and generated app host assets.</P>
+              <P>FormLogic can run on your infrastructure: PHP 8.2+, MySQL 8+, SQLite for form responses and hosted apps, and a static frontend. Use the Node version pinned in the repository to build the frontend. Native app hosting also needs a compatible Node runtime on the server, with node:sqlite, to run its ZIPP backend host. Standard form scripts and named hosted actions use their packaged sandbox launcher. Include the generated browser runtime, editors and native host modules.</P>
               <P><strong>Prepare a source checkout before running an installer.</strong> Keep <C>softn.com</C> beside <C>formlogic.com</C>, install dependencies in the Softn repository and in <C>formlogic/ui</C>, then run this from <C>formlogic/ui</C>:</P>
-              <CodeBlock title="required before the frontend build or CLI installer">{`npm run build:hosted-runtime`}</CodeBlock>
-              <P>Every frontend build checks for these generated assets. A fresh clone without them cannot complete <C>npm run build</C> or the CLI installer. A deployment using prepared build artifacts must include the matching runtime directory.</P>
+              <CodeBlock title="required before the frontend build or CLI installer">{`npm run build:hosted-runtime
+npm run build:app-editors
+node ../../scripts/prepare-native-runtime.mjs`}</CodeBlock>
+              <P>Every frontend build checks for these generated assets. A fresh clone without them cannot complete <C>npm run build</C> or the CLI installer. A deployment using prepared build artifacts must include the matching hosted-runtime and app-editors directories, plus the prepared native backend modules.</P>
               <P><strong>Updates after installation:</strong> open <C>Admin → Updates</C>, choose <C>Check for updates</C>, then <C>Download and verify</C>. Review the release before selecting <C>Install</C>. FormLogic verifies the official GitHub release digest and backs up your database and code before applying it. No signing-key setup is needed for official downloads; signed ZIP uploads remain available for offline or custom releases. See the <GuideLink file="docs/UPGRADING.md">upgrade guide</GuideLink>.</P>
               <P>Then choose an assisted installer in <C>formlogic/</C>:</P>
               <Bullets items={[
@@ -653,7 +688,7 @@ function _init() {
                 <><strong className="text-gray-900 dark:text-white">CLI</strong> — run <C>./install.sh</C> from <C>formlogic/</C>. Same seeding; skip it with <C>SEED_DEMO=0 ./install.sh</C>.</>,
               ]} />
               <P>Use the <GuideLink file="formlogic/README.md">developer setup guide</GuideLink> for database initialization, environment variables and local servers. The CLI builds the web client. For a manual setup, run <C>npm run build</C> from <C>formlogic/ui</C> after preparing the runtime.</P>
-              <P>Include the generated <C>public/hosted-runtime/</C> assets in deployment and follow their static-file header requirements. Back up hosted app databases separately from form exports. <GuideLink file="docs/HOSTED_APPS.md">Hosted app deployment and backups</GuideLink> · <GuideLink file="DEPLOYMENT.md">Production deployment guide</GuideLink>.</P>
+              <P>Include the generated <C>public/hosted-runtime/</C> and <C>public/app-editors/</C> assets in deployment and follow their static-file header requirements. Back up hosted app databases separately from form exports. <GuideLink file="docs/HOSTED_APPS.md">Hosted app deployment and backups</GuideLink> · <GuideLink file="DEPLOYMENT.md">Production deployment guide</GuideLink>.</P>
               <Tip><strong className="text-gray-900 dark:text-white">One domain is all you need.</strong> The frontend calls the API at <C>/api</C> on the <strong className="text-gray-900 dark:text-white">same origin</strong> by default, so you can serve the app and its API from a single domain with no CORS setup — point your web server's <C>/api</C> at the PHP backend and serve the built UI for everything else. Only set <C>VITE_API_URL</C> (at build time) and <C>CORS_ORIGIN</C> if you deliberately put the API on a <em>separate</em> host.</Tip>
               <P>FormLogic is source-available — the full source, README, and deployment guide live on <a href="https://github.com/f2i-com/formlogic.com" target="_blank" rel="noreferrer" className="text-primary-600 dark:text-primary-400 underline underline-offset-4">GitHub</a> (production hardening: set <C>APP_ENV=production</C>, strong secrets, HTTPS). You can self-host and modify it freely under the project's <a href="https://github.com/f2i-com/formlogic.com/blob/main/LICENSE" target="_blank" rel="noreferrer" className="text-primary-600 dark:text-primary-400 underline underline-offset-4">license</a>. If it's useful to you, a <strong className="text-gray-900 dark:text-white">star</strong> is hugely appreciated.</P>
             </section>

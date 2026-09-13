@@ -3,7 +3,7 @@
 <p align="center"><strong>Build forms and business apps with a backend, a database and the AI you choose.</strong></p>
 
 <p align="center">
-  Create forms, dashboards, portals and automations in one workspace. Build editable apps with <strong>Softn</strong>, host them on FormLogic, and connect <strong>OAIY</strong> for AI and local services. Add <strong>Aokie</strong> when calls, messages and appointments belong in the same app.
+  Create forms, dashboards, portals and automations in one workspace. Import an existing app, edit its interface and backend, and manage its SQLite records without leaving FormLogic. Build editable apps with <strong>Softn</strong>, host them on FormLogic, and connect <strong>OAIY</strong> for AI and local services. Add <strong>Aokie</strong> when calls, messages and appointments belong in the same app.
 </p>
 
 <p align="center">
@@ -35,7 +35,7 @@
 1. **Start with your data.** Create a form visually, use AI, or choose a marketplace starter.
 2. **Build the workspace.** Add screens, dashboards, reports, branding, members and roles in App Studio.
 3. **Connect the work.** Use flows and scripts to turn submissions and device events into the next action.
-4. **Make it your own.** Create a portable interface, download its editable `.softn` project, or host your own client with private `.logic` actions and SQLite storage.
+4. **Make it your own.** Import an editable `.softn` project, open the embedded Visual Builder or AI Studio, and host its private `.logic` backend and SQLite database.
 5. **Share the same records.** Add forms to another app without copying the data, or move a complete integration after reviewing its permissions.
 
 <table>
@@ -54,12 +54,49 @@
   </tr>
 </table>
 
+## Your app, from interface to database
+
+Bring an existing Softn project or start in FormLogic. Keep its interface, backend source, records and automations together, and download the editable project when you want to take it elsewhere.
+
+| Work on… | In FormLogic |
+|---|---|
+| **Layout and components** | Open Visual Builder from App Studio’s hosting tools. |
+| **Source and AI changes** | Open AI Studio with your configured AI, review its changes, then publish the draft. |
+| **Screens and private backend** | Edit highlighted `.ui` and `.logic` source with line numbers, search, wrapping and light/dark themes. Installed SQL migrations stay read-only. |
+| **SQLite records** | Create records, view full values, edit fields and confirm deletions. Desktop tables become record cards on mobile. |
+| **Record automations** | Connect a created, updated or deleted database event to a flow, including account-registration events. |
+| **Visitor access** | Keep an app’s own sign-in or require FormLogic membership. Owner administration stays separate. |
+
+<p align="center">
+  <img src="docs/images/native-backend.jpg" alt="FormLogic native hosting with syntax-highlighted private backend code and publication controls" width="850" />
+</p>
+<p align="center"><sub>Current Backend editor. The fictional Service desk app uses private ZIPP logic and its own SQLite database.</sub></p>
+
+<table>
+  <tr>
+    <td width="68%" valign="top">
+      <img src="docs/images/native-records.jpg" alt="SQLite records in FormLogic with Add record, filtering, pagination and View controls" width="100%" />
+      <p><strong>Manage the data where you build the app.</strong> List previews stay compact; editing loads full text. Database defaults, NULL values and constraints are respected, and stale changes are rejected.</p>
+    </td>
+    <td width="32%" valign="top">
+      <img src="docs/images/native-record-editor-mobile.jpg" alt="Phone-width record editor showing a service request with save and delete controls" width="100%" />
+      <p><strong>Ready for a small screen.</strong> Open a record, change its fields and save from the same mobile workspace.</p>
+    </td>
+  </tr>
+</table>
+
+Owner record controls write directly to SQLite and queue connected automations. They enforce database constraints, but do not call the app’s backend validation functions. Use the app itself when those business rules are required. Existing records need a complete visible primary key for editing/deletion; secrets, generated fields and binary values are protected from ordinary field editing.
+
+Editor changes return to a draft. Publishing preserves existing records; editor previews do not execute the hosted backend. A downloaded project includes source and media, without database records or server credentials. Custom domains also require DNS, web-server and HTTPS configuration.
+
+[Build and host an app](docs/HOSTED_APPS.md) · [Manage database records](docs/HOSTED_APPS.md#owner-record-api) · [Screenshot notes](docs/images/README.md)
+
 ## One connected platform
 
 | Layer | What it owns | What it unlocks |
 |---|---|---|
 | **FormLogic** | Forms, records, apps, access control, flows, hosting and APIs | A shared backend and operational workspace |
-| **[Softn](https://github.com/f2i-com/softn.com)** | Portable app interfaces and client logic | Editable `.softn` clients that can run inside a compatible host |
+| **[Softn](https://github.com/f2i-com/softn.com)** | Portable app projects, Visual Builder, AI Studio and runtime | Editable `.softn` projects and integrated app tools |
 | **OAIY** (paired desktop, separate repository) | Local models, services, supervised plugins, hardware connectors and headless flow execution | Local capability with cloud visibility—even when the browser is closed |
 | **Aokie** | Bluetooth phone control, live call audio, speech and durable call/SMS events | A phone receptionist whose conversations become structured business work |
 
@@ -91,7 +128,7 @@ Aokie runs as an OAIY plugin and connects to a compatible phone over Bluetooth. 
 - **Waiting-call visibility** with a read-only summary of waiting and held callers in OAIY.
 - **Natural interruption** with optional barge-in and echo cancellation.
 - **Local-first voice loop** using local speech recognition, a local LLM and local text-to-speech by default.
-- **Remote visibility** through the FormLogic app while Desktop handles the local phone connection.
+- **Remote visibility** through the FormLogic app while OAIY handles the local phone connection.
 - **Crash-safe delivery** through a write-before-emit event outbox with acknowledgements, replay and idempotency.
 - **Privacy-aware operation** with DPAPI-protected transcript/SMS outbox payloads and conversation content excluded from logs by default.
 - **Safer defaults**: auto-answer is opt-in and defaults off.
@@ -133,7 +170,8 @@ Compose KPI, bar, line, area, pie, donut, table, record-list and activity widget
 ### Client apps and private backend logic
 
 - **Softn clients** combine `.ui` interfaces and `.logic` behavior in an editable app project.
-- **Hosted backend actions** run private `.logic` code with permission-checked, transactional SQLite record operations.
+- **Native app hosting** runs private `.logic` route handlers in ZIPP with declared SQLite migrations.
+- **Hosted backend actions** provide an alternative named-action format with permission-checked, transactional SQLite record operations.
 - **Sandboxed app logic** runs lifecycle hooks and returns permission-checked effects.
 - **Custom screens** run as sandboxed HTML/CSS/JavaScript behind an iframe and postMessage SDK.
 - **FormLogic SDK** provides permission-aware React hooks and components for first-party screens.
@@ -141,7 +179,7 @@ Compose KPI, bar, line, area, pie, donut, table, record-list and activity widget
 
 ### Visual flows that do real work
 
-React to form submissions, connector events and manual runs. Branch, transform and format data, call an OpenAI-compatible model, operate connectors, drive approved local services and read or write FormLogic records. Runs are tracked with correlation IDs, idempotency and history.
+React to form submissions, native database record changes, connector events and manual runs. Branch, transform and format data, call an OpenAI-compatible model, operate connectors, drive approved local services and read or write FormLogic records. Runs are tracked with correlation IDs, idempotency and history.
 
 ### Bring your own AI
 
@@ -240,7 +278,7 @@ FormLogic defaults to **free access**. Payments are **off by default**. Administ
 | Node.js | 24.19.0 LTS recommended (pinned in `.node-version`); supported: 22.22.2+ (22.x), 24.15.0+ (24.x), or 26+ |
 | Composer | Any recent release |
 
-Node.js is a build dependency for the web client, not an API runtime requirement. The existing server-script and hosted-action sandboxes require their packaged binaries. Hosted apps also need PDO SQLite and the generated Softn host assets.
+Node.js builds the web client and is also required on servers using native app hosting: its trusted Node host runs the ZIPP VM and SQLite migrations. Standard form scripts and named hosted actions use their packaged sandbox launcher. Native hosting also needs PDO SQLite, prepared backend modules and the generated Softn browser runtime and editor assets.
 
 The frontend test suite uses jsdom 30. Node 20 and older Node 22/24 releases cannot run it. Check `node --version` before `npm ci`; use the version in `.node-version` for the same environment as the manual build and release checks.
 
@@ -256,6 +294,8 @@ npm install
 cd ../formlogic.com/formlogic/ui
 npm install
 npm run build:hosted-runtime
+npm run build:app-editors
+node ../../scripts/prepare-native-runtime.mjs
 
 # The installer can now build the web client.
 cd ..
@@ -284,10 +324,12 @@ Keep `softn.com` beside `formlogic.com` and install dependencies in both reposit
 
 ```sh
 npm run build:hosted-runtime
+npm run build:app-editors
+node ../../scripts/prepare-native-runtime.mjs
 npm run build
 ```
 
-The first command builds the shared Softn runtime and generates `public/hosted-runtime/`. Those build artifacts stay out of Git; include them in the deployment. [Hosted apps guide](docs/HOSTED_APPS.md) covers private actions, SQLite storage, static-asset headers and backups.
+These commands prepare `public/hosted-runtime/`, the embedded tools in `public/app-editors/`, and the trusted backend modules in `backend/resources/softn-native/`. Generated artifacts stay out of Git; include them in the deployment. The prebuild checks verify browser runtime and editor assets before compiling the UI. [Hosted apps guide](docs/HOSTED_APPS.md) covers private actions, SQLite storage, static-asset headers and backups.
 
 For local development, Vite keeps requests on `/api` and proxies to `http://127.0.0.1:8080`. Set `VITE_API_PROXY_TARGET` to change that target.
 
@@ -295,7 +337,7 @@ For local development, Vite keeps requests on `/api` and proxies to `http://127.
 
 | Layer | Technology |
 |---|---|
-| Web client | React 19, TypeScript, Vite 7, Tailwind CSS 4, Zustand, React Router and Recharts |
+| Web client | React 19, TypeScript, Vite 8, Tailwind CSS 4, Zustand, React Router and Recharts |
 | Builder & flows | dnd-kit, XYFlow, Monaco, ZIPP WASM and Web Workers |
 | API | PHP 8.2+, Slim 4, PHP-DI and Monolog |
 | Data | MySQL for platform metadata, SQLite response databases per form and a separate SQLite database per hosted app |

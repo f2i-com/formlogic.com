@@ -2967,9 +2967,11 @@ $app->get('/api/apps/{id}/native', function ($request, $response) use ($containe
 $app->put('/api/apps/{id}/native', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
 })->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
-$app->get('/api/apps/{id}/native/{operation:records}', function ($request, $response) use ($container, $getArgs) {
+// Record maintenance has its own bounded budget; browsing must not consume deployment capacity.
+$nativeRecordLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'native_records', true, true);
+$app->map(['GET', 'POST'], '/api/apps/{id}/native/{operation:records}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
-})->add($hostingLimiter)->add($authRequired);
+})->add($nativeRecordLimiter)->add($authRequired);
 $nativeLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'native_apps', true, true);
 $app->get('/api/app/{slug}/entry', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->entry($request, $response, $getArgs($request));

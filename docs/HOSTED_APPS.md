@@ -140,6 +140,7 @@ Install dependencies in the sibling `softn.com` and FormLogic UI repositories, t
 ```powershell
 # From formlogic.com/formlogic/ui
 npm run build:hosted-runtime
+npm run build:app-editors
 npm run test:zipp-sharing
 npm run build
 ```
@@ -219,10 +220,17 @@ migrations. This is separate from the named-action editor described above.
    operator configuration; local development does not provision a public domain.
 4. **Install app project** validates the backend in ZIPP and applies its declared migrations.
    **Screens** edits the public interface/client source. **Backend** edits private `.logic`;
-   existing migrations remain read-only. Import a new numbered migration to evolve the schema.
-5. **Records** browses the actual SQLite tables used by these handlers. It is read-only,
-   paginates 50 rows, previews 400 characters per text cell, and hides host metadata and
-   common authentication-secret columns. Apply data changes through the app's backend rules.
+   both source editors include syntax colours, line numbers, search, wrapping, and light/dark themes.
+   Existing migrations remain read-only. Import a new numbered migration to evolve the schema.
+5. **Records** lets the owner browse, create, edit, and delete records in the app's SQLite tables.
+   The list paginates 50 rows and previews 400 characters per text cell. **View → Edit record**
+   loads full values (up to 100 KB per field); primary keys, generated fields, and binary values
+   stay read-only. Common authentication secrets and host metadata remain hidden. Tables need
+   a visible primary key for editing/deletion; creation requiring private or binary fields goes
+   through the app. Defaults and NULL are separate from empty text. Stale edits are rejected.
+   These owner controls apply database constraints and connected record automations, but do
+   **not** call the app's backend functions. Use the app itself when its business validation is required.
+   Deletion requires confirmation and honours database relationships, including cascades.
 6. **Download editable project** includes the current draft's source, media and migrations.
    It does not contain database records or operator credentials.
 7. **Open Visual Builder** edits layout and components directly in FormLogic. **Open AI Studio**
@@ -270,6 +278,74 @@ counts to 200/100. The browser action bridge currently limits an individual mess
 At most four native workers run concurrently across apps in one storage root, with a 20-second
 worker deadline. This is an initial capacity limit, not a production concurrency benchmark.
 
+### Source and records walkthrough
+
+The following screenshots show the current local interface with a fictional Service desk project.
+
+![Private backend source with syntax highlighting, file selection and publishing](images/native-backend.jpg)
+
+Use **Screens** for `.ui` interfaces and their client logic. Use **Backend** for private `.logic`
+handlers. Both editors have line numbers, word wrapping, search (`Ctrl/Cmd+F`) and light/dark
+colours. Edits stay in a draft until publication. Existing SQL migrations are read-only; add
+new numbered migrations when changing the schema.
+
+![App database with a table selector, filtering, creation and pagination](images/native-records.jpg)
+
+Choose a table, then **Add record** or **View → Edit record**. Automatic IDs and database
+defaults can be left unset. NULL and empty text are separate choices. Saving uses the full
+record, not its shortened list preview. Close and refresh a record if a conflict is reported.
+Deletion requires confirmation and honours foreign-key rules, including cascades.
+
+<img src="images/native-record-editor-mobile.jpg" alt="Mobile editor with a full request title, read-only primary key and save/delete controls" width="360" />
+
+### Owner record API
+
+These session-authenticated endpoints are for the FormLogic project owner, separate from
+visitor accounts inside the hosted application. POST requests require the session's CSRF
+header. The shared demo cannot use native hosting. Record requests have their own limit of
+30 per minute per account, separate from app publication requests.
+
+| Request | Result |
+|---|---|
+| `GET /api/apps/{id}/native/records` | Available application tables. |
+| `GET /api/apps/{id}/native/records?table=items&offset=0` | Up to 50 previews, `hasMore`, schema/field metadata, and `keys` aligned to the returned rows. |
+| `POST /api/apps/{id}/native/records` | Read a full record, create, update or delete using the action body below. |
+
+```json
+{"action":"read","table":"items","key":{"id":"1"}}
+```
+
+Read returns `record.values`, `record.fields` and `record.revision`. Keep the revision for
+the next update or delete. Use the `keys` from the list response rather than deriving IDs
+from shortened previews. Key values and editable numeric values are returned as strings
+so large SQLite integers are preserved.
+
+```json
+{"action":"create","table":"items","values":{"title":"Arrange a site visit"}}
+```
+
+Omit a field to use its database default. Supply JSON `null` explicitly for NULL.
+
+```json
+{"action":"update","table":"items","key":{"id":"1"},"revision":"<revision from read>","values":{"title":"Confirm the site visit"}}
+```
+
+Only send changed, editable fields. Primary keys remain unchanged. Generated and binary
+fields are read-only; secret columns and internal host tables are excluded. Text over
+100 KB is not returned as editable content. A complete visible primary key is required to
+edit/delete, and tables needing required private/binary values must be populated through
+the app. Database constraints are enforced inside the write transaction. Stale or missing
+records return 409; database constraint failures return 422. Successful mutations return
+`{"saved":true}` and queue enabled record automations with the committed write.
+
+```json
+{"action":"delete","table":"items","key":{"id":"1"},"revision":"<revision from read>"}
+```
+
+The API does not present a confirmation dialog: integrations must obtain the intended
+user action before requesting deletion. As in the UI, owner writes bypass the app's backend
+functions. They are maintenance operations, not a replacement for application validation.
+
 ### Record changes and signup flows
 
 Open **App Studio → Automations → Connect database event**. Choose a SQLite table,
@@ -283,8 +359,10 @@ Search the table list and click a table to open its records. The same backend an
 are also available in **Data & forms → Records → Backend code / Database records**, as well
 as Screens' hosting tools. Backend edits publish a new source
 version while preserving records. The database viewer has desktop tables, mobile record cards, expandable details, refresh,
-50-row pagination and a filter limited to the current page. It is read-only; application writes
-continue through its `.logic` routes and their validation rules.
+50-row pagination and a filter limited to the current page. **Add record** creates an entry;
+**View → Edit record** loads its full editable values and provides save/delete controls.
+Owner maintenance applies database constraints and connected automations. It does not call
+the app’s `.logic` validation functions; use the app itself when those rules are required.
 
 The trigger picker creates an ordinary app flow binding. API/MCP clients can configure it
 with `POST /api/apps/{id}/flow-bindings`:
@@ -345,16 +423,18 @@ operator environment. From the FormLogic repository root, run:
 node scripts/prepare-native-runtime.mjs
 cd formlogic/ui
 npm run build:hosted-runtime
+npm run build:app-editors
 npm run build
 ```
 
-Both commands must use the compatible SoftN checkout containing native host protocol 1.
+All preparation commands must use a compatible SoftN checkout containing native host protocol 1.
 The preparation script verifies the ZIPP artifact against FormLogic's pinned identity.
 Generated server assets go in `backend/resources/softn-native/`; the browser runtime goes
 in `ui/public/hosted-runtime/`. An older browser runtime is rejected with an update message.
-These new server assets are optional and are not yet provisioned by the existing pinned
-release workflow. Before a public release, pin the matching SoftN commit and package both
-artifacts together. A clean installation without them reports native hosting unavailable.
+The shared release preparation action builds the browser runtime, embedded editors and
+native backend from a pinned Softn checkout. The package script checks these artifacts before
+staging a release. Source installations must prepare them explicitly. A host without compatible
+Node or native modules reports native hosting unavailable; the frontend also checks editor assets.
 
 Persistent app data is under `backend/storage/native-apps/<sha256(appId)>/private/`, outside
 the public document root. Back up this whole installation with SQLite-consistent snapshots,
