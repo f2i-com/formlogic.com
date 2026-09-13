@@ -27,7 +27,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 function SectionTag({ index, label }: { index: string; label: string }) {
   return (
     <div className="fl-mono inline-flex items-center gap-2.5 text-xs uppercase tracking-[0.2em] text-primary-600 dark:text-primary-400 mb-5">
-      <span className="opacity-60">{index}</span>
+      <span>{index}</span>
       <span className="h-px w-8 bg-primary-500/40" />
       <span>{label}</span>
     </div>
@@ -95,7 +95,7 @@ function PackCard({ pack, onOpen }: { pack: CatalogPack; onOpen: () => void }) {
             >
               <Star className="h-3 w-3 fill-amber-400 text-amber-400" aria-hidden="true" />
               {pack.avgRating.toFixed(1)}
-              <span className="opacity-70">({pack.ratingCount})</span>
+              <span>({pack.ratingCount})</span>
             </span>
           )}
           {pack.downloadCount > 0 && (
@@ -302,8 +302,8 @@ export default function PackGalleryPage() {
                 onClick={() => { setCategoryFilter(cat.name); setTagFilter(''); setPage(1); }}
                 className={chipClass(categoryFilter === cat.name)}
               >
-                {cat.name}
-                <span className="ml-1.5 opacity-60">{cat.count}</span>
+                {cat.name}{' '}
+                <span className="ml-1.5">{cat.count}</span>
               </button>
             ))}
           </div>

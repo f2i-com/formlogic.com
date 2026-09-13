@@ -162,10 +162,15 @@ test.describe('accessibility smoke (axe)', () => {
   // install something — a review a screen-reader user cannot follow is not a review.
   test('marketplace gallery', async ({ page }) => {
     await login(page);
+    const facetsReady = page.waitForResponse(response => response.url().includes('/packs/catalog/facets') && response.ok());
     await page.goto('/packs');
-    // The gallery is a full-bleed marketing-style page without an AppShell <main>; wait on
-    // its own heading instead of assuming a landmark it does not render.
+    const facets = await (await facetsReady).json();
     await page.getByRole('heading', { level: 1 }).first().waitFor({ timeout: 20_000 });
+    // Scan the loaded category counts too, rather than racing the catalogue fetch.
+    for (const category of facets.categories ?? facets.data?.categories ?? []) {
+      await expect(page.getByRole('button', { name: `${category.name} ${category.count}`, exact: true })).toBeVisible();
+    }
+    await expect(page.getByRole('status', { name: 'Loading apps' })).toBeHidden();
     await expectNoSeriousViolations(page, 'marketplace gallery');
   });
 
