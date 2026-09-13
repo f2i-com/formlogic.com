@@ -105,6 +105,10 @@ jobs:
       - name: Prepare hosted app runtime
         uses: ./.github/actions/prepare-hosted-runtime
 
+      - name: Verify native app hosting with the prepared runtime
+        working-directory: formlogic/backend
+        run: FORMLOGIC_NODE_BIN="$(command -v node)" vendor/bin/phpunit tests/Unit/NativeAppServiceTest.php
+
       - name: Test release contracts and PHP signature interoperability
         run: node --test scripts/release-signing.test.mjs
 
