@@ -155,7 +155,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
         </Button>
         {!sidebarCollapsed && (
           <label className="relative block">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400 dark:text-slate-500" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500 dark:text-slate-400" />
             <input
               value={query}
               onChange={(e) => {
@@ -211,7 +211,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
           </div>
         )}
         {appsExpanded && visibleApps.length === 0 && !sidebarCollapsed && (
-          <p className="px-3 py-1.5 text-xs text-gray-400 dark:text-slate-500">
+          <p className="px-3 py-1.5 text-xs text-gray-500 dark:text-slate-400">
             {query.trim() ? 'No apps match your search.' : 'No apps yet — create one to get started.'}
           </p>
         )}
@@ -242,7 +242,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
                     )}>
                       {app.name}
                     </span>
-                    <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-400 dark:text-slate-500">
+                    <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-slate-400">
                       <span
                         className={cn(
                           'h-1.5 w-1.5 rounded-full',
@@ -299,7 +299,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
                     <item.icon className="mt-0.5 h-4 w-4 flex-none" />
                     <span className="min-w-0">
                       <span className="block truncate">{item.label}</span>
-                      <span className="mt-0.5 block text-[11px] leading-snug text-gray-400 dark:text-slate-500">
+                      <span className="mt-0.5 block text-[11px] leading-snug text-gray-500 dark:text-slate-400">
                         {item.hint}
                       </span>
                     </span>
@@ -323,7 +323,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
       {/* Storage Mode Indicator */}
       {!sidebarCollapsed && (
         <div className="px-4 py-2">
-          <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-slate-500">
+          <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400">
             {storageMode === 'api' ? (
               <><Cloud className="h-3.5 w-3.5" /><span>Cloud Storage</span></>
             ) : (
@@ -340,7 +340,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
           aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           className={cn(
             'flex items-center gap-3 px-3 py-2 w-full rounded-lg',
-            'text-gray-500 dark:text-slate-500 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-700 dark:hover:text-slate-300 transition-all duration-200 cursor-pointer',
+            'text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-700 dark:hover:text-slate-300 transition-all duration-200 cursor-pointer',
             sidebarCollapsed && 'justify-center px-0'
           )}
         >

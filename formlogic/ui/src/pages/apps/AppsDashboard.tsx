@@ -147,7 +147,7 @@ export function AppsDashboard() {
         )}
 
         {isLoading ? (
-          <div className="grid grid-cols-1 gap-4 @2xl/apps:grid-cols-2 @2xl/apps:gap-6 @5xl/apps:grid-cols-3" aria-busy="true" aria-label="Loading apps">
+          <div className="grid grid-cols-1 gap-4 @2xl/apps:grid-cols-2 @2xl/apps:gap-6 @5xl/apps:grid-cols-3" role="status" aria-busy="true" aria-label="Loading apps">
             {Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)}
           </div>
         ) : loadError && apps.length === 0 ? (

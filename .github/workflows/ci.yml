@@ -54,6 +54,16 @@ jobs:
         run: |
           find src public config -name '*.php' -print0 | xargs -0 -n1 -P4 php -l > /dev/null
 
+      - name: Set up Node for native backend tests
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.node-version'
+
+      - name: Prepare native app runtime
+        uses: ./.github/actions/prepare-hosted-runtime
+        with:
+          native-only: 'true'
+
       - name: Tests (unit + DB integration)
         run: composer test
 

@@ -1,19 +1,25 @@
 name: Build pinned app runtime and editors
 description: Build and verify the compatible Softn runtime from a clean source checkout
+inputs:
+  native-only:
+    description: Prepare only the native backend runtime for PHP tests
+    default: 'false'
 runs:
   using: composite
   steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         repository: f2i-com/softn.com
-        ref: fdaa8d9fd14b43413c474383711cb0eb7b2361c2
+        ref: 397430383b1690fd413ddbf9698a98fa818bec7f
         path: .runtime-source/softn.com
         persist-credentials: false
     - name: Install pinned runtime dependencies
+      if: inputs.native-only != 'true'
       shell: bash
       working-directory: ${{ github.workspace }}/.runtime-source/softn.com
       run: npm ci
     - name: Build and verify hosted runtime
+      if: inputs.native-only != 'true'
       shell: bash
       working-directory: ${{ github.workspace }}/formlogic/ui
       env:
@@ -23,4 +29,11 @@ runs:
         npm run test:hosted-runtime
         npm run build:app-editors
         node scripts/check-app-editors.mjs
-        node ../../scripts/prepare-native-runtime.mjs
+    - name: Prepare native runtime and test runner
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        SOFTN_REPO: ${{ github.workspace }}/.runtime-source/softn.com
+      run: |
+        node scripts/prepare-native-runtime.mjs
+        echo "FORMLOGIC_NODE_BIN=$(command -v node)" >> "$GITHUB_ENV"

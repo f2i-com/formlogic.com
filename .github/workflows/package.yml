@@ -62,6 +62,16 @@ jobs:
           extensions: pdo, pdo_mysql, pdo_sqlite, sodium, mbstring, curl, gd, zip
           coverage: none
 
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+          cache-dependency-path: formlogic/ui/package-lock.json
+
+      - name: Prepare hosted app runtime
+        uses: ./.github/actions/prepare-hosted-runtime
+
       # Audit FL-REL-001: the release gate must be IDENTICAL-or-stricter than
       # main CI — a tag could previously package from a commit that never ran
       # lint, audits, the bundle budget or the prelude-sync check.
@@ -94,20 +104,6 @@ jobs:
               sleep $((attempt * 15))
             fi
           done
-
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: '.node-version'
-          cache: npm
-          cache-dependency-path: formlogic/ui/package-lock.json
-
-      - name: Prepare hosted app runtime
-        uses: ./.github/actions/prepare-hosted-runtime
-
-      - name: Verify native app hosting with the prepared runtime
-        working-directory: formlogic/backend
-        run: FORMLOGIC_NODE_BIN="$(command -v node)" vendor/bin/phpunit tests/Unit/NativeAppServiceTest.php
 
       - name: Test release contracts and PHP signature interoperability
         run: node --test scripts/release-signing.test.mjs
@@ -176,6 +172,16 @@ jobs:
       - name: Lint (php -l) changed source
         run: |
           find src public config -name '*.php' -print0 | xargs -0 -n1 -P4 php -l > /dev/null
+
+      - name: Set up Node for native backend tests
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.node-version'
+
+      - name: Prepare native app runtime
+        uses: ./.github/actions/prepare-hosted-runtime
+        with:
+          native-only: 'true'
 
       - name: Tests (unit + DB integration)
         run: composer test

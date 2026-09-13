@@ -456,7 +456,7 @@ function FormActionsDropdown({
                 role="menuitem"
                 className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
               >
-                <Pencil className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+                <Pencil className="h-4 w-4 text-gray-500 dark:text-slate-400" />
                 Edit
               </button>
               <button
@@ -464,7 +464,7 @@ function FormActionsDropdown({
                 role="menuitem"
                 className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
               >
-                <Eye className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+                <Eye className="h-4 w-4 text-gray-500 dark:text-slate-400" />
                 Preview
               </button>
               <button
@@ -472,7 +472,7 @@ function FormActionsDropdown({
                 role="menuitem"
                 className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
               >
-                <BarChart3 className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+                <BarChart3 className="h-4 w-4 text-gray-500 dark:text-slate-400" />
                 Analytics
               </button>
               <button
@@ -480,7 +480,7 @@ function FormActionsDropdown({
                 role="menuitem"
                 className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
               >
-                <Table className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+                <Table className="h-4 w-4 text-gray-500 dark:text-slate-400" />
                 View data
               </button>
               <button
@@ -488,7 +488,7 @@ function FormActionsDropdown({
                 role="menuitem"
                 className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
               >
-                <Share2 className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+                <Share2 className="h-4 w-4 text-gray-500 dark:text-slate-400" />
                 Share & embed
               </button>
               <div className="border-t border-gray-100 dark:border-slate-800 my-1" />
@@ -595,7 +595,7 @@ function QuickFind({
   return (
     <div ref={wrapRef} className="relative mb-8 max-w-2xl">
       <div className="relative">
-        <Search className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500" />
+        <Search className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500 dark:text-slate-400" />
         <input
           ref={inputRef}
           type="text"
@@ -614,7 +614,7 @@ function QuickFind({
           }}
           className="w-full pl-10 pr-16 py-3 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900/60 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500 transition-colors shadow-sm"
         />
-        <kbd className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 hidden sm:inline-flex items-center rounded border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 px-1.5 py-0.5 text-[11px] font-medium text-gray-400 dark:text-slate-500">/</kbd>
+        <kbd className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 hidden sm:inline-flex items-center rounded border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 px-1.5 py-0.5 text-[11px] font-medium text-gray-500 dark:text-slate-400">/</kbd>
       </div>
 
       {open && (
@@ -635,7 +635,7 @@ function QuickFind({
             ))}
           </div>
           {results.length === 0 ? (
-            <p className="px-4 py-6 text-center text-sm text-gray-400 dark:text-slate-500">No forms match.</p>
+            <p className="px-4 py-6 text-center text-sm text-gray-500 dark:text-slate-400">No forms match.</p>
           ) : (
             <ul role="listbox" aria-label="Matching forms" className="max-h-80 overflow-y-auto divide-y divide-gray-50 dark:divide-slate-800/60">
               {results.map((form, i) => {
@@ -657,7 +657,7 @@ function QuickFind({
                             </span>
                           )}
                         </div>
-                        <span className="block text-xs text-gray-400 dark:text-slate-500 capitalize">
+                        <span className="block text-xs text-gray-500 dark:text-slate-400 capitalize">
                           {form.status} · {count} record{count === 1 ? '' : 's'}
                         </span>
                       </div>
@@ -696,7 +696,7 @@ function QuickFind({
               })}
             </ul>
           )}
-          <p className="px-4 py-2 border-t border-gray-100 dark:border-slate-800 text-[11px] text-gray-400 dark:text-slate-500">
+          <p className="px-4 py-2 border-t border-gray-100 dark:border-slate-800 text-[11px] text-gray-500 dark:text-slate-400">
             Enter opens the records · click a result to browse its data
           </p>
         </div>
@@ -1645,7 +1645,7 @@ export function Dashboard() {
                                 )}
                               </div>
                               {pulseUnavailable ? <p className="py-3 text-xs text-gray-500 dark:text-slate-400">Activity couldn’t be loaded.</p> : <PulseStrip days={days} loading={statsLoading} />}
-                              <div className="mt-0.5 flex justify-between text-[9px] font-medium uppercase tracking-wider text-gray-400 dark:text-slate-500">
+                              <div className="mt-0.5 flex justify-between text-[9px] font-medium uppercase tracking-wider text-gray-500 dark:text-slate-400">
                                 <span>14 days ago</span>
                                 <span>Today</span>
                               </div>

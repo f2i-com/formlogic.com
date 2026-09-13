@@ -107,7 +107,7 @@ export function MobileNav() {
 
             <div className="space-y-3 border-b border-gray-100 p-3 dark:border-white/[0.07]">
               <label className="relative block">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400 dark:text-slate-500" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500 dark:text-slate-400" />
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
@@ -133,7 +133,7 @@ export function MobileNav() {
                   <p className="mt-3 text-sm font-medium text-gray-700 dark:text-slate-300">
                     {query.trim() ? 'No matching apps' : 'No apps yet'}
                   </p>
-                  <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">
+                  <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
                     {query.trim() ? 'Try a different name.' : 'Create your first app to see it here.'}
                   </p>
                 </div>
@@ -148,7 +148,7 @@ export function MobileNav() {
                     <AppTile app={app} size="sm" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-semibold text-gray-800 dark:text-slate-200">{app.name}</span>
-                      <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-400 dark:text-slate-500">
+                      <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-slate-400">
                         <span className={cn('h-1.5 w-1.5 rounded-full', app.status === 'published' ? 'bg-emerald-500' : 'bg-amber-500')} />
                         {app.status === 'published' ? 'Published' : 'Draft'}
                       </span>
@@ -203,7 +203,7 @@ export function MobileNav() {
                     'flex min-w-0 flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl px-1 py-2 transition-all duration-200',
                     active
                       ? 'bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400'
-                      : 'text-gray-400 hover:text-gray-600 active:bg-gray-100 dark:text-slate-500 dark:hover:text-slate-300 dark:active:bg-slate-800'
+                      : 'text-gray-500 hover:text-gray-600 active:bg-gray-100 dark:text-slate-400 dark:hover:text-slate-300 dark:active:bg-slate-800'
                   )}
                 >
                   <item.icon className={cn('h-5 w-5 transition-transform', active && 'scale-110')} />
@@ -222,7 +222,7 @@ export function MobileNav() {
                     'flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-xl px-1 py-2 transition-all duration-200',
                     isActive
                       ? 'bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400'
-                      : 'text-gray-400 hover:text-gray-600 active:bg-gray-100 dark:text-slate-500 dark:hover:text-slate-300 dark:active:bg-slate-800'
+                      : 'text-gray-500 hover:text-gray-600 active:bg-gray-100 dark:text-slate-400 dark:hover:text-slate-300 dark:active:bg-slate-800'
                   )
                 }
               >

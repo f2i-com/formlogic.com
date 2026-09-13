@@ -239,12 +239,12 @@ class PackTrustAndMetadataTest extends TestCase
     // ADR-010 pins this: a node-only distribution is expressed as an Application Package v2
     // that OMITS content.pack — the Pack v1 form requirement itself is never relaxed.
 
-    public function testPackV1RequiresAtLeastOneForm(): void
+    public function testPackRequiresAFormOrAnAppProject(): void
     {
         $pack = $this->minimalPack();
         $pack['forms'] = [];
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('at least one form');
+        $this->expectExceptionMessage('Pack must contain a form or an app project');
         self::$packs->importPack($pack, $this->userId, null, null, null, []);
     }
 

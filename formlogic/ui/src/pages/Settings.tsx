@@ -624,7 +624,7 @@ export function Settings() {
                   emptyLabel="Use each app's timezone"
                   className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
-                <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Record times (call logs, submissions) show in this zone across every app you use. Leave unset to follow each app's own timezone.</p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Record times (call logs, submissions) show in this zone across every app you use. Leave unset to follow each app's own timezone.</p>
               </div>
               <div className="flex flex-wrap items-center gap-3 border-t border-gray-100 pt-4 dark:border-white/[0.06]">
                 <Button
@@ -847,7 +847,7 @@ export function Settings() {
                               </span>
                             )}
                           </div>
-                          <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
+                          <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
                             {!isOnline && (
                               <>
                                 {conn.lastSeenAt ? `Last seen ${formatRelativeTime(conn.lastSeenAt)}` : 'Never connected'}
@@ -1126,7 +1126,7 @@ export function Settings() {
                             </span>
                           ))}
                         </div>
-                        <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
+                        <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
                           {key.lastUsedAt
                             ? `Last used ${parseServerDate(key.lastUsedAt).toLocaleDateString()}${key.lastUsedIp ? ` from ${key.lastUsedIp}` : ''}`
                             : 'Never used'}

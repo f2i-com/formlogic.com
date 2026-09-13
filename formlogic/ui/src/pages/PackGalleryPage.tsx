@@ -366,7 +366,7 @@ export default function PackGalleryPage() {
 
         {/* Pack grid */}
         {loading ? (
-          <div className="grid grid-cols-1 gap-4 @2xl/packs:grid-cols-2 @4xl/packs:grid-cols-3" aria-busy="true" aria-label="Loading apps">
+          <div className="grid grid-cols-1 gap-4 @2xl/packs:grid-cols-2 @4xl/packs:grid-cols-3" role="status" aria-busy="true" aria-label="Loading apps">
             {Array.from({ length: 6 }).map((_, i) => (
               <PackCardSkeleton key={i} />
             ))}
