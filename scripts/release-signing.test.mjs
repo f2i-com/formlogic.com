@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadReleaseSigner, signReleaseManifest } from './release-signing.mjs';
-import { verifyUploadedAsset } from './check-published-release.mjs';
+import { readReleaseForVerification, verifyUploadedAsset } from './check-published-release.mjs';
 import { checkReleaseRuntime } from './release-runtime.mjs';
 import { writeRuntimeManifest } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 
@@ -30,6 +30,18 @@ test('official releases need no key; offline distribution can require a signatur
   for (const env of [{ GITHUB_ACTIONS: 'true' }, { GITHUB_REF_TYPE: 'tag' }]) {
     assert.equal(loadReleaseSigner(env), null);
   }
+});
+
+test('release verification resolves authenticated drafts before checking uploaded bytes', () => {
+  const bytes = Buffer.from('draft ZIP fixture');
+  const asset = { name: 'formlogic-2.0.0.zip', digest: 'sha256:' + hash(bytes), size: bytes.length };
+  const run = (command, args) => {
+    assert.equal(command, 'gh');
+    assert.deepEqual(args, ['release', 'view', 'v2.0.0', '--repo', 'f2i-com/formlogic.com', '--json', 'tagName,assets']);
+    return JSON.stringify({ tagName: 'v2.0.0', assets: [asset] });
+  };
+  verifyUploadedAsset(readReleaseForVerification('f2i-com/formlogic.com', 'v2.0.0', run), asset.name, bytes);
+  assert.throws(() => readReleaseForVerification('f2i-com/formlogic.com', 'v2.0.0', () => JSON.stringify({ tagName: 'v1.0.0' })), /tag does not match/);
 });
 
 test('publishing requires GitHub to confirm the exact built ZIP', () => {
