@@ -48,6 +48,24 @@ Still open from the recheck: a two-host restart/partition run for R2-XD-01/02 (t
 | OAIY moderate advisories | esbuild ^0.28 (cli), vitest ^5 (desktop), dompurify ^3.4.15 via npm `overrides` (ui; monaco 0.56 still pins a vulnerable dompurify and moves its worker entry points) | all three lockfiles audit clean at every severity; cli, ui and desktop suites and builds pass |
 | Pins | xdb.org (this pass) → softn.com → formlogic.com; manifest regenerated | `node scripts/ecosystem-manifest.mjs --check` |
 
+## Round 3 (14 September 2026, `F2i-Ecosystem-Round-3-Handoff-2026-09-14`)
+
+The round-3 review confirmed the eight round-2 repairs and named six narrower follow-ups plus one hardening item. All were confirmed against the current source before being changed; the review's six registry probes were promoted into the project suites.
+
+| Ticket | Repaired | Regression |
+| --- | --- | --- |
+| R3-SN-01 installation-level gating and durable completion/undo | every digest mapped to an installation with a pending upgrade resolves `upgrade-unresolved` (the older package is not run against possibly-changed data; the person restores the snapshot here or finishes by opening the newer file); completion and undo are bound to the operation (digest + backup); an unsaved completion closes the app with the pending record intact; undo reports data-restored and record-saved separately and never claims more | softn.com `test/upgradeFlow.test.ts` (R3-SN-01 block) |
+| R3-SN-02 truthful registry state | a failing read is `unavailable` (nothing resolves, saves or opens); invalid identity-critical records are kept as damaged material with their raw value, gate the packages they name, block ordinary saves until an explicit discard, while valid records still load; the opaque-origin fallback is one non-durable session registry on which upgrades are refused | `test/upgradeFlow.test.ts` (R3-SN-02 block), `installations.test.ts` |
+| R3-SN-03 browser import preparation failures | every read and preparation precedes the first write; a later-collection read failure changes nothing; crash atomicity across collection writes is documented as not promised | core `xdb-restore-ordering.test.ts` |
+| R3-XD-01 restore pause enforced everywhere | one policy `SyncGate::permits(SyncActivity)` for updates, resets, request answers, join/repair/reconnect reconciliation and publishes (only the committed reset plan may leave while paused), re-checked under the database lock; an unreadable pending file (any error but NotFound) holds the gate with a visible reason | xdb.org `network.rs` and `tauri.rs` tests (paused policy, update waiting for the lock, held resets, unreadable pending file) |
+| R3-XD-02 recoverable authoritative restore | plan computed without touching the live database; data and reset epochs activated in one backup step from the validated staging copy; journal (`phase`, prior catalog, source, backup, plan) written before any byte moves and advanced under the lock; `resume_sync` refuses unapplied or unreadable records; `recover_restore { rollback | complete | discard }` resolves them | `authoritative_restore_activates_data_and_epochs_together_or_leaves_the_live_database_untouched`, `resume_refuses_a_restore_interrupted_before_it_was_applied` |
+| Fork reservation | destination reserved with create-new semantics before the identity is returned; colliding ids and concurrent allocations retry | `fork_allocation_reserves_the_destination_and_retries_a_colliding_id`, `concurrent_fork_allocations_never_share_an_identity` |
+| R3-OAI-01 release evidence | build jobs write `unverified` / `pending`; the tag-only release job attests `verified` / `pass` with the exact run only after the gate succeeded and every artifact digest re-checks; Node version from the runtime | oaiy.com `scripts/attest-release-evidence.test.mjs` (12 cases) |
+
+Pins after round 3: xdb.org 84e952e → softn.com db17857 → formlogic.com (this commit); manifest regenerated and checked. The XDB loopback network test could not be rerun on the reviewer's machine today because unrelated desktop applications hold the mDNS port; it fails identically at discovery on the previous commit, so the round-3 change is not the cause. Rerun it (and the two-host check) before the next tag.
+
+Still open after round 3: the two-host LAN run, the automated desktop upgrade end to end (the loader's unresolved-upgrade and stop-on-unfinalised paths are unit-tested, not driven through Tauri), the ecosystem harness below, and the GitHub-side runs of the OAIY attestation and Aokie no-secrets dispatch.
+
 ## What the ecosystem harness must do when it is built
 
 1. Fixture: one representative Softn app hosted in FormLogic (conventional form + native app), one Aokie synthetic telephony source (no real hardware), OAIY CLI as the flow runner, the pinned ZIPP runtime from the compatibility manifest.
