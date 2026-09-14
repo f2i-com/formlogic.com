@@ -1,11 +1,11 @@
 {
   "kind": "formlogic.ecosystemCompatibilityManifest",
   "formatVersion": 1,
-  "generatedAt": "2026-09-14T22:42:39.076Z",
+  "generatedAt": "2026-09-14T22:45:08.994Z",
   "note": "Source revisions and digests of files present in the tree at generation time. Release workflows must recompute digests of the artifacts they actually ship; provenance is not verification of downloaded bytes.",
   "components": {
     "formlogic": {
-      "revision": "7a83ed60d8cb9a711b999f3d5855ab083acc88a7",
+      "revision": "f5b9be8c9e7a9feea1d938db12b2fd3dc3298ea6",
       "backupFormat": {
         "current": 2,
         "importable": [
@@ -75,7 +75,7 @@
     },
     "modules": {
       "runner.mjs": "f1766373c27de787aa3173977e1de2a99e98a1001f2061b58e2b386a0bd1f6b9",
-      "request-worker.mjs": "d76ede82c57d808c6e0b4a956c67b0ca9b534453e12a2e64fb89868160bce22f",
+      "request-worker.mjs": "0255450a99f0f2218c219d25fe8627239ff0abb2ef68d4a013ee4298c2a56c68",
       "request-hook.mjs": "ec1c9dfb3e2fc183574fc1819abd8300c1e9441d4615b71fed3c16b5712a067e",
       "wasm-host.mjs": "03a566be4dc334e7a1af9e4b7032b3f846ebe36141e25ded345a716d0b7a940d",
       "migrations.mjs": "f5994e7acd3b1288f8da209d77615334814d5e92cbeba5a78f9a8b88d83b4c7b",
