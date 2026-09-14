@@ -1,11 +1,11 @@
 {
   "kind": "formlogic.ecosystemCompatibilityManifest",
   "formatVersion": 1,
-  "generatedAt": "2026-09-14T21:38:55.849Z",
+  "generatedAt": "2026-09-14T22:03:46.279Z",
   "note": "Source revisions and digests of files present in the tree at generation time. Release workflows must recompute digests of the artifacts they actually ship; provenance is not verification of downloaded bytes.",
   "components": {
     "formlogic": {
-      "revision": "d7d1999bfe5c0d5dc5de58a229b3e27e597c351a",
+      "revision": "fa8e82e10fed1b4486c4892af2407881b6ddee64",
       "backupFormat": {
         "current": 2,
         "importable": [
@@ -17,8 +17,8 @@
     },
     "softn": {
       "pinnedBy": "formlogic/.github/actions/prepare-hosted-runtime/action.yml",
-      "revision": "13ed8e9a595c04a88c418b73079bd61e2ed9255e",
-      "checkoutRevision": "13ed8e9a595c04a88c418b73079bd61e2ed9255e",
+      "revision": "1c9cb07509c0954bd55aa4f6c134cd71f272bcc5",
+      "checkoutRevision": "1c9cb07509c0954bd55aa4f6c134cd71f272bcc5",
       "nativeProtocol": 1,
       "recordEvents": 1,
       "minimumNode": "24.19.0"
