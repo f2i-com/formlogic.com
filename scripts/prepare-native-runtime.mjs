@@ -4,13 +4,14 @@ import { mkdir, readFile, writeFile, copyFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolve, sep } from 'node:path';
+import { NATIVE_PROTOCOL, RECORD_EVENTS_PROTOCOL } from '../formlogic/ui/scripts/softn-protocol.mjs';
 const repository = process.env.SOFTN_REPO ? pathToFileURL(resolve(process.env.SOFTN_REPO) + sep) : new URL('../../softn.com/', import.meta.url);
 const source = new URL('apps/softn-php/runtime/', repository);
 const wasm = new URL('packages/@softn/core/wasm-zipp/', repository);
 const target = new URL('../formlogic/backend/resources/softn-native/', import.meta.url);
 const modules = ['runner.mjs','request-worker.mjs','request-hook.mjs','wasm-host.mjs','migrations.mjs','crypto.mjs','time.mjs','host-protocol.json','record-events.mjs'];
 const protocol = JSON.parse(await readFile(new URL('host-protocol.json', source), 'utf8'));
-if (protocol.nativeProtocol !== 1 || protocol.recordEvents !== 1) throw new Error('Use a SoftN checkout supporting native hosting protocol 1.');
+if (protocol.nativeProtocol !== NATIVE_PROTOCOL || protocol.recordEvents !== RECORD_EVENTS_PROTOCOL) throw new Error(`Use a SoftN checkout supporting native hosting protocol ${NATIVE_PROTOCOL} (record events ${RECORD_EVENTS_PROTOCOL}).`);
 const expected = JSON.parse(await readFile(new URL('../formlogic/ui/vendor/zipp-wasm/SOURCE.json', import.meta.url), 'utf8'));
 const identity = JSON.parse(await readFile(new URL('SOURCE.json', wasm), 'utf8'));
 const hash = createHash('sha256').update(await readFile(new URL('zipp_wasm_bg.wasm', wasm))).digest('hex');
@@ -27,5 +28,5 @@ for (const [from, to] of [['zipp_wasm.js','wasm/zipp_wasm.mjs'],['zipp_wasm_bg.w
 }
 for (const name of ['LICENSE','NOTICE']) await copyFile(new URL(name, repository), new URL(name, target));
 await copyFile(new URL('THIRD_PARTY_LICENSES.txt', wasm), new URL('ZIPP-THIRD-PARTY-LICENSES.txt', target));
-await writeFile(new URL('provenance.json',target), JSON.stringify({ source:'softn.com/apps/softn-php/runtime',nativeProtocol:1,zipp:identity,modules:hashes },null,2)+'\n');
+await writeFile(new URL('provenance.json',target), JSON.stringify({ source:'softn.com/apps/softn-php/runtime',nativeProtocol:NATIVE_PROTOCOL,zipp:identity,modules:hashes },null,2)+'\n');
 console.log('Prepared native app runtime: '+fileURLToPath(target));

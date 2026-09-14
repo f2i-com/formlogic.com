@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { resolveDefaultLlm } from '../../client-runtime/flows/aiDefault';
+import { EDITOR_BRIDGE_PROTOCOL } from '../../lib/softn/protocol';
 import { ArrowLeft, Check } from 'lucide-react';
 import { Button } from '../ui/Button';
 
@@ -76,7 +77,7 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose }: {
     let disposed = false;
     const aiRequests = new Map<string, AbortController>();
     const receive = (event: MessageEvent) => {
-      if (event.source !== frame.current?.contentWindow || event.origin !== location.origin || event.data?.kind !== 'formlogic-editor-ready' || event.data?.protocol !== 1 || port.current) return;
+      if (event.source !== frame.current?.contentWindow || event.origin !== location.origin || event.data?.kind !== 'formlogic-editor-ready' || event.data?.protocol !== EDITOR_BRIDGE_PROTOCOL || port.current) return;
       const channel = new MessageChannel();
       port.current = channel.port1;
       channel.port1.onmessage = ({ data }) => {
@@ -101,7 +102,7 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose }: {
         else waiting.reject(new Error(typeof data.error === 'string' ? data.error : 'Editor operation failed.'));
       };
       channel.port1.start();
-      frame.current!.contentWindow!.postMessage({ kind: 'formlogic-editor-connect', protocol: 1 }, location.origin, [channel.port2]);
+      frame.current!.contentWindow!.postMessage({ kind: 'formlogic-editor-connect', protocol: EDITOR_BRIDGE_PROTOCOL }, location.origin, [channel.port2]);
       void Promise.resolve().then(() => request('open', { bytes: editorBundle(bundle), name, theme: document.documentElement.classList.contains("dark") ? "dark" : "light" })).then(() => { if (!disposed) setReady(true); }).catch(reason => { if (!disposed) setError(reason.message); });
     };
     window.addEventListener('message', receive);

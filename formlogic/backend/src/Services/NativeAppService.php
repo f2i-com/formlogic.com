@@ -33,7 +33,24 @@ class NativeAppService
     public const CRYPTO_RESTORED = 'restored';
     public const CRYPTO_REISSUED = 'reissued';
 
+    /**
+     * The native hosting protocol this service speaks, and the record-event protocol it
+     * understands. Softn's runtime declares its own in host-protocol.json; the prepared
+     * runtime is refused unless they agree. The UI keeps the same numbers in
+     * formlogic/ui/src/lib/softn/protocol.json (NativeAppServiceTest pins the two together).
+     */
+    public const NATIVE_PROTOCOL = 1;
+    public const RECORD_EVENTS_PROTOCOL = 1;
+
     private const PREFLIGHT_TTL = 60;
+
+    /**
+     * Environment variables the Node runtime is allowed to inherit from PHP. Everything else
+     * (database credentials, API keys, whatever the operator's .env put in the process
+     * environment) stays with PHP: the guest cannot read process.env, but the runtime should
+     * not hold secrets it has no use for. Compared case-insensitively (Windows).
+     */
+    private const NODE_ENV_ALLOWLIST = ['PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'LANG', 'LC_ALL', 'NODE_OPTIONS', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE'];
 
     public function __construct(private ?string $storagePath = null, private ?string $runtimePath = null, private ?string $nodeBinary = null) {}
 
@@ -314,12 +331,12 @@ class NativeAppService
         $missing ? $fail('runtime.files', 'Native runtime is not prepared; missing ' . implode(', ', $missing) . ' (run scripts/prepare-native-runtime.mjs)') : $pass('runtime.files', 'Native runtime artifacts are present');
 
         $protocol = $missing ? null : json_decode((string) file_get_contents($this->runtime() . '/host-protocol.json'), true);
-        if (!is_array($protocol) || ($protocol['nativeProtocol'] ?? null) !== 1) {
-            if (!$missing) $fail('runtime.protocol', 'The prepared runtime does not speak native hosting protocol 1');
+        if (!is_array($protocol) || ($protocol['nativeProtocol'] ?? null) !== self::NATIVE_PROTOCOL) {
+            if (!$missing) $fail('runtime.protocol', 'The prepared runtime does not speak native hosting protocol ' . self::NATIVE_PROTOCOL);
         } else {
-            $runtime['nativeProtocol'] = 1;
-            $runtime['recordEvents'] = ($protocol['recordEvents'] ?? null) === 1 && is_file($this->runtime() . '/record-events.mjs') ? 1 : 0;
-            $pass('runtime.protocol', 'Native hosting protocol 1' . ($runtime['recordEvents'] === 1 ? ' with record automations' : ' (record automations unavailable)'));
+            $runtime['nativeProtocol'] = self::NATIVE_PROTOCOL;
+            $runtime['recordEvents'] = ($protocol['recordEvents'] ?? null) === self::RECORD_EVENTS_PROTOCOL && is_file($this->runtime() . '/record-events.mjs') ? self::RECORD_EVENTS_PROTOCOL : 0;
+            $pass('runtime.protocol', 'Native hosting protocol ' . self::NATIVE_PROTOCOL . ($runtime['recordEvents'] === self::RECORD_EVENTS_PROTOCOL ? ' with record automations' : ' (record automations unavailable)'));
         }
         $provenance = is_file($this->runtime() . '/provenance.json') ? json_decode((string) file_get_contents($this->runtime() . '/provenance.json'), true) : null;
         if (is_array($provenance)) $runtime['zipp'] = ['version' => $provenance['zipp']['version'] ?? null, 'sha256' => $provenance['zipp']['sha256'] ?? null];
@@ -404,6 +421,64 @@ class NativeAppService
     }
 
     /** Run a command with a hard deadline; null when it did not finish in time. @return array{exit:int, stdout:string}|null */
+    /**
+     * The version of the configured Node binary, cached on disk for PREFLIGHT_TTL under a key
+     * that names the binary (path, and its mtime/size when the path is a file), so a request
+     * costs one `node --version` per minute at most rather than one per request. Null when the
+     * binary does not run.
+     */
+    private function nodeVersion(): ?string
+    {
+        $node = $this->nodeBinary();
+        $key = $node . '|' . (is_file($node) ? filemtime($node) . ':' . filesize($node) : 'path');
+        $cacheFile = $this->storageRoot() . '/.node-version.json';
+        if (is_file($cacheFile)) {
+            $cached = json_decode((string) file_get_contents($cacheFile), true);
+            if (is_array($cached) && ($cached['key'] ?? null) === $key && (int) ($cached['at'] ?? 0) > time() - self::PREFLIGHT_TTL && is_string($cached['version'] ?? null)) return $cached['version'];
+        }
+        $result = $this->runBounded([$node, '--version'], 8);
+        if ($result === null || $result['exit'] !== 0 || !preg_match('/^v?(\d+\.\d+\.\d+)/', trim($result['stdout']), $m)) return null;
+        try {
+            $this->directory($this->storageRoot());
+            $pending = $cacheFile . '.' . bin2hex(random_bytes(4));
+            if (file_put_contents($pending, json_encode(['key' => $key, 'at' => time(), 'version' => $m[1]], JSON_THROW_ON_ERROR)) !== false) rename($pending, $cacheFile);
+        } catch (\Throwable $e) { /* caching is best effort */ }
+        return $m[1];
+    }
+
+    /**
+     * Refuse to start the runtime on a Node binary older than the runtime's own minimum
+     * (host-protocol.json `minimumNode`). Preflight reports the same condition for operators,
+     * but its result is cached and the binary can change underneath it; a request that would
+     * otherwise fail deep inside the worker (node:sqlite is Node 22.5+) gets a clear message.
+     */
+    private function assertNodeMeetsMinimum(?array $protocol): void
+    {
+        $minimum = is_array($protocol) && is_string($protocol['minimumNode'] ?? null) ? $protocol['minimumNode'] : null;
+        if ($minimum === null) return;
+        $version = $this->nodeVersion();
+        if ($version === null) throw new RuntimeException('The native runtime\'s Node.js binary could not be executed (set FORMLOGIC_NODE_BIN to a working Node.js install)', 503);
+        if (version_compare($version, $minimum, '<')) throw new RuntimeException('Node.js ' . $version . ' is older than the native runtime minimum ' . $minimum . '; update Node.js or FORMLOGIC_NODE_BIN', 503);
+    }
+
+    /**
+     * The environment the Node runtime is started with: the allowlisted subset of `$source`
+     * (normally PHP's own environment) plus the host's own variables, which always win.
+     *
+     * @param array<string, mixed> $source
+     * @param array<string, string> $host
+     * @return array<string, string>
+     */
+    public static function nodeEnvironment(array $source, array $host): array
+    {
+        $env = [];
+        foreach ($source as $name => $value) {
+            if (!is_string($name) || !is_scalar($value) || !in_array(strtoupper($name), self::NODE_ENV_ALLOWLIST, true)) continue;
+            $env[$name] = (string) $value;
+        }
+        return array_merge($env, ['NODE_NO_WARNINGS' => '1'], $host);
+    }
+
     private function runBounded(array $command, int $seconds): ?array
     {
         if (!function_exists('proc_open')) return null;
@@ -671,7 +746,9 @@ class NativeAppService
 
     private function invoke(string $root, array $request, array $identity = [], array $subscriptions = []): array
     {
-        if ($subscriptions && (!is_file($this->runtime() . '/record-events.mjs') || (json_decode(file_get_contents($this->runtime() . '/host-protocol.json'), true)['recordEvents'] ?? null) !== 1)) throw new RuntimeException('Update the native runtime to enable record automations');
+        $protocol = json_decode((string) file_get_contents($this->runtime() . '/host-protocol.json'), true);
+        if ($subscriptions && (!is_file($this->runtime() . '/record-events.mjs') || ($protocol['recordEvents'] ?? null) !== self::RECORD_EVENTS_PROTOCOL)) throw new RuntimeException('Update the native runtime to enable record automations');
+        $this->assertNodeMeetsMinimum(is_array($protocol) ? $protocol : null);
         $base = $root . '/private/request-' . bin2hex(random_bytes(12));
         $input = json_encode($request, JSON_THROW_ON_ERROR);
         if (strlen($input) > 6000000) throw new InvalidArgumentException('Request exceeds the native host limit');
@@ -688,8 +765,10 @@ class NativeAppService
         }
         if (!$slot) { unlink($base . '.in'); throw new RuntimeException('The native host is busy. Try again shortly.', 429); }
         try {
-            $node = $this->nodeBinary ?? ($_ENV['FORMLOGIC_NODE_BIN'] ?? getenv('FORMLOGIC_NODE_BIN') ?: 'node');
-            $env = array_merge(getenv(), ['SOFTN_BACKEND_ROOT' => $root, 'NODE_NO_WARNINGS' => '1', 'SOFTN_HOST_CONTEXT' => json_encode($identity, JSON_THROW_ON_ERROR), 'SOFTN_RECORD_EVENTS' => json_encode($subscriptions, JSON_THROW_ON_ERROR)]);
+            $node = $this->nodeBinary();
+            // Only the allowlisted variables reach the runtime (see NODE_ENV_ALLOWLIST); the
+            // three SOFTN_* values are the whole host context the worker reads.
+            $env = self::nodeEnvironment(getenv(), ['SOFTN_BACKEND_ROOT' => $root, 'SOFTN_HOST_CONTEXT' => json_encode($identity, JSON_THROW_ON_ERROR), 'SOFTN_RECORD_EVENTS' => json_encode($subscriptions, JSON_THROW_ON_ERROR)]);
             $process = proc_open([$node, '--max-old-space-size=128', '--disable-proto=throw', $this->runtime() . '/runner.mjs'], [0 => ['file', $base . '.in', 'r'], 1 => ['file', $base . '.out', 'w'], 2 => ['file', $base . '.err', 'w']], $pipes, $root, $env, ['bypass_shell' => true]);
             if (!is_resource($process)) throw new RuntimeException('Native runtime could not start');
             $deadline = microtime(true) + 25;

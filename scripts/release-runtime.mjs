@@ -18,11 +18,12 @@ export async function checkReleaseRuntime(directory, expected) {
 }
 
 export { checkAppEditors } from '../formlogic/ui/scripts/check-app-editors.mjs';
+import { NATIVE_PROTOCOL, RECORD_EVENTS_PROTOCOL } from '../formlogic/ui/scripts/softn-protocol.mjs';
 
 export async function checkNativeRuntime(directory, expected) {
   const provenance = JSON.parse(await readFile(resolve(directory, 'provenance.json'), 'utf8'));
   const protocol = JSON.parse(await readFile(resolve(directory, 'host-protocol.json'), 'utf8'));
-  if (provenance.nativeProtocol !== 1 || protocol.nativeProtocol !== 1 || protocol.recordEvents !== 1 || provenance.zipp?.sha256 !== expected.sha256 || provenance.zipp?.version !== expected.version) throw new Error('The native app runtime is incompatible. Run node scripts/prepare-native-runtime.mjs.');
+  if (provenance.nativeProtocol !== NATIVE_PROTOCOL || protocol.nativeProtocol !== NATIVE_PROTOCOL || protocol.recordEvents !== RECORD_EVENTS_PROTOCOL || provenance.zipp?.sha256 !== expected.sha256 || provenance.zipp?.version !== expected.version) throw new Error('The native app runtime is incompatible. Run node scripts/prepare-native-runtime.mjs.');
   for (const name of ['runner.mjs','request-worker.mjs','request-hook.mjs','wasm-host.mjs','migrations.mjs','crypto.mjs','time.mjs','host-protocol.json','record-events.mjs','wasm/zipp_wasm_bg.wasm']) {
     const hash = createHash('sha256').update(await readFile(resolve(directory, name))).digest('hex');
     if (hash !== (name.endsWith('.wasm') ? expected.sha256 : provenance.modules?.[name])) throw new Error(`Native runtime module is missing or changed: ${name}`);

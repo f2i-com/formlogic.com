@@ -1,5 +1,6 @@
 import { access, cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { runtimeIdentity, assertMatchingRuntime, writeRuntimeManifest, checkRuntimeArtifact } from './hosted-runtime-artifact.mjs';
+import { EDITOR_BRIDGE_PROTOCOL } from './softn-protocol.mjs';
 import { spawnSync } from 'node:child_process';
 import { dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +24,7 @@ try {
     if (result.status !== 0) throw new Error(`${kind} build failed.`);
     await access(resolve(stage, kind, 'index.html'));
   }
-  await writeFile(resolve(stage, 'manifest.json'), JSON.stringify({ protocol: 1, editors: ['builder', 'studio'], builtAt: new Date().toISOString() }) + '\n');
+  await writeFile(resolve(stage, 'manifest.json'), JSON.stringify({ protocol: EDITOR_BRIDGE_PROTOCOL, editors: ['builder', 'studio'], builtAt: new Date().toISOString() }) + '\n');
   await cp(resolve(softn, 'LICENSE'), resolve(stage, 'LICENSE'));
   await cp(resolve(softn, 'NOTICE'), resolve(stage, 'NOTICE'));
   await rm(output, { recursive: true, force: true });

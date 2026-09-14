@@ -144,6 +144,63 @@ final class NativeAppServiceTest extends TestCase
         $this->assertArrayHasKey('storage.writable', $failing($result));
     }
 
+    // ── integration audit M2/M3/L3: request-time guards and the shared protocol ──
+
+    public function testRequestRefusesANodeBinaryOlderThanTheRuntimeMinimum(): void
+    {
+        $this->service->install('notes', $this->project(), 0);
+        $this->assertSame(201, $this->createNote('Before')['status']);
+
+        // The same installed app, served by a runtime whose declared minimum no Node meets.
+        $runtime = dirname(__DIR__, 2) . '/resources/softn-native';
+        $strict = $this->storage . '/strict-runtime';
+        mkdir($strict . '/wasm', 0700, true);
+        foreach (['runner.mjs', 'request-worker.mjs', 'request-hook.mjs', 'wasm-host.mjs', 'migrations.mjs', 'crypto.mjs', 'time.mjs', 'record-events.mjs', 'wasm/zipp_wasm.mjs', 'wasm/zipp_wasm_bg.wasm'] as $file) copy($runtime . '/' . $file, $strict . '/' . $file);
+        file_put_contents($strict . '/host-protocol.json', json_encode(['nativeProtocol' => NativeAppService::NATIVE_PROTOCOL, 'recordEvents' => NativeAppService::RECORD_EVENTS_PROTOCOL, 'minimumNode' => '99.0.0']));
+        $service = new NativeAppService($this->storage, $strict, getenv('FORMLOGIC_NODE_BIN'));
+        try {
+            $service->request('notes', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'Refused'], 'client_ip' => '127.0.0.1']);
+            $this->fail('a too-old Node binary must be refused before the worker starts');
+        } catch (\RuntimeException $e) {
+            $this->assertSame(503, $e->getCode());
+            $this->assertMatchesRegularExpression('/^Node\.js \d+\.\d+\.\d+ is older than the native runtime minimum 99\.0\.0/', $e->getMessage());
+            $this->assertStringNotContainsString($this->storage, $e->getMessage());
+        }
+        $this->assertSame([['id' => 1, 'title' => 'Before']], $this->service->records('notes', 'notes')['rows'], 'nothing reached the database');
+
+        // A runtime that declares no minimum, or one this Node meets, still serves requests.
+        file_put_contents($strict . '/host-protocol.json', json_encode(['nativeProtocol' => NativeAppService::NATIVE_PROTOCOL, 'recordEvents' => NativeAppService::RECORD_EVENTS_PROTOCOL, 'minimumNode' => '22.5.0']));
+        $this->assertSame(201, $service->request('notes', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'Served'], 'client_ip' => '127.0.0.1'])['status']);
+        $this->assertFileExists($this->storage . '/.node-version.json', 'the Node version is cached so a request does not spawn node --version every time');
+    }
+
+    public function testNodeEnvironmentPassesOnlyAllowlistedVariablesAndTheHostContext(): void
+    {
+        $source = [
+            'Path' => 'C:\\nodejs;C:\\Windows', 'SystemRoot' => 'C:\\Windows', 'TEMP' => 'C:\\tmp', 'HOME' => '/home/php', 'NODE_OPTIONS' => '--stack-size=2000',
+            'DB_PASSWORD' => 'hunter2', 'DB_USERNAME' => 'root', 'APP_KEY' => 'base64:secret', 'OPENAI_API_KEY' => 'sk-live', 'FORMLOGIC_NODE_BIN' => 'node',
+            'SOFTN_HOST_CONTEXT' => '{"spoofed":true}', 'NODE_NO_WARNINGS' => '0', 'NOT_A_STRING' => ['x'],
+        ];
+        $env = NativeAppService::nodeEnvironment($source, ['SOFTN_BACKEND_ROOT' => '/apps/one', 'SOFTN_HOST_CONTEXT' => '{"userId":"u1"}', 'SOFTN_RECORD_EVENTS' => '[]']);
+        $this->assertSame([
+            'Path' => 'C:\\nodejs;C:\\Windows', 'SystemRoot' => 'C:\\Windows', 'TEMP' => 'C:\\tmp', 'HOME' => '/home/php', 'NODE_OPTIONS' => '--stack-size=2000',
+            'NODE_NO_WARNINGS' => '1', 'SOFTN_BACKEND_ROOT' => '/apps/one', 'SOFTN_HOST_CONTEXT' => '{"userId":"u1"}', 'SOFTN_RECORD_EVENTS' => '[]',
+        ], $env);
+        foreach (['DB_PASSWORD', 'DB_USERNAME', 'APP_KEY', 'OPENAI_API_KEY', 'FORMLOGIC_NODE_BIN', 'NOT_A_STRING'] as $secret) $this->assertArrayNotHasKey($secret, $env);
+        $this->assertSame('{"userId":"u1"}', $env['SOFTN_HOST_CONTEXT'], 'the host context comes from the host, never from the process environment');
+    }
+
+    public function testProtocolConstantsMatchTheUiAndThePreparedRuntime(): void
+    {
+        // formlogic/ui/src/lib/softn/protocol.json is the shared source of truth for the UI and the build scripts.
+        $shared = json_decode((string) file_get_contents(dirname(__DIR__, 3) . '/ui/src/lib/softn/protocol.json'), true);
+        $this->assertSame($shared['nativeProtocol'], NativeAppService::NATIVE_PROTOCOL);
+        $this->assertSame($shared['recordEvents'], NativeAppService::RECORD_EVENTS_PROTOCOL);
+        $runtime = json_decode((string) file_get_contents(dirname(__DIR__, 2) . '/resources/softn-native/host-protocol.json'), true);
+        $this->assertSame(NativeAppService::NATIVE_PROTOCOL, $runtime['nativeProtocol']);
+        $this->assertSame(NativeAppService::RECORD_EVENTS_PROTOCOL, $runtime['recordEvents']);
+    }
+
     // ── audit FL-02: backup surface and restore ───────────────────────────────
 
     public function testDescribeSnapshotAndRestorePreserveRecordsAndKeyMaterial(): void

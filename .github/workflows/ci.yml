@@ -120,19 +120,12 @@ jobs:
           cache: npm
           cache-dependency-path: formlogic/ui/package-lock.json
 
+      # ECO-02: the action ends by checking the committed compatibility
+      # manifest against this tree and the pinned Softn checkout, so every
+      # job that prepares the runtime (this one, the backend job, e2e and
+      # packaging) fails on a stale manifest or a drifted pin before any test.
       - name: Prepare hosted app runtime
         uses: ./.github/actions/prepare-hosted-runtime
-
-      # ECO-02: the committed compatibility manifest must describe THIS tree:
-      # the pinned Softn revision, its pinned XDB revision, the vendored ZIPP
-      # release (identical bytes in FormLogic, Softn and the prepared native
-      # runtime), protocol versions and data-format ranges. A stale manifest,
-      # a drifted pin or mismatched engine bytes fail here before any test.
-      - name: Ecosystem compatibility manifest (pins, digests, protocols)
-        working-directory: ${{ github.workspace }}
-        env:
-          SOFTN_REPO: ${{ github.workspace }}/.runtime-source/softn.com
-        run: node scripts/ecosystem-manifest.mjs --check
 
       - name: Install dependencies
         run: npm ci

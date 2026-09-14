@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import { workspaceBridge } from "../../lib/softn/workspaceBridge";
+import { NATIVE_PROTOCOL } from "../../lib/softn/protocol";
 import { getZippWasmBytes, matchesZippRuntime } from "../../lib/formlogic/zipp-bytes";
 
 import { nativeAppStorage } from "../../lib/nativeAppStorage";
@@ -57,7 +58,7 @@ export function HostedAppFrame({
         channel || initializing || expired
       )
         return;
-      if (native && event.data.nativeProtocol !== 1) {
+      if (native && event.data.nativeProtocol !== NATIVE_PROTOCOL) {
         clearTimeout(timeout);
         setError("This hosted runtime does not support native apps yet. Update the hosted app runtime and reload.");
         return;

@@ -2,10 +2,11 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkRuntimeArtifact, runtimeIdentity } from './hosted-runtime-artifact.mjs';
+import { EDITOR_BRIDGE_PROTOCOL } from './softn-protocol.mjs';
 
 export async function checkAppEditors(directory, expected) {
   const metadata = JSON.parse(await readFile(resolve(directory, 'manifest.json'), 'utf8'));
-  if (metadata.protocol !== 1 || JSON.stringify(metadata.editors) !== JSON.stringify(['builder', 'studio'])) throw new Error('Unsupported app editor bridge protocol.');
+  if (metadata.protocol !== EDITOR_BRIDGE_PROTOCOL || JSON.stringify(metadata.editors) !== JSON.stringify(['builder', 'studio'])) throw new Error('Unsupported app editor bridge protocol.');
   for (const editor of metadata.editors) {
     const artifact = await checkRuntimeArtifact(resolve(directory, editor), expected);
     const wasm = Object.entries(artifact.files).filter(([path]) => /zipp_wasm_bg(?:-[^/]+)?\.wasm$/.test(path));

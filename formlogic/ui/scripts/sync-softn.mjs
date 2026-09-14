@@ -4,7 +4,10 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 const source = new URL('../../../../softn.com/packages/@softn/core/src/integrations/formlogic.ts', import.meta.url);
 const destination = new URL('../src/lib/softn/', import.meta.url);
-const content = await readFile(source, 'utf8');
+// LF on both sides: the digest recorded here is compared by
+// scripts/ecosystem-manifest.mjs against the Softn source at the pinned
+// revision, on Windows (CRLF checkouts) and in CI (LF) alike.
+const content = (await readFile(source, 'utf8')).replace(/\r\n/g, '\n');
 await mkdir(destination, { recursive: true });
 await writeFile(new URL('project.ts', destination), '// Vendored from SoftN. Refresh with node scripts/sync-softn.mjs.\n' + content);
 await writeFile(new URL('provenance.json', destination), JSON.stringify({ source: 'softn.com/packages/@softn/core/src/integrations/formlogic.ts', license: 'Apache-2.0', sha256: createHash('sha256').update(content).digest('hex') }, null, 2) + '\n');
