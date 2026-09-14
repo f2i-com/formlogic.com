@@ -3,7 +3,7 @@
  * in one place. `protocol.json` is the source of truth: this module types it
  * for the UI, `scripts/softn-protocol.mjs` reads it for the build scripts, and
  * `NativeAppService` keeps the same numbers on the PHP side (its test pins them
- * to this file). Softn declares its own in `apps/softn-php/runtime/host-protocol.json`
+ * to this file). Softn declares its own in `apps/softn-host-php/runtime/host-protocol.json`
  * and in the `formlogic:ready` / `formlogic-editor-ready` messages; the
  * ecosystem manifest check fails when the two repositories disagree.
  *

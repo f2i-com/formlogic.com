@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolve, sep } from 'node:path';
 import { NATIVE_PROTOCOL, RECORD_EVENTS_PROTOCOL } from '../formlogic/ui/scripts/softn-protocol.mjs';
 const repository = process.env.SOFTN_REPO ? pathToFileURL(resolve(process.env.SOFTN_REPO) + sep) : new URL('../../softn.com/', import.meta.url);
-const source = new URL('apps/softn-php/runtime/', repository);
+const source = new URL('apps/softn-host-php/runtime/', repository);
 const wasm = new URL('packages/@softn/core/wasm-zipp/', repository);
 const target = new URL('../formlogic/backend/resources/softn-native/', import.meta.url);
 const modules = ['runner.mjs','request-worker.mjs','request-hook.mjs','wasm-host.mjs','migrations.mjs','crypto.mjs','time.mjs','host-protocol.json','record-events.mjs'];
@@ -28,5 +28,5 @@ for (const [from, to] of [['zipp_wasm.js','wasm/zipp_wasm.mjs'],['zipp_wasm_bg.w
 }
 for (const name of ['LICENSE','NOTICE']) await copyFile(new URL(name, repository), new URL(name, target));
 await copyFile(new URL('THIRD_PARTY_LICENSES.txt', wasm), new URL('ZIPP-THIRD-PARTY-LICENSES.txt', target));
-await writeFile(new URL('provenance.json',target), JSON.stringify({ source:'softn.com/apps/softn-php/runtime',nativeProtocol:NATIVE_PROTOCOL,zipp:identity,modules:hashes },null,2)+'\n');
+await writeFile(new URL('provenance.json',target), JSON.stringify({ source:'softn.com/apps/softn-host-php/runtime',nativeProtocol:NATIVE_PROTOCOL,zipp:identity,modules:hashes },null,2)+'\n');
 console.log('Prepared native app runtime: '+fileURLToPath(target));

@@ -18,7 +18,7 @@
 //   <softn>/.github/scripts/checkout-xdb.sh                   Softn -> XDB revision
 //   formlogic/ui/vendor/zipp-wasm/SOURCE.json                 FormLogic's vendored ZIPP release + digest
 //   <softn>/packages/@softn/core/wasm-zipp/SOURCE.json        Softn's vendored ZIPP release + digest
-//   <softn>/apps/softn-php/runtime/host-protocol.json         native hosting protocol versions
+//   <softn>/apps/softn-host-php/runtime/host-protocol.json         native hosting protocol versions
 //   formlogic/backend/resources/softn-native/provenance.json  what the prepared native runtime carries
 //   formlogic/ui/src/lib/softn/provenance.json                 the vendored FormLogic adapter's source digest
 //   formlogic/ui/src/lib/softn/protocol.json                   the protocol versions FormLogic speaks
@@ -72,7 +72,7 @@ if (existsSync(softnRepo)) {
   const checkout = read(resolve(softnRepo, '.github/scripts/checkout-xdb.sh'));
   xdbPin = /XDB_COMMIT="([0-9a-f]{40})"/.exec(checkout)?.[1] ?? null;
   must(xdbPin, 'softn checkout-xdb.sh does not pin a 40-hex XDB revision');
-  softnProtocol = json(resolve(softnRepo, 'apps/softn-php/runtime/host-protocol.json'));
+  softnProtocol = json(resolve(softnRepo, 'apps/softn-host-php/runtime/host-protocol.json'));
   softnZipp = json(resolve(softnRepo, 'packages/@softn/core/wasm-zipp/SOURCE.json'));
   const loaderCargo = read(resolve(softnRepo, 'apps/softn-loader/src-tauri/Cargo.toml'));
   loaderXdbDependency = /^xdb\s*=\s*\{[^}]*path\s*=\s*"([^"]+)"/m.exec(loaderCargo)?.[1] ?? null;
