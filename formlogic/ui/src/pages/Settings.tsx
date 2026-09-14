@@ -1261,8 +1261,9 @@ export function Settings() {
                 <div>
                   <p className="font-medium text-gray-900 dark:text-white">Download full backup</p>
                   <p className="text-sm text-gray-500 dark:text-slate-400">
-                    Everything in one zip: apps, forms and flows (schemas), every form&apos;s record database, and uploaded files.
-                    Webhook secrets, members and API keys are not included.
+                    Everything in one zip: apps, forms and flows (schemas), a consistent snapshot of every form&apos;s record database, uploaded files,
+                    and each hosted native app&apos;s source, media and private database.
+                    Webhook secrets, members, API keys and native app host keys are not included — a restore from this download re-issues native app keys.
                   </p>
                 </div>
                 <Button variant="outline" onClick={handleExportBackup} isLoading={isExportingBackup} leftIcon={<Archive className="h-4 w-4" />}>
@@ -1292,7 +1293,7 @@ export function Settings() {
                 <div className="p-4 rounded-xl border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-500/10 text-sm space-y-1">
                   <p className="font-medium text-gray-900 dark:text-white">Restore complete</p>
                   <p className="text-gray-600 dark:text-slate-300">
-                    {backupResult.apps.length} apps · {backupResult.forms.length} forms · {backupResult.flows} flows · {backupResult.bindings} bindings · {backupResult.responses.toLocaleString()} records · {backupResult.files} files
+                    {backupResult.apps.length} apps · {backupResult.forms.length} forms · {backupResult.flows} flows · {backupResult.bindings} bindings · {backupResult.responses.toLocaleString()} records · {backupResult.files} files{(backupResult.nativeApps?.length ?? 0) > 0 ? ` · ${backupResult.nativeApps!.length} native apps` : ''}
                   </p>
                   {(backupResult.warnings ?? []).map((w, i) => (
                     <p key={i} className="text-amber-700 dark:text-amber-400 text-xs">{w}</p>

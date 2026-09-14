@@ -1926,7 +1926,7 @@ class ApiClient {
   async getNativeEntry(slug: string): Promise<ApiResponse<{ home: boolean; access: 'application' | 'members' }>> {
     return this.request(`/app/${encodeURIComponent(slug)}/entry`);
   }
-  async getNativeProject(id: string): Promise<ApiResponse<{ available: boolean; project: import('./nativeHosting').NativeProject | null }>> {
+  async getNativeProject(id: string): Promise<ApiResponse<{ available: boolean; ready?: boolean; preflight?: NativeRuntimePreflight | null; project: import('./nativeHosting').NativeProject | null }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/native`);
   }
   async saveNativeProject(id: string, project: import('./nativeHosting').NativeProject, expectedVersion: number): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject }>> {
@@ -5081,7 +5081,18 @@ export interface AccountBackupImportResult {
   bindings: number;
   responses: number;
   files: number;
+  /** Hosted native apps re-installed from the backup (format 2+). */
+  nativeApps?: Array<{ appId: string; name: string; version: number; database: 'restored' | 'none'; cryptoMaterial: 'restored' | 'reissued' }>;
   warnings?: string[];
+}
+
+/** NativeAppService::preflight() — can the native runtime actually run on this server? */
+export interface NativeRuntimePreflight {
+  ok: boolean;
+  cached: boolean;
+  checkedAt: string;
+  checks: Array<{ id: string; ok: boolean; message: string }>;
+  runtime: { nativeProtocol?: number; recordEvents?: number; node?: string; zipp?: { version?: string | null; sha256?: string | null } };
 }
 
 export interface TrashItem {

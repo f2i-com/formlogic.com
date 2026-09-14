@@ -6,6 +6,8 @@ namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
+use FormLogic\Database\SqliteSnapshot;
+use FormLogic\Database\SqliteSnapshotException;
 use PDO;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -16,9 +18,21 @@ use Psr\Log\NullLogger;
  *
  * EXPORT: one zip per account — apps/forms/flows structure (backup.json, all
  * REAL ids), a consistent snapshot of every per-form SQLite database
- * (data/forms/<oldFormId>.sqlite, wal_checkpoint(FULL) + copy), and the
- * uploaded files (files/<oldFormId>/<storedFilename>). manifest.json indexes
- * every other entry with a sha256; unlisted entries are rejected on import.
+ * (data/forms/<oldFormId>.sqlite — ONE online-backup/VACUUM INTO read
+ * transaction per file via SqliteSnapshot, never checkpoint-and-copy; audit
+ * FL-01), the uploaded files (files/<oldFormId>/<storedFilename>) and, since
+ * format 2 (audit FL-02), every hosted native SoftN app: its source + media
+ * (native/<appId>/project.json), a consistent snapshot of its private database
+ * (native/<appId>/application.sqlite) and — ONLY in privileged recovery
+ * archives such as the scheduled site backup and recycle-bin captures, never
+ * in the user's Settings download — its host key material
+ * (native/<appId>/host-config.json). manifest.json indexes every other entry
+ * with a sha256 and records each snapshot's provenance separately from the
+ * checksum; unlisted entries are rejected on import.
+ *
+ * CONSISTENCY BOUNDARY: each SQLite file is one point-in-time snapshot. The
+ * structure document (MySQL) and the many SQLite files are captured one after
+ * another; the archive is NOT one global transaction across all of them.
  * Unsigned v1 by design: a backup only re-enters the importer's OWN account,
  * and the HS256 signing key wouldn't verify on a fresh server — which is the
  * disaster-recovery case this exists for.
@@ -39,7 +53,9 @@ use Psr\Log\NullLogger;
  */
 final class AccountBackupService
 {
-    public const FORMAT_VERSION = 1;
+    public const FORMAT_VERSION = 2;
+    /** Older archives (no native app payloads) remain importable; compatibility is explicit, not guessed. */
+    public const SUPPORTED_FORMAT_VERSIONS = [1, 2];
     public const KIND = 'formlogic.accountBackup';
 
     /** Uploaded-file basenames inside the zip: uuid-ish stem + short extension. */
@@ -48,6 +64,8 @@ final class AccountBackupService
     private PDO $pdo;
     private LoggerInterface $logger;
     private array $config;
+    private SqliteSnapshot $snapshots;
+    private NativeAppService $native;
 
     public function __construct(
         MySQLConnection $mysql,
@@ -62,9 +80,13 @@ final class AccountBackupService
         private string $uploadsPath,
         private ?PlanService $planService = null,
         ?LoggerInterface $logger = null,
+        ?SqliteSnapshot $snapshotter = null,
+        ?NativeAppService $native = null,
     ) {
         $this->pdo = $mysql->getConnection();
         $this->logger = $logger ?? new NullLogger();
+        $this->snapshots = $snapshotter ?? new SqliteSnapshot();
+        $this->native = $native ?? new NativeAppService();
         $this->config = $backupConfig + [
             'maxZipSize' => 200 * 1024 * 1024,
             'maxEntryBytes' => 256 * 1024 * 1024,
@@ -188,12 +210,19 @@ final class AccountBackupService
      * Build the full account backup. Returns the path to a temp zip the caller
      * streams (or moves) then unlinks.
      *
-     * @param array{includeFiles?: bool} $options includeFiles=false skips the
-     *        uploaded-files tree (the scheduled nightly job's size lever).
+     * @param array{includeFiles?: bool, includeHostSecrets?: bool} $options
+     *        includeFiles=false skips the uploaded-files tree (the scheduled
+     *        nightly job's size lever). includeHostSecrets=true adds native app
+     *        host key material — ONLY for archives that stay under operator
+     *        control (scheduled site backups); never for a user download.
      */
     public function exportAccount(string $userId, array $options = []): string
     {
-        return $this->buildZip($this->buildStructure($userId), (bool) ($options['includeFiles'] ?? true));
+        return $this->buildZip(
+            $this->buildStructure($userId),
+            (bool) ($options['includeFiles'] ?? true),
+            (bool) ($options['includeHostSecrets'] ?? false)
+        );
     }
 
     /**
@@ -275,7 +304,7 @@ final class AccountBackupService
                 if (!$app) {
                     throw new \RuntimeException('App not found');
                 }
-                $structure['apps'][] = $this->buildAppBlock($app);
+                $structure['apps'][] = $this->buildAppBlock($app, $this->describeNative($id));
                 foreach ($this->flowService->listFlows($id) as $flow) {
                     $structure['flows'][] = $this->serializeFlow($flow);
                 }
@@ -311,11 +340,17 @@ final class AccountBackupService
                 throw new \RuntimeException("Unknown snapshot kind: {$kind}");
         }
 
-        return $this->buildZip($structure, true);
+        // Recycle-bin captures never leave the server, so they carry native host
+        // keys: an undelete must restore a DECRYPTABLE native app.
+        return $this->buildZip($structure, true, true);
     }
 
-    /** Zip a structure document + its record databases/files into a temp archive. */
-    private function buildZip(array $structure, bool $includeFiles): string
+    /**
+     * Zip a structure document + its record databases/files into a temp archive.
+     *
+     * @param bool $includeHostSecrets add native/<appId>/host-config.json (key material)
+     */
+    private function buildZip(array $structure, bool $includeFiles, bool $includeHostSecrets = false): string
     {
         if (!class_exists(\ZipArchive::class)) {
             throw new \RuntimeException('The PHP zip extension is required for backups.');
@@ -336,34 +371,34 @@ final class AccountBackupService
             }
 
             $entries = [];
+            $snapshots = [];
             $responseTotal = 0;
             $fileTotal = 0;
+            $nativeTotal = 0;
 
-            // Per-form record databases: checkpoint then copy — the staged copy is
-            // private + immutable, safe to hash and add by path (streamed at close()).
+            // Per-form record databases: ONE consistent snapshot each (audit FL-01).
+            // The staged copy is private, verified and immutable — safe to hash and
+            // add by path (streamed at close()). A snapshot that cannot be produced
+            // or verified fails the WHOLE export: there is no successful partial zip.
             foreach ($structure['forms'] as $bf) {
                 $formId = (string) $bf['id'];
                 if (!$this->sqlite->formDatabaseExists($formId)) {
                     continue;
                 }
-                try {
-                    $this->sqlite->getFormDatabase($formId)->exec('PRAGMA wal_checkpoint(FULL)');
-                } catch (\Exception $e) {
-                    $this->logger->warning('Backup: WAL checkpoint failed (continuing with main file)', [
-                        'formId' => $formId, 'error' => $e->getMessage(),
-                    ]);
-                }
                 $staged = $stagingDir . '/' . $formId . '.sqlite';
-                if (!copy($this->sqlite->getFormDbPath($formId), $staged)) {
-                    throw new \RuntimeException("Could not snapshot the database for form {$formId}");
-                }
                 try {
-                    $responseTotal += (int) (new PDO('sqlite:' . $staged))->query('SELECT COUNT(*) FROM responses')->fetchColumn();
-                } catch (\Exception $e) {
-                    // Count is informational; the snapshot itself is what matters.
+                    $snap = $this->snapshots->snapshot($this->sqlite->getFormDbPath($formId), $staged, ['responses']);
+                } catch (SqliteSnapshotException $e) {
+                    $this->logger->error('Backup: SQLite snapshot failed', ['formId' => $formId, 'error' => $e->getMessage()]);
+                    throw new \RuntimeException("Could not snapshot the database for form {$formId}: " . $e->getMessage(), 0, $e);
                 }
+                // Counted from the COMPLETED snapshot so the manifest describes the
+                // archive, not whatever the live database held a moment later.
+                $responses = $this->snapshots->countRows($staged, 'responses');
+                $responseTotal += $responses;
                 $name = 'data/forms/' . $formId . '.sqlite';
-                $entries[$name] = hash_file('sha256', $staged);
+                $entries[$name] = $snap['sha256'];
+                $snapshots[$name] = $this->snapshotRecord($snap) + ['responses' => $responses];
                 $zip->addFile($staged, $name);
 
                 // Uploaded files for this form (immutable once written; .pending is staging).
@@ -374,6 +409,59 @@ final class AccountBackupService
                         $fileTotal++;
                     }
                 }
+            }
+
+            // Hosted native apps (audit FL-02): source + media, a consistent snapshot
+            // of the private database and — privileged archives only — host keys.
+            // A declared native app whose payload cannot be captured fails the export.
+            foreach ($structure['apps'] as $i => $ba) {
+                if (!is_array($ba['native'] ?? null)) {
+                    continue;
+                }
+                $appId = (string) $ba['id'];
+                $project = $this->native->get($appId);
+                if ($project === null) {
+                    throw new \RuntimeException("Native app payload is missing for app {$appId}");
+                }
+                if (!empty($ba['native']['recoveryRequired'])) {
+                    throw new \RuntimeException("Native app {$appId} needs operator recovery before it can be backed up");
+                }
+                $projectJson = json_encode([
+                    'files' => is_array($project['files'] ?? null) ? $project['files'] : [],
+                    'assets' => is_array($project['assets'] ?? null) ? $project['assets'] : [],
+                    'version' => (int) ($project['version'] ?? 1),
+                    'home' => (bool) ($project['home'] ?? false),
+                    'access' => (string) ($project['access'] ?? 'application'),
+                ], JSON_UNESCAPED_SLASHES);
+                if ($projectJson === false) {
+                    throw new \RuntimeException("Could not serialize the native project for app {$appId}");
+                }
+                $name = 'native/' . $appId . '/project.json';
+                $entries[$name] = hash('sha256', $projectJson);
+                $zip->addFromString($name, $projectJson);
+
+                $dbStaged = $stagingDir . '/native-' . $appId . '.sqlite';
+                $snap = $this->native->snapshotDatabase($appId, $dbStaged, $this->snapshots);
+                $structure['apps'][$i]['native']['hasDatabase'] = $snap !== null;
+                if ($snap !== null) {
+                    $name = 'native/' . $appId . '/application.sqlite';
+                    $entries[$name] = $snap['sha256'];
+                    $snapshots[$name] = $this->snapshotRecord($snap);
+                    $zip->addFile($dbStaged, $name);
+                }
+
+                $hostConfig = $includeHostSecrets ? $this->native->hostConfig($appId) : null;
+                $structure['apps'][$i]['native']['hasHostConfig'] = $hostConfig !== null;
+                if ($hostConfig !== null) {
+                    $configJson = json_encode($hostConfig, JSON_UNESCAPED_SLASHES);
+                    if ($configJson === false) {
+                        throw new \RuntimeException("Could not serialize the host configuration for app {$appId}");
+                    }
+                    $name = 'native/' . $appId . '/host-config.json';
+                    $entries[$name] = hash('sha256', $configJson);
+                    $zip->addFromString($name, $configJson);
+                }
+                $nativeTotal++;
             }
 
             $backupJson = json_encode($structure, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
@@ -394,8 +482,18 @@ final class AccountBackupService
                     'bindings' => count($structure['appBindings']) + count($structure['formBindings']),
                     'responses' => $responseTotal,
                     'files' => $fileTotal,
+                    'nativeApps' => $nativeTotal,
                 ],
                 'entries' => $entries,
+                // Audit FL-01: snapshot provenance lives BESIDE the checksums, never
+                // inside them — a sha256 proves which bytes were archived; the
+                // snapshot record says how (and when) they were taken.
+                'snapshots' => $snapshots,
+                'consistency' => [
+                    'scope' => 'per-database',
+                    'detail' => 'Every SQLite entry is one single-read-transaction snapshot (committed WAL content included). backup.json, MySQL-derived metadata and the databases were captured one after another, not as one global transaction.',
+                ],
+                'includesHostSecrets' => $includeHostSecrets,
             ];
             $zip->addFromString('manifest.json', (string) json_encode($manifest, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
 
@@ -410,6 +508,56 @@ final class AccountBackupService
         } finally {
             $this->removeDir($stagingDir);
         }
+    }
+
+    /** @return array<string,mixed> the manifest's per-entry snapshot record */
+    private function snapshotRecord(array $snap): array
+    {
+        return [
+            'method' => $snap['method'],
+            'snapshotAt' => $snap['completedAt'],
+            'consistency' => $snap['consistency'],
+            'quickCheck' => $snap['quickCheck'],
+            'pageCount' => $snap['pageCount'],
+            'attempts' => $snap['attempts'],
+        ];
+    }
+
+    /** describe() for an app id the native service may reject as unsafe → simply "not native". */
+    private function describeNative(string $appId): ?array
+    {
+        try {
+            return $this->native->describe($appId);
+        } catch (\InvalidArgumentException) {
+            return null;
+        }
+    }
+
+    /**
+     * Apps in a structure document that declare a hosted native payload.
+     *
+     * @return array<string,array<string,mixed>> oldAppId => native block (+ 'name')
+     */
+    private function nativeAppsIn(array $structure): array
+    {
+        $out = [];
+        foreach ($structure['apps'] as $i => $a) {
+            if (!array_key_exists('native', $a) || $a['native'] === null) {
+                continue;
+            }
+            $n = $a['native'];
+            if (
+                !is_array($n) || !is_string($a['id'] ?? null) || !is_string($n['manifestId'] ?? null)
+                || !is_bool($n['hasDatabase'] ?? null) || !is_bool($n['hasHostConfig'] ?? null)
+            ) {
+                throw new \RuntimeException("backup.json app #{$i} has a malformed native block");
+            }
+            if (!preg_match('/^[a-zA-Z0-9_-]{1,100}$/D', $a['id'])) {
+                throw new \RuntimeException("backup.json app #{$i} has an unsafe id for a native payload");
+            }
+            $out[$a['id']] = $n + ['name' => (string) ($a['name'] ?? $a['id'])];
+        }
+        return $out;
     }
 
     /** The structure document (backup.json) — all REAL ids; they are the import's remap keys. */
@@ -436,7 +584,7 @@ final class AccountBackupService
             if (!$app) {
                 continue;
             }
-            $apps[] = $this->buildAppBlock($app);
+            $apps[] = $this->buildAppBlock($app, $this->describeNative((string) $appId));
 
             foreach ($this->flowService->listFlows((string) $appId) as $flow) {
                 $flows[] = $this->serializeFlow($flow);
@@ -628,7 +776,11 @@ final class AccountBackupService
     }
 
     /** @param array $app a formatted app (getApp shape) */
-    private function buildAppBlock(array $app): array
+    /**
+     * @param array|null $native NativeAppService::describe() for a hosted native app; the
+     *        block is only present for native apps so older readers see no change.
+     */
+    private function buildAppBlock(array $app, ?array $native = null): array
     {
         $appId = (string) $app['id'];
         // defaultRoleId is instance-local — carry the role NAME instead (pack precedent).
@@ -658,7 +810,7 @@ final class AccountBackupService
             $settings['defaultRoleName'] = $defaultRoleName;
         }
 
-        return [
+        $block = [
             'id' => $app['id'],
             'name' => $app['name'],
             // slug: informational for a plain import; a preserve-ids restore re-claims
@@ -682,6 +834,20 @@ final class AccountBackupService
             ], $this->appService->getAppForms($appId)),
             'roles' => $roles,
         ];
+        if ($native !== null) {
+            $block['native'] = [
+                'manifestId' => $native['manifestId'],
+                'version' => $native['version'],
+                'home' => $native['home'],
+                'access' => $native['access'],
+                'capabilities' => $native['capabilities'],
+                // buildZip() sets these to what the archive actually carries.
+                'hasDatabase' => $native['hasDatabase'],
+                'hasHostConfig' => false,
+                'recoveryRequired' => $native['recoveryRequired'],
+            ];
+        }
+        return $block;
     }
 
     private function userBlock(string $userId): array
@@ -839,6 +1005,43 @@ final class AccountBackupService
                 $stagedDbs[$oldFormId] = $staged;
             }
 
+            // Native app payloads (audit FL-02): staged + validated BEFORE anything is
+            // created. A declared payload that is missing or damaged is an explicit
+            // failure — never a silently partial restore.
+            $nativePayloads = [];
+            foreach ($this->nativeAppsIn($structure) as $oldAppId => $nativeBlock) {
+                $project = json_decode($this->readEntryBounded($zip, 'native/' . $oldAppId . '/project.json', 32 * 1024 * 1024), true);
+                if (!is_array($project)) {
+                    throw new \RuntimeException("Native project payload for app {$oldAppId} is not valid JSON");
+                }
+                try {
+                    NativeAppService::validateProject($project);
+                } catch (\InvalidArgumentException $e) {
+                    throw new \RuntimeException("Native project payload for app {$oldAppId} is invalid: " . $e->getMessage(), 0, $e);
+                }
+                $dbPath = null;
+                if (isset($manifest['entries']['native/' . $oldAppId . '/application.sqlite'])) {
+                    $dbPath = $stagingDir . '/native-' . $oldAppId . '.sqlite';
+                    $this->extractEntryStreaming($zip, 'native/' . $oldAppId . '/application.sqlite', $dbPath);
+                    $check = $this->snapshots->quickCheck($dbPath);
+                    if ($check !== 'ok') {
+                        throw new \RuntimeException("The native database for app {$oldAppId} failed its integrity check");
+                    }
+                }
+                $hostConfig = null;
+                if (isset($manifest['entries']['native/' . $oldAppId . '/host-config.json'])) {
+                    $hostConfig = json_decode($this->readEntryBounded($zip, 'native/' . $oldAppId . '/host-config.json', 64 * 1024), true);
+                    if (!is_array($hostConfig)) {
+                        throw new \RuntimeException("Native host configuration for app {$oldAppId} is not valid JSON");
+                    }
+                }
+                $nativePayloads[$oldAppId] = ['name' => $nativeBlock['name'], 'project' => $project, 'database' => $dbPath, 'hostConfig' => $hostConfig];
+            }
+            $nativeMode = (($options['nativeApps'] ?? 'restore') === 'skip') ? 'skip' : 'restore';
+            if ($nativePayloads !== [] && $nativeMode === 'restore' && !$this->native->available()) {
+                throw new \RuntimeException('This backup contains hosted native apps but the native app runtime is not prepared on this server. Prepare it first, or import with native apps skipped.');
+            }
+
             $formsInBackup = $structure['forms'];
             if ($this->planService !== null && !$this->planService->canCreateForms($userId, count($formsInBackup))) {
                 throw new \RuntimeException('Restoring this backup would exceed your plan\'s form limit.');
@@ -892,9 +1095,10 @@ final class AccountBackupService
             // ── Phase 1: structure, in ONE MySQL transaction ──
             $maps = $this->restoreStructure($structure, $userId, $created, $warnings, $opts);
 
-            // ── Phase 2: records + files + links (compensate fully on failure) ──
+            // ── Phase 2: records + files + links + native apps (compensate fully on failure) ──
             try {
                 $summary = $this->restoreRecords($structure, $maps, $stagedDbs, $zip, $manifest['entries'], $warnings);
+                $summary['nativeApps'] = $this->restoreNativeApps($nativePayloads, $maps['appIdMap'], $nativeMode, $warnings);
             } catch (\Throwable $e) {
                 $this->compensate($created, $userId);
                 throw new \RuntimeException('Backup import failed and was rolled back: ' . $e->getMessage(), 0, $e);
@@ -919,12 +1123,47 @@ final class AccountBackupService
                 'bindings' => $maps['bindingsCreated'],
                 'responses' => $summary['responses'],
                 'files' => $summary['files'],
+                'nativeApps' => $summary['nativeApps'],
                 'warnings' => $warnings,
             ];
         } finally {
             $zip->close();
             $this->removeDir($stagingDir);
         }
+    }
+
+    /**
+     * Phase 2b (audit FL-02): re-install every hosted native app under its NEW app id
+     * with its restored database. Key material is restored when the archive carried it
+     * (privileged recovery) and reissued — with a loud warning — when it did not.
+     *
+     * @param array<string,array{name:string, project:array, database:?string, hostConfig:?array}> $payloads
+     * @param array<string,string> $appIdMap
+     * @return list<array{appId:string, name:string, version:int, database:string, cryptoMaterial:string}>
+     */
+    private function restoreNativeApps(array $payloads, array $appIdMap, string $mode, array &$warnings): array
+    {
+        $restored = [];
+        foreach ($payloads as $oldAppId => $payload) {
+            $name = $payload['name'];
+            if ($mode === 'skip') {
+                $warnings[] = "Hosted native app '{$name}' was NOT restored (native apps were skipped). Its source and records remain in the backup.";
+                continue;
+            }
+            $newAppId = $appIdMap[$oldAppId] ?? null;
+            if ($newAppId === null) {
+                throw new \RuntimeException("Native app '{$name}' has no restored app to attach to");
+            }
+            $result = $this->native->restore($newAppId, $payload['project'], $payload['database'], $payload['hostConfig']);
+            if ($result['cryptoMaterial'] === NativeAppService::CRYPTO_REISSUED) {
+                $warnings[] = "Hosted native app '{$name}' was restored with NEW host keys: this backup did not carry its key material, so values the app sealed or signed before cannot be read or verified. Key-preserving recovery uses the scheduled site backup.";
+            }
+            if ($result['database'] === 'none') {
+                $warnings[] = "Hosted native app '{$name}' was restored without records (the backup carried no database for it).";
+            }
+            $restored[] = ['appId' => $newAppId, 'name' => $name] + $result;
+        }
+        return $restored;
     }
 
     /** @return array{formatVersion:int, entries: array<string,string>} */
@@ -935,7 +1174,8 @@ final class AccountBackupService
         if (!is_array($manifest)) {
             throw new \RuntimeException('manifest.json is missing or invalid');
         }
-        if ((int) ($manifest['formatVersion'] ?? 0) !== self::FORMAT_VERSION || ($manifest['kind'] ?? '') !== self::KIND) {
+        $formatVersion = (int) ($manifest['formatVersion'] ?? 0);
+        if (!in_array($formatVersion, self::SUPPORTED_FORMAT_VERSIONS, true) || ($manifest['kind'] ?? '') !== self::KIND) {
             throw new \RuntimeException('Not a FormLogic account backup (or an unsupported version)');
         }
         $entries = $manifest['entries'] ?? null;
@@ -947,7 +1187,7 @@ final class AccountBackupService
                 throw new \RuntimeException('manifest.json entry index is malformed');
             }
         }
-        return ['formatVersion' => self::FORMAT_VERSION, 'entries' => $entries];
+        return ['formatVersion' => $formatVersion, 'entries' => $entries];
     }
 
     /** Streaming sha256 of every indexed entry + reject any archive entry that isn't indexed. */
@@ -1011,7 +1251,11 @@ final class AccountBackupService
             }
             $formIds[$id] = true;
         }
-        // Every data/files entry must correspond to a form in the structure, with a safe basename.
+        $nativeApps = [];
+        foreach ($this->nativeAppsIn($structure) as $appId => $n) {
+            $nativeApps[$appId] = $n + ['project' => false, 'database' => false, 'hostConfig' => false];
+        }
+        // Every data/files/native entry must correspond to a form/app in the structure, with a safe basename.
         foreach ($entries as $name => $sha) {
             if (str_starts_with($name, 'data/forms/')) {
                 $oldId = basename($name, '.sqlite');
@@ -1023,8 +1267,27 @@ final class AccountBackupService
                 if (count($parts) !== 3 || !isset($formIds[$parts[1]]) || preg_match(self::SAFE_UPLOAD_NAME, $parts[2]) !== 1) {
                     throw new \RuntimeException("Backup file entry is malformed: {$name}");
                 }
+            } elseif (str_starts_with($name, 'native/')) {
+                $parts = explode('/', $name);
+                $kinds = ['project.json' => 'project', 'application.sqlite' => 'database', 'host-config.json' => 'hostConfig'];
+                if (count($parts) !== 3 || !isset($nativeApps[$parts[1]]) || !isset($kinds[$parts[2]])) {
+                    throw new \RuntimeException("Backup native entry is malformed: {$name}");
+                }
+                $nativeApps[$parts[1]][$kinds[$parts[2]]] = true;
             } elseif ($name !== 'backup.json') {
                 throw new \RuntimeException("Backup contains an unexpected entry: {$name}");
+            }
+        }
+        // A declared native payload must be COMPLETE: partial is an explicit failure (audit FL-02).
+        foreach ($nativeApps as $appId => $n) {
+            if (!$n['project']) {
+                throw new \RuntimeException("Backup declares a native app ({$appId}) but its project payload is missing");
+            }
+            if ($n['hasDatabase'] && !$n['database']) {
+                throw new \RuntimeException("Backup declares a native database for app {$appId} but its snapshot is missing");
+            }
+            if ($n['hasHostConfig'] && !$n['hostConfig']) {
+                throw new \RuntimeException("Backup declares native host configuration for app {$appId} but it is missing");
             }
         }
     }
@@ -1051,7 +1314,7 @@ final class AccountBackupService
      * inside ONE MySQL transaction (createForm/createApp respect the open tx).
      *
      * @param array{preserveIds:bool, attachExistingForms:bool, attachExistingApps:bool, lenientFormBindings:bool, rebuildInboundLinks:bool} $opts
-     * @return array{formIdMap: array<string,string>, flowSlugMap: array<string,string>, flowsCreated:int, bindingsCreated:int, attachedForms: string[]}
+     * @return array{formIdMap: array<string,string>, appIdMap: array<string,string>, flowSlugMap: array<string,string>, flowsCreated:int, bindingsCreated:int, attachedForms: string[]}
      */
     private function restoreStructure(array $structure, string $userId, array &$created, array &$warnings, array $opts): array
     {
@@ -1368,6 +1631,7 @@ final class AccountBackupService
             $this->pdo->commit();
             return [
                 'formIdMap' => $formIdMap,
+                'appIdMap' => $appIdMap,
                 'flowSlugMap' => $flowSlugMap,
                 'flowsCreated' => $flowsCreated,
                 'bindingsCreated' => $bindingsCreated,
@@ -1787,6 +2051,13 @@ final class AccountBackupService
     private function compensate(array $created, string $userId): void
     {
         foreach ($created['apps'] as $app) {
+            try {
+                // A native installation restored for this app (audit FL-02) has no
+                // MySQL cascade — remove its storage explicitly (no-op when absent).
+                $this->native->remove($app['id']);
+            } catch (\Throwable $e) {
+                $this->logger->warning('Backup import compensation: could not remove native app storage', ['appId' => $app['id'], 'error' => $e->getMessage()]);
+            }
             try {
                 $this->appService->deleteApp($app['id']);
             } catch (\Throwable $e) {

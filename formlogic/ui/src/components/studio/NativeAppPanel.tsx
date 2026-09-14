@@ -23,6 +23,8 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
   const [version, setVersion] = useState(0);
   const [ready, setReady] = useState(false);
   const [available, setAvailable] = useState(false);
+  // Runtime preflight (audit FL-03): artifacts can be prepared while the runtime still cannot start.
+  const [preflight, setPreflight] = useState<import('../../lib/api').NativeRuntimePreflight | null>(null);
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState('');
@@ -38,7 +40,7 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
     let cancelled = false; alive.current = true;
     void api.getNativeProject(app.id).then(result => {
       if (cancelled) return;
-      setReady(!result.error); setAvailable(!!result.data?.available);
+      setReady(!result.error); setAvailable(!!result.data?.available && result.data?.ready !== false); setPreflight(result.data?.preflight ?? null);
       if (result.error) setError(result.error);
       if (result.data?.project) { setProject(result.data.project); setVersion(result.data.project.version); setSourceFile(Object.keys(result.data.project.files).find(path => path.startsWith('server/') && path.endsWith('.logic')) || ''); }
     });
@@ -84,7 +86,11 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
     <div className="space-y-5 p-4 sm:p-6">
       {tab !== 'records' && <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">FormLogic manages this project. Its private .logic code runs in ZIPP and its records stay in one app database. Importing does not publish the parent app or configure external SMS providers.</p>}
       {!ready && !error && <p role="status">Loading native hosting…</p>}
-      {ready && !available && <p role="alert" className="text-sm text-amber-700 dark:text-amber-300">The server needs the native app runtime installed before it can run this project.</p>}
+      {ready && !available && !preflight && <p role="alert" className="text-sm text-amber-700 dark:text-amber-300">The server needs the native app runtime installed before it can run this project.</p>}
+      {ready && preflight && !preflight.ok && <div role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+        <p className="font-medium">The native runtime is prepared but cannot start on this server yet.</p>
+        <ul className="mt-2 list-disc space-y-1 pl-5">{preflight.checks.filter(check => !check.ok).map(check => <li key={check.id}><span className="font-mono text-xs">{check.id}</span> — {check.message}</li>)}</ul>
+      </div>}
       {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
       {notice && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">{notice}</p>}
       {project && <div className="flex flex-wrap gap-2">{(['builder', 'studio'] as const).map(kind => <Button key={kind} variant="secondary" disabled={busy} onClick={() => { try { setEditor({ kind, bundle: exportNativeProject(project) }); } catch { setError('Could not prepare this project for the editor.'); } }}>{kind === 'builder' ? 'Open Visual Builder' : 'Open AI Studio'}</Button>)}</div>}

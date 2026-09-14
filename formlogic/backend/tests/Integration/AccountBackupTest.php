@@ -11,6 +11,7 @@ use FormLogic\Services\AppService;
 use FormLogic\Services\AppUserService;
 use FormLogic\Services\FlowService;
 use FormLogic\Services\FormService;
+use FormLogic\Services\NativeAppService;
 use FormLogic\Services\ReconcileService;
 use FormLogic\Services\ResponseService;
 use PDO;
@@ -95,7 +96,7 @@ class AccountBackupTest extends TestCase
         self::$backup = self::makeService();
     }
 
-    private static function makeService(array $configOverride = []): AccountBackupService
+    private static function makeService(array $configOverride = [], ?NativeAppService $native = null): AccountBackupService
     {
         return new AccountBackupService(
             self::$mysql,
@@ -107,8 +108,47 @@ class AccountBackupTest extends TestCase
             self::$responses,
             $configOverride,
             self::$formsPath,
-            self::$uploadsPath
+            self::$uploadsPath,
+            null,
+            null,
+            null,
+            $native
         );
+    }
+
+    /** A native service over a private temp storage root, or null when the runtime is not prepared here. */
+    private function makeNativeService(): ?NativeAppService
+    {
+        $runtime = dirname(__DIR__, 2) . '/resources/softn-native';
+        if (!is_file($runtime . '/runner.mjs') || !getenv('FORMLOGIC_NODE_BIN')) {
+            return null;
+        }
+        $storage = self::$tmpRoot . '/native-' . bin2hex(random_bytes(4));
+        mkdir($storage, 0700, true);
+        $this->nativeStorages[] = $storage;
+        return new NativeAppService($storage, $runtime, getenv('FORMLOGIC_NODE_BIN'));
+    }
+
+    /** @var list<string> */
+    private array $nativeStorages = [];
+
+    /** A native project whose records carry an HMAC of their title (key continuity is testable). */
+    private static function nativeProject(): array
+    {
+        return ['access' => 'application', 'assets' => [], 'files' => [
+            'manifest.json' => json_encode(['id' => 'test.backup-notes', 'version' => '1.0.0', 'main' => 'ui/main.ui', 'server' => [
+                'entry' => 'server/main.logic', 'requires' => ['apiVersion' => 1, 'capabilities' => ['sql', 'crypto']],
+                'database' => ['kind' => 'private-sqlite', 'migrations' => ['server/migrations/001.sql']],
+                'routes' => [
+                    ['path' => '/api/notes', 'method' => 'POST', 'handler' => 'createNote', 'transaction' => 'write', 'authorization' => 'anonymous'],
+                    ['path' => '/api/notes', 'method' => 'GET', 'handler' => 'listNotes', 'transaction' => 'read', 'authorization' => 'anonymous'],
+                ],
+            ]]),
+            'ui/main.ui' => '<Text>Notes</Text>',
+            'server/migrations/001.sql' => 'CREATE TABLE notes(id INTEGER PRIMARY KEY, title TEXT, mac TEXT);',
+            'server/main.logic' => 'function createNote(req) { softn.sql.execute("INSERT INTO notes(title,mac) VALUES(?,?)",[req.body.title, softn.crypto.hmac(req.body.title)]); return {status:201,body:softn.sql.first("SELECT id,title FROM notes ORDER BY id DESC",[])}; }'
+                . "\n" . 'function listNotes(req) { var rows = softn.sql.query("SELECT id,title,mac FROM notes ORDER BY id",[]); return {status:200,body:{notes:rows.map(function(r){ return {id:r.id,title:r.title,verified:softn.crypto.equal(r.mac, softn.crypto.hmac(r.title))}; })}}; }',
+        ]];
     }
 
     protected function setUp(): void
@@ -123,6 +163,10 @@ class AccountBackupTest extends TestCase
 
     protected function tearDown(): void
     {
+        foreach ($this->nativeStorages as $storage) {
+            $this->removeTree($storage);
+        }
+        $this->nativeStorages = [];
         if (self::$pdo === null) {
             return;
         }
@@ -151,6 +195,18 @@ class AccountBackupTest extends TestCase
     }
 
     // ── fixture ──────────────────────────────────────────────────────────────
+
+    private function removeTree(string $dir): void
+    {
+        if (!is_dir($dir)) {
+            return;
+        }
+        $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS), \RecursiveIteratorIterator::CHILD_FIRST);
+        foreach ($it as $entry) {
+            $entry->isDir() && !$entry->isLink() ? @rmdir($entry->getPathname()) : @unlink($entry->getPathname());
+        }
+        @rmdir($dir);
+    }
 
     private function makeUser(): string
     {
@@ -270,13 +326,35 @@ class AccountBackupTest extends TestCase
 
             $manifest = json_decode((string) $zip->getFromName('manifest.json'), true);
             $this->assertSame('formlogic.accountBackup', $manifest['kind']);
-            $this->assertSame(1, $manifest['formatVersion']);
+            $this->assertSame(2, $manifest['formatVersion']);
             $this->assertSame(2, $manifest['counts']['forms']);
             $this->assertSame(2, $manifest['counts']['apps']);
             $this->assertSame(2, $manifest['counts']['flows']);
             $this->assertSame(2, $manifest['counts']['bindings']);
             $this->assertSame(4, $manifest['counts']['responses']);
             $this->assertSame(1, $manifest['counts']['files']);
+            $this->assertSame(0, $manifest['counts']['nativeApps']);
+            $this->assertFalse($manifest['includesHostSecrets'], 'a user download never carries native host keys');
+
+            // Audit FL-01: every database entry carries a snapshot record SEPARATE from its checksum.
+            $this->assertSame('per-database', $manifest['consistency']['scope']);
+            foreach (["data/forms/{$this->f1}.sqlite", "data/forms/{$this->f2}.sqlite"] as $dbEntry) {
+                $record = $manifest['snapshots'][$dbEntry] ?? null;
+                $this->assertIsArray($record, "snapshot record for {$dbEntry}");
+                $this->assertSame('ok', $record['quickCheck']);
+                $this->assertSame(\FormLogic\Database\SqliteSnapshot::CONSISTENCY_SNAPSHOT, $record['consistency']);
+                $this->assertContains($record['method'], [\FormLogic\Database\SqliteSnapshot::METHOD_BACKUP_API, \FormLogic\Database\SqliteSnapshot::METHOD_VACUUM_INTO]);
+                $this->assertNotEmpty($record['snapshotAt']);
+            }
+            $this->assertSame(3, $manifest['snapshots']["data/forms/{$this->f1}.sqlite"]['responses']);
+            $this->assertSame(1, $manifest['snapshots']["data/forms/{$this->f2}.sqlite"]['responses']);
+            // Snapshots are single self-contained files (no WAL sidecar could be forgotten).
+            $stagedCopy = self::$tmpRoot . '/inspect-' . bin2hex(random_bytes(3)) . '.sqlite';
+            file_put_contents($stagedCopy, (string) $zip->getFromName("data/forms/{$this->f1}.sqlite"));
+            $inspect = new PDO('sqlite:' . $stagedCopy);
+            $this->assertSame('delete', strtolower((string) $inspect->query('PRAGMA journal_mode')->fetchColumn()));
+            $inspect = null;
+            @unlink($stagedCopy);
 
             // Every non-manifest entry is indexed with a correct sha256.
             foreach ($manifest['entries'] as $name => $sha) {
@@ -545,6 +623,229 @@ class AccountBackupTest extends TestCase
             $sqliteBytes = (string) $zip->getFromName("data/forms/{$this->f1}.sqlite");
             $this->assertStringContainsString(self::SECRET, $sqliteBytes);
             $zip->close();
+        } finally {
+            @unlink($zipPath);
+        }
+    }
+
+    // ── 9. audit FL-01: the export is a CONSISTENT snapshot, not a checkpoint-and-copy ──
+
+    public function testExportCarriesRowsCommittedOnlyToTheWalWhileAnOldReaderPinsIt(): void
+    {
+        // An old reader keeps its read snapshot open across the export: a FULL
+        // checkpoint cannot advance past it, so the main file alone is stale.
+        $reader = new PDO('sqlite:' . self::$sqlite->getFormDbPath($this->f1), null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $reader->exec('BEGIN');
+        $this->assertSame(3, (int) $reader->query('SELECT COUNT(*) FROM responses')->fetchColumn());
+
+        self::$responses->createResponse($this->f1, ['answers' => ['name' => 'Dana', 'notes' => 'ONLY-IN-WAL']], null);
+        $live = self::$sqlite->getFormDatabase($this->f1);
+        $checkpoint = $live->query('PRAGMA wal_checkpoint(FULL)')->fetch(PDO::FETCH_NUM);
+        $this->assertSame(1, (int) $checkpoint[0], 'the checkpoint is blocked by the old reader (busy)');
+
+        $zipPath = self::$backup->exportAccount($this->userId);
+        try {
+            $zip = new \ZipArchive();
+            $this->assertTrue($zip->open($zipPath) === true);
+            $manifest = json_decode((string) $zip->getFromName('manifest.json'), true);
+            $this->assertSame(5, $manifest['counts']['responses'], 'counted from the completed snapshot');
+            $copy = self::$tmpRoot . '/wal-' . bin2hex(random_bytes(3)) . '.sqlite';
+            file_put_contents($copy, (string) $zip->getFromName("data/forms/{$this->f1}.sqlite"));
+            $zip->close();
+            $inspect = new PDO('sqlite:' . $copy);
+            $this->assertSame(4, (int) $inspect->query('SELECT COUNT(*) FROM responses')->fetchColumn(), 'the WAL-only row is in the archive');
+            $this->assertStringContainsString('ONLY-IN-WAL', (string) file_get_contents($copy));
+            $inspect = null;
+            @unlink($copy);
+        } finally {
+            $reader->exec('COMMIT');
+            @unlink($zipPath);
+        }
+    }
+
+    // ── 10. audit FL-02: explicit format compatibility ───────────────────────
+
+    public function testFormatOneArchiveWithoutNativeAppsStillImports(): void
+    {
+        $zipPath = self::$backup->exportAccount($this->userId);
+        try {
+            $zip = new \ZipArchive();
+            $this->assertTrue($zip->open($zipPath) === true);
+            $manifest = json_decode((string) $zip->getFromName('manifest.json'), true);
+            $manifest['formatVersion'] = 1;
+            unset($manifest['snapshots'], $manifest['consistency'], $manifest['includesHostSecrets'], $manifest['counts']['nativeApps']);
+            $zip->deleteName('manifest.json');
+            $zip->addFromString('manifest.json', (string) json_encode($manifest));
+            $zip->close();
+
+            $result = self::$backup->importAccount($zipPath, $this->otherId);
+            $this->assertCount(2, $result['forms']);
+            $this->assertCount(2, $result['apps']);
+            $this->assertSame([], $result['nativeApps']);
+        } finally {
+            @unlink($zipPath);
+        }
+    }
+
+    public function testUnsupportedFormatVersionIsRejected(): void
+    {
+        $zipPath = self::$backup->exportAccount($this->userId);
+        try {
+            $zip = new \ZipArchive();
+            $this->assertTrue($zip->open($zipPath) === true);
+            $manifest = json_decode((string) $zip->getFromName('manifest.json'), true);
+            $manifest['formatVersion'] = 3;
+            $zip->deleteName('manifest.json');
+            $zip->addFromString('manifest.json', (string) json_encode($manifest));
+            $zip->close();
+            $before = $this->countUserResources($this->otherId);
+            try {
+                self::$backup->importAccount($zipPath, $this->otherId);
+                $this->fail('a future format must be refused, not guessed at');
+            } catch (\RuntimeException $e) {
+                $this->assertStringContainsString('unsupported version', $e->getMessage());
+            }
+            $this->assertSame($before, $this->countUserResources($this->otherId));
+        } finally {
+            @unlink($zipPath);
+        }
+    }
+
+    // ── 11. audit FL-02: hosted native apps ride in the backup and restore truthfully ──
+
+    public function testNativeAppRoundTripRestoresRecordsAndReportsKeyPolicy(): void
+    {
+        $native = $this->makeNativeService();
+        if ($native === null) {
+            $this->markTestSkipped('Prepare the native runtime and set FORMLOGIC_NODE_BIN.');
+        }
+        $backup = self::makeService([], $native);
+        $native->install($this->app1, self::nativeProject(), 0);
+        $created = $native->request($this->app1, ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'Signed note'], 'client_ip' => '127.0.0.1']);
+        $this->assertSame(201, $created['status'], json_encode($created));
+
+        // (a) The user's download: source + records, NO host keys.
+        $userZip = $backup->exportAccount($this->userId);
+        // (b) The privileged recovery archive (scheduled site backup): keys included.
+        $recoveryZip = $backup->exportAccount($this->userId, ['includeHostSecrets' => true]);
+        try {
+            $zip = new \ZipArchive();
+            $this->assertTrue($zip->open($userZip) === true);
+            $manifest = json_decode((string) $zip->getFromName('manifest.json'), true);
+            $this->assertSame(1, $manifest['counts']['nativeApps']);
+            $this->assertArrayHasKey("native/{$this->app1}/project.json", $manifest['entries']);
+            $this->assertArrayHasKey("native/{$this->app1}/application.sqlite", $manifest['entries']);
+            $this->assertArrayNotHasKey("native/{$this->app1}/host-config.json", $manifest['entries'], 'user downloads never carry host keys');
+            $this->assertSame('ok', $manifest['snapshots']["native/{$this->app1}/application.sqlite"]['quickCheck']);
+            $structure = json_decode((string) $zip->getFromName('backup.json'), true);
+            $nativeBlocks = array_values(array_filter($structure['apps'], static fn ($a) => isset($a['native'])));
+            $this->assertCount(1, $nativeBlocks);
+            $this->assertSame('test.backup-notes', $nativeBlocks[0]['native']['manifestId']);
+            $this->assertTrue($nativeBlocks[0]['native']['hasDatabase']);
+            $this->assertFalse($nativeBlocks[0]['native']['hasHostConfig']);
+            $this->assertStringNotContainsString('keyHex', (string) $zip->getFromName('backup.json'));
+            $zip->close();
+
+            $zip = new \ZipArchive();
+            $this->assertTrue($zip->open($recoveryZip) === true);
+            $manifest = json_decode((string) $zip->getFromName('manifest.json'), true);
+            $this->assertTrue($manifest['includesHostSecrets']);
+            $this->assertArrayHasKey("native/{$this->app1}/host-config.json", $manifest['entries']);
+            $zip->close();
+
+            // Restore the USER download into the other account: records come back,
+            // keys are reissued and the result SAYS so — HMACs no longer verify.
+            $result = $backup->importAccount($userZip, $this->otherId);
+            $this->assertCount(1, $result['nativeApps']);
+            $this->assertSame('restored', $result['nativeApps'][0]['database']);
+            $this->assertSame(NativeAppService::CRYPTO_REISSUED, $result['nativeApps'][0]['cryptoMaterial']);
+            $this->assertNotEmpty(array_filter($result['warnings'], static fn ($w) => str_contains($w, 'NEW host keys')));
+            $reissuedAppId = $result['nativeApps'][0]['appId'];
+            $this->assertNotSame($this->app1, $reissuedAppId);
+            $listed = $native->request($reissuedAppId, ['method' => 'GET', 'path' => '/api/notes', 'client_ip' => '127.0.0.1']);
+            $this->assertSame(200, $listed['status'], json_encode($listed));
+            $this->assertSame('Signed note', $listed['body']['notes'][0]['title']);
+            $this->assertFalse($listed['body']['notes'][0]['verified'], 'a reissued key cannot verify the old HMAC');
+
+            // Restore the RECOVERY archive: the original key material comes back and
+            // the previously signed value verifies again.
+            $result = $backup->importAccount($recoveryZip, $this->otherId);
+            $this->assertSame(NativeAppService::CRYPTO_RESTORED, $result['nativeApps'][0]['cryptoMaterial']);
+            $this->assertSame([], array_values(array_filter($result['warnings'], static fn ($w) => str_contains($w, 'NEW host keys'))));
+            $restoredAppId = $result['nativeApps'][0]['appId'];
+            $listed = $native->request($restoredAppId, ['method' => 'GET', 'path' => '/api/notes', 'client_ip' => '127.0.0.1']);
+            $this->assertSame(200, $listed['status'], json_encode($listed));
+            $this->assertTrue($listed['body']['notes'][0]['verified'], 'restored key material verifies the original HMAC');
+            $this->assertSame(1, $native->get($restoredAppId)['version']);
+            // The restored app keeps working (new writes, same database).
+            $this->assertSame(201, $native->request($restoredAppId, ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'After restore'], 'client_ip' => '127.0.0.1'])['status']);
+            $this->assertCount(2, $native->request($restoredAppId, ['method' => 'GET', 'path' => '/api/notes', 'client_ip' => '127.0.0.1'])['body']['notes']);
+        } finally {
+            @unlink($userZip);
+            @unlink($recoveryZip);
+        }
+    }
+
+    public function testMissingNativePayloadIsAnExplicitFailureNotAPartialRestore(): void
+    {
+        $native = $this->makeNativeService();
+        if ($native === null) {
+            $this->markTestSkipped('Prepare the native runtime and set FORMLOGIC_NODE_BIN.');
+        }
+        $backup = self::makeService([], $native);
+        $native->install($this->app1, self::nativeProject(), 0);
+        $this->assertSame(201, $native->request($this->app1, ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'x'], 'client_ip' => '127.0.0.1'])['status']);
+        $zipPath = $backup->exportAccount($this->userId);
+        try {
+            // Drop the database snapshot (and its index entry) while backup.json still promises it.
+            $zip = new \ZipArchive();
+            $this->assertTrue($zip->open($zipPath) === true);
+            $manifest = json_decode((string) $zip->getFromName('manifest.json'), true);
+            unset($manifest['entries']["native/{$this->app1}/application.sqlite"]);
+            $zip->deleteName("native/{$this->app1}/application.sqlite");
+            $zip->deleteName('manifest.json');
+            $zip->addFromString('manifest.json', (string) json_encode($manifest));
+            $zip->close();
+
+            $before = $this->countUserResources($this->otherId);
+            try {
+                $backup->importAccount($zipPath, $this->otherId);
+                $this->fail('a declared-but-missing native payload must fail the import');
+            } catch (\RuntimeException $e) {
+                $this->assertStringContainsString('snapshot is missing', $e->getMessage());
+            }
+            $this->assertSame($before, $this->countUserResources($this->otherId), 'nothing was created');
+        } finally {
+            @unlink($zipPath);
+        }
+    }
+
+    public function testNativeAppsCanBeSkippedExplicitlyAndRuntimeAbsenceIsExplicit(): void
+    {
+        $native = $this->makeNativeService();
+        if ($native === null) {
+            $this->markTestSkipped('Prepare the native runtime and set FORMLOGIC_NODE_BIN.');
+        }
+        $backup = self::makeService([], $native);
+        $native->install($this->app1, self::nativeProject(), 0);
+        $zipPath = $backup->exportAccount($this->userId);
+        try {
+            // A host WITHOUT the runtime refuses a native backup up front — nothing half-restored.
+            $noRuntime = self::makeService([], new NativeAppService(self::$tmpRoot . '/no-runtime-storage', self::$tmpRoot . '/no-runtime', 'node'));
+            $before = $this->countUserResources($this->otherId);
+            try {
+                $noRuntime->importAccount($zipPath, $this->otherId);
+                $this->fail('a native backup on a host without the runtime must be refused');
+            } catch (\RuntimeException $e) {
+                $this->assertStringContainsString('native app runtime is not prepared', $e->getMessage());
+            }
+            $this->assertSame($before, $this->countUserResources($this->otherId));
+
+            // …unless the operator explicitly skips native apps, which is reported, not hidden.
+            $result = $noRuntime->importAccount($zipPath, $this->otherId, ['nativeApps' => 'skip']);
+            $this->assertSame([], $result['nativeApps']);
+            $this->assertNotEmpty(array_filter($result['warnings'], static fn ($w) => str_contains($w, 'NOT restored')));
+            $this->assertCount(2, $result['apps']);
         } finally {
             @unlink($zipPath);
         }

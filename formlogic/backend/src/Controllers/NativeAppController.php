@@ -36,7 +36,12 @@ class NativeAppController
                 if (!$this->native->get($app['id']) && !isset($query['table'])) return ['installed' => false, 'tables' => []];
                 return $this->native->records($app['id'], isset($query['table']) && is_string($query['table']) ? $query['table'] : null, (int) ($query['offset'] ?? 0));
             }
-            if ($request->getMethod() === 'GET') return ['available' => $this->native->available(), 'project' => $this->native->get($app['id'])];
+            if ($request->getMethod() === 'GET') {
+                // available = artifacts prepared; preflight = the runtime actually starts here
+                // (audit FL-03). Owner-only endpoint; preflight messages carry no paths or secrets.
+                $preflight = $this->native->available() ? $this->native->preflight() : null;
+                return ['available' => $this->native->available(), 'ready' => $preflight !== null && $preflight['ok'], 'preflight' => $preflight, 'project' => $this->native->get($app['id'])];
+            }
             $body = $request->getParsedBody();
             if (!is_array($body) || !is_array($body['project'] ?? null) || !is_int($body['expectedVersion'] ?? null) || $body['expectedVersion'] < 0) throw new \InvalidArgumentException('Provide a project and expectedVersion');
             return ['project' => $this->native->install($app['id'], $body['project'], $body['expectedVersion'])];

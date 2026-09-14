@@ -205,7 +205,9 @@ $container->set(\FormLogic\Services\AccountBackupService::class, function (Conta
         $settings['settings']['sqlite']['storage_path'],
         $settings['settings']['uploads']['storagePath'] ?? __DIR__ . '/../storage/uploads',
         $c->get(\FormLogic\Services\PlanService::class),
-        $c->get(LoggerInterface::class)
+        $c->get(LoggerInterface::class),
+        new \FormLogic\Database\SqliteSnapshot(),
+        $c->get(\FormLogic\Services\NativeAppService::class)
     );
 });
 $container->set(\FormLogic\Controllers\AccountBackupController::class, function (Container $c) {

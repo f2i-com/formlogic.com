@@ -79,6 +79,130 @@ final class NativeAppServiceTest extends TestCase
         $this->assertStringContainsString('AI tool review', json_encode($listed['body']));
     }
 
+    // ── audit FL-03: runtime preflight ────────────────────────────────────────
+
+    public function testPreflightStartsARealWorkerAndCachesBriefly(): void
+    {
+        $first = $this->service->preflight(true);
+        $this->assertTrue($first['ok'], json_encode($first['checks']));
+        $this->assertFalse($first['cached']);
+        $ids = array_column($first['checks'], 'id');
+        foreach (['php.proc_open', 'php.pdo_sqlite', 'runtime.files', 'runtime.protocol', 'node.executable', 'node.version', 'node.capabilities', 'storage.writable', 'worker.startup'] as $id) {
+            $this->assertContains($id, $ids);
+        }
+        $this->assertSame(1, $first['runtime']['nativeProtocol']);
+        $this->assertMatchesRegularExpression('/^\d+\.\d+\.\d+$/', $first['runtime']['node']);
+        // No probe app, worker file or record survives the check.
+        $this->assertSame([], glob($this->storage . '/.preflight-*') ?: []);
+        $this->assertSame([], glob($this->storage . '/*') ?: [], 'no app directories were created');
+        foreach ($first['checks'] as $check) $this->assertStringNotContainsString($this->storage, $check['message'], 'no absolute paths leak into messages');
+
+        $second = $this->service->preflight();
+        $this->assertTrue($second['cached'], 'a public page must not fork a worker on every request');
+        $this->assertSame($first['checkedAt'], $second['checkedAt']);
+    }
+
+    public function testPreflightReportsDistinctFailures(): void
+    {
+        $runtime = dirname(__DIR__, 2) . '/resources/softn-native';
+        $failing = static fn (array $result): array => array_column(array_filter($result['checks'], static fn ($c) => !$c['ok']), 'message', 'id');
+
+        // Missing executable: distinct from missing artifacts.
+        $badNode = new NativeAppService($this->storage, $runtime, $this->storage . '/no-such-node.exe');
+        $result = $badNode->preflight(true);
+        $this->assertFalse($result['ok']);
+        $this->assertArrayHasKey('node.executable', $failing($result));
+        $this->assertArrayNotHasKey('runtime.files', $failing($result));
+        $this->assertArrayNotHasKey('worker.startup', $failing($result), 'no worker is started once an earlier check failed');
+
+        // Unprepared runtime directory: names the missing files, never the path.
+        $noRuntime = new NativeAppService($this->storage, $this->storage . '/empty-runtime', getenv('FORMLOGIC_NODE_BIN'));
+        $result = $noRuntime->preflight(true);
+        $this->assertFalse($result['ok']);
+        $this->assertStringContainsString('runner.mjs', $failing($result)['runtime.files']);
+        $this->assertStringNotContainsString($this->storage, $failing($result)['runtime.files']);
+
+        // Unsupported runtime version: protocol mismatch is its own failure.
+        $oldRuntime = $this->storage . '/old-runtime';
+        mkdir($oldRuntime . '/wasm', 0700, true);
+        foreach (['runner.mjs', 'request-worker.mjs', 'wasm-host.mjs', 'migrations.mjs', 'wasm/zipp_wasm.mjs', 'wasm/zipp_wasm_bg.wasm'] as $file) copy($runtime . '/' . $file, $oldRuntime . '/' . $file);
+        file_put_contents($oldRuntime . '/host-protocol.json', json_encode(['nativeProtocol' => 0, 'minimumNode' => '99.0.0']));
+        $result = (new NativeAppService($this->storage, $oldRuntime, getenv('FORMLOGIC_NODE_BIN')))->preflight(true);
+        $this->assertFalse($result['ok']);
+        $this->assertArrayHasKey('runtime.protocol', $failing($result));
+
+        // Too-old Node according to the runtime's own minimum.
+        file_put_contents($oldRuntime . '/host-protocol.json', json_encode(['nativeProtocol' => 1, 'recordEvents' => 1, 'minimumNode' => '99.0.0']));
+        $result = (new NativeAppService($this->storage, $oldRuntime, getenv('FORMLOGIC_NODE_BIN')))->preflight(true);
+        $this->assertFalse($result['ok']);
+        $this->assertStringContainsString('older than the runtime minimum 99.0.0', $failing($result)['node.version']);
+
+        // Unwritable private storage (a FILE where the storage root should be).
+        file_put_contents($this->storage . '/not-a-dir', 'x');
+        $result = (new NativeAppService($this->storage . '/not-a-dir', $runtime, getenv('FORMLOGIC_NODE_BIN')))->preflight(true);
+        $this->assertFalse($result['ok']);
+        $this->assertArrayHasKey('storage.writable', $failing($result));
+    }
+
+    // ── audit FL-02: backup surface and restore ───────────────────────────────
+
+    public function testDescribeSnapshotAndRestorePreserveRecordsAndKeyMaterial(): void
+    {
+        $this->assertNull($this->service->describe('notes'));
+        $this->service->install('notes', $this->project(), 0);
+        $this->assertSame(201, $this->createNote('Kept')['status']);
+        $described = $this->service->describe('notes');
+        $this->assertSame(['manifestId' => 'test.notes', 'version' => 1, 'home' => false, 'access' => 'application', 'capabilities' => ['sql'], 'hasDatabase' => true, 'recoveryRequired' => false], $described);
+        $this->assertArrayNotHasKey('keyHex', $described);
+        $config = $this->service->hostConfig('notes');
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $config['keyHex']);
+
+        $snapshot = $this->storage . '/snapshot.sqlite';
+        $meta = $this->service->snapshotDatabase('notes', $snapshot);
+        $this->assertSame('ok', $meta['quickCheck']);
+        $this->assertFileExists($snapshot);
+
+        // Restore into a SECOND storage root (a fresh host) with the original keys.
+        $otherStorage = $this->storage . '/other-host';
+        mkdir($otherStorage);
+        $other = new NativeAppService($otherStorage, dirname(__DIR__, 2) . '/resources/softn-native', getenv('FORMLOGIC_NODE_BIN'));
+        $result = $other->restore('notes', $this->service->get('notes'), $snapshot, $config);
+        $this->assertSame(['version' => 1, 'database' => 'restored', 'cryptoMaterial' => NativeAppService::CRYPTO_RESTORED], $result);
+        $this->assertSame($config['keyHex'], $other->hostConfig('notes')['keyHex']);
+        $this->assertSame([['id' => 1, 'title' => 'Kept']], $other->records('notes', 'notes')['rows']);
+        $this->assertSame(201, $other->request('notes', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'After'], 'client_ip' => '127.0.0.1'])['status']);
+
+        // Never overwrite an existing installation.
+        try { $other->restore('notes', $this->service->get('notes'), $snapshot, $config); $this->fail('restore overwrote an installation'); }
+        catch (\RuntimeException $e) { $this->assertStringContainsString('already exists', $e->getMessage()); }
+        $this->assertCount(2, $other->records('notes', 'notes')['rows'], 'the refused restore changed nothing');
+
+        // Without key material the key is reissued and reported as such.
+        $result = $other->restore('reissued', $this->service->get('notes'), $snapshot, null);
+        $this->assertSame(NativeAppService::CRYPTO_REISSUED, $result['cryptoMaterial']);
+        $this->assertNotSame($config['keyHex'], $other->hostConfig('reissued')['keyHex']);
+        // Keys from a different app identity are refused.
+        try { $other->restore('wrong-key', $this->service->get('notes'), null, ['appId' => 'someone.else', 'keyHex' => str_repeat('a', 64)]); $this->fail('foreign key material accepted'); }
+        catch (\InvalidArgumentException $e) { $this->assertStringContainsString('does not belong', $e->getMessage()); }
+        $this->assertNull($other->get('wrong-key'));
+    }
+
+    public function testFailedRestoreLeavesNoInstallation(): void
+    {
+        $project = $this->project();
+        $project['files']['server/main.logic'] = 'this is not valid logic {{{';
+        try { $this->service->restore('broken', $project, null, null); $this->fail('broken source restored'); }
+        catch (\RuntimeException $e) { $this->assertStringContainsString('failed validation', $e->getMessage()); }
+        $this->assertNull($this->service->get('broken'));
+        $this->assertSame([], glob($this->storage . '/*') ?: [], 'nothing remains on disk');
+
+        // A damaged snapshot is refused before anything is written.
+        file_put_contents($this->storage . '/damaged.sqlite', 'not a database');
+        try { $this->service->restore('damaged', $this->project(), $this->storage . '/damaged.sqlite', null); $this->fail('damaged snapshot restored'); }
+        catch (\RuntimeException $e) { $this->assertStringContainsString('integrity check', $e->getMessage()); }
+        $this->assertNull($this->service->get('damaged'));
+    }
+
     public function testRuntimeRecordsAndUpdatesUseTheSameDatabase(): void
     {
         $this->service->install('notes', $this->project(), 0);

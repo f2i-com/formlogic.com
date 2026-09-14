@@ -149,14 +149,18 @@ final class ScheduledBackupService
                 continue; // shared demo account is provisioning-managed
             }
             try {
-                $tmpZip = $this->accountBackup->exportAccount($userId, ['includeFiles' => $this->includeFiles]);
+                // Scheduled archives stay under operator control, so they are the ONE
+                // place native app host keys are carried (audit FL-02): a site restore
+                // must bring native apps back DECRYPTABLE. The Settings download never
+                // includes them.
+                $tmpZip = $this->accountBackup->exportAccount($userId, ['includeFiles' => $this->includeFiles, 'includeHostSecrets' => true]);
                 $dest = $accountsDir . '/' . $userId . '.zip';
                 if (!rename($tmpZip, $dest) && !copy($tmpZip, $dest)) {
                     @unlink($tmpZip);
                     throw new \RuntimeException('Could not move the account zip into the staging folder');
                 }
                 @unlink($tmpZip); // no-op after a successful rename
-                $this->verifyAccountZip($dest);
+                $counts = $this->verifyAccountZip($dest);
                 $this->syncFile($dest);
                 $size = (int) filesize($dest);
                 $totalBytes += $size;
@@ -166,6 +170,9 @@ final class ScheduledBackupService
                     'file' => 'accounts/' . $userId . '.zip',
                     'sizeBytes' => $size,
                     'sha256' => hash_file('sha256', $dest),
+                    // What the zip actually carries (from ITS manifest) — a restore
+                    // operator can see native apps are included without unzipping.
+                    'counts' => $counts,
                 ];
                 $ok++;
             } catch (\Throwable $e) {
@@ -268,18 +275,41 @@ final class ScheduledBackupService
         }
     }
 
-    /** Zip readability + backup-manifest presence before a zip may publish. */
-    private function verifyAccountZip(string $path): void
+    /**
+     * Zip readability + backup-manifest presence + snapshot provenance before a
+     * zip may publish. Every SQLite entry the manifest indexes must also carry a
+     * verified snapshot record (audit FL-01): a checksum alone is not evidence
+     * that the archived database is a complete logical snapshot.
+     *
+     * @return array<string,int> the zip's own manifest counts
+     */
+    private function verifyAccountZip(string $path): array
     {
         $zip = new \ZipArchive();
         if ($zip->open($path) !== true) {
             throw new \RuntimeException('Account zip failed readability verification');
         }
         $hasManifest = $zip->locateName('backup.json') !== false;
+        $manifest = json_decode((string) $zip->getFromName('manifest.json'), true);
         $zip->close();
-        if (!$hasManifest) {
+        if (!$hasManifest || !is_array($manifest)) {
             throw new \RuntimeException('Account zip is missing its backup manifest');
         }
+        $snapshots = is_array($manifest['snapshots'] ?? null) ? $manifest['snapshots'] : [];
+        foreach (array_keys(is_array($manifest['entries'] ?? null) ? $manifest['entries'] : []) as $entry) {
+            if (!str_ends_with((string) $entry, '.sqlite')) {
+                continue;
+            }
+            $record = $snapshots[$entry] ?? null;
+            if (!is_array($record) || ($record['quickCheck'] ?? null) !== 'ok' || ($record['consistency'] ?? null) !== \FormLogic\Database\SqliteSnapshot::CONSISTENCY_SNAPSHOT) {
+                throw new \RuntimeException('Account zip carries a database without a verified consistent snapshot record: ' . $entry);
+            }
+        }
+        $counts = [];
+        foreach (is_array($manifest['counts'] ?? null) ? $manifest['counts'] : [] as $key => $value) {
+            $counts[(string) $key] = (int) $value;
+        }
+        return $counts;
     }
 
     private function writeChecked(string $path, string $content): void
@@ -479,17 +509,35 @@ FormLogic scheduled backup — how to restore
       gunzip -c database.sql.gz | mysql -u <user> -p <database>
    b. Each accounts/<userId>.zip carries that user's record databases VERBATIM
       (original ids) under data/forms/*.sqlite and uploaded files under files/.
-      Unzip and copy them back:
+      Every *.sqlite is a single self-contained consistent snapshot (see
+      'snapshots' in the zip's manifest.json) - copy it as one file:
         data/forms/*.sqlite  ->  backend/storage/forms/
         files/<formId>/*     ->  backend/storage/uploads/<formId>/
       The ids match the restored MySQL rows, so everything lines up.
+   c. Hosted NATIVE apps live under native/<appId>/ in the same zip:
+        project.json        the app's source and media (portable)
+        application.sqlite  its private record database (consistent snapshot)
+        host-config.json    its host KEY MATERIAL - present only in these
+                            scheduled archives; keep this folder as private as
+                            the MySQL dump.
+      Put them back with the admin restore (option 1 in preserve-ids mode) or,
+      by hand, run the account import; do NOT copy native/ files into
+      backend/storage/native-apps/ directly - the directory names there are
+      hashes of the app id and the runtime validates the source on install.
+      A restore WITHOUT host-config.json reissues the app's keys and says so in
+      its warnings: values the app sealed or signed before cannot be read.
 
 3) MOVE ACCOUNTS TO ANOTHER SERVER
    Import individual accounts/<userId>.zip files through Settings -> Backup &
-   restore on the new server (ids are regenerated safely on import).
+   restore on the new server (ids are regenerated safely on import). Native
+   apps are re-installed on the new server; it must have the native runtime
+   prepared, or import with native apps skipped.
 
 Backups exclude webhook signing secrets, app members/invitations, custom
 domains and API keys (see 'excluded' in each zip's backup.json).
+CONSISTENCY: each database file is one point-in-time snapshot; the set of
+files plus the MySQL dump is captured sequentially, not as one global
+transaction (see 'consistency' in each zip's manifest.json).
 TXT;
     }
 }

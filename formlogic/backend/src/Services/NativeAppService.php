@@ -4,13 +4,37 @@ declare(strict_types=1);
 
 namespace FormLogic\Services;
 
+use FormLogic\Database\SqliteSnapshot;
 use InvalidArgumentException;
 use RuntimeException;
 use PDO;
 
-/** Owner-managed native SoftN installations. Runtime code is operator supplied; uploads contain data and DSL source only. */
+/**
+ * Owner-managed native SoftN installations. Runtime code is operator supplied; uploads contain data and DSL source only.
+ *
+ * Three different questions, answered by three different methods (audit FL-03):
+ *  - available()  — are the runtime ARTIFACTS prepared on this host? Cheap file/extension checks only.
+ *  - preflight()  — can the runtime actually RUN here? Executes the configured Node binary, loads the
+ *                   engine, starts a throw-away app in a temporary root and proves private storage is
+ *                   writable. Bounded, non-destructive, briefly cached.
+ *  - install()'s /api/meta health call — is THIS app's source and migration state usable?
+ *
+ * Storage layout under root(appId) (audit FL-02 inventory):
+ *  - app/                          active source (restorable, portable)
+ *  - project.json                  source + media + version/home/access (restorable, portable)
+ *  - private/data/application.sqlite   records + migration state + record-event queue (restorable, account data)
+ *  - private/config.json           host-generated key material + capabilities (restorable ONLY through a
+ *                                  privileged recovery backup; otherwise reissued and reported as such)
+ *  - private/manage.lock, events.lock, staging-*, previous-*, pre-install-*.sqlite, recovery-required
+ *                                  host-local; never archived
+ */
 class NativeAppService
 {
+    public const CRYPTO_RESTORED = 'restored';
+    public const CRYPTO_REISSUED = 'reissued';
+
+    private const PREFLIGHT_TTL = 60;
+
     public function __construct(private ?string $storagePath = null, private ?string $runtimePath = null, private ?string $nodeBinary = null) {}
 
     private function root(string $appId): string
@@ -25,6 +49,326 @@ class NativeAppService
     }
 
     private function runtime(): string { return $this->runtimePath ?? dirname(__DIR__, 2) . '/resources/softn-native'; }
+
+    private function storageRoot(): string { return $this->storagePath ?? dirname(__DIR__, 2) . '/storage/native-apps'; }
+
+    // ── Backup / restore surface (audit FL-02) ────────────────────────────────
+
+    /**
+     * What a backup can carry for this app, or null when no native installation exists.
+     * Never returns key material; hostConfig() is the separate, privileged read.
+     *
+     * @return array{manifestId:string, version:int, home:bool, access:string, capabilities:list<string>, hasDatabase:bool, recoveryRequired:bool}|null
+     */
+    public function describe(string $appId): ?array
+    {
+        $project = $this->get($appId);
+        if (!$project) return null;
+        $root = $this->root($appId);
+        $manifest = json_decode((string) ($project['files']['manifest.json'] ?? ''), true);
+        $capabilities = is_array($manifest['server']['requires']['capabilities'] ?? null) ? array_values(array_map('strval', $manifest['server']['requires']['capabilities'])) : [];
+        return [
+            'manifestId' => (string) ($manifest['id'] ?? ''),
+            'version' => (int) ($project['version'] ?? 0),
+            'home' => (bool) ($project['home'] ?? false),
+            'access' => (string) ($project['access'] ?? 'application'),
+            'capabilities' => $capabilities,
+            'hasDatabase' => is_file($root . '/private/data/application.sqlite'),
+            'recoveryRequired' => is_file($root . '/private/recovery-required'),
+        ];
+    }
+
+    /**
+     * The private host configuration (key material + capabilities) for a PRIVILEGED recovery backup.
+     * Callers must never place this in a user-downloadable export.
+     */
+    public function hostConfig(string $appId): ?array
+    {
+        $path = $this->root($appId) . '/private/config.json';
+        if (!is_file($path)) return null;
+        $config = json_decode((string) file_get_contents($path), true);
+        return is_array($config) ? $config : null;
+    }
+
+    /**
+     * Consistent snapshot of the app's private database into $destination (audit FL-01 helper),
+     * taken under the shared management lock so an in-progress install cannot interleave.
+     *
+     * @return array|null SqliteSnapshot metadata, or null when the app has no database yet
+     */
+    public function snapshotDatabase(string $appId, string $destination, ?SqliteSnapshot $snapshotter = null): ?array
+    {
+        $root = $this->root($appId);
+        $path = $root . '/private/data/application.sqlite';
+        if (!is_file($path)) return null;
+        if (is_file($root . '/private/recovery-required')) throw new RuntimeException('The app database needs operator recovery before it can be backed up');
+        $lock = fopen($root . '/private/manage.lock', 'c');
+        if (!$lock || !flock($lock, LOCK_SH | LOCK_NB)) { if ($lock) fclose($lock); throw new RuntimeException('The app is being updated. Try the backup again shortly.', 409); }
+        try { return ($snapshotter ?? new SqliteSnapshot())->snapshot($path, $destination); }
+        finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
+    /**
+     * Disaster-recovery restore of an installation captured by describe()/get()/snapshotDatabase().
+     *
+     * - Never overwrites: an existing installation for $appId is an explicit error.
+     * - $databaseSnapshot (a closed, verified SQLite file) becomes the private database; without it the
+     *   app starts empty and the result says so.
+     * - $hostConfig restores the original key material ("restored"); without it a NEW key is generated
+     *   and the result reports "reissued" — values sealed/HMACed by the old installation are then
+     *   unverifiable, which the caller must surface rather than hide.
+     * - Everything is cleaned up on failure; a half-restored app never remains.
+     *
+     * @return array{version:int, database:string, cryptoMaterial:string}
+     */
+    public function restore(string $appId, array $project, ?string $databaseSnapshot, ?array $hostConfig): array
+    {
+        if (!$this->available()) throw new RuntimeException('Prepare the native app runtime before restoring native apps');
+        [$files, $decoded, $manifest, $capabilities] = self::validateProject($project);
+        $root = $this->root($appId);
+        if (is_dir($root) && (is_file($root . '/project.json') || is_dir($root . '/app') || is_file($root . '/private/data/application.sqlite'))) {
+            throw new RuntimeException('A native installation already exists for this app; remove it before restoring');
+        }
+        if ($databaseSnapshot !== null) {
+            if (!is_file($databaseSnapshot)) throw new RuntimeException('The native database snapshot is missing');
+            $this->assertSnapshotHealthy($databaseSnapshot);
+        }
+        if ($hostConfig !== null) {
+            if (!is_string($hostConfig['keyHex'] ?? null) || !preg_match('/^[0-9a-f]{64}$/', $hostConfig['keyHex']) || ($hostConfig['appId'] ?? null) !== $manifest['id']) {
+                throw new InvalidArgumentException('The native host configuration does not belong to this app');
+            }
+        }
+        $this->directory($root);
+        $this->directory($root . '/private');
+        $this->directory($root . '/private/data');
+        $lock = fopen($root . '/private/manage.lock', 'c');
+        if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) throw new RuntimeException('The app is busy. Try again shortly.', 409);
+        $staging = $root . '/staging-' . bin2hex(random_bytes(8));
+        try {
+            $config = $hostConfig ?? ['appId' => $manifest['id'], 'development' => false, 'keyHex' => bin2hex(random_bytes(32)), 'cryptoDomains' => ['hmac' => $manifest['id'] . ':hmac:v1', 'seal' => $manifest['id'] . ':seal:v1']];
+            $config['capabilities'] = $capabilities;
+            $config['enableHostContext'] = true;
+            $this->writeHostConfig($root . '/private/config.json', json_encode($config, JSON_THROW_ON_ERROR));
+            $database = 'none';
+            if ($databaseSnapshot !== null) {
+                if (!copy($databaseSnapshot, $root . '/private/data/application.sqlite')) throw new RuntimeException('Could not place the restored app database');
+                $database = 'restored';
+            }
+            $this->directory($staging);
+            foreach (array_merge($files, $decoded) as $path => $source) {
+                $this->directory(dirname($staging . '/' . $path));
+                if (file_put_contents($staging . '/' . $path, $source) === false) throw new RuntimeException('Could not stage app source');
+            }
+            if (!rename($staging, $root . '/app')) throw new RuntimeException('Could not activate restored app source');
+            $health = $this->invoke($root, ['method' => 'GET', 'path' => '/api/meta', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false]);
+            if (($health['status'] ?? 500) !== 200) throw new RuntimeException('Restored native app failed validation: ' . ($health['body']['diagnostic'] ?? 'runtime unavailable'), 422);
+            $version = max(1, (int) ($project['version'] ?? 1));
+            $saved = ['home' => ($project['home'] ?? false) === true, 'version' => $version, 'updatedAt' => gmdate('c'), 'files' => $files, 'assets' => is_array($project['assets'] ?? null) ? $project['assets'] : [], 'access' => ($project['access'] ?? '') === 'members' ? 'members' : 'application'];
+            $temp = $root . '/project.pending.json';
+            file_put_contents($temp, json_encode($saved, JSON_THROW_ON_ERROR));
+            if (!rename($temp, $root . '/project.json')) throw new RuntimeException('Could not save the restored project');
+            return ['version' => $version, 'database' => $database, 'cryptoMaterial' => $hostConfig !== null ? self::CRYPTO_RESTORED : self::CRYPTO_REISSUED];
+        } catch (\Throwable $error) {
+            flock($lock, LOCK_UN); fclose($lock); $lock = null;
+            try { $this->remove($appId); } catch (\Throwable $cleanup) { error_log('Native restore cleanup: ' . $cleanup->getMessage()); }
+            throw $error;
+        } finally {
+            if ($lock) { flock($lock, LOCK_UN); fclose($lock); }
+        }
+    }
+
+    private function assertSnapshotHealthy(string $path): void
+    {
+        // Explicitly closed handle (see SqliteSnapshot::readRows for why that matters on Windows).
+        if (class_exists(\SQLite3::class)) {
+            $db = new \SQLite3($path, SQLITE3_OPEN_READONLY);
+            try { $db->enableExceptions(true); $check = (string) $db->querySingle('PRAGMA quick_check'); }
+            catch (\Throwable $e) { $check = $e->getMessage(); }
+            finally { $db->close(); }
+        } else {
+            $pdo = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+            try { $check = (string) $pdo->query('PRAGMA quick_check')->fetchColumn(); } catch (\Throwable $e) { $check = $e->getMessage(); }
+            $pdo = null;
+        }
+        if ($check !== 'ok') throw new RuntimeException('The native database snapshot failed its integrity check: ' . $check);
+    }
+
+    // ── Runtime preflight (audit FL-03) ───────────────────────────────────────
+
+    /**
+     * Bounded, non-destructive capability preflight. Distinct failures for: missing/unsupported
+     * artifacts, an unrunnable or too-old Node binary, missing built-in modules, a worker that cannot
+     * start the engine, and unwritable private storage. Results are cached briefly (invalidated when
+     * the runtime files, binary or storage path change) so a public page never forks a worker.
+     *
+     * Messages name relative files only — never absolute paths or secrets — so they can be shown to
+     * an app owner. Operators get the same structure through the admin tooling.
+     *
+     * @return array{ok:bool, checkedAt:string, cached:bool, checks:list<array{id:string,ok:bool,message:string}>, runtime:array<string,mixed>}
+     */
+    public function preflight(bool $fresh = false): array
+    {
+        $cacheFile = $this->storageRoot() . '/.preflight.json';
+        $key = $this->preflightKey();
+        if (!$fresh && is_file($cacheFile)) {
+            $cached = json_decode((string) file_get_contents($cacheFile), true);
+            if (is_array($cached) && ($cached['key'] ?? null) === $key && (int) ($cached['at'] ?? 0) > time() - self::PREFLIGHT_TTL && is_array($cached['result'] ?? null)) {
+                return ['cached' => true] + $cached['result'];
+            }
+        }
+        $result = $this->runPreflight();
+        try {
+            $this->directory($this->storageRoot());
+            $pending = $cacheFile . '.' . bin2hex(random_bytes(4));
+            if (file_put_contents($pending, json_encode(['key' => $key, 'at' => time(), 'result' => $result], JSON_THROW_ON_ERROR)) !== false) rename($pending, $cacheFile);
+        } catch (\Throwable $e) { /* caching is best effort */ }
+        return ['cached' => false] + $result;
+    }
+
+    private function nodeBinary(): string
+    {
+        return $this->nodeBinary ?? ($_ENV['FORMLOGIC_NODE_BIN'] ?? getenv('FORMLOGIC_NODE_BIN') ?: 'node');
+    }
+
+    private function preflightKey(): string
+    {
+        $parts = [$this->runtime(), $this->storageRoot(), $this->nodeBinary()];
+        foreach (['host-protocol.json', 'runner.mjs', 'request-worker.mjs', 'provenance.json', 'wasm/zipp_wasm_bg.wasm'] as $file) {
+            $path = $this->runtime() . '/' . $file;
+            $parts[] = is_file($path) ? $file . ':' . filemtime($path) . ':' . filesize($path) : $file . ':missing';
+        }
+        return hash('sha256', implode('|', $parts));
+    }
+
+    private function runPreflight(): array
+    {
+        $checks = [];
+        $runtime = [];
+        $fail = static function (string $id, string $message) use (&$checks): void { $checks[] = ['id' => $id, 'ok' => false, 'message' => $message]; };
+        $pass = static function (string $id, string $message) use (&$checks): void { $checks[] = ['id' => $id, 'ok' => true, 'message' => $message]; };
+
+        function_exists('proc_open') ? $pass('php.proc_open', 'PHP can start worker processes') : $fail('php.proc_open', 'PHP proc_open() is disabled; the native runtime cannot start');
+        extension_loaded('pdo_sqlite') ? $pass('php.pdo_sqlite', 'PDO SQLite is available') : $fail('php.pdo_sqlite', 'The pdo_sqlite PHP extension is not loaded');
+
+        $missing = [];
+        foreach (['host-protocol.json', 'runner.mjs', 'request-worker.mjs', 'wasm-host.mjs', 'migrations.mjs', 'wasm/zipp_wasm.mjs', 'wasm/zipp_wasm_bg.wasm'] as $file) {
+            if (!is_file($this->runtime() . '/' . $file)) $missing[] = $file;
+        }
+        $missing ? $fail('runtime.files', 'Native runtime is not prepared; missing ' . implode(', ', $missing) . ' (run scripts/prepare-native-runtime.mjs)') : $pass('runtime.files', 'Native runtime artifacts are present');
+
+        $protocol = $missing ? null : json_decode((string) file_get_contents($this->runtime() . '/host-protocol.json'), true);
+        if (!is_array($protocol) || ($protocol['nativeProtocol'] ?? null) !== 1) {
+            if (!$missing) $fail('runtime.protocol', 'The prepared runtime does not speak native hosting protocol 1');
+        } else {
+            $runtime['nativeProtocol'] = 1;
+            $runtime['recordEvents'] = ($protocol['recordEvents'] ?? null) === 1 && is_file($this->runtime() . '/record-events.mjs') ? 1 : 0;
+            $pass('runtime.protocol', 'Native hosting protocol 1' . ($runtime['recordEvents'] === 1 ? ' with record automations' : ' (record automations unavailable)'));
+        }
+        $provenance = is_file($this->runtime() . '/provenance.json') ? json_decode((string) file_get_contents($this->runtime() . '/provenance.json'), true) : null;
+        if (is_array($provenance)) $runtime['zipp'] = ['version' => $provenance['zipp']['version'] ?? null, 'sha256' => $provenance['zipp']['sha256'] ?? null];
+
+        $node = $this->nodeBinary();
+        $version = $this->runBounded([$node, '--version'], 8);
+        if ($version === null || $version['exit'] !== 0 || !preg_match('/^v?(\d+\.\d+\.\d+)/', trim($version['stdout']), $m)) {
+            $fail('node.executable', 'The configured Node.js binary could not be executed (set FORMLOGIC_NODE_BIN to a working Node.js install)');
+        } else {
+            $runtime['node'] = $m[1];
+            $pass('node.executable', 'The configured Node.js binary runs');
+            $minimum = is_array($protocol) && is_string($protocol['minimumNode'] ?? null) ? $protocol['minimumNode'] : null;
+            if ($minimum !== null && version_compare($m[1], $minimum, '<')) $fail('node.version', 'Node.js ' . $m[1] . ' is older than the runtime minimum ' . $minimum);
+            else $pass('node.version', 'Node.js ' . $m[1] . ($minimum !== null ? ' meets the runtime minimum ' . $minimum : ''));
+            if (!$missing) {
+                $probe = 'const m=[];for(const n of ["node:sqlite","node:worker_threads","node:crypto"]){try{await import(n)}catch{m.push(n)}}'
+                    . 'if(typeof WebAssembly!=="object")m.push("WebAssembly");'
+                    . 'if(m.length){console.log(JSON.stringify({missing:m}));process.exit(2)}'
+                    . 'const fs=await import("node:fs");try{await WebAssembly.compile(fs.readFileSync(process.argv[1]))}catch(e){console.log(JSON.stringify({missing:["zipp-wasm:"+String(e.message).slice(0,80)]}));process.exit(3)}'
+                    . 'console.log(JSON.stringify({missing:[]}))';
+                $caps = $this->runBounded([$node, '--no-warnings', '--input-type=module', '-e', $probe, $this->runtime() . '/wasm/zipp_wasm_bg.wasm'], 15);
+                $decoded = $caps !== null ? json_decode(trim((string) strrchr("\n" . rtrim($caps['stdout']), "\n")), true) : null;
+                if ($caps === null) $fail('node.capabilities', 'Node.js did not finish the capability probe within its deadline');
+                elseif (!is_array($decoded)) $fail('node.capabilities', 'Node.js could not run the capability probe');
+                elseif (!empty($decoded['missing'])) $fail('node.capabilities', 'Node.js is missing required built-ins: ' . implode(', ', array_map('strval', $decoded['missing'])));
+                else $pass('node.capabilities', 'Node.js provides SQLite, worker threads, crypto and can compile the ZIPP engine');
+            }
+        }
+
+        $storageOk = false;
+        try {
+            $this->directory($this->storageRoot());
+            $probeRoot = $this->storageRoot() . '/.preflight-' . bin2hex(random_bytes(6));
+            $this->directory($probeRoot);
+            try {
+                $this->directory($probeRoot . '/private/data');
+                if (file_put_contents($probeRoot . '/private/probe.txt', 'ok') !== 2) throw new RuntimeException('write failed');
+                $dbPath = $probeRoot . '/private/data/probe.sqlite';
+                if (class_exists(\SQLite3::class)) { $db = new \SQLite3($dbPath); try { $db->enableExceptions(true); $db->exec('CREATE TABLE probe(id INTEGER)'); } finally { $db->close(); } }
+                else { $pdo = new PDO('sqlite:' . $dbPath, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]); $pdo->exec('CREATE TABLE probe(id INTEGER)'); $pdo = null; }
+                $storageOk = true;
+                $pass('storage.writable', 'Private app storage is writable');
+                // Only when everything else passed: start a minimal isolated app in the throw-away root.
+                if (!array_filter($checks, static fn ($c) => !$c['ok'])) {
+                    $started = $this->probeWorker($probeRoot);
+                    $started === null ? $pass('worker.startup', 'A minimal native app started and answered /api/meta') : $fail('worker.startup', $started);
+                }
+            } finally {
+                $this->removeProbeRoot($probeRoot);
+            }
+        } catch (\Throwable $e) {
+            if (!$storageOk) $fail('storage.writable', 'Private app storage is not writable: ' . $e->getMessage());
+        }
+
+        $ok = !array_filter($checks, static fn ($c) => !$c['ok']);
+        return ['ok' => $ok, 'checkedAt' => gmdate('c'), 'checks' => $checks, 'runtime' => $runtime];
+    }
+
+    /** Start a real worker against a throw-away app root; null on success, else the operator message. */
+    private function probeWorker(string $root): ?string
+    {
+        try {
+            $manifest = ['id' => 'formlogic.preflight', 'version' => '1.0.0', 'main' => 'ui/main.ui', 'server' => ['entry' => 'server/main.logic', 'requires' => ['apiVersion' => 1, 'capabilities' => ['sql']], 'database' => ['kind' => 'private-sqlite', 'migrations' => []], 'routes' => []]];
+            $files = ['manifest.json' => json_encode($manifest, JSON_THROW_ON_ERROR), 'ui/main.ui' => '<Text>Preflight</Text>', 'server/main.logic' => 'function noop() { return { status: 200, body: {} }; }'];
+            foreach ($files as $path => $source) { $this->directory(dirname($root . '/app/' . $path)); file_put_contents($root . '/app/' . $path, $source); }
+            $this->writeHostConfig($root . '/private/config.json', json_encode(['appId' => 'formlogic.preflight', 'development' => false, 'keyHex' => bin2hex(random_bytes(32)), 'capabilities' => ['sql'], 'cryptoDomains' => ['hmac' => 'formlogic.preflight:hmac:v1', 'seal' => 'formlogic.preflight:seal:v1'], 'enableHostContext' => true], JSON_THROW_ON_ERROR));
+            $health = $this->invoke($root, ['method' => 'GET', 'path' => '/api/meta', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false]);
+            if (($health['status'] ?? 500) !== 200) return 'The native worker started but could not validate a minimal app: ' . (string) ($health['body']['diagnostic'] ?? 'runtime unavailable');
+            return null;
+        } catch (\Throwable $e) {
+            return 'The native worker could not start: ' . $e->getMessage();
+        }
+    }
+
+    private function removeProbeRoot(string $root): void
+    {
+        $resolved = realpath($root);
+        if (!$resolved || !str_starts_with(basename($resolved), '.preflight-')) return;
+        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($resolved, \FilesystemIterator::SKIP_DOTS), \RecursiveIteratorIterator::CHILD_FIRST);
+        foreach ($iterator as $entry) { if ($entry->isLink() || !$entry->isDir()) @unlink($entry->getPathname()); else @rmdir($entry->getPathname()); }
+        @rmdir($resolved);
+    }
+
+    /** Run a command with a hard deadline; null when it did not finish in time. @return array{exit:int, stdout:string}|null */
+    private function runBounded(array $command, int $seconds): ?array
+    {
+        if (!function_exists('proc_open')) return null;
+        $out = tempnam(sys_get_temp_dir(), 'fl-preflight-');
+        $process = @proc_open($command, [0 => ['pipe', 'r'], 1 => ['file', $out, 'w'], 2 => ['file', $out, 'a']], $pipes, null, null, ['bypass_shell' => true]);
+        if (!is_resource($process)) { @unlink($out); return null; }
+        fclose($pipes[0]);
+        $deadline = microtime(true) + $seconds;
+        try {
+            do {
+                $status = proc_get_status($process);
+                if (!$status['running']) break;
+                if (microtime(true) >= $deadline) { proc_terminate($process); return null; }
+                usleep(20000);
+            } while (true);
+            $exit = (int) $status['exitcode'];
+            return ['exit' => $exit, 'stdout' => (string) file_get_contents($out)];
+        } finally {
+            if (is_resource($process)) proc_close($process);
+            @unlink($out);
+        }
+    }
 
     private function directory(string $path): void
     {
