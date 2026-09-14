@@ -66,6 +66,23 @@ Pins after round 3: xdb.org 84e952e → softn.com db17857 → formlogic.com (thi
 
 Still open after round 3: the two-host LAN run, the automated desktop upgrade end to end (the loader's unresolved-upgrade and stop-on-unfinalised paths are unit-tested, not driven through Tauri), the ecosystem harness below, and the GitHub-side runs of the OAIY attestation and Aokie no-secrets dispatch.
 
+## Round 4 (15 September 2026, `F2i-Ecosystem-Round-4-Handoff-2026-09-15`)
+
+The round-4 review confirmed the seven round-3 repairs and left three tickets. All three were confirmed against the current source; the review's proposed regression file was adopted verbatim into the loader suite. Running the LAN qualification in containers to verify XDB first, as requested, found and fixed a fourth defect the review had not seen.
+
+| Item | Repaired | Regression |
+| --- | --- | --- |
+| R4-SN-01 registry operations across awaits | no registry snapshot survives an await: every commit re-reads the stored registry, revalidates the operation (record present, no other pending upgrade, digest not mapped elsewhere, pending record still this operation's) and writes only what it owns; a cancellation signal from the loader stops an operation before new side effects and obsolete dialogs are answered with cancel; a restore that already ran is still recorded | softn.com `test/upgrade-overlap.regression.test.ts` (the review's file: suspended upgrade vs unrelated open, competing upgrades, rollback vs unrelated open) and R4 cases in `upgradeFlow.test.ts` |
+| R4-SN-02 recovery retry | a successful rollback retry clears the recovery marker together with the pending record; `recoverInstallation` verifies installation and backup identity, restores, then clears both markers in one commit or keeps the block with a precise reason; opening a recovery-only installation offers "restore the backup and retry" with the backup path shown | `upgrade-overlap.regression.test.ts` (recovery), `upgradeFlow.test.ts` (R4-SN-02 block) |
+| R4-XD-01 offline authoritative resume | one rule (`NetworkControl::publication_precondition`) for initial import, `resume_sync` and every `recover_restore` step: an applied `replace` restore without a running network node is refused with the fix named, the plan is kept, the pause holds, a restart finds the same plan; `local` restores resume without a node | xdb.org `an_applied_replace_restore_keeps_its_plan_pending_while_networking_is_off` |
+| LAN dial defect (found by the container run) | libp2p reuses the listening port as dial source port; two peers discovering each other in the same instant dialed each other at once with mirrored 4-tuples, the kernel merged the dials into one TCP simultaneous open, both Noise handshakes ran as initiator and failed, and nothing retried, so the peers never connected. The node now dials discovered peers from a fresh port, registers explicit GossipSub peers only once connected, retries failed dials with jittered back-off, logs connection failures, and re-queries mDNS every 30 s instead of every 5 min | two `lan-probe` containers on a Docker bridge (`scripts/lan-two-containers.sh`), simultaneous start: converged in both of two runs; in-process loopback in a container: 3 of 3 (previously 1 of 4) |
+
+XDB qualification on this machine: the in-process loopback test cannot run on the Windows host while WSL or Docker Desktop is up (their virtual adapter wins the multicast route, so discovery packets never loop back); it and the two-container run pass in Linux containers, which the XDB README now documents as the supported way to run them on a single machine. A run across two real hosts is still to be recorded.
+
+Pins after round 4: xdb.org e642c31 → softn.com 0cd405d → formlogic.com (this commit); manifest regenerated and checked.
+
+Still open after round 4: the two-host LAN run, the automated desktop upgrade end to end, the ecosystem harness below, and the GitHub-side runs of the OAIY attestation and the Aokie no-secrets dispatch.
+
 ## What the ecosystem harness must do when it is built
 
 1. Fixture: one representative Softn app hosted in FormLogic (conventional form + native app), one Aokie synthetic telephony source (no real hardware), OAIY CLI as the flow runner, the pinned ZIPP runtime from the compatibility manifest.
