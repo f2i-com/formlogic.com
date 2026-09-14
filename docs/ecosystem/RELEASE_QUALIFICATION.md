@@ -42,8 +42,9 @@ Still open from the recheck: live two-machine restart/partition qualification fo
 | OAI-01 CLI typecheck | `npm run typecheck` had never passed, so the gate that runs it would have failed on GitHub; generated glue typed, browser-only globals declared for the CLI | passes locally |
 | ECO-04 quick-xml exception | closed, not accepted: only dependent was the demo's `wayland-scanner`; bumped, xdb.org `cargo audit` 0 vulnerabilities | `cargo test -p xdb` 39 tests |
 | XD-04 batch edit | `Database::update_records` + Tauri `update_records`: 200 → 101 rows, 1.15 s → 34 ms at 10k | `update_records_commits_all_or_nothing_with_one_snapshot_per_collection`; benchmarks.md third pass |
-| FormLogic lock handle | the refused (409) paths of native install, restore and request left the `manage.lock` handle open until garbage collection; closed explicitly | `NativeAppServiceTest` runs without the three Windows cleanup warnings the R2-FL-01 test had added; full backend suite 1637 tests OK |
-| Pins | xdb.org c349911 → softn.com 5db3041 → formlogic.com (this commit); manifest regenerated | `node scripts/ecosystem-manifest.mjs --check` |
+| FormLogic lock handle | the refused (409) paths of native install, restore and request returned without closing the `manage.lock` handle they had opened; closed explicitly like the other lock sites | `NativeAppServiceTest`; full backend suite 1637 tests OK |
+| FormLogic test warnings | the remaining "Resource temporarily unavailable" / "Directory not empty" cleanup warnings were traced to Xdebug `develop` mode, which retains every frame's locals at each throw for the life of the process (reproduced with plain objects and with PDO/SQLite3 on PHP 8.0–8.5; absent with `xdebug.mode=off`). Not a code defect; documented in the backend README. The one genuine warning, `mkdir()` on a storage path that is a file (the `storage.writable` preflight scenario), is now refused before mkdir | `php -d xdebug.mode=off vendor/bin/phpunit`: 0 warnings |
+| Pins | xdb.org c349911 → softn.com e510d17 (pin plus the loader registering `update_records`) → formlogic.com; manifest regenerated | `node scripts/ecosystem-manifest.mjs --check` |
 
 ## What the ecosystem harness must do when it is built
 

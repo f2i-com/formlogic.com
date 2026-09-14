@@ -145,6 +145,20 @@ backend/
 composer test
 ```
 
+Native app tests need the prepared runtime (`resources/softn-native/`, see
+`scripts/prepare-native-runtime.mjs`) and `FORMLOGIC_NODE_BIN` pointing at a
+Node.js binary; they are skipped otherwise. Integration tests use the MySQL
+database named in `.env`.
+
+`composer test` runs PHPUnit with Xdebug off (`php -d xdebug.mode=off
+vendor/bin/phpunit`); do the same when invoking PHPUnit directly on a machine
+that loads Xdebug in `develop` mode. In develop mode Xdebug keeps a reference to every local variable of every
+frame at the moment an exception is thrown, for the rest of the process. Tests
+that exercise failure paths (a 409 on publish, a rejected delivery) then leave
+SQLite files and lock handles open, and their temp-directory cleanup reports
+"Resource temporarily unavailable" / "Directory not empty" warnings that have
+nothing to do with the code under test.
+
 ## Production Deployment
 
 1. Set `APP_ENV=production` and `APP_DEBUG=false` in `.env`

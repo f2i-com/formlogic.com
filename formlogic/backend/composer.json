@@ -34,7 +34,7 @@
     },
     "scripts": {
         "start": "php -S localhost:8080 -t public",
-        "test": "phpunit",
+        "test": "@php -d xdebug.mode=off vendor/bin/phpunit",
         "analyse": "phpstan analyse --no-progress --memory-limit=1G"
     }
 }

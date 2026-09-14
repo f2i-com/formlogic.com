@@ -430,7 +430,10 @@ class NativeAppService
     private function directory(string $path): void
     {
         if (is_link($path)) throw new RuntimeException('App storage is unavailable');
-        if (!is_dir($path) && !mkdir($path, 0700, true) && !is_dir($path)) throw new RuntimeException('App storage is unavailable');
+        if (is_dir($path)) return;
+        // A file (or anything else) where the directory belongs: mkdir would only warn.
+        if (file_exists($path)) throw new RuntimeException('App storage is unavailable');
+        if (!mkdir($path, 0700, true) && !is_dir($path)) throw new RuntimeException('App storage is unavailable');
     }
 
     /** Replace private configuration atomically so a failed write cannot truncate its keys. */
