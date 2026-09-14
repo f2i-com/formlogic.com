@@ -1,11 +1,11 @@
 {
   "kind": "formlogic.ecosystemCompatibilityManifest",
   "formatVersion": 1,
-  "generatedAt": "2026-09-14T22:03:46.279Z",
+  "generatedAt": "2026-09-14T22:42:39.076Z",
   "note": "Source revisions and digests of files present in the tree at generation time. Release workflows must recompute digests of the artifacts they actually ship; provenance is not verification of downloaded bytes.",
   "components": {
     "formlogic": {
-      "revision": "fa8e82e10fed1b4486c4892af2407881b6ddee64",
+      "revision": "7a83ed60d8cb9a711b999f3d5855ab083acc88a7",
       "backupFormat": {
         "current": 2,
         "importable": [
@@ -17,11 +17,16 @@
     },
     "softn": {
       "pinnedBy": "formlogic/.github/actions/prepare-hosted-runtime/action.yml",
-      "revision": "1c9cb07509c0954bd55aa4f6c134cd71f272bcc5",
-      "checkoutRevision": "1c9cb07509c0954bd55aa4f6c134cd71f272bcc5",
+      "revision": "6cfe0eb335d99d09db3ebe6963e8a132b1068154",
+      "checkoutRevision": "6cfe0eb335d99d09db3ebe6963e8a132b1068154",
       "nativeProtocol": 1,
       "recordEvents": 1,
-      "minimumNode": "24.19.0"
+      "minimumNode": "24.19.0",
+      "formlogicAdapter": {
+        "vendoredAt": "formlogic/ui/src/lib/softn/project.ts",
+        "source": "softn.com/packages/@softn/core/src/integrations/formlogic.ts",
+        "sha256": "0a05fae49fef7b70a83d0b0a3394a72c26944e9abbd66e6cf4d705c63dc682e2"
+      }
     },
     "xdb": {
       "pinnedBy": "softn/.github/scripts/checkout-xdb.sh",
@@ -84,6 +89,7 @@
     "hostedRuntimeProtocol": 1,
     "nativeHostingProtocol": 1,
     "recordEventsProtocol": 1,
+    "editorBridgeProtocol": 1,
     "accountBackupFormats": [
       1,
       2

@@ -10,7 +10,7 @@ runs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         repository: f2i-com/softn.com
-        ref: 1c9cb07509c0954bd55aa4f6c134cd71f272bcc5
+        ref: 6cfe0eb335d99d09db3ebe6963e8a132b1068154
         path: .runtime-source/softn.com
         persist-credentials: false
     - name: Install pinned runtime dependencies
@@ -37,3 +37,16 @@ runs:
       run: |
         node scripts/prepare-native-runtime.mjs
         echo "FORMLOGIC_NODE_BIN=$(command -v node)" >> "$GITHUB_ENV"
+    # ECO-02: every consumer of the pinned runtime (backend tests, UI, e2e,
+    # packaging) asserts that the committed compatibility manifest describes
+    # THIS tree: the pinned Softn revision, its pinned XDB revision, the
+    # vendored ZIPP release (identical bytes in FormLogic, Softn and the
+    # prepared native runtime), the vendored adapter's provenance, protocol
+    # versions and data-format ranges. A stale manifest, a drifted pin or
+    # mismatched engine bytes fail here before any test or package step.
+    - name: Ecosystem compatibility manifest (pins, digests, protocols)
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        SOFTN_REPO: ${{ github.workspace }}/.runtime-source/softn.com
+      run: node scripts/ecosystem-manifest.mjs --check
