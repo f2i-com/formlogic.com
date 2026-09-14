@@ -2,11 +2,13 @@
 
 **Run:** 14 September 2026, reviewer's Windows 11 workstation, online. Tools: `cargo audit 0.22.2` (RustSec DB current at run time), `npm audit` (npm registry advisories, `--audit-level=high` for gating), `composer audit` (Packagist). Every result below is dated; re-run before widening native networking or tagging a release. A tool that cannot reach its service is recorded as **unknown**, never as clean (see `VERIFICATION_POLICY.md` §4).
 
+**Second pass, 14 September 2026 (later the same day):** the OAIY high findings were remediated and the XDB quick-xml exception was closed rather than accepted. The tables below show the state after that pass; the first-pass findings are kept in the "as found" rows so the record shows what changed.
+
 ## Results per shipped lockfile
 
 | Lockfile | Tool | Result | Resolution |
 | --- | --- | --- | --- |
-| `xdb.org/Cargo.lock` | cargo audit | 4 vulnerabilities, 10 unmaintained, 4 unsound, 2 yanked (warnings) | **crossbeam-epoch 0.9.18 → 0.9.21** and **h2 0.4.12 → 0.4.19** updated in place (semver-compatible; `cargo test -p xdb` passes). **quick-xml 0.37.5** (RUSTSEC-2026-0194/0195, fixed in 0.41): not direct; constrained by a parent in the libp2p family — accepted exception below. |
+| `xdb.org/Cargo.lock` | cargo audit | as found: 4 vulnerabilities, 10 unmaintained, 4 unsound, 2 yanked (warnings). **After the second pass: 0 vulnerabilities, 16 warnings.** | **crossbeam-epoch 0.9.18 → 0.9.21** and **h2 0.4.12 → 0.4.19** updated in place (semver-compatible; `cargo test -p xdb` passes). **quick-xml 0.37.5 → 0.41.0** (RUSTSEC-2026-0194/0195): the first pass attributed it to the libp2p stack; `cargo tree -i quick-xml` shows its only dependent is `wayland-scanner` (the demo app's Linux GUI tooling, not the `xdb` crate). `cargo update -p wayland-scanner` (0.31.7 → 0.31.11) moves it to 0.41.0; the xdb crate's own dependency set is unchanged. |
 | `aokie.com/Cargo.lock` | cargo audit | 0 vulnerabilities, 9 unmaintained warnings | clean; the existing `cargo audit` CI gate and `.cargo/audit.toml` (no ignores) stay. |
 | `oaiy.com/desktop/src-tauri/Cargo.lock` | cargo audit | 0 vulnerabilities, 6 unmaintained, 1 unsound warning | clean. |
 | `softn.com/apps/softn-loader/src-tauri/Cargo.lock` | cargo audit | 0 vulnerabilities | clean. Its XDB path dependency resolves through the sibling checkout pinned by `checkout-xdb.sh`; the XDB row above is the one that applies to shipped Softn desktop builds. |
@@ -16,33 +18,34 @@
 | `formlogic.com/formlogic/ui/package-lock.json` | npm audit (high) | 0 | clean (703 packages). |
 | `xdb.org/package-lock.json` | npm audit (high) | 0 | clean. |
 | `aokie.com/apps/aokie-mobile/package-lock.json` | npm audit (high) | 0 | clean. |
-| `oaiy.com/ui/package-lock.json` | npm audit (high) | **5 high, 3 moderate, 1 low** | see OAIY table below. |
-| `oaiy.com/cli/package-lock.json` | npm audit (high) | **2 high, 1 moderate** | see OAIY table below. |
-| `oaiy.com/desktop/package-lock.json` | npm audit (high) | **4 high, 3 moderate, 1 low** | see OAIY table below. |
+| `oaiy.com/ui/package-lock.json` | npm audit (high) | as found: **5 high, 3 moderate, 1 low**. After the second pass: **0 high**, 2 moderate. | `npm audit fix` applied; see OAIY table below. |
+| `oaiy.com/cli/package-lock.json` | npm audit (high) | as found: **2 high, 1 moderate**. After the second pass: **0 high**, 1 moderate. | `npm audit fix` applied, `sharp` → ^0.35.4; see OAIY table below. |
+| `oaiy.com/desktop/package-lock.json` | npm audit (high) | as found: **4 high, 3 moderate, 1 low**. After the second pass: **0 high**, 2 moderate. | `npm audit fix` applied; see OAIY table below. |
 | `formlogic.com/formlogic/backend/composer.lock` | composer audit | 0 advisories, 0 abandoned | clean. |
 | `oaiy.com/api` | composer audit | no packages | nothing to audit. |
 
-### OAIY npm findings (not remediated by this review; owner: OAIY release owner)
+### OAIY npm findings (as found, then remediated in the second pass; owner: OAIY release owner)
 
-| Package | Where | Severity | Runtime or dev | Fix | Exposure note |
+| Package | Where | Severity | Runtime or dev | Fix | Status after the second pass |
 | --- | --- | --- | --- | --- | --- |
-| browserslist ≤4.28.6 | ui, desktop | high | prod (build-time tooling resolved as prod) | `npm audit fix` (non-major) | build tooling; not reachable from shipped pages |
-| nanoid ≤3.3.17 | ui, desktop | high | prod | `npm audit fix` | id generation; check shipped bundles for direct use |
-| postcss ≤8.5.22 | ui (dev), desktop (prod) | high | dev / prod | `npm audit fix` | build-time source map loading; not in shipped output |
-| undici 7.x / 8.x | ui (prod), cli (dev) | high | prod / dev | `npm audit fix` | HTTP client; **prod in ui** — verify whether the browser bundle includes it (likely a Node-only dependency of tooling) |
-| vite 7.0–7.3.3 | ui, desktop | high | dev | `npm audit fix` | dev server only |
-| sharp ≤0.35.4-rc.0 | cli | high | dev | major (0.35.4) | image tooling, dev only |
-| dompurify ≤3.4.12 via monaco-editor | ui | moderate | prod | major (monaco 0.56) | editor sanitiser; assess whether untrusted HTML reaches DOMPurify in the flow builder |
-| @vitest/mocker, vitest, esbuild | desktop, cli | moderate | dev | major | test tooling |
-| baseline-browser-mapping | ui, desktop | moderate | prod | `npm audit fix` | tooling |
+| browserslist ≤4.28.6 | ui, desktop | high | prod (build-time tooling resolved as prod) | `npm audit fix` (non-major) | **fixed** |
+| nanoid ≤3.3.17 | ui, desktop | high | prod | `npm audit fix` | **fixed** |
+| postcss ≤8.5.22 | ui (dev), desktop (prod) | high | dev / prod | `npm audit fix` | **fixed** |
+| undici 7.x / 8.x | ui (prod), cli (dev) | high | prod / dev | `npm audit fix` | **fixed** |
+| vite 7.0–7.3.3 | ui, desktop | high | dev | `npm audit fix` | **fixed** |
+| sharp ≤0.35.4-rc.0 | cli | high | optional | `sharp` ^0.35.4 as an optional dependency (it had been listed twice, once as dev) | **fixed** |
+| dompurify ≤3.4.12 via monaco-editor | ui | moderate | prod | major (monaco 0.56) | open — below the gate; editor sanitiser, assess whether untrusted HTML reaches DOMPurify in the flow builder before the major bump |
+| @vitest/mocker, vitest | desktop | moderate | dev | major | open — test tooling only |
+| esbuild ≤0.24.2 | cli | moderate | dev | major (via the pinned vitest line) | open — dev server only; the CLI bundle is built with the same esbuild but the advisory concerns its dev server |
+| baseline-browser-mapping | ui, desktop | moderate | prod | `npm audit fix` | **fixed** |
 
-Recommended order for OAIY: run `npm audit fix` (non-major) in `ui`, `cli` and `desktop`, then re-run the release gate (`ci.yml`) which now includes the full CLI and desktop suites; schedule the major bumps (monaco-editor, sharp, vitest/esbuild) as a separate change with the same gate. Until then, OAIY's release workflow does not have an npm audit step; its `release-evidence-*.json` should carry `"dependencyAudit": { "status": "fail" }` for these lockfiles, not omit it.
+After the fixes the OAIY suites were re-run: ui `npm test`, cli build + `npm test` + `npm run typecheck` + HTTPS shutdown check, desktop Vitest + build. The CLI typecheck had never passed before (browser-only globals in the shared engine sources, untyped generated glue); it passes now, so the OAI-01 gate that runs it is honest. OAIY's `ci.yml` now runs `npm audit --audit-level=high` in the ui, cli and desktop lanes (high fails; unreachable registry is recorded as UNKNOWN and fails), and `release-evidence-*.json` carries `dependencyAudit`. The remaining moderate items are scheduled as a separate major-bump change under the same gate.
 
 ## Accepted exceptions
 
 | Advisory | Lockfile | Owner | Reason | Exposure assessment | Expiry |
 | --- | --- | --- | --- | --- | --- |
-| RUSTSEC-2026-0194 / RUSTSEC-2026-0195 (quick-xml 0.37.5 quadratic duplicate-attribute check; unbounded namespace allocation in `NsReader`) | `xdb.org/Cargo.lock` (and therefore Softn desktop builds) | XDB / Softn native release owner | Not a direct dependency; the 0.37 line is required by a parent in the libp2p/mDNS stack, so moving to 0.41 needs a coordinated parent upgrade and a native peer-networking regression run. | XML parsing is reached only through libp2p components; native peer networking is **off by default and opt-in** since XD-01, so a default installation does not exercise the code. Denial-of-service class, not code execution. | 2026-10-31 — re-audit; if the parent stack still pins 0.37, escalate before any decision to enable networking by default. |
+| ~~RUSTSEC-2026-0194 / RUSTSEC-2026-0195 (quick-xml 0.37.5)~~ | `xdb.org/Cargo.lock` | XDB release owner | **Closed in the second pass, not accepted.** The first-pass reason ("required by a parent in the libp2p stack") was wrong: the only dependent was `wayland-scanner`, pulled by the demo app's Linux GUI dependencies and never by the `xdb` crate that Softn's loader consumes. `cargo update -p wayland-scanner` resolved it to quick-xml 0.41.0. | Even as found, the code was unreachable from the xdb crate and from Windows/macOS builds of the demo. | — |
 | RustSec **unmaintained / unsound / yanked warnings** (XDB 10/4/2, Aokie 9, OAIY 6/1) | as listed | each repository's release owner | Warnings, not vulnerabilities; listed by `cargo audit` and left visible. | No known exploit; tracked so they are not forgotten. | reviewed at each release |
 
 ## How this feeds release evidence

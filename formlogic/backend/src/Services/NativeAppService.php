@@ -196,7 +196,10 @@ class NativeAppService
         $this->directory($root . '/private');
         $this->directory($root . '/private/data');
         $lock = fopen($root . '/private/manage.lock', 'c');
-        if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) throw new RuntimeException('The app is busy. Try again shortly.', 409);
+        if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) {
+            if ($lock) fclose($lock);
+            throw new RuntimeException('The app is busy. Try again shortly.', 409);
+        }
         $staging = $root . '/staging-' . bin2hex(random_bytes(8));
         try {
             $config = $hostConfig ?? ['appId' => $manifest['id'], 'development' => false, 'keyHex' => bin2hex(random_bytes(32)), 'cryptoDomains' => ['hmac' => $manifest['id'] . ':hmac:v1', 'seal' => $manifest['id'] . ':seal:v1']];
@@ -518,7 +521,10 @@ class NativeAppService
         $this->directory($root . '/private');
         $this->directory($root . '/private/data');
         $lock = fopen($root . '/private/manage.lock', 'c');
-        if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) throw new RuntimeException('The app is busy. Try again shortly.', 409);
+        if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) {
+            if ($lock) fclose($lock);
+            throw new RuntimeException('The app is busy. Try again shortly.', 409);
+        }
         $staging = $root . '/staging-' . bin2hex(random_bytes(8));
         $backup = null;
         $activated = false;
@@ -626,7 +632,10 @@ class NativeAppService
         if (!$this->get($appId)) throw new RuntimeException('Native app not found', 404);
         if (is_file($root . '/private/recovery-required')) throw new RuntimeException('The app database needs operator recovery');
         $lock = fopen($root . '/private/manage.lock', 'c');
-        if (!$lock || !flock($lock, LOCK_SH | LOCK_NB)) throw new RuntimeException('The app is being updated. Try again shortly.', 409);
+        if (!$lock || !flock($lock, LOCK_SH | LOCK_NB)) {
+            if ($lock) fclose($lock);
+            throw new RuntimeException('The app is being updated. Try again shortly.', 409);
+        }
         try { return $this->invoke($root, $request, $identity, $subscriptions); }
         finally { flock($lock, LOCK_UN); fclose($lock); }
     }

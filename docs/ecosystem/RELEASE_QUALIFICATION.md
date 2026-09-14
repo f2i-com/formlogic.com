@@ -33,6 +33,18 @@
 
 Still open from the recheck: live two-machine restart/partition qualification for R2-XD-01/02 (database-level and control-level tests only), a real Tauri end-to-end upgrade with a failing migration (registry logic tested; the loader flow is wired but not driven by an automated desktop test), and the ecosystem harness below.
 
+## Third pass (14 September 2026, later the same day)
+
+| Item | Done | Evidence |
+| --- | --- | --- |
+| ECO-04 OAIY high advisories | `npm audit fix` in ui, cli, desktop; `sharp` ^0.35.4; 0 high in all three lockfiles (moderates listed in `DEPENDENCY_ADVISORIES-2026-09-14.md`) | ui `npm test`, cli build + `npm test` + typecheck + HTTPS shutdown, desktop Vitest + build |
+| ECO-04 audit gate | OAIY `ci.yml` runs `npm audit --audit-level=high` per npm lane; unreachable registry = UNKNOWN and fails; `dependencyAudit` in `release-evidence-*.json` | workflow yaml parsed; the GitHub run itself is pending the next push to a tag |
+| OAI-01 CLI typecheck | `npm run typecheck` had never passed, so the gate that runs it would have failed on GitHub; generated glue typed, browser-only globals declared for the CLI | passes locally |
+| ECO-04 quick-xml exception | closed, not accepted: only dependent was the demo's `wayland-scanner`; bumped, xdb.org `cargo audit` 0 vulnerabilities | `cargo test -p xdb` 39 tests |
+| XD-04 batch edit | `Database::update_records` + Tauri `update_records`: 200 → 101 rows, 1.15 s → 34 ms at 10k | `update_records_commits_all_or_nothing_with_one_snapshot_per_collection`; benchmarks.md third pass |
+| FormLogic lock handle | the refused (409) paths of native install, restore and request left the `manage.lock` handle open until garbage collection; closed explicitly | `NativeAppServiceTest` runs without the three Windows cleanup warnings the R2-FL-01 test had added; full backend suite 1637 tests OK |
+| Pins | xdb.org c349911 → softn.com 5db3041 → formlogic.com (this commit); manifest regenerated | `node scripts/ecosystem-manifest.mjs --check` |
+
 ## What the ecosystem harness must do when it is built
 
 1. Fixture: one representative Softn app hosted in FormLogic (conventional form + native app), one Aokie synthetic telephony source (no real hardware), OAIY CLI as the flow runner, the pinned ZIPP runtime from the compatibility manifest.
