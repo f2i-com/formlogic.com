@@ -1,11 +1,11 @@
 {
   "kind": "formlogic.ecosystemCompatibilityManifest",
   "formatVersion": 1,
-  "generatedAt": "2026-09-14T10:36:22.545Z",
+  "generatedAt": "2026-09-14T10:47:51.354Z",
   "note": "Source revisions and digests of files present in the tree at generation time. Release workflows must recompute digests of the artifacts they actually ship; provenance is not verification of downloaded bytes.",
   "components": {
     "formlogic": {
-      "revision": "d476f7d99cba4d31c858bb146251e7e69567a7a9",
+      "revision": "36d4da12e6eaab3c196ff301571f344a5470a464",
       "backupFormat": {
         "current": 2,
         "importable": [
@@ -17,16 +17,16 @@
     },
     "softn": {
       "pinnedBy": "formlogic/.github/actions/prepare-hosted-runtime/action.yml",
-      "revision": "e510d177065a419a0c283f3e472ec47793db3d5b",
-      "checkoutRevision": "e510d177065a419a0c283f3e472ec47793db3d5b",
+      "revision": "d9a5141d0bbf8e363121c277abba1008ba42b8a7",
+      "checkoutRevision": "d9a5141d0bbf8e363121c277abba1008ba42b8a7",
       "nativeProtocol": 1,
       "recordEvents": 1,
       "minimumNode": "24.19.0"
     },
     "xdb": {
       "pinnedBy": "softn/.github/scripts/checkout-xdb.sh",
-      "revision": "c3499113c09a120179775483f0e40cf07c45e2b3",
-      "checkoutRevision": "c3499113c09a120179775483f0e40cf07c45e2b3",
+      "revision": "fd7bb9576b1bb3a851ee6ce784d8fab39798e2f5",
+      "checkoutRevision": "fd7bb9576b1bb3a851ee6ce784d8fab39798e2f5",
       "consumedAs": "../../../../xdb.org/crates/xdb",
       "note": "Native peer networking is opt-in and local-only by default at this revision; see xdb docs/networking-and-restore-policy.md"
     },

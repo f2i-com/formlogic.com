@@ -18,9 +18,9 @@
 | `formlogic.com/formlogic/ui/package-lock.json` | npm audit (high) | 0 | clean (703 packages). |
 | `xdb.org/package-lock.json` | npm audit (high) | 0 | clean. |
 | `aokie.com/apps/aokie-mobile/package-lock.json` | npm audit (high) | 0 | clean. |
-| `oaiy.com/ui/package-lock.json` | npm audit (high) | as found: **5 high, 3 moderate, 1 low**. After the second pass: **0 high**, 2 moderate. | `npm audit fix` applied; see OAIY table below. |
-| `oaiy.com/cli/package-lock.json` | npm audit (high) | as found: **2 high, 1 moderate**. After the second pass: **0 high**, 1 moderate. | `npm audit fix` applied, `sharp` → ^0.35.4; see OAIY table below. |
-| `oaiy.com/desktop/package-lock.json` | npm audit (high) | as found: **4 high, 3 moderate, 1 low**. After the second pass: **0 high**, 2 moderate. | `npm audit fix` applied; see OAIY table below. |
+| `oaiy.com/ui/package-lock.json` | npm audit (high) | as found: **5 high, 3 moderate, 1 low**. After the second pass: **0 high**, 2 moderate. **Third pass: 0 at every severity.** | `npm audit fix`; then dompurify ^3.4.15 via npm `overrides`; see OAIY table below. |
+| `oaiy.com/cli/package-lock.json` | npm audit (high) | as found: **2 high, 1 moderate**. After the second pass: **0 high**, 1 moderate. **Third pass: 0.** | `npm audit fix`, `sharp` → ^0.35.4, esbuild → ^0.28.2; see OAIY table below. |
+| `oaiy.com/desktop/package-lock.json` | npm audit (high) | as found: **4 high, 3 moderate, 1 low**. After the second pass: **0 high**, 2 moderate. **Third pass: 0.** | `npm audit fix`, vitest → ^5; see OAIY table below. |
 | `formlogic.com/formlogic/backend/composer.lock` | composer audit | 0 advisories, 0 abandoned | clean. |
 | `oaiy.com/api` | composer audit | no packages | nothing to audit. |
 
@@ -34,12 +34,12 @@
 | undici 7.x / 8.x | ui (prod), cli (dev) | high | prod / dev | `npm audit fix` | **fixed** |
 | vite 7.0–7.3.3 | ui, desktop | high | dev | `npm audit fix` | **fixed** |
 | sharp ≤0.35.4-rc.0 | cli | high | optional | `sharp` ^0.35.4 as an optional dependency (it had been listed twice, once as dev) | **fixed** |
-| dompurify ≤3.4.12 via monaco-editor | ui | moderate | prod | major (monaco 0.56) | open — below the gate; editor sanitiser, assess whether untrusted HTML reaches DOMPurify in the flow builder before the major bump |
-| @vitest/mocker, vitest | desktop | moderate | dev | major | open — test tooling only |
-| esbuild ≤0.24.2 | cli | moderate | dev | major (via the pinned vitest line) | open — dev server only; the CLI bundle is built with the same esbuild but the advisory concerns its dev server |
+| dompurify ≤3.4.12 via monaco-editor | ui | moderate | prod | npm `overrides`: dompurify ^3.4.15 (monaco 0.55.1 declares ^3.2; 0.56.0 still pins a vulnerable 3.4.8 and moves its worker entry points, which breaks the Vite build) | **fixed (third pass)**; `npm test`, production build and node contracts pass with the override |
+| @vitest/mocker, vitest | desktop | moderate | dev | vitest ^5.0.0 | **fixed (third pass)**; 113 tests and the build pass |
+| esbuild ≤0.24.2 | cli | moderate | dev | esbuild ^0.28.2 | **fixed (third pass)**; build, `npm test`, typecheck and the HTTPS shutdown check pass |
 | baseline-browser-mapping | ui, desktop | moderate | prod | `npm audit fix` | **fixed** |
 
-After the fixes the OAIY suites were re-run: ui `npm test`, cli build + `npm test` + `npm run typecheck` + HTTPS shutdown check, desktop Vitest + build. The CLI typecheck had never passed before (browser-only globals in the shared engine sources, untyped generated glue); it passes now, so the OAI-01 gate that runs it is honest. OAIY's `ci.yml` now runs `npm audit --audit-level=high` in the ui, cli and desktop lanes (high fails; unreachable registry is recorded as UNKNOWN and fails), and `release-evidence-*.json` carries `dependencyAudit`. The remaining moderate items are scheduled as a separate major-bump change under the same gate.
+After the fixes the OAIY suites were re-run: ui `npm test`, cli build + `npm test` + `npm run typecheck` + HTTPS shutdown check, desktop Vitest + build. The CLI typecheck had never passed before (browser-only globals in the shared engine sources, untyped generated glue); it passes now, so the OAI-01 gate that runs it is honest. OAIY's `ci.yml` now runs `npm audit --audit-level=high` in the ui, cli and desktop lanes (high fails; unreachable registry is recorded as UNKNOWN and fails), and `release-evidence-*.json` carries `dependencyAudit`. The moderate items were closed in the third pass (esbuild 0.28, vitest 5, dompurify override); all three OAIY lockfiles audit clean at every severity as of 14 September 2026.
 
 ## Accepted exceptions
 
