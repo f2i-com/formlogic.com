@@ -1,11 +1,11 @@
 {
   "kind": "formlogic.ecosystemCompatibilityManifest",
   "formatVersion": 1,
-  "generatedAt": "2026-09-14T22:45:08.994Z",
+  "generatedAt": "2026-09-14T23:25:56.921Z",
   "note": "Source revisions and digests of files present in the tree at generation time. Release workflows must recompute digests of the artifacts they actually ship; provenance is not verification of downloaded bytes.",
   "components": {
     "formlogic": {
-      "revision": "f5b9be8c9e7a9feea1d938db12b2fd3dc3298ea6",
+      "revision": "1539c97c6d3d35a5e3135662830c4f96408236b3",
       "backupFormat": {
         "current": 2,
         "importable": [
@@ -17,21 +17,21 @@
     },
     "softn": {
       "pinnedBy": "formlogic/.github/actions/prepare-hosted-runtime/action.yml",
-      "revision": "6cfe0eb335d99d09db3ebe6963e8a132b1068154",
-      "checkoutRevision": "6cfe0eb335d99d09db3ebe6963e8a132b1068154",
+      "revision": "4a6c9d3b56b60419c509317e804f542ac74d2c08",
+      "checkoutRevision": "4a6c9d3b56b60419c509317e804f542ac74d2c08",
       "nativeProtocol": 1,
       "recordEvents": 1,
       "minimumNode": "24.19.0",
       "formlogicAdapter": {
         "vendoredAt": "formlogic/ui/src/lib/softn/project.ts",
         "source": "softn.com/packages/@softn/core/src/integrations/formlogic.ts",
-        "sha256": "0a05fae49fef7b70a83d0b0a3394a72c26944e9abbd66e6cf4d705c63dc682e2"
+        "sha256": "f86ffbbe4bae2ba8a6bf0c07426e14d332fde7776e741c4770e870127055c866"
       }
     },
     "xdb": {
       "pinnedBy": "softn/.github/scripts/checkout-xdb.sh",
-      "revision": "e642c31f2de705635b0a15deef4bb936b4dc9d9b",
-      "checkoutRevision": "e642c31f2de705635b0a15deef4bb936b4dc9d9b",
+      "revision": "ef84eef5bd018c67e947c627da21d1e8fe75839f",
+      "checkoutRevision": "ef84eef5bd018c67e947c627da21d1e8fe75839f",
       "consumedAs": "../../../../xdb.org/crates/xdb",
       "note": "Native peer networking is opt-in and local-only by default at this revision; see xdb docs/networking-and-restore-policy.md"
     },
