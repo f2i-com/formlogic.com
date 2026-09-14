@@ -18,6 +18,21 @@
 | Ecosystem event | synthetic Aokie event → OAIY → FormLogic → Softn record; lost response, crash/retry, restart | FormLogic `AokieCompanionRelayTest`, `DesktopFlowRelayTest`, `AppSubmissionIdempotencyTest`, `AppSyncBatchIdempotencyTest`, `NativeAppServiceTest::testCommittedRecordEventsSurviveDeliveryFailure…`; Aokie outbox/idempotency tests | — | **the six-project harness itself**: one fixture that drives Aokie → OAIY → FormLogic → Softn with the deployed ZIPP runtime, interrupts at each durable boundary and asserts one business effect via idempotency keys. Not built by this remediation. |
 | Hardware qualification | real phone/dongle/Windows combinations | Aokie hardware-labelled suites (dev machine) | — | consented-lab protocol and evidence template (privacy-safe) |
 
+## Recheck follow-ups (14 September 2026, second pass)
+
+| Ticket | Repaired | Regression |
+| --- | --- | --- |
+| R2-SN-01 restore validated before mutation | `planImport` decides everything (envelope, names, writability, rows) before `executeImport`; `restoreAsync` refuses partial restores with zero change and no native batch | `xdb-restore-ordering.test.ts` (browser + native) |
+| R2-SN-02 no eager browser clear; replace parity | one atomic key replacement per collection, earlier collections restored on a later failure with the state named in the error; `clearFirst`/`merge:false` mean "exactly the accepted rows" on both backends | same file |
+| R2-SN-03 durable upgrade approval and real rollback | upgrade needs a verified backup and a durable staging record or it stops unapplied; the digest is mapped only when the new package starts; a failed start restores the snapshot (or enters an explicit recovery-only state); a damaged registry is quarantined and blocks unknown packages until discarded | `installations.test.ts` |
+| R2-FL-01 one managed native snapshot | `NativeAppService::captureForBackup` holds the shared management lock across source, version, database and host-config capture and re-checks the version; installs hold it exclusively | `NativeAppServiceTest::testCaptureForBackupHoldsTheManagementLock…` |
+| R2-XD-01 durable pause before replacement | `pending-restore.json` written and gate paused before any byte moves, loaded before any network start, cleared only by `resume_sync` | `pending_restore_survives_restart_and_holds_the_gate_until_resolved` |
+| R2-XD-02 monotonic authority over the union | `replace_from_file_authoritative`: epoch = max(live, snapshot)+1 for every collection in either catalog; plan persisted before publication, re-applied idempotently | `authoritative_restore_exceeds_both_live_and_snapshot_epochs…` |
+| R2-XD-03 legacy snapshot migrated in staging | `replace_from_file` copies to staging, runs the idempotent schema init, validates, then swaps; source untouched | `restoring_a_legacy_snapshot_keeps_the_epoch_table_usable_without_a_restart` |
+| R2-XD-04 create-only fork identities | `<label>-fork-<uuid>` with existence/open checks and retry | `fork_identities_are_distinct_within_one_second…` |
+
+Still open from the recheck: live two-machine restart/partition qualification for R2-XD-01/02 (database-level and control-level tests only), a real Tauri end-to-end upgrade with a failing migration (registry logic tested; the loader flow is wired but not driven by an automated desktop test), and the ecosystem harness below.
+
 ## What the ecosystem harness must do when it is built
 
 1. Fixture: one representative Softn app hosted in FormLogic (conventional form + native app), one Aokie synthetic telephony source (no real hardware), OAIY CLI as the flow runner, the pinned ZIPP runtime from the compatibility manifest.

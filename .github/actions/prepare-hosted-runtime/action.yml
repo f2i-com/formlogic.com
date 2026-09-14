@@ -10,7 +10,7 @@ runs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         repository: f2i-com/softn.com
-        ref: fd1b66133327b5a35763e4cb5cf15cb0d2ac01c0
+        ref: d293559b3ab690b4c9d8b1dedb4f3137393eccb6
         path: .runtime-source/softn.com
         persist-credentials: false
     - name: Install pinned runtime dependencies

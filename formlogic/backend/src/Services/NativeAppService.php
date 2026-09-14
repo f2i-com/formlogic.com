@@ -99,13 +99,67 @@ class NativeAppService
     public function snapshotDatabase(string $appId, string $destination, ?SqliteSnapshot $snapshotter = null): ?array
     {
         $root = $this->root($appId);
-        $path = $root . '/private/data/application.sqlite';
-        if (!is_file($path)) return null;
         if (is_file($root . '/private/recovery-required')) throw new RuntimeException('The app database needs operator recovery before it can be backed up');
+        $lock = $this->sharedLock($root);
+        try { return $this->snapshotDatabaseLocked($root, $destination, $snapshotter); }
+        finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
+    /** Shared management lock, or a 409 while an install/removal holds it exclusively. */
+    private function sharedLock(string $root)
+    {
+        $this->directory($root . '/private');
         $lock = fopen($root . '/private/manage.lock', 'c');
         if (!$lock || !flock($lock, LOCK_SH | LOCK_NB)) { if ($lock) fclose($lock); throw new RuntimeException('The app is being updated. Try the backup again shortly.', 409); }
-        try { return ($snapshotter ?? new SqliteSnapshot())->snapshot($path, $destination); }
-        finally { flock($lock, LOCK_UN); fclose($lock); }
+        return $lock;
+    }
+
+    /** Caller holds the management lock. */
+    private function snapshotDatabaseLocked(string $root, string $destination, ?SqliteSnapshot $snapshotter): ?array
+    {
+        $path = $root . '/private/data/application.sqlite';
+        if (!is_file($path)) return null;
+        return ($snapshotter ?? new SqliteSnapshot())->snapshot($path, $destination);
+    }
+
+    /**
+     * ONE managed recovery snapshot of an installation (R2-FL-01): the project
+     * source and media, the app version, the private host configuration and a
+     * consistent database snapshot are captured under a single shared
+     * management lock, so an install (which holds the lock exclusively while
+     * it activates source and runs migrations) cannot complete between two
+     * captures and leave an archive whose source and schema belong to
+     * different versions. The lock is released before the caller compresses.
+     *
+     * @return array{project: array, version: int, manifestId: string, databasePath: ?string, snapshot: ?array, hostConfig: ?array}
+     */
+    public function captureForBackup(string $appId, string $databaseDestination, ?SqliteSnapshot $snapshotter = null, bool $includeHostSecrets = false): array
+    {
+        $root = $this->root($appId);
+        if (!is_file($root . '/project.json')) throw new RuntimeException('Native app not found', 404);
+        $lock = $this->sharedLock($root);
+        try {
+            if (is_file($root . '/private/recovery-required')) throw new RuntimeException('The app database needs operator recovery before it can be backed up');
+            $project = $this->get($appId);
+            if ($project === null) throw new RuntimeException('Native app not found', 404);
+            $manifest = json_decode((string) ($project['files']['manifest.json'] ?? ''), true);
+            $snapshot = $this->snapshotDatabaseLocked($root, $databaseDestination, $snapshotter);
+            $hostConfig = $includeHostSecrets ? $this->hostConfig($appId) : null;
+            if ($includeHostSecrets && $hostConfig === null) throw new RuntimeException('The native host configuration is missing; the app cannot be captured consistently');
+            // The version read AFTER every capture must still be the version read
+            // before: with the lock held it cannot differ, and this is the check
+            // that says so in the archive.
+            $after = $this->get($appId);
+            if (($after['version'] ?? null) !== ($project['version'] ?? null)) throw new RuntimeException('The native app changed during capture; retry the backup');
+            return [
+                'project' => ['files' => is_array($project['files'] ?? null) ? $project['files'] : [], 'assets' => is_array($project['assets'] ?? null) ? $project['assets'] : [], 'version' => (int) ($project['version'] ?? 1), 'home' => (bool) ($project['home'] ?? false), 'access' => (string) ($project['access'] ?? 'application')],
+                'version' => (int) ($project['version'] ?? 1),
+                'manifestId' => (string) ($manifest['id'] ?? ''),
+                'databasePath' => $snapshot !== null ? $databaseDestination : null,
+                'snapshot' => $snapshot,
+                'hostConfig' => $hostConfig,
+            ];
+        } finally { flock($lock, LOCK_UN); fclose($lock); }
     }
 
     /**

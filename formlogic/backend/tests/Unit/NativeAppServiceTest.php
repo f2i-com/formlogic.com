@@ -187,6 +187,45 @@ final class NativeAppServiceTest extends TestCase
         $this->assertNull($other->get('wrong-key'));
     }
 
+    // ── R2-FL-01: one managed capture under the management lock ──
+
+    public function testCaptureForBackupHoldsTheManagementLockAndIsVersionConsistent(): void
+    {
+        $this->service->install('notes', $this->project(), 0);
+        $this->assertSame(201, $this->createNote('captured')['status']);
+        $capture = $this->service->captureForBackup('notes', $this->storage . '/capture.sqlite', null, true);
+        $this->assertSame(1, $capture['version']);
+        $this->assertSame('test.notes', $capture['manifestId']);
+        $this->assertSame(1, $capture['project']['version']);
+        $this->assertSame('ok', $capture['snapshot']['quickCheck']);
+        $this->assertFileExists($capture['databasePath']);
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $capture['hostConfig']['keyHex']);
+        $this->assertNull($this->service->captureForBackup('notes', $this->storage . '/capture-2.sqlite')['hostConfig'], 'host keys only when asked');
+        // The lock is released after capture: an update proceeds.
+        $this->assertSame(2, $this->service->install('notes', $this->project(), 1)['version']);
+        $again = $this->service->captureForBackup('notes', $this->storage . '/capture-3.sqlite');
+        $this->assertSame(2, $again['version']);
+        $this->assertSame(2, $again['project']['version']);
+
+        // While an install holds the exclusive lock, capture refuses with 409
+        // instead of reading a half-activated installation.
+        $root = $this->storage . '/' . hash('sha256', 'notes');
+        $exclusive = fopen($root . '/private/manage.lock', 'c');
+        $this->assertTrue(flock($exclusive, LOCK_EX | LOCK_NB));
+        try {
+            try { $this->service->captureForBackup('notes', $this->storage . '/capture-4.sqlite'); $this->fail('captured during an update'); }
+            catch (\RuntimeException $e) { $this->assertSame(409, $e->getCode()); }
+            $this->assertFileDoesNotExist($this->storage . '/capture-4.sqlite');
+        } finally { flock($exclusive, LOCK_UN); fclose($exclusive); }
+        // And a capture holds the SHARED lock: an exclusive install cannot slip in between its reads.
+        $shared = fopen($root . '/private/manage.lock', 'c');
+        $this->assertTrue(flock($shared, LOCK_SH | LOCK_NB));
+        try {
+            try { $this->service->install('notes', $this->project(), 2); $this->fail('installed under a shared lock'); }
+            catch (\RuntimeException $e) { $this->assertSame(409, $e->getCode()); }
+        } finally { flock($shared, LOCK_UN); fclose($shared); }
+    }
+
     public function testFailedRestoreLeavesNoInstallation(): void
     {
         $project = $this->project();

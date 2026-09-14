@@ -419,38 +419,34 @@ final class AccountBackupService
                     continue;
                 }
                 $appId = (string) $ba['id'];
-                $project = $this->native->get($appId);
-                if ($project === null) {
-                    throw new \RuntimeException("Native app payload is missing for app {$appId}");
-                }
                 if (!empty($ba['native']['recoveryRequired'])) {
                     throw new \RuntimeException("Native app {$appId} needs operator recovery before it can be backed up");
                 }
-                $projectJson = json_encode([
-                    'files' => is_array($project['files'] ?? null) ? $project['files'] : [],
-                    'assets' => is_array($project['assets'] ?? null) ? $project['assets'] : [],
-                    'version' => (int) ($project['version'] ?? 1),
-                    'home' => (bool) ($project['home'] ?? false),
-                    'access' => (string) ($project['access'] ?? 'application'),
-                ], JSON_UNESCAPED_SLASHES);
+                // ONE managed capture under the app's management lock (R2-FL-01):
+                // source, version, database snapshot and (privileged) host keys
+                // all belong to the same installed version.
+                $dbStaged = $stagingDir . '/native-' . $appId . '.sqlite';
+                $capture = $this->native->captureForBackup($appId, $dbStaged, $this->snapshots, $includeHostSecrets);
+                $projectJson = json_encode($capture['project'], JSON_UNESCAPED_SLASHES);
                 if ($projectJson === false) {
                     throw new \RuntimeException("Could not serialize the native project for app {$appId}");
                 }
                 $name = 'native/' . $appId . '/project.json';
                 $entries[$name] = hash('sha256', $projectJson);
                 $zip->addFromString($name, $projectJson);
+                $structure['apps'][$i]['native']['version'] = $capture['version'];
+                $structure['apps'][$i]['native']['manifestId'] = $capture['manifestId'];
 
-                $dbStaged = $stagingDir . '/native-' . $appId . '.sqlite';
-                $snap = $this->native->snapshotDatabase($appId, $dbStaged, $this->snapshots);
+                $snap = $capture['snapshot'];
                 $structure['apps'][$i]['native']['hasDatabase'] = $snap !== null;
                 if ($snap !== null) {
                     $name = 'native/' . $appId . '/application.sqlite';
                     $entries[$name] = $snap['sha256'];
-                    $snapshots[$name] = $this->snapshotRecord($snap);
+                    $snapshots[$name] = $this->snapshotRecord($snap) + ['appVersion' => $capture['version']];
                     $zip->addFile($dbStaged, $name);
                 }
 
-                $hostConfig = $includeHostSecrets ? $this->native->hostConfig($appId) : null;
+                $hostConfig = $capture['hostConfig'];
                 $structure['apps'][$i]['native']['hasHostConfig'] = $hostConfig !== null;
                 if ($hostConfig !== null) {
                     $configJson = json_encode($hostConfig, JSON_UNESCAPED_SLASHES);
