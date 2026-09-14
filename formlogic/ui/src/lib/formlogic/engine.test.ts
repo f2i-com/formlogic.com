@@ -192,3 +192,86 @@ describe('engine.ts — Flows timeout-budget plumbing', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Audit ZP-01: the Worker (and its WASM instance) is recycled on MEASURED
+// retention or after a lifetime evaluation count, only when nothing is in flight.
+// ---------------------------------------------------------------------------
+describe('engine.ts — instance recycling (ZP-01)', () => {
+  let spawned = 0;
+  let usageToReport: WorkerResponse['usage'] | undefined;
+  class CountingWorker {
+    onmessage: ((e: { data: WorkerResponse }) => void) | null = null;
+    onerror: ((e: unknown) => void) | null = null;
+    terminated = false;
+    constructor() { spawned += 1; }
+    postMessage(msg: WorkerRequest | WorkerInit): void {
+      if ('type' in msg) { queueMicrotask(() => { if (!this.terminated) this.onmessage?.({ data: { id: 0, ok: true, ready: true } }); }); return; }
+      setTimeout(() => { if (!this.terminated) this.onmessage?.({ data: { id: msg.id, ok: true, result: 1, usage: usageToReport } }); }, 5);
+    }
+    terminate(): void { this.terminated = true; }
+  }
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    spawned = 0;
+    usageToReport = { enginesCreated: 1, enginesDisposed: 1, retainedBytes: 0, dynamicCodeCalls: 2 };
+    vi.stubGlobal('Worker', CountingWorker as unknown as typeof Worker);
+  });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  async function evaluateOnce(engine: typeof import('./engine')) {
+    const promise = engine.calculateValue('1', {});
+    await vi.advanceTimersByTimeAsync(10);
+    return promise;
+  }
+
+  it('keeps one Worker while the instance stays within budget', async () => {
+    const engine = await import('./engine');
+    for (let i = 0; i < 5; i++) await evaluateOnce(engine);
+    expect(spawned).toBe(1);
+    const status = engine.getEngineInstanceStatus();
+    expect(status.currentWorkerEvaluations).toBe(5);
+    expect(status.workersRecycled).toBe(0);
+    expect(status.lastUsage?.retainedBytes).toBe(0);
+  });
+
+  it('recycles the Worker once the reported retention exceeds the budget, after the call completes', async () => {
+    const engine = await import('./engine');
+    await evaluateOnce(engine);
+    expect(spawned).toBe(1);
+    usageToReport = { enginesCreated: 400, enginesDisposed: 400, retainedBytes: engine.INSTANCE_RETAINED_BUDGET_BYTES, dynamicCodeCalls: 800 };
+    await expect(evaluateOnce(engine)).resolves.toBe(1); // the triggering call still succeeds
+    expect(engine.getEngineInstanceStatus().workersRecycled).toBe(1);
+    // The next call gets a FRESH instance, whose counters start again.
+    usageToReport = { enginesCreated: 1, enginesDisposed: 1, retainedBytes: 100, dynamicCodeCalls: 2 };
+    await evaluateOnce(engine);
+    expect(spawned).toBe(2);
+    expect(engine.getEngineInstanceStatus().currentWorkerEvaluations).toBe(1);
+  });
+
+  it('never recycles while another evaluation is in flight', async () => {
+    const engine = await import('./engine');
+    usageToReport = { enginesCreated: 1, enginesDisposed: 1, retainedBytes: engine.INSTANCE_RETAINED_BUDGET_BYTES, dynamicCodeCalls: 1 };
+    const first = engine.calculateValue('1', {});
+    const second = engine.calculateValue('2', {});
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(first).resolves.toBe(1);
+    await expect(second).resolves.toBe(1);
+    // Both replies arrived on the same Worker; recycling waited for the last one.
+    expect(spawned).toBe(1);
+    expect(engine.getEngineInstanceStatus().workersRecycled).toBe(1);
+    await evaluateOnce(engine);
+    expect(spawned).toBe(2);
+  });
+
+  it('recycles after the lifetime evaluation count even when retention is not reported', async () => {
+    const engine = await import('./engine');
+    usageToReport = undefined;
+    for (let i = 0; i < engine.INSTANCE_MAX_EVALUATIONS; i++) await evaluateOnce(engine);
+    expect(engine.getEngineInstanceStatus().workersRecycled).toBe(1);
+    await evaluateOnce(engine);
+    expect(spawned).toBe(2);
+  });
+});

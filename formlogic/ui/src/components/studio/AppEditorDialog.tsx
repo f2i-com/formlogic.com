@@ -34,7 +34,10 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose }: {
   const [busy, setBusy] = useState(false);
   const [aiPending, setAiPending] = useState(false);
   const [error, setError] = useState('');
-  const applyRef = useRef<() => void>(() => {});
+  // Audit SN-04: a save the editor requested is acknowledged back over the
+  // port only after the draft was actually taken (or with the failure reason),
+  // so the editor never shows "saved" for a request this side dropped.
+  const applyRef = useRef<(saveId?: string) => void>(() => {});
   function request(method: string, data: Record<string, unknown> = {}): Promise<unknown> {
     if (!port.current) return Promise.reject(new Error('The editor is not connected.'));
     const id = crypto.randomUUID();
@@ -44,18 +47,28 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose }: {
       port.current!.postMessage({ id, method, ...data });
     });
   }
-  async function apply() {
-    if (!ready || lock.current || aiPending) return;
+  function acknowledgeSave(saveId: string | undefined, ok: boolean, error?: string) {
+    if (!saveId || !port.current) return;
+    try { port.current.postMessage({ kind: 'save-result', id: saveId, ok, ...(ok ? {} : { error }) }); } catch { /* the port is already gone; the editor's own timeout reports it */ }
+  }
+  async function apply(saveId?: string) {
+    if (!ready || aiPending) { acknowledgeSave(saveId, false, !ready ? 'The editor is not connected to FormLogic yet.' : 'AI is still editing the draft; wait for it to finish.'); return; }
+    if (lock.current) { acknowledgeSave(saveId, false, 'A previous save is still being applied.'); return; }
     lock.current = true; setBusy(true); setError('');
     try {
       const result = await request('export');
       if (!(result instanceof Uint8Array) || result.byteLength > 24 * 1024 * 1024) throw new Error('The editor returned an invalid project.');
       await onApply(result);
+      acknowledgeSave(saveId, true);
       onClose();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not return your changes.'); }
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : 'Could not return your changes.';
+      acknowledgeSave(saveId, false, message);
+      setError(message);
+    }
     finally { lock.current = false; setBusy(false); }
   }
-  useLayoutEffect(() => { applyRef.current = () => { void apply(); }; });
+  useLayoutEffect(() => { applyRef.current = (saveId?: string) => { void apply(saveId); }; });
   useEffect(() => {
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -80,7 +93,7 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose }: {
           }).catch(error => reply(false, error instanceof Error ? error.message : 'Could not contact your AI provider.')).finally(() => { aiRequests.delete(data.id); if (!disposed) setAiPending(aiRequests.size > 0); });
           return;
         }
-        if (data?.kind === 'save-requested') { applyRef.current(); return; }
+        if (data?.kind === 'save-requested') { applyRef.current(typeof data.id === 'string' ? data.id : undefined); return; }
         const waiting = queue.get(data?.id);
         if (!waiting) return;
         clearTimeout(waiting.timer); queue.delete(data.id);

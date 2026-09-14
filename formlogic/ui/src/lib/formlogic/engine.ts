@@ -1,6 +1,7 @@
 import { logger } from '../logger';
 import type { EvalKind } from './zipp-host';
 import type { WorkerRequest, WorkerResponse } from './formlogic.worker';
+import type { InstanceUsage } from './zipp-host';
 import { getZippWasmBytes } from './zipp-bytes';
 
 // ---------------------------------------------------------------------------
@@ -27,6 +28,20 @@ import { getZippWasmBytes } from './zipp-bytes';
 
 const DEFAULT_BUDGET_MS = 1000; // in-VM interrupt deadline
 const WATCHDOG_GRACE_MS = 1500; // extra time before we hard-kill the worker
+// ---------------------------------------------------------------------------
+// Instance lifetime (audit ZP-01). Every evaluation is a fresh Engine that is
+// disposed, but the WASM INSTANCE inside the Worker keeps the dynamically
+// compiled definitions those engines retained; dispose() cannot give that
+// back, and this page never used to recycle a healthy Worker. The Worker now
+// reports the instance's retained bytes with every reply, and engine.ts
+// replaces the Worker — at a quiet moment, never mid-flight — when either a
+// measured budget or a lifetime evaluation count is exceeded. Respawning
+// reuses the page's cached engine bytes, so the cost is one compile.
+// ---------------------------------------------------------------------------
+/** Retained dynamic-definition bytes in one Worker's instance before it is recycled. */
+export const INSTANCE_RETAINED_BUDGET_BYTES = 48 * 1024 * 1024;
+/** Evaluations one Worker may serve before it is recycled regardless of measurement. */
+export const INSTANCE_MAX_EVALUATIONS = 5000;
 /** How long a Worker may take to fetch + compile the engine before it is given up on. */
 const ENGINE_LOAD_TIMEOUT_MS = 90_000;
 /** The Worker's readiness handshake id (see formlogic.worker.ts READY_ID). */
@@ -43,11 +58,49 @@ let worker: Worker | null = null;
 let workerReady: Promise<void> | null = null;
 let nextId = 1;
 const pending = new Map<number, Pending>();
+/** Evaluations served by the current Worker and its last reported instance usage. */
+let workerEvaluations = 0;
+let lastUsage: InstanceUsage | null = null;
+/** Set when the current Worker should be replaced once no call is in flight. */
+let recyclePending = false;
+/** Lifetime counters, for diagnostics and tests. */
+const lifetime = { workersSpawned: 0, workersRecycled: 0 };
+
+export interface EngineInstanceStatus {
+  workersSpawned: number;
+  workersRecycled: number;
+  currentWorkerEvaluations: number;
+  lastUsage: InstanceUsage | null;
+  recyclePending: boolean;
+}
+
+/** Diagnostics for support views and tests: never user data, never expressions. */
+export function getEngineInstanceStatus(): EngineInstanceStatus {
+  return { workersSpawned: lifetime.workersSpawned, workersRecycled: lifetime.workersRecycled, currentWorkerEvaluations: workerEvaluations, lastUsage, recyclePending };
+}
+
+function noteUsage(usage: InstanceUsage | undefined): void {
+  workerEvaluations += 1;
+  if (usage) lastUsage = usage;
+  const overBudget = (usage?.retainedBytes ?? 0) >= INSTANCE_RETAINED_BUDGET_BYTES;
+  if (overBudget || workerEvaluations >= INSTANCE_MAX_EVALUATIONS) recyclePending = true;
+}
+
+/** Replace the Worker at a quiet moment: nothing in flight can be lost. */
+function recycleIfIdle(): void {
+  if (!recyclePending || pending.size > 0 || !worker) return;
+  recyclePending = false;
+  lifetime.workersRecycled += 1;
+  terminateWorker();
+}
 
 function spawnWorker(): Worker {
   const w = new Worker(new URL('./formlogic.worker.ts', import.meta.url), {
     type: 'module',
   });
+  lifetime.workersSpawned += 1;
+  workerEvaluations = 0;
+  recyclePending = false;
 
   let settleReady: { resolve: () => void; reject: (e: Error) => void } | null = null;
   workerReady = new Promise<void>((resolve, reject) => {
@@ -58,7 +111,7 @@ function spawnWorker(): Worker {
   }, ENGINE_LOAD_TIMEOUT_MS);
 
   w.onmessage = (event: MessageEvent<WorkerResponse>) => {
-    const { id, ok, result, error } = event.data;
+    const { id, ok, result, error, usage } = event.data;
     if (id === READY_ID) {
       clearTimeout(loadTimer);
       if (ok) settleReady?.resolve();
@@ -69,11 +122,13 @@ function spawnWorker(): Worker {
     if (!entry) return;
     clearTimeout(entry.timer);
     pending.delete(id);
+    if (worker === w) noteUsage(usage);
     if (ok) {
       entry.resolve(result);
     } else {
       entry.reject(new Error(error || 'Expression evaluation failed'));
     }
+    if (worker === w) recycleIfIdle();
   };
   w.onerror = (event) => {
     // A worker-level error invalidates all in-flight work; fail them and respawn

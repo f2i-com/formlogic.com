@@ -1,0 +1,95 @@
+{
+  "kind": "formlogic.ecosystemCompatibilityManifest",
+  "formatVersion": 1,
+  "generatedAt": "2026-09-14T07:06:41.424Z",
+  "note": "Source revisions and digests of files present in the tree at generation time. Release workflows must recompute digests of the artifacts they actually ship; provenance is not verification of downloaded bytes.",
+  "components": {
+    "formlogic": {
+      "revision": "c0a91301335b90fe381d7f973ae619a33f148423",
+      "backupFormat": {
+        "current": 2,
+        "importable": [
+          1,
+          2
+        ]
+      },
+      "formSqliteSchema": 4
+    },
+    "softn": {
+      "pinnedBy": "formlogic/.github/actions/prepare-hosted-runtime/action.yml",
+      "revision": "fd1b66133327b5a35763e4cb5cf15cb0d2ac01c0",
+      "checkoutRevision": "fd1b66133327b5a35763e4cb5cf15cb0d2ac01c0",
+      "nativeProtocol": 1,
+      "recordEvents": 1,
+      "minimumNode": "24.19.0"
+    },
+    "xdb": {
+      "pinnedBy": "softn/.github/scripts/checkout-xdb.sh",
+      "revision": "a72ec38b12fcddb265d28f14c69b2c4dcbcffc78",
+      "checkoutRevision": "a72ec38b12fcddb265d28f14c69b2c4dcbcffc78",
+      "consumedAs": "../../../../xdb.org/crates/xdb",
+      "note": "Native peer networking is opt-in and local-only by default at this revision; see xdb docs/networking-and-restore-policy.md"
+    },
+    "zipp": {
+      "pinnedBy": "formlogic/ui/vendor/zipp-wasm/SOURCE.json and softn packages/@softn/core/wasm-zipp/SOURCE.json",
+      "version": "0.0.18",
+      "revision": "2f5c4c8d5295b15b57beb894dd16dca3f4ff01ce",
+      "variant": "all",
+      "languages": [
+        "javascript",
+        "python"
+      ],
+      "artifact": "zipp_wasm_bg.wasm",
+      "sha256": "206630229207e0ecb0e3440444092d45abb6fdc7bc7608f5c469ff49af4360ab",
+      "rustc": "rustc 1.92.0 (ded5c06cf 2025-12-08)",
+      "wasmBindgen": "0.2.126"
+    },
+    "aokie": {
+      "path": "docs/contracts/aokie-connector-contract.v1.json",
+      "contractVersion": 1,
+      "sha256": "e357238b23febc5581245b430e3bba0503ab48155bcafbb0f04929fa3038a018"
+    }
+  },
+  "nativeRuntime": {
+    "nativeProtocol": 1,
+    "zipp": {
+      "repository": "https://github.com/f2i-com/zipp.org",
+      "revision": "2f5c4c8d5295b15b57beb894dd16dca3f4ff01ce",
+      "version": "0.0.18",
+      "build": "local",
+      "variant": "all",
+      "languages": [
+        "javascript",
+        "python"
+      ],
+      "rustc": "rustc 1.92.0 (ded5c06cf 2025-12-08)",
+      "wasmBindgen": "0.2.126",
+      "license": "Apache-2.0",
+      "artifact": "zipp_wasm_bg.wasm",
+      "sha256": "206630229207e0ecb0e3440444092d45abb6fdc7bc7608f5c469ff49af4360ab"
+    },
+    "modules": {
+      "runner.mjs": "f1766373c27de787aa3173977e1de2a99e98a1001f2061b58e2b386a0bd1f6b9",
+      "request-worker.mjs": "d76ede82c57d808c6e0b4a956c67b0ca9b534453e12a2e64fb89868160bce22f",
+      "request-hook.mjs": "ec1c9dfb3e2fc183574fc1819abd8300c1e9441d4615b71fed3c16b5712a067e",
+      "wasm-host.mjs": "03a566be4dc334e7a1af9e4b7032b3f846ebe36141e25ded345a716d0b7a940d",
+      "migrations.mjs": "f5994e7acd3b1288f8da209d77615334814d5e92cbeba5a78f9a8b88d83b4c7b",
+      "crypto.mjs": "a31f3c8321b08b25170680730c73ff41395a3c47eb44a7f86413f882e67d2d67",
+      "time.mjs": "e5002e6385adb2e51c03da089e1db1f870027af7cd467303b2362dc9822e5311",
+      "host-protocol.json": "96b9f30c72a6d1f014b291a25f652b743eaa44e577106570d858f0527337d94b",
+      "record-events.mjs": "0062f0aceac3a965c4e7ef27b897ddc23bf0ae8b6c08ed53d2f265a5c7c6581e"
+    }
+  },
+  "compatibility": {
+    "hostedRuntimeProtocol": 1,
+    "nativeHostingProtocol": 1,
+    "recordEventsProtocol": 1,
+    "accountBackupFormats": [
+      1,
+      2
+    ],
+    "formSqliteSchema": 4,
+    "migrationDirection": "forward only: newer FormLogic imports older backup formats; older FormLogic refuses newer ones"
+  },
+  "problems": []
+}

@@ -10,7 +10,7 @@
 // and only starts a call's watchdog once the engine exists, so a 5 MB download
 // on a cold cache is never mistaken for a wedged evaluation.
 /// <reference lib="webworker" />
-import { runEval, warmUp, type EvalKind } from './zipp-host';
+import { runEval, warmUp, instanceUsage, type EvalKind, type InstanceUsage } from './zipp-host';
 
 /** Reserved request id for the readiness handshake. Real requests start at 1. */
 export const READY_ID = 0;
@@ -35,6 +35,12 @@ export interface WorkerResponse {
   error?: string;
   /** Set on the id-0 handshake message only. */
   ready?: true;
+  /**
+   * What this Worker's WASM instance has retained across disposed engines
+   * (audit ZP-01). engine.ts recycles the Worker when it exceeds the budget;
+   * dispose() alone cannot give this memory back.
+   */
+  usage?: InstanceUsage;
 }
 
 const post = (response: WorkerResponse): void => {
@@ -62,13 +68,14 @@ self.onmessage = async (event: MessageEvent<WorkerRequest | WorkerInit>) => {
     if (!initialization) throw new Error('The app engine has not been initialized.');
     await initialization;
     const result = await runEval(kind, expression, context ?? {}, { budgetMs });
-    const response: WorkerResponse = { id, ok: true, result };
+    const response: WorkerResponse = { id, ok: true, result, usage: instanceUsage() };
     (self as DedicatedWorkerGlobalScope).postMessage(response);
   } catch (err) {
     const response: WorkerResponse = {
       id,
       ok: false,
       error: err instanceof Error ? err.message : String(err),
+      usage: instanceUsage(),
     };
     (self as DedicatedWorkerGlobalScope).postMessage(response);
   }

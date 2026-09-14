@@ -26,12 +26,44 @@
 //     browser profile omits cooperative abort polling by design and expects the
 //     host to kill the Worker; engine.ts already did exactly that for QuickJS,
 //     so the deadline story is unchanged.
-import initZipp, { Engine } from '../../../vendor/zipp-wasm/zipp_wasm.js';
+import initZipp, { Engine, zippInstanceUsage } from '../../../vendor/zipp-wasm/zipp_wasm.js';
 // Canonical standard library — single source of truth, shared with the backend
 // and the desktop (ui/scripts/sync-prelude.mjs writes the copies).
 import PRELUDE from './prelude.js?raw';
 
 export type EvalKind = 'condition' | 'calc' | 'validate' | 'test' | 'syntax' | 'applogic';
+
+/** The subset of `zippInstanceUsage()` a host recycles on (audit ZP-01). */
+export interface InstanceUsage {
+  enginesCreated: number;
+  enginesDisposed: number;
+  /** Bytes of dynamically compiled functions/classes the instance still holds. */
+  retainedBytes: number;
+  dynamicCodeCalls: number;
+}
+
+/**
+ * What THIS WASM instance has accumulated across every engine it disposed.
+ * Every evaluation here compiles the expression dynamically, so this grows
+ * with use and only a fresh instance (a new Worker) reclaims it. Returns
+ * zeros before the engine is loaded or if the artifact cannot answer.
+ */
+export function instanceUsage(): InstanceUsage {
+  try {
+    const usage = zippInstanceUsage() as {
+      enginesCreated?: number; enginesDisposed?: number;
+      retainedFunctionBytes?: number; retainedClassBytes?: number; dynamicCodeCalls?: number;
+    };
+    return {
+      enginesCreated: usage.enginesCreated ?? 0,
+      enginesDisposed: usage.enginesDisposed ?? 0,
+      retainedBytes: (usage.retainedFunctionBytes ?? 0) + (usage.retainedClassBytes ?? 0),
+      dynamicCodeCalls: usage.dynamicCodeCalls ?? 0,
+    };
+  } catch {
+    return { enginesCreated: 0, enginesDisposed: 0, retainedBytes: 0, dynamicCodeCalls: 0 };
+  }
+}
 
 const DEFAULT_BUDGET_MS = 1000; // matches the backend's wall-time budget
 /** Same figure as DEFAULT_MAX_STEPS in formlogic/runtime/guest/src/main.rs. */
