@@ -79,7 +79,7 @@ The round-4 review confirmed the seven round-3 repairs and left three tickets. A
 
 XDB qualification on this machine: the in-process loopback test cannot run on the Windows host while WSL or Docker Desktop is up (their virtual adapter wins the multicast route, so discovery packets never loop back); it and the two-container run pass in Linux containers, which the XDB README now documents as the supported way to run them on a single machine. A run across two real hosts is still to be recorded.
 
-Pins after round 4: xdb.org e642c31 → softn.com 0cd405d → formlogic.com (this commit); manifest regenerated and checked.
+Pins after round 4: xdb.org e642c31 → softn.com 13ed8e9 → formlogic.com (this commit); manifest regenerated and checked.
 
 Still open after round 4: the two-host LAN run, the automated desktop upgrade end to end, the ecosystem harness below, and the GitHub-side runs of the OAIY attestation and the Aokie no-secrets dispatch.
 
