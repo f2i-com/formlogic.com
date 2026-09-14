@@ -12,6 +12,8 @@ import {
   providerSupports,
 } from "../client-runtime/flows/aiProviders";
 import { listAiSources } from "../client-runtime/flows/desktopService";
+import { fetchProviderCatalog } from "../client-runtime/desktop/desktopTunnel";
+import { providerListingFromTunnel } from "../components/settings/aiModelCatalog";
 import { api } from "../lib/api";
 import { cacheAiPreferences } from "../lib/websiteAiRouting";
 import { useAuthStore } from "../stores/authStore";
@@ -20,11 +22,12 @@ type Method = "desktop" | "custom";
 export default function ConnectAiWizard() {
   const [step, setStep] = useState(0);
   const [method, setMethod] = useState<Method>("desktop");
+  const [desktopConnection, setDesktopConnection] = useState<'account' | 'local'>('account');
   const [servicesOpen, setServicesOpen] = useState(false);
   const [checking, setChecking] = useState(false);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
-  const presence = useFlowsDesktopPresence();
+  const presence = useFlowsDesktopPresence(true, desktopConnection === 'local', desktopConnection === 'account');
   const user = useAuthStore((s) => s.user);
   const verify = async () => {
     setChecking(true);
@@ -53,7 +56,15 @@ export default function ConnectAiWizard() {
             "Add a chat provider in this browser, then select it below.",
           );
       } else {
-        const sources = await listAiSources();
+        let sources = desktopConnection === 'local' ? await listAiSources() : [];
+        if (sources.length === 0) {
+          const catalog = await fetchProviderCatalog({ timeoutMs: 30_000 });
+          if (!catalog.ok) throw new Error(catalog.error.message);
+          sources = catalog.data.providers.flatMap((provider) => {
+            const source = providerListingFromTunnel(provider);
+            return source ? [source] : [];
+          });
+        }
         const id = prefs.desktopProviderId?.replace(/^provider:/, "");
         if (
           !id ||
@@ -67,7 +78,7 @@ export default function ConnectAiWizard() {
           )
         ) {
           throw new Error(
-            "The saved provider is not available. Keep OAIY open, approve the connection and enable a provider there.",
+            "The saved provider is not available. Keep OAIY open, link your FormLogic account in Connections and enable a provider there.",
           );
         }
       }
@@ -134,7 +145,7 @@ export default function ConnectAiWizard() {
                       "desktop",
                       Laptop,
                       "OAIY desktop",
-                      "Use Codex with a ChatGPT sign-in, provider keys, or local models. Keep OAIY running on your computer.",
+                      "Use Codex with a ChatGPT sign-in, provider keys, or local models. OAIY can run on this computer or another one.",
                     ],
                     [
                       "custom",
@@ -164,8 +175,19 @@ export default function ConnectAiWizard() {
           {step === 1 && method === "desktop" && (
             <>
               <h3 className="text-lg font-semibold">
-                Connect OAIY to this browser
+                Connect your OAIY computer
               </h3>
+              <fieldset className="space-y-2">
+                <legend className="mb-2 text-sm font-medium">Connection method</legend>
+                <label className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 dark:border-slate-700">
+                  <input type="radio" name="desktop-connection" value="account" checked={desktopConnection === 'account'} onChange={() => setDesktopConnection('account')} className="mt-1" />
+                  <span className="text-sm"><strong className="block">Through my FormLogic account</strong><span className="text-gray-500 dark:text-slate-400">Use OAIY from any device through the encrypted AI relay.</span></span>
+                </label>
+                <label className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 dark:border-slate-700">
+                  <input type="radio" name="desktop-connection" value="local" checked={desktopConnection === 'local'} onChange={() => setDesktopConnection('local')} className="mt-1" />
+                  <span className="text-sm"><strong className="block">Directly from this computer</strong><span className="text-gray-500 dark:text-slate-400">Pair this browser with OAIY running on the same computer.</span></span>
+                </label>
+              </fieldset>
               <ol className="list-decimal space-y-3 pl-5 text-sm leading-6">
                 <li>
                   <a
@@ -185,14 +207,16 @@ export default function ConnectAiWizard() {
                   Alternatively add an API key or a local model.
                 </li>
                 <li>
-                  Use Connect below. Check and approve the matching code in
-                  OAIY, then return here.
+                  {desktopConnection === 'account'
+                    ? 'In OAIY, open Connections → Linked account, enter this FormLogic site’s address and approve the account link in your browser. Keep OAIY running, then continue here from any device.'
+                    : 'Use Connect below. Check and approve the matching code in OAIY, then return here.'}
                 </li>
               </ol>
-              <LocalRuntimePanel />
+              {desktopConnection === 'local' && <LocalRuntimePanel />}
               <p className="text-sm text-gray-500">
-                Pairing lets this browser use OAIY. Your AI provider is selected
-                in the next step.
+                {desktopConnection === 'account'
+                  ? 'No port forwarding or localhost pairing is needed. Select your AI provider in the next step. If several computers are linked, choose their assignments in Settings → AI & devices → Linked desktops.'
+                  : 'Pairing lets this browser use OAIY. Your AI provider is selected in the next step.'}
               </p>
             </>
           )}
@@ -228,7 +252,7 @@ export default function ConnectAiWizard() {
                 Select the provider you connected. These settings power chat and
                 automations using your default AI.
               </p>
-              <AiSourceCard preferredSource={method} />
+              <AiSourceCard preferredSource={method} remoteOnly={method === 'desktop' && desktopConnection === 'account'} />
               <div className="border-t border-gray-200 pt-5 dark:border-slate-700">
                 <Button onClick={() => void verify()} isLoading={checking}>
                   Check saved setup

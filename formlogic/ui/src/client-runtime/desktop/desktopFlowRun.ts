@@ -176,7 +176,7 @@ async function resolveDesktopKey(
   instanceId: string | undefined,
   onTrustEstablished?: (pin: DesktopE2ePin, firstTrust: boolean) => void
 ): Promise<DesktopTunnelResult<ResolvedDesktopKey>> {
-  const res = await api.getDesktopAiPubkey(instanceId);
+  const res = await api.getDesktopAiPubkey(instanceId, 'flow');
   if (res.error) {
     if (!res.status) {
       return failure({ code: 'transport', message: res.error });
@@ -275,11 +275,18 @@ function statusToTerminal(
  * counter). Returns the result payload; throws on any crypto/shape violation — the
  * caller maps that to a closed `sealed_envelope_invalid` failure.
  */
-function openResultEnvelope(session: TunnelSession, resultEnvelope: string): unknown {
+function openResultEnvelope(session: TunnelSession, resultEnvelope: string): FlowTerminal {
   const envelope = decodeTunnelEnvelope(resultEnvelope);
   if (!envelope) throw new FlowRunCryptoError('undecodable result envelope');
   const frame = openIncomingStrict(session, envelope);
-  return 'result' in frame ? frame.result : frame;
+  const type = firstString(frame.type, frame.kind);
+  if (type === 'error' || type === 'failed') {
+    return { kind: 'failed', code: firstString(frame.code) ?? 'request_failed', message: firstString(frame.message) };
+  }
+  if (type !== 'flow_result' && type !== 'done' && type !== 'final') {
+    throw new FlowRunCryptoError('unexpected terminal envelope type');
+  }
+  return { kind: 'done', result: frame.result };
 }
 
 /**
@@ -300,11 +307,11 @@ async function settleFromStatus(
   }
   const run = res.data as DesktopFlowRunStatus | undefined;
   if (run && typeof run.status === 'string') {
-    if (run.status === 'done') {
+    if (run.status === 'done' || run.status === 'failed') {
       if (typeof run.resultEnvelope === 'string' && run.resultEnvelope !== '') {
-        return { terminal: { kind: 'done', result: openResultEnvelope(session, run.resultEnvelope) }, waiting: false };
+        return { terminal: openResultEnvelope(session, run.resultEnvelope), waiting: false };
       }
-      return { terminal: { kind: 'done', result: undefined }, waiting: false };
+      if (run.status === 'done') return { terminal: { kind: 'done', result: undefined }, waiting: false };
     }
     const terminal = statusToTerminal(run.status, run.queuePos, run.code, run.message, onState);
     if (terminal) return { terminal, waiting: false };
@@ -445,10 +452,10 @@ async function streamFlowRun(
             case 'state':
             case 'status': {
               const word = firstString(frame.state, frame.status) ?? '';
-              if (word === 'done') {
+              if (word === 'done' || word === 'failed') {
                 const settled = await settleFromStatus(session, requestId, onState);
                 if (settled.terminal) return settled.terminal;
-                return settled.waiting ? null : { kind: 'done', result: undefined };
+                return null;
               }
               return statusToTerminal(
                 word,
@@ -466,11 +473,11 @@ async function streamFlowRun(
 
         // Unsealed status event (queue position / lifecycle — routing metadata only, §7).
         if (typeof obj.status === 'string') {
-          if (obj.status === 'done') {
+          if (obj.status === 'done' || obj.status === 'failed') {
             // The result never rides unsealed routing metadata — read the sealed resultEnvelope.
             const settled = await settleFromStatus(session, requestId, onState);
             if (settled.terminal) return settled.terminal;
-            return settled.waiting ? null : { kind: 'done', result: undefined };
+            return null;
           }
           return statusToTerminal(
             obj.status,

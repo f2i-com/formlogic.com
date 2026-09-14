@@ -189,7 +189,7 @@ React to form submissions, native database record changes, connector events and 
 
 Open **Connect your AI** and follow **Choose → Connect → Use in FormLogic**.
 
-- **OAIY Desktop:** connect Codex, a provider API or local models, then approve FormLogic's pairing request.
+- **OAIY Desktop:** connect Codex, a provider API or local models. Choose **Through my FormLogic account** and link this site in **OAIY → Connections → Linked account** to use it from another computer or phone. Direct browser pairing is also available on the same computer.
 - **Your own API provider:** use the browser's provider editor, test the connection and choose a default. The provider must allow browser requests.
 - **External AI clients:** use scoped OAuth/MCP access to create and edit apps, forms, screens, roles, flows and hosted projects.
 

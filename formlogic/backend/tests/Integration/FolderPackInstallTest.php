@@ -114,6 +114,21 @@ class FolderPackInstallTest extends TestCase
         self::assertNull(self::$native->get($id));
     }
 
+    public function testSignedAokieFolderInstallsUsableScreensWithoutGrantingUnapprovedCommands(): void
+    {
+        $pack = (new \FormLogic\Services\FolderPackCatalog(null, '/nonexistent'))->load()['entries']['aokie-receptionist']['pack'];
+        $installed = self::$packs->importPack($pack, $this->userId, null, null, null, []);
+        self::assertCount(10, $installed['forms']);
+        foreach ($installed['forms'] as $form) {
+            $saved = self::$forms->getForm($form['id']);
+            self::assertSame('verified', $saved['customScreen']['_trust']);
+        }
+        $app = self::$apps->getApp($installed['apps'][0]['id']);
+        foreach ($app['customLogic']['permissions'] ?? [] as $permission) {
+            self::assertFalse(str_starts_with($permission, 'connector.'), 'Screen signing must not approve connector permissions');
+        }
+    }
+
     public function testFailedProjectInstallationRollsBackItsFormsAndApp(): void
     {
         $pack = (new \FormLogic\Services\FolderPackCatalog(null, '/nonexistent'))->load()['entries']['clinic-appointment-intake']['pack'];

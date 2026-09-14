@@ -303,6 +303,16 @@ describe('runFlowOnDesktop — states, progress, result', () => {
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error.code).toBe('expired');
   });
+
+  it('opens an encrypted OAIY failure after an unsealed lifecycle event', async () => {
+    mockFlowBackend(DESKTOP, {
+      streamEvents: () => [sseData(JSON.stringify({ status: 'failed' }))],
+      statusBody: (desktop, eph) => ({ status: 'failed', resultEnvelope: desktop.sealFrame(eph,
+        { v: 1, type: 'error', code: 'node_failed', message: 'Private model is unavailable' }) }),
+    });
+    const result = await runFlowOnDesktop('flow-oaiy');
+    expect(result).toMatchObject({ ok: false, error: { code: 'node_failed', message: 'Private model is unavailable' } });
+  });
 });
 
 // ---------------------------------------------------------------------------

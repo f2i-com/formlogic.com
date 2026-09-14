@@ -27,7 +27,7 @@ final class FolderPackCatalogTest extends TestCase
         foreach ($loaded['entries'] as $id => $entry) {
             $original = json_decode(file_get_contents($root . '/marketplace-packs/' . $id . '.json'), true, 128, JSON_THROW_ON_ERROR)['pack'];
             $actual = $entry['pack'];
-            unset($original['signing']);
+            unset($original['signing'], $actual['signing']);
             foreach ($actual['apps'] as $i => &$app) {
                 self::assertArrayHasKey('hostedProject', $app, $id);
                 self::assertSame(true, $app['settings']['hostedDashboard']);
@@ -37,6 +37,20 @@ final class FolderPackCatalogTest extends TestCase
             unset($app);
             self::assertSame($original, $actual, "$id must preserve forms, links, roles, reports, scripts and flows");
         }
+    }
+
+    public function testBundledAokieScreensCarryVerifiablePublisherSignatures(): void
+    {
+        $entry = (new FolderPackCatalog(null, '/nonexistent'))->load()['entries']['aokie-receptionist'];
+        $service = (new \ReflectionClass(\FormLogic\Services\PackService::class))->newInstanceWithoutConstructor();
+        $checked = 0;
+        foreach ($entry['pack']['forms'] as $form) {
+            if (empty($form['customScreen'])) continue;
+            $result = $service->verifyVendorSignedScreenComponent($entry['pack'], 'form:' . $form['packFormId'], $form['customScreen']);
+            self::assertSame('verified', $result['trust']);
+            $checked++;
+        }
+        self::assertSame(10, $checked);
     }
 
     public function testFolderChangesOverridesAndFailuresAreVisibleWithoutRebuild(): void

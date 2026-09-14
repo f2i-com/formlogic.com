@@ -4220,8 +4220,11 @@ class ApiClient {
   // standard {error:true, code, message} envelope and surface via DesktopAiApiResponse.code.
 
   /** GET /api/desktop/ai/pubkey — the target desktop's long-term X25519 public key (TOFU-pinned by the tunnel client). */
-  async getDesktopAiPubkey(instanceId?: string): Promise<DesktopAiApiResponse<DesktopAiPubkeyResponse>> {
-    const query = instanceId ? `?instanceId=${encodeURIComponent(instanceId)}` : '';
+  async getDesktopAiPubkey(instanceId?: string, lane?: 'flow'): Promise<DesktopAiApiResponse<DesktopAiPubkeyResponse>> {
+    const params = new URLSearchParams();
+    if (instanceId) params.set('instanceId', instanceId);
+    if (lane) params.set('lane', lane);
+    const query = params.size ? `?${params}` : '';
     return this.desktopAiRequest(`/desktop/ai/pubkey${query}`);
   }
 

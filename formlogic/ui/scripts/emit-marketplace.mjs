@@ -41,6 +41,45 @@ const code = bundled.outputFiles[0].text;
 const { loadAllPacks } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
 const packCatalog = await loadAllPacks();
 
+// Folder catalogues are independently editable sources. Refresh their screens
+// only when explicitly requested; never replace an operator's app/database/flows
+// as a side effect of the legacy marketplace build.
+const folderIndex = process.argv.indexOf('--folder-screens');
+if (folderIndex !== -1) {
+  const id = process.argv[folderIndex + 1];
+  const entry = packCatalog.find(pack => pack.id === id);
+  if (!entry || !/^[a-z0-9][a-z0-9-]*$/.test(id)) throw new Error('Provide a known pack ID after --folder-screens');
+  const vendorKey = loadVendorKey();
+  if (!vendorKey) throw new Error('A vendor signing key is required to refresh folder screens. No files changed.');
+  const folder = join(here, '..', '..', 'backend', 'resources', 'packs', id);
+  const target = join(folder, 'install.json');
+  const installed = JSON.parse(readFileSync(target, 'utf8'));
+  const legacyTarget = join(here, '..', '..', 'backend', 'resources', 'marketplace-packs', id + '.json');
+  const legacy = JSON.parse(readFileSync(legacyTarget, 'utf8'));
+  const metadata = JSON.parse(readFileSync(join(folder, 'pack.json'), 'utf8'));
+  if (installed.packMeta?.id !== id || metadata.id !== id || installed.packMeta?.version !== metadata.version) {
+    throw new Error('Folder pack identity/version does not match');
+  }
+  let refreshed = 0;
+  for (const form of installed.forms) {
+    const source = entry.pack.forms.find(candidate => candidate.packFormId === form.packFormId);
+    if (!source?.customScreen) continue;
+    form.customScreen = source.customScreen;
+    const legacyForm = legacy.pack.forms.find(candidate => candidate.packFormId === form.packFormId);
+    if (legacyForm) legacyForm.customScreen = source.customScreen;
+    refreshed++;
+  }
+  if (!refreshed) throw new Error('No matching form screens to refresh');
+  // Sign the final folder payload, including any app screens already there.
+  // PHP still verifies the signature and each component's executable digest.
+  installed.signing = buildPackSigning(installed, vendorKey);
+  legacy.pack.signing = buildPackSigning(legacy.pack, vendorKey);
+  writeFileSync(target, JSON.stringify(installed, null, 2) + '\n');
+  writeFileSync(legacyTarget, JSON.stringify(legacy, null, 2));
+  console.log(`Refreshed ${refreshed} screens and signed ${id}; forms, flows and app projects preserved.`);
+  process.exit(0);
+}
+
 const outDir = join(here, '..', '..', 'backend', 'resources', 'marketplace-packs');
 mkdirSync(outDir, { recursive: true });
 

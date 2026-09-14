@@ -43,6 +43,27 @@ function baseFL(overrides: Record<string, unknown> = {}): Record<string, unknown
 }
 
 describe('live-call section screen (TSX)', () => {
+  it('shows SDK connection failures instead of claiming the desktop is absent or offering simulation', async () => {
+    const { root } = await runScreen(AOKIE_LIVE_CALL_SCREEN, baseFL({
+      presence: () => Promise.reject(new Error('This SDK action is disabled for an unverified custom screen.')),
+      can: () => Promise.reject(new Error('This SDK action is disabled for an unverified custom screen.')),
+    }));
+    await flush();
+    expect(root.querySelector('#presence')?.textContent).toBe('Connection needs attention');
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain('unverified custom screen');
+    expect(root.querySelector('[data-act="simulate"]')).toBeNull();
+    expect(root.textContent).not.toContain('No desktop connected');
+  });
+
+  it('distinguishes failed record reads from an empty call history', async () => {
+    const { root } = await runScreen(AOKIE_LIVE_CALL_SCREEN, baseFL({
+      records: () => Promise.reject(new Error('Session expired')),
+    }));
+    await flush();
+    expect(root.textContent).toContain('Could not refresh call records: Session expired');
+    expect(root.textContent).not.toContain('No calls logged yet');
+  });
+
   it("presence 'remote' standby shows the mirror note and NEVER the demo Simulate button", async () => {
     const ceremony = vi.fn(() => Promise.resolve({ status: 'done' }));
     const { root } = await runScreen(AOKIE_LIVE_CALL_SCREEN, baseFL({
@@ -96,7 +117,7 @@ describe('live-call section screen (TSX)', () => {
       },
     }));
     await flush();
-    expect(root.textContent).toContain('Install FormLogic Desktop (Device Setup) to take real calls.');
+    expect(root.textContent).toContain('Connect OAIY in Device Setup to take real calls');
     const btn = root.querySelector<HTMLButtonElement>('[data-act="simulate"]');
     expect(btn).not.toBeNull();
     expect(btn!.textContent).toBe('Simulate incoming call');

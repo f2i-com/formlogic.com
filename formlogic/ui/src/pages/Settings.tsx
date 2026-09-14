@@ -807,7 +807,7 @@ export function Settings() {
             <SectionHeader
               icon={Laptop}
               title="Linked Desktops"
-              description="FormLogic Desktop installs linked to your account. Each one can run your flows and relay live commands (like the Aokie phone bridge) even when you're not at that computer."
+              description="OAIY computers linked to your FormLogic account. Use their AI, plugins, and flows from another computer while OAIY stays running."
               iconBg="bg-primary-50 dark:bg-primary-500/10"
               iconColor="text-primary-600 dark:text-primary-400"
             />
@@ -825,7 +825,18 @@ export function Settings() {
                 <EmptyState
                   icon={Laptop}
                   title="No desktops linked yet"
-                  description='Open FormLogic Desktop, go to Settings, and click "Link FormLogic account" to connect it here.'
+                  description="Link the account from the computer running OAIY. A local browser connection alone will not add a computer here."
+                  action={(
+                    <div className="max-w-lg space-y-4 text-left text-sm text-gray-600 dark:text-slate-300">
+                      <ol className="list-decimal space-y-2 pl-5">
+                        <li>Open OAIY Desktop → Connections → Linked account.</li>
+                        <li>Set the address to this FormLogic site and click <strong>Link account</strong>.</li>
+                        <li>Approve in the browser on that computer, using the same FormLogic account you use here.</li>
+                        <li>Return to OAIY and confirm it shows a linked account, then check again below.</li>
+                      </ol>
+                      <Button variant="outline" onClick={() => loadDesktopConnections()}>Check linked computers</Button>
+                    </div>
+                  )}
                   className="py-8"
                 />
               ) : (

@@ -323,11 +323,11 @@ export function Docs() {
               <P>Open <Link to="/connect-ai" className="text-primary-700 dark:text-primary-300 underline">Connect your AI</Link>. The wizard walks through choosing a connection, testing it and making it your default. You can explore the <Link to="/ai-setup" className="underline">public setup guide</Link> before signing in; the connection wizard requires sign-in.</P>
               <Steps items={[
                 <><strong className="text-gray-900 dark:text-white">Choose OAIY or a direct API.</strong> OAIY can connect a Codex account, a provider key or a local model. A direct API connection is configured in this browser and needs a provider that permits browser requests.</>,
-                <><strong className="text-gray-900 dark:text-white">Connect and test.</strong> In OAIY, complete Getting started, select an AI provider and approve the FormLogic pairing code. For a direct API, enter the endpoint, model and key in the provider editor and test the connection.</>,
+                <><strong className="text-gray-900 dark:text-white">Connect and test.</strong> In OAIY, select an AI provider and link your FormLogic account in Connections for access from any device. Choose direct browser pairing only when using OAIY on the same computer. For a direct API, enter the endpoint, model and key in the provider editor and test the connection.</>,
                 <><strong className="text-gray-900 dark:text-white">Choose your default.</strong> Finish the wizard and try a small request in the workspace. The selected provider supplies the AI; its own usage limits and charges apply.</>,
               ]} />
               <Figure src="/images/docs/connect-ai.jpg" alt="FormLogic connection wizard offering OAIY Desktop and a direct API provider" caption="Actual connection wizard with a fictional account and no provider connected." />
-              <Tip>Browser pairing lets this browser use approved OAIY capabilities. To deliver device events and run account workflows, also link your FormLogic account in OAIY. Those are separate connections. For an external AI client, follow <a href="#mcp" className="underline">Build with your AI (MCP)</a>.</Tip>
+              <Tip>To use OAIY from another computer or phone, choose <strong>Through my FormLogic account</strong> in the wizard, then link this site in <strong>OAIY → Connections → Linked account</strong>. AI requests travel through the encrypted relay without localhost pairing or port forwarding. Keep OAIY running. Browser pairing is the separate option for direct access on the same computer. For an external AI client, follow <a href="#mcp" className="underline">Build with your AI (MCP)</a>.</Tip>
               <P>Operator-funded Site AI is off by default. Some specialised generation tools still require it and are unavailable when it is off. <GuideLink file="docs/FREE_PLANS_AND_AI_SETUP.md">Connection options, feature coverage and administrator setup</GuideLink>.</P>
             </section>
 
@@ -531,7 +531,7 @@ export function Docs() {
               <P>FormLogic is free. Create forms, apps and automations with the visual builders, and bring your own AI when you want an assistant. Your AI provider may charge separately.</P>
               <Steps items={[
                 <>Open <Link to="/connect-ai" className="underline">Connect your AI</Link> and choose OAIY desktop or your own API provider.</>,
-                <>For OAIY, use its Getting started guide to sign in with Codex, add a provider key, or start a local model. Approve FormLogic's pairing code in OAIY.</>,
+                <>For OAIY, use its Getting started guide to sign in with Codex, add a provider key, or start a local model. Link your FormLogic account for remote access, or approve the pairing code for direct access on the same computer.</>,
                 <>For a direct API, save and test your provider in this browser. Select it as your default in the final wizard step.</>,
                 <>After signing in, open your account menu and choose <C>Cloud &amp; billing</C> to reach <strong>Your plan</strong>. Payments are disabled by default; if enabled, support is optional and prepaid, with no auto-renewal.</>,
                 <>Administrators can edit plan names, descriptions and prices in Admin &gt; Platform &gt; Plans. PayPal credentials alone never enable checkout. Free access continues regardless of support expiry.</>,
@@ -666,6 +666,7 @@ function _init() {
             {/* Flows & Desktop */}
             <section className="mb-14">
               <H2 id="flows" icon={Workflow}>Automations &amp; OAIY</H2>
+              <P>Saved flows can run on an OAIY computer linked to your account, even when you use FormLogic on another device. Choose <strong>Desktop relay</strong> and select the <strong>Linked computer</strong> in the test panel. Inputs and final results are encrypted end to end; flow definitions and routing status remain on FormLogic. Service/plugin commands and records use the authenticated HTTPS API. Queue and completion status are shown; individual node progress depends on the runtime.</P>
               <P>Open <strong>Automations</strong> to build a flow: an event starts it, nodes read or transform data, and actions write records or use an approved connector. Begin with a manual test, inspect the run history and then enable the trigger you need. Workspace flows support <C>form.submitted</C>; connector events such as Aokie calls need a flow within an app.</P>
 
               <Bullets items={[

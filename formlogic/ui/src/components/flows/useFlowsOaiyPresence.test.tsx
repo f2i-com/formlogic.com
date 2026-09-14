@@ -53,3 +53,13 @@ it('the passive shell resumes monitoring when pairing changes and stops when dis
   await act(async () => { state.ready = false; state.paired(); });
   expect(state.oaiyProbes.at(-1)).toBe(false);
 });
+
+it('account-only mode does not probe localhost even with an existing browser pairing', async () => {
+  state.ready = true;
+  state.legacy = true;
+  function RemoteProbe() { const presence = useFlowsDesktopPresence(true, false, true); return <p>{presence.kind}</p>; }
+  await act(async () => root.render(<RemoteProbe />));
+  expect(state.oaiyProbes.at(-1)).toBe(false);
+  expect(state.legacyProbes.at(-1)).toBe(false);
+  expect(container.textContent).toBe('none');
+});

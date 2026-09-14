@@ -28,8 +28,9 @@ export function RecentCalls({ c }: { c: ConsoleController }) {
           View all
         </span>
       </div>
+      {c.state.recentError && <p class="muted tempty" role="alert">Could not refresh call records: {c.state.recentError}</p>}
       {rows.length === 0 ? (
-        <p class="muted tempty">No calls logged yet - they are recorded automatically from call events.</p>
+        !c.state.recentError && <p class="muted tempty">No calls logged yet. New calls appear here after OAIY is linked to your FormLogic account and this app is installed.</p>
       ) : (
         <ul class="calls">
           {rows.map((row) => {

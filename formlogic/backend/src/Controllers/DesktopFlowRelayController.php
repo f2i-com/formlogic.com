@@ -54,8 +54,8 @@ class DesktopFlowRelayController
      * POST /api/desktop/flows/run — enqueue a sealed flow run {flowId, ephPub, envelope,
      * idempotencyKey?}. The flow must belong to the session user (a run of a foreign flow can
      * never be enqueued — the desktop would execute it with the owner's authority). The SERVER
-     * picks the target machine (connector assignment pin → implicit single fresh desktop → 409
-     * ambiguous_desktop); a client-supplied target is discarded, mirroring the AI lane.
+     * validates an explicit target against the owner's linked computers, or resolves the
+     * flow assignment / single fresh desktop when no target was selected.
      */
     public function enqueue(Request $request, Response $response): Response
     {
@@ -74,8 +74,18 @@ class DesktopFlowRelayController
             return $this->jsonError($response, 'Flow not found', 404);
         }
 
+        if (isset($body['targetInstanceId']) && !is_string($body['targetInstanceId'])) {
+            return $this->jsonError($response, 'Invalid desktop instance id', 400);
+        }
+        try {
+            $resolved = $this->commands->resolveSealedTarget((string) $userId, self::TARGET_CONNECTOR_ID, $body['targetInstanceId'] ?? null);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonError($response, $e->getMessage(), 400);
+        }
+        if ($resolved['error'] === 'desktop_not_linked') {
+            return $this->jsonError($response, 'The selected computer is not linked to this account', 404, 'desktop_not_linked');
+        }
         unset($body['targetInstanceId']);
-        $resolved = $this->commands->resolveTargetInstance((string) $userId, self::TARGET_CONNECTOR_ID);
         if ($resolved['error'] === 'ambiguous_desktop') {
             return $this->jsonError(
                 $response,

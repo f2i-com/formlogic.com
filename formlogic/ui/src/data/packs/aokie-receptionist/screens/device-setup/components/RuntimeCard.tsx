@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
-// FormLogic Desktop presence card: local / remote / not-connected states, the
-// 'Connect FormLogic Desktop' host ceremony trigger, and the owner's linked
+// OAIY Desktop presence card: local / remote / not-connected states, the
+// 'Connect OAIY Desktop' host ceremony trigger, and the owner's linked
 // desktop registry (owner-only; a member's refusal simply hides the list).
 import { agoLabel } from '../format';
 import type { DesktopRow } from '../types';
@@ -18,7 +18,7 @@ export function RuntimeCard({ demo, presence, desktops, connecting, onConnectDes
     return (
       <section class="card" id="runtime">
         <h2>Demo bridge</h2>
-        <p class="muted">This is the shared demo, so the hardware below is simulated - FormLogic Desktop and real phones are never used here. Use "Simulate incoming call" on the Calls screen to see the receptionist in action.</p>
+        <p class="muted">This is the shared demo, so the hardware below is simulated - OAIY Desktop and real phones are never used here. Use "Simulate incoming call" on the Calls screen to see the receptionist in action.</p>
       </section>
     );
   }
@@ -27,13 +27,13 @@ export function RuntimeCard({ demo, presence, desktops, connecting, onConnectDes
   return (
     <section class="card" id="runtime">
       <div class="sectionrow">
-        <h2>FormLogic Desktop</h2>
+        <h2>OAIY Desktop</h2>
         {p && p.kind === 'local' && <span class="pill ok">Connected on this computer</span>}
         {p && p.kind === 'remote' && <span class="pill accent">{'Running on ' + (p.deviceName || 'another machine')}</span>}
         {p && p.kind === 'none' && <span class="pill warn">Not connected</span>}
       </div>
       {p === null && (
-        <div class="loadwrap" role="status" aria-label="Checking for FormLogic Desktop">
+        <div class="loadwrap" role="status" aria-label="Checking for OAIY Desktop">
           <span class="skeleton" />
           <span class="skeleton short" />
         </div>
@@ -46,14 +46,14 @@ export function RuntimeCard({ demo, presence, desktops, connecting, onConnectDes
         </p>
       )}
       {p && p.kind === 'local' && (
-        <p class="muted">Device plugins and hardware connectors are served by the FormLogic Desktop on this computer.</p>
+        <p class="muted">Device plugins and hardware connectors are served by the OAIY Desktop on this computer.</p>
       )}
       {p && p.kind === 'none' && (
         <div>
-          <p class="muted">FormLogic Desktop hosts the phone bridge and hardware connectors. Start it on this computer, then connect it - approving the request on the desktop issues a token bound to this site.</p>
+          <p class="muted">OAIY Desktop hosts the phone bridge and hardware connectors. Start it on this computer, then connect it - approving the request on the desktop issues a token bound to this site.</p>
           <p class="cta">
             <button type="button" class="btn primary" disabled={connecting} onClick={onConnectDesktop}>
-              {connecting ? 'Waiting for approval on the desktop...' : 'Connect FormLogic Desktop'}
+              {connecting ? 'Waiting for approval on the desktop...' : 'Connect OAIY Desktop'}
             </button>
           </p>
         </div>

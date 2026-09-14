@@ -73,6 +73,12 @@ Use the actual configured port for a headless/custom host. Avoid terminating eve
 
 ## Delivery, retention and time
 
+If Calls says there is no desktop but Device Setup reports **unverified custom screen**, check the pack's screen provenance. This is a screen-verification failure, not evidence that OAIY is offline. Use **Records → Calls** or **Records → Transcript Turns** to check server data independently. Unsigned folder-pack imports cannot use privileged screen SDK actions, even when their background app logic is receiving events.
+
+Maintainers can refresh the bundled Aokie screens and sign the exact folder payload from `formlogic/ui` with `node scripts/emit-marketplace.mjs --folder-screens aokie-receptionist`. This requires the existing trusted vendor key and updates the matching legacy catalogue entry too. It preserves forms, flows and hosted project source. Deploying a new catalogue does not replace screens in an existing installation: update those screens through a reviewed in-place upgrade, preserving IDs and records. Do not disable SDK trust checks or reinstall over customer data to work around this.
+
+For after-call summaries and appointment extraction, configure the **Default model** in **OAIY → Providers → Edit** or specify a model in Receptionist Settings. The phone responder can work while these background flows fail with “no model specified,” because they use OAIY's AI gateway independently. After correcting the model, test a new call or inspect the failed run's business effects before retrying it.
+
 Aokie's durable outbox tracks pending, failed and dead events. **All events delivered** describes delivery to the host; a successful FormLogic flow and stored record establish end-to-end success. Fix the link, permission or flow error before redriving. `outbox.redrive` can target one idempotency key or an explicit dead set; inspect business side effects before retrying. Preserve original event identity so deduplication can work.
 
 Check the installed forms' `retentionDays` and purge behavior rather than assuming every deployment uses the starter's policy. Customers, appointments and follow-ups have different retention needs from call/transcript/message/device records. Set the app timezone for dashboard day boundaries and confirm booking dates/times in that timezone.

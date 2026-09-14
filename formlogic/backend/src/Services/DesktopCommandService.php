@@ -533,11 +533,27 @@ class DesktopCommandService
     }
 
     /**
-     * ROUTE-001: map desktop instance ids → device names (owner-scoped), so command
-     * read-backs can show WHICH machine a command was aimed at / handled by.
-     * @param string[] $instanceIds
-     * @return array<string, string> instanceId => deviceName
+     * Resolve a sealed request without changing the computer whose key the browser used.
+     * @return array{target: ?string, error: ?string, desktops: array[]}
      */
+    public function resolveSealedTarget(string $ownerUserId, string $connectorId, ?string $requestedInstance): array
+    {
+        if ($requestedInstance === null || $requestedInstance === '') {
+            return $this->resolveTargetInstance($ownerUserId, $connectorId);
+        }
+        // A sealed envelope cannot be silently rerouted: only the selected
+        // computer has its decryption key. Resolve the browser's hint through
+        // the authenticated owner's registry before accepting it.
+        if (strlen($requestedInstance) > 128 || !preg_match('/^[A-Za-z0-9._-]+$/', $requestedInstance)) {
+            throw new \InvalidArgumentException('Invalid desktop instance id');
+        }
+        $owned = $this->describeInstances($ownerUserId, [$requestedInstance]);
+        return array_key_exists($requestedInstance, $owned)
+            ? ['target' => $requestedInstance, 'error' => null, 'desktops' => []]
+            : ['target' => null, 'error' => 'desktop_not_linked', 'desktops' => []];
+    }
+
+    /** @param string[] $instanceIds @return array<string, string> instanceId => deviceName */
     public function describeInstances(string $ownerUserId, array $instanceIds): array
     {
         $ids = array_values(array_unique(array_filter($instanceIds, static fn ($v) => is_string($v) && $v !== '')));

@@ -23,6 +23,7 @@ import { RecentCalls } from './components/RecentCalls';
 
 function PresencePill({ c }: { c: ConsoleController }) {
   const p = c.state.presence;
+  if (c.state.connectionError) return <span id="presence" class="pill warn">Connection needs attention</span>;
   // While presence is still resolving, show a neutral "Connecting" pill rather than
   // "No desktop connected" — the desktop is usually just a beat behind on mount.
   if (!c.presenceSettled()) {
@@ -61,6 +62,13 @@ function PresencePill({ c }: { c: ConsoleController }) {
  *  - local: direct bridge, no panel. */
 function Standby({ c }: { c: ConsoleController }) {
   const s = c.state;
+  if (s.connectionError) return (
+    <div class="standby"><div class="card callout" role="alert">
+      <h2>Could not connect this screen</h2>
+      <p class="note">{s.connectionError}</p>
+      <p class="note">Open Device Setup to review the connection. An app owner may need to review the installed screen in App Studio.</p>
+    </div></div>
+  );
   // Still resolving presence on load: a loading spinner, never the Simulate card —
   // a desktop that's a beat behind must not flash the demo affordance.
   if (!c.presenceSettled()) {
@@ -94,7 +102,7 @@ function Standby({ c }: { c: ConsoleController }) {
       ) : s.presence.kind !== 'local' ? (
         <div class="card">
           <p class="note lead">
-            Install FormLogic Desktop (Device Setup) to take real calls. Until then, run a scripted demo call to explore the flow.
+            Connect OAIY in Device Setup to take real calls and keep your call records in this app. You can also explore with a scripted demo call.
           </p>
           <button type="button" class="btn" data-act="simulate" disabled={s.simulating}
             onClick={() => c.simulate()}>
@@ -125,7 +133,7 @@ function App() {
           <PresencePill c={c} />
         </div>
         <div class="cbody">
-          {call === null && <Standby c={c} />}
+          {(call === null || c.state.connectionError) && <Standby c={c} />}
           {call !== null && <CallStage c={c} call={call} />}
           {call !== null && <LiveCaptions call={call} captions={c.state.captions} />}
           <Transcript c={c} call={call} />

@@ -283,7 +283,7 @@ export function LocalRuntimePanel() {
                   : 'bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-500/20'
               }`}
             >
-              {activePaired ? 'Connected' : 'Not connected'}
+              {activePaired ? 'Connected on this computer' : 'Not connected'}
             </span>
           )}
         </div>
@@ -293,9 +293,18 @@ export function LocalRuntimePanel() {
       </div>
 
       <p className="text-sm text-gray-600 dark:text-slate-400 mb-4">
-        Connect OAIY Desktop to use local AI and installed plugins from your apps and automations.
-        Your browser asks for approval before it connects. FormLogic Desktop is also supported.
+        Connect this browser directly to OAIY Desktop on the same computer to use its AI and plugins.
+        Your browser asks for approval before it connects.
       </p>
+
+      <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200">
+        <p className="font-medium">Using OAIY from another computer?</p>
+        <p className="mt-1">
+          On the computer running OAIY, open Connections → Linked account → Link account and approve
+          this FormLogic account in its browser. Keep OAIY running. That account link makes the computer
+          available from your other devices; this local connection only works on this computer.
+        </p>
+      </div>
 
       {!detected && (
         <div className="bg-gray-50 dark:bg-slate-800 rounded-xl p-4 text-sm text-gray-600 dark:text-slate-400 mb-4">

@@ -47,9 +47,8 @@ class DesktopAiRelayController
 
     /**
      * POST /api/desktop/ai/requests — enqueue a sealed AI request {kind, providerId, ephPub,
-     * envelope, idempotencyKey?}. The SERVER picks the target machine (connector assignment pin
-     * → implicit single fresh desktop → 409 ambiguous_desktop); a client-supplied target is
-     * discarded, mirroring the connector-command relay.
+     * envelope, idempotencyKey?}. The server validates the selected computer against the
+     * owner's registry, or uses the AI assignment / single fresh desktop by default.
      */
     public function enqueue(Request $request, Response $response): Response
     {
@@ -62,8 +61,18 @@ class DesktopAiRelayController
             $body = [];
         }
 
+        if (isset($body['targetInstanceId']) && !is_string($body['targetInstanceId'])) {
+            return $this->jsonError($response, 'Invalid desktop instance id', 400);
+        }
+        try {
+            $resolved = $this->commands->resolveSealedTarget((string) $userId, self::TARGET_CONNECTOR_ID, $body['targetInstanceId'] ?? null);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonError($response, $e->getMessage(), 400);
+        }
+        if ($resolved['error'] === 'desktop_not_linked') {
+            return $this->jsonError($response, 'The selected computer is not linked to this account', 404, 'desktop_not_linked');
+        }
         unset($body['targetInstanceId']);
-        $resolved = $this->commands->resolveTargetInstance((string) $userId, self::TARGET_CONNECTOR_ID);
         if ($resolved['error'] === 'ambiguous_desktop') {
             return $this->jsonError(
                 $response,
@@ -178,7 +187,8 @@ class DesktopAiRelayController
         if ($instanceId === '') {
             // No explicit target: resolve the same way enqueue does (assignment pin → implicit
             // single fresh desktop → 409 ambiguous) so a caller can fetch the default key.
-            $resolved = $this->commands->resolveTargetInstance((string) $userId, self::TARGET_CONNECTOR_ID);
+            $lane = ($request->getQueryParams()['lane'] ?? '') === 'flow' ? 'desktop-flow' : self::TARGET_CONNECTOR_ID;
+            $resolved = $this->commands->resolveTargetInstance((string) $userId, $lane);
             if ($resolved['error'] === 'ambiguous_desktop') {
                 return $this->jsonError(
                     $response,

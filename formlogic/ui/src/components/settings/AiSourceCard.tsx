@@ -89,11 +89,11 @@ interface CatalogResult {
   models: ModelOption[];
 }
 
-export function AiSourceCard({ preferredSource }: { preferredSource?: 'desktop' | 'custom' } = {}) {
+export function AiSourceCard({ preferredSource, remoteOnly = false }: { preferredSource?: 'desktop' | 'custom'; remoteOnly?: boolean } = {}) {
   const { plans } = usePublicConfig();
   const user = useAuthStore((s) => s.user);
   const readOnly = !!user?.isDemo;
-  const desktopPresence = useFlowsDesktopPresence();
+  const desktopPresence = useFlowsDesktopPresence(false, !remoteOnly, remoteOnly);
 
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -152,7 +152,7 @@ export function AiSourceCard({ preferredSource }: { preferredSource?: 'desktop' 
   const presenceKind = desktopPresence.kind;
   useEffect(() => {
     let cancelled = false;
-    listAiSources()
+    (remoteOnly ? Promise.resolve([]) : listAiSources())
       .then(async (sources) => {
         if (cancelled) return;
         const local = chatProvidersFrom(sources);
@@ -160,8 +160,8 @@ export function AiSourceCard({ preferredSource }: { preferredSource?: 'desktop' 
           setDesktopProviders(local);
           return;
         }
-        if (presenceKind === 'none') return;
-        const cached = readProviderCatalogCache();
+        if (presenceKind === 'none' && !remoteOnly) return;
+        const cached = remoteOnly ? null : readProviderCatalogCache();
         if (cached) {
           setDesktopProviders(chatProvidersFrom(cached));
           return;
@@ -184,7 +184,7 @@ export function AiSourceCard({ preferredSource }: { preferredSource?: 'desktop' 
     return () => {
       cancelled = true;
     };
-  }, [presenceKind]);
+  }, [presenceKind, remoteOnly]);
 
   // Browser-local custom providers refresh when the AI services registry changes
   // (the AiServicesDialog dispatches this event on save; mount state is the lazy initializer).
@@ -286,7 +286,7 @@ export function AiSourceCard({ preferredSource }: { preferredSource?: 'desktop' 
   const save = async () => {
     if (saving || readOnly) return;
     if (source === 'desktop' && !desktopProviderId.trim()) {
-      toast.error('Pick a desktop provider', 'Choose the FormLogic Desktop provider to use, or switch AI source.');
+      toast.error('Pick a desktop provider', 'Choose the OAIY provider to use, or switch AI source.');
       return;
     }
     if (source === 'custom' && !customProviderId) {

@@ -92,6 +92,18 @@ const buttons = (root: HTMLElement) => [...root.querySelectorAll<HTMLButtonEleme
 const buttonByText = (root: HTMLElement, text: string) => buttons(root).find((b) => b.textContent === text);
 
 describe('device setup section screen (TSX)', () => {
+  it('settles blocked SDK reads into an actionable error instead of endless loading cards', async () => {
+    const { root } = await runScreen(AOKIE_DEVICE_SETUP_SCREEN, mockFormLogic(newCalls(), {
+      presence: () => Promise.reject(new Error('This SDK action is disabled for an unverified custom screen.')),
+      can: () => Promise.reject(new Error('This SDK action is disabled for an unverified custom screen.')),
+    }));
+    await flush();
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain('unverified custom screen');
+    expect(root.textContent).toContain('This does not mean OAIY or your phone is offline.');
+    expect(root.textContent).not.toContain('Loading...');
+    expect(root.querySelector('.skeleton')).toBeNull();
+  });
+
   it('paints every card in a Loading state before any read resolves - nothing sits blank', async () => {
     const calls = newCalls();
     const { root } = await runScreen(AOKIE_DEVICE_SETUP_SCREEN, mockFormLogic(calls, {

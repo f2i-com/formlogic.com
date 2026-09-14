@@ -87,9 +87,9 @@ export function localFlowRuntime(includeOaiy = false): FlowsDesktopPresence {
   return hasLocalDesktopBridge() ? { kind: 'local' } : { kind: 'none' };
 }
 
-export function useFlowsDesktopPresence(includeOaiy = false, discoverLocal = true): FlowsDesktopPresence {
+export function useFlowsDesktopPresence(includeOaiy = false, discoverLocal = true, remoteOnly = false): FlowsDesktopPresence {
   const [local, setLocal] = useState(() => localFlowRuntime(includeOaiy));
-  const localBridge = local.kind === 'local';
+  const localBridge = !remoteOnly && local.kind === 'local';
   const legacyPaired = isDesktopPaired();
   const oaiyPaired = isOaiyPaired();
   const [remote, setRemote] = useState<FlowsDesktopPresence | null>(null);
@@ -100,16 +100,16 @@ export function useFlowsDesktopPresence(includeOaiy = false, discoverLocal = tru
     const recompute = () => {
       const next = localFlowRuntime(includeOaiy);
       setLocal(next);
-      if (next.kind === 'local') setRemote(null);
+      if (!remoteOnly && next.kind === 'local') setRemote(null);
     };
     const unsubs = [
-      subscribeDesktopStatus(recompute, { probe: discoverLocal || legacyPaired }),
+      subscribeDesktopStatus(recompute, { probe: !remoteOnly && (discoverLocal || legacyPaired) }),
       subscribeDesktopPaired(recompute),
-      subscribeOaiyStatus(recompute, { probe: discoverLocal || oaiyPaired }),
+      subscribeOaiyStatus(recompute, { probe: !remoteOnly && (discoverLocal || oaiyPaired) }),
       subscribeOaiyPaired(recompute),
     ];
     return () => unsubs.forEach((u) => u());
-  }, [includeOaiy, discoverLocal, legacyPaired, oaiyPaired]);
+  }, [includeOaiy, discoverLocal, legacyPaired, oaiyPaired, remoteOnly]);
 
   useEffect(() => {
     if (localBridge) return;

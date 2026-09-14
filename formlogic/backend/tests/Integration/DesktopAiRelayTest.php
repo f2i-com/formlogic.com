@@ -647,4 +647,16 @@ class DesktopAiRelayTest extends TestCase
         $this->assertSame('ambiguous_desktop', $r['body']['code'] ?? null);
         $this->assertCount(2, $r['body']['details']['desktops'] ?? []);
     }
+
+    public function testSelectedComputerKeepsTheEnvelopeOnItsKeyOwner(): void
+    {
+        $this->addConnection('desk-1');
+        $this->addConnection('desk-2');
+        $selected = $this->webEnqueue($this->ownerId, $this->sealedBody(['targetInstanceId' => 'desk-2']));
+        $this->assertSame(201, $selected['status'], json_encode($selected['body']));
+        $this->assertSame('desk-2', $selected['body']['targetInstanceId']);
+        $missing = $this->webEnqueue($this->ownerId, $this->sealedBody(['targetInstanceId' => 'not-linked']));
+        $this->assertSame(404, $missing['status']);
+        $this->assertSame('desktop_not_linked', $missing['body']['code']);
+    }
 }

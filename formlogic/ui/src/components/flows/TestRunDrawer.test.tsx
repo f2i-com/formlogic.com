@@ -10,10 +10,11 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { runFlowCloudMock, runFlowOnDesktopMock, executeFlowMock } = vi.hoisted(() => ({
+const { runFlowCloudMock, runFlowOnDesktopMock, executeFlowMock, getDesktopConnectionsMock } = vi.hoisted(() => ({
   runFlowCloudMock: vi.fn(),
   runFlowOnDesktopMock: vi.fn(),
   executeFlowMock: vi.fn(),
+  getDesktopConnectionsMock: vi.fn(),
 }));
 
 vi.mock('../../lib/api', async (importOriginal) => {
@@ -23,6 +24,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
     api: {
       isDemoMode: () => false,
       runFlowCloud: (...args: unknown[]) => runFlowCloudMock(...args),
+      getDesktopConnections: () => getDesktopConnectionsMock(),
     },
   };
 });
@@ -115,6 +117,24 @@ async function click(btn: HTMLButtonElement): Promise<void> {
 beforeEach(() => {
   vi.clearAllMocks();
   executeFlowMock.mockResolvedValue({ status: 'done', result: { echoed: true }, nodesExecuted: 1 });
+  getDesktopConnectionsMock.mockResolvedValue({ data: { connections: [] } });
+});
+
+it('runs on the explicitly selected remote computer without invoking the browser runner', async () => {
+  getDesktopConnectionsMock.mockResolvedValue({ data: { connections: [
+    { desktopInstanceId: 'oaiy-home', deviceName: 'Home PC', lastSeenAt: new Date().toISOString() },
+    { desktopInstanceId: 'oaiy-office', deviceName: 'Office PC', lastSeenAt: new Date().toISOString() },
+  ] } });
+  runFlowOnDesktopMock.mockResolvedValue({ ok: true, data: { status: 'done', result: 'remote' } });
+  const container = await renderDrawer({}, 'desktop');
+  const select = container.querySelector('select')!;
+  await act(async () => {
+    select.value = 'oaiy-office';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await click(buttonByText(container, 'Run via Desktop relay'));
+  expect(runFlowOnDesktopMock).toHaveBeenCalledWith('flow-1', expect.objectContaining({ instanceId: 'oaiy-office' }));
+  expect(executeFlowMock).not.toHaveBeenCalled();
 });
 
 afterEach(async () => {

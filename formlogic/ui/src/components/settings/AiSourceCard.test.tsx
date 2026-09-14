@@ -90,12 +90,12 @@ async function flush(): Promise<void> {
   });
 }
 
-async function renderCard(): Promise<{ container: HTMLDivElement; root: Root }> {
+async function renderCard(remoteOnly = false): Promise<{ container: HTMLDivElement; root: Root }> {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
   await act(async () => {
-    root.render(<AiSourceCard />);
+    root.render(<AiSourceCard remoteOnly={remoteOnly} />);
   });
   await flush();
   return { container, root };
@@ -155,6 +155,20 @@ describe('AiSourceCard', () => {
     expect(radio(container!, 'site').checked).toBe(true);
     expect(container!.textContent).toContain('12 of 500 messages this month');
     expect(container!.textContent).toContain('Default flows use this too.');
+  });
+
+  it('lists remote providers without calling the local runtime in account mode', async () => {
+    getAiPreferencesMock.mockResolvedValue({ data: prefs({ aiSource: 'desktop', desktopProviderId: 'remote-model' }) });
+    fetchProviderCatalogMock.mockResolvedValue({ ok: true, data: { providers: [
+      { id: 'remote-model', name: 'Remote model', enabled: true, capabilities: ['chat'] },
+    ], threadId: 'remote' } });
+    const rendered = await renderCard(true);
+    root = rendered.root;
+    container = rendered.container;
+    await flush();
+    expect(fetchProviderCatalogMock).toHaveBeenCalled();
+    expect(listAiSourcesMock).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Remote model');
   });
 
   it('degrades gracefully when usage is absent', async () => {

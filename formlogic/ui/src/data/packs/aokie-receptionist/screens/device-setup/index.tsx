@@ -38,6 +38,7 @@ const errText = (e: unknown): string => (e instanceof Error && e.message ? e.mes
 
 function App() {
   const [banner, setBanner] = useState('');
+  const [setupError, setSetupError] = useState('');
   const [demo, setDemo] = useState(false);
   const [presence, setPresence] = useState<FlPresence | null>(null);
   const [desktops, setDesktops] = useState<DesktopRow[] | null>(null);
@@ -195,6 +196,7 @@ function App() {
 
   const loadAll = async () => {
     setBanner('');
+    setSetupError('');
     // Paint every card in its null/Loading state up front so nothing sits blank
     // while a command is in flight - a relayed dongle/phone read against a
     // remote desktop can take several seconds.
@@ -211,7 +213,12 @@ function App() {
     } catch { /* keep the previous demo verdict */ }
     demoRef.current = isDemo;
     setDemo(isDemo);
-    await Promise.all([loadRuntime(isDemo), loadDongles(), loadPhones(), loadCompanion(isDemo), refreshEvents()]);
+    try {
+      await Promise.all([loadRuntime(isDemo), loadDongles(), loadPhones(), loadCompanion(isDemo), refreshEvents()]);
+    } catch (err) {
+      // SDK preflight failures must not leave hardware cards spinning forever.
+      setSetupError(errText(err));
+    }
   };
 
   // Mount-only initial load (loadAll's identity changes per render; re-running it per
@@ -366,6 +373,19 @@ function App() {
   };
 
   // ---- layout ------------------------------------------------------------
+
+  if (setupError) return (
+    <div id="ds" aria-label="Device setup">
+      <div class="head"><h1>Device Setup</h1>
+        <button type="button" class="btn" onClick={() => { void loadAll(); }}>Refresh</button>
+      </div>
+      <section class="card" role="alert">
+        <h2>Could not load device setup</h2>
+        <p>{setupError}</p>
+        <p>An app owner may need to review the installed screen in App Studio. This does not mean OAIY or your phone is offline.</p>
+      </section>
+    </div>
+  );
 
   return (
     <div id="ds" aria-label="Device setup">

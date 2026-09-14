@@ -602,4 +602,21 @@ class DesktopFlowRelayTest extends TestCase
         $this->assertSame('ambiguous_desktop', $r['body']['code'] ?? null);
         $this->assertCount(2, $r['body']['details']['desktops'] ?? []);
     }
+
+    public function testExplicitOwnedComputerIsKeptWhenSeveralAreOnline(): void
+    {
+        $this->addConnection('desk-1');
+        $this->addConnection('desk-2');
+        $result = $this->webEnqueue($this->ownerId, $this->sealedBody(['targetInstanceId' => 'desk-2']));
+        $this->assertSame(201, $result['status'], json_encode($result['body']));
+        $this->assertSame('desk-2', $result['body']['targetInstanceId']);
+    }
+
+    public function testUnlinkedSelectionIsRefusedRatherThanRerouted(): void
+    {
+        $this->addConnection('desk-1');
+        $result = $this->webEnqueue($this->ownerId, $this->sealedBody(['targetInstanceId' => 'not-linked']));
+        $this->assertSame(404, $result['status']);
+        $this->assertSame('desktop_not_linked', $result['body']['code']);
+    }
 }

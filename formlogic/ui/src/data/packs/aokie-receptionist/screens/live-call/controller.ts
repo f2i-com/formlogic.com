@@ -67,6 +67,8 @@ export interface Turn {
 
 export interface ConsoleState {
   presence: FlPresence;
+  connectionError: string | null;
+  recentError: string | null;
   /** The viewer is the shared demo account (demo@formlogic.local). */
   demo: boolean;
   call: CallInfo | null;
@@ -124,6 +126,8 @@ export interface ConsoleController {
 export function createConsole(repaint: () => void): ConsoleController {
   const state: ConsoleState = {
     presence: { kind: 'none' },
+    connectionError: null,
+    recentError: null,
     demo: false,
     call: null,
     turns: [],
@@ -158,12 +162,13 @@ export function createConsole(repaint: () => void): ConsoleController {
   // grace has elapsed for a genuinely absent desktop. While unsettled the standby shows
   // a spinner instead of the demo Simulate card (avoids the "connecting" flash).
   const presenceSettled = () =>
+    state.connectionError !== null ||
     state.presence.kind === 'local' ||
     state.presence.kind === 'remote' ||
     isDemo() ||
     (bootAtMs > 0 && Date.now() - bootAtMs >= presenceGraceMs());
   const activeCall = () => (state.call && state.call.state !== 'ended' ? state.call : null);
-  const can = (perm: string) => state.grants[perm] === true;
+  const can = (perm: string) => !state.connectionError && state.grants[perm] === true;
 
   function nameForPhone(phone: unknown): string | null {
     const t = tail9(phone);
@@ -236,7 +241,8 @@ export function createConsole(repaint: () => void): ConsoleController {
   function refreshRecent(): Promise<void> {
     return FormLogic.records({ limit: 8 }).then((rows) => {
       state.recent = rows || [];
-    }).catch(() => undefined);
+      state.recentError = null;
+    }).catch((err: unknown) => { state.recentError = errMessage(err, 'Could not load call records.'); });
   }
 
   function refreshCustomers(): Promise<void> {
@@ -524,6 +530,7 @@ export function createConsole(repaint: () => void): ConsoleController {
   }
 
   function simulate(): void {
+    if (state.connectionError || state.presence.kind !== 'none' || state.simulating) return;
     state.simulating = true;
     repaint();
     void FormLogic.host.ceremony('simulate-call')
@@ -562,30 +569,43 @@ export function createConsole(repaint: () => void): ConsoleController {
   }
 
   function tick(): Promise<void> {
+    const recovering = state.connectionError !== null;
     // Re-resolve presence every tick: detection is demand-driven and may only
     // finish AFTER this screen mounts (navigating in from another page), so a
     // late-connecting desktop self-heals here instead of needing a full reload.
     return FormLogic.presence()
       .then((p) => {
+        state.connectionError = null;
         const prev = state.presence.kind;
         state.presence = p || { kind: 'none' };
         if (state.presence.kind === 'local' && prev !== 'local') return attachLiveLanes();
         if (prev === 'local' && state.presence.kind !== 'local') detachLiveLanes();
         return undefined;
       })
-      .catch(() => undefined)
+      .catch((err: unknown) => {
+        state.connectionError = errMessage(err, 'Could not check the OAIY connection.');
+        state.presence = { kind: 'none' };
+        detachLiveLanes();
+      })
+      .then(() => recovering && !state.connectionError ? loadGrants() : undefined)
       .then(() => refreshCall())
       .then(() => (state.liveEvents ? Promise.resolve() : refreshStoredTurns()))
       .then(() => {
         maybeTombstone();
+        repaint();
+      }).catch((err: unknown) => {
+        state.connectionError = errMessage(err, 'Could not refresh the receptionist console.');
         repaint();
       });
   }
 
   function loadAll(): Promise<void> {
     return FormLogic.presence()
-      .then((p) => { state.presence = p || { kind: 'none' }; })
-      .catch(() => { state.presence = { kind: 'none' }; })
+      .then((p) => { state.presence = p || { kind: 'none' }; state.connectionError = null; })
+      .catch((err: unknown) => {
+        state.presence = { kind: 'none' };
+        state.connectionError = errMessage(err, 'Could not check the OAIY connection.');
+      })
       .then(() => FormLogic.currentUser())
       .then((u) => { state.demo = !!(u && u.email === 'demo@formlogic.local'); })
       .catch(() => undefined)
@@ -595,6 +615,9 @@ export function createConsole(repaint: () => void): ConsoleController {
       .then(() => (state.liveEvents ? Promise.resolve() : refreshStoredTurns()))
       .then(() => {
         maybeTombstone();
+        repaint();
+      }).catch((err: unknown) => {
+        state.connectionError = errMessage(err, 'Could not load the receptionist console.');
         repaint();
       });
   }

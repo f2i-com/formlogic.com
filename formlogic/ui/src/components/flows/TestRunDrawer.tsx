@@ -16,6 +16,7 @@ import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Check, Cloud, Laptop, Loader2, MinusCircle, PlayCircle, ServerCog, X } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { PanelHeader } from './PanelHeader';
+import { RemoteComputerSelect } from './RemoteComputerSelect';
 import { toast } from '../../stores/toastStore';
 import { api } from '../../lib/api';
 import { executeFlow, type FlowRunOutcome } from '../../client-runtime/flows/flowExecutor';
@@ -101,6 +102,7 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
   const location = flowExecutionLocation(flow);
   const [runLocation, setRunLocation] = useState<FlowRunExecutedLocation | null>(null);
   const [desktopState, setDesktopState] = useState<DesktopFlowRunState | null>(null);
+  const [desktopInstanceId, setDesktopInstanceId] = useState('');
   const [cloudError, setCloudError] = useState<{ kind: 'credits' | 'unsupported' | 'other'; message: string; nodes?: string[] } | null>(null);
 
   // Friendly label per node id for the timeline (falls back to the raw type / id).
@@ -247,6 +249,7 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
     let executed = 0;
     const res = await runFlowOnDesktop(flow.id, {
       inputs,
+      ...(desktopInstanceId ? { instanceId: desktopInstanceId } : {}),
       onState: (s) => setDesktopState(s),
       onProgress: (p) => {
         if (p.status === 'done' || p.status === 'error') executed += 1;
@@ -337,6 +340,7 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
           />
         </div>
 
+        {location === 'desktop' && !api.isDemoMode() && <RemoteComputerSelect value={desktopInstanceId} onChange={setDesktopInstanceId} disabled={running || serverRunning} />}
         <div className="flex flex-wrap gap-2">
           {location === 'auto' && (
             <Button size="sm" onClick={runBrowser} isLoading={running} disabled={running} leftIcon={<PlayCircle className="h-4 w-4" />}>
@@ -366,10 +370,10 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
         </div>
         <p className="text-[11px] text-gray-400 dark:text-slate-500">
           {location === 'desktop'
-            ? 'Desktop runs travel end-to-end encrypted to a linked runtime that supports encrypted flow relays. For OAIY tools in this browser, choose Auto. Queue position and node progress appear below.'
+            ? 'Run the saved flow on your linked OAIY computer through FormLogic. Inputs and results are end-to-end encrypted; this works from another device without a localhost connection. Queue status appears below; detailed progress depends on the runtime.'
             : location === 'cloud'
               ? 'Cloud runs execute on FormLogic Cloud and use plan credits.'
-              : 'Browser runs use the real QuickJS sandbox and your session\'s permissions, exactly like a live run, but are not written to history.'}
+              : 'Browser runs use the ZIPP runtime and your session\'s permissions, exactly like a live run, but are not written to history.'}
           {flow.appId ? ' A server run executes headless and is recorded below.' : ''}
         </p>
 
@@ -478,7 +482,9 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
                       : 'Ran in this browser'}
                 </span>
               )}
-              <span className="text-[11px] text-gray-400 dark:text-slate-500">{outcome.nodesExecuted} node{outcome.nodesExecuted === 1 ? '' : 's'} executed</span>
+              <span className="text-[11px] text-gray-400 dark:text-slate-500">{runLocation === 'desktop' && outcome.nodesExecuted === 0
+                ? 'Completed on linked computer'
+                : `${outcome.nodesExecuted} node${outcome.nodesExecuted === 1 ? '' : 's'} executed`}</span>
             </div>
             {outcome.error && (
               <p className="text-xs text-red-600 dark:text-red-400">
