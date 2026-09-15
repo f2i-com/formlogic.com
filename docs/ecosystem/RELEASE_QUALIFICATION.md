@@ -97,3 +97,26 @@ Hardware runs stay separate: consented lab, supported phone/dongle/driver combin
 ## Evidence format
 
 Each lane run records: exact component revisions (from the compatibility manifest), artifact digests, correlation ids, expected durable effects, the interruption point, and the outcome. No workflow is marked complete because an in-memory queue accepted it; only the persisted effect counts.
+
+## 0.1.6 candidate lanes (15 September 2026, source-verified handoff FL-S09)
+
+Run on this machine against the candidate built from `d27d9446` with Softn release v0.0.13 installed by
+`scripts/fetch-softn-release.mjs`. Full record, hashes and the lab scripts: [`qualification/0.1.6/`](qualification/0.1.6/README.md).
+
+| Lane | Result | Note |
+| --- | --- | --- |
+| Assembled distribution | pass | package built from the tree; identity recorded |
+| Clean-host install (INSTALL.txt manual steps, empty container, no sibling checkout) | pass | account, form with sandbox-evaluated field, hosted native app request, owner records |
+| Missing Node | pass | preflight names the fix; hosted requests 503 with a message; forms unaffected |
+| Predecessor upgrade 0.1.5 -> candidate (UPGRADING.md steps) | pass | identities, responses, attachment and hosted app survive; `--check` exit 0 |
+| Interrupted upgrade | no window | no schema change between 0.1.5 and the candidate: the CLI finishes in ~1 s; file-level rollback suffices for this pair; re-run when a migration exists |
+| Account backup -> empty host | pass, documented boundary | reads, writes and the attachment verified; host keys are reissued and the import says so (key-preserving path is the scheduled site backup) |
+| Site-level restore (DEPLOYMENT.md §2) onto a clean host | pass | private native config byte-identical; original account and ids; hosted read/write |
+| Two editors racing one draft version (API) | pass | 409 "The project changed. Reload before importing."; first save kept; retry after reload succeeds |
+| Browser editor round trip (Builder/Studio iframes) | not run | needs Playwright against the container with the e2e fixtures; still the open UI-race item above |
+| Standalone fetcher tests | pass | 22/22 |
+
+Observations recorded there, none requiring a source change to ship: Windows-built packages lack unix mode
+bits (release zips come from CI), `formlogic/README.md` still documents the sibling-checkout runtime build,
+hosted-request `host_error` replies carry no reason for the developer, `mysqldump` from the MariaDB client
+needs `--skip-ssl` against MySQL 8, and `GET /api/health/deep` needs an authenticated token.

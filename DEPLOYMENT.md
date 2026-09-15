@@ -88,7 +88,7 @@ Work top to bottom before exposing the app publicly. Most of these live in
 **Operations**
 - [ ] Webhook retry worker scheduled (§3)
 - [ ] Backups configured (§2)
-- [ ] `GET /api/health/deep` returns `status: ok` (§5)
+- [ ] `GET /api/health/deep` (as a platform admin) returns `status: ok` (§5)
 - [ ] Dependency audits clean: `composer audit` (backend), `npm audit` (ui)
 
 ---
@@ -117,7 +117,7 @@ cp formlogic/backend/.env backups/env-$(date +%F)   # keep this somewhere safe
 1. Restore the MySQL dump into an empty database.
 2. Restore the `storage/` directories with the **same paths and permissions** (dirs `0700`).
 3. Restore `.env` (the `AUDIT_HMAC_KEY` must match the original or audit-chain verification fails).
-4. Run `GET /api/health/deep` and confirm `status: ok`.
+4. Sign in as a platform admin and run `GET /api/health/deep` with that session's token (the deep check needs an authenticated platform-admin session; the unauthenticated `GET /api/health` only says the API is up) and confirm `status: ok`.
 
 > Keep MySQL and `storage/` backups in sync — a form row in MySQL points at a SQLite file on
 > disk, so restoring one without the other leaves orphaned/missing responses.

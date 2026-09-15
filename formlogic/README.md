@@ -11,7 +11,7 @@ The web application lives in this directory:
 
 OAIY is the separate desktop host for local AI, services, plugins and background flows. Aokie runs as an OAIY plugin and connects its call, message and appointment records to FormLogic. Their source lives in the sibling `oaiy.com` and `aokie.com` repositories; the optional `native-runtime/` shell here is not OAIY. See [connected apps](../docs/CONNECTED_APPS.md) for pairing, account linking and app bindings.
 
-Hosted app interfaces use Softn. Building their shared browser runtime requires the sibling `softn.com` checkout, or a previously generated runtime artifact. The native app backend also requires a compatible Node runtime on the server; OAIY is optional and supplies local AI/device services rather than the hosted backend.
+Hosted app interfaces use Softn. Their browser runtime, embedded editors and native backend modules are installed from Softn's latest GitHub release by `scripts/fetch-softn-release.mjs` (no sibling checkout needed); developers working on Softn itself can still build them from a sibling checkout with `SOFTN_REPO`. The native app backend also requires a compatible Node runtime on the server; OAIY is optional and supplies local AI/device services rather than the hosted backend.
 
 ## Prerequisites
 
@@ -49,22 +49,19 @@ The wizard checks requirements and file permissions (fixing what it can — incl
 
 ### Option 2: Install script (Linux / macOS / Git Bash)
 
-The script runs `npm run build`, whose prebuild check requires the generated hosted runtime. **Build that runtime before invoking the installer.** For a clean source install, clone FormLogic and Softn as siblings and run the commands in this order (use your existing checkouts if already cloned):
+The script runs `npm run build`, whose prebuild check requires the generated hosted runtime. **Install that runtime before invoking the installer.** For a clean source install:
 
 ```bash
 git clone git@github.com:f2i-com/formlogic.com.git
-git clone git@github.com:f2i-com/softn.com.git
-cd softn.com
+cd formlogic.com/formlogic/ui
 npm install
-cd ../formlogic.com/formlogic/ui
-npm install
-npm run build:hosted-runtime
-npm run build:app-editors
-node ../../scripts/prepare-native-runtime.mjs
+node ../../scripts/fetch-softn-release.mjs   # latest Softn release; SOFTN_RELEASE=v0.0.13 pins one
 cd ..
 chmod +x install.sh
 ./install.sh
 ```
+
+The fetch downloads Softn's `softn-formlogic-runtime-<tag>.zip`, verifies it (checksum, every file digest, identical ZIPP engine bytes, protocol versions, the vendored adapter) and installs the hosted runtime, the embedded editors and the native backend modules. See [docs/ecosystem/SOFTN_RELEASE.md](../docs/ecosystem/SOFTN_RELEASE.md).
 
 The script verifies prerequisites, runs `composer install`, creates `backend/.env` with generated `JWT_SECRET` + `AUDIT_HMAC_KEY`, creates the MySQL database and imports the schema (when a DB password is provided), runs `npm install`, creates `ui/.env`, makes the vendored sandbox launcher executable, and builds the frontend. Afterwards, set your database password in `backend/.env` if you skipped it.
 
@@ -127,19 +124,15 @@ Keep the default `VITE_API_URL=/api` for development and same-domain production.
 
 #### 5. Hosted app runtime
 
-With `softn.com` checked out next to `formlogic.com`, install its workspace dependencies and build the shared assets:
+Install the shared assets from Softn's release:
 
 ```bash
 # From formlogic.com/formlogic/ui
-cd ../../../softn.com
-npm install
-cd ../formlogic.com/formlogic/ui
-npm run build:hosted-runtime
-npm run build:app-editors
-node ../../scripts/prepare-native-runtime.mjs
+node ../../scripts/fetch-softn-release.mjs            # latest release
+node ../../scripts/fetch-softn-release.mjs --check    # verify an install offline
 ```
 
-The hosted-runtime command builds Softn core/components and `apps/formlogic-host`, then copies the result into `ui/public/hosted-runtime/`. Generated runtime assets are ignored by Git. The editor build generates `ui/public/app-editors/`; the native preparation script assembles `backend/resources/softn-native/`. These directories are also generated, not committed. A normal UI build checks runtime and editor assets exist; deploy them with the UI, or restore a compatible build artifact when the Softn source is unavailable. See [hosted app deployment](../docs/HOSTED_APPS.md#build-and-operate) for the iframe's static-asset CORS requirements.
+The fetch installs `ui/public/hosted-runtime/`, `ui/public/app-editors/` and `backend/resources/softn-native/` as one verified generation. Generated runtime assets are ignored by Git. To build them from a Softn source checkout instead (Softn development only), set `SOFTN_REPO` to the checkout and run `npm run build:hosted-runtime`, `npm run build:app-editors` and `node ../../scripts/prepare-native-runtime.mjs`. A normal UI build checks runtime and editor assets exist; deploy them with the UI, or restore a compatible build artifact when the Softn source is unavailable. See [hosted app deployment](../docs/HOSTED_APPS.md#build-and-operate) for the iframe's static-asset CORS requirements.
 
 When editing the canonical workspace or Aokie client templates in Softn, also run `node scripts/sync-workspace-project.mjs` from `ui/` to refresh the UI and PHP resource copies. See [maintaining shared clients](../docs/CONNECTED_APPS.md#maintain-the-shared-clients).
 

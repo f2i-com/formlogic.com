@@ -1,0 +1,30 @@
+{
+  "ticket": "FL-S09",
+  "runDate": "2026-09-15",
+  "formlogic": { "commit": "d27d9446eb769538a8d74cef6705e5c6cd0b58e1", "workingTreeClean": false, "note": "other streams' uncommitted edits present during the build" },
+  "candidatePackage": { "name": "formlogic-d27d9446-20260915.zip", "bytes": 144442778, "sha256": "5fa5251788bae8d154f27b41e89168ffa3409acef9f149621017f3c27f1e3843", "builtWith": "node scripts/package-dist.mjs --no-install (Windows, PowerShell zip fallback)", "entries": 3011 },
+  "predecessorPackage": { "name": "formlogic-0.1.5.zip", "sha256": "34dee2b59990f00afcb71ec467b37e60afd47d8aca182ea4b3baa3f55cb9ec7e", "source": "https://github.com/f2i-com/formlogic.com/releases/tag/v0.1.5" },
+  "softnRelease": { "tag": "v0.0.13", "commit": "2288b6dee98329554d4f9b48366703ddee2711e6", "archive": "softn-formlogic-runtime-v0.0.13.zip", "sha256": "131f9e8ff5438dba2081dc6dd0f5fa01371f903ad6b0a33c3c095c6dfd840d01" },
+  "zipp": { "version": "0.0.18", "revision": "2f5c4c8d5295b15b57beb894dd16dca3f4ff01ce", "sha256": "206630229207e0ecb0e3440444092d45abb6fdc7bc7608f5c469ff49af4360ab" },
+  "lab": { "image": "php:8.3-apache + pdo_mysql zip gd + Node 24.19.0", "php": "8.3.33", "apache": "2.4.68", "mysql": "8.4.11", "docker": "Docker Desktop, Linux containers" },
+  "lanes": {
+    "assembledDistribution": { "result": "pass" },
+    "cleanHostInstall": { "result": "pass", "steps": ["INSTALL.txt manual install", "register", "login", "form with calculated field = 42", "response", "app", "native preflight 9/9 ok", "native install v1", "hosted request 201", "records 1 row"] },
+    "missingNode": { "result": "pass", "preflight": "node.executable failed with an actionable message", "hostedRequest": 503, "formSubmission": 201 },
+    "predecessorUpgrade": { "result": "pass", "from": "0.1.5", "to": "d27d9446-20260915", "upgradeCli": "--app-version then --check exit 0", "verified": ["login", "responses kept", "new response", "native v1 4 files", "hosted read", "hosted write", "attachment digest"] },
+    "interruptedUpgrade": { "result": "no-window", "reason": "no schema change between 0.1.5 and the candidate; CLI completes in ~1 s; rollback for this pair is file-level" },
+    "accountBackupRestore": { "result": "pass", "boundary": "cryptoMaterial reissued; warning names the scheduled site backup for key-preserving recovery", "restored": { "forms": 4, "responses": 3, "files": 1, "nativeApps": 1 }, "idsPreserved": false, "verified": ["new response", "hosted read", "hosted write", "attachment digest"] },
+    "siteLevelRestore": { "result": "pass", "verified": ["private/config.json digest identical", "original account and ids", "hosted read/write"] },
+    "twoEditorsApi": { "result": "pass", "conflictStatus": 409, "conflictMessage": "The project changed. Reload before importing." },
+    "browserEditorRoundTrip": { "result": "not-run", "needs": "Playwright against the container with e2e fixtures" },
+    "fetcherTests": { "result": "pass", "tests": 22 }
+  },
+  "observations": [
+    "Windows-built package has no unix mode bits (PowerShell fallback); release zips must come from CI",
+    "formlogic/README.md still documents the sibling-checkout runtime build",
+    "hosted request host_error carries no reason for the developer and leaves no per-app log",
+    "mysqldump from the MariaDB client needs --skip-ssl against MySQL 8",
+    "GET /api/health/deep requires authentication; DEPLOYMENT.md lists it as a plain check",
+    "text/plain uploads refused by the default allowlist (expected)"
+  ]
+}
