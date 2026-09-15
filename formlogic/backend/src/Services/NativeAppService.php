@@ -308,7 +308,7 @@ class NativeAppService
             $database = 'none';
             if ($databaseSnapshot !== null) {
                 $target = $root . '/private/data/application.sqlite';
-                if (!copy($databaseSnapshot, $target) || filesize($target) !== filesize($databaseSnapshot)) throw new RuntimeException('Could not place the restored app database');
+                if (!copy($databaseSnapshot, $target) || !$this->sameSize($target, $databaseSnapshot)) throw new RuntimeException('Could not place the restored app database');
                 $database = 'restored';
             }
             $this->stageProject($staging, array_merge($files, $decoded));
@@ -326,6 +326,19 @@ class NativeAppService
         } finally {
             if ($lock) { flock($lock, LOCK_UN); fclose($lock); }
         }
+    }
+
+    /**
+     * Whether a copy landed whole. The sizes are read after clearing PHP's stat
+     * cache for both paths: an earlier is_file()/filesize() on the destination
+     * leaves its old size cached, and copy() does not invalidate it (PHP 8.2
+     * answered the stale size and called a complete restore short).
+     */
+    private function sameSize(string $copy, string $original): bool
+    {
+        clearstatcache(true, $copy);
+        clearstatcache(true, $original);
+        return filesize($copy) === filesize($original);
     }
 
     private function assertSnapshotHealthy(string $path): void
@@ -766,7 +779,7 @@ class NativeAppService
                         foreach (['-wal', '-shm'] as $suffix) if (is_file($database . $suffix)) unlink($database . $suffix);
                         // Copied, not moved: the snapshot stays until the journal is retired, so a
                         // rollback that fails later still has it.
-                        if (!copy($snapshot, $database) || filesize($database) !== filesize($snapshot)) $problems[] = 'restore the database from its snapshot';
+                        if (!copy($snapshot, $database) || !$this->sameSize($database, $snapshot)) $problems[] = 'restore the database from its snapshot';
                     } catch (\Throwable $error) { $problems[] = 'restore the database: ' . $error->getMessage(); }
                 }
             } else {
