@@ -20,6 +20,9 @@
 //
 //   node scripts/ecosystem-manifest.mjs                # write docs/ecosystem/compatibility-manifest.json
 //   node scripts/ecosystem-manifest.mjs --check        # verify the committed manifest matches the tree
+//   node scripts/ecosystem-manifest.mjs --check --exact  # ...and that the installed release IS the one frozen for this run
+//                                                       (SOFTN_FROZEN=<record from fetch-softn-release.mjs --resolve-only>,
+//                                                        or the record the install was made with)
 //   SOFTN_REPO=/path/to/softn.com node scripts/ecosystem-manifest.mjs   # a developer's source checkout instead of a release
 //
 // Sources (all existing controls):
@@ -54,6 +57,12 @@ const softnRepo = sourceMode ? resolve(process.env.SOFTN_REPO) : null;
 const xdbRepo = process.env.XDB_REPO ? resolve(process.env.XDB_REPO) : resolve(root, '..', 'xdb.org');
 const currentReleasePath = resolve(root, '.runtime-source/softn-release/current.json');
 const check = process.argv.includes('--check');
+// Exact-candidate identity (release-readiness FL-S01): compatibility says a
+// release FITS; exact says it IS the release this run resolved and froze.
+// The release gate runs --exact so the runtime packaged is the runtime
+// every earlier job tested.
+const exact = process.argv.includes('--exact');
+const frozenPath = process.env.SOFTN_FROZEN ? resolve(root, process.env.SOFTN_FROZEN) : null;
 const out = resolve(root, 'docs', 'ecosystem', 'compatibility-manifest.json');
 
 const problems = [];
@@ -111,6 +120,26 @@ if (sourceMode) {
   }
 } else {
   problems.push('no Softn runtime is installed: run node scripts/fetch-softn-release.mjs (the latest Softn release), or set SOFTN_REPO to a Softn source checkout');
+}
+let frozen = null;
+if (frozenPath) {
+  if (existsSync(frozenPath)) frozen = json(frozenPath);
+  else problems.push(`SOFTN_FROZEN names ${process.env.SOFTN_FROZEN}, which does not exist; run node scripts/fetch-softn-release.mjs --resolve-only --frozen ${process.env.SOFTN_FROZEN} first`);
+}
+if (exact) {
+  if (sourceMode) problems.push('--exact describes a release install; it cannot certify a SOFTN_REPO source checkout');
+  else if (softnRelease) {
+    const reference = frozen ?? softnRelease.frozen ?? null;
+    if (!reference) problems.push('--exact needs a frozen release record: SOFTN_FROZEN=<file> written by fetch-softn-release.mjs --resolve-only, or an install made with --frozen');
+    else {
+      must(softnRelease.tag === reference.tag, `the installed Softn release is ${softnRelease.tag}; the frozen record for this run is ${reference.tag}`);
+      must(softnRelease.commit === reference.tagCommit, `the installed Softn archive was built from ${String(softnRelease.commit).slice(0, 12)}; the frozen record says tag ${reference.tag} points at ${String(reference.tagCommit).slice(0, 12)}`);
+      must(softnRelease.sha256 === reference.archiveSha256, `the installed Softn archive digest is ${String(softnRelease.sha256).slice(0, 12)}; the frozen record says ${String(reference.archiveSha256).slice(0, 12)}`);
+      must(!softnRelease.frozen || softnRelease.frozen.archiveSha256 === reference.archiveSha256, 'the install was made with a different frozen record than the one this check was given');
+      const installedProvenance = resolve(root, 'formlogic/backend/resources/softn-native/provenance.json');
+      if (existsSync(installedProvenance)) must(json(installedProvenance).release?.tag === reference.tag, `the native runtime on disk is from ${json(installedProvenance).release?.tag ?? 'a source build'}, not the frozen ${reference.tag}`);
+    }
+  }
 }
 let xdbHead = null;
 if (sourceMode && existsSync(xdbRepo)) {
@@ -193,7 +222,7 @@ const manifest = {
     formlogic: { revision: gitHead(root), backupFormat: { current: backupFormat, importable: backupSupported }, formSqliteSchema: formSchema },
     softn: sourceMode
       ? { pinnedBy: 'SOFTN_REPO source checkout (developer mode); releases come from scripts/fetch-softn-release.mjs', revision: softnPin, checkoutRevision: softnHead, nativeProtocol: softnProtocol?.nativeProtocol ?? null, recordEvents: softnProtocol?.recordEvents ?? null, minimumNode: softnProtocol?.minimumNode ?? null, formlogicAdapter: { vendoredAt: 'formlogic/ui/src/lib/softn/project.ts', source: adapterProvenance.source ?? null, sha256: adapterProvenance.sha256 ?? null } }
-      : { pinnedBy: 'latest GitHub release of f2i-com/softn.com (scripts/fetch-softn-release.mjs); SOFTN_RELEASE pins a tag', release: softnRelease?.tag ?? null, revision: softnPin, archiveSha256: softnRelease?.sha256 ?? null, nativeProtocol: softnProtocol?.nativeProtocol ?? null, recordEvents: softnProtocol?.recordEvents ?? null, minimumNode: softnProtocol?.minimumNode ?? null, formlogicAdapter: { vendoredAt: 'formlogic/ui/src/lib/softn/project.ts', source: adapterProvenance.source ?? null, sha256: adapterProvenance.sha256 ?? null } },
+      : { pinnedBy: 'latest GitHub release of f2i-com/softn.com (scripts/fetch-softn-release.mjs); SOFTN_RELEASE pins a tag; a release run freezes one record (--resolve-only) that every job installs (--frozen) and the release gate checks with --exact', release: softnRelease?.tag ?? null, revision: softnPin, archiveSha256: softnRelease?.sha256 ?? null, frozen: softnRelease?.frozen ?? null, nativeProtocol: softnProtocol?.nativeProtocol ?? null, recordEvents: softnProtocol?.recordEvents ?? null, minimumNode: softnProtocol?.minimumNode ?? null, formlogicAdapter: { vendoredAt: 'formlogic/ui/src/lib/softn/project.ts', source: adapterProvenance.source ?? null, sha256: adapterProvenance.sha256 ?? null } },
     xdb: { pinnedBy: sourceMode ? 'softn/.github/scripts/checkout-xdb.sh' : 'the installed Softn release (softn-release.json xdb.revision, when it records one)', revision: xdbPin, checkoutRevision: xdbHead, consumedAs: loaderXdbDependency, note: 'Native peer networking is opt-in and local-only by default at this revision; see xdb docs/networking-and-restore-policy.md' },
     zipp: { pinnedBy: 'formlogic/ui/vendor/zipp-wasm/SOURCE.json and softn packages/@softn/core/wasm-zipp/SOURCE.json', version: flZipp.version, revision: flZipp.revision, variant: flZipp.variant, languages: flZipp.languages, artifact: flZipp.artifact, sha256: flZipp.sha256, rustc: flZipp.rustc, wasmBindgen: flZipp.wasmBindgen },
     aokie: aokieContract ?? { note: 'connector contract copy not present in this tree' },
@@ -223,7 +252,7 @@ if (check) {
     const { generatedAt, components, problems: p, nativeRuntime, ...rest } = m;
     const c = JSON.parse(JSON.stringify(components));
     if (c.formlogic) delete c.formlogic.revision;
-    if (c.softn) { delete c.softn.checkoutRevision; delete c.softn.release; delete c.softn.revision; delete c.softn.archiveSha256; delete c.softn.minimumNode; }
+    if (c.softn) { delete c.softn.checkoutRevision; delete c.softn.release; delete c.softn.revision; delete c.softn.archiveSha256; delete c.softn.frozen; delete c.softn.minimumNode; }
     if (c.xdb) { delete c.xdb.checkoutRevision; delete c.xdb.revision; delete c.xdb.consumedAs; }
     const n = nativeRuntime ? { nativeProtocol: nativeRuntime.nativeProtocol ?? null, zipp: nativeRuntime.zipp ?? null } : null;
     return { ...rest, components: c, nativeRuntime: n };
@@ -256,4 +285,4 @@ if (check) {
     process.exit(1);
   }
 }
-console.log(`ecosystem set: formlogic ${manifest.components.formlogic.revision?.slice(0, 12)} -> softn ${softnRelease ? `${softnRelease.tag} ` : ''}${softnPin?.slice(0, 12)} -> xdb ${xdbPin?.slice(0, 12) ?? 'as the release pins'}; zipp ${flZipp.version}@${flZipp.revision.slice(0, 12)} (${flZipp.sha256.slice(0, 12)})`);
+console.log(`ecosystem set${exact ? ' (exact candidate)' : ''}: formlogic ${manifest.components.formlogic.revision?.slice(0, 12)} -> softn ${softnRelease ? `${softnRelease.tag} ` : ''}${softnPin?.slice(0, 12)} -> xdb ${xdbPin?.slice(0, 12) ?? 'as the release pins'}; zipp ${flZipp.version}@${flZipp.revision.slice(0, 12)} (${flZipp.sha256.slice(0, 12)})`);

@@ -5,15 +5,52 @@ name: CI
 # push/pull_request triggers below when automatic CI is explicitly re-enabled.
 on:
   workflow_dispatch:
+    inputs:
+      softn-release:
+        description: Softn release tag to test against (for example v0.0.13); empty resolves the latest release once for both jobs
+        required: false
+        default: ''
+        type: string
   # push:
   #   branches: [main]
   # pull_request:
   #   branches: [main]
 
 jobs:
+  # Release-readiness FL-S01: resolve the Softn release ONCE, before any job
+  # installs it, and hand every job the same frozen identity (tag, the commit
+  # the annotated tag points at, the asset, the archive's SHA-256). A Softn
+  # release published while this run is in flight cannot change what a later
+  # job installs: each consumer verifies the bytes against the frozen digest
+  # and the archive's own manifest against the frozen tag and commit, and the
+  # release gate's manifest check runs in --exact mode.
+  resolve:
+    name: Resolve the Softn release for this run
+    runs-on: ubuntu-latest
+    outputs:
+      frozen: ${{ steps.resolve.outputs.frozen }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.node-version'
+
+      - name: Resolve and freeze
+        id: resolve
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOFTN_RELEASE: ${{ inputs.softn-release }}
+        run: |
+          node scripts/fetch-softn-release.mjs --resolve-only --frozen softn-frozen.json
+          { echo 'frozen<<FROZEN_RECORD'; cat softn-frozen.json; echo 'FROZEN_RECORD'; } >> "$GITHUB_OUTPUT"
+          node -e "const f=require('./softn-frozen.json'); console.log('Softn release frozen for this run: '+f.tag+' @ '+f.tagCommit.slice(0,12)+' - '+f.assetName+' sha256 '+f.archiveSha256)" >> "$GITHUB_STEP_SUMMARY"
+
   backend:
     name: Backend (PHP)
     runs-on: ubuntu-latest
+    needs: resolve
     defaults:
       run:
         working-directory: formlogic/backend
@@ -59,10 +96,17 @@ jobs:
         with:
           node-version-file: '.node-version'
 
+      - name: Frozen Softn release for this run
+        working-directory: ${{ github.workspace }}
+        env:
+          SOFTN_FROZEN_JSON: ${{ needs.resolve.outputs.frozen }}
+        run: printf '%s\n' "$SOFTN_FROZEN_JSON" > softn-frozen.json
+
       - name: Prepare native app runtime
         uses: ./.github/actions/prepare-hosted-runtime
         with:
           native-only: 'true'
+          frozen-release: softn-frozen.json
 
       - name: Tests (unit + DB integration)
         run: composer test
@@ -107,6 +151,7 @@ jobs:
   frontend:
     name: Frontend (Vite/TS)
     runs-on: ubuntu-latest
+    needs: resolve
     defaults:
       run:
         working-directory: formlogic/ui
@@ -125,8 +170,16 @@ jobs:
       # manifest against this tree and that release, so every job that
       # prepares the runtime (this one, the backend job, e2e and packaging)
       # fails on a stale manifest or an incompatible release before any test.
+      - name: Frozen Softn release for this run
+        working-directory: ${{ github.workspace }}
+        env:
+          SOFTN_FROZEN_JSON: ${{ needs.resolve.outputs.frozen }}
+        run: printf '%s\n' "$SOFTN_FROZEN_JSON" > softn-frozen.json
+
       - name: Prepare hosted app runtime
         uses: ./.github/actions/prepare-hosted-runtime
+        with:
+          frozen-release: softn-frozen.json
 
       - name: Install dependencies
         run: npm ci

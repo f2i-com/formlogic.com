@@ -13,6 +13,12 @@ on:
   # invokes it during manual packaging and HARD-DEPENDS on it — the standalone tag trigger
   # is gone so a tag runs the suite exactly once, as a release requirement.
   workflow_call:
+    inputs:
+      frozen-release:
+        description: The frozen Softn release record (JSON) the calling run resolved once; empty installs the latest release
+        required: false
+        default: ''
+        type: string
   # schedule:
   #   # Nightly at 15:20 UTC (~01:20 AEST) — off the top-of-hour rush.
   #   - cron: '20 15 * * *'
@@ -60,8 +66,18 @@ jobs:
           cache: npm
           cache-dependency-path: formlogic/ui/package-lock.json
 
+      # When package.yml calls this workflow it passes the record it froze, so
+      # the golden paths run against the release the other gates tested.
+      - name: Frozen Softn release for this run
+        if: inputs.frozen-release != ''
+        env:
+          SOFTN_FROZEN_JSON: ${{ inputs.frozen-release }}
+        run: printf '%s\n' "$SOFTN_FROZEN_JSON" > softn-frozen.json
+
       - name: Prepare hosted app runtime
         uses: ./.github/actions/prepare-hosted-runtime
+        with:
+          frozen-release: ${{ inputs.frozen-release != '' && 'softn-frozen.json' || '' }}
 
       - name: Install backend dependencies
         working-directory: formlogic/backend

@@ -7,6 +7,14 @@ inputs:
   softn-release:
     description: A Softn release tag to install instead of the latest (for example v0.0.13); empty means the latest release
     default: ''
+  frozen-release:
+    description: >-
+      Path (in the workspace) of the frozen release record a run resolved once with
+      `node scripts/fetch-softn-release.mjs --resolve-only --frozen <file>`. When set, this
+      job installs exactly that release (tag, tag commit, asset, archive digest; any drift
+      fails) and the manifest check runs in --exact mode. Empty means the latest release,
+      for development use only: a multi-job run must pass the same record to every job.
+    default: ''
 runs:
   using: composite
   steps:
@@ -26,6 +34,7 @@ runs:
       env:
         GITHUB_TOKEN: ${{ github.token }}
         SOFTN_RELEASE: ${{ inputs.softn-release }}
+        SOFTN_FROZEN: ${{ inputs.frozen-release }}
       run: node scripts/fetch-softn-release.mjs
     - name: Verify the hosted runtime and editors
       if: inputs.native-only != 'true'
@@ -45,7 +54,11 @@ runs:
     # release's adapter, protocol versions and data-format ranges. Which
     # Softn release is installed is recorded, not pinned: it moves with every
     # Softn release, and a release that does not fit fails the fetch above.
+    # With a frozen record (release-readiness FL-S01) the check is also exact:
+    # what is installed IS the release this run resolved, not merely one that fits.
     - name: Ecosystem compatibility manifest (digests, protocols)
       shell: bash
       working-directory: ${{ github.workspace }}
-      run: node scripts/ecosystem-manifest.mjs --check
+      env:
+        SOFTN_FROZEN: ${{ inputs.frozen-release }}
+      run: node scripts/ecosystem-manifest.mjs --check ${{ inputs.frozen-release != '' && '--exact' || '' }}
