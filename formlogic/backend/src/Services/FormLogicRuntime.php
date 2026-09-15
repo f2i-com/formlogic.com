@@ -22,16 +22,21 @@ use FormLogic\Helpers\IpSafety;
  * - { reject: true, message: 'reason' } to reject the submission
  * - Any other value as the computed result
  *
- * Execution happens inside the QuickJS sandbox (via {@see SandboxRunner} and the
- * vendored static qjs binary) — the SAME engine + prelude the browser uses. The
- * untrusted script runs with no host bindings; ctx.db/ctx.http/ctx.utils are
- * synchronous RPC callbacks handled here in PHP, so all side effects and the
- * SSRF/DNS-pinning HTTP guards stay on the trusted side. A wall-clock kill in the
- * runner bounds runaway/looping scripts; this class enforces the shared HTTP
- * time + request-count budget across ctx.http calls.
+ * Execution happens inside the ZIPP sandbox (via {@see SandboxRunner} and the
+ * vendored formlogic-runtime launcher: a wasmtime host running the zipp-vm
+ * WebAssembly guest from formlogic/runtime) — the same prelude the browser uses,
+ * on the ZIPP engine the browser also runs (each side pins its own build; see
+ * runtime/host/SOURCE.json). The untrusted script runs with no host bindings;
+ * ctx.db/ctx.http/ctx.utils are synchronous RPC callbacks handled here in PHP,
+ * so all side effects and the SSRF/DNS-pinning HTTP guards stay on the trusted
+ * side. A watchdog kill in the runner (plus the guest's own instruction budget)
+ * bounds runaway/looping scripts; this class enforces the shared HTTP time +
+ * request-count budget across ctx.http calls.
  */
 class FormLogicRuntime
 {
+    // Stored but not passed on (nor is maxCallDepth): the step budget is the guest's
+    // own DEFAULT_MAX_STEPS (formlogic/runtime/guest/src/main.rs).
     private int $maxInstructions;
     private int $maxWallTimeMs;
     private int $maxCallDepth;

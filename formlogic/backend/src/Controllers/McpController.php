@@ -550,7 +550,7 @@ Build an app from scratch:
 2. create_app_form { title, fields } — create a form AND attach it to the app in one call. Repeat per form. Fields: [{ id, type, label, required, properties? }]. Common types: short_text, long_text, email, number, dropdown / multiple_choice (properties.options: [{id,label,value}]), checkbox, date, rating, scale, file_upload, hidden, statement, linked_record (properties.targetFormId = another form's id, to relate records).
 For a complete native .softn app: create_app, get_native_app_template, customize and publish_native_app_project. Read get_native_app_project before updates; update_native_app_files preserves other files and the SQLite database. Visual Builder and AI Studio are available from FormLogic hosting. Link record changes with create_flow_binding and app.record.created.TABLE events.
 For a portable connected dashboard: get_workspace_template, get_app_project, then publish_app_project. Use compose_apps to add existing app forms or move Aokie automation into a destination app. Read both apps first; preserve existing member permissions.
-3. (optional) update_form { formId, logicScript } — a QuickJS "function onSubmit(ctx) {…}" server-side script.
+3. (optional) update_form { formId, logicScript } — a sandboxed JavaScript (ZIPP) "function onSubmit(ctx) {…}" server-side script.
 4. (recommended) set_app_home { appId, customScreen: { kind:"dashboard", dashboard:{ cols:12, widgets:[…] } } } — a no-code widget DASHBOARD home screen, the primary kind. Widgets: { kind:"report", layout:{x,y,w,h}, title?, spec } (spec = the same shape as create_report), { kind:"list", layout, list:{formId,limit?,titleField?,subtitleField?,metaField?} }, { kind:"text", layout, text:{body} }, { kind:"actions", layout } (new-record buttons), { kind:"activity", layout } (latest records). ALTERNATIVE: a full CODE frontend { enabled:true, files:[{path,content}] } (React-style TSX supported: entry index.tsx mounting createRoot(document.getElementById('root')!).render(<App/>); built-ins 'react'/'react-dom/client'/'preact'/'preact/hooks', no other npm; folders + relative imports fine; no index.html needed) or legacy { enabled:true, ts, html, css }; compiled/bundled automatically. Inside it window.FormLogic is the SDK: context(), forms(), submit(formId,answers), records(formId,{limit}), currentUser(), navigate(formId), toast.success/error, escapeHtml(v) — render record data as JSX text (auto-escaped), never dangerouslySetInnerHTML.
 5. (optional) AUTOMATE with flows: create_flow { appId, name, flowJson:{nodes,edges}, nodeCapabilities } then create_flow_binding { flow:<slug>, event, formId?|connectorId?, inputMap?, outputActions? } — e.g. run a flow on event "form.submitted" of a form, or on a connector event like "aokie.call.incoming". Full node reference in get_started § Flows.
 6. (optional) create_report { appId, name, spec } — add charts/KPIs/tables to the app's Reports section (bar|line|area|pie|donut|kpi|table). Then create_document { appId, name, blocks } to combine several charts + text into an exportable PDF report page.
@@ -585,7 +585,7 @@ Types: short_text, long_text, email, number, phone, url, date, time, dropdown, m
 - linked_record: properties.targetFormId = the id of another form to relate to. (Over MCP the other form must exist; use its real id.)
 
 ## onSubmit script (optional)
-logicScript is JavaScript: "function onSubmit(ctx) { /* ctx.answers, ctx.setField, ctx.reject, ctx.setStatus, ctx.addTag */ }". Runs server-side on every submission (sandboxed QuickJS).
+logicScript is JavaScript: "function onSubmit(ctx) { /* ctx.answers, ctx.setField, ctx.reject, ctx.setStatus, ctx.addTag */ }". Runs server-side on every submission (in the ZIPP sandbox).
 
 ## Widget dashboards (the primary home screen)
 A dashboard is DATA, not code: a grid of widgets the host renders natively (theming, drill-down, auto-refresh come free). Set it with set_app_home { appId, customScreen: { kind:"dashboard", dashboard } }.
@@ -629,14 +629,14 @@ Node ids are unique strings you choose (e.g. "summarise"); each node's config li
 VALUE REFERENCES (how nodes read data):
 - Selector strings: "$inputs.<name>" (trigger inputs), "$nodes.<nodeId>.<key>" (an earlier node's output), "$event" (the raw event). Used in JSON-ish fields (answers, payload, filters values, output value).
 - Templates: free-text fields interpolate {{ inputs.name }} / {{ nodes.summarise.content }} (note: no $ inside braces needed, but tolerated).
-- QuickJS code fields ("expr"): plain JS with variables inputs, nodes, event, upstream, app — e.g. nodes["lookup"].found && inputs.durationSeconds > 5.
+- Sandboxed JavaScript code fields ("expr"): plain JS with variables inputs, nodes, event, upstream, app — e.g. nodes["lookup"].found && inputs.durationSeconds > 5.
 
 NODE TYPES (type → config → output):
 - input — the Trigger. data.inputs = [{ name, example? }] declares what the binding's inputMap provides. Output: $inputs.<name>.
 - output — the flow result. data.value: a selector or JSON (selector strings inside resolve); blank passes the upstream value through. The binding's outputActions read this as $result.
-- condition — data.expr (QuickJS boolean). Routes via sourceHandle true/false edges.
+- condition — data.expr (sandboxed JavaScript boolean). Routes via sourceHandle true/false edges.
 - template — data.template ({{…}} interpolation) → string.
-- logic_block — data.expr (QuickJS, return any JSON), data.timeoutMs? → whatever you return.
+- logic_block — data.expr (sandboxed JavaScript: an expression, or a function body that returns a JSON value), data.timeoutMs? → the resulting JSON value.
 - llm_chat — data.system?, data.prompt ({{…}} ok), data.model?, data.maxTokens?, data.temperature? → { content } (the reply text: $nodes.<id>.content). Uses the app/Desktop's default model when model/endpoint are omitted — leave them omitted unless you must pin one.
 - http_request — data.url ({{…}} ok; allow-listed to the FormLogic API or the paired Desktop), data.method, data.body (JSON, selectors ok) → { status, ok, body }.
 - formlogic_list_responses — data.form (form id), data.filters? [{ field, op ("eq"|"contains"|…), value ("$inputs.x" ok) }], data.limit? → { first, responses, count, found }.

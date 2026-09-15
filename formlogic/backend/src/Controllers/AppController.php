@@ -222,7 +222,7 @@ class AppController
             }
         }
 
-        // Custom app-logic is sandboxed QuickJS the client runs; the backend stays authoritative on
+        // Custom app-logic is sandboxed JavaScript the client runs; the backend stays authoritative on
         // submit. We still validate its shape and cap its size so nothing abusive can be stored.
         if (isset($data['customLogic'])) {
             if (!is_array($data['customLogic'])) {

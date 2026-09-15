@@ -6,9 +6,11 @@ namespace FormLogic\Services;
 
 /**
  * Runs FormLogic user code inside the zipp sandbox, via the vendored
- * `formlogic-runtime` child (no Node runtime required). The desktop flow runner
- * embeds the same engine and the same prelude, so an expression means the same
- * thing wherever it runs.
+ * `formlogic-runtime` child (no Node runtime required). The browser evaluates
+ * form logic with zipp too (ui/vendor/zipp-wasm, its own pinned build) and loads
+ * the same prelude; the shared expression corpus
+ * (docs/contracts/formlogic-expression-corpus.json) is asserted on both sides, so
+ * a divergence between the two shows up as a failing test.
  *
  * The engine replaced a QuickJS build whose harness had to capture `std`/`os`
  * — filesystem, `popen`, `getenv`, `urlGet` — and then delete them from the

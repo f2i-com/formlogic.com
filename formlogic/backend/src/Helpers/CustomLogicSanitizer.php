@@ -7,13 +7,14 @@ namespace FormLogic\Helpers;
 /**
  * Normalizes an incoming custom app-logic bundle (app-level or form-level) to a known-safe
  * shape: only recognized hooks, string sources under a per-script cap, at most 50 scripts,
- * runtime forced to 'quickjs'. The stored bundle is never trusted — the client sandboxes it
+ * runtime forced to 'quickjs' (a historical name kept for stored bundles; the browser host runs
+ * the scripts on ZIPP). The stored bundle is never trusted — the client sandboxes it
  * and the server re-validates every submit — but a clean shape avoids storing junk and keeps
  * the payload bounded. Shared by AppController and FormController.
  */
 class CustomLogicSanitizer
 {
-    /** Hook names the QuickJS app-logic runtime understands (mirror of the TS CustomAppLogicHookName union). */
+    /** Hook names the app-logic runtime understands (mirror of the TS CustomAppLogicHookName union). */
     public const VALID_HOOKS = [
         'onAppStart', 'onScreenEnter', 'onScreenLeave', 'onButtonClick', 'onBeforeSubmit',
         'onAfterSubmit', 'onConnectorEvent', 'onSyncConflict', 'mapConnectorDataToForm', 'calculateDashboardState',
@@ -84,7 +85,7 @@ class CustomLogicSanitizer
         }
         // Pack-embedded connector driver (spec: self-contained packs). The client's
         // trusted host is the enforcement point (grant-gated demo driver, allowlisted
-        // events, QuickJS sandbox); here we just keep the shape sane + bounded so an
+        // events, ZIPP sandbox); here we just keep the shape sane + bounded so an
         // owner's customLogic save can never silently DROP the pack's connector.
         $connector = self::sanitizeConnector($bundle['connector'] ?? null);
         if ($connector !== null) {

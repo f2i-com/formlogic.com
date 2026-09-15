@@ -6,7 +6,7 @@ import type { WorkflowGraph } from '../../types/flows';
 // v0 browser executor (docs/FORMLOGIC_FLOWS.md §4): topological interpretation of the
 // restricted node set, condition branch routing via sourceHandle, invalid_flow on unknown
 // node types, and the per-run timeout. All capabilities are injected (FlowExecutorDeps),
-// so no QuickJS worker / network / store is needed here.
+// so no ZIPP engine worker / network / store is needed here.
 
 function fakeDeps(overrides: Partial<FlowExecutorDeps> = {}): FlowExecutorDeps {
   return {

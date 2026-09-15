@@ -67,7 +67,7 @@ export interface FlowDefinition {
 
 export type FlowBindingMode = 'sync' | 'async' | 'background' | 'manual';
 
-/** Sandboxed boolean expression over {event} — evaluated in QuickJS, never eval(). */
+/** Sandboxed boolean expression over {event} — evaluated in the ZIPP sandbox in the browser, never eval(). */
 export interface FlowBindingCondition {
   type: 'expression';
   expr: string;

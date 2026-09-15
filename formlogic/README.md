@@ -372,12 +372,12 @@ The default `E2E_BASE_URL` is `http://formlogic.local` (see `ui/playwright.confi
 
 ### Scripting engine
 
-FormLogic runs user expressions and `onSubmit` scripts inside a **zipp** sandbox, using the same engine revision and shared standard-library prelude on both sides. A shared expression corpus checks browser/server behavior:
+FormLogic runs user expressions and `onSubmit` scripts inside a **zipp** sandbox, with a shared standard-library prelude on both sides. The browser and server builds are each pinned by revision (`ui/vendor/zipp-wasm/SOURCE.json`, `runtime/README.md`), and a shared expression corpus checks browser/server behavior:
 
 - **Browser** — the vendored `ui/vendor/zipp-wasm/` module runs in a dedicated Web Worker for validation, conditional logic and calculated fields. Engine limits and the worker watchdog bound evaluation.
 - **Server** — a vendored launcher (under `backend/bin/runtime/`, selected per-OS) invoked by `SandboxRunner` via `proc_open`; inside it the [zipp](https://github.com/f2i-com/zipp.org) engine runs as a WASI guest under wasmtime, behind a hard memory ceiling, a fuel budget and no filesystem or network capability. `onSubmit` `ctx.db`/`ctx.http`/`ctx.utils` calls are handled in PHP over a synchronous RPC, keeping the SSRF/DNS-pinning guards on the trusted side.
 
-Host access is denied by default; each evaluation receives only its permitted bindings, and runaway scripts are stopped by the sandbox budgets or watchdog. The same sandbox also runs app-level and form-level **custom logic** (effect + permission model — see [custom app platform](../docs/CUSTOM_APP_PLATFORM.md#app-logic-quickjs); that reference retains its older QuickJS heading).
+Host access is denied by default; each evaluation receives only its permitted bindings, and runaway scripts are stopped by the sandbox budgets or watchdog. The same sandbox also runs app-level and form-level **custom logic** (effect + permission model — see [custom app platform](../docs/CUSTOM_APP_PLATFORM.md#app-logic-zipp-sandbox)).
 
 **Edit the prelude only at `ui/src/lib/formlogic/prelude.js`** — the build's `prebuild` step (`npm run sync:prelude`) syncs it into `backend/resources/`.
 

@@ -31,7 +31,7 @@ import { api } from '../../../../lib/api';
 // The pack-embedded aokie DEMO driver (connector/driver.js), ported from the retired
 // browser mock (client-runtime/connectors/aokieConnector.ts) and driven through the
 // REAL machinery: registerPackConnector (grant-gated) → the composed desktop-backed
-// connector → the QuickJS sandbox (runEval — the exact production semantics, minus
+// connector → the ZIPP sandbox (runEval — the exact production semantics, minus
 // the Worker Vitest doesn't have).
 //
 // Routing (FL-CONN-001): desktop present+paired → the Desktop gateway; desktop

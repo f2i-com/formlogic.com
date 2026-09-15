@@ -1,6 +1,6 @@
 // Effect application layer for custom app-logic.
 //
-// A QuickJS hook returns a CustomAppLogicRunResult. This module (a) defensively
+// A sandboxed hook returns a CustomAppLogicRunResult. This module (a) defensively
 // normalizes whatever came out of the sandbox into that shape, and (b) defines
 // the handler interface the trusted host implements to actually carry out the
 // permitted effects (show a toast, set form values, ask a connector, etc.).

@@ -47,7 +47,7 @@
 - **Dual Database**: MySQL (metadata, users, apps, analytics) + SQLite (per-form field definitions, responses, computed data)
 - **Auth**: JWT via HttpOnly cookies (firebase/php-jwt, HS256), with Bearer header fallback for API clients
 - **CSRF**: Double-submit cookie pattern (non-HttpOnly cookie readable by JS, matched against `X-CSRF-Token` header)
-- **Scripting**: the zipp JavaScript engine in every runtime — a wasm build in a Web Worker (frontend), the same engine as a WASI guest under a vendored wasmtime launcher (backend, `bin/runtime/`, no Node.js), linked natively on the desktop — sharing one standard-library prelude and one parity corpus
+- **Scripting**: the zipp JavaScript engine — a wasm build in a Web Worker (frontend) and a WASI guest under a vendored wasmtime launcher (backend, `bin/runtime/`, no Node.js) — sharing one standard-library prelude and one parity corpus. Logic executed by OAIY Desktop (claimed flow runs, headless app scripts) does not use zipp (see `docs/FORMLOGIC_DESKTOP.md`)
 - **Audit**: Hash-chained audit log with HMAC-SHA256 integrity verification
 - **RBAC**: Role-based access control with per-form permission granularity (Owner role always bypasses checks)
 - **Webhooks**: HMAC-SHA256 signed deliveries with SSRF protection
@@ -98,7 +98,7 @@ formlogic-app/
 
 2. **Snapshot-Before-Update Versioning**: When a form is updated, the current state is snapshotted to `form_versions` before the update is applied. Restoration also creates a snapshot first.
 
-3. **Script Execution Pipeline**: On response creation: validate answers -> run the form's `onSubmit` script in the QuickJS sandbox -> handle rejection or capture computed fields/tags/status -> save response -> save computed data -> sync to MySQL metadata -> update analytics -> dispatch webhooks.
+3. **Script Execution Pipeline**: On response creation: validate answers -> run the form's `onSubmit` script in the ZIPP sandbox -> handle rejection or capture computed fields/tags/status -> save response -> save computed data -> sync to MySQL metadata -> update analytics -> dispatch webhooks.
 
 4. **SSRF Protection**: Applied consistently across webhook delivery, HTTP module in FormLogic runtime, and AI image URL validation. Uses DNS resolution + private IP blocking.
 
@@ -255,7 +255,7 @@ Error handling: `RuntimeException` -> 400, "Rate limit" messages -> 429, others 
 - Version endpoints: list, get, restore
 
 ### `ResponseController`
-- `POST /api/forms/{formId}/responses` — **Public endpoint**. Checks form published. Validates answers against field definitions. Runs the form's `onSubmit` script (QuickJS). Handles `ScriptRejection` with 422
+- `POST /api/forms/{formId}/responses` — **Public endpoint**. Checks form published. Validates answers against field definitions. Runs the form's `onSubmit` script (ZIPP sandbox). Handles `ScriptRejection` with 422
 - `GET .../responses` — Auth + form ownership. Filters: status, from/to dates, limit/offset
 - `POST .../responses/import` — Two-phase CSV: without mapping = preview, with mapping = import
 - Export: CSV, SQLite file download, JSON download
@@ -629,9 +629,9 @@ Returns boolean. Tracks `navigator.onLine` via events.
 ## FormLogic Scripting Engine
 
 ### `engine.ts`
-Thin client over a QuickJS sandbox: each evaluation is dispatched to a dedicated
-Web Worker (`formlogic.worker.ts` → `quickjs-host.ts`, using `quickjs-emscripten`)
-with memory/stack/interrupt limits and a terminate watchdog. The standard library
+Thin client over a ZIPP WASM sandbox: each evaluation is dispatched to a dedicated
+Web Worker (`formlogic.worker.ts` → `zipp-host.ts`, running the vendored `ui/vendor/zipp-wasm`)
+with an instruction budget, a heap cap and a terminate watchdog. The standard library
 below is the shared prelude (`prelude.js`), which also runs server-side via the
 vendored launcher, so client and server results match — `docs/contracts/formlogic-expression-corpus.json` pins that.
 
@@ -746,7 +746,7 @@ Pack references use `@pack:packFormId` syntax for linked records, resolved at im
 | `LogicEditor` | Conditional logic expression editor + action selector (show/hide/skip/require) |
 | `ValidationEditor` | Add/edit validation rules |
 | `CalculatedFieldEditor` | Expression editor with formula testing |
-| `ScriptEditor` | Full-screen modal code editor for `onSubmit` scripts (JavaScript, runs in QuickJS) |
+| `ScriptEditor` | Full-screen modal code editor for `onSubmit` scripts (JavaScript, runs in the ZIPP sandbox) |
 | `ThemeEditor` | Visual theme customizer: colors, font, border radius, background |
 | `EmbedModal` | Share/embed: direct link, iframe, JavaScript snippet |
 | `AIFormGenerator` | AI form generation: text prompt, file upload (PDF/images) |

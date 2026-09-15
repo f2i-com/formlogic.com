@@ -1,9 +1,9 @@
-// Deploy panel: author sandboxed QuickJS app-logic in-product (spec §54).
+// Deploy panel: author sandboxed app-logic in-product (spec §54).
 //
 // Owners add scripts through a guided modal (pick a hook with a plain-language description,
 // then start blank or from that hook's starter snippet), edit them in Monaco-backed cards
 // (hook badge, optional description, enable toggle, permission quick-add chips), and
-// "Test run" each one against the real QuickJS host with a sample ctx before saving.
+// "Test run" each one through the real host (ZIPP sandbox) with a sample ctx before saving.
 // Persists via api.updateApp; the backend re-sanitizes + re-validates on save and on submit.
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Braces, ChevronDown, ChevronRight, Play, Plus, Trash2 } from 'lucide-react';
@@ -307,7 +307,7 @@ export function AppLogicPanel({ appId, initialLogic, onDirtyChange }: {
     <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-3 text-left">
         <Braces className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-        <h3 className="flex-1 font-medium text-gray-900 dark:text-white tracking-tight">App logic (QuickJS)</h3>
+        <h3 className="flex-1 font-medium text-gray-900 dark:text-white tracking-tight">App logic</h3>
         <span className="text-xs text-gray-500 dark:text-slate-400">{scripts.length} script{scripts.length === 1 ? '' : 's'}</span>
         {open ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}
       </button>
@@ -315,8 +315,9 @@ export function AppLogicPanel({ appId, initialLogic, onDirtyChange }: {
       {open && (
         <div className="mt-4 space-y-4">
           <p className="text-sm text-gray-600 dark:text-slate-400">
-            Sandboxed scripts that run in the app runtime to prefill fields, warn, or block a submit. They can only
-            return <em>effects</em>; the server stays authoritative. Every effect needs a matching permission.
+            Sandboxed JavaScript that runs in the app runtime (on ZIPP in the browser) to prefill fields, warn, or block a submit.
+            Scripts can only return <em>effects</em>; the server stays authoritative. Every effect needs a matching permission.
+            Device events that a linked desktop runtime handles run these scripts on the desktop instead.
           </p>
 
           {scripts.length === 0 ? (

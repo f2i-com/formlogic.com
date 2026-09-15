@@ -3,6 +3,7 @@
 ## Custom Domains, PWAs, FormLogic SDK, Application Packages, Native Runtime, Connectors, Offline Sync, Marketplace, and QuickJS App Logic
 
 **Document status:** planning/specification document only.
+**Engine note:** in the app runtime, app logic now runs in the ZIPP sandbox (OAIY Desktop runs headless `onConnectorEvent` scripts on its own engine); "QuickJS" in this plan is historical. The persisted names it introduced (`runtime: "quickjs"`, the `quickjs/` package folder, `quickjs_library`) are kept for compatibility. For current behaviour see `docs/CUSTOM_APP_PLATFORM.md`.
 **Target repo:** `f2i-com/formlogic.com`
 **Main product direction:** extend FormLogic from a business form/app builder into a full custom business app deployment platform.
 

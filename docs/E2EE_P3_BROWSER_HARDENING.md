@@ -18,7 +18,7 @@ Policy and what each allowance is for:
 | Directive | Value | Why |
 |---|---|---|
 | `default-src` | `'self'` | Baseline deny. |
-| `script-src` | `'self' 'wasm-unsafe-eval' https://www.paypal.com` | `wasm-unsafe-eval` is REQUIRED by the QuickJS form-logic VM, esbuild-wasm (Studio screen compiler) and libsodium (private-form crypto) — all three instantiate WASM. **No `'unsafe-eval'`**: custom screens run in sandboxed iframes under `SCREEN_CSP` (pinned by `scripts/check-security-invariants.mjs`), and the app shell has no runtime `new Function`/`eval` (guarded by `client-runtime/flows/noEval.test.ts`). PayPal only for the Billing page SDK. |
+| `script-src` | `'self' 'wasm-unsafe-eval' https://www.paypal.com` | `wasm-unsafe-eval` is REQUIRED by the ZIPP form-logic VM (`ui/vendor/zipp-wasm`), esbuild-wasm (Studio screen compiler) and libsodium (private-form crypto) — all three instantiate WASM. **No `'unsafe-eval'`**: custom screens run in sandboxed iframes under `SCREEN_CSP` (pinned by `scripts/check-security-invariants.mjs`), and the app shell has no runtime `new Function`/`eval` (guarded by `client-runtime/flows/noEval.test.ts`). PayPal only for the Billing page SDK. |
 | `style-src` | `'self' 'unsafe-inline' https://fonts.googleapis.com` | Tailwind inline styles + Google Fonts stylesheet. |
 | `font-src` | `'self' data: https://fonts.gstatic.com` | Webfonts. |
 | `img-src` | `'self' data: blob:` + PayPal hosts | Signature dataURLs, blob previews, PayPal button assets. |
@@ -34,7 +34,7 @@ Known limitations (documented, accepted for the baseline):
 
 - `frame-ancestors` cannot be expressed in a `<meta>` CSP and must be delivered as a
   server response header (backend follow-up; clickjacking posture unchanged from today).
-- `wasm-unsafe-eval` is required — there is no libsodium/QuickJS/esbuild path without
+- `wasm-unsafe-eval` is required — there is no libsodium/ZIPP/esbuild path without
   it on this stack. Browsers too old to know the keyword (pre-2023) are outside the
   supported matrix.
 - Dev mode runs without the CSP (see above); the production build is the enforced surface.

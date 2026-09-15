@@ -1,9 +1,10 @@
-// Types for sandboxed QuickJS logic hooks used by custom FormLogic apps.
+// Types for sandboxed logic hooks used by custom FormLogic apps.
 //
 // These types intentionally describe a capability/effect based runtime instead of
-// direct browser/native/backend access. React renders the UI; QuickJS scripts
+// direct browser/native/backend access. React renders the UI; sandboxed scripts
 // return safe effects that the trusted host applies after permission checks.
 
+/** Stored runtime tag. 'quickjs' is a historical name kept for saved bundles and shipped packs; FormLogic's hosts run the scripts on ZIPP. */
 export type CustomAppLogicRuntime = 'quickjs';
 
 export type CustomAppLogicHookName =
@@ -58,7 +59,7 @@ export interface CustomAppLogicBundle {
   /**
    * Optional pack-shipped connector driver (spec: pack-embedded connectors).
    * The manifest declares the connector's identity + command surface; the demo
-   * driver is a sandboxed QuickJS script the trusted host runs for simulator
+   * driver is a sandboxed script the trusted host runs for simulator
    * sessions ONLY. Real hardware transport (FormLogic Desktop gateway / relay)
    * is always host-owned — the driver never sees tokens or live IO.
    */
@@ -103,7 +104,7 @@ export interface ConnectorDriverManifest {
 export interface PackConnectorBundle {
   manifest: ConnectorDriverManifest;
   /**
-   * QuickJS demo-driver source (`function run(ctx) { ... }` convention, same
+   * Sandboxed demo-driver source (`function run(ctx) { ... }` convention, same
    * sandbox as app-logic scripts: zero IO, pure state-threaded — the host
    * passes `ctx.state` in and persists the returned `state`). Optional: a
    * manifest without a driver routes to real hardware only.

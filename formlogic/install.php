@@ -367,9 +367,10 @@ function checkRequirements(): array
         ];
     }
 
-    // FormLogic sandbox binary (the server-side script runtime). Presence on every platform; on
-    // Linux/macOS ALSO the execute bit — zip extraction commonly drops it — with a chmod attempt
-    // before asking the operator to do it.
+    // FormLogic sandbox binary (the server-side ZIPP script runtime launcher). Presence on every
+    // platform; on Linux/macOS ALSO the execute bit — zip extraction commonly drops it — with a
+    // chmod attempt before asking the operator to do it. The `qjs` names below are historical
+    // (the check key is kept as-is); they refer to this launcher.
     $qjsBin = $isWin
         ? flBackendDir() . '/bin/runtime/formlogic-runtime-windows-x86_64.exe'
         : flBackendDir() . '/bin/runtime/formlogic-runtime-linux-x86_64';
@@ -1221,7 +1222,7 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
   </div>
   <?php endif; ?>
 
-  <!-- Step 1: Requirements (always shown — the permission/qjs checks matter for upgrades too) -->
+  <!-- Step 1: Requirements (always shown — the permission/script-runtime checks matter for upgrades too) -->
   <div class="card" id="step-requirements">
     <h2><span class="step-num">1</span> System Requirements</h2>
     <div id="req-loading" style="text-align:center;padding:20px;">

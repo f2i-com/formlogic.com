@@ -20,6 +20,7 @@ function severityOf(c: DeepHealthCheck): Severity {
 
 const LABELS: Record<string, string> = {
   database: 'Database',
+  // 'quickjs' is the historical /api/health/deep check id, kept for monitors; it checks the ZIPP runtime.
   quickjs: 'ZIPP runtime',
   paypal: 'Billing (PayPal)',
   webhook_worker: 'Webhook retry worker',

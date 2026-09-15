@@ -4,9 +4,11 @@ import { describe, expect, it, vi } from 'vitest';
 // §4) must forward a node's clamped `timeoutMs` (nodes.ts) as `budgetMs`, and the
 // logic_block path must use the NON-swallowing `calculateValueForFlow` — never
 // `calculateValue` — so a timeout/error fails the flow loudly instead of resolving to null.
+// (calculateValueForFlow also accepts a function body with a top-level `return`; the
+// condition node stays on evaluateCondition, an expression, as on the desktop runner.)
 // buildDefaultExecutorDeps() (the app-runtime-store-backed sibling used inside an app
-// runtime) wires these two functions IDENTICALLY — see flowDispatcher.ts — so exercising the
-// exported workspace builder is representative of both.
+// runtime) wires these two functions IDENTICALLY — see flowDispatcher.ts — and is checked
+// alongside the workspace builder.
 vi.mock('../../lib/formlogic', () => ({
   evaluateCondition: vi.fn(async () => true),
   calculateValue: vi.fn(async () => {
@@ -16,7 +18,7 @@ vi.mock('../../lib/formlogic', () => ({
 }));
 
 import { evaluateCondition, calculateValue, calculateValueForFlow } from '../../lib/formlogic';
-import { buildWorkspaceExecutorDeps } from './flowDispatcher';
+import { buildDefaultExecutorDeps, buildWorkspaceExecutorDeps } from './flowDispatcher';
 
 describe('buildWorkspaceExecutorDeps — timeout-budget + swallow/throw wiring (docs §4)', () => {
   it('evaluateBoolean forwards a declared budgetMs straight through to evaluateCondition', async () => {
@@ -43,5 +45,16 @@ describe('buildWorkspaceExecutorDeps — timeout-budget + swallow/throw wiring (
     const deps = buildWorkspaceExecutorDeps();
     await deps.evaluateExpression('1', {});
     expect(calculateValueForFlow).toHaveBeenCalledWith('1', {}, undefined);
+  });
+});
+
+describe('buildDefaultExecutorDeps — same node evaluator wiring as the workspace builder', () => {
+  it('forwards budgetMs to evaluateCondition and to the NON-swallowing calculateValueForFlow', async () => {
+    const deps = buildDefaultExecutorDeps();
+    await expect(deps.evaluateBoolean('inputs.x > 1', { inputs: { x: 2 } }, 1200)).resolves.toBe(true);
+    expect(evaluateCondition).toHaveBeenCalledWith('inputs.x > 1', { inputs: { x: 2 } }, 1200);
+    await expect(deps.evaluateExpression('return 1;', {}, 2000)).resolves.toBe('flow-value');
+    expect(calculateValueForFlow).toHaveBeenCalledWith('return 1;', {}, 2000);
+    expect(calculateValue).not.toHaveBeenCalled();
   });
 });

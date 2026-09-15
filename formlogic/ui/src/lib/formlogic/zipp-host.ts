@@ -4,8 +4,9 @@
 // that has an EMPTY global object and NO host bridge. The only thing crossing the
 // boundary is the form-data context, and it crosses as a JSON *value* parsed
 // inside the sandbox — never concatenated into program source. The trusted
-// PRELUDE standard library is the same canonical module the backend and the
-// desktop load, so an expression means the same thing in all three.
+// PRELUDE standard library is the same canonical module the backend guest loads,
+// so an expression means the same thing in the browser and on the server. (Runs
+// claimed by OAIY Desktop do not load it.)
 //
 // zipp's synchronous host channel is default-deny: an Engine grants nothing until
 // the host calls setSyncHostCapabilities, and this host never calls it. There is
@@ -28,10 +29,10 @@
 //     so the deadline story is unchanged.
 import initZipp, { Engine, zippInstanceUsage } from '../../../vendor/zipp-wasm/zipp_wasm.js';
 // Canonical standard library — single source of truth, shared with the backend
-// and the desktop (ui/scripts/sync-prelude.mjs writes the copies).
+// guest (ui/scripts/sync-prelude.mjs writes the backend copy).
 import PRELUDE from './prelude.js?raw';
 
-export type EvalKind = 'condition' | 'calc' | 'validate' | 'test' | 'syntax' | 'applogic';
+export type EvalKind = 'condition' | 'calc' | 'validate' | 'test' | 'syntax' | 'applogic' | 'flow';
 
 /** The subset of `zippInstanceUsage()` a host recycles on (audit ZP-01). */
 export interface InstanceUsage {
@@ -204,6 +205,44 @@ try {
   var __run = new Function(${exprLiteral} + "\\nreturn typeof run === 'function' ? run : null;")();
   __out = {ok: true, value: (typeof __run === 'function') ? __run(__ctx) : undefined};
 } catch (e) { __out = {ok: false, error: String((e && e.message) || e)}; }
+__emit(__out);`;
+  }
+
+  if (kind === 'flow') {
+    // A Flows logic_block node. Authors write it in two styles: an expression, or
+    // statements whose completion value is the result (what the eval below has
+    // always accepted), and a function body with a top-level `return` (the
+    // editor's placeholder). Indirect eval rejects the second with "'return'
+    // outside of a function". Flow conditions do not use this kind: the desktop
+    // runner evaluates them as expressions only.
+    //
+    // The style is decided by PARSING, before any author statement runs, so exactly
+    // one path executes. The probe is a direct eval inside a throwaway function:
+    // `throw 0` is its first statement, so the source is only parsed, and anything
+    // it hoists stays in that function. Source that parses as a script takes the
+    // unchanged eval path. Source that does not, but parses as a function body,
+    // runs as that body over the same globals, so only a `return` gives it a value:
+    // a trailing expression after a top-level `return` is ignored. (The OAIY
+    // desktop runner parses the block and returns that trailing expression when no
+    // `return` fires; there is no parser here to do the same.) Source that parses
+    // as neither fails with the parse error that fits it: the function-body error
+    // when it mentions `return` (so "'return' outside of a function" never hides
+    // the real mistake), otherwise the eval error, as calc reports it.
+    //
+    // Form conditions and calculations never use this kind: they stay identical to
+    // the backend guest (docs/contracts/formlogic-expression-corpus.json).
+    return `${PRELUDE}
+globalThis.__ctxJson = ${ctxLiteral};
+${BOOTSTRAP}
+var __out;
+try {
+  var __asBody = (function (src) {
+    try { eval("throw 0;\\n" + src); return null; } catch (e) { if (e === 0) return null; }
+    try { return new Function(src); } catch (e) { if (/\\breturn\\b/.test(src)) throw e; return null; }
+  })(${exprLiteral});
+  __out = {ok: true, value: __asBody ? __asBody() : (0, eval)(${exprLiteral})};
+}
+catch (e) { __out = {ok: false, error: String((e && e.message) || e)}; }
 __emit(__out);`;
   }
 

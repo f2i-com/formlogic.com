@@ -1,6 +1,6 @@
 // Permission model for sandboxed custom app-logic effects.
 //
-// The QuickJS script itself can do nothing but return a description of effects.
+// The sandboxed script itself can do nothing but return a description of effects.
 // EVERY outward effect (connector call, response write, storage, navigation,
 // setValues, toast) must map to a permission that the app/script was granted,
 // or the trusted host drops it. Advisory-only results (reject / warnings /

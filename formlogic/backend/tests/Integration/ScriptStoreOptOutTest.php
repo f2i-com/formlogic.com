@@ -22,8 +22,8 @@ use PHPUnit\Framework\TestCase;
  *  - {reject:true} still rejects (nothing stored, ScriptRejection returned);
  *  - a plain script (no store key) still stores exactly as before.
  *
- * Runs the REAL QuickJS sandbox (vendored qjs + harness); skipped when the
- * runtime binary is unavailable.
+ * Runs the REAL ZIPP sandbox (vendored formlogic-runtime launcher + prelude);
+ * skipped when the runtime binary is unavailable.
  */
 class ScriptStoreOptOutTest extends TestCase
 {

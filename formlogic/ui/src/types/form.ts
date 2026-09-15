@@ -231,7 +231,7 @@ export interface Form {
   logicPrompt?: string;
   /** Optional sandboxed custom frontend ({ html, css, js }) over this form's data. */
   customScreen?: CustomScreen;
-  /** Optional form-scoped sandboxed QuickJS app-logic (runs only when this form is open). */
+  /** Optional form-scoped sandboxed app-logic (runs only when this form is open). */
   customLogic?: import('./customAppLogic').CustomAppLogicBundle;
   /** Present (mode 'private') when this form is end-to-end encrypted (E2EE plan SS8). */
   encryption?: PublicFormEncryption;

@@ -172,7 +172,7 @@ export interface PackApp {
   roles: PackAppRole[];
   /** Optional pre-configured chart reports + PDF documents shown in the app's Reports section. */
   reports?: PackReportItem[];
-  /** Optional sandboxed QuickJS app-logic bundle (spec §31; imported to apps.custom_logic). */
+  /** Optional sandboxed app-logic bundle (spec §31; imported to apps.custom_logic). */
   customLogic?: CustomAppLogicBundle;
   /**
    * App Features included with this app (owner-toggleable after install; max 8).

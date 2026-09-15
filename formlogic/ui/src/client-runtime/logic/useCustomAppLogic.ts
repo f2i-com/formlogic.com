@@ -4,7 +4,7 @@
 // effect handlers to real runtime capabilities (set form values, toast, ask a
 // connector, submit a response), and exposes typed run functions for the form
 // view to call at its lifecycle seams (screen-enter / before-submit / after-submit).
-// The QuickJS scripts themselves stay fully sandboxed — this hook is the trusted
+// The scripts themselves stay fully sandboxed (ZIPP) — this hook is the trusted
 // host that applies only permitted effects.
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';

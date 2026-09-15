@@ -914,7 +914,7 @@ function FormVisit() {
     setErrorFieldId(null);
   }, []);
 
-  // Sandboxed app-logic (QuickJS): connector prefill on open + before/after-submit hooks.
+  // Sandboxed app-logic (ZIPP): connector prefill on open + before/after-submit hooks.
   // ui.setValues from a hook merges straight into the answers record (one render).
   const applyLogicValues = useCallback((patch: Record<string, unknown>) => {
     setAnswers((prev) => ({ ...prev, ...patch }));

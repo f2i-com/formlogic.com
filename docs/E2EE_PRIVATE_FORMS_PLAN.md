@@ -9,6 +9,7 @@ authoritative only when their stated addenda are appended. Two independent revie
 the threat-model narrative; this document governs implementation.
 **Prepared:** 2026-07-22, against formlogic `00a4bb7` (post Site-AI/tunnel epic).
 **Scope:** formlogic repo only. Aokie alignment is Phase 7 and gets its own doc when reached.
+**Engine note:** form logic and browser-run flow logic now run on the ZIPP sandbox (server: `SandboxRunner`); the QuickJS and `QuickJsRunner` references below are historical.
 
 **Product promise (exact wording, keep honest):**
 > Responses to a Private form are encrypted in the submitter's browser before upload. FormLogic

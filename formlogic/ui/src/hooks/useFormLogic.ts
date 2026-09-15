@@ -117,7 +117,7 @@ export function useConditionalLogic(
 
   useEffect(() => {
     // Evaluate immediately on first run (so on-load visibility is correct, no flash), then
-    // debounce subsequent re-evals so typing doesn't fire a QuickJS round-trip per keystroke.
+    // debounce subsequent re-evals so typing doesn't fire a ZIPP worker round-trip per keystroke.
     if (firstEvalRef.current) {
       firstEvalRef.current = false;
       evaluateAllConditions();

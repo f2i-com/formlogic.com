@@ -111,7 +111,7 @@ export function buildInputs(
 /**
  * Evaluate an output action's `when` gate: absent → true; a `$` selector → its truthiness
  * ('!' prefix negates). This is a pure selector check — expression `when`s belong in the
- * binding condition, which runs in the QuickJS sandbox.
+ * binding condition, which runs in the ZIPP sandbox.
  */
 export function whenPasses(when: string | undefined, scope: SelectorScope): boolean {
   if (when === undefined || when === null || when === '') return true;

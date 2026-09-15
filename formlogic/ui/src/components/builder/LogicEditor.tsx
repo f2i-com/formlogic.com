@@ -66,7 +66,7 @@ function simpleConditionToExpression(
     const value = cond.value;
     // number/rating/scale answers are stored as real JS numbers, so equality must
     // compare against an unquoted numeric literal (0 === "0" is false under the
-    // strict equality QuickJS evaluates).
+    // strict equality the ZIPP sandbox evaluates).
     const isNumeric = numericFieldIds.has(cond.fieldId);
 
     switch (cond.operator) {

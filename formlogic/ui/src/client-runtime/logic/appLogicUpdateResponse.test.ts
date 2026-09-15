@@ -1,6 +1,6 @@
 // formlogic.updateResponse effect (Aokie Receptionist raw-record updates): permission
 // mapping, host application (responseId / match / upsert passthrough), and fail-safe
-// error capture. The QuickJS engine is mocked — the WASM worker can't run under node.
+// error capture. The ZIPP engine is mocked — the WASM worker can't run under node.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectRequiredPermission, isPermissionGranted } from './appLogicPermissions';
 import { runHook } from './appLogicHost';

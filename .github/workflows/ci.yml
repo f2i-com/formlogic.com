@@ -170,7 +170,7 @@ jobs:
           npm run test:zipp-sharing
 
       # Rough bundle budget: reports the initial (critical-path) JS payload and fails only on an
-      # egregious regression. Heavy Monaco/QuickJS chunks are lazy and excluded.
+      # egregious regression. Heavy Monaco/ZIPP engine chunks are lazy and excluded.
       - name: Bundle budget (initial payload)
         run: node scripts/check-bundle-budget.mjs
 

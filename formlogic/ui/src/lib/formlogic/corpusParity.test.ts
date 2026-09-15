@@ -3,10 +3,10 @@
 // BROWSER leg of the cross-engine expression parity harness.
 //
 // FormLogic runs untrusted author-written JavaScript in three separate sandboxes
-// (the PHP backend's qjs child process, this browser QuickJS-WASM VM, and the
-// desktop flow runner). The product's central correctness claim is that one
-// expression means one thing in all three. This file asserts that claim for the
-// browser, against the shared corpus at
+// (the PHP backend's zipp guest in the runtime launcher, this browser zipp WASM
+// VM, and the desktop flow runner). The product's central correctness claim is
+// that one expression means one thing in all three. This file asserts that claim
+// for the browser, against the shared corpus at
 // docs/contracts/formlogic-expression-corpus.json.
 //
 // Why it has to be a REAL-engine test: every consumer of the browser engine
@@ -20,7 +20,7 @@
 //
 //  1. THREE outcomes, never two. `ok`, `threw` (the guest raised — a legitimate,
 //     assertable result) and `harness-failed` (the engine never ran the program:
-//     wasm unavailable, interrupt budget hit, resource cap). `harness-failed` is
+//     wasm unavailable, instruction or heap budget hit). `harness-failed` is
 //     ALWAYS a test failure, including on `agree` cases; conflating it with
 //     "empty" or with a guest throw is exactly how a broken engine certifies
 //     itself green.
@@ -34,8 +34,8 @@
 //     numbers, -0 and `undefined` therefore get distinct tokens.
 //
 //  3. The wasm module is instantiated ONCE. zipp-host memoises it in
-//     `modulePromise`, so a single warm-up in beforeAll is all that is needed;
-//     each case still gets a fresh runtime + context, exactly as production does.
+//     `readyPromise`, so a single warm-up in beforeAll is all that is needed;
+//     each case still gets a fresh Engine, exactly as production does.
 //
 // Every `agree` case (error text, locale output, host timezone — things no engine
 // may be declared the winner of) is RECORDED to a machine-readable artifact
@@ -73,12 +73,15 @@ interface Corpus {
  * Corpus `kind` -> browser EvalKind.
  *
  * `expression` maps to 'calc' for a verified reason, not an arbitrary one:
- * buildProgram() in zipp-host.ts special-cases only 'syntax' and 'applogic';
- * 'condition' | 'calc' | 'validate' | 'test' all fall through to the identical
- * `${PRELUDE}\n${BOOTSTRAP}\n${expression}` program, so the choice among those
- * four cannot affect a result. ('syntax' IS different — parse-only, no context
- * injected, no backend or desktop counterpart — which is why the corpus has no
- * syntax-kind cases and this map has no entry that would silently accept one.)
+ * buildProgram() in zipp-host.ts special-cases only 'syntax', 'applogic' and
+ * 'flow'; 'condition' | 'calc' | 'validate' | 'test' all fall through to the
+ * identical program (prelude, context bootstrap, indirect eval of the
+ * expression), so the choice among those four cannot affect a result. ('syntax'
+ * IS different — parse-only, no context injected, no backend or desktop
+ * counterpart — which is why the corpus has no syntax-kind cases and this map has
+ * no entry that would silently accept one. 'flow' is the Flows-only kind that
+ * also accepts a function body with a top-level `return`; the backend has no such
+ * kind, so it is covered by flowEval.test.ts, not by this corpus.)
  */
 const EVAL_KIND_BY_CORPUS_KIND: Record<string, EvalKind> = {
   expression: 'calc',
@@ -86,11 +89,12 @@ const EVAL_KIND_BY_CORPUS_KIND: Record<string, EvalKind> = {
 };
 
 // Matches the budget the corpus expectations were captured under
-// (build-expression-corpus.php passes 15000ms to evaluateBatch), so a case that
-// is merely slow is never misreported as a semantic difference.
+// (build-expression-corpus.php passes 15000ms to evaluateBatch). runEval does not
+// use it — the in-VM limit is the instruction budget — so here it is recorded in
+// the artifact and passed for call-shape parity only.
 const EVAL_BUDGET_MS = 15_000;
-// Must exceed EVAL_BUDGET_MS, or vitest kills the case before the engine's own
-// interrupt fires and a budget overrun is misreported as a test timeout.
+// Generous, so vitest never kills a case before the engine's instruction budget
+// ends it and a budget overrun is misreported as a test timeout.
 const CASE_TIMEOUT_MS = 20_000;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -108,7 +112,7 @@ const ARTIFACT_PATH =
 /**
  * Deterministic, information-preserving encoding used for BOTH sides of every
  * comparison and for the artifact's `canonical` field. Object keys are sorted so
- * key order — which QuickJS, PHP and serde each choose independently — can never
+ * key order — which zipp, PHP and serde each choose independently — can never
  * masquerade as a divergence. Values JSON cannot represent get explicit tokens so
  * they can never silently collapse into `null`.
  */
@@ -154,15 +158,17 @@ interface CaseRun {
 /**
  * A guest exception and an engine that never ran the program are different facts.
  * zipp-host raises SandboxGuestError for EVERY guest throw and nothing else does
- * (ctx.unwrapResult builds one and copies the guest error's name/message onto
- * it), so `instanceof` is an exact discriminator. NOTE it is reachable only via
- * the `errors` namespace — the package has no top-level `QuickJSUnwrapError`
- * export, and importing one yields `undefined`, which would silently classify
- * every guest throw as a harness failure. There is one carve-out: the
- * interrupt handler and the memory cap also surface as guest-shaped
- * InternalErrors, and those mean "we never got an answer", not "the program
- * threw". Note that a genuine guest RangeError ("Maximum call stack size
- * exceeded") stays classified as `threw`, because it is one.
+ * (the program's own try/catch reports the guest error's message, and runEval
+ * wraps it), so `instanceof` is an exact discriminator. The instruction, heap and
+ * regex budgets abort the whole program instead: they reach here as the engine's
+ * own error, not a SandboxGuestError, and so are harness failures by the first
+ * check. The message check below is a defensive carve-out for a limit that ever
+ * does arrive guest-shaped. It matches the engine's own limit messages ("script
+ * exceeded its instruction budget", "script exceeded its memory budget",
+ * "regular expression exceeded its execution budget"), because a limit still
+ * means "we never got an answer", not "the program threw". A genuine guest
+ * RangeError ("Maximum call stack size exceeded") stays classified as `threw`,
+ * because it is one.
  */
 function classify(err: unknown): { outcome: Outcome; name: string; message: string } {
   const name = err instanceof Error ? err.name : typeof err;
@@ -171,7 +177,7 @@ function classify(err: unknown): { outcome: Outcome; name: string; message: stri
     // Module instantiation failure, a bug in this harness, anything non-guest.
     return { outcome: 'harness-failed', name, message };
   }
-  if (/interrupt|out of memory/i.test(message)) {
+  if (/exceeded its (instruction|memory|execution) budget/i.test(message)) {
     return { outcome: 'harness-failed', name, message };
   }
   return { outcome: 'threw', name, message };
@@ -262,10 +268,10 @@ const CORPUS: Corpus = (() => {
 describe('cross-engine expression parity — browser zipp (real WASM)', () => {
   beforeAll(async () => {
     // Instantiating the wasm module is the expensive part; zipp-host memoises
-    // it in `modulePromise`, so this one warm-up is what makes the other ~140
-    // cases cheap. Each case still builds its own fresh runtime + context.
+    // it in `readyPromise`, so this one warm-up is what makes the other ~140
+    // cases cheap. Each case still builds its own fresh Engine.
     const warm = await runEval('calc', '1 + 1', {}, { budgetMs: EVAL_BUDGET_MS });
-    expect(warm, 'the QuickJS WASM module failed to evaluate a trivial expression').toBe(2);
+    expect(warm, 'the zipp WASM module failed to evaluate a trivial expression').toBe(2);
   }, CASE_TIMEOUT_MS);
 
   it('every corpus case id is unique', () => {

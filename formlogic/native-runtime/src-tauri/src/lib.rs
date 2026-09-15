@@ -2,10 +2,10 @@
 //
 // A generic desktop/mobile shell that loads a FormLogic app and exposes a small,
 // approved set of native capabilities over `window.FormLogicNative` (spec §38/§39):
-// a connector registry (device/vehicle data) and an offline sync queue. QuickJS app
-// logic and SDK screens ask the connector for abstract commands (e.g. vehicle
-// "status.read") and never touch the transport — here the transport is a mock,
-// later it can be Bluetooth/USB/local-HTTP without the app changing.
+// a connector registry (device/vehicle data) and an offline sync queue. Sandboxed app
+// logic (ZIPP, in the loaded web app) and SDK screens ask the connector for abstract
+// commands (e.g. vehicle "status.read") and never touch the transport — here the
+// transport is a mock, later it can be Bluetooth/USB/local-HTTP without the app changing.
 //
 // Trust boundary (spec §25 + NATIVE-SEC-001): the bridge is injected into every page, but
 // connector / sync access is granted ONLY to an APP — keyed (origin, slug), never origin
@@ -208,7 +208,7 @@ fn connector_status(
 }
 
 // Deterministic-ish jitter (by clock minute) so repeated reads feel live. Shape matches the
-// browser mock connector exactly, so QuickJS onConnectorEvent maps it identically.
+// browser mock connector exactly, so app-logic onConnectorEvent maps it identically.
 fn vehicle_telemetry() -> Value {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

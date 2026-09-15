@@ -1823,8 +1823,8 @@ $app->group('/api/forms/{id}/versions', function (RouteCollectorProxy $group) us
 // Create rate limiter for public endpoints (30 submissions per minute per IP)
 $submissionRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'submission');
 
-// Running sandboxed user scripts (script test / recompute) spawns a qjs
-// subprocess and can make ctx.http calls, so cap it per user like the AI endpoints.
+// Running sandboxed user scripts (script test / recompute) spawns the ZIPP
+// runtime subprocess and can make ctx.http calls, so cap it per user like the AI endpoints.
 $scriptTestRateLimiter = new RateLimitMiddleware($rateLimiter, 15, 60, 'script_test', true);
 
 // Response routes (protected - require authentication)

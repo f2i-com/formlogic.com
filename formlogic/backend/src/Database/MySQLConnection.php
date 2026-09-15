@@ -1586,7 +1586,7 @@ class MySQLConnection
             }
         }
 
-        // Add custom_logic column to forms (form-scoped sandboxed QuickJS app-logic) if it doesn't exist
+        // Add custom_logic column to forms (form-scoped sandboxed app-logic) if it doesn't exist
         $result = $pdo->query("SHOW COLUMNS FROM forms LIKE 'custom_logic'");
         if ($result->rowCount() === 0) {
             $pdo->exec("ALTER TABLE forms ADD COLUMN custom_logic MEDIUMTEXT DEFAULT NULL AFTER custom_screen");
@@ -1612,7 +1612,7 @@ class MySQLConnection
             $pdo->exec("ALTER TABLE apps ADD COLUMN reports JSON DEFAULT NULL AFTER custom_screen");
         }
 
-        // Add custom_logic column to apps (sandboxed QuickJS app-logic bundle) if it doesn't exist
+        // Add custom_logic column to apps (sandboxed app-logic bundle) if it doesn't exist
         $result = $pdo->query("SHOW COLUMNS FROM apps LIKE 'custom_logic'");
         if ($result->rowCount() === 0) {
             $pdo->exec("ALTER TABLE apps ADD COLUMN custom_logic MEDIUMTEXT DEFAULT NULL AFTER reports");

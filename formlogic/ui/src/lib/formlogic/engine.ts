@@ -10,10 +10,12 @@ import { getZippWasmBytes } from './zipp-bytes';
 // User-authored expressions/formulas run inside a zipp WASM sandbox hosted in a
 // dedicated Web Worker (see zipp-host.ts / formlogic.worker.ts). This module is
 // a thin, stable client: it owns the worker lifecycle and a hard wall-clock
-// watchdog that terminates+respawns the worker if an evaluation overruns (the
-// backstop for the rare expression the VM can't interrupt itself, e.g. a
-// catastrophic regex). The exported function surface is unchanged from the
-// previous WASM engine, so hooks and editors need no changes.
+// watchdog that terminates+respawns the worker if an evaluation overruns. Inside
+// the VM the limits are the instruction budget zipp-host sets and the engine's
+// own heap accounting (plus its regex execution budget), which count work, not
+// time; the watchdog is the ONLY wall-clock limit. The exported function surface
+// is unchanged from the previous WASM engine, so hooks and editors need no
+// changes.
 //
 // Two clocks, kept apart on purpose:
 //   * LOADING the engine (a 5 MB module: fetch + compile) gets its own generous
@@ -26,7 +28,7 @@ import { getZippWasmBytes } from './zipp-bytes';
 // while every conditional field failed open and the calculated ones went null.
 // ---------------------------------------------------------------------------
 
-const DEFAULT_BUDGET_MS = 1000; // in-VM interrupt deadline
+const DEFAULT_BUDGET_MS = 1000; // sizes the Worker watchdog; zipp-host ignores it
 const WATCHDOG_GRACE_MS = 1500; // extra time before we hard-kill the worker
 // ---------------------------------------------------------------------------
 // Instance lifetime (audit ZP-01). Every evaluation is a fresh Engine that is
@@ -200,9 +202,9 @@ async function evaluate(
 
   return new Promise<unknown>((resolve, reject) => {
     const timer = setTimeout(() => {
-      // Hard backstop: the in-VM interrupt should have fired by now. If we're
-      // here, the VM is wedged — kill the worker, fail every in-flight call, and
-      // let the next call respawn a clean worker.
+      // The wall-clock limit: the VM has no deadline of its own, so an evaluation
+      // still running now is over budget — kill the worker, fail every in-flight
+      // call, and let the next call respawn a clean worker.
       pending.delete(id);
       reject(new Error('Expression evaluation timed out'));
       failAll(new Error('FormLogic worker terminated after timeout'));
@@ -225,9 +227,9 @@ async function evaluate(
  *
  * `budgetMs` defaults to DEFAULT_BUDGET_MS, preserving the exact existing
  * behavior for useConditionalLogic (which never passes one). FormLogic Flows'
- * `condition` node (flowDispatcher.ts) passes its own clamped `data.timeoutMs`
- * so the sandbox's real interrupt deadline matches the node's declared budget
- * instead of always falling back to this default.
+ * `condition` node (flowDispatcher.ts) passes its own clamped `data.timeoutMs`,
+ * which sizes the Worker watchdog (budgetMs + WATCHDOG_GRACE_MS, the only
+ * wall-clock limit) instead of it always falling back to this default.
  */
 export async function evaluateCondition(
   expression: string,
@@ -288,14 +290,19 @@ export async function calculateValue(
 }
 
 /**
- * Calculate a value exactly like `calculateValue()`, but for the Flows
- * `logic_block` node ONLY: does NOT catch-to-null. A budget overrun or a
- * guest script error propagates as a rejected promise so the flow run fails
- * loudly (matching `condition`'s existing throw-on-error behavior and the
- * Rust desktop runner), instead of silently degrading like the calculated
- * -field use case above. `budgetMs` defaults to DEFAULT_BUDGET_MS; flowDispatcher.ts
- * passes the node's own clamped `data.timeoutMs` so the sandbox's real
- * interrupt deadline matches the node's declared budget.
+ * Calculate a value like `calculateValue()`, but for the Flows `logic_block`
+ * node ONLY: does NOT catch-to-null. A budget overrun or a guest script error
+ * propagates as a rejected promise so the flow run fails loudly (matching
+ * `condition`'s existing throw-on-error behavior and the Rust desktop runner),
+ * instead of silently degrading like the calculated-field use case above.
+ * `budgetMs` defaults to DEFAULT_BUDGET_MS; flowDispatcher.ts passes the node's
+ * own clamped `data.timeoutMs`, which sizes the Worker watchdog.
+ *
+ * The code may be an expression, statements whose completion value is the
+ * result, or a function body with a top-level `return` (see zipp-host.ts, kind
+ * 'flow'). The first two evaluate exactly as calculateValue() evaluates them.
+ * Code with a top-level `return` gets only a returned value; a trailing
+ * expression after it is ignored.
  *
  * Reserved for flowDispatcher.ts's FlowExecutorDeps.evaluateExpression — do
  * not use this for calculated fields (useFormLogic.ts must keep calling
@@ -306,11 +313,11 @@ export async function calculateValueForFlow(
   formData: Record<string, unknown>,
   budgetMs = DEFAULT_BUDGET_MS
 ): Promise<unknown> {
-  return evaluate('calc', expression, formData, budgetMs);
+  return evaluate('flow', expression, formData, budgetMs);
 }
 
 /**
- * Run a custom app-logic hook script inside the QuickJS sandbox.
+ * Run a custom app-logic hook script inside the ZIPP sandbox.
  *
  * `source` is a full script that declares `function run(ctx) { ... }`. It runs in
  * the SAME empty-global sandbox as every other expression here: no window, no

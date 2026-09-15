@@ -3,7 +3,7 @@
 // Each node is interpreted by the executor against a WorkflowGraph. Node handlers only see
 // (a) JSON node data, (b) the run scope (inputs/event/app + prior node outputs), and
 // (c) the injected FlowExecutorDeps — the SAME capability boundary as app-logic effects:
-// expressions run in the QuickJS sandbox (never eval), formlogic.* writes go through the
+// expressions run in the ZIPP sandbox (never eval), formlogic.* writes go through the
 // viewer's authenticated session, connector requests through the standard permission-gated
 // connector client, and HTTP is allow-listed to OAIY + the FormLogic API only.
 // Unsupported node types fail the run with `invalid_flow` naming the node — flows authored
@@ -131,7 +131,7 @@ export class FlowExecError extends Error {
 
 /**
  * Capabilities injected into a run. The browser wiring (flowDispatcher) binds these to the
- * QuickJS engine, the app runtime store and the connector client; tests inject fakes.
+ * ZIPP sandbox engine, the app runtime store and the connector client; tests inject fakes.
  */
 export interface FlowExecutorDeps {
   /**
@@ -141,14 +141,15 @@ export interface FlowExecutorDeps {
    */
   appSlug?: string;
   /**
-   * Sandboxed boolean expression over a JSON context (QuickJS — never eval).
+   * Sandboxed boolean expression over a JSON context (ZIPP — never eval).
    * `budgetMs`, when given, is the node's own clamped `data.timeoutMs`
-   * (100ms–30s) — the real in-VM interrupt deadline should match it instead
-   * of always falling back to the sandbox's internal default.
+   * (100ms–30s). It sizes the engine's wall-clock watchdog, which terminates
+   * the evaluation Worker, instead of that watchdog always using its default.
+   * Inside the VM the limits count work (instructions, heap), not time.
    */
   evaluateBoolean(expr: string, ctx: Record<string, unknown>, budgetMs?: number): Promise<boolean>;
   /**
-   * Sandboxed value expression over a JSON context (QuickJS — never eval).
+   * Sandboxed value expression over a JSON context (ZIPP — never eval).
    * `budgetMs` is logic_block's clamped `data.timeoutMs` (or the 2s default) —
    * see `evaluateBoolean`.
    */
@@ -166,7 +167,7 @@ export interface FlowExecutorDeps {
   kvGet?(scope: string, key: string): Promise<unknown>;
   /** Flow KV upsert (docs §9). Callers are gated by the KV_WRITE_CAPABILITY check in storage_set. */
   kvSet?(scope: string, key: string, value: unknown): Promise<unknown>;
-  /** One KV scope's entries as a plain {key: value} object (logic_block's read-only ctx.kv snapshot). */
+  /** One KV scope's entries as a plain {key: value} object (logic_block's read-only `kv` snapshot). */
   kvList?(scope: string): Promise<Record<string, unknown>>;
   /**
    * Resolve a running OAIY local AI service exposing an OpenAI-compatible
@@ -1514,10 +1515,10 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
       return data.value !== undefined ? resolveDeep(data.value, ctx.scope) : ctx.scope.upstream;
 
     case 'condition': {
-      // A declared data.timeoutMs (100ms..30s, docs §4) becomes the sandbox's real
-      // interrupt budget; when absent, evaluateBoolean's own default budget applies,
-      // exactly as before. condition keeps its existing throw-on-error/timeout
-      // behavior — only the ACTUAL budget used is now configurable.
+      // A declared data.timeoutMs (100ms..30s, docs §4) sizes the sandbox's wall-clock
+      // watchdog; when absent, evaluateBoolean's own default budget applies, exactly as
+      // before. condition keeps its existing throw-on-error/timeout behavior — only the
+      // ACTUAL budget used is now configurable.
       const expr = requireString(node, data, ['expr', 'expression', 'condition']);
       const budgetMs = clampDeclaredTimeoutMs(data);
       return await deps.evaluateBoolean(expr, exprContext(ctx), budgetMs);
@@ -1529,11 +1530,12 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
     }
 
     case 'logic_block': {
-      // User code ALWAYS runs in the QuickJS sandbox (docs §4) with a frozen, JSON-only
-      // ctx: {inputs, event, kv, app} (+ nodes/upstream for graph plumbing). `kv` is a
-      // read snapshot of the node's KV scope — writes only happen via storage_set, which
-      // is capability-gated. Wall clock is capped at 2s by default (data.timeoutMs
-      // overrides within 100ms..30s) so a wedged evaluation can't stall the run budget.
+      // User code ALWAYS runs in the ZIPP sandbox (docs §4). The sandbox receives a JSON
+      // copy of {inputs, event, kv, app} (+ nodes/upstream for graph plumbing), each as a
+      // global variable. `kv` is a read snapshot of the node's KV scope — writes only
+      // happen via storage_set, which is capability-gated. Wall clock is capped at 2s by
+      // default (data.timeoutMs overrides within 100ms..30s) so a wedged evaluation can't
+      // stall the run budget.
       const expr = requireString(node, data, ['expr', 'code', 'expression']);
       let kv: Record<string, unknown> = {};
       if (deps.kvList) {
@@ -1545,7 +1547,7 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
       }
       const frozenCtx = Object.freeze({ ...exprContext(ctx), kv });
       const timeoutMs = clampDeclaredTimeoutMs(data) ?? LOGIC_BLOCK_DEFAULT_TIMEOUT_MS;
-      // Thread the SAME timeoutMs into the sandbox as its real interrupt budget
+      // Thread the SAME timeoutMs into the sandbox, where it sizes the Worker watchdog
       // (previously the sandbox always used its own fixed 1s default regardless of
       // this value, so a script could be silently cut off well before — or run well
       // past — the node's declared deadline). evaluateExpression is now also

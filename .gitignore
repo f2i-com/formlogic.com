@@ -1,7 +1,8 @@
 # Root repo tracks formlogic/. Build artifacts and dependencies are ignored by
 # formlogic/.gitignore. (The old engine source repos formlogic-php and
-# formlogic-rust were removed — the scripting engine is now the vendored QuickJS
-# runtime under formlogic/.)
+# formlogic-rust were removed — the scripting engine is now the vendored ZIPP
+# runtime under formlogic/: runtime/ and backend/bin/runtime/ for the server,
+# ui/vendor/zipp-wasm/ for the browser.)
 
 # Playwright output (any location)
 test-results/

@@ -18,7 +18,7 @@ import { api } from '../../lib/api';
 // Broker rules for pack-embedded connector drivers (packConnectorDriver.ts):
 // the demo driver is grant-gated, its events are allowlisted + host-stamped,
 // its error codes fold to a demo-safe set, and its state threads between runs.
-// Exercised with a MINIMAL synthetic driver against the REAL QuickJS sandbox
+// Exercised with a MINIMAL synthetic driver against the REAL ZIPP sandbox
 // (zipp-host runEval — same PRELUDE/JSON-ctx/budget semantics as production,
 // minus the Worker Vitest doesn't have).
 

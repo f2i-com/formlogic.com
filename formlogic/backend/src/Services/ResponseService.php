@@ -458,7 +458,7 @@ class ResponseService
         }
         $ctx = array_merge($ctx, $answers);
 
-        // Evaluate ALL conditional expressions in a single qjs round-trip.
+        // Evaluate ALL conditional expressions in a single sandbox round-trip.
         try {
             $results = $this->getFormLogic()->evaluateBatch($jobs, $ctx);
         } catch (\Throwable $e) {
@@ -546,7 +546,7 @@ class ResponseService
 
         // Up to N passes (N = number of calculated fields) — enough to resolve any
         // acyclic dependency chain regardless of document order; stops early once
-        // nothing changes. Each pass is ONE qjs round-trip for all calculated
+        // nothing changes. Each pass is ONE sandbox round-trip for all calculated
         // fields (was one process spawn per field per pass). Best-effort — a
         // broken expression is skipped.
         $passes = count($jobs);

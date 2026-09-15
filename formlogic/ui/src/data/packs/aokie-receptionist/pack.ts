@@ -33,7 +33,7 @@ import { AOKIE_RECEPTIONIST_SETTINGS_SCREEN } from './screens/receptionistSettin
 import { DEFAULT_PERSONA } from './persona';
 // Pack-embedded connector (spec: self-contained packs): the manifest declares the
 // aokie connector's identity + command surface; the demo driver is a sandboxed
-// QuickJS state machine the HOST runs for simulator sessions only
+// (ZIPP) state machine the HOST runs for simulator sessions only
 // (packConnectorDriver.ts). Real transport stays host-owned.
 import AOKIE_CONNECTOR_MANIFEST from './connector/manifest.json';
 import AOKIE_CONNECTOR_DRIVER from './connector/driver.js?raw';
@@ -58,7 +58,7 @@ const defaultTheme: Record<string, unknown> = {
   borderRadius: 'medium',
 };
 
-// ── App-logic scripts (sandboxed QuickJS; effects only, host enforces grants) ──────────
+// ── App-logic scripts (sandboxed JS; effects only, host enforces grants) ───────────────
 // Every script guards on the exact event name and dedupes on the envelope idempotencyKey
 // via the host-provided ctx.storage snapshot + a storage.set effect (contract §7).
 
@@ -255,7 +255,7 @@ const LOGIC_HARDWARE_ERROR = `function run(ctx) {
   };
 }`;
 
-// ── Flow logic blocks (QuickJS expressions; completion value = node output) ────────────
+// ── Flow logic blocks (sandboxed JS expressions; completion value = node output) ───────
 
 /**
  * The outbound-SMS kill switch, as a snippet every send site splices in.
@@ -3912,7 +3912,7 @@ export const aokieReceptionistPack: PackData = {
         },
       },
 
-      // Sandboxed QuickJS app logic: mirrors raw aokie.* events into records. Strict
+      // Sandboxed app logic: mirrors raw aokie.* events into records. Strict
       // permissions — every effect maps to a grant below; the bundle-level grants also
       // define the connector capability surface the SDK screens may use (connectorGrants).
       customLogic: {

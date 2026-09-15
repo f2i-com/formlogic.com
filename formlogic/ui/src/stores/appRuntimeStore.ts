@@ -79,7 +79,7 @@ interface AppRuntimeState {
   // Section-screen dashboard for one form (stored on that form's customScreen)
   saveFormDashboard: (formId: string, screen: DashboardScreen) => Promise<boolean>;
 
-  // Custom app-logic (sandboxed QuickJS hooks, stored on app.customLogic)
+  // Custom app-logic (sandboxed hooks, stored on app.customLogic)
   saveCustomLogic: (bundle: CustomAppLogicBundle) => Promise<boolean>;
 
   // Permission helpers

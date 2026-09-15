@@ -280,7 +280,7 @@ FormLogic in advance:
 | `create_document` | apps:write | Compose an exportable PDF report page from charts and text |
 | `list_flows` | apps:read | List an app's flows (automations) — summaries only |
 | `get_flow` | apps:read | Get one flow incl. its `flowJson` graph + `nodeCapabilities` |
-| `create_flow` | apps:write | Create a flow: a graph of nodes (LLM chat, find/submit/update records, condition, template, QuickJS, HTTP, connector commands, speech) |
+| `create_flow` | apps:write | Create a flow: a graph of nodes (LLM chat, find/submit/update records, condition, template, sandboxed JavaScript logic, HTTP, connector commands, speech) |
 | `update_flow` | apps:write | Update a flow (name/slug/description/`flowJson`/`nodeCapabilities`/enabled; graph changes bump the version) |
 | `delete_flow` | apps:write | Delete a flow (its bindings go with it) |
 | `list_flow_bindings` | apps:read | List which events trigger which flows |

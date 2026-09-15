@@ -2,8 +2,8 @@
 # =============================================================================
 # FormLogic Installer
 # =============================================================================
-# Sets up the FormLogic application: backend API, frontend UI, and the QuickJS
-# scripting runtime (vendored qjs binary + quickjs-emscripten via npm).
+# Sets up the FormLogic application: backend API, frontend UI, and the ZIPP
+# scripting runtime (vendored backend/bin/runtime launcher + ui/vendor/zipp-wasm).
 #
 # Usage:
 #   chmod +x install.sh
@@ -181,12 +181,12 @@ else
     ok ".env already exists"
 fi
 
-# FormLogic runtime: the browser engine (quickjs-emscripten) is installed via the
-# npm step above, and the canonical prelude is synced into the backend by the
-# `npm run build` prebuild step below. The backend uses the vendored sandbox
-# launcher (committed under backend/bin/runtime, a wasmtime host for the zipp
-# engine); it only needs to be executable, which git clone and zip extraction
-# cannot be relied on to preserve.
+# FormLogic runtime: the browser engine (the ZIPP wasm module, committed under
+# ui/vendor/zipp-wasm) is bundled by the `npm run build` step below, whose
+# prebuild step also syncs the canonical prelude into the backend. The backend
+# uses the vendored sandbox launcher (committed under backend/bin/runtime, a
+# wasmtime host for the zipp engine); it only needs to be executable, which git
+# clone and zip extraction cannot be relied on to preserve.
 if [[ -f "$RUNTIME_BIN" ]]; then
     chmod +x "$RUNTIME_BIN" 2>/dev/null || true
     if [[ -x "$RUNTIME_BIN" ]]; then

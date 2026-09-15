@@ -7,7 +7,7 @@ import type { CustomAppLogicBundle, CustomAppLogicEffect } from '../../types/cus
 // flow.run effect (docs/FORMLOGIC_FLOWS.md §5): required permission is 'flow.<slug>.run',
 // covered by the exact grant, the 'flow.*.run' wildcard, or the bare grant-all 'flow.run'.
 // The host defers flow.run like connector requests and chains a sync result back through
-// onConnectorEvent. The QuickJS engine is mocked — the WASM worker can't run under node.
+// onConnectorEvent. The ZIPP engine is mocked — the WASM worker can't run under node.
 
 vi.mock('../../lib/formlogic', () => ({
   runAppLogic: vi.fn(),

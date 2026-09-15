@@ -222,7 +222,7 @@ class PackService
                     'logoUrl' => $packApp['logoUrl'] ?? null,
                     'navConfig' => $navConfig,
                     'customScreen' => $this->resolveCustomScreen($packApp['customScreen'] ?? null, $formIdMap),
-                    // Sandboxed QuickJS app-logic bundle. References fields by their stable ids (not @pack:
+                    // Sandboxed app-logic bundle. References fields by their stable ids (not @pack:
                     // remapped) and is bounded by the client sandbox + permission model at runtime.
                     // APP-502: unapproved connector grants are stripped here before persist.
                     'customLogic' => $this->reviewCustomLogicGrants(
@@ -964,7 +964,7 @@ class PackService
      * Export an app as a full .formlogic ARCHIVE (spec §29): a ZIP bundling
      *   manifest.json  — the ApplicationPackageManifest (id/name/version/description + a content hash)
      *   pack.json      — the existing exportApp() payload (the atomic importer's source of truth)
-     *   quickjs/customLogic.json — the app's sandboxed QuickJS bundle, if any
+     *   quickjs/customLogic.json — the app's sandboxed app-logic bundle, if any (historical folder name)
      *   assets/*       — inline data-URI assets decoded to real files, if any
      *   launch.json / native.json — launch + native runtime config, if present on the app
      *   signature.json — a DETACHED signature over the CANONICAL manifest.json (SigningService). The manifest
@@ -2008,7 +2008,7 @@ class PackService
                     throw new \RuntimeException("App '{$app['packAppId']}' custom screen exceeds 2MB limit");
                 }
             }
-            // Custom app-logic is code (sandboxed at runtime); 256KB covers the QuickJS
+            // Custom app-logic is code (sandboxed at runtime); 256KB covers the sandboxed
             // scripts plus an optional pack connector demo driver (CustomLogicSanitizer caps).
             if (isset($app['customLogic'])) {
                 $logicJson = json_encode($app['customLogic']);

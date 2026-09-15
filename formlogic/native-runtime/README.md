@@ -37,7 +37,7 @@ app it navigates to — so app-logic / SDK screens call the same API in-browser 
     **feature-detected at runtime** (no native plugin), so it works identically in a browser, the
     PWA, and the native runtime. See `docs/CUSTOM_APP_PLATFORM.md#connectors`.
   - **`vehicle`** — a Rust mock returning realistic telemetry (same shape as the browser mock), so
-    QuickJS `onConnectorEvent` mapping is identical everywhere.
+    app-logic `onConnectorEvent` mapping is identical everywhere.
 - **Offline sync queue** — **persisted to disk** (`sync-queue.json` in the app data dir) so queued
   submissions survive a restart. The native side does **not** POST: `sync.flush()` returns the
   pending items grouped by `appSlug` to the WebView (which holds the session cookie); the WebView
@@ -206,5 +206,5 @@ release `.so` + package `assemble<Abi>Release`, then verify with
 - Deep links open **http/https targets only** — `javascript:`/`file:`/`data:` are rejected, so a
   crafted link can't execute in the privileged shell origin. The `device` connector's phone-ability
   access is gated per-command by app-logic permissions (`connector.device.<cmd>`), and device I/O
-  runs in the trusted web layer, never inside the QuickJS sandbox.
+  runs in the trusted web layer, never inside the app-logic (ZIPP) sandbox.
 ```

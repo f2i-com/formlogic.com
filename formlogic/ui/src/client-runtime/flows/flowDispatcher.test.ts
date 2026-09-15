@@ -92,7 +92,7 @@ function installDeps(overrides: Partial<FlowDispatcherDeps> = {}): Harness {
     },
     evaluateCondition: async (expr, ctx) => {
       harness.conditionCalls.push({ expr, ctx });
-      // Mimic the QuickJS empty-global sandbox: only `event` exists as a context global,
+      // Mimic the ZIPP sandbox's empty global scope: only `event` exists as a context global,
       // so an expression touching window/document throws a ReferenceError.
       if (/\b(window|document|globalThis|fetch)\b/.test(expr)) {
         throw new ReferenceError("'window' is not defined");
@@ -190,7 +190,7 @@ describe('binding condition — sandbox semantics', () => {
     // The evaluator received a JSON ctx exposing only `event` — never window/document.
     expect(harness.conditionCalls).toHaveLength(1);
     expect(Object.keys(harness.conditionCalls[0].ctx)).toEqual(['event']);
-    // The ReferenceError (as QuickJS would throw) skipped the binding entirely: no run.
+    // The ReferenceError (as the ZIPP sandbox would throw) skipped the binding entirely: no run.
     expect(harness.reserveCalls).toHaveLength(0);
     expect(harness.completeCalls).toHaveLength(0);
   });

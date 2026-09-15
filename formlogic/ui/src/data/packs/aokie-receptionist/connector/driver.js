@@ -1,4 +1,4 @@
-// Aokie DEMO driver (pack-embedded, sandboxed QuickJS; see packConnectorDriver.ts).
+// Aokie DEMO driver (pack-embedded, sandboxed ZIPP; see packConnectorDriver.ts).
 //
 // Ported 1:1 from the retired browser mock (client-runtime/connectors/aokieConnector.ts,
 // mockAokieConnector + simulateIncomingCall). This script is a PURE state machine:

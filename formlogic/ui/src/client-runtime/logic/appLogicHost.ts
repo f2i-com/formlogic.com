@@ -2,10 +2,10 @@
 //
 // This is the boundary the whole design rests on (spec §31/§65):
 //
-//   QuickJS scripts describe safe effects; the trusted host applies those
+//   Sandboxed scripts describe safe effects; the trusted host applies those
 //   effects after permission checks.
 //
-// The host runs the enabled scripts for a hook inside the QuickJS sandbox
+// The host runs the enabled scripts for a hook inside the ZIPP sandbox
 // (runAppLogic), permission-checks every effect they return, applies the
 // permitted ones through injected handlers, and folds the outcome into a single
 // result the caller can act on (reject a submit, show warnings, apply prefill).
@@ -114,12 +114,14 @@ async function runHookInternal(
 
   for (const script of scripts) {
     // Build a fresh JSON ctx per script. `values` carries forward what earlier
-    // scripts set, so a chain sees a consistent view.
+    // scripts set, so a chain sees a consistent view. `storage` is the host's
+    // read-only snapshot of this app's logic storage (scripts dedupe on it).
     const ctx: CustomAppLogicInput = {
       hook,
       answers: input.answers ?? {},
       values: { ...(input.values ?? {}), ...outcome.values },
       params: input.params ?? {},
+      storage: storageSnapshotCopy(input.storage),
       meta: input.meta ?? {},
       event: input.event,
     };
@@ -155,15 +157,28 @@ async function runHookInternal(
     const connectorRequests: Extract<CustomAppLogicEffect, { type: 'connector.request' }>[] = [];
     const flowRuns: Extract<CustomAppLogicEffect, { type: 'flow.run' }>[] = [];
 
+    // Effects apply in the script's order, and that order is the contract: scripts write the
+    // record FIRST and the seen-marker AFTER (audit C-04/FL-001), so a write that did not
+    // happen is not marked handled. Once a record write in this script fails (denied,
+    // malformed or rejected), its later storage.set effects are held back and the next
+    // delivery of the event tries again — the same rule as the desktop host.
+    let recordWriteFailed = false;
     for (const effect of resultEffects(result)) {
       const required = effectRequiredPermission(effect);
       const relaxed = !strict && isDefaultSafeEffect(effect);
       if (required && !relaxed && !isPermissionGranted(required, grants)) {
         outcome.deniedPermissions.push(required);
         logger.warn(`[app-logic] ${script.id}: effect '${effect.type}' denied (needs ${required})`);
+        if (isRecordWrite(effect)) recordWriteFailed = true;
         continue;
       }
-      await applyEffect(effect, handlers, outcome, connectorRequests, flowRuns);
+      if (effect.type === 'storage.set' && recordWriteFailed) {
+        const msg = `held back storage.set '${String(effect.key)}' because a record write earlier in this script failed; the event will be handled again`;
+        logger.warn(`[app-logic] ${script.id}: ${msg}`);
+        outcome.errors.push(`${script.id}: ${msg}`);
+        continue;
+      }
+      if (await applyEffect(effect, handlers, outcome, connectorRequests, flowRuns)) recordWriteFailed = true;
     }
 
     // FormLogic Flows §5: a sync flow.run feeds its result back through onConnectorEvent
@@ -247,6 +262,21 @@ async function runHookInternal(
   return outcome;
 }
 
+/**
+ * A JSON copy of the host's storage snapshot, so a script's ctx never shares
+ * references with the host's copy. Anything that is not a plain object, or does
+ * not survive JSON, reads as empty.
+ */
+function storageSnapshotCopy(storage: unknown): Record<string, unknown> {
+  if (!storage || typeof storage !== 'object' || Array.isArray(storage)) return {};
+  try {
+    const copy: unknown = JSON.parse(JSON.stringify(storage));
+    return copy && typeof copy === 'object' && !Array.isArray(copy) ? (copy as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
 /** A non-empty string form key (the sandbox output is loosely cast, so guard at runtime). */
 function isFormKey(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
@@ -257,13 +287,23 @@ function isAnswersObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
 }
 
+/** A record write (submitResponse / updateResponse): the effects a seen-marker vouches for. */
+function isRecordWrite(effect: CustomAppLogicEffect): boolean {
+  return effect.type === 'formlogic.submitResponse' || effect.type === 'formlogic.updateResponse';
+}
+
+/**
+ * Apply one permitted effect. Resolves true when it was a record write that failed (a
+ * malformed effect or a handler that threw); false otherwise, including a write this host
+ * has no handler for (unsupported here, e.g. the editor's Test run).
+ */
 async function applyEffect(
   effect: CustomAppLogicEffect,
   handlers: AppLogicEffectHandlers | undefined,
   outcome: AppLogicHookOutcome,
   connectorRequests: Extract<CustomAppLogicEffect, { type: 'connector.request' }>[],
   flowRuns: Extract<CustomAppLogicEffect, { type: 'flow.run' }>[]
-): Promise<void> {
+): Promise<boolean> {
   switch (effect.type) {
     case 'ui.setValues':
       Object.assign(outcome.values, effect.values);
@@ -292,12 +332,13 @@ async function applyEffect(
       if (handlers?.submitResponse) {
         if (!isFormKey(effect.formKey) || !isAnswersObject(effect.answers)) {
           outcome.errors.push('submitResponse: a string formKey and object answers are required');
-          break;
+          return true;
         }
         try {
           await handlers.submitResponse(effect.formKey, effect.answers, effect.options);
         } catch (err) {
           outcome.errors.push(`submitResponse ${effect.formKey}: ${err instanceof Error ? err.message : String(err)}`);
+          return true;
         }
       }
       break;
@@ -305,7 +346,7 @@ async function applyEffect(
       if (handlers?.updateResponse) {
         if (!isFormKey(effect.formKey) || !isAnswersObject(effect.answers)) {
           outcome.errors.push('updateResponse: a string formKey and object answers are required');
-          break;
+          return true;
         }
         try {
           await handlers.updateResponse(
@@ -316,6 +357,7 @@ async function applyEffect(
           );
         } catch (err) {
           outcome.errors.push(`updateResponse ${effect.formKey}: ${err instanceof Error ? err.message : String(err)}`);
+          return true;
         }
       }
       break;
@@ -327,12 +369,15 @@ async function applyEffect(
       handlers?.storageGet?.(effect.key);
       break;
     case 'storage.set':
-      handlers?.storageSet?.(effect.key, effect.value);
+      // A marker with no value would not survive JSON and read as absent in the next
+      // ctx.storage snapshot, so an unstated value means "set" (true), as on the desktop.
+      handlers?.storageSet?.(effect.key, effect.value === undefined ? true : effect.value);
       break;
     case 'storage.remove':
       handlers?.storageRemove?.(effect.key);
       break;
   }
+  return false;
 }
 
 function mergeOutcome(into: AppLogicHookOutcome, from: AppLogicHookOutcome): void {

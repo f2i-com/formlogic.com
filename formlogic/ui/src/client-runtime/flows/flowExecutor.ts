@@ -74,7 +74,7 @@ export interface ExecuteFlowOptions {
   signal?: AbortSignal;
   /** The flow's declared nodeCapabilities (gates storage_set — see nodes.ts). */
   capabilities?: string[] | null;
-  /** The flow's slug — default KV scope 'flow:<slug>' for storage nodes / logic_block ctx.kv. */
+  /** The flow's slug — default KV scope 'flow:<slug>' for storage nodes / logic_block `kv`. */
   flowSlug?: string;
   /**
    * Awaited-call ancestry INCLUDING this flow (stable flow ids, root first) — flow_call's

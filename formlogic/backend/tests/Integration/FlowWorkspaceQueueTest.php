@@ -464,7 +464,7 @@ JS;
             'timestamp' => time(),
         ]);
         if (!$result->success && str_contains((string) $result->error, 'not available')) {
-            $this->markTestSkipped('QuickJS runtime not available on this host');
+            $this->markTestSkipped('ZIPP sandbox runtime not available on this host');
         }
         $this->assertTrue($result->success, 'script failed: ' . ($result->error ?? ''));
         $this->assertSame(['first' => true, 'dup' => false, 'bad' => false], $result->computed);

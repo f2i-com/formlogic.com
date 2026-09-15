@@ -39,6 +39,7 @@ export interface ApplicationPackageManifest {
     offline?: boolean;
     native?: boolean;
     connectors?: string[];
+    /** Historical key name: the package uses sandboxed app logic (FormLogic's hosts run it on ZIPP). */
     quickjs?: boolean;
   };
 }

@@ -110,7 +110,8 @@ export function AppDeploySettings() {
     if (!appId || !app || exportingArchive) return;
     setExportingArchive(true);
     try {
-      // Full .formlogic ARCHIVE (ZIP): manifest + pack + quickjs + assets + detached signature.
+      // Full .formlogic ARCHIVE (ZIP): manifest + pack + quickjs/customLogic.json (historical entry name
+      // for the sandboxed app logic) + assets + detached signature.
       await api.exportAppPackageArchive(appId, app.slug);
       toast.success('Package exported', 'Downloaded a .formlogic archive.');
     } catch (err) {
@@ -306,7 +307,7 @@ export function AppDeploySettings() {
             while acting: this panel shows the signed-in ADMIN's own machine, not the owner's. */}
         {!acting && <LocalRuntimePanel />}
 
-        {/* App logic (QuickJS) */}
+        {/* App logic */}
         <AppLogicPanel appId={appId!} initialLogic={app.customLogic} onDirtyChange={setLogicDirty} />
 
         {/* FormLogic Flows (event-driven automations, docs/FORMLOGIC_FLOWS.md) */}
@@ -322,7 +323,7 @@ export function AppDeploySettings() {
           <p className="text-sm text-gray-600 dark:text-slate-400 mb-4">
             Export this app (forms, screens, reports, roles, and app logic) as a signed
             <span className="font-mono"> .formlogic</span> package — portable, and verifiable against FormLogic's key.
-            The <span className="font-mono">.formlogic</span> archive additionally bundles the QuickJS logic and any assets as a ZIP.
+            The <span className="font-mono">.formlogic</span> archive additionally bundles the app logic and any assets as a ZIP.
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" onClick={handleExportPackage} isLoading={exporting} disabled={exporting} leftIcon={<Download className="h-4 w-4" />}>

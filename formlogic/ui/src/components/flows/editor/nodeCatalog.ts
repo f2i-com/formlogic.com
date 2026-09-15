@@ -131,13 +131,13 @@ export interface ShowIf {
  *   - 'selector' — the WHOLE field value is resolved as one bare `$`-rooted selector string
  *     (`resolveSelector`), or the field is JSON walked by `resolveDeep` (a selector-shaped
  *     STRING VALUE inside it resolves the same way) — both want the bare `$nodes.x.y` string.
- *   - 'quickjs'  — a `code` field with `quickjs: true` runs as literal JS in the sandbox, where
+ *   - 'zipp'     — a `code` field with `zipp: true` runs as literal JS in the ZIPP sandbox, where
  *     `inputs`/`nodes`/`event`/`upstream`/`app` are real JS variables (no `$`, no `{{ }}`).
  *   - 'template' — resolved via `interpolateTemplate`, which only scans for `{{ ... }}`
  *     placeholders in free text; a bare `$selector` dropped outside braces is never resolved and
  *     ends up verbatim in the output (e.g. spoken on a live call).
  */
-export type ReferenceSyntax = 'selector' | 'quickjs' | 'template';
+export type ReferenceSyntax = 'selector' | 'zipp' | 'template';
 
 export interface NodePropertySpec {
   key: string;
@@ -148,8 +148,8 @@ export interface NodePropertySpec {
   help?: string;
   default?: unknown;
   options?: { value: string; label: string }[];
-  /** `code` fields render a monospace Monaco editor labelled "QuickJS sandboxed". */
-  quickjs?: boolean;
+  /** `code` fields render a monospace Monaco editor labelled "ZIPP sandboxed". */
+  zipp?: boolean;
   /** Monaco language for a `code` field ('javascript' default, 'json' for structured fields). */
   language?: string;
   /** Authoring aid: flag a warning badge when this (visible) property is empty. Never blocks a run. */
@@ -159,7 +159,7 @@ export interface NodePropertySpec {
   /**
    * Override the inferred reference syntax (see `ReferenceSyntax`). Only needed for a field
    * resolved via `interpolateTemplate` in the executor — everything else is inferred correctly
-   * by `getReferenceSyntax` (a `code` field with `quickjs: true` → 'quickjs', else 'selector').
+   * by `getReferenceSyntax` (a `code` field with `zipp: true` → 'zipp', else 'selector').
    */
   referenceSyntax?: ReferenceSyntax;
   /**
@@ -171,15 +171,15 @@ export interface NodePropertySpec {
 
 /**
  * The reference syntax a chip-insert must produce for this property to actually resolve
- * (docs `ReferenceSyntax`). An explicit `referenceSyntax` always wins; otherwise a QuickJS
- * `code` field infers 'quickjs' and everything else defaults to 'selector' — correct for both
+ * (docs `ReferenceSyntax`). An explicit `referenceSyntax` always wins; otherwise a sandboxed JS
+ * `code` field infers 'zipp' and everything else defaults to 'selector' — correct for both
  * whole-value-selector fields (`resolveSelector`) AND JSON fields walked by `resolveDeep`,
  * since both want the bare `$nodes.x.y` string. Only `interpolateTemplate` fields need the
  * explicit 'template' override (set per-field below, cross-checked against nodes.ts).
  */
 export function getReferenceSyntax(spec: NodePropertySpec): ReferenceSyntax {
   if (spec.referenceSyntax) return spec.referenceSyntax;
-  if (spec.type === 'code' && spec.quickjs) return 'quickjs';
+  if (spec.type === 'code' && spec.zipp) return 'zipp';
   return 'selector';
 }
 
@@ -194,7 +194,7 @@ function isJsIdentifier(s: string): boolean {
  *   - 'selector' — unchanged (the bare string IS the value the executor expects).
  *   - 'template' — wrapped in `{{ }}` (a leading `$` inside braces is tolerated by
  *     `interpolateTemplate`/`interpolate_template`, so no need to strip it).
- *   - 'quickjs'  — the leading `$` is stripped so the root reads as the plain JS variable the
+ *   - 'zipp'     — the leading `$` is stripped so the root reads as the plain JS variable the
  *     sandbox actually exposes (`$event` → `event`), and every path segment after the root is
  *     emitted as `.seg` only when `seg` is a valid bare JS identifier, else as `["seg"]`. This
  *     matters because every node id in this app is auto-minted as `<type>-<n>` (`condition-1`,
@@ -207,7 +207,7 @@ export function formatChipInsert(hint: string, mode: ReferenceSyntax): string {
   switch (mode) {
     case 'template':
       return `{{ ${hint} }}`;
-    case 'quickjs': {
+    case 'zipp': {
       const path = hint.startsWith('$') ? hint.slice(1) : hint;
       const [root, ...rest] = path.split('.');
       return rest.reduce((acc, seg) => (isJsIdentifier(seg) ? `${acc}.${seg}` : `${acc}[${JSON.stringify(seg)}]`), root);
@@ -459,7 +459,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
         key: 'value',
         label: 'Value (selector or JSON)',
         type: 'code',
-        quickjs: false,
+        zipp: false,
         language: 'json',
         placeholder: '{ "greeting": "$nodes.match.greeting" }',
         help: 'Optional. Selector strings ($nodes.x, $inputs.y) resolve against the run scope. Leave blank to pass the upstream value through.',
@@ -485,10 +485,10 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
         key: 'expr',
         label: 'Expression',
         type: 'code',
-        quickjs: true,
+        zipp: true,
         required: true,
         placeholder: "inputs.durationSeconds > 5",
-        help: 'Boolean over { inputs, event, app, nodes, upstream }. Runs in QuickJS — never eval. An error or timeout fails the run.',
+        help: 'Boolean over { inputs, event, app, nodes, upstream }. In the browser it runs in the ZIPP sandbox — never eval. An error or timeout fails the run.',
       },
       { key: 'timeoutMs', label: 'Timeout (ms)', type: 'number', placeholder: '1000', help: 'Optional. 100–30000.' },
     ],
@@ -520,7 +520,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     type: 'logic_block',
     label: 'Logic block',
     category: 'logic',
-    description: 'Run a JS expression in the QuickJS sandbox with a frozen JSON ctx { inputs, event, app, nodes, upstream, kv }.',
+    description: 'Run sandboxed JavaScript (ZIPP in the browser) over a copy of the run data, exposed as the globals inputs, event, app, nodes, upstream and kv.',
     icon: Code2,
     accent: 'sky',
     executable: true,
@@ -532,14 +532,14 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
         key: 'expr',
         label: 'Code',
         type: 'code',
-        quickjs: true,
+        zipp: true,
         required: true,
         language: 'javascript',
         placeholder: 'const c = nodes.customers.find(r => r.answers.phone === inputs.from);\nreturn { found: !!c, name: c?.answers?.name };',
-        help: 'Return a JSON value. Wall clock capped (2s default; data.timeoutMs 100ms–30s). An error or timeout fails the run.',
+        help: 'Produce a JSON value: return it, or end with an expression whose value is the result. Pick one: once the code has a top-level return, only returned values count and a trailing expression is ignored. Wall clock capped (2s default; data.timeoutMs 100ms–30s). An error or timeout fails the run.',
       },
       { key: 'timeoutMs', label: 'Timeout (ms)', type: 'number', placeholder: '2000', help: 'Optional. 100–30000.' },
-      { key: 'scope', label: 'KV scope (ctx.kv)', type: 'text', placeholder: 'flow:<slug>', help: 'Optional. Read-only KV snapshot exposed as ctx.kv.' },
+      { key: 'scope', label: 'KV scope (kv)', type: 'text', placeholder: 'flow:<slug>', help: 'Optional. Read-only KV snapshot exposed as kv.' },
     ],
   },
   {

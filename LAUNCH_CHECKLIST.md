@@ -182,7 +182,7 @@ its own Windows CI running the plugin's full test suite plus the voice-feature c
 - [x] **AI config states** — clear unavailable/misconfigured/local-model/insecure-transport;
   status in `/api/health/deep`; never expose keys.
 - [x] **Doctor UI** — `/doctor` admin page over `/api/health/deep` (pass/warn/fail cards: DB,
-  storage, QuickJS, billing, doc converters, webhook worker, dual-store) with remediation hints,
+  storage, ZIPP runtime, billing, doc converters, webhook worker, dual-store) with remediation hints,
   no secrets. Done.
 
 ## Nice-to-have

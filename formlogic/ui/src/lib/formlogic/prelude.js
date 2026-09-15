@@ -1,5 +1,5 @@
 // CANONICAL FORMLOGIC PRELUDE — single source of truth.
-// This plain-JS standard library is evaluated inside the QuickJS sandbox on
+// This plain-JS standard library is evaluated inside the ZIPP sandbox on
 // BOTH the browser (zipp wasm) and the backend (the zipp sandbox child) before
 // every user expression/script, so helper builtins resolve identically on
 // each side. It is imported as raw text in the browser and read from disk by
@@ -7,11 +7,10 @@
 // generated from THIS file by scripts/sync-prelude.mjs (run in prebuild) —
 // edit this file and never hand-edit the generated copy.
 //
-// The module objects are declared with `var` (not `let`) on purpose: the qjs
-// harness installs the prelude via indirect eval and then runs user code via
-// `new Function`, whose body sees global *object* properties (var/function) but
-// NOT global lexical (let/const) bindings. `var` keeps them resolvable on both
-// engines.
+// The module objects are declared with `var` (not `let`) on purpose: both zipp
+// hosts compile the prelude into the program ahead of the user code and then run
+// that code via indirect eval or `new Function`. `var` makes every module a
+// property of the global object, which that code resolves in any engine.
 
 function __isArr(a) { return typeof a == "object" && a != null && typeof a.length == "number"; }
 var validators = {

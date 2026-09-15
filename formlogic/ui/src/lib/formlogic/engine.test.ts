@@ -6,11 +6,12 @@ vi.mock('./zipp-bytes', () => ({
 }));
 
 // engine.ts spawns a real browser Worker (formlogic.worker.ts -> zipp-host.ts, a real WASM
-// QuickJS VM) — we can't and shouldn't run that under Vitest. This fake simulates the SAME
+// ZIPP VM) — we can't and shouldn't run that under Vitest. This fake simulates the SAME
 // postMessage/onmessage protocol so the budget plumbing this suite exists to pin down
-// (docs/FORMLOGIC_FLOWS.md §4: a node's declared `timeoutMs` must become the sandbox's REAL
-// interrupt deadline) is tested deterministically via fake timers, with no real WASM/timing
-// flakiness.
+// (docs/FORMLOGIC_FLOWS.md §4: a node's declared `timeoutMs` must size the Worker watchdog,
+// the sandbox's only wall-clock limit) is tested deterministically via fake timers, with no
+// real WASM/timing flakiness. The real-engine behaviour of each kind is covered by
+// flowEval.test.ts and corpusParity.test.ts.
 type FakeBehavior =
   | { kind: 'reply'; delayMs: number; response: Omit<WorkerResponse, 'id'> }
   | { kind: 'hang' }; // never replies — exercises engine.ts's hard-backstop watchdog
@@ -189,6 +190,21 @@ describe('engine.ts — Flows timeout-budget plumbing', () => {
       await vi.advanceTimersByTimeAsync(1);
       await promise;
       expect(lastRequest?.budgetMs).toBe(DEFAULT_BUDGET_MS);
+    });
+  });
+
+  describe('evaluation kind per entry point — only the Flows logic_block evaluator uses the flow kind', () => {
+    it.each([
+      ['calculateValue', 'calc'],
+      ['evaluateCondition', 'condition'],
+      ['calculateValueForFlow', 'flow'],
+    ] as const)('%s sends kind %s', async (name, kind) => {
+      const engine = await import('./engine');
+      behavior = { kind: 'reply', delayMs: 0, response: { ok: true, result: true } };
+      const promise = engine[name]('1', {});
+      await vi.advanceTimersByTimeAsync(0);
+      await promise;
+      expect(lastRequest?.kind).toBe(kind);
     });
   });
 });

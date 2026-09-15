@@ -170,18 +170,18 @@ describe('getReferenceSyntax + formatChipInsert (chip-insert must match the exec
     expect(getReferenceSyntax(field({ type: 'textarea' }))).toBe('selector');
   });
 
-  it('infers quickjs from a code field with quickjs:true, without needing an explicit override', () => {
-    expect(getReferenceSyntax(field({ type: 'code', quickjs: true }))).toBe('quickjs');
+  it('infers zipp from a code field with zipp:true, without needing an explicit override', () => {
+    expect(getReferenceSyntax(field({ type: 'code', zipp: true }))).toBe('zipp');
   });
 
-  it('defaults a JSON code field (quickjs falsy) to selector — resolveDeep wants a bare selector string', () => {
-    expect(getReferenceSyntax(field({ type: 'code', quickjs: false, language: 'json' }))).toBe('selector');
+  it('defaults a JSON code field (zipp falsy) to selector — resolveDeep wants a bare selector string', () => {
+    expect(getReferenceSyntax(field({ type: 'code', zipp: false, language: 'json' }))).toBe('selector');
     expect(getReferenceSyntax(field({ type: 'code' }))).toBe('selector');
   });
 
   it('an explicit referenceSyntax always wins over the inferred default', () => {
     expect(getReferenceSyntax(field({ type: 'textarea', referenceSyntax: 'template' }))).toBe('template');
-    expect(getReferenceSyntax(field({ type: 'code', quickjs: true, referenceSyntax: 'selector' }))).toBe('selector');
+    expect(getReferenceSyntax(field({ type: 'code', zipp: true, referenceSyntax: 'selector' }))).toBe('selector');
   });
 
   it('every field explicitly marked template in the real catalog resolves via interpolateTemplate in nodes.ts (cross-checked field list)', () => {
@@ -217,22 +217,22 @@ describe('getReferenceSyntax + formatChipInsert (chip-insert must match the exec
     expect(formatChipInsert('$event', 'template')).toBe('{{ $event }}');
   });
 
-  it('formatChipInsert: quickjs mode strips the leading $ to the plain JS variable the sandbox exposes', () => {
-    expect(formatChipInsert('$nodes.lookup.first', 'quickjs')).toBe('nodes.lookup.first');
-    expect(formatChipInsert('$inputs.name', 'quickjs')).toBe('inputs.name');
-    expect(formatChipInsert('$event', 'quickjs')).toBe('event');
+  it('formatChipInsert: zipp mode strips the leading $ to the plain JS variable the sandbox exposes', () => {
+    expect(formatChipInsert('$nodes.lookup.first', 'zipp')).toBe('nodes.lookup.first');
+    expect(formatChipInsert('$inputs.name', 'zipp')).toBe('inputs.name');
+    expect(formatChipInsert('$event', 'zipp')).toBe('event');
   });
 
-  it('formatChipInsert: quickjs mode bracket-quotes a node id containing a hyphen (real shape: mintNodeId yields `<type>-<n>`)', () => {
+  it('formatChipInsert: zipp mode bracket-quotes a node id containing a hyphen (real shape: mintNodeId yields `<type>-<n>`)', () => {
     // A bare `.` would parse as `nodes.condition - 1` (subtraction), not a property lookup —
     // this is the exact hint FlowEditor's insertHints emits for every non-trigger node.
-    expect(formatChipInsert('$nodes.condition-1', 'quickjs')).toBe('nodes["condition-1"]');
-    expect(formatChipInsert('$nodes.http_request-2', 'quickjs')).toBe('nodes["http_request-2"]');
+    expect(formatChipInsert('$nodes.condition-1', 'zipp')).toBe('nodes["condition-1"]');
+    expect(formatChipInsert('$nodes.http_request-2', 'zipp')).toBe('nodes["http_request-2"]');
   });
 
-  it('formatChipInsert: quickjs mode bracket-quotes any non-identifier path segment, not just the node id', () => {
-    expect(formatChipInsert('$nodes.condition-1.found', 'quickjs')).toBe('nodes["condition-1"].found');
-    expect(formatChipInsert('$inputs.caller phone', 'quickjs')).toBe('inputs["caller phone"]');
+  it('formatChipInsert: zipp mode bracket-quotes any non-identifier path segment, not just the node id', () => {
+    expect(formatChipInsert('$nodes.condition-1.found', 'zipp')).toBe('nodes["condition-1"].found');
+    expect(formatChipInsert('$inputs.caller phone', 'zipp')).toBe('inputs["caller phone"]');
   });
 });
 

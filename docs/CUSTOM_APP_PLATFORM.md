@@ -9,12 +9,13 @@ that proves it end-to-end.
 
 This document consolidates eight previously separate design notes into one
 place. The authoritative master design lives in `docs/CUSTOM_APP_SPEC.md`; the
-sandbox internals are covered in [[formlogic-quickjs-runtime]] and the
+sandbox internals are covered in the README's
+[scripting engine](../formlogic/README.md#scripting-engine) section and the
 desktop/mobile shell in [[NATIVE_RUNTIME_TAURI]].
 
 ## Contents
 
-- [App Logic (QuickJS)](#app-logic-quickjs)
+- [App Logic (ZIPP sandbox)](#app-logic-zipp-sandbox)
 - [FormLogic SDK](#formlogic-sdk)
 - [Connectors](#connectors)
 - [Application Package Format](#application-package-format)
@@ -27,7 +28,7 @@ desktop/mobile shell in [[NATIVE_RUNTIME_TAURI]].
 
 ---
 
-## App Logic (QuickJS)
+## App Logic (ZIPP sandbox)
 
 Status: **implemented** (app-level + form-level). See `docs/CUSTOM_APP_SPEC.md` §31–37 for the original design.
 
@@ -37,10 +38,13 @@ Sandboxed JavaScript that runs *inside the app runtime* to customize behavior �
 from a connector, warn or block a submission, react to lifecycle events — without giving the
 script any real IO. The rule (spec §65):
 
-> **QuickJS scripts describe safe *effects*; the trusted host applies those effects after permission checks.**
+> **Sandboxed scripts describe safe *effects*; the trusted host applies those effects after permission checks.**
 
-Scripts run in the **same** QuickJS WASM sandbox as form expressions (empty globals, no
-`window`/`fetch`/native bridge, memory/stack/time budgets). See [[formlogic-quickjs-runtime]].
+Scripts run in the **same** ZIPP WASM sandbox as form expressions (no host access: `fetch`, the
+DOM and the native bridge are absent, and ZIPP's built-in `window`/`localStorage` shims are
+default-deny because the host grants no capability; an instruction budget, a heap cap, and a
+wall-clock deadline enforced by terminating the worker). See `ui/src/lib/formlogic/zipp-host.ts` and the README's
+[scripting engine](../formlogic/README.md#scripting-engine) section.
 
 ### Authoring
 
@@ -87,16 +91,16 @@ every submission** — client logic is a UX layer only.
 ### Key files
 
 - Types: `ui/src/types/customAppLogic.ts`
-- Sandbox: `ui/src/lib/formlogic/quickjs-host.ts` (`applogic` kind), `engine.ts` (`runAppLogic`)
+- Sandbox: `ui/src/lib/formlogic/zipp-host.ts` (`applogic` kind), `engine.ts` (`runAppLogic`)
 - Host: `ui/src/client-runtime/logic/{appLogicHost,appLogicEffects,appLogicPermissions,useCustomAppLogic}.ts`
 - Integration: `ui/src/components/app-runtime/AppFormView.tsx`
 - Backend: `Helpers/CustomLogicSanitizer.php`, `AppController`/`FormController` (validate), `McpController` (`update_app`)
 
 ### Authoring in-product
 
-Owners edit app logic in **Deploy & share → App logic (QuickJS)** (`components/apps/AppLogicPanel.tsx`):
+Owners edit app logic in **Deploy & share → App logic** (`components/apps/AppLogicPanel.tsx`):
 add/enable/delete scripts, set per-script + app-wide permissions, and **Test run** each script against
-a sample ctx in the real QuickJS host before saving (persists via `PUT /api/apps/{id}` → sanitizer).
+a sample ctx in the real ZIPP sandbox host before saving (persists via `PUT /api/apps/{id}` → sanitizer).
 The whole app can be exported as a signed `.formlogic` from the **Application package** card (see the
 [Application Package Format](#application-package-format) section).
 
@@ -417,10 +421,10 @@ exposes. Commands (permission `connector.device.<command>`):
 `screen.read` · `network.read` (online/effectiveType/downlink) · `battery.read` · `orientation.read` ·
 `motion.read` · `gps.read` · `clipboard.write` · `wakeLock.acquire`/`release` · `vibrate`.
 
-An app "custom connector" is just an **app-logic script** (see the [App Logic (QuickJS)](#app-logic-quickjs)
+An app "custom connector" is just an **app-logic script** (see the [App Logic (ZIPP sandbox)](#app-logic-zipp-sandbox)
 section) that emits `connector.request{connectorId:'device',command}`
 effects and maps `ctx.event.result` into fields via `onConnectorEvent` — reusing the whole existing
-effect/permission chain. The QuickJS sandbox stays empty (scripts never touch `navigator.*`); device
+effect/permission chain. The ZIPP sandbox gets no device access (scripts never touch `navigator.*`); device
 I/O runs in the trusted web layer and is gated by `connector.device.*` permissions. `?flDeviceMock`
 returns deterministic values for testing. **Verify**: open `/device-check` in the runtime.
 
@@ -454,7 +458,7 @@ customLogic.connector = {
     "demoCeremonies": ["simulate-call"],        // demo sequences FormLogic.host.ceremony() can run
     "captions": true                            // provides the volatile live-captions lane
   },
-  "demoDriver": "function run(ctx) { … }"       // QuickJS simulator (≤128KB)
+  "demoDriver": "function run(ctx) { … }"       // ZIPP-sandboxed simulator (≤128KB)
 }
 ```
 
@@ -535,7 +539,8 @@ Routes:
   third party can verify).
 - `GET /api/apps/{id}/export/package` → the full **`.formlogic` ZIP** (`manifest.json` + `pack.json`
   + `quickjs/` + optional `launch.json`/`native.json` + `assets/` + detached `signature.json`), streamed
-  as `application/zip`.
+  as `application/zip`. (`quickjs/` is a historical, signed entry name kept for compatibility; in the
+  app runtime the scripts inside it run in the ZIPP sandbox.)
 - `POST /api/application-packages/import` — a multipart ZIP **or** a JSON `{ package, signature, alg }`
   envelope; the SERVER verifies the signature, stamps trust, and delegates to the atomic `importPack`.
   Every ZIP entry passes a shared path-traversal + zip-bomb guard (`PackFileService::assertSafeArchive`).
@@ -904,7 +909,7 @@ Each attached app keeps its **own**:
 - Members + roles + per-form permissions — `app_users` / `app_roles` / `app_role_permissions` are all per-app.
 - The shared form's in-app presentation — the `app_forms` row: `display_name`, `sort_order`, `is_visible`, `settings`.
 - Home dashboard / custom home screen (`apps.custom_screen`) and saved reports + PDF documents (`apps.reports`).
-- App-level customLogic (`apps.custom_logic`) — see [App Logic (QuickJS)](#app-logic-quickjs).
+- App-level customLogic (`apps.custom_logic`) — see [App Logic (ZIPP sandbox)](#app-logic-zipp-sandbox).
 - Custom domains (`app_domains`), signed client manifest, and PWA manifest — see
   [Custom Domains & App Launch](#custom-domains--app-launch) and [Client Manifest](#client-manifest).
 - Offline idempotency — the sync ledger is keyed `(app, form, idempotency_key)`.
@@ -938,9 +943,9 @@ multi-app column nuance (what travels with a shared form) is in
 
 | surface | where it runs | trust model | typical use |
 |---|---|---|---|
-| App-level customLogic (`apps.custom_logic`) | client — QuickJS WASM sandbox in the app runtime | untrusted script describes *effects*; host applies them after permission checks; backend re-validates every submit | connector prefill, submit gates, toasts/navigation app-wide ([App Logic](#app-logic-quickjs)) |
+| App-level customLogic (`apps.custom_logic`) | client — ZIPP WASM sandbox in the app runtime | untrusted script describes *effects*; host applies them after permission checks; backend re-validates every submit | connector prefill, submit gates, toasts/navigation app-wide ([App Logic](#app-logic-zipp-sandbox)) |
 | Form-level customLogic (`forms.custom_logic`) | same sandbox, only while its form is open | same effect/permission model | per-form logic that travels with the form into every app |
-| onSubmit `logicScript` (`forms.logic_script`) | **server** — sandboxed `qjs` in the submission pipeline | trusted + authoritative — the one surface a client cannot bypass | validation, computed/hidden fields, rejecting bad data (test via `POST /api/forms/{formId}/script/test`) |
+| onSubmit `logicScript` (`forms.logic_script`) | **server** — ZIPP sandbox (the vendored `formlogic-runtime` launcher) in the submission pipeline | trusted + authoritative — the one surface a client cannot bypass | validation, computed/hidden fields, rejecting bad data (test via `POST /api/forms/{formId}/script/test`) |
 | Code screens (`custom_screen`, kind `code`) | opaque-origin **iframe**; data via the postMessage SDK bridge | untrusted — the iframe **is** the boundary | arbitrary / AI-generated UI: app home + form section screens; portable in packs |
 | Dashboard screens (kind `dashboard`) | host React — recharts widget grid | no author code runs — declarative spec only | no-code KPIs/charts for app home + section screens |
 | SDK screens (kind `sdk`) | host React tree (`SdkScreenRuntime`) | trusted — **first-party registry only** ([trust note](#trust-boundary-host-rendered-react-is-first-party-only)) | screens FormLogic ships in the runtime |
@@ -959,7 +964,7 @@ multi-app column nuance (what travels with a shared form) is in
   `onConnectorEvent` — a "custom connector" is just an app-logic script emitting
   `connector.request` effects.
 
-Editors: app logic in **Deploy & share → App logic (QuickJS)** (`AppLogicPanel`); screens in the
+Editors: app logic in **Deploy & share → App logic** (`AppLogicPanel`); screens in the
 Studio (`/forms/:id/screen/edit`, `/apps/:id/home/edit`); the onSubmit script in the builder's
 ScriptEditor (with a server-side Test run).
 

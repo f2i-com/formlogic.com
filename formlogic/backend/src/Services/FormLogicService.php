@@ -8,11 +8,13 @@ namespace FormLogic\Services;
  * Evaluates FormLogic field expressions (conditional visibility, calculated
  * fields, validation rules) server-side.
  *
- * Expressions run inside the QuickJS sandbox via {@see SandboxRunner} — the exact
- * same engine and standard-library prelude the browser uses — so server results
- * match the client by construction. Each method throws on evaluation error; the
- * callers (ResponseService) decide the failure policy (visibility fails open,
- * calculated fields are skipped).
+ * Expressions run inside the ZIPP sandbox via {@see SandboxRunner}, with the same
+ * standard-library prelude the browser uses. The browser runs ZIPP too, but each
+ * side pins its own build (runtime/host/SOURCE.json and
+ * ui/vendor/zipp-wasm/SOURCE.json), so server/client agreement is checked by the
+ * shared expression corpus rather than guaranteed. Each method throws on
+ * evaluation error; the callers (ResponseService) decide the failure policy
+ * (visibility fails open, calculated fields are skipped).
  */
 class FormLogicService
 {
@@ -65,7 +67,7 @@ class FormLogicService
     }
 
     /**
-     * Evaluate many expressions against ONE shared context in a single qjs
+     * Evaluate many expressions against ONE shared context in a single runtime
      * round-trip (instead of one process spawn per expression). Returns RAW
      * per-id results so the caller can apply its own failure policy (e.g.
      * fail-open visibility, skip calculated fields).

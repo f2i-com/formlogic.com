@@ -522,7 +522,7 @@ export function BindingEditor({
             aria-label="Trigger condition expression"
             className={MONO_INPUT_CLS}
           />
-          <ChipRow mode="quickjs" hints={eventHints} onInsert={(formatted) => insertOrCopy(conditionInputRef.current, formatted)} />
+          <ChipRow mode="zipp" hints={eventHints} onInsert={(formatted) => insertOrCopy(conditionInputRef.current, formatted)} />
         </div>
         <div>
           <label className={LABEL_CLS}>Timeout (ms)</label>

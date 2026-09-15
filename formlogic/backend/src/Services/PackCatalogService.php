@@ -9,7 +9,10 @@ use PDO;
 
 class PackCatalogService
 {
-    /** Marketplace item types (spec §30). Only 'application_package' has a runtime install target today. */
+    /**
+     * Marketplace item types (spec §30). Only 'application_package' has a runtime install target today.
+     * 'quickjs_library' mirrors the pack_catalog.item_type DB enum; the name is historical (scripts now run on ZIPP).
+     */
     public const ITEM_TYPES = ['application_package', 'connector', 'theme', 'widget', 'quickjs_library', 'sdk_component', 'template'];
     public const TRUST_LEVELS = ['official', 'verified', 'community', 'private'];
 

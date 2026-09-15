@@ -52,7 +52,8 @@ use PHPUnit\Framework\TestCase;
  * repo-wide). Override with FORMLOGIC_PARITY_OUT; corpus with
  * FORMLOGIC_PARITY_CORPUS. Both mirror the browser leg's env names.
  *
- * FORMLOGIC_QJS_BIN repoints the child binary, but it is NOT a general A/B switch,
+ * FORMLOGIC_RUNTIME_BIN (or its legacy alias FORMLOGIC_QJS_BIN) repoints the child
+ * binary, but it is NOT a general A/B switch,
  * and two measured caveats decide whether a run means anything:
  *
  *  1. The override applies only when the path EXISTS (`is_file` in
@@ -66,8 +67,8 @@ use PHPUnit\Framework\TestCase;
  *
  * So always confirm `engineDetail.binary` and `engineDetail.binarySha256` in the
  * artifact name what you intended. Cross-ENGINE differencing is done by comparing
- * this leg's artifact with the browser and desktop legs' artifacts, not by swapping
- * binaries underneath one leg.
+ * this leg's artifact with the browser leg's artifact, not by swapping binaries
+ * underneath one leg.
  */
 class FormLogicExpressionParityTest extends TestCase
 {
@@ -161,17 +162,19 @@ class FormLogicExpressionParityTest extends TestCase
                 'binary' => $binary,
                 'binarySha256' => is_string($binary) && is_file($binary) ? hash_file('sha256', $binary) : null,
                 'prelude' => 'backend/resources/formlogic-prelude.js',
-                'harness' => 'backend/resources/formlogic-harness.js',
+                // No JS harness file: the guest builds the eval/script wrapper itself.
+                'harness' => 'runtime/guest/src/main.rs',
                 'budgetMs' => self::CPU_BUDGET_MS,
                 'php' => PHP_VERSION,
                 'os' => PHP_OS_FAMILY,
                 // The biggest known divergence class is epoch->local-time conversion, so
                 // the comparator needs the zone the ENGINE used. That is NOT PHP's: the
-                // qjs child reads the OS timezone while PHP uses its own date.timezone
-                // (measured on this box: engine -600 / AEST against a PHP default of
-                // UTC). Reporting PHP's alone would make every date diff look
-                // inexplicable, so both are recorded, and the engine's is taken from its
-                // own observed getTimezoneOffset() where the corpus probes it.
+                // zipp guest reads dates as UTC whatever the OS zone (measured on an
+                // AEST box: engine 0), while PHP uses its own date.timezone; the retired
+                // QuickJS child read the OS zone instead (measured then: engine -600).
+                // Reporting PHP's alone would make every date diff look inexplicable, so
+                // both are recorded, and the engine's is taken from its own observed
+                // getTimezoneOffset() where the corpus probes it.
                 'phpTimezone' => date_default_timezone_get(),
                 'engineTimezoneOffsetMinutes' => self::observedTimezoneOffset($records),
             ],
@@ -211,8 +214,9 @@ class FormLogicExpressionParityTest extends TestCase
      *
      * Read reflectively (read-only, metadata only) because the runner exposes no
      * getter, and because guessing is how a parity artifact ends up naming an engine
-     * that never executed: FORMLOGIC_QJS_BIN is silently ignored when the path does
-     * not exist, and detectBinary's vendored default has itself been repointed at a
+     * that never executed: FORMLOGIC_RUNTIME_BIN / FORMLOGIC_QJS_BIN are silently
+     * ignored when the path does not exist, and detectBinary's vendored default has
+     * itself been repointed at a
      * different engine during this migration.
      */
     private static function resolvedBinary(): ?string
@@ -345,7 +349,7 @@ class FormLogicExpressionParityTest extends TestCase
      * identically on both legs.
      *
      * NaN/Infinity cannot arrive here from json_decode (JSON has no such literals —
-     * the qjs harness's JSON.stringify already collapsed them to null, which is
+     * the guest's __sanitize already collapsed them to null, which is
      * itself a genuine backend/browser divergence the comparator should surface).
      * They are handled anyway so a future non-JSON transport cannot silently encode
      * them as something else.
@@ -379,7 +383,7 @@ class FormLogicExpressionParityTest extends TestCase
      *
      * Batched by CONTEXT, not one process per case: SandboxRunner::evaluateBatch
      * sends the context ONCE at the payload top level and applies it to every job,
-     * so all cases sharing a context ride a single qjs spawn (137 cases across 17
+     * so all cases sharing a context ride a single runtime spawn (137 cases across 17
      * distinct contexts here). That is also the shape production uses —
      * ResponseService evaluates a whole form's expressions in one round-trip — so
      * this exercises the real code path rather than a one-expression-per-process
@@ -455,9 +459,9 @@ class FormLogicExpressionParityTest extends TestCase
         if (($result['ok'] ?? false) === true) {
             return [
                 'outcome' => 'ok',
-                // The harness omits `value` entirely for an `undefined` result
-                // (JSON.stringify drops it), which is NOT the same observation as a
-                // returned null. Record which one happened.
+                // A runtime that omits `value` for an `undefined` result (the retired
+                // qjs harness did; the zipp guest's __sanitize sends null) makes a
+                // different observation from a returned null. Record which one happened.
                 'value' => $result['value'] ?? null,
                 'valueAbsent' => !array_key_exists('value', $result),
             ];
@@ -697,9 +701,9 @@ class FormLogicExpressionParityTest extends TestCase
 
     /**
      * `applogic` is the app-logic hook shape (`function run(ctx) { ... }`). The
-     * browser runs it through quickjs-host's 'applogic' kind and the desktop through
-     * its own applogic mode - but THIS backend has no app-logic execution path at
-     * all. `apps.custom_logic` is only stored and sanitized server-side
+     * browser runs it through zipp-host's 'applogic' kind (runs claimed by OAIY
+     * Desktop go through its own CLI, which has no leg in this corpus) - but THIS
+     * backend has no app-logic execution path at all. `apps.custom_logic` is only stored and sanitized server-side
      * (CustomLogicSanitizer); nothing under src/ executes it.
      *
      * So these cases are recorded as `unsupported` rather than forced through
@@ -727,7 +731,7 @@ class FormLogicExpressionParityTest extends TestCase
                 'error' => [
                     'name' => 'LaneUnsupported',
                     'message' => 'the PHP backend has no app-logic execution path; this lane '
-                        . 'exists only in the browser and desktop engines',
+                        . 'exists only in the browser engine\'s corpus leg',
                 ],
             ];
         }

@@ -26,7 +26,8 @@ use PDO;
  *
  * NOT cloud-executable in v1 (validateCloudEligible() names them at save time and again at
  * run time before any credit is touched): JS logic blocks (logic_block) and JS condition
- * nodes (condition) — there is no PHP-side JS sandbox — and every other node type
+ * nodes (condition) — this runner does not evaluate flow JavaScript (the backend's ZIPP
+ * sandbox, SandboxRunner, is not used for flows) — and every other node type
  * (storage_get/set, aokie_speak, browser_action, image_gen, stt/tts, desktop_services).
  * Loop/join: the graph executor's converging-branch semantics (several activated
  * predecessors → the upstream map) provide the join behavior; neither existing runner has

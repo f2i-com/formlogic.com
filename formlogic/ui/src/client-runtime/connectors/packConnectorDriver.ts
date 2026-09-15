@@ -4,10 +4,10 @@
 // A pack ships its connector as DATA on the app's customLogic bundle:
 //   customLogic.connector = { manifest, demoDriver? }
 // The manifest declares identity + command surface; the demo driver is a
-// QuickJS script (`function run(ctx)`, the exact app-logic sandbox: zero IO,
-// memory/stack/budget-limited) that implements the connector's SIMULATOR as a
-// pure state machine: the host passes `ctx.state` in and persists the returned
-// `state` — the script never holds live references, timers or sockets.
+// sandboxed script (`function run(ctx)`, the exact app-logic ZIPP sandbox:
+// zero IO, step-budget/heap/wall-clock limited) that implements the connector's
+// SIMULATOR as a pure state machine: the host passes `ctx.state` in and persists
+// the returned `state` — the script never holds live references, timers or sockets.
 //
 // Trust model (the host is the broker; the driver only describes):
 //  - TRANSPORT IS HOST-OWNED. Real commands route through the generic

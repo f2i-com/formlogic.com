@@ -101,7 +101,7 @@ export interface App {
   customScreen?: CustomScreen;
   /** Optional saved reports + composed PDF documents shown in the app's Reports section. */
   reports?: AppReportItem[];
-  /** Optional sandboxed QuickJS app-logic (onBeforeSubmit / onConnectorEvent / …). Owner-authored;
+  /** Optional sandboxed app-logic (onBeforeSubmit / onConnectorEvent / …). Owner-authored;
    *  runs client-side to describe safe effects — the backend stays authoritative on submit. */
   customLogic?: CustomAppLogicBundle;
   /** REAL attached-form count from the apps list endpoint (app_forms). Use this for list displays —

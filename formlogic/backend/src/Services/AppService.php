@@ -502,7 +502,7 @@ class AppService
             $createData['customScreen'] = $source['customScreen'];
         }
 
-        // App-level QuickJS logic: re-sanitize on copy (defense in depth) so a stale
+        // App-level sandboxed logic: re-sanitize on copy (defense in depth) so a stale
         // or hand-edited stored bundle can't propagate unknown hooks or junk shape.
         if (!empty($options['copyLogic']) && !empty($source['customLogic']) && is_array($source['customLogic'])) {
             $sanitized = CustomLogicSanitizer::sanitize($source['customLogic']);

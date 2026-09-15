@@ -3,7 +3,7 @@
 // Bridges events to the browser executor: desktop-event envelopes from the desktopEvents
 // hub AND form events (`form.submitted`, fired from the app runtime's onAfterSubmit path)
 // fan out to every enabled binding matching event_name. For each match the dispatcher
-//   1. evaluates the binding condition in the QuickJS sandbox (never eval; an erroring
+//   1. evaluates the binding condition in the ZIPP sandbox (never eval; an erroring
 //      condition fails SAFE — the binding is skipped),
 //   2. reserves the run log FIRST (idempotencyKey = flow:<binding>:<event key>, the UNIQUE
 //      column being the cross-tab dedupe gate — an idempotent replay skips execution),
@@ -13,7 +13,7 @@
 //   5. applies outputActions in order (formlogic.* writes through the viewer's session),
 //   6. PATCHes the run log terminal (result or flow-run-result error envelope).
 //
-// All browser bindings (api / store / QuickJS / connector client / toasts) are injected
+// All browser bindings (api / store / ZIPP sandbox / connector client / toasts) are injected
 // through a deps object so the whole pipeline is unit-testable without a DOM.
 import { api, newIdempotencyKey } from '../../lib/api';
 import { demoApplyFlowOverlay, demoApplyFormBindingOverlay } from '../../lib/demoLocal';
@@ -159,7 +159,7 @@ export interface FlowDispatcherDeps {
     runId: string,
     payload: { status: 'done' | 'error' | 'timeout' | 'cancelled'; result?: Record<string, unknown> | null; error?: FlowRunError | null; instanceId?: string }
   ): Promise<void>;
-  /** Sandboxed condition evaluation (QuickJS — never eval). */
+  /** Sandboxed condition evaluation (ZIPP — never eval). */
   evaluateCondition(expr: string, ctx: Record<string, unknown>): Promise<boolean>;
   executorDeps: FlowExecutorDeps;
   createResponse(formId: string, answers: Record<string, unknown>): Promise<unknown>;
@@ -272,7 +272,8 @@ export function buildDefaultExecutorDeps(): FlowExecutorDeps {
     },
     // NOTE: these forward the node's clamped `timeoutMs` (nodes.ts) as `budgetMs` — the
     // BINDING-level `defaultEvaluateCondition` above is a separate, 2-arg-only evaluator
-    // and is NOT reused here for exactly that reason.
+    // and is NOT reused here for exactly that reason. logic_block also accepts a function
+    // body with a top-level `return`; conditions stay expressions, as on the desktop runner.
     evaluateBoolean: async (expr, ctx, budgetMs) => {
       const { evaluateCondition } = await import('../../lib/formlogic');
       return evaluateCondition(expr, ctx, budgetMs);
@@ -338,7 +339,7 @@ export function buildDefaultExecutorDeps(): FlowExecutorDeps {
 /**
  * Executor deps for WORKSPACE-scope runs (the /flows page claim loop): no app runtime
  * store exists there, so formlogic.* nodes hit the owner APIs directly and KV uses the
- * workspace store. Same QuickJS sandbox, same connector client, same desktop AI routing.
+ * workspace store. Same ZIPP sandbox, same connector client, same desktop AI routing.
  */
 export function buildWorkspaceExecutorDeps(): FlowExecutorDeps {
   return {

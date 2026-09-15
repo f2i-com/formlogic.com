@@ -160,7 +160,7 @@ export interface SdkConnector {
  * A connector handle (native bridge when available, else the browser mock). `request` is gated on the
  * app's declared connector grants (bundle- + script-level `connector.<id>.<command>` permissions, the
  * same set published in the signed client manifest): a command the app hasn't been granted is rejected
- * before it reaches the transport, mirroring the QuickJS app-logic host. Advisory only — the native
+ * before it reaches the transport, mirroring the app-logic host. Advisory only — the native
  * bridge and server stay the real trust boundary.
  */
 export function useConnector(connectorId: string, options?: { formId?: string }): SdkConnector {

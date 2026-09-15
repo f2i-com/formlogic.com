@@ -1,7 +1,7 @@
 // FormLogic Flows workspace — Test Run drawer.
 //
 // Executes the selected flow's graph through the REAL v0 browser executor
-// (client-runtime/flows/flowExecutor) with the owner-scoped workspace deps (QuickJS sandbox +
+// (client-runtime/flows/flowExecutor) with the owner-scoped workspace deps (ZIPP sandbox +
 // the FormLogic API + connector client). The author supplies a JSON `inputs` object. The run reads
 // like a debug log: a live per-node timeline (each node's status, duration and a compact output /
 // error) built from the executor's onNodeStatus observer, plus the final status + result. App-scoped
@@ -156,9 +156,9 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
         // flows, 3 min for flows with AI/service nodes — a browser LLM call can be slow).
         capabilities: flow.nodeCapabilities,
         flowSlug: flow.slug,
-        // flow_call ancestry seed. The workspace deps carry no child invoker yet, so
-        // flow_call in a Test Run refuses typed — the seed is still correct for when
-        // the workspace invoker lands.
+        // flow_call ancestry seed. The workspace deps wire the workspace child-flow
+        // invoker (flowDispatcher.ts), so flow_call in a Test Run runs its child; this
+        // seed is what the invoker's recursion and depth guards check.
         callStack: [flow.id],
         onNodeStatus: (id, status, info) => {
           setRunLog((l) => reduceRunLog(l, id, status, info));

@@ -1,7 +1,7 @@
 // FormLogic Flows editor — properties panel for the selected node.
 //
 // Edits the selected node's `data` fields per its catalog spec. Field widgets: text / number /
-// select / boolean, a plain textarea (templates/prompts), a "QuickJS sandboxed" monospace editor
+// select / boolean, a plain textarea (templates/prompts), a "ZIPP sandboxed" monospace editor
 // for code fields, a JSON/selector monospace editor for structured fields, and the Flows-specific
 // FORM PICKER, FILTERS editor and CONNECTOR pickers. Every panel shows the node's one-line
 // description and an "Output:" hint (from the catalog) so the shape is visible while authoring.
@@ -90,9 +90,9 @@ const FILTER_OP_OPTIONS: { value: FlowFilterOp; label: string }[] = [
   { value: 'phone_eq', label: 'phone number matches' },
 ];
 
-/** Is this a structured (JSON/selector) code field vs. a QuickJS code field? */
+/** Is this a structured (JSON/selector) code field vs. a sandboxed JS code field? */
 function isJsonField(p: NodePropertySpec): boolean {
-  return p.type === 'code' && !p.quickjs;
+  return p.type === 'code' && !p.zipp;
 }
 
 /** Turn a stored value into the string a code/text field shows. */
@@ -1035,7 +1035,7 @@ function AnswersFieldAdder({
 
 /**
  * A real code editor (Monaco) for `code`-type fields (condition/logic_block expressions, JSON /
- * selector bodies, the output value). Keeps the "QuickJS sandboxed" / "JSON / selectors"
+ * selector bodies, the output value). Keeps the "ZIPP sandboxed" / "JSON / selectors"
  * affordances, registers itself as the active selector-insert target on focus, and falls back to a
  * monospace textarea if Monaco can't mount (offline chunk, worker failure).
  */
@@ -1051,11 +1051,11 @@ function CodeField({
   setInserter: (fn: ((text: string) => void) | null) => void;
 }) {
   const json = isJsonField(spec);
-  const language = spec.language ?? (spec.quickjs ? 'javascript' : json ? 'json' : 'javascript');
+  const language = spec.language ?? (spec.zipp ? 'javascript' : json ? 'json' : 'javascript');
   const text = toInput(value);
   const handle = (v: string) => onChange(json ? parseJsonField(v) : v);
   // What syntax a chip-insert must produce here (bare selector / plain-JS / {{ }} template) —
-  // 'quickjs' for condition/logic_block's sandboxed expr, 'selector' for JSON/selector bodies
+  // 'zipp' for condition/logic_block's sandboxed expr, 'selector' for JSON/selector bodies
   // (resolveDeep), matching nodes.ts exactly (see getReferenceSyntax).
   const mode = getReferenceSyntax(spec);
 
@@ -1088,9 +1088,9 @@ function CodeField({
     <label className="block">
       <span className={LABEL_CLS}>
         {spec.label}
-        {spec.quickjs && (
+        {spec.zipp && (
           <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:bg-sky-500/15 dark:text-sky-300">
-            QuickJS sandboxed
+            ZIPP sandboxed
           </span>
         )}
         {json && (

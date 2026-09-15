@@ -6,32 +6,36 @@ declare(strict_types=1);
  * Generate docs/contracts/formlogic-expression-corpus.json — the cross-engine
  * parity corpus.
  *
- * FormLogic evaluates untrusted author-written JavaScript in THREE separate
- * sandboxes: the PHP backend (a spawned qjs child), the browser
- * (quickjs-emscripten), and the desktop flow runner (Rust, an embedded qjs). The
- * product's central correctness claim is that the same expression means the same
- * thing in all three. Nothing tested that claim, so it was not true: the desktop
- * loads no standard library at all, and `eval_bool` turns the resulting
- * "validators is not defined" into `false` — a flow condition silently taking the
- * wrong branch.
+ * FormLogic's own runtimes evaluate untrusted author-written JavaScript in two
+ * separate sandboxes, both running the ZIPP engine: the PHP backend (a
+ * wasm32-wasip1 guest under the spawned formlogic-runtime launcher, driven by
+ * SandboxRunner) and the browser (the vendored zipp wasm module in a Worker,
+ * zipp-host.ts). Runs claimed by OAIY Desktop use that product's own evaluators
+ * and are not covered by this corpus. The product's central correctness claim is
+ * that the same expression means the same thing wherever it runs. When this
+ * corpus was written nothing tested that claim, and it was not true: FormLogic's
+ * since-removed desktop Rust flow runner loaded no standard library at all, and
+ * `eval_bool` turned the resulting "validators is not defined" into `false` — a
+ * flow condition silently taking the wrong branch.
  *
  * This corpus is the missing test. Each engine gets a harness that runs it and
- * asserts the same expectations, so a divergence is a failing test rather than a
- * support ticket. It is also the gate for changing engines at all: a candidate
- * engine must reproduce this file before it can replace anything.
+ * asserts the same expectations (tests/Unit/FormLogicExpressionParityTest.php and
+ * ui/src/lib/formlogic/corpusParity.test.ts), so a divergence is a failing test
+ * rather than a support ticket. It is also the gate for changing engines at all:
+ * a candidate engine must reproduce this file before it can replace anything.
  *
- * Expectations are captured from the CANONICAL engine — the backend qjs runner
- * with the canonical prelude, which the browser shares byte-for-byte. Cases whose
- * value is legitimately engine-defined (error text, locale output) are recorded
- * as `agree` instead of pinned, so the harnesses compare engines against each
- * other rather than against an arbitrary winner.
+ * Expectations are captured from the CANONICAL engine — the backend sandbox
+ * (SandboxRunner) with the canonical prelude, which the browser shares
+ * byte-for-byte. Cases whose value is legitimately engine-defined (error text,
+ * locale output) are recorded as `agree` instead of pinned, so the harnesses
+ * compare engines against each other rather than against an arbitrary winner.
  *
  * Usage:  php scripts/build-expression-corpus.php [--out <path>]
  */
 
 require __DIR__ . '/../vendor/autoload.php';
 
-use FormLogic\Services\QuickJsRunner;
+use FormLogic\Services\SandboxRunner;
 
 $root = dirname(__DIR__);
 $repoRoot = dirname(dirname($root));
@@ -250,10 +254,10 @@ foreach ($languageProbes as $n => $expr) {
 }
 
 // ── 4. The known engine-divergence classes ───────────────────────────────────
-// These are recorded UNPINNED on purpose. QuickJS reads the host's system
-// timezone, so the same expression already answers differently on a server, a
-// laptop and a phone; zipp is UTC everywhere. Pinning either answer would bless
-// an accident. The harnesses compare engines and report the difference, which is
+// These are recorded UNPINNED on purpose. The retired QuickJS engine read the
+// host's system timezone, so the same expression answered differently on a
+// server, a laptop and a phone; zipp is UTC everywhere. Pinning either answer
+// would bless an accident. The harnesses compare engines and report the difference, which is
 // exactly the signal a migration needs.
 $divergenceProbes = [
     ['tz-offset', 'new Date(0).getTimezoneOffset()'],
@@ -305,9 +309,9 @@ addCase($cases, $seen, 'pollution-returned', 'expression', 'probe:security',
     '({ "__proto__": { "polluted": true }, ok: 1 })', []);
 
 // ── 6. Run everything through the canonical engine to capture expectations ────
-$runner = new QuickJsRunner();
+$runner = new SandboxRunner();
 if (!$runner->isAvailable()) {
-    fwrite(STDERR, "The QuickJS runtime is unavailable — cannot capture canonical expectations.\n");
+    fwrite(STDERR, "The ZIPP sandbox runtime (backend/bin/runtime launcher + resources/formlogic-prelude.js) is unavailable — cannot capture canonical expectations.\n");
     exit(2);
 }
 

@@ -28,7 +28,7 @@
         "type": { "const": "expression" },
         "expr": {
           "type": "string",
-          "description": "Sandboxed boolean expression over {event}. Evaluated in the QuickJS sandbox, never eval().",
+          "description": "Sandboxed boolean expression over {event}. The browser evaluates it in the ZIPP sandbox, never eval().",
           "maxLength": 1000
         }
       },

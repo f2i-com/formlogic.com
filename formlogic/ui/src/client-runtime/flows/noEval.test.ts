@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-// Guard (docs/FORMLOGIC_FLOWS.md §4): ALL user-authored flow code runs in the QuickJS
+// Guard (docs/FORMLOGIC_FLOWS.md §4): ALL user-authored flow code runs in the ZIPP
 // sandbox — condition/logic_block go through the lib/formlogic engine, and templates /
 // selectors are pure string/path ops. This static scan asserts the flows runtime NEVER
 // reaches for `eval` or `new Function`, so no author-supplied code can escape the sandbox

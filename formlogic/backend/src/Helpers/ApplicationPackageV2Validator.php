@@ -53,6 +53,7 @@ class ApplicationPackageV2Validator
     private const ARTIFACT_KINDS = ['image', 'audio', 'video', 'file'];
     private const SIDE_EFFECTS = ['none', 'read', 'external-write', 'destructive'];
     private const IDEMPOTENCY = ['none', 'caller-key'];
+    // 'quickjs' is a reserved contract name (mirrored in packageV2.ts); FormLogic's script sandbox is now ZIPP.
     private const LATER_HANDLER_KINDS = ['connector-action', 'subflow', 'quickjs', 'hosted-action'];
     private const REF_ALLOWLIST = ['formlogic://schemas/artifact-ref.json'];
     private const SCHEMA_TYPES = ['string', 'number', 'integer', 'boolean', 'object', 'array', 'null'];

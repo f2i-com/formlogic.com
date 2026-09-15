@@ -1,7 +1,7 @@
 /**
  * Rough bundle-budget report for CI. Measures the INITIAL JS payload (the entry chunk + its
  * modulepreload'd chunks referenced from dist/index.html) — NOT the whole dist, since the heavy
- * Monaco editor / QuickJS worker / emscripten chunks are lazy-loaded on demand and don't hit the
+ * Monaco editor / ZIPP worker + wasm chunks are lazy-loaded on demand and don't hit the
  * first paint. Prints the breakdown; fails only if the initial payload blows past a generous cap.
  */
 import { readFileSync, statSync, readdirSync } from 'node:fs';
