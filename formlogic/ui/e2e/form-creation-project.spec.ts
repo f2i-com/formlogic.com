@@ -63,11 +63,11 @@ for (const width of [1440, 390]) test(`Unnamed form, rename and editable app dow
   expect(strFromU8(files[manifest.files.ui[1]])).toContain('Customer enquiries');
   await page.goto('/forms');
   await page.getByRole('button', { name: 'Card view', exact: true }).click();
-  // The actions menu closes itself on any scroll (FormsList closes it on the
-  // capture-phase scroll event to avoid stale positioning) and focuses its first
-  // item on open. On a phone-width viewport a card near the fold therefore sees
-  // the focus scroll the page and the menu vanish under the click. Bring the
-  // trigger fully into view first, then wait for the open menu before choosing.
+  // The actions menu fits itself to the viewport above or below its trigger and
+  // focuses its first item without scrolling, so opening it never scrolls the page.
+  // It still closes on a page scroll (its fixed position would go stale), though not
+  // on its own overflow scroll. The explicit scroll is redundant with click()'s own
+  // scroll into view and kept as harmless; wait for the open menu before choosing.
   const actions = page.getByRole('button', { name: 'Actions for Customer enquiries', exact: true });
   await actions.scrollIntoViewIfNeeded();
   await actions.click();

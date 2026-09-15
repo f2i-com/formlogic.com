@@ -50,15 +50,19 @@ async function login(context: BrowserContext) {
   return { 'X-CSRF-Token': csrf };
 }
 
+type CreatedApp = { id: string; slug: string; name: string };
+
 async function createApp(context: BrowserContext, headers: Record<string, string>, name: string) {
   const r = await context.request.post('/api/apps', { headers, data: { name } });
   expect(r.ok(), await r.text()).toBe(true);
   const body = await r.json();
-  return (body.app ?? body) as { id: string; slug: string; name: string };
+  return (body.app ?? body) as CreatedApp;
 }
 
+/** Cleanup never fails the test, but a delete that did not happen is logged so a leftover app in the seeded account shows in the run. */
 async function deleteApp(context: BrowserContext, headers: Record<string, string>, id: string) {
-  await context.request.delete(`/api/apps/${id}`, { headers }).catch(() => {});
+  const r = await context.request.delete(`/api/apps/${id}`, { headers }).catch((e: Error) => e);
+  if (r instanceof Error || !r.ok()) console.log('CLEANUP FAILED: app', id, 'was not deleted:', r instanceof Error ? r.message : r.status());
 }
 
 async function nativeProject(context: BrowserContext, id: string) {
@@ -98,9 +102,13 @@ test.describe('embedded editors: round trip and live conflict', () => {
     test.setTimeout(420_000);
     page.on('pageerror', e => console.log('PAGE ERROR', e.message));
     const headers = await login(context);
-    const app = await createApp(context, headers, 'Round trip source');
-    const twin = await createApp(context, headers, 'Round trip reimport');
+    // Every app is created inside the try, and whatever was created is deleted: a failed
+    // second create (a rate or plan limit) must not leave the first in the seeded account.
+    let app: CreatedApp | undefined;
+    let twin: CreatedApp | undefined;
     try {
+      app = await createApp(context, headers, 'Round trip source');
+      twin = await createApp(context, headers, 'Round trip reimport');
       await page.setViewportSize({ width: 1440, height: 1000 });
       const dialog = await openHosting(page, app.id);
 
@@ -123,7 +131,7 @@ test.describe('embedded editors: round trip and live conflict', () => {
       // 3. AI Studio opens on that draft: its export of the project carries the Builder edit.
       await page.route('**/api/ai/preferences', route => route.fulfill({ json: { data: { aiSource: 'site', chatToolMode: 'off' } } }));
       await page.route('**/api/ai/chat', async route => {
-        const current = (await nativeProject(context, app.id))!.files['ui/main.ui'].replace('Save example item', 'Save round-trip item');
+        const current = (await nativeProject(context, app!.id))!.files['ui/main.ui'].replace('Save example item', 'Save round-trip item');
         const source = current.replace('My app', 'Studio edited app');
         await route.fulfill({ json: { data: { content: `Updated the heading.\n<softn-file path="ui/main.ui">${source}</softn-file>` } } });
       });
@@ -177,19 +185,25 @@ test.describe('embedded editors: round trip and live conflict', () => {
       expect(reimported.version).toBe(1);
       expect(reimported.files).toEqual(published.files);
     } finally {
-      await deleteApp(context, headers, app.id);
-      await deleteApp(context, headers, twin.id);
+      if (app) await deleteApp(context, headers, app.id);
+      if (twin) await deleteApp(context, headers, twin.id);
     }
   });
 
   test('two live editors on one installed version: the second publish is an explicit conflict that keeps its draft', async ({ browser }) => {
     test.setTimeout(420_000);
-    const a = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-    const b = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-    const headersA = await login(a);
-    await login(b); // context B signs in; its own headers are not needed, the pages carry the session
-    const app = await createApp(a, headersA, 'Two editors');
+    // Contexts, sign-ins and the app all happen inside the try: a failed sign-in or create
+    // still closes both contexts and deletes the app if it exists.
+    let a: BrowserContext | undefined;
+    let b: BrowserContext | undefined;
+    let headersA: Record<string, string> | undefined;
+    let app: CreatedApp | undefined;
     try {
+      a = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+      b = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+      headersA = await login(a);
+      await login(b); // context B signs in; its own headers are not needed, the pages carry the session
+      app = await createApp(a, headersA, 'Two editors');
       const install = await a.request.put(`/api/apps/${app.id}/native`, { headers: headersA, data: { project: { version: 0, files: STARTER.files, assets: {}, access: 'application' }, expectedVersion: 0 } });
       expect(install.ok(), await install.text()).toBe(true);
       const pageA = await a.newPage();
@@ -215,9 +229,8 @@ test.describe('embedded editors: round trip and live conflict', () => {
       await dialogB.getByRole("tab", { name: /screens/i }).click();
       await expect(dialogB.getByRole('region', { name: 'Interface source editor' })).toContainText('Saved by editor B');
     } finally {
-      await deleteApp(a, headersA, app.id);
-      await a.close();
-      await b.close();
+      if (a && headersA && app) await deleteApp(a, headersA, app.id);
+      await Promise.allSettled([a?.close(), b?.close()]);
     }
   });
 });

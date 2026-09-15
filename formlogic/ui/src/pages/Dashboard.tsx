@@ -49,6 +49,7 @@ import { api } from '../lib/api';
 import { loadUiCache, saveUiCache } from '../lib/uiCache';
 import { loadAppGroupsCache, fetchAppGroups, type AppGroup } from '../lib/appGroups';
 import { appClickLabel, appClickPath } from '../lib/appNavigation';
+import { actionsMenuPosition, isMenuScroll } from '../lib/actionsMenu';
 import { isDemoLocalId } from '../lib/demoLocal';
 import { cn, formatRelativeTime, sanitizeFilename, parseServerDate } from '../lib/utils';
 import { EmbedModal, PackImportModal, useFormPreview } from '../components/builder';
@@ -344,16 +345,19 @@ function FormActionsDropdown({
   const [menuRect, setMenuRect] = useState<DOMRect | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
-  // Close on scroll/resize to prevent stale positioning
+  // Close on scroll/resize to prevent stale positioning — but not on the menu scrolling itself
+  // (isMenuScroll): the phone-width variant outgrows a short viewport, and scrolling it to reach
+  // Export or Delete closed it, as it did the forms list's menu.
   useEffect(() => {
     if (!isOpen) return;
     const close = () => setIsOpen(false);
+    const onScroll = (e: Event) => { if (!isMenuScroll(e)) close(); };
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setIsOpen(false); buttonRef.current?.focus(); } };
-    window.addEventListener('scroll', close, true);
+    window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', close);
     document.addEventListener('keydown', onKey);
     return () => {
-      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', close);
       document.removeEventListener('keydown', onKey);
     };
@@ -441,13 +445,10 @@ function FormActionsDropdown({
           <div
             role="menu"
             aria-label={`Actions for ${formTitle}`}
-            className="absolute w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/[0.06] overflow-hidden max-h-[80vh] overflow-y-auto"
-            style={{
-              ...(menuRect.bottom + 320 > window.innerHeight
-                ? { bottom: window.innerHeight - menuRect.top + 4 }
-                : { top: menuRect.bottom + 4 }),
-              left: Math.max(8, menuRect.right - 192),
-            }}
+            // Fitted to the room on the chosen side (actionsMenuPosition): flipping above a
+            // trigger near the top of a short viewport used to run the menu off its top edge.
+            className="absolute w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/[0.06] overflow-hidden overflow-y-auto overscroll-contain"
+            style={actionsMenuPosition(menuRect)}
           >
             {/* Mobile-only quick actions */}
             <div className="sm:hidden">

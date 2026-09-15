@@ -56,6 +56,7 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { api } from '../lib/api';
 import { loadUiCache, saveUiCache } from '../lib/uiCache';
 import { loadAppGroupsCache, fetchAppGroups, type AppGroup } from '../lib/appGroups';
+import { actionsMenuPosition, isMenuScroll } from '../lib/actionsMenu';
 import type { PackInstallation } from '../lib/api';
 import type { Form } from '../types/form';
 // E2EE private forms: lock badge next to the form name (list payload `isPrivate`) —
@@ -221,9 +222,10 @@ const FormCard = memo(function FormCard({
   useEffect(() => {
     if (isMenuOpen) {
       wasMenuOpen.current = true;
-      // Without preventScroll, focusing an item of a menu that opened partly below the
-      // fold scrolls it into view, and the scroll listener below closes the menu it just
-      // opened (seen at phone width in the forms-list e2e).
+      // Focus never scrolls the page, which closes the menu (the scroll listener in FormsList):
+      // at phone width, focus scrolling a menu opened below the fold closed it under the click
+      // (the forms-list e2e). actionsMenuPosition fits the menu to the viewport, so its first
+      // item is already visible.
       menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus({ preventScroll: true });
     } else if (wasMenuOpen.current) {
       wasMenuOpen.current = false;
@@ -314,17 +316,16 @@ const FormCard = memo(function FormCard({
                       : (e.key === 'ArrowDown'
                         ? (current + 1) % items.length
                         : (current - 1 + items.length) % items.length);
-                    items[next]?.focus();
+                    // As on open, focus never scrolls the page; the item is revealed by scrolling
+                    // the menu's own box, which the scroll listener ignores.
+                    const item = items[next];
+                    const menu = e.currentTarget;
+                    item.focus({ preventScroll: true });
+                    if (item.offsetTop < menu.scrollTop) menu.scrollTop = item.offsetTop;
+                    else if (item.offsetTop + item.offsetHeight > menu.scrollTop + menu.clientHeight) menu.scrollTop = item.offsetTop + item.offsetHeight - menu.clientHeight;
                   }}
-                  className="absolute w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/[0.06] overflow-hidden max-h-[80vh] overflow-y-auto"
-                  style={{
-                    // 330 ≈ the real height of the tallest menu variant — flip above the
-                    // trigger when that wouldn't fit below.
-                    ...(activeMenuRect.bottom + 330 > window.innerHeight
-                      ? { bottom: window.innerHeight - activeMenuRect.top + 4 }
-                      : { top: activeMenuRect.bottom + 4 }),
-                    left: Math.max(8, activeMenuRect.right - 192),
-                  }}
+                  className="absolute w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/[0.06] overflow-hidden overflow-y-auto overscroll-contain"
+                  style={actionsMenuPosition(activeMenuRect)}
                 >
                   <button
                     onClick={() => { onNavigate(`/builder/${form.id}`); onMenuClose(); }}
@@ -763,16 +764,19 @@ export function FormsList() {
   // The grid only waits on the forms themselves — the apps rail loads independently.
   const gridLoading = formsLoading;
 
-  // Close dropdown menu on scroll, resize, or Escape to prevent stale positioning
+  // Close dropdown menu on scroll, resize, or Escape to prevent stale positioning. Only a scroll
+  // that can move the trigger (the page or an ancestor) makes the position stale; the menu's own
+  // overflow scrolling, keyboard focus included, must not close it under the item being chosen.
   useEffect(() => {
     if (!activeMenu) return;
     const close = () => setActiveMenu(null);
+    const onScroll = (e: Event) => { if (!isMenuScroll(e)) close(); };
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setActiveMenu(null); };
-    window.addEventListener('scroll', close, true);
+    window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', close);
     document.addEventListener('keydown', onKey);
     return () => {
-      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', close);
       document.removeEventListener('keydown', onKey);
     };
