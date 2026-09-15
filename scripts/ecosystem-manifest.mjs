@@ -180,7 +180,8 @@ must(Number.isFinite(formSchema), 'SQLiteConnection schema version is unreadable
 let aokieContract = null;
 for (const candidate of ['formlogic/backend/resources/contracts/aokie-connector-contract.v1.json', 'docs/contracts/aokie-connector-contract.v1.json']) {
   const path = resolve(root, candidate);
-  if (existsSync(path)) { aokieContract = { path: candidate, contractVersion: json(path).contractVersion, sha256: sha256(path) }; break; }
+  // Digest of the LF-normalised text, so a CRLF checkout on Windows and an LF checkout on a runner agree.
+  if (existsSync(path)) { aokieContract = { path: candidate, contractVersion: json(path).contractVersion, sha256: sha256Text(read(path)) }; break; }
 }
 
 const manifest = {
@@ -233,7 +234,17 @@ if (check) {
     console.error('compatibility problems:');
     for (const p of problems) console.error(' - ' + p);
   }
-  if (!same) console.error('compatibility-manifest.json is stale: regenerate it with `node scripts/ecosystem-manifest.mjs` and commit the result');
+  if (!same) {
+    console.error('compatibility-manifest.json is stale: regenerate it with `node scripts/ecosystem-manifest.mjs` and commit the result');
+    // Name what differs, so a runner's failure can be read without reproducing it.
+    const flat = (v, prefix = '', into = {}) => {
+      if (v && typeof v === 'object' && !Array.isArray(v)) for (const [k, x] of Object.entries(v)) flat(x, prefix ? `${prefix}.${k}` : k, into);
+      else into[prefix] = JSON.stringify(v);
+      return into;
+    };
+    const a = flat(strip(committed)), b = flat(strip(manifest));
+    for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) if (a[key] !== b[key]) console.error(`   ${key}: committed ${a[key] ?? '(absent)'} vs tree ${b[key] ?? '(absent)'}`);
+  }
   if (!same || problems.length) process.exit(1);
 } else {
   mkdirSync(dirname(out), { recursive: true });
