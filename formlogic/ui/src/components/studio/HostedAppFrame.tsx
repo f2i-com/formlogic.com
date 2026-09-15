@@ -4,7 +4,7 @@ import { workspaceBridge } from "../../lib/softn/workspaceBridge";
 import { NATIVE_PROTOCOL } from "../../lib/softn/protocol";
 import { getZippWasmBytes, matchesZippRuntime } from "../../lib/formlogic/zipp-bytes";
 
-import { nativeAppStorage } from "../../lib/nativeAppStorage";
+import { nativeAppStorage, NativeStorageError } from "../../lib/nativeAppStorage";
 
 const navigate = (path: string) => window.location.assign(path);
 // The frame bootstraps once. Its DOM lifetime must match the effect's client
@@ -34,6 +34,11 @@ export function HostedAppFrame({
   const frame = useRef<HTMLIFrameElement>(null);
 
   const [error, setError] = useState("");
+  // Audit FL-S07: damaged saved browser data stops the app before it starts,
+  // with the owner's choices in front of them, rather than being filtered
+  // into something that looks healthy. Reset boots a fresh frame.
+  const [storageIssue, setStorageIssue] = useState<{ message: string; exportable: boolean } | null>(null);
+  const [storageEpoch, setStorageEpoch] = useState(0);
   useEffect(() => {
     let channel: MessageChannel | undefined;
     let active = true;
@@ -80,11 +85,16 @@ export function HostedAppFrame({
       }
       if (!active || expired) return;
       let savedStorage: Record<string, string> | undefined;
-      try { savedStorage = storage?.read(); } catch {
+      try { savedStorage = storage?.read(); } catch (reason) {
         clearTimeout(timeout);
-        setError("This app’s saved browser session could not be read. Check browser storage and reload.");
+        initializing = false;
+        const failure = reason instanceof NativeStorageError ? reason : null;
+        const exportable = (() => { try { return failure?.code !== "unavailable" && !!storage?.exportRaw(); } catch { return false; } })();
+        setStorageIssue({ message: failure?.message ?? "This app’s saved browser session could not be read.", exportable });
+        setError(failure?.code === "unavailable" ? "Browser storage is not available, so this app cannot keep a session here. Check browser privacy settings and reload." : "This app’s saved browser session could not be read, so the app was not started.");
         return;
       }
+      setStorageIssue(null);
       setError("");
       channel = new MessageChannel();
       channel.port1.onmessage = async (event) => {
@@ -175,19 +185,51 @@ export function HostedAppFrame({
       window.removeEventListener("message", receive);
       channel?.port1.close();
     };
-  }, [slug, client, version, native]);
+  }, [slug, client, version, native, storageEpoch]);
+  const exportSavedData = () => {
+    const raw = (() => { try { return nativeAppStorage(slug).exportRaw(); } catch { return null; } })();
+    if (raw === null) return;
+    const url = URL.createObjectURL(new Blob([raw], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${slug}-browser-data.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const resetSavedData = () => {
+    if (!window.confirm("Reset this app’s saved browser data on this device? Export it first if you may need it.")) return;
+    try { nativeAppStorage(slug).reset(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Browser storage is not available."); return; }
+    setStorageIssue(null);
+    setError("");
+    setStorageEpoch((epoch) => epoch + 1);
+  };
   return (
     <div className="flex h-full min-h-[420px] min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-950">
       {error && (
-        <p
+        <div
           role="alert"
           className="bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200"
         >
-          {error}
-        </p>
+          <p>{error}</p>
+          {storageIssue && (
+            <div className="mt-3 space-y-2">
+              <p>{storageIssue.message}</p>
+              <div className="flex flex-wrap gap-2">
+                {storageIssue.exportable && (
+                  <button type="button" className="min-h-11 rounded-lg border border-amber-300 px-3 font-medium dark:border-amber-700" onClick={exportSavedData}>
+                    Export saved data
+                  </button>
+                )}
+                <button type="button" className="min-h-11 rounded-lg border border-amber-300 px-3 font-medium dark:border-amber-700" onClick={resetSavedData}>
+                  Reset saved data
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       )}
       <iframe
-        key={`${slug}/${version}/${clientIdentity(client)}`}
+        key={`${slug}/${version}/${clientIdentity(client)}/${storageEpoch}`}
         ref={frame}
         title="Hosted app"
         src="/hosted-runtime/index.html"

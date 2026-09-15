@@ -5,7 +5,13 @@ export interface NativeProject { home?: boolean; version: number; updatedAt?: st
 export interface NativeRuntimeProject { version: number; client: Record<string,string>; assets: Record<string,string>; access: 'application' | 'members'; origins?: string[] }
 export interface NativeRecordField { name: string; type: string; primary: boolean; required: boolean; defaultValue: string | null; auto: boolean; readOnly: boolean }
 export interface NativeRecordDetail { values: Record<string, string | null>; revision: string; fields: NativeRecordField[] }
-export interface NativeRecords { schema?: { fields: NativeRecordField[]; primaryKey: string[]; canCreate: boolean }; keys?: (Record<string, string> | null)[]; installed?: boolean; tables: string[]; columns?: string[]; rows?: Record<string, unknown>[]; hasMore?: boolean }
+/**
+ * A page of records. `offset` is the offset the server actually used (it
+ * clamps requests past its browsing window), `end` says why the page ends:
+ * more pages follow, the table ended, or the window's limit was reached with
+ * rows beyond it. Older servers send only `hasMore`.
+ */
+export interface NativeRecords { schema?: { fields: NativeRecordField[]; primaryKey: string[]; canCreate: boolean }; keys?: (Record<string, string> | null)[]; installed?: boolean; tables: string[]; columns?: string[]; rows?: Record<string, unknown>[]; hasMore?: boolean; offset?: number; end?: 'more' | 'end' | 'limit'; limit?: number }
 export async function importNativeProject(file: File): Promise<NativeProject> {
   const { files, review } = reviewAppArchive(new Uint8Array(await file.arrayBuffer()));
   if (review.backend !== 'native') throw new Error('This app has no native server entry. Use App hosting for a client app and named backend actions.');
