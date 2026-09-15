@@ -3,7 +3,8 @@
 # FormLogic Installer
 # =============================================================================
 # Sets up the FormLogic application: backend API, frontend UI, and the ZIPP
-# scripting runtime (vendored backend/bin/runtime launcher + ui/vendor/zipp-wasm).
+# scripting runtime (the backend/bin/runtime launcher, and the browser engine and
+# Softn runtime installed from the latest Softn release).
 #
 # Usage:
 #   chmod +x install.sh
@@ -181,9 +182,11 @@ else
     ok ".env already exists"
 fi
 
-# FormLogic runtime: the browser engine (the ZIPP wasm module, committed under
-# ui/vendor/zipp-wasm) is bundled by the `npm run build` step below, whose
-# prebuild step also syncs the canonical prelude into the backend. The backend
+# FormLogic runtime: the browser engine (the ZIPP wasm module at ui/vendor/zipp-wasm)
+# and the Softn hosted runtime, editors and native runtime are not in git; the
+# fetch below installs them from the Softn release (SOFTN_RELEASE=<tag> pins one),
+# and the `npm run build` step bundles the engine, its prebuild step verifying
+# them and syncing the canonical prelude into the backend. The backend
 # uses the vendored sandbox launcher (committed under backend/bin/runtime, a
 # wasmtime host for the zipp engine); it only needs to be executable, which git
 # clone and zip extraction cannot be relied on to preserve.
@@ -197,6 +200,13 @@ if [[ -f "$RUNTIME_BIN" ]]; then
 else
     warn "FormLogic script runtime missing at $RUNTIME_BIN — form logic & scripts will be disabled server-side"
 fi
+
+# Install the Softn release runtime (browser engine included) before the build needs it.
+# The fetcher resolves the repository root from its own path, so the working directory
+# does not matter; the repository root is this script's parent.
+info "Installing the Softn release runtime..."
+node "$SCRIPT_DIR/../scripts/fetch-softn-release.mjs"
+ok "Softn release runtime installed"
 
 # Build frontend
 info "Building frontend..."

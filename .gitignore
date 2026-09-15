@@ -1,8 +1,9 @@
 # Root repo tracks formlogic/. Build artifacts and dependencies are ignored by
 # formlogic/.gitignore. (The old engine source repos formlogic-php and
-# formlogic-rust were removed — the scripting engine is now the vendored ZIPP
-# runtime under formlogic/: runtime/ and backend/bin/runtime/ for the server,
-# ui/vendor/zipp-wasm/ for the browser.)
+# formlogic-rust were removed — the scripting engine is ZIPP: the server sandbox
+# under formlogic/runtime/ and backend/bin/runtime/, and the browser engine,
+# which is generated: formlogic/ui/vendor/zipp-wasm/ is the installed Softn
+# release's zipp/ tree, installed by scripts/fetch-softn-release.mjs.)
 
 # Playwright output (any location)
 test-results/
@@ -33,6 +34,13 @@ formlogic/backend/storage/booking-test/
 
 /formlogic/ui/public/app-editors/
 /formlogic/ui/public/.app-editors-*/
+
+# Generated browser engine (the installed Softn release's zipp/ tree, with its
+# staging and .previous siblings); scripts/engine-provenance-guard.mjs fails on
+# anything tracked here. The zip's zipp-licenses.txt is written by
+# scripts/package-dist.mjs, no longer kept in public/.
+/formlogic/ui/vendor/
+/formlogic/ui/public/zipp-licenses.txt
 
 # Private hosted app databases created by local/runtime use
 /formlogic/backend/storage/hosted-apps/

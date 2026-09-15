@@ -50,6 +50,10 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runEval, SandboxGuestError, type EvalKind } from './zipp-host';
+import zippSource from '../../../vendor/zipp-wasm/SOURCE.json';
+
+/** The generated engine record; typed loosely so the check does not depend on which release's fields are installed. */
+const installedZipp = zippSource as { release?: string; revision?: string; sha256: string };
 
 // ── Shared corpus contract ───────────────────────────────────────────────────
 
@@ -352,7 +356,8 @@ describe('cross-engine expression parity — browser zipp (real WASM)', () => {
       engine: 'browser-zipp',
       engineDetail: {
         host: 'ui/src/lib/formlogic/zipp-host.ts',
-        variant: 'zipp-wasm (vendored; see ui/vendor/zipp-wasm/README.md)',
+        // The engine is the installed Softn release's ZIPP; the backend leg names its own, and the two are compared.
+        zipp: { release: installedZipp.release ?? null, revision: installedZipp.revision ?? null, sha256: installedZipp.sha256 },
         prelude: 'ui/src/lib/formlogic/prelude.js',
         budgetMs: EVAL_BUDGET_MS,
       },

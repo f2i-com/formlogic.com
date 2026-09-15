@@ -39,8 +39,8 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadReleaseSigner, signReleaseManifest } from './release-signing.mjs';
-import { checkReleaseRuntime, checkAppEditors, checkNativeRuntime } from './release-runtime.mjs';
-import { runtimeIdentity } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
+import { checkReleaseRuntime, checkAppEditors, checkNativeRuntime, checkDistEngines, zippLicensesText, engineIdentity } from './release-runtime.mjs';
+import { runtimeIdentity, checkZippTree } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 
 const isWindows = process.platform === 'win32';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -365,7 +365,16 @@ catch (error) { fail(error.message); }
 // Keep signing credentials out of npm/composer and other child processes.
 delete process.env.FORMLOGIC_RELEASE_SIGNING_KEY;
 delete process.env.FORMLOGIC_RELEASE_SIGNING_KEY_PEM;
-const expectedRuntime = runtimeIdentity(JSON.parse(readFileSync(path.join(uiDir, 'vendor/zipp-wasm/SOURCE.json'), 'utf8')));
+// The browser engine is generated (the installed Softn release's zipp/ tree),
+// not reviewed in git, so its identity is re-derived and cross-checked here.
+const zippDir = path.join(uiDir, 'vendor/zipp-wasm');
+const installedRelease = path.join(repoRoot, '.runtime-source/softn-release/current.json');
+if (!existsSync(path.join(zippDir, 'SOURCE.json'))) fail('formlogic/ui/vendor/zipp-wasm is not installed (it is generated): run node scripts/fetch-softn-release.mjs first');
+const zippSource = JSON.parse(readFileSync(path.join(zippDir, 'SOURCE.json'), 'utf8'));
+const softnRelease = existsSync(installedRelease) ? JSON.parse(readFileSync(installedRelease, 'utf8')) : null;
+try { await checkZippTree(zippDir, softnRelease ? softnRelease.zipp : zippSource); }
+catch (error) { fail(`formlogic/ui/vendor/zipp-wasm is not the ZIPP release ${softnRelease ? `Softn ${softnRelease.tag} installed` : 'its SOURCE.json records'}: ${error.message} Run node scripts/fetch-softn-release.mjs.`); }
+const expectedRuntime = runtimeIdentity(zippSource);
 const version = resolveVersion();
 const outDir = path.resolve(repoRoot, cli.out || 'dist-package');
 const staging = path.join(outDir, 'staging');
@@ -397,6 +406,13 @@ if (cli.skipUiBuild) {
 for (const f of ['index.html', '.htaccess', 'assets']) {
   if (!existsSync(path.join(distDir, f))) fail(`UI build incomplete: formlogic/ui/dist/${f} is missing`);
 }
+
+// Every ZIPP engine the build emitted (found by its exports, whatever Vite
+// named it) is the installed release's, and the app's own copy is among them.
+try {
+  const engines = await checkDistEngines(distDir, zippSource);
+  info(`${engines.length} ZIPP engine copies in formlogic/ui/dist, all ${expectedRuntime.sha256.slice(0, 12)}`);
+} catch (error) { fail(error.message); }
 
 // Even --skip-ui-build must supply a complete, matching hosted runtime.
 await checkReleaseRuntime(path.join(distDir, 'hosted-runtime'), expectedRuntime);
@@ -471,12 +487,18 @@ copyFileSync(installerSrc, path.join(staging, 'install.php'));
 info('copied formlogic/install.php -> install.php (the wizard resolves the bundle layout via the api/ folder beside it)');
 
 // [6] VERSION + INSTALL.txt + UPGRADE.txt ---------------------------------------
-step('Writing VERSION, INSTALL.txt, UPGRADE.txt');
+step('Writing VERSION, INSTALL.txt, UPGRADE.txt, zipp-licenses.txt, engine-identity.json');
 writeFileSync(path.join(staging, 'VERSION'), `${version}\n`);
 // api/VERSION is what api/bin/upgrade.php falls back to for --app-version stamping.
 writeFileSync(path.join(apiDst, 'VERSION'), `${version}\n`);
 writeFileSync(path.join(staging, 'INSTALL.txt'), installTxt(version));
 writeFileSync(path.join(staging, 'UPGRADE.txt'), upgradeTxt(version));
+// The bundled engine's notices (RustPython and Unicode, then ZIPP's own
+// licence), from the installed release rather than a committed copy.
+try { writeFileSync(path.join(staging, 'zipp-licenses.txt'), await zippLicensesText(zippDir, zippSource)); }
+catch (error) { fail(error.message); }
+// Which engine this zip carries, and which Softn release it came from.
+writeFileSync(path.join(staging, 'engine-identity.json'), JSON.stringify(engineIdentity(zippSource, softnRelease), null, 2) + '\n');
 
 // [7] Sanity checks on the staged tree ------------------------------------------
 step('Verifying the staged tree');
@@ -506,6 +528,8 @@ const mustExist = [
   'api/VERSION',
   'INSTALL.txt',
   'UPGRADE.txt',
+  'zipp-licenses.txt',
+  'engine-identity.json',
   ...BACKEND_SKELETON_DIRS.map((d) => path.join('api', d)),
 ];
 const mustNotExist = ['api/.env', 'api/tests', 'api/scripts', 'api/phpunit.xml', 'api/.phpunit.cache'];

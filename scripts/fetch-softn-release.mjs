@@ -4,17 +4,23 @@
  * from a source build.
  *
  * Every Softn release (tag v*) carries `softn-formlogic-runtime-<tag>.zip`:
- * the hosted app runtime, the two embedded editors, the native backend
- * runtime and the FormLogic adapter source, built once by Softn's release
- * workflow and verified there. This script fetches the latest release (or the
- * one SOFTN_RELEASE names), proves the archive is the one the release page
- * describes and that it fits THIS FormLogic (same ZIPP engine bytes, same
- * protocol versions, the adapter this tree has vendored), and installs the
- * three generated trees where the build and the tests expect them:
+ * the ZIPP engine Softn took from a ZIPP release, the hosted app runtime, the
+ * two embedded editors, the native backend runtime and the FormLogic adapter
+ * source, built once by Softn's release workflow and verified there. This
+ * script fetches the latest release (or the one SOFTN_RELEASE names), proves
+ * the archive is the one the release page describes, that every copy of the
+ * engine in it is the one ZIPP release its softn-release.json records, and
+ * that it fits THIS FormLogic (same protocol versions, the adapter this tree
+ * has vendored), and installs the four generated trees where the build and
+ * the tests expect them:
  *
+ *   zipp/            -> formlogic/ui/vendor/zipp-wasm/   (the browser engine)
  *   hosted-runtime/  -> formlogic/ui/public/hosted-runtime/
  *   app-editors/     -> formlogic/ui/public/app-editors/
  *   native-runtime/  -> formlogic/backend/resources/softn-native/
+ *
+ * Which ZIPP release that is, is Softn's choice: nothing in this tree names
+ * one, so a Softn release that moves ZIPP installs without a FormLogic commit.
  *
  *   node scripts/fetch-softn-release.mjs                 latest release
  *   SOFTN_RELEASE=v0.0.13 node scripts/fetch-softn-release.mjs   one release
@@ -37,7 +43,7 @@
  * digest and checks the archive's own manifest names the frozen tag and
  * commit. Any drift is a hard failure naming both values.
  *
- * One generation per install (release-readiness FL-S05). The three trees are
+ * One generation per install (release-readiness FL-S05). The four trees are
  * staged and verified together, promoted together with the previous trees
  * kept until the new generation is recorded, and recorded with a complete
  * file inventory; a promotion that fails is rolled back before the run ends,
@@ -55,8 +61,10 @@
  * scripts/ecosystem-manifest.mjs reads.
  *
  * Developers who want to run against a local Softn checkout instead keep the
- * source path: SOFTN_REPO with formlogic/ui `npm run build:hosted-runtime`,
- * `npm run build:app-editors` and scripts/prepare-native-runtime.mjs.
+ * source path: SOFTN_REPO with scripts/sync-zipp-from-softn.mjs (after
+ * `npm run fetch:zipp` in the checkout), scripts/prepare-native-runtime.mjs,
+ * and formlogic/ui `npm run build:hosted-runtime` and `npm run build:app-editors`.
+ * A local archive (SOFTN_RELEASE_ARCHIVE) is the same path CI takes.
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile, cp } from 'node:fs/promises';
@@ -64,7 +72,7 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve, basename, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readArchive } from './lib/archive.mjs';
-import { runtimeIdentity, assertMatchingRuntime, checkRuntimeArtifact, artifactFiles, LINKED_ASSET } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
+import { runtimeIdentity, assertMatchingRuntime, checkRuntimeArtifact, checkZippTree, isZippEngineWasm, zippReleaseIdentity, artifactFiles, LINKED_ASSET } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 import { checkAppEditors } from '../formlogic/ui/scripts/check-app-editors.mjs';
 import { checkNativeRuntime } from './release-runtime.mjs';
 import { writeAdapter, adapterDigest, ADAPTER_SOURCE } from '../formlogic/ui/scripts/sync-softn.mjs';
@@ -76,6 +84,20 @@ export const FROZEN_FORMAT = 1;
 const NATIVE_MODULES = ['runner.mjs', 'request-worker.mjs', 'request-hook.mjs', 'wasm-host.mjs', 'migrations.mjs', 'crypto.mjs', 'time.mjs', 'host-protocol.json', 'record-events.mjs'];
 const NATIVE_EXTRA = ['wasm/zipp_wasm.mjs', 'wasm/zipp_wasm_bg.wasm', 'wasm/SOURCE.json', 'LICENSE', 'NOTICE', 'ZIPP-THIRD-PARTY-LICENSES.txt', 'provenance.json'];
 const PROVENANCE = 'native-runtime/provenance.json';
+/**
+ * Where a release's engine copies live, as Softn's packager requires them: the
+ * browser engine tree, the native runtime, and in the hosted runtime and each
+ * editor the hashed app asset and the core-runtime copy. Each must yield one
+ * to the content scan, so an engine whose exports changed, or a copy a Softn
+ * packaging change dropped, fails the fetch instead of a later build or package.
+ */
+const KNOWN_ENGINE_COPIES = [
+  'zipp/zipp_wasm_bg.wasm',
+  'native-runtime/wasm/zipp_wasm_bg.wasm',
+  ...['hosted-runtime', 'app-editors/builder', 'app-editors/studio'].flatMap((prefix) => [`${prefix}/assets/zipp_wasm_bg-*.wasm`, `${prefix}/assets/core-runtime/zipp_wasm_bg.wasm`]),
+].map((where) => ({ where, pattern: new RegExp(`^${where.replace(/[.]/g, '\\.').replace('*', '[^/]+')}$`) }));
+/** The first Softn release that ships its ZIPP engine as a zipp/ tree with the ZIPP release it came from. */
+const FIRST_ZIPP_TREE_RELEASE = 'v0.0.15';
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 /** A digest of a JSON value that does not depend on key order or formatting. */
@@ -99,7 +121,7 @@ function defaultPaths(root) {
   return {
     root,
     protocolFile: resolve(root, 'formlogic/ui/src/lib/softn/protocol.json'),
-    zippSource: resolve(root, 'formlogic/ui/vendor/zipp-wasm/SOURCE.json'),
+    zippWasm: resolve(root, 'formlogic/ui/vendor/zipp-wasm'),
     adapterDir: resolve(root, 'formlogic/ui/src/lib/softn'),
     hostedRuntime: resolve(root, 'formlogic/ui/public/hosted-runtime'),
     appEditors: resolve(root, 'formlogic/ui/public/app-editors'),
@@ -258,8 +280,9 @@ function entryText(entries, name) {
 
 /**
  * Read the archive as an extractor would, check every digest the release
- * manifest records, and check the release fits this tree: engine bytes,
- * protocol versions, and (reported, not enforced here) the adapter digest.
+ * manifest records, check every engine copy is the one ZIPP release the
+ * manifest records, and check the release fits this tree: protocol versions,
+ * and (reported, not enforced here) the adapter digest.
  */
 export async function verifyArchive(zip, { sidecarDigest, paths, archiveName }) {
   const zipDigest = sha256(zip);
@@ -286,17 +309,39 @@ export async function verifyArchive(zip, { sidecarDigest, paths, archiveName }) 
   }
   if (listed.size) throw new ReleaseError(`softn-release.json lists files the archive lacks: ${[...listed].join(', ')}.`);
 
-  // The engine: the release's ZIPP must be the one this tree vendors, byte for byte.
-  const expected = runtimeIdentity(JSON.parse(await readFile(paths.zippSource, 'utf8')));
-  const releaseZipp = release.zipp ?? {};
-  if (releaseZipp.version !== expected.version || releaseZipp.sha256 !== expected.sha256) {
-    throw new ReleaseError(`Softn ${release.tag} was built with ZIPP ${releaseZipp.version} (${String(releaseZipp.sha256).slice(0, 12)}); this FormLogic vendors ZIPP ${expected.version} (${expected.sha256.slice(0, 12)}). Update formlogic/ui/vendor/zipp-wasm to the same release (node scripts/sync-zipp-from-softn.mjs) or pin an older Softn with SOFTN_RELEASE=<tag>.`);
+  // The engine: whichever ZIPP release Softn built this release with, taken
+  // from release.zipp, never from this tree. Its zipp/ tree must be that
+  // release, and every other copy in the archive the same bytes.
+  const zippTree = new Map();
+  for (const [name, entry] of entries) if (name.startsWith('zipp/') && !name.endsWith('/')) zippTree.set(name.slice('zipp/'.length), entry.data);
+  let zipp;
+  try {
+    if (!zippTree.size) throw new Error('the archive has no zipp/ tree');
+    zipp = zippReleaseIdentity(release.zipp);
+  } catch (error) {
+    throw new ReleaseError(`Softn ${release.tag} does not ship its ZIPP engine as a ZIPP release FormLogic can install (${error.message}). This FormLogic takes its browser engine from the Softn release and needs Softn ${FIRST_ZIPP_TREE_RELEASE} or later.`);
   }
+  const expected = runtimeIdentity(zipp);
+  try { await checkZippTree(zippTree, zipp); }
+  catch (error) { throw new ReleaseError(`zipp/ in Softn ${release.tag} is not the ZIPP ${zipp.release} softn-release.json records: ${error.message}`); }
   const wasm = entries.get('native-runtime/wasm/zipp_wasm_bg.wasm');
   if (!wasm) throw new ReleaseError('The archive has no native-runtime/wasm/zipp_wasm_bg.wasm.');
   if (sha256(wasm.data) !== expected.sha256) throw new ReleaseError('The archive\'s ZIPP engine bytes differ from the digest its manifest records.');
   const shippedSource = JSON.parse(entryText(entries, 'native-runtime/wasm/SOURCE.json'));
-  assertMatchingRuntime(runtimeIdentity(shippedSource), expected);
+  try { assertMatchingRuntime(runtimeIdentity(shippedSource), expected); }
+  catch { throw new ReleaseError(`native-runtime/wasm/SOURCE.json names ZIPP ${shippedSource?.version} (${String(shippedSource?.sha256).slice(0, 12)}); softn-release.json records ${expected.version} (${expected.sha256.slice(0, 12)}).`); }
+  const nativeGlue = entries.get('native-runtime/wasm/zipp_wasm.mjs');
+  if (!nativeGlue || !nativeGlue.data.equals(zippTree.get('zipp_wasm.js'))) throw new ReleaseError('native-runtime/wasm/zipp_wasm.mjs is not zipp/zipp_wasm.js: the native runtime and the browser engine must share one glue build.');
+  // By content, not by name: a hashed asset or a renamed copy is still found.
+  const copies = [];
+  for (const [name, entry] of entries) {
+    if (!isZippEngineWasm(entry.data)) continue;
+    const digest = sha256(entry.data);
+    if (digest !== expected.sha256) throw new ReleaseError(`${name} is a ZIPP engine (${digest.slice(0, 12)}) other than the ZIPP ${zipp.release} engine (${expected.sha256.slice(0, 12)}) softn-release.json records; one release ships one engine.`);
+    copies.push(name);
+  }
+  const unfound = KNOWN_ENGINE_COPIES.filter(({ pattern }) => !copies.some((name) => pattern.test(name)));
+  if (unfound.length) throw new ReleaseError(`No ZIPP engine copy matches ${unfound.map(({ where }) => where).join(', ')} in Softn ${release.tag} (found: ${copies.join(', ') || 'none'}); a copy is missing or the engine's exports changed, so the content check cannot vouch for this archive.`);
 
   // The protocols: exactly what this FormLogic speaks.
   const protocol = JSON.parse(await readFile(paths.protocolFile, 'utf8'));
@@ -416,13 +461,21 @@ async function moveDir(from, to, ops, copying = async () => {}) {
 }
 
 /**
- * The three trees a release installs, in promotion order. `prepare` edits a
+ * The four trees a release installs, in promotion order. `prepare` edits a
  * staged tree before it is verified (the native runtime's provenance gains
  * the release it came from); `validate` is the same check the source
- * builders and `--check` apply.
+ * builders and `--check` apply. `releaseInfo.zipp` is the release's ZIPP
+ * record, which the installed engine tree's SOURCE.json must carry.
  */
 function generationTrees(paths, expected, releaseInfo) {
   return [
+    {
+      name: 'zipp-wasm', prefix: 'zipp/', destination: paths.zippWasm, stagePrefix: '.zipp-wasm-',
+      validate: async (dir) => {
+        try { await checkZippTree(dir, releaseInfo.zipp); }
+        catch (error) { throw new ReleaseError(`The browser engine tree (${relative(paths.root, dir) || dir}) is not the ZIPP ${releaseInfo.zipp?.release ?? '(unrecorded)'} Softn ${releaseInfo.tag} records: ${error.message}`); }
+      },
+    },
     {
       name: 'hosted-runtime', prefix: 'hosted-runtime/', destination: paths.hostedRuntime, stagePrefix: '.hosted-runtime-',
       validate: (dir) => checkRuntimeArtifact(dir, expected),
@@ -475,7 +528,7 @@ const intact = (diff) => !diff.missing.length && !diff.unlisted.length && !diff.
 /**
  * Resolve an interrupted promotion before anything else touches the trees.
  * A run that died mid-swap left promotion.json: every tree is either the new
- * generation (if all three are, the generation is completed by recording
+ * generation (if all of them are, the generation is completed by recording
  * it) or is put back from the `.previous` copy kept for exactly this, so the
  * result is all-old or all-new, never a mixture. Returns what it did. `ops`
  * replaces filesystem operations (tests).
@@ -551,7 +604,7 @@ async function rollBack(journal, journalFile, log, io, reason = 'the swap did no
 }
 
 /**
- * Install the three trees as one generation: stage and verify all of them,
+ * Install the four trees as one generation: stage and verify all of them,
  * write the promotion journal, swap each destination (keeping the previous
  * tree beside it), record the generation with its complete inventory, and
  * only then drop the previous trees. A failure between writing the journal
@@ -745,7 +798,7 @@ export async function fetchSoftnRelease({
     fetchedAt: new Date().toISOString(),
   };
   const full = await installGeneration(entries, expected, paths, record, { failAt, log, ops });
-  log(`Softn ${release.tag} (${release.commit.slice(0, 12)}) installed: hosted runtime, app editors, native runtime; ZIPP ${release.zipp.version}${frozenRecord ? ' (frozen for this run)' : ''}`);
+  log(`Softn ${release.tag} (${release.commit.slice(0, 12)}) installed: browser engine, hosted runtime, app editors, native runtime; ZIPP ${release.zipp.release} (${release.zipp.revision.slice(0, 12)}, engine ${release.zipp.sha256.slice(0, 12)})${frozenRecord ? ' (frozen for this run)' : ''}`);
   return full;
 }
 
@@ -760,8 +813,11 @@ export async function checkInstalled({ root = resolve(dirname(fileURLToPath(impo
   const current = currentRecordPath(paths);
   if (!existsSync(current)) throw new ReleaseError('No Softn release is installed (no .runtime-source/softn-release/current.json); run node scripts/fetch-softn-release.mjs.');
   const record = JSON.parse(await readFile(current, 'utf8'));
-  const expected = runtimeIdentity(JSON.parse(await readFile(paths.zippSource, 'utf8')));
-  if (record.zipp?.version !== expected.version || record.zipp?.sha256 !== expected.sha256) throw new ReleaseError(`The installed Softn ${record.tag} carries ZIPP ${record.zipp?.version}; this tree vendors ${expected.version}. Fetch again.`);
+  // The engine identity is the installed release's; the engine tree's own
+  // SOURCE.json must carry it (the zipp-wasm tree's check below).
+  let expected;
+  try { expected = runtimeIdentity(zippReleaseIdentity(record.zipp)); }
+  catch (error) { throw new ReleaseError(`The installed Softn ${record.tag} records no ZIPP release FormLogic can install (${error.message}); this FormLogic needs Softn ${FIRST_ZIPP_TREE_RELEASE} or later. Run node scripts/fetch-softn-release.mjs.`); }
   const protocol = JSON.parse(await readFile(paths.protocolFile, 'utf8'));
   for (const key of ['nativeProtocol', 'recordEvents', 'editorBridge']) {
     if (record.protocols?.[key] !== protocol[key]) throw new ReleaseError(`The installed Softn ${record.tag} speaks ${key} ${record.protocols?.[key]}; this tree speaks ${protocol[key]}. Fetch again.`);

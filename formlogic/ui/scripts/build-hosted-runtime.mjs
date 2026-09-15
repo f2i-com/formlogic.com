@@ -10,9 +10,16 @@ const engine = process.env.SOFTN_REPO
 const output = new URL('../public/hosted-runtime/', import.meta.url);
 const npm = process.env.npm_execpath;
 if (!npm) throw new Error('Run this script with npm run build:hosted-runtime.');
-const source = runtimeIdentity(JSON.parse(await readFile(new URL('../vendor/zipp-wasm/SOURCE.json', import.meta.url), 'utf8')));
-const hostedSource = runtimeIdentity(JSON.parse(await readFile(new URL('packages/@softn/core/wasm-zipp/SOURCE.json', engine), 'utf8')));
-assertMatchingRuntime(hostedSource, source);
+// Both engine trees are generated: the checkout's by `npm run fetch:zipp`, FormLogic's by sync-zipp-from-softn.
+const syncHint = 'Run npm run fetch:zipp in the Softn checkout, then node scripts/sync-zipp-from-softn.mjs from the repository root.';
+let source, hostedSource;
+try {
+  source = runtimeIdentity(JSON.parse(await readFile(new URL('../vendor/zipp-wasm/SOURCE.json', import.meta.url), 'utf8')));
+  hostedSource = runtimeIdentity(JSON.parse(await readFile(new URL('packages/@softn/core/wasm-zipp/SOURCE.json', engine), 'utf8')));
+  assertMatchingRuntime(hostedSource, source);
+} catch (error) {
+  throw new Error(`The Softn checkout and formlogic/ui/vendor/zipp-wasm must hold the same ZIPP release. ${syncHint} ${error.message}`);
+}
 await access(new URL('node_modules/vite/bin/vite.js', engine));
 const core = spawnSync(process.execPath, [npm, 'run', 'build', '-w', '@softn/core', '-w', '@softn/components'], { cwd: fileURLToPath(engine), stdio: 'inherit' });
 if (core.status !== 0) process.exit(core.status || 1);

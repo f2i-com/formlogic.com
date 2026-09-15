@@ -25,7 +25,7 @@ A later commit cannot inherit a previous commit's status: the reusable gates che
 | Full conformance | on demand / before a tagged release | ZIPP full 230-binary engine suite, Test262, three-browser Worker smoke, FormLogic Playwright e2e, Softn Tauri matrix builds |
 | Hardware qualification | consented lab only, never CI | Aokie radio/dongle/phone scenarios (see `RELEASE_QUALIFICATION.md` §hardware) |
 
-Changes that require FULL qualification before release: engine bytecode/semantics (ZIPP), vendored `zipp_wasm_bg.wasm` bytes, the native hosting or hosted-runtime protocol (`host-protocol.json`, the app-editor port protocol), XDB wire messages or schema, account backup format, the Aokie connector contract, and any lockfile change in a networking or crypto dependency family.
+Changes that require FULL qualification before release: engine bytecode/semantics (ZIPP), the ZIPP release a Softn release ships (its `zipp_wasm_bg.wasm` bytes), the native hosting or hosted-runtime protocol (`host-protocol.json`, the app-editor port protocol), XDB wire messages or schema, account backup format, the Aokie connector contract, and any lockfile change in a networking or crypto dependency family.
 
 ## 3. Fresh evidence rules
 

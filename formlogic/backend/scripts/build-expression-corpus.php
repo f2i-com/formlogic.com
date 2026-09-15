@@ -9,8 +9,8 @@ declare(strict_types=1);
  * FormLogic's own runtimes evaluate untrusted author-written JavaScript in two
  * separate sandboxes, both running the ZIPP engine: the PHP backend (a
  * wasm32-wasip1 guest under the spawned formlogic-runtime launcher, driven by
- * SandboxRunner) and the browser (the vendored zipp wasm module in a Worker,
- * zipp-host.ts). Runs claimed by OAIY Desktop use that product's own evaluators
+ * SandboxRunner) and the browser (the ZIPP wasm module the Softn release
+ * installs, in a Worker, zipp-host.ts). Runs claimed by OAIY Desktop use that product's own evaluators
  * and are not covered by this corpus. The product's central correctness claim is
  * that the same expression means the same thing wherever it runs. When this
  * corpus was written nothing tested that claim, and it was not true: FormLogic's

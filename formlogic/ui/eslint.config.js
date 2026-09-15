@@ -8,7 +8,7 @@ import { defineConfig, globalIgnores } from 'eslint/config'
 export default defineConfig([
   // Built/vendored runtime artifacts are verified by the artifact/hash checks.
   // Their generated code and declarations are not authored application source.
-  globalIgnores(['dist', 'public/hosted-runtime/**', 'public/app-editors/**', 'vendor/zipp-wasm/**']),
+  globalIgnores(['dist', 'public/hosted-runtime/**', 'public/app-editors/**', 'vendor/**']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

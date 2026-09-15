@@ -12,8 +12,14 @@ const output = resolve(publicDir, 'app-editors');
 if (dirname(output) !== publicDir || basename(output) !== 'app-editors') throw new Error('Unexpected editor output.');
 if ((await lstat(output).catch(() => null))?.isSymbolicLink()) throw new Error('Editor output must not be a link.');
 await access(resolve(softn, 'apps/shared/hostedEditor.ts'));
-const expected = runtimeIdentity(JSON.parse(await readFile(resolve(ui, 'vendor/zipp-wasm/SOURCE.json'), 'utf8')));
-assertMatchingRuntime(runtimeIdentity(JSON.parse(await readFile(resolve(softn, 'packages/@softn/core/wasm-zipp/SOURCE.json'), 'utf8'))), expected);
+// Both engine trees are generated: the checkout's by `npm run fetch:zipp`, FormLogic's by sync-zipp-from-softn.
+let expected;
+try {
+  expected = runtimeIdentity(JSON.parse(await readFile(resolve(ui, 'vendor/zipp-wasm/SOURCE.json'), 'utf8')));
+  assertMatchingRuntime(runtimeIdentity(JSON.parse(await readFile(resolve(softn, 'packages/@softn/core/wasm-zipp/SOURCE.json'), 'utf8'))), expected);
+} catch (error) {
+  throw new Error(`The Softn checkout and formlogic/ui/vendor/zipp-wasm must hold the same ZIPP release. Run npm run fetch:zipp in the Softn checkout, then node scripts/sync-zipp-from-softn.mjs from the repository root. ${error.message}`);
+}
 const stage = await mkdtemp(resolve(publicDir, '.app-editors-'));
 try {
   for (const kind of ['builder', 'studio']) {

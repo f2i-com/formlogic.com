@@ -25,8 +25,9 @@ code on the server. It runs inside a WebAssembly instance, behind:
   launcher on the trusted side and handed across as an argument, because the
   guest cannot open a file.
 
-The browser runs the same engine at the same revision as its own wasm module
-(`ui/vendor/zipp-wasm/`). The shared corpus
+The browser runs the same engine as its own wasm module (`ui/vendor/zipp-wasm/`,
+installed from the Softn release, which names its ZIPP release and revision in
+`SOURCE.json`). The shared corpus
 (`docs/contracts/formlogic-expression-corpus.json`) is asserted against both so
 an expression means the same thing everywhere; `scripts/check-expression-parity.mjs`
 is the comparator.
@@ -110,8 +111,9 @@ separate from Windows also prevents incompatible build caches from mixing.
 Zip extraction drops the execute bit on the Linux binary; `install.php` checks
 for it and offers the `chmod +x` if it cannot restore it itself.
 
-**Rebuild everything** (guest, both launchers, and `ui/vendor/zipp-wasm/`) when
-the engine revision changes — never one of them alone.
+**Rebuild everything** (guest and both launchers) when the engine revision
+changes — never one of them alone — to the ZIPP release the installed Softn
+release names (`ui/vendor/zipp-wasm/SOURCE.json`).
 
 ## Why wasmtime 44
 

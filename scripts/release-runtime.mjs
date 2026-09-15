@@ -1,7 +1,56 @@
-import { readFile } from 'node:fs/promises';
+import { open, readFile, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
-import { checkRuntimeArtifact } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
+import { checkRuntimeArtifact, isZippEngineWasm } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
+
+const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+
+/**
+ * Every ZIPP engine a UI build emitted, found by its exports whatever Vite
+ * named it, is the installed release's (`source`, the engine tree's
+ * SOURCE.json), and the app's own hashed copy is among them. Links, and the
+ * top-level folders in `skip` (the staged backend), are not followed. Returns
+ * the engines found, as `label`-relative paths.
+ */
+export async function checkDistEngines(directory, source, { label = 'formlogic/ui/dist', skip = ['api'] } = {}) {
+  const engines = [];
+  const walk = async prefix => {
+    for (const entry of await readdir(resolve(directory, prefix), { withFileTypes: true })) {
+      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) { if (prefix || !skip.includes(entry.name)) await walk(path); continue; }
+      if (!entry.isFile()) continue;
+      // Only a file that starts like wasm is read whole.
+      const handle = await open(resolve(directory, path), 'r');
+      let magic;
+      try { magic = await handle.read(Buffer.alloc(4), 0, 4, 0); } finally { await handle.close(); }
+      if (magic.bytesRead < 4 || magic.buffer.readUInt32BE(0) !== 0x0061736d) continue;
+      const bytes = await readFile(resolve(directory, path));
+      if (!isZippEngineWasm(bytes)) continue;
+      const digest = sha256(bytes);
+      if (digest !== source.sha256) throw new Error(`${label}/${path} is a ZIPP engine (${digest.slice(0, 12)}) other than the installed ZIPP ${source.release ?? source.version} (${source.sha256.slice(0, 12)}); rebuild the UI after node scripts/fetch-softn-release.mjs`);
+      engines.push(path);
+    }
+  };
+  await walk('');
+  engines.sort();
+  if (!engines.some(path => /^assets\/zipp_wasm_bg-[^/]+\.wasm$/.test(path))) throw new Error(`${label} has no assets/zipp_wasm_bg-*.wasm engine (found: ${engines.join(', ') || 'none'})`);
+  return engines;
+}
+
+/** zipp-licenses.txt: the engine tree's third-party notices (the file its SOURCE.json names), then ZIPP's own LICENSE-APACHE. */
+export async function zippLicensesText(directory, source) {
+  if (typeof source.notices?.file !== 'string') throw new Error('The ZIPP engine tree\'s SOURCE.json names no notices file.');
+  const read = name => readFile(resolve(directory, name), 'utf8').catch(() => { throw new Error(`formlogic/ui/vendor/zipp-wasm/${name} is missing; the zip must carry the ZIPP engine's licences`); });
+  const notices = await read(source.notices.file);
+  const license = await read('LICENSE-APACHE');
+  const rule = '='.repeat(78);
+  return `${notices.trimEnd()}\n\n${rule}\nZIPP ${source.release ?? source.version} (${source.repository ?? 'https://github.com/f2i-com/zipp.org'}) LICENSE-APACHE\n${rule}\n\n${license}`;
+}
+
+/** engine-identity.json: which ZIPP release the zip carries, and the Softn release it came from (none for a source checkout). */
+export function engineIdentity(source, softnRelease) {
+  return { zipp: softnRelease ? softnRelease.zipp : source, softnRelease: softnRelease ? { tag: softnRelease.tag, archiveSha256: softnRelease.sha256 } : null };
+}
 
 export async function checkReleaseRuntime(directory, expected) {
   const manifest = await checkRuntimeArtifact(directory, expected);

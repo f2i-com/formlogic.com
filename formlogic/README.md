@@ -140,7 +140,7 @@ When editing the canonical workspace or Aokie client templates in Softn, also ru
 
 Form expressions and `onSubmit` scripts run in a **zipp** sandbox on both sides, sharing one standard-library prelude (`ui/src/lib/formlogic/prelude.js`):
 
-- **Browser:** the vendored module in `ui/vendor/zipp-wasm/` runs in a Web Worker; Vite bundles its WASM and the prelude.
+- **Browser:** the module in `ui/vendor/zipp-wasm/` runs in a Web Worker; Vite bundles its WASM and the prelude. It is not in git: `node scripts/fetch-softn-release.mjs` installs it from the Softn release (the ZIPP release that Softn release was built with).
 - **Server:** the PHP API invokes a vendored per-OS launcher under `backend/bin/runtime/`, which runs zipp as a WebAssembly guest under wasmtime. See the [runtime README](runtime/README.md). The UI build's `prebuild` step syncs the prelude into `backend/resources/formlogic-prelude.js`.
 
 On Linux/macOS ensure the launcher is executable (`chmod +x backend/bin/runtime/formlogic-runtime-linux-x86_64`); `install.sh` and `install.php` both do this for you.
@@ -372,9 +372,9 @@ The default `E2E_BASE_URL` is `http://formlogic.local` (see `ui/playwright.confi
 
 ### Scripting engine
 
-FormLogic runs user expressions and `onSubmit` scripts inside a **zipp** sandbox, with a shared standard-library prelude on both sides. The browser and server builds are each pinned by revision (`ui/vendor/zipp-wasm/SOURCE.json`, `runtime/README.md`), and a shared expression corpus checks browser/server behavior:
+FormLogic runs user expressions and `onSubmit` scripts inside a **zipp** sandbox, with a shared standard-library prelude on both sides. The browser engine is the ZIPP release the installed Softn release ships (recorded in the generated `ui/vendor/zipp-wasm/SOURCE.json`); the server build is pinned by revision (`runtime/README.md`). A shared expression corpus checks browser/server behavior:
 
-- **Browser** — the vendored `ui/vendor/zipp-wasm/` module runs in a dedicated Web Worker for validation, conditional logic and calculated fields. Engine limits and the worker watchdog bound evaluation.
+- **Browser** — the `ui/vendor/zipp-wasm/` module (installed from the Softn release) runs in a dedicated Web Worker for validation, conditional logic and calculated fields. Engine limits and the worker watchdog bound evaluation.
 - **Server** — a vendored launcher (under `backend/bin/runtime/`, selected per-OS) invoked by `SandboxRunner` via `proc_open`; inside it the [zipp](https://github.com/f2i-com/zipp.org) engine runs as a WASI guest under wasmtime, behind a hard memory ceiling, a fuel budget and no filesystem or network capability. `onSubmit` `ctx.db`/`ctx.http`/`ctx.utils` calls are handled in PHP over a synchronous RPC, keeping the SSRF/DNS-pinning guards on the trusted side.
 
 Host access is denied by default; each evaluation receives only its permitted bindings, and runaway scripts are stopped by the sandbox budgets or watchdog. The same sandbox also runs app-level and form-level **custom logic** (effect + permission model — see [custom app platform](../docs/CUSTOM_APP_PLATFORM.md#app-logic-zipp-sandbox)).
@@ -413,7 +413,7 @@ formlogic/
 │   ├── .env.example               # Frontend environment template
 │   ├── e2e/                       # Playwright specs (run against a live deploy)
 │   ├── public/hosted-runtime/      # Generated Softn runtime assets (not tracked)
-│   ├── vendor/zipp-wasm/           # Browser scripting engine
+│   ├── vendor/zipp-wasm/           # Browser scripting engine (generated from the Softn release; not tracked)
 │   ├── scripts/                   # Prelude/template sync, runtime build, marketplace and QA tooling
 │   └── src/
 │       ├── pages/                 # Top-level pages + pages/apps/ (app admin)
@@ -544,7 +544,7 @@ Keep `VITE_API_URL=/api`; confirm the PHP server is running and Vite's proxy tar
 Run `npm run build:hosted-runtime` and `npm run build:app-editors` with the sibling Softn dependencies installed, then rebuild the UI. For native backend hosting, also run `node ../../scripts/prepare-native-runtime.mjs` from `ui/` and verify `FORMLOGIC_NODE_BIN`. Check that `/hosted-runtime/index.html` and its JS/WASM assets are deployed. The static runtime needs the CORS headers above; missing files must not return the landing page. See [hosting troubleshooting](../docs/HOSTED_APPS.md#troubleshooting).
 
 ### Scripting (form logic / validation / calculations) not running
-- **Browser:** ensure the vendored `ui/vendor/zipp-wasm/` files are present and the built WASM asset loads successfully in the worker. It is bundled by Vite; no `quickjs-emscripten` download is required.
+- **Browser:** ensure `ui/vendor/zipp-wasm/` is installed (`node scripts/fetch-softn-release.mjs`; `--check` verifies it) and the built WASM asset loads successfully in the worker. It is bundled by Vite; no `quickjs-emscripten` download is required.
 - **Server:** ensure the vendored launcher exists under `backend/bin/runtime/` for your OS (it's committed in the repo). On macOS/Linux it must be executable (`chmod +x backend/bin/runtime/formlogic-runtime-linux-x86_64`; `install.sh` and `install.php` do this). The prelude is synced to `backend/resources/` by the `prebuild` step of `npm run build`.
 
 ### MySQL connection refused

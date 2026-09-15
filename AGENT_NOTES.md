@@ -630,7 +630,7 @@ Returns boolean. Tracks `navigator.onLine` via events.
 
 ### `engine.ts`
 Thin client over a ZIPP WASM sandbox: each evaluation is dispatched to a dedicated
-Web Worker (`formlogic.worker.ts` → `zipp-host.ts`, running the vendored `ui/vendor/zipp-wasm`)
+Web Worker (`formlogic.worker.ts` → `zipp-host.ts`, running `ui/vendor/zipp-wasm`, generated from the installed Softn release)
 with an instruction budget, a heap cap and a terminate watchdog. The standard library
 below is the shared prelude (`prelude.js`), which also runs server-side via the
 vendored launcher, so client and server results match — `docs/contracts/formlogic-expression-corpus.json` pins that.

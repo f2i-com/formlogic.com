@@ -4,15 +4,17 @@
 // FormLogic is the hub of the tested set: it takes Softn's runtime from
 // Softn's latest GitHub release (scripts/fetch-softn-release.mjs, which
 // records what it installed in .runtime-source/softn-release/current.json),
-// that Softn release pins an XDB revision, and both FormLogic and Softn vendor
-// the same ZIPP release. This script does NOT add competing constants. It
+// that Softn release pins an XDB revision and ships the ZIPP release it was
+// built with, and FormLogic's browser engine is that release's zipp/ tree.
+// This script does NOT add competing constants. It
 // READS what is present, verifies the pieces agree, and writes one
 // machine-readable manifest that names every revision, digest, protocol
 // version and schema range a release was tested with.
 //
-// Which Softn release is installed is RECORDED, not pinned: it moves with
-// every Softn release without a FormLogic commit, so --check treats the
-// release, its commit and its archive digest as informational. What --check
+// Which Softn release is installed, and which ZIPP release it ships, are
+// RECORDED, not pinned: they move with every Softn release without a
+// FormLogic commit, so --check treats the release, its commit, its archive
+// digest and the ZIPP identity as informational. What --check
 // enforces are the invariants: identical ZIPP bytes, equal protocol versions,
 // the vendored adapter being the one the release ships, and this tree's own
 // data-format constants. A Softn release that breaks one of those fails the
@@ -28,8 +30,9 @@
 // Sources (all existing controls):
 //   .runtime-source/softn-release/current.json               the installed Softn release (tag, commit, archive digest)
 //   <softn>/.github/scripts/checkout-xdb.sh                   Softn -> XDB revision (source mode)
-//   formlogic/ui/vendor/zipp-wasm/SOURCE.json                 FormLogic's vendored ZIPP release + digest
-//   <softn>/packages/@softn/core/wasm-zipp/SOURCE.json        Softn's vendored ZIPP release + digest
+//   formlogic/ui/vendor/zipp-wasm/SOURCE.json                 the installed ZIPP release + digest (generated: the release's zipp/)
+//   <softn>/packages/@softn/core/wasm-zipp/SOURCE.json        the ZIPP release a Softn checkout installed (source mode;
+//                                                             --check then ignores the pinnedBy texts, which name the mode)
 //   <softn>/apps/softn-host-php/runtime/host-protocol.json         native hosting protocol versions
 //   formlogic/backend/resources/softn-native/provenance.json  what the prepared native runtime carries
 //   formlogic/ui/src/lib/softn/provenance.json                 the vendored FormLogic adapter's source digest
@@ -47,6 +50,7 @@ import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NATIVE_PROTOCOL, RECORD_EVENTS_PROTOCOL, EDITOR_BRIDGE_PROTOCOL } from '../formlogic/ui/scripts/softn-protocol.mjs';
+import { canonical } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
@@ -147,26 +151,34 @@ if (sourceMode && existsSync(xdbRepo)) {
   if (xdbHead && xdbPin && xdbHead !== xdbPin) problems.push(`the XDB checkout at ${xdbRepo} is ${xdbHead}, but Softn pins ${xdbPin}`);
 }
 
-// ── ZIPP: one release, identical bytes, in both trees and in the prepared runtime ──
-const flZipp = json(resolve(root, 'formlogic/ui/vendor/zipp-wasm/SOURCE.json'));
+// ── ZIPP: the release Softn ships, identical bytes in the engine tree and in the prepared runtime ──
+const flZippPath = resolve(root, 'formlogic/ui/vendor/zipp-wasm/SOURCE.json');
+if (!existsSync(flZippPath)) {
+  console.error('formlogic/ui/vendor/zipp-wasm is not installed (it is generated): run node scripts/fetch-softn-release.mjs, or node scripts/sync-zipp-from-softn.mjs with SOFTN_REPO');
+  process.exit(1);
+}
+const flZipp = json(flZippPath);
 const flZippDigest = sha256(resolve(root, 'formlogic/ui/vendor/zipp-wasm/zipp_wasm_bg.wasm'));
-must(flZippDigest === flZipp.sha256, `FormLogic vendored ZIPP bytes (${flZippDigest}) differ from SOURCE.json (${flZipp.sha256})`);
+must(flZippDigest === flZipp.sha256, `the installed ZIPP engine bytes (${flZippDigest}) differ from its SOURCE.json (${flZipp.sha256})`);
 if (softnZipp) {
-  must(softnZipp.version === flZipp.version && softnZipp.sha256 === flZipp.sha256 && softnZipp.revision === flZipp.revision,
-    `Softn vendors ZIPP ${softnZipp.version}@${softnZipp.revision} (${softnZipp.sha256}) but FormLogic vendors ${flZipp.version}@${flZipp.revision} (${flZipp.sha256})`);
+  // Every field the release (or the Softn checkout) records, the installed engine tree carries unchanged
+  // (key order aside, as the fetch compares them: two JSON writers may order a nested record differently).
+  const differing = Object.keys(softnZipp).filter((key) => canonical(softnZipp[key]) !== canonical(flZipp[key]));
+  must(!differing.length,
+    `${sourceMode ? 'the Softn checkout installed' : `Softn ${softnRelease?.tag} ships`} ZIPP ${softnZipp.release ?? softnZipp.version}@${softnZipp.revision} (${softnZipp.sha256}) but formlogic/ui/vendor/zipp-wasm is ${flZipp.release ?? flZipp.version}@${flZipp.revision} (${flZipp.sha256}); they differ in ${differing.join(', ')}. ${sourceMode ? 'Run node scripts/sync-zipp-from-softn.mjs' : 'Run node scripts/fetch-softn-release.mjs'}`);
   if (sourceMode) {
     const softnDigest = sha256(resolve(softnRepo, 'packages/@softn/core/wasm-zipp/zipp_wasm_bg.wasm'));
-    must(softnDigest === softnZipp.sha256, `Softn vendored ZIPP bytes (${softnDigest}) differ from its SOURCE.json (${softnZipp.sha256})`);
+    must(softnDigest === softnZipp.sha256, `the Softn checkout's installed ZIPP bytes (${softnDigest}) differ from its SOURCE.json (${softnZipp.sha256}); run npm run fetch:zipp there`);
   }
 }
 const runtimeProvenancePath = resolve(root, 'formlogic/backend/resources/softn-native/provenance.json');
 let runtimeProvenance = null;
 if (existsSync(runtimeProvenancePath)) {
   runtimeProvenance = json(runtimeProvenancePath);
-  must(runtimeProvenance.zipp?.sha256 === flZipp.sha256, 'the prepared native runtime carries a different ZIPP digest than FormLogic vendors');
+  must(runtimeProvenance.zipp?.sha256 === flZipp.sha256, 'the prepared native runtime carries a different ZIPP digest than the installed browser engine');
   must(runtimeProvenance.nativeProtocol === NATIVE_PROTOCOL, `the prepared native runtime is not native hosting protocol ${NATIVE_PROTOCOL}`);
   const runtimeWasm = resolve(root, 'formlogic/backend/resources/softn-native/wasm/zipp_wasm_bg.wasm');
-  if (existsSync(runtimeWasm)) must(sha256(runtimeWasm) === flZipp.sha256, 'the prepared native runtime wasm bytes differ from FormLogic\'s vendored release');
+  if (existsSync(runtimeWasm)) must(sha256(runtimeWasm) === flZipp.sha256, 'the prepared native runtime wasm bytes differ from the installed browser engine\'s');
 }
 if (softnProtocol) {
   must(softnProtocol.nativeProtocol === NATIVE_PROTOCOL, `Softn's runtime speaks native protocol ${softnProtocol.nativeProtocol}; FormLogic requires ${NATIVE_PROTOCOL}`);
@@ -224,7 +236,7 @@ const manifest = {
       ? { pinnedBy: 'SOFTN_REPO source checkout (developer mode); releases come from scripts/fetch-softn-release.mjs', revision: softnPin, checkoutRevision: softnHead, nativeProtocol: softnProtocol?.nativeProtocol ?? null, recordEvents: softnProtocol?.recordEvents ?? null, minimumNode: softnProtocol?.minimumNode ?? null, formlogicAdapter: { vendoredAt: 'formlogic/ui/src/lib/softn/project.ts', source: adapterProvenance.source ?? null, sha256: adapterProvenance.sha256 ?? null } }
       : { pinnedBy: 'latest GitHub release of f2i-com/softn.com (scripts/fetch-softn-release.mjs); SOFTN_RELEASE pins a tag; a release run freezes one record (--resolve-only) that every job installs (--frozen) and the release gate checks with --exact', release: softnRelease?.tag ?? null, revision: softnPin, archiveSha256: softnRelease?.sha256 ?? null, frozen: softnRelease?.frozen ?? null, nativeProtocol: softnProtocol?.nativeProtocol ?? null, recordEvents: softnProtocol?.recordEvents ?? null, minimumNode: softnProtocol?.minimumNode ?? null, formlogicAdapter: { vendoredAt: 'formlogic/ui/src/lib/softn/project.ts', source: adapterProvenance.source ?? null, sha256: adapterProvenance.sha256 ?? null } },
     xdb: { pinnedBy: sourceMode ? 'softn/.github/scripts/checkout-xdb.sh' : 'the installed Softn release (softn-release.json xdb.revision, when it records one)', revision: xdbPin, checkoutRevision: xdbHead, consumedAs: loaderXdbDependency, note: 'Native peer networking is opt-in and local-only by default at this revision; see xdb docs/networking-and-restore-policy.md' },
-    zipp: { pinnedBy: 'formlogic/ui/vendor/zipp-wasm/SOURCE.json and softn packages/@softn/core/wasm-zipp/SOURCE.json', version: flZipp.version, revision: flZipp.revision, variant: flZipp.variant, languages: flZipp.languages, artifact: flZipp.artifact, sha256: flZipp.sha256, rustc: flZipp.rustc, wasmBindgen: flZipp.wasmBindgen },
+    zipp: { pinnedBy: sourceMode ? 'the SOFTN_REPO checkout\'s packages/@softn/core/wasm-zipp (npm run fetch:zipp there), synced to formlogic/ui/vendor/zipp-wasm (generated)' : 'the installed Softn release (softn-release.json zipp), installed at formlogic/ui/vendor/zipp-wasm (generated)', release: flZipp.release ?? null, version: flZipp.version, revision: flZipp.revision, build: flZipp.build ?? null, bundle: flZipp.bundle ?? null, bundleSha256: flZipp.bundleSha256 ?? null, sumsSha256: flZipp.sumsSha256 ?? null, variant: flZipp.variant, languages: flZipp.languages, artifact: flZipp.artifact, sha256: flZipp.sha256, rustc: flZipp.rustc, wasmBindgen: flZipp.wasmBindgen },
     aokie: aokieContract ?? { note: 'connector contract copy not present in this tree' },
   },
   nativeRuntime: runtimeProvenance ? { nativeProtocol: runtimeProvenance.nativeProtocol, zipp: runtimeProvenance.zipp, modules: runtimeProvenance.modules } : { note: 'run scripts/prepare-native-runtime.mjs to record the prepared runtime' },
@@ -247,14 +259,23 @@ if (check) {
   // Informational fields move without a FormLogic commit: this tree's own
   // revision, checkout revisions, and (release mode) which Softn release is
   // installed with its commit, archive digest, minimum Node and native module
-  // digests. Everything else must match the committed manifest.
+  // digests, and which ZIPP release it ships (so --check never re-pins ZIPP;
+  // the equal-bytes invariants above still hold whatever it is). Everything
+  // else must match the committed manifest. A ZIPP record keeps only what does
+  // not name a release, so fields a later Softn adds to it cannot pin one either.
+  // The committed manifest describes a release install, so a SOFTN_REPO source
+  // checkout is checked against it without the pinnedBy text that names the mode.
+  const ZIPP_COMPARED = ['pinnedBy', 'repository', 'license', 'artifact'];
+  const unpinZipp = (zipp) => (zipp && typeof zipp === 'object' ? Object.fromEntries(ZIPP_COMPARED.filter((key) => key in zipp).map((key) => [key, zipp[key]])) : zipp);
   const strip = (m) => {
     const { generatedAt, components, problems: p, nativeRuntime, ...rest } = m;
     const c = JSON.parse(JSON.stringify(components));
     if (c.formlogic) delete c.formlogic.revision;
     if (c.softn) { delete c.softn.checkoutRevision; delete c.softn.release; delete c.softn.revision; delete c.softn.archiveSha256; delete c.softn.frozen; delete c.softn.minimumNode; }
     if (c.xdb) { delete c.xdb.checkoutRevision; delete c.xdb.revision; delete c.xdb.consumedAs; }
-    const n = nativeRuntime ? { nativeProtocol: nativeRuntime.nativeProtocol ?? null, zipp: nativeRuntime.zipp ?? null } : null;
+    if (c.zipp) c.zipp = unpinZipp(c.zipp);
+    if (sourceMode) for (const name of ['softn', 'xdb', 'zipp']) if (c[name]) delete c[name].pinnedBy;
+    const n = nativeRuntime ? { nativeProtocol: nativeRuntime.nativeProtocol ?? null, zipp: unpinZipp(nativeRuntime.zipp ?? null) } : null;
     return { ...rest, components: c, nativeRuntime: n };
   };
   const same = JSON.stringify(strip(committed)) === JSON.stringify(strip(manifest));
@@ -285,4 +306,4 @@ if (check) {
     process.exit(1);
   }
 }
-console.log(`ecosystem set${exact ? ' (exact candidate)' : ''}: formlogic ${manifest.components.formlogic.revision?.slice(0, 12)} -> softn ${softnRelease ? `${softnRelease.tag} ` : ''}${softnPin?.slice(0, 12)} -> xdb ${xdbPin?.slice(0, 12) ?? 'as the release pins'}; zipp ${flZipp.version}@${flZipp.revision.slice(0, 12)} (${flZipp.sha256.slice(0, 12)})`);
+console.log(`ecosystem set${exact ? ' (exact candidate)' : ''}: formlogic ${manifest.components.formlogic.revision?.slice(0, 12)} -> softn ${softnRelease ? `${softnRelease.tag} ` : ''}${softnPin?.slice(0, 12)} -> xdb ${xdbPin?.slice(0, 12) ?? 'as the release pins'}; zipp ${flZipp.release ?? flZipp.version}@${String(flZipp.revision).slice(0, 12)} (${flZipp.sha256.slice(0, 12)})`);

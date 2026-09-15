@@ -60,17 +60,19 @@ runs:
           printf '%s\n' "$SOFTN_FROZEN_JSON" > "$SOFTN_FROZEN_PATH"
         fi
         echo "path=$SOFTN_FROZEN_PATH" >> "$GITHUB_OUTPUT"
-    # FormLogic embeds three things Softn builds — the hosted app runtime,
-    # the two embedded editors and the native backend runtime — plus the
-    # source of the vendored FormLogic adapter. Every Softn release publishes
-    # them as softn-formlogic-runtime-<tag>.zip, built once and verified by
-    # Softn's release workflow. This fetches the frozen release (or, where the
-    # caller allows it, the latest or the softn-release tag), checks the
-    # archive against its .sha256 and its own manifest, checks it fits THIS
-    # tree (identical ZIPP engine bytes, the same protocol versions, the
-    # adapter this tree has vendored) and installs it where the build, the
-    # tests and the packagers expect it. Nothing is built from Softn source
-    # here.
+    # FormLogic embeds what Softn builds and ships — the ZIPP browser engine
+    # Softn took from a ZIPP release, the hosted app runtime, the two embedded
+    # editors and the native backend runtime — plus the source of the vendored
+    # FormLogic adapter. Every Softn release publishes them as
+    # softn-formlogic-runtime-<tag>.zip, built once and verified by Softn's
+    # release workflow. This fetches the frozen release (or, where the caller
+    # allows it, the latest or the softn-release tag), checks the archive
+    # against its .sha256 and its own manifest, checks every engine copy in it
+    # is the one ZIPP release it records and that it fits THIS tree (the same
+    # protocol versions, the adapter this tree has vendored), and installs it
+    # where the build, the tests and the packagers expect it (the engine at
+    # formlogic/ui/vendor/zipp-wasm, which git ignores). Nothing is built from
+    # Softn source here, and no ZIPP is named by this tree.
     - name: Fetch and install the Softn release runtime
       shell: bash
       working-directory: ${{ github.workspace }}
@@ -92,11 +94,12 @@ runs:
       run: echo "FORMLOGIC_NODE_BIN=$(command -v node)" >> "$GITHUB_ENV"
     # ECO-02: every consumer of the runtime (backend tests, UI, e2e, packaging)
     # asserts that the committed compatibility manifest describes THIS tree:
-    # the vendored ZIPP release (identical bytes in FormLogic and in the
-    # installed runtime), the vendored adapter's provenance against the
+    # the installed ZIPP release (identical bytes in the browser engine and in
+    # the native runtime), the vendored adapter's provenance against the
     # release's adapter, protocol versions and data-format ranges. Which
-    # Softn release is installed is recorded, not pinned: it moves with every
-    # Softn release, and a release that does not fit fails the fetch above.
+    # Softn release is installed, and the ZIPP release it ships, are recorded,
+    # not pinned: they move with every Softn release, and a release that does
+    # not fit fails the fetch above.
     # With a frozen record (release-readiness FL-S01) the check is also exact:
     # what is installed IS the release this run resolved, not merely one that fits.
     - name: Ecosystem compatibility manifest (digests, protocols)

@@ -1,8 +1,8 @@
 // @vitest-environment node
 //
 // Flows logic_block evaluation (zipp-host kind 'flow', used by calculateValueForFlow)
-// against the REAL vendored ZIPP engine — zipp-host runEval with the checked-in wasm
-// bytes, minus the Worker Vitest doesn't have (same approach as corpusParity.test.ts).
+// against the REAL ZIPP engine — zipp-host runEval with the installed wasm bytes (the
+// Softn release's), minus the Worker Vitest doesn't have (same approach as corpusParity.test.ts).
 //
 // Authors write logic_block code in two styles: an expression, or statements whose
 // completion value is the result, and a function body with a top-level `return` (the

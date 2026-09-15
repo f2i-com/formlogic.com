@@ -1,0 +1,122 @@
+#!/usr/bin/env node
+// Engine provenance guard: engines come from releases, never from git.
+//
+// FormLogic's browser engine is the installed Softn release's zipp/ tree
+// (scripts/fetch-softn-release.mjs installs it at formlogic/ui/vendor/zipp-wasm,
+// which git ignores), and Softn takes it from a ZIPP release. A committed copy
+// would be a second, unverified engine that silently outlives the release it
+// came from, so this fails on any tracked file that is:
+//
+//   - a compiled binary: wasm, ELF, or a PE (MZ header with a PE signature), or a *.cwasm;
+//   - anything under formlogic/ui/vendor/;
+//   - named zipp_wasm* (the engine's glue, declarations or module, under any folder);
+//   - a Cargo.toml naming a zipp.org source (git, tag, rev, branch or [patch]) or
+//     zipp-vm / zipp-regress other than as a path into .runtime-source/zipp/src.
+//
+// Static: it reads `git ls-files` and the tracked bytes, and needs no install.
+//
+//   node scripts/engine-provenance-guard.mjs [--root <repository>]
+import { execFileSync } from 'node:child_process';
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
+import { basename, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * Tracked binaries the server sandbox still commits until it is built in CI
+ * from the ZIPP release the installed Softn release names; that change empties
+ * this list and lifts CARGO_EXEMPT.
+ */
+export const BINARY_ALLOWLIST = Object.freeze([
+  'formlogic/backend/bin/runtime/formlogic-runtime-linux-x86_64',
+  'formlogic/backend/bin/runtime/formlogic-runtime-windows-x86_64.exe',
+  'formlogic/runtime/host/formlogic-runtime-guest.wasm',
+]);
+/** The guest still takes zipp-vm by git rev until the same change. */
+export const CARGO_EXEMPT = Object.freeze(['formlogic/runtime/guest/Cargo.toml']);
+
+const ZIPP_SOURCE_PATH = /(^|\/)\.runtime-source\/zipp\/src\//;
+const ZIPP_CRATE = /^(zipp-vm|zipp-regress)$/;
+
+/** What the first bytes say a file is, or null. */
+export function binaryKind(header) {
+  if (header.length >= 4 && header[0] === 0x00 && header[1] === 0x61 && header[2] === 0x73 && header[3] === 0x6d) return 'wasm';
+  if (header.length >= 4 && header[0] === 0x7f && header[1] === 0x45 && header[2] === 0x4c && header[3] === 0x46) return 'ELF';
+  if (header.length >= 0x40 && header[0] === 0x4d && header[1] === 0x5a) {
+    const offset = header.readUInt32LE(0x3c);
+    if (offset + 4 <= header.length && header[offset] === 0x50 && header[offset + 1] === 0x45 && header[offset + 2] === 0 && header[offset + 3] === 0) return 'PE';
+  }
+  return null;
+}
+
+/** Violations of the zipp.org-source rule in one Cargo.toml's text. */
+export function cargoViolations(text) {
+  const problems = [];
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  let table = null;
+  let tableBody = [];
+  const closeTable = () => {
+    if (table && !tableBody.some((line) => /^\s*path\s*=\s*"([^"]*)"/.test(line) && ZIPP_SOURCE_PATH.test(/"([^"]*)"/.exec(line)[1]))) problems.push(`[${table}] does not take ${table.split('.').pop()} as a path into .runtime-source/zipp/src`);
+    table = null;
+    tableBody = [];
+  };
+  for (const raw of lines) {
+    const line = raw.replace(/#.*$/, '');
+    const header = /^\s*\[+([^\]]+)\]+\s*$/.exec(line);
+    if (header) {
+      closeTable();
+      const name = header[1].trim();
+      if (/zipp\.org/i.test(name)) problems.push(`[${name}] patches a zipp.org source`);
+      else if (ZIPP_CRATE.test(name.split('.').pop().replace(/"/g, '')) && /dependencies/.test(name)) table = name;
+      continue;
+    }
+    if (table) tableBody.push(line);
+    if (/zipp\.org/i.test(line)) { problems.push(`names a zipp.org source: ${raw.trim()}`); continue; }
+    const dependency = /^\s*"?(zipp-vm|zipp-regress)"?\s*=\s*(.+)$/.exec(line);
+    if (dependency) {
+      const path = /\bpath\s*=\s*"([^"]*)"/.exec(dependency[2])?.[1];
+      if (!path || !ZIPP_SOURCE_PATH.test(path) || /\b(git|tag|rev|branch|registry)\s*=/.test(dependency[2])) problems.push(`takes ${dependency[1]} other than as a path into .runtime-source/zipp/src: ${raw.trim()}`);
+    }
+  }
+  closeTable();
+  return problems;
+}
+
+/** Every violation in the repository at `root`, as "<path>: <reason>". */
+export function findViolations({ root }) {
+  const git = (args, options = {}) => execFileSync('git', ['-C', root, ...args], { maxBuffer: 1 << 28, ...options });
+  const files = git(['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean);
+  // A tracked file missing from the working tree is still committed: read what the index holds.
+  const tracked = (path) => (existsSync(resolve(root, path)) && statSync(resolve(root, path)).isFile() ? null : git(['cat-file', 'blob', `:${path}`]));
+  const violations = [];
+  for (const path of files) {
+    const name = basename(path);
+    if (path.startsWith('formlogic/ui/vendor/')) violations.push(`${path}: formlogic/ui/vendor is generated by scripts/fetch-softn-release.mjs and must not be tracked`);
+    if (name.startsWith('zipp_wasm')) violations.push(`${path}: a ZIPP engine file (zipp_wasm*) must come from the installed Softn release, not git`);
+    if (name.endsWith('.cwasm')) violations.push(`${path}: a precompiled wasm module (*.cwasm) must not be tracked`);
+    const blob = tracked(path);
+    let header;
+    if (blob) header = blob.subarray(0, 4096);
+    else {
+      const fd = openSync(resolve(root, path), 'r');
+      try { header = Buffer.alloc(4096); header = header.subarray(0, readSync(fd, header, 0, 4096, 0)); } finally { closeSync(fd); }
+    }
+    const kind = binaryKind(header);
+    if (kind && !BINARY_ALLOWLIST.includes(path)) violations.push(`${path}: a tracked ${kind} binary; engines and launchers come from releases and CI builds, not git`);
+    if (name === 'Cargo.toml' && !CARGO_EXEMPT.includes(path)) {
+      for (const problem of cargoViolations((blob ?? readFileSync(resolve(root, path))).toString('utf8'))) violations.push(`${path}: ${problem}`);
+    }
+  }
+  return violations;
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const rootIndex = process.argv.indexOf('--root');
+  const root = rootIndex > 0 ? resolve(process.argv[rootIndex + 1]) : resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const violations = findViolations({ root });
+  if (violations.length) {
+    console.error('engine provenance guard:');
+    for (const violation of violations) console.error(` - ${violation}`);
+    process.exit(1);
+  }
+  console.log(`engine provenance guard: no tracked engine binaries or zipp.org pins (${BINARY_ALLOWLIST.length} sandbox binaries and ${CARGO_EXEMPT.length} Cargo.toml still allowed until the sandbox is built in CI)`);
+}

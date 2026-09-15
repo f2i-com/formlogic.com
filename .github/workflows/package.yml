@@ -131,6 +131,16 @@ jobs:
       - name: Test release contracts and PHP signature interoperability
         run: node --test scripts/release-signing.test.mjs scripts/installer-browser.test.mjs
 
+      # A release carries no committed engine: static, over git ls-files.
+      - name: Engine provenance guard
+        run: node scripts/engine-provenance-guard.mjs
+
+      # What the guard and the fetch stand on, over fixtures (no network, no installed
+      # tree): the Softn archive's refusals and one-generation install, the guard's rules,
+      # the manifest never re-pinning ZIPP, source-mode sync and package-dist's engine checks.
+      - name: Engine sourcing script tests
+        run: node --test scripts/fetch-softn-release.test.mjs scripts/prepare-hosted-runtime.test.mjs scripts/engine-provenance-guard.test.mjs scripts/ecosystem-manifest.test.mjs scripts/sync-zipp-from-softn.test.mjs scripts/release-runtime.test.mjs
+
       - name: Frontend gates (lint, tests, build, budget, invariants, audit)
         working-directory: formlogic/ui
         run: |

@@ -74,7 +74,8 @@ const MAX_OUTPUT_DEPTH = 8;
 let readyPromise: Promise<void> | null = null;
 
 /**
- * Node parity tests read the checked-in artifact. Browser workers receive the
+ * Node parity tests read the installed engine (vendor/zipp-wasm, generated from
+ * the Softn release by scripts/fetch-softn-release.mjs). Browser workers receive the
  * page's verified bytes and never download another copy themselves. Keep the
  * Node-only URL dynamic so Vite does not emit a second worker-owned WASM asset.
  */

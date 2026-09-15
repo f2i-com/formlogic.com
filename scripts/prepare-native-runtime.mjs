@@ -12,10 +12,12 @@ const target = new URL('../formlogic/backend/resources/softn-native/', import.me
 const modules = ['runner.mjs','request-worker.mjs','request-hook.mjs','wasm-host.mjs','migrations.mjs','crypto.mjs','time.mjs','host-protocol.json','record-events.mjs'];
 const protocol = JSON.parse(await readFile(new URL('host-protocol.json', source), 'utf8'));
 if (protocol.nativeProtocol !== NATIVE_PROTOCOL || protocol.recordEvents !== RECORD_EVENTS_PROTOCOL) throw new Error(`Use a SoftN checkout supporting native hosting protocol ${NATIVE_PROTOCOL} (record events ${RECORD_EVENTS_PROTOCOL}).`);
-const expected = JSON.parse(await readFile(new URL('../formlogic/ui/vendor/zipp-wasm/SOURCE.json', import.meta.url), 'utf8'));
-const identity = JSON.parse(await readFile(new URL('SOURCE.json', wasm), 'utf8'));
+// Both engine trees are generated: the checkout's by `npm run fetch:zipp`, FormLogic's by sync-zipp-from-softn.
+const syncHint = 'Run npm run fetch:zipp in the Softn checkout, then node scripts/sync-zipp-from-softn.mjs here.';
+const expected = JSON.parse(await readFile(new URL('../formlogic/ui/vendor/zipp-wasm/SOURCE.json', import.meta.url), 'utf8').catch(() => { throw new Error(`formlogic/ui/vendor/zipp-wasm is not installed. ${syncHint}`); }));
+const identity = JSON.parse(await readFile(new URL('SOURCE.json', wasm), 'utf8').catch(() => { throw new Error(`The Softn checkout has no packages/@softn/core/wasm-zipp install. ${syncHint}`); }));
 const hash = createHash('sha256').update(await readFile(new URL('zipp_wasm_bg.wasm', wasm))).digest('hex');
-if (identity.version !== expected.version || identity.sha256 !== expected.sha256 || hash !== expected.sha256) throw new Error('Native runtime must use the same verified ZIPP release as FormLogic.');
+if (identity.version !== expected.version || identity.sha256 !== expected.sha256 || hash !== expected.sha256) throw new Error(`Native runtime must use the same verified ZIPP release as FormLogic's browser engine. ${syncHint}`);
 await mkdir(new URL('wasm/', target), { recursive: true });
 const hashes = {};
 for (const name of modules) {
@@ -27,6 +29,7 @@ for (const [from, to] of [['zipp_wasm.js','wasm/zipp_wasm.mjs'],['zipp_wasm_bg.w
   await copyFile(new URL(from, wasm), new URL(to, target));
 }
 for (const name of ['LICENSE','NOTICE']) await copyFile(new URL(name, repository), new URL(name, target));
-await copyFile(new URL('THIRD_PARTY_LICENSES.txt', wasm), new URL('ZIPP-THIRD-PARTY-LICENSES.txt', target));
+// The notices go by the name SOURCE.json records, as Softn's packager takes them.
+await copyFile(new URL(identity.notices?.file ?? 'THIRD_PARTY_LICENSES.txt', wasm), new URL('ZIPP-THIRD-PARTY-LICENSES.txt', target));
 await writeFile(new URL('provenance.json',target), JSON.stringify({ source:'softn.com/apps/softn-host-php/runtime',nativeProtocol:NATIVE_PROTOCOL,zipp:identity,modules:hashes },null,2)+'\n');
 console.log('Prepared native app runtime: '+fileURLToPath(target));

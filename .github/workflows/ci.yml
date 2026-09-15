@@ -185,6 +185,21 @@ jobs:
       - name: Security invariants (custom-screen CSP)
         run: node scripts/check-security-invariants.mjs
 
+      # Hard gate: engines come from releases, never git. Static (git ls-files and
+      # the tracked bytes): no tracked wasm/ELF/PE binary outside the sandbox
+      # allowlist, nothing under ui/vendor, no zipp_wasm* file, no zipp.org pin in a Cargo.toml.
+      - name: Engine provenance guard
+        working-directory: ${{ github.workspace }}
+        run: node scripts/engine-provenance-guard.mjs
+
+      # The contracts the guard and the fetch stand on, over fixtures (no network, no
+      # installed tree): every refusal of a Softn archive, the one-generation install and
+      # its rollback, the guard's rules, the manifest never re-pinning ZIPP, source-mode
+      # sync, and what package-dist holds a UI build to.
+      - name: Engine sourcing script tests
+        working-directory: ${{ github.workspace }}
+        run: node --test scripts/fetch-softn-release.test.mjs scripts/prepare-hosted-runtime.test.mjs scripts/engine-provenance-guard.test.mjs scripts/ecosystem-manifest.test.mjs scripts/sync-zipp-from-softn.test.mjs scripts/release-runtime.test.mjs
+
       # The build's prebuild step syncs prelude.js into the backend; if that produced a diff,
       # the committed backend copy was stale (someone forgot `npm run sync:prelude`).
       - name: FormLogic prelude in sync (frontend ↔ backend)
