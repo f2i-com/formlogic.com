@@ -27,6 +27,21 @@ use PDO;
  *                                  privileged recovery backup; otherwise reissued and reported as such)
  *  - private/manage.lock, events.lock, staging-*, previous-*, pre-install-*.sqlite, recovery-required
  *                                  host-local; never archived
+ *  - private/install.json          the install journal (FL-S03): written before an update changes
+ *                                  anything, advanced at every phase, removed when the update is
+ *                                  complete. A process that dies mid-update leaves it behind, and
+ *                                  the next operation to take the management lock settles it —
+ *                                  rolls the old generation back, or the finished one forward —
+ *                                  before anything else runs.
+ *
+ * Every file this service publishes (project.json, config.json, staged source and media, the
+ * journal, the recovery marker) is written completely or not at all (FL-S02): a private temporary
+ * file beside the destination, the byte count compared with the byte count intended, flushed,
+ * then renamed into place. A short write leaves the previous file and fails the operation.
+ *
+ * Every entry point takes the management lock FIRST and decides only afterwards (FL-S04): whether
+ * the installation exists, whether an update was left unfinished, whether operator recovery is
+ * required, and whether the generation the caller was looking at is still the one installed.
  */
 class NativeAppService
 {
@@ -43,6 +58,13 @@ class NativeAppService
     public const RECORD_EVENTS_PROTOCOL = 1;
 
     private const PREFLIGHT_TTL = 60;
+
+    /** The install journal, relative to the installation root. */
+    private const JOURNAL = '/private/install.json';
+
+    /** Records browsing: rows per page, and the furthest offset a page may start at. */
+    public const RECORD_PAGE = 50;
+    public const RECORD_OFFSET_LIMIT = 100000;
 
     /**
      * Environment variables the Node runtime is allowed to inherit from PHP. Everything else
@@ -92,6 +114,7 @@ class NativeAppService
             'capabilities' => $capabilities,
             'hasDatabase' => is_file($root . '/private/data/application.sqlite'),
             'recoveryRequired' => is_file($root . '/private/recovery-required'),
+            'updateUnfinished' => is_file($root . self::JOURNAL),
         ];
     }
 
@@ -115,9 +138,8 @@ class NativeAppService
      */
     public function snapshotDatabase(string $appId, string $destination, ?SqliteSnapshot $snapshotter = null): ?array
     {
-        $root = $this->root($appId);
-        if (is_file($root . '/private/recovery-required')) throw new RuntimeException('The app database needs operator recovery before it can be backed up');
-        $lock = $this->sharedLock($root);
+        [$root, $lock] = $this->openShared($appId, null, false);
+        if ($lock === null) return null;
         try { return $this->snapshotDatabaseLocked($root, $destination, $snapshotter); }
         finally { flock($lock, LOCK_UN); fclose($lock); }
     }
@@ -127,9 +149,67 @@ class NativeAppService
     {
         $this->directory($root . '/private');
         $lock = fopen($root . '/private/manage.lock', 'c');
-        if (!$lock || !flock($lock, LOCK_SH | LOCK_NB)) { if ($lock) fclose($lock); throw new RuntimeException('The app is being updated. Try the backup again shortly.', 409); }
+        if (!$lock || !flock($lock, LOCK_SH | LOCK_NB)) { if ($lock) fclose($lock); throw new RuntimeException('The app is being updated. Try again shortly.', 409); }
         return $lock;
     }
+
+    /** Exclusive management lock for an install, restore or removal; a 409 when anyone else holds it. */
+    private function exclusiveLock(string $root, string $busy)
+    {
+        $this->directory($root . '/private');
+        $lock = fopen($root . '/private/manage.lock', 'c');
+        if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) { if ($lock) fclose($lock); throw new RuntimeException($busy, 409); }
+        return $lock;
+    }
+
+    /**
+     * The one way in for every operation that reads or uses an installation (FL-S04): take the
+     * shared management lock, THEN decide. An unfinished update left by a terminated process is
+     * settled under an exclusive lock first (rolled back, or rolled forward when it had reached
+     * its last step), then the shared lock is taken again and the checks run against what is
+     * actually installed: the recovery marker, the project, and — when the caller names the
+     * generation it was looking at — that this is still that generation.
+     *
+     * @return array{0:string, 1:resource|null, 2:array|null} root, the held shared lock, the project
+     */
+    private function openShared(string $appId, ?int $generation = null, bool $requireProject = true): array
+    {
+        $root = $this->root($appId);
+        if (!is_file($root . '/project.json') && !is_file($root . self::JOURNAL)) {
+            if ($requireProject) throw new RuntimeException('Native app not found', 404);
+            return [$root, null, null];
+        }
+        $this->beforeLock($root, 'shared');
+        $lock = null;
+        for ($attempt = 0; $attempt < 2 && $lock === null; $attempt++) {
+            $lock = $this->sharedLock($root);
+            if (!is_file($root . self::JOURNAL)) break;
+            flock($lock, LOCK_UN); fclose($lock); $lock = null;
+            $exclusive = $this->exclusiveLock($root, 'The app is being updated. Try again shortly.');
+            try { $this->resolveJournal($root); }
+            finally { flock($exclusive, LOCK_UN); fclose($exclusive); }
+        }
+        if ($lock === null) throw new RuntimeException('The app is being updated. Try again shortly.', 409);
+        try {
+            if (is_file($root . self::JOURNAL)) throw new RuntimeException('The app is being updated. Try again shortly.', 409);
+            $this->assertNotRecoveryRequired($root);
+            $project = $this->get($appId);
+            if ($project === null && $requireProject) throw new RuntimeException('Native app not found', 404);
+            if ($generation !== null && (int) ($project['version'] ?? 0) !== $generation) throw new RuntimeException('The app was updated while this request was in flight. Reload and try again.', 409);
+            return [$root, $lock, $project];
+        } catch (\Throwable $error) {
+            flock($lock, LOCK_UN); fclose($lock);
+            throw $error;
+        }
+    }
+
+    private function assertNotRecoveryRequired(string $root, string $message = 'The app database needs operator recovery'): void
+    {
+        if (is_file($root . '/private/recovery-required')) throw new RuntimeException($message);
+    }
+
+    /** A seam for deterministic tests: called after the pre-lock existence check and before the lock is taken. */
+    protected function beforeLock(string $root, string $operation): void {}
 
     /** Caller holds the management lock. */
     private function snapshotDatabaseLocked(string $root, string $destination, ?SqliteSnapshot $snapshotter): ?array
@@ -152,12 +232,8 @@ class NativeAppService
      */
     public function captureForBackup(string $appId, string $databaseDestination, ?SqliteSnapshot $snapshotter = null, bool $includeHostSecrets = false): array
     {
-        $root = $this->root($appId);
-        if (!is_file($root . '/project.json')) throw new RuntimeException('Native app not found', 404);
-        $lock = $this->sharedLock($root);
+        [$root, $lock, $project] = $this->openShared($appId);
         try {
-            if (is_file($root . '/private/recovery-required')) throw new RuntimeException('The app database needs operator recovery before it can be backed up');
-            $project = $this->get($appId);
             if ($project === null) throw new RuntimeException('Native app not found', 404);
             $manifest = json_decode((string) ($project['files']['manifest.json'] ?? ''), true);
             $snapshot = $this->snapshotDatabaseLocked($root, $databaseDestination, $snapshotter);
@@ -212,39 +288,40 @@ class NativeAppService
         $this->directory($root);
         $this->directory($root . '/private');
         $this->directory($root . '/private/data');
-        $lock = fopen($root . '/private/manage.lock', 'c');
-        if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) {
-            if ($lock) fclose($lock);
-            throw new RuntimeException('The app is busy. Try again shortly.', 409);
-        }
+        $this->beforeLock($root, 'restore');
+        $lock = $this->exclusiveLock($root, 'The app is busy. Try again shortly.');
         $staging = $root . '/staging-' . bin2hex(random_bytes(8));
+        $writing = false;
         try {
+            // Decided under the lock, not before it: an unfinished update is settled first, and
+            // the create-only rule is checked against what is there now. Until it passes nothing
+            // of ours has been written, so a refusal must not clean anything up.
+            $this->resolveJournal($root);
+            if (is_file($root . '/project.json') || is_dir($root . '/app') || is_file($root . '/private/data/application.sqlite')) {
+                throw new RuntimeException('A native installation already exists for this app; remove it before restoring');
+            }
+            $writing = true;
             $config = $hostConfig ?? ['appId' => $manifest['id'], 'development' => false, 'keyHex' => bin2hex(random_bytes(32)), 'cryptoDomains' => ['hmac' => $manifest['id'] . ':hmac:v1', 'seal' => $manifest['id'] . ':seal:v1']];
             $config['capabilities'] = $capabilities;
             $config['enableHostContext'] = true;
             $this->writeHostConfig($root . '/private/config.json', json_encode($config, JSON_THROW_ON_ERROR));
             $database = 'none';
             if ($databaseSnapshot !== null) {
-                if (!copy($databaseSnapshot, $root . '/private/data/application.sqlite')) throw new RuntimeException('Could not place the restored app database');
+                $target = $root . '/private/data/application.sqlite';
+                if (!copy($databaseSnapshot, $target) || filesize($target) !== filesize($databaseSnapshot)) throw new RuntimeException('Could not place the restored app database');
                 $database = 'restored';
             }
-            $this->directory($staging);
-            foreach (array_merge($files, $decoded) as $path => $source) {
-                $this->directory(dirname($staging . '/' . $path));
-                if (file_put_contents($staging . '/' . $path, $source) === false) throw new RuntimeException('Could not stage app source');
-            }
+            $this->stageProject($staging, array_merge($files, $decoded));
             if (!rename($staging, $root . '/app')) throw new RuntimeException('Could not activate restored app source');
             $health = $this->invoke($root, ['method' => 'GET', 'path' => '/api/meta', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false]);
             if (($health['status'] ?? 500) !== 200) throw new RuntimeException('Restored native app failed validation: ' . ($health['body']['diagnostic'] ?? 'runtime unavailable'), 422);
             $version = max(1, (int) ($project['version'] ?? 1));
             $saved = ['home' => ($project['home'] ?? false) === true, 'version' => $version, 'updatedAt' => gmdate('c'), 'files' => $files, 'assets' => is_array($project['assets'] ?? null) ? $project['assets'] : [], 'access' => ($project['access'] ?? '') === 'members' ? 'members' : 'application'];
-            $temp = $root . '/project.pending.json';
-            file_put_contents($temp, json_encode($saved, JSON_THROW_ON_ERROR));
-            if (!rename($temp, $root . '/project.json')) throw new RuntimeException('Could not save the restored project');
+            $this->writeExact($root . '/project.json', json_encode($saved, JSON_THROW_ON_ERROR), 0600);
             return ['version' => $version, 'database' => $database, 'cryptoMaterial' => $hostConfig !== null ? self::CRYPTO_RESTORED : self::CRYPTO_REISSUED];
         } catch (\Throwable $error) {
             flock($lock, LOCK_UN); fclose($lock); $lock = null;
-            try { $this->remove($appId); } catch (\Throwable $cleanup) { error_log('Native restore cleanup: ' . $cleanup->getMessage()); }
+            if ($writing) { try { $this->remove($appId); } catch (\Throwable $cleanup) { error_log('Native restore cleanup: ' . $cleanup->getMessage()); } }
             throw $error;
         } finally {
             if ($lock) { flock($lock, LOCK_UN); fclose($lock); }
@@ -514,12 +591,218 @@ class NativeAppService
     /** Replace private configuration atomically so a failed write cannot truncate its keys. */
     private function writeHostConfig(string $path, string $source): void
     {
-        $pending = $path . '.pending';
+        try { $this->writeExact($path, $source, 0600); }
+        catch (RuntimeException $error) { throw new RuntimeException('Could not save host configuration: ' . $error->getMessage(), 0, $error); }
+    }
+
+    /**
+     * Write $bytes to $path completely or not at all (FL-S02). The bytes go to a private
+     * temporary file beside the destination; the count written is compared with the count
+     * intended; the data is flushed to disk; only then does the file take the destination's
+     * name. A short write — a full disk, a quota, a signal — leaves the previous file in place
+     * and throws. PHP's own warning on a partial write is not a signal anyone reads.
+     */
+    private function writeExact(string $path, string $bytes, int $mode = 0644): void
+    {
+        $pending = $path . '.pending-' . bin2hex(random_bytes(6));
         try {
-            if (file_put_contents($pending, $source) !== strlen($source) || !chmod($pending, 0600) || !rename($pending, $path)) {
-                throw new RuntimeException('Could not save host configuration');
+            $stream = @fopen($pending, 'xb');
+            if ($stream === false) throw new RuntimeException('Could not create a private file in app storage');
+            try {
+                $written = $this->writeStream($pending, $stream, $bytes);
+                if ($written !== strlen($bytes)) throw new RuntimeException('Short write to ' . basename($path) . ': ' . (int) $written . ' of ' . strlen($bytes) . ' bytes');
+                if (!fflush($stream)) throw new RuntimeException('Could not flush ' . basename($path));
+                if (function_exists('fsync')) fsync($stream);
+            } finally { fclose($stream); }
+            clearstatcache(true, $pending);
+            if (filesize($pending) !== strlen($bytes)) throw new RuntimeException('Short write to ' . basename($path) . ': the file is not the size intended');
+            if (!chmod($pending, $mode)) throw new RuntimeException('Could not set permissions on ' . basename($path));
+            if (!rename($pending, $path)) throw new RuntimeException('Could not replace ' . basename($path));
+        } finally { if (is_file($pending)) @unlink($pending); }
+    }
+
+    /**
+     * The raw write behind writeExact, in a loop until every byte is out or the stream refuses.
+     * A seam: tests make it come up short for a chosen path. @return int|false bytes written
+     */
+    protected function writeStream(string $path, $stream, string $bytes): int|false
+    {
+        $total = 0;
+        $length = strlen($bytes);
+        while ($total < $length) {
+            $count = fwrite($stream, substr($bytes, $total));
+            if ($count === false || $count === 0) return $total;
+            $total += $count;
+        }
+        return $total;
+    }
+
+    /** Stage every source and media file of a project into $staging, each written completely or not at all. */
+    private function stageProject(string $staging, array $entries): void
+    {
+        $this->directory($staging);
+        foreach ($entries as $path => $source) {
+            $this->directory(dirname($staging . '/' . $path));
+            $this->writeExact($staging . '/' . $path, $source, 0644);
+        }
+    }
+
+    /** rename() with its result as the answer; a seam so a test can make a rollback step fail. */
+    protected function renameChecked(string $from, string $to): bool
+    {
+        return @rename($from, $to);
+    }
+
+    // ── The install journal (FL-S03) ─────────────────────────────────────────
+
+    private function readJournal(string $root): ?array
+    {
+        $path = $root . self::JOURNAL;
+        if (!is_file($path)) return null;
+        $journal = json_decode((string) file_get_contents($path), true);
+        // An unreadable journal is still an unfinished update: nothing may run until an operator looks.
+        if (!is_array($journal) || !is_string($journal['phase'] ?? null) || !is_string($journal['operation'] ?? null)) return ['operation' => 'unreadable', 'phase' => 'recovery', 'problems' => ['the install journal could not be read'], 'staging' => '', 'previous' => null, 'snapshot' => null, 'configBackup' => null, 'hadConfig' => true, 'hadDatabase' => true, 'firstInstall' => false];
+        return $journal;
+    }
+
+    private function writeJournal(string $root, array $journal): void
+    {
+        $this->writeExact($root . self::JOURNAL, json_encode($journal, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT), 0600);
+    }
+
+    private function clearJournal(string $root): void
+    {
+        $path = $root . self::JOURNAL;
+        if (is_file($path) && !unlink($path)) throw new RuntimeException('Could not retire the install journal');
+    }
+
+    /** Move the update to its next phase, durably, before the phase's work begins. */
+    private function advance(string $root, array &$journal, string $phase): void
+    {
+        $journal['phase'] = $phase;
+        $this->writeJournal($root, $journal);
+        $this->afterPhase($root, $phase);
+    }
+
+    /** A seam for termination tests: called once the named phase is durable. */
+    protected function afterPhase(string $root, string $phase): void {}
+
+    /**
+     * Settle whatever a terminated update left behind. Caller holds the exclusive lock.
+     * A journal that reached metadata-promoted describes a complete new generation and is rolled
+     * forward; any earlier phase is rolled back to the previous generation. A journal already in
+     * recovery, or a rollback that cannot complete, leaves the recovery marker and throws.
+     */
+    private function resolveJournal(string $root): void
+    {
+        $journal = $this->readJournal($root);
+        if ($journal === null) {
+            foreach (glob($root . '/staging-*', GLOB_ONLYDIR) ?: [] as $orphan) {
+                try { $this->removeStagedSource($root, $orphan); } catch (\Throwable $e) { error_log('Native source cleanup: ' . $e->getMessage()); }
             }
-        } finally { if (is_file($pending)) unlink($pending); }
+            return;
+        }
+        if ($journal['phase'] === 'metadata-promoted') $this->rollForward($root, $journal);
+        elseif ($journal['phase'] !== 'recovery') $this->rollBack($root, $journal, 'the previous update was interrupted at phase ' . $journal['phase']);
+        if (is_file($root . '/private/recovery-required')) throw new RuntimeException('The app needs operator recovery: ' . trim((string) file_get_contents($root . '/private/recovery-required')));
+    }
+
+    /** The new generation is complete: retire what the rollback would have needed. Never throws. */
+    private function rollForward(string $root, array $journal): void
+    {
+        try {
+            if (is_string($journal['snapshot'] ?? null) && is_file($root . '/private/' . $journal['snapshot'])) unlink($root . '/private/' . $journal['snapshot']);
+            if (is_string($journal['configBackup'] ?? null) && is_file($root . '/private/' . $journal['configBackup'])) unlink($root . '/private/' . $journal['configBackup']);
+            // Keep one previous source version — this update's — and discard older ones and every staging directory.
+            $keep = is_string($journal['previous'] ?? null) ? $journal['previous'] : null;
+            foreach (array_merge(glob($root . '/previous-*', GLOB_ONLYDIR) ?: [], glob($root . '/staging-*', GLOB_ONLYDIR) ?: []) as $directory) {
+                if ($keep !== null && basename($directory) === $keep) continue;
+                try { $this->removeStagedSource($root, $directory); } catch (\Throwable $e) { error_log('Native source cleanup: ' . $e->getMessage()); }
+            }
+            $this->clearJournal($root);
+        } catch (\Throwable $error) {
+            error_log('Native install journal could not be retired: ' . $error->getMessage());
+        }
+    }
+
+    /**
+     * Put the previous generation back: source, database, configuration, in that order, each step
+     * checked. What the filesystem says happened decides what to undo, so this serves both an
+     * exception in a live install and a journal left by a terminated one. When any step cannot be
+     * completed the journal is kept in phase `recovery`, the recovery marker is written naming
+     * the problems, and every input the operator needs (staging, previous source, snapshot,
+     * configuration backup) is retained. Never throws.
+     */
+    private function rollBack(string $root, array $journal, string $reason): void
+    {
+        $problems = [];
+        $phase = (string) $journal['phase'];
+        $staging = $root . '/' . $journal['staging'];
+        $previous = is_string($journal['previous'] ?? null) ? $root . '/' . $journal['previous'] : null;
+        $database = $root . '/private/data/application.sqlite';
+        $sourceTouched = in_array($phase, ['activating', 'source-activated', 'migrated'], true);
+        if ($sourceTouched) {
+            // The new source is in app/ exactly when staging/ is gone; the old one is in previous/ exactly when it was moved.
+            if (is_dir($root . '/app') && !is_dir($staging) && !$this->renameChecked($root . '/app', $staging)) $problems[] = 'move the new source aside';
+            if ($previous !== null) {
+                if (is_dir($root . '/app')) { if (is_dir($previous)) $problems[] = 'the new source is still active'; }
+                elseif (!is_dir($previous)) $problems[] = 'the previous source is missing';
+                elseif (!$this->renameChecked($previous, $root . '/app')) $problems[] = 'restore the previous source';
+            }
+        }
+        if (in_array($phase, ['source-activated', 'migrated'], true)) {
+            // Migrations may have run: the database goes back to the verified pre-install snapshot,
+            // or, for a first install, away.
+            if (!empty($journal['hadDatabase'])) {
+                $snapshot = is_string($journal['snapshot'] ?? null) ? $root . '/private/' . $journal['snapshot'] : null;
+                if ($snapshot === null || !is_file($snapshot)) $problems[] = 'the pre-install database snapshot is missing';
+                else {
+                    try {
+                        $this->assertSnapshotHealthy($snapshot);
+                        if (is_file($database)) {
+                            $db = new PDO('sqlite:' . $database, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+                            $db->exec('PRAGMA wal_checkpoint(TRUNCATE)'); $db = null;
+                        }
+                        foreach (['-wal', '-shm'] as $suffix) if (is_file($database . $suffix)) unlink($database . $suffix);
+                        // Copied, not moved: the snapshot stays until the journal is retired, so a
+                        // rollback that fails later still has it.
+                        if (!copy($snapshot, $database) || filesize($database) !== filesize($snapshot)) $problems[] = 'restore the database from its snapshot';
+                    } catch (\Throwable $error) { $problems[] = 'restore the database: ' . $error->getMessage(); }
+                }
+            } else {
+                foreach (['', '-wal', '-shm'] as $suffix) if (is_file($database . $suffix) && !unlink($database . $suffix)) $problems[] = 'remove the first install\'s database';
+            }
+        }
+        if ($phase !== 'staged') {
+            $configPath = $root . '/private/config.json';
+            if (!empty($journal['hadConfig'])) {
+                $backup = is_string($journal['configBackup'] ?? null) ? $root . '/private/' . $journal['configBackup'] : null;
+                if ($backup === null || !is_file($backup)) $problems[] = 'the configuration backup is missing';
+                else {
+                    try { $this->writeHostConfig($configPath, (string) file_get_contents($backup)); }
+                    catch (\Throwable $error) { $problems[] = 'restore the configuration: ' . $error->getMessage(); }
+                }
+            } elseif (is_file($configPath) && !unlink($configPath)) $problems[] = 'remove the first install\'s configuration';
+        }
+        if ($problems) {
+            $journal['phase'] = 'recovery';
+            $journal['problems'] = $problems;
+            $journal['reason'] = $reason;
+            $message = 'An update could not be rolled back (' . $reason . '). Unfinished: ' . implode('; ', $problems) . '. Inputs are kept under the installation\'s private/ folder and its staging/previous directories; see private/install.json.';
+            try { $this->writeJournal($root, $journal); } catch (\Throwable $e) { error_log('Native install journal: ' . $e->getMessage()); }
+            try { $this->writeExact($root . '/private/recovery-required', $message, 0600); } catch (\Throwable $e) { error_log('Native recovery marker: ' . $e->getMessage()); }
+            error_log('Native app recovery required: ' . $message);
+            return;
+        }
+        // Everything is back: retire the update's inputs and the journal.
+        try {
+            if (is_dir($staging)) $this->removeStagedSource($root, $staging);
+            if (is_string($journal['snapshot'] ?? null) && is_file($root . '/private/' . $journal['snapshot'])) unlink($root . '/private/' . $journal['snapshot']);
+            if (is_string($journal['configBackup'] ?? null) && is_file($root . '/private/' . $journal['configBackup'])) unlink($root . '/private/' . $journal['configBackup']);
+            $this->clearJournal($root);
+        } catch (\Throwable $error) {
+            error_log('Native install rollback cleanup: ' . $error->getMessage());
+        }
     }
 
     /** Source inspection requires owner authorization at the controller. Keys and database contents are never included. */
@@ -598,96 +881,78 @@ class NativeAppService
         $this->directory($root);
         $this->directory($root . '/private');
         $this->directory($root . '/private/data');
-        $lock = fopen($root . '/private/manage.lock', 'c');
-        if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) {
-            if ($lock) fclose($lock);
-            throw new RuntimeException('The app is busy. Try again shortly.', 409);
-        }
-        $staging = $root . '/staging-' . bin2hex(random_bytes(8));
-        $backup = null;
-        $activated = false;
-        $snapshot = null;
+        $this->beforeLock($root, 'install');
+        $lock = $this->exclusiveLock($root, 'The app is busy. Try again shortly.');
+        $operation = bin2hex(random_bytes(8));
+        $staging = $root . '/staging-' . $operation;
         $configPath = $root . '/private/config.json';
-        $originalConfig = null;
-        $configChanged = false;
+        $database = $root . '/private/data/application.sqlite';
+        $journal = null;
         try {
-            if (is_file($root . '/private/recovery-required')) throw new RuntimeException('Restore the app database before installing another update');
+            // Decided under the lock (FL-S04): an update a terminated process left behind is
+            // settled first, then the marker, the version and the identity are checked.
+            $this->resolveJournal($root);
+            $this->assertNotRecoveryRequired($root, 'Restore the app database before installing another update');
             $old = $this->get($appId);
             if (($old['version'] ?? 0) !== $expectedVersion) throw new RuntimeException('The project changed. Reload before importing.', 409);
             if ($old && json_decode($old['files']['manifest.json'], true)['id'] !== $manifest['id']) throw new InvalidArgumentException('Import updates with the same app identity to preserve its database');
-            $this->directory($staging);
-            foreach (array_merge($files, $decoded) as $path => $source) {
-                $this->directory(dirname($staging . '/' . $path));
-                if (file_put_contents($staging . '/' . $path, $source) === false) throw new RuntimeException('Could not stage app source');
-            }
+            $this->stageProject($staging, array_merge($files, $decoded));
+            // The journal is the durable intent (FL-S03): written before anything active changes,
+            // advanced before each phase, so a process that dies leaves a record of how far it got.
+            $journal = ['operation' => $operation, 'startedAt' => gmdate('c'), 'phase' => 'staged', 'firstInstall' => $old === null, 'oldVersion' => (int) ($old['version'] ?? 0), 'newVersion' => $expectedVersion + 1, 'staging' => basename($staging), 'previous' => null, 'snapshot' => null, 'configBackup' => null, 'hadConfig' => is_file($configPath), 'hadDatabase' => is_file($database)];
+            $this->writeJournal($root, $journal);
+            $this->afterPhase($root, 'staged');
             if (!is_file($configPath)) {
                 $config = ['appId' => $manifest['id'], 'development' => false, 'keyHex' => bin2hex(random_bytes(32)), 'capabilities' => $capabilities, 'cryptoDomains' => ['hmac' => $manifest['id'] . ':hmac:v1', 'seal' => $manifest['id'] . ':seal:v1']];
                 $this->writeHostConfig($configPath, json_encode($config, JSON_THROW_ON_ERROR));
             }
             $originalConfig = file_get_contents($configPath);
             if ($originalConfig === false) throw new RuntimeException('Could not read host configuration');
+            if ($journal['hadConfig']) {
+                $journal['configBackup'] = 'config.previous-' . $operation . '.json';
+                $this->writeExact($root . '/private/' . $journal['configBackup'], $originalConfig, 0600);
+            }
+            $this->advance($root, $journal, 'config-changed');
             $config = json_decode($originalConfig, true, 64, JSON_THROW_ON_ERROR);
             // Owner-authorized updates use the same validated capabilities as a new install.
             // Retain the app identity and cryptographic keys across source updates.
             $config['capabilities'] = $capabilities;
             $config['enableHostContext'] = true;
             $this->writeHostConfig($configPath, json_encode($config, JSON_THROW_ON_ERROR));
-            $configChanged = true;
-            $database = $root . '/private/data/application.sqlite';
-            if (is_file($database)) {
-                $snapshot = $root . '/private/pre-install-' . bin2hex(random_bytes(8)) . '.sqlite';
+            if ($journal['hadDatabase']) {
+                $snapshot = 'pre-install-' . $operation . '.sqlite';
                 $db = new PDO('sqlite:' . $database, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
                 $db->exec('PRAGMA busy_timeout=1500');
-                $db->exec('VACUUM INTO ' . $db->quote($snapshot));
+                $db->exec('VACUUM INTO ' . $db->quote($root . '/private/' . $snapshot));
                 $db = null;
+                // Recorded only once it is known to be a snapshot worth restoring from.
+                $this->assertSnapshotHealthy($root . '/private/' . $snapshot);
+                $journal['snapshot'] = $snapshot;
             }
-            if (is_dir($root . '/app')) {
-                $backup = $root . '/previous-' . ($old['version'] ?? 0) . '-' . bin2hex(random_bytes(4));
-                if (!rename($root . '/app', $backup)) throw new RuntimeException('Could not stage the update');
-            }
+            $journal['previous'] = is_dir($root . '/app') ? 'previous-' . $journal['oldVersion'] . '-' . $operation : null;
+            $this->advance($root, $journal, 'activating');
+            if ($journal['previous'] !== null && !rename($root . '/app', $root . '/' . $journal['previous'])) throw new RuntimeException('Could not stage the update');
             if (!rename($staging, $root . '/app')) throw new RuntimeException('Could not activate app source');
-            $activated = true;
+            $this->advance($root, $journal, 'source-activated');
             // This runs the native host's manifest and migration validation, using its real SQLite database.
             $health = $this->invoke($root, ['method' => 'GET', 'path' => '/api/meta', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false]);
             if (($health['status'] ?? 500) !== 200) throw new RuntimeException('Native host validation failed: ' . ($health['body']['diagnostic'] ?? 'runtime unavailable'), 422);
+            $this->advance($root, $journal, 'migrated');
             $saved = ['home' => ($project['home'] ?? false) === true, 'version' => $expectedVersion + 1, 'updatedAt' => gmdate('c'), 'files' => $files, 'assets' => $assets, 'access' => ($project['access'] ?? '') === 'members' ? 'members' : 'application'];
-            $temp = $root . '/project.pending.json';
-            file_put_contents($temp, json_encode($saved, JSON_THROW_ON_ERROR));
-            if (!rename($temp, $root . '/project.json')) throw new RuntimeException('Could not save the project');
-            if ($snapshot !== null) { unlink($snapshot); $snapshot = null; }
+            $this->writeExact($root . '/project.json', json_encode($saved, JSON_THROW_ON_ERROR), 0600);
+            $this->advance($root, $journal, 'metadata-promoted');
+            $this->rollForward($root, $journal);
+            $journal = null;
             return $saved;
         } catch (\Throwable $error) {
-            if ($configChanged && is_string($originalConfig)) {
-                try { $this->writeHostConfig($configPath, $originalConfig); }
-                catch (\Throwable $configError) {
-                    file_put_contents($root . '/private/recovery-required', 'Restore private/config.json capabilities from the previous manifest before resuming.');
-                    error_log('Native app configuration recovery required');
-                }
+            if ($journal !== null) {
+                if ($journal['phase'] === 'metadata-promoted') $this->rollForward($root, $journal);
+                else $this->rollBack($root, $journal, $error->getMessage());
+            } elseif (is_dir($staging)) {
+                try { $this->removeStagedSource($root, $staging); } catch (\Throwable $cleanupError) { error_log('Native source cleanup: ' . $cleanupError->getMessage()); }
             }
-            if ($activated && $snapshot !== null && is_file($snapshot)) {
-                try {
-                    $db = new PDO('sqlite:' . $root . '/private/data/application.sqlite', null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-                    $db->exec('PRAGMA wal_checkpoint(TRUNCATE)'); $db = null;
-                    if (!rename($snapshot, $root . '/private/data/application.sqlite')) throw new RuntimeException('Could not restore app database');
-                } catch (\Throwable $restoreError) {
-                    file_put_contents($root . '/private/recovery-required', basename($snapshot));
-                    error_log('Native app database recovery required: ' . $restoreError->getMessage());
-                }
-            }
-            if ($activated && is_dir($root . '/app') && !is_dir($staging)) rename($root . '/app', $staging);
-            if ($backup !== null && is_dir($backup)) rename($backup, $root . '/app');
             throw $error;
         } finally {
-            if (!is_file($root . '/private/recovery-required')) {
-                if ($snapshot !== null && is_file($snapshot)) unlink($snapshot);
-                // Keep one previous source version; discarded staging files are not durable backups.
-                $previous = glob($root . '/previous-*', GLOB_ONLYDIR) ?: [];
-                usort($previous, static fn($a, $b) => (int) explode('-', basename($b))[1] <=> (int) explode('-', basename($a))[1]);
-                foreach (array_merge(array_slice($previous, 1), glob($root . '/staging-*', GLOB_ONLYDIR) ?: []) as $discard) {
-                    try { $this->removeStagedSource($root, $discard); }
-                    catch (\Throwable $cleanupError) { error_log('Native source cleanup: ' . $cleanupError->getMessage()); }
-                }
-            }
             flock($lock, LOCK_UN); fclose($lock);
         }
     }
@@ -704,16 +969,13 @@ class NativeAppService
         rmdir($resolved);
     }
 
-    public function request(string $appId, array $request, array $identity = [], array $subscriptions = []): array
+    /**
+     * Run one app request. $generation, when given, is the project version the caller's access
+     * decision was made against: the request is refused (409) if the installation has moved on.
+     */
+    public function request(string $appId, array $request, array $identity = [], array $subscriptions = [], ?int $generation = null): array
     {
-        $root = $this->root($appId);
-        if (!$this->get($appId)) throw new RuntimeException('Native app not found', 404);
-        if (is_file($root . '/private/recovery-required')) throw new RuntimeException('The app database needs operator recovery');
-        $lock = fopen($root . '/private/manage.lock', 'c');
-        if (!$lock || !flock($lock, LOCK_SH | LOCK_NB)) {
-            if ($lock) fclose($lock);
-            throw new RuntimeException('The app is being updated. Try again shortly.', 409);
-        }
+        [$root, $lock] = $this->openShared($appId, $generation);
         try { return $this->invoke($root, $request, $identity, $subscriptions); }
         finally { flock($lock, LOCK_UN); fclose($lock); }
     }
@@ -721,14 +983,14 @@ class NativeAppService
     /** Deliver committed events only. Failed delivery leaves the event available for retry. */
     public function dispatchRecordEvents(string $appId, callable $deliver, int $limit = 100): int
     {
-        $root = $this->root($appId);
-        $path = $root . '/private/data/application.sqlite';
+        $path = $this->root($appId) . '/private/data/application.sqlite';
         if (!is_file($path)) return 0;
-        if (is_file($root . '/private/recovery-required')) throw new RuntimeException('The app database needs operator recovery');
-        $manage = fopen($root . '/private/manage.lock', 'c');
+        try { [$root, $manage] = $this->openShared($appId, null, false); }
+        catch (RuntimeException $busy) { if ($busy->getCode() === 409) return 0; throw $busy; }
+        if ($manage === null) return 0;
         $dispatch = fopen($root . '/private/events.lock', 'c');
         try {
-            if (!$manage || !$dispatch || !flock($manage, LOCK_SH | LOCK_NB) || !flock($dispatch, LOCK_EX | LOCK_NB)) return 0;
+            if (!$dispatch || !flock($dispatch, LOCK_EX | LOCK_NB)) return 0;
             $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
             $db->exec('PRAGMA busy_timeout=1500');
             if (!$db->query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='_formlogic_record_events'")->fetchColumn()) return 0;
@@ -790,32 +1052,19 @@ class NativeAppService
     }
 
     /** Browse the same database used by ZIPP; host metadata and auth secrets are excluded from the table view. */
-    public function records(string $appId, ?string $table = null, int $offset = 0): array
+    public function records(string $appId, ?string $table = null, int $offset = 0, ?int $generation = null): array
     {
-        $root = $this->root($appId);
-        if (!$this->get($appId)) throw new RuntimeException('Native app not found', 404);
-        if (is_file($root . '/private/recovery-required')) throw new RuntimeException('The app database needs operator recovery');
-        $lock = fopen($root . '/private/manage.lock', 'c');
-        if (!$lock || !flock($lock, LOCK_SH | LOCK_NB)) {
-            if ($lock) fclose($lock);
-            throw new RuntimeException('The app is being updated. Try again shortly.', 409);
-        }
+        [$root, $lock] = $this->openShared($appId, $generation);
         try { return $this->readRecords($appId, $table, $offset); }
         finally { flock($lock, LOCK_UN); fclose($lock); }
     }
 
-    public function manageRecord(string $appId, array $input, array $subscriptions = []): array
+    public function manageRecord(string $appId, array $input, array $subscriptions = [], ?int $generation = null): array
     {
-        $root = $this->root($appId);
-        $path = $root . '/private/data/application.sqlite';
-        if (!$this->get($appId) || !is_file($path)) throw new RuntimeException('App database not found', 404);
-        if (is_file($root . '/private/recovery-required')) throw new RuntimeException('The app database needs operator recovery');
-        $lock = fopen($root . '/private/manage.lock', 'c');
-        if (!$lock || !flock($lock, LOCK_SH | LOCK_NB)) {
-            if ($lock) fclose($lock);
-            throw new RuntimeException('The app is being updated. Try again shortly.', 409);
-        }
+        [$root, $lock] = $this->openShared($appId, $generation);
         try {
+            $path = $root . '/private/data/application.sqlite';
+            if (!is_file($path)) throw new RuntimeException('App database not found', 404);
             $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
             return (new NativeRecordStore($db))->operate($input, $subscriptions);
         } finally { flock($lock, LOCK_UN); fclose($lock); }
@@ -834,26 +1083,36 @@ class NativeAppService
         $columns = $db->query('PRAGMA table_info(' . $quoted . ')')->fetchAll();
         $hidden = '/password|token|secret|code_hash|challenge|encrypted|sealed/i';
         $visible = array_slice(array_values(array_filter(array_column($columns, 'name'), static fn($name) => !preg_match($hidden, $name))), 0, 100);
-        if (!$visible) return ['tables' => $tables, 'columns' => [], 'rows' => [], 'hasMore' => false];
+        // Paging contract (FL-S06): the response says which offset it actually used and why it
+        // stops. A requested offset past the window is clamped to it and reported, never
+        // silently repeated under a new page number: `end` is 'more' (a next page exists inside
+        // the window), 'limit' (rows exist beyond the window; the browser is bounded) or 'end'.
+        $effective = min(self::RECORD_OFFSET_LIMIT, max(0, $offset));
+        $paging = ['offset' => $effective, 'limit' => self::RECORD_PAGE, 'offsetLimit' => self::RECORD_OFFSET_LIMIT];
+        if (!$visible) return ['tables' => $tables, 'columns' => [], 'rows' => [], 'hasMore' => false, 'end' => 'end'] + $paging;
         $select = implode(',', array_map(static function ($name) {
             $column = '"' . str_replace('"', '""', $name) . '"';
             return "CASE WHEN typeof($column)='blob' THEN '[binary]' WHEN typeof($column)='text' THEN substr($column,1,400) ELSE $column END AS $column";
         }, $visible));
         $primary = array_values(array_filter($columns, static fn($column) => $column['pk'] > 0));
         usort($primary, static fn($a, $b) => $a['pk'] <=> $b['pk']);
-        $order = $primary ? implode(',', array_map(static fn($column) => '"' . str_replace('"', '""', $column['name']) . '"', $primary)) : 'rowid';
-        $statement = $db->query('SELECT ' . $select . ' FROM ' . $quoted . ' ORDER BY ' . $order . ' LIMIT 51 OFFSET ' . min(100000, max(0, $offset)));
+        // Ordered by the TABLE's columns (t."id"), never by an output alias: the previews and the
+        // keys alias every column, and an ORDER BY on a bare name would sort by the alias — the
+        // CAST(... AS TEXT) key, as text — and put the keys out of step with the rows.
+        $order = $primary ? implode(',', array_map(static fn($column) => 't."' . str_replace('"', '""', $column['name']) . '"', $primary)) : 't.rowid';
+        $statement = $db->query('SELECT ' . $select . ' FROM ' . $quoted . ' AS t ORDER BY ' . $order . ' LIMIT ' . (self::RECORD_PAGE + 1) . ' OFFSET ' . $effective);
         $rows = $statement->fetchAll();
-        $more = count($rows) > 50;
-        $rows = array_slice($rows, 0, 50);
+        $more = count($rows) > self::RECORD_PAGE;
+        $rows = array_slice($rows, 0, self::RECORD_PAGE);
+        $end = !$more ? 'end' : ($effective + self::RECORD_PAGE > self::RECORD_OFFSET_LIMIT ? 'limit' : 'more');
         foreach ($rows as &$row) foreach ($row as &$value) if (is_string($value) && strlen($value) > 4000) $value = mb_strcut($value, 0, 4000) . '…';
         $schema = (new NativeRecordStore($db))->schema($table);
         $keys = [];
         if ($schema['primaryKey']) {
             $keySelect = implode(',', array_map(static fn($name) => 'CAST("' . str_replace('"', '""', $name) . '" AS TEXT) AS "' . str_replace('"', '""', $name) . '"', $schema['primaryKey']));
-            $keys = $db->query('SELECT ' . $keySelect . ' FROM ' . $quoted . ' ORDER BY ' . $order . ' LIMIT 50 OFFSET ' . min(100000, max(0, $offset)))->fetchAll();
+            $keys = $db->query('SELECT ' . $keySelect . ' FROM ' . $quoted . ' AS t ORDER BY ' . $order . ' LIMIT ' . self::RECORD_PAGE . ' OFFSET ' . $effective)->fetchAll();
             $keys = array_map(static fn($key) => in_array(null, $key, true) ? null : $key, $keys);
         }
-        return ['tables' => $tables, 'columns' => $visible, 'rows' => $rows, 'hasMore' => $more, 'schema' => $schema, 'keys' => $keys];
+        return ['tables' => $tables, 'columns' => $visible, 'rows' => $rows, 'hasMore' => $end === 'more', 'end' => $end, 'schema' => $schema, 'keys' => $keys] + $paging;
     }
 }

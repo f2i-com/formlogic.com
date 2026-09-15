@@ -209,7 +209,7 @@ final class NativeAppServiceTest extends TestCase
         $this->service->install('notes', $this->project(), 0);
         $this->assertSame(201, $this->createNote('Kept')['status']);
         $described = $this->service->describe('notes');
-        $this->assertSame(['manifestId' => 'test.notes', 'version' => 1, 'home' => false, 'access' => 'application', 'capabilities' => ['sql'], 'hasDatabase' => true, 'recoveryRequired' => false], $described);
+        $this->assertSame(['manifestId' => 'test.notes', 'version' => 1, 'home' => false, 'access' => 'application', 'capabilities' => ['sql'], 'hasDatabase' => true, 'recoveryRequired' => false, 'updateUnfinished' => false], $described);
         $this->assertArrayNotHasKey('keyHex', $described);
         $config = $this->service->hostConfig('notes');
         $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $config['keyHex']);

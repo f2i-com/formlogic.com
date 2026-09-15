@@ -309,7 +309,7 @@ header. The shared demo cannot use native hosting. Record requests have their ow
 | Request | Result |
 |---|---|
 | `GET /api/apps/{id}/native/records` | Available application tables. |
-| `GET /api/apps/{id}/native/records?table=items&offset=0` | Up to 50 previews, `hasMore`, schema/field metadata, and `keys` aligned to the returned rows. |
+| `GET /api/apps/{id}/native/records?table=items&offset=0` | Up to 50 previews, the effective `offset`, `limit`, `offsetLimit`, `end` (`more`/`limit`/`end`) and `hasMore`, schema/field metadata, and `keys` aligned to the returned rows. |
 | `POST /api/apps/{id}/native/records` | Read a full record, create, update or delete using the action body below. |
 
 ```json
@@ -439,17 +439,58 @@ Persistent app data is under `backend/storage/native-apps/<sha256(appId)>/privat
 the public document root. Back up this whole installation with SQLite-consistent snapshots,
 including `config.json`: its private encryption key is required for the app's existing data.
 Account/form export jobs do not yet include this directory. Installed source and project
-metadata sit alongside it. Updates take an SQLite snapshot and an exclusive deployment lock;
-source validation occurs before migrations. Failed validation/migrations restore the working
-project. One previous source version is retained; discarded staging files are cleaned up.
-If restoring a snapshot fails, `private/recovery-required` stops runtime/database access until
-an operator restores the named snapshot. Do not delete that marker without completing recovery.
+metadata sit alongside it.
+
+#### How an update is applied, and what happens when it is interrupted
+
+An update holds the exclusive management lock and works through fixed phases, each recorded
+in `private/install.json` (the install journal) before the phase's work begins:
+
+| Phase | What has changed on disk |
+| --- | --- |
+| `staged` | The new source and media are staged beside the installation; nothing active has changed. |
+| `config-changed` | `private/config.json` carries the new capability list; the previous file is kept as `config.previous-<op>.json`. |
+| `activating` | A verified pre-install snapshot (`pre-install-<op>.sqlite`) exists when there was a database; the source swap is about to happen. |
+| `source-activated` | The new source is in `app/`; the previous source is in `previous-<version>-<op>/`. |
+| `migrated` | The runtime validated the manifest and applied migrations against the real database. |
+| `metadata-promoted` | `project.json` names the new version: the new generation is complete. |
+
+The journal is removed when the update is complete. If the PHP process is terminated at any
+point, the journal stays behind, and the next operation to touch the installation (a request,
+the records browser, a backup, event delivery, or another update) settles it under the lock
+before doing anything else: a journal at `metadata-promoted` is rolled forward (snapshots and
+the older source retired); any earlier phase is rolled back, restoring the previous source,
+the database from its verified snapshot, and the previous configuration. A first install that
+did not finish is rolled back to nothing (its fresh database and configuration are removed) and
+can simply be retried. Every rollback step is checked. If one cannot complete, the journal is
+kept in phase `recovery`, `private/recovery-required` names what is unfinished, and every
+input the operator needs (the staged source, the previous source, the snapshot, the
+configuration backup) is retained. That marker stops runtime, records and backups until an
+operator completes the recovery and removes it; do not delete it without doing so.
+
+Every file the host publishes (`project.json`, `config.json`, staged source and media, the
+journal, the marker) is written completely or not at all: to a private temporary file beside
+the destination, with the byte count checked against the bytes intended, flushed, then renamed
+into place. A short write (a full disk, a quota) fails the update and leaves the previous file.
+
+Every entry point takes the management lock before deciding anything: whether the installation
+exists, whether an update was left unfinished, whether recovery is required, and — for app
+requests — that the generation the access decision was made against is still the one
+installed (otherwise `409`, and the client reloads).
 
 Owner-authorized project updates refresh the host's supported capability list while retaining its
-identity, encryption key and crypto domains. A failed update restores the previous configuration
-alongside the source/database rollback. Configuration replacement is atomic to protect keys from
-partial writes. If configuration recovery fails, the same recovery marker blocks the app until
-the operator restores the previous manifest's capabilities.
+identity, encryption key and crypto domains. One previous source version is retained after a
+successful update; staging directories are discarded.
+
+#### Records browsing window
+
+The Records view reads pages of 50 rows in primary-key order, and a page may start no further
+than offset 100,000 (a bounded browser, not a full-table scan). Every response says which
+offset it actually used (`offset`), the page size (`limit`), the window (`offsetLimit`) and
+why it stops: `end` is `more` (a next page exists inside the window), `limit` (rows exist
+beyond the window) or `end` (the last page). A requested offset past the window is clamped
+and reported, never silently repeated under a new page number; `hasMore` is true only for
+`more`.
 
 ### Coffee.Dating validation and remaining integrations
 

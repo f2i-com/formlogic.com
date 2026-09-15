@@ -94,7 +94,7 @@ class NativeAppController
                 'method' => $input['method'], 'path' => $input['path'], 'query' => (object) ($input['query'] ?? []), 'body' => $body,
                 'headers' => (object) ['authorization' => $authorization],
                 'client_ip' => $request->getServerParams()['REMOTE_ADDR'] ?? 'unknown', 'photos' => false,
-            ], $identity, $this->flows->nativeRecordSubscriptions($app['id']));
+            ], $identity, $this->flows->nativeRecordSubscriptions($app['id']), (int) ($project['version'] ?? 0));
             try {
                 $this->native->dispatchRecordEvents($app['id'], fn($id, $event, $data, $bindings) => $this->flows->enqueueNativeRecordEvent($app['id'], $id, $event, $data, $bindings));
             } catch (\Throwable $error) {
