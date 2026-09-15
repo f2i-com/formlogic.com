@@ -8,6 +8,13 @@
  * `/api/*` is handed to the real Slim front controller; existing static files are served by the built-in
  * server; everything else falls back to the SPA's index.html (client-side routing). The SPA must be built
  * with VITE_API_URL=/api so it calls this same origin.
+ *
+ * The hosted app runtime and the embedded editors are the exception to "let the built-in server serve
+ * static files": production gets their headers from ui/public/.htaccess (docs/HOSTED_APPS.md, "static-asset
+ * CORS requirements"), which PHP's built-in server never reads. The runtime runs in a sandboxed iframe with
+ * an opaque origin, so its module scripts and wasm are cross-origin fetches that need
+ * `Access-Control-Allow-Origin: *`, and the entry documents need the framing headers; without them the
+ * frame stays blank and no golden path can render a hosted app.
  */
 
 $uri = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
@@ -25,6 +32,32 @@ if ($uri === '/api' || str_starts_with($uri, '/api/')) {
 if (preg_match('#^/\.well-known/(oauth-protected-resource(/.*)?|oauth-authorization-server)$#', $uri)) {
     require __DIR__ . '/../backend/public/index.php';
     return true;
+}
+
+// The hosted runtime and the embedded editors, with the headers the .htaccess gives them in production.
+if (preg_match('#^/(hosted-runtime|app-editors)/#', $uri)) {
+    $root = realpath($dist);
+    $file = $root !== false ? realpath($root . $uri) : false;
+    if ($file !== false && str_starts_with($file, $root . DIRECTORY_SEPARATOR) && is_file($file)) {
+        $types = [
+            'js' => 'application/javascript', 'mjs' => 'application/javascript', 'wasm' => 'application/wasm',
+            'json' => 'application/json', 'css' => 'text/css', 'html' => 'text/html; charset=UTF-8',
+            'svg' => 'image/svg+xml', 'png' => 'image/png', 'woff2' => 'font/woff2', 'woff' => 'font/woff',
+            'ico' => 'image/x-icon', 'map' => 'application/json', 'txt' => 'text/plain; charset=UTF-8',
+            'onnx' => 'application/octet-stream', 'bin' => 'application/octet-stream',
+        ];
+        $ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+        header('Content-Type: ' . ($types[$ext] ?? 'application/octet-stream'));
+        header('X-Content-Type-Options: nosniff');
+        header('Access-Control-Allow-Origin: *');
+        if (preg_match('#^/(hosted-runtime/(index\.html)?|app-editors/(builder|studio)/(index\.html)?)$#', $uri)) {
+            header('X-Frame-Options: SAMEORIGIN');
+            header("Content-Security-Policy: frame-ancestors 'self'; base-uri 'self'; object-src 'none'");
+        }
+        header('Content-Length: ' . filesize($file));
+        readfile($file);
+        return true;
+    }
 }
 
 // Let the built-in server serve a real static asset from the doc root (dist).

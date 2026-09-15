@@ -221,7 +221,10 @@ const FormCard = memo(function FormCard({
   useEffect(() => {
     if (isMenuOpen) {
       wasMenuOpen.current = true;
-      menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+      // Without preventScroll, focusing an item of a menu that opened partly below the
+      // fold scrolls it into view, and the scroll listener below closes the menu it just
+      // opened (seen at phone width in the forms-list e2e).
+      menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus({ preventScroll: true });
     } else if (wasMenuOpen.current) {
       wasMenuOpen.current = false;
       triggerRef.current?.focus();

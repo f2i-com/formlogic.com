@@ -63,8 +63,17 @@ for (const width of [1440, 390]) test(`Unnamed form, rename and editable app dow
   expect(strFromU8(files[manifest.files.ui[1]])).toContain('Customer enquiries');
   await page.goto('/forms');
   await page.getByRole('button', { name: 'Card view', exact: true }).click();
-  await page.getByRole('button', { name: 'Actions for Customer enquiries', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Rename', exact: true }).click();
+  // The actions menu closes itself on any scroll (FormsList closes it on the
+  // capture-phase scroll event to avoid stale positioning) and focuses its first
+  // item on open. On a phone-width viewport a card near the fold therefore sees
+  // the focus scroll the page and the menu vanish under the click. Bring the
+  // trigger fully into view first, then wait for the open menu before choosing.
+  const actions = page.getByRole('button', { name: 'Actions for Customer enquiries', exact: true });
+  await actions.scrollIntoViewIfNeeded();
+  await actions.click();
+  const actionsMenu = page.getByRole('menu', { name: 'Actions for Customer enquiries', exact: true });
+  await expect(actionsMenu).toBeVisible();
+  await actionsMenu.getByRole('menuitem', { name: 'Rename', exact: true }).click();
   const rename = page.getByRole('dialog', { name: 'Rename form' });
   await rename.getByRole('textbox', { name: 'Form name', exact: true }).fill('Bookings');
   failRename = true;
