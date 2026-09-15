@@ -123,12 +123,25 @@ class RateLimitMiddleware implements MiddlewareInterface
      * it falls back to the trusted client IP. IpResolver only honors
      * X-Forwarded-For from configured proxies, preventing spoofing that could
      * bypass the limit.
+     *
+     * The shared public demo account is the exception for reads: every demo
+     * visitor is that one account, so keyed by account alone they would all
+     * share one budget and a single busy visitor would 429 everyone browsing.
+     * Its GET/HEAD/OPTIONS requests are keyed by account AND client IP instead
+     * (same demo detection as JsonResponseTrait::isDemoRequest). The few writes
+     * the demo may still make (DemoReadOnlyMiddleware's allowlist, e.g. minting
+     * MCP tokens) keep the one shared account budget, so rotating addresses
+     * cannot buy fresh credential-management budgets (RATE-001).
      */
     private function getClientKey(Request $request): string
     {
         if ($this->keyByUser) {
             $userId = $request->getAttribute('userId');
             if (is_string($userId) && $userId !== '') {
+                $user = $request->getAttribute('user');
+                if (in_array(strtoupper($request->getMethod()), ['GET', 'HEAD', 'OPTIONS'], true) && is_object($user) && isset($user->email) && $user->email === ($_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local')) {
+                    return $this->keyPrefix . ':u:' . hash('sha256', $userId) . ':' . hash('sha256', $this->ipResolver->getClientIp($request));
+                }
                 return $this->keyPrefix . ':u:' . hash('sha256', $userId);
             }
         }

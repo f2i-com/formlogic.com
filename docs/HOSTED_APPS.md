@@ -303,8 +303,11 @@ Deletion requires confirmation and honours foreign-key rules, including cascades
 
 These session-authenticated endpoints are for the FormLogic project owner, separate from
 visitor accounts inside the hosted application. POST requests require the session's CSRF
-header. The shared demo cannot use native hosting. Record requests have their own limit of
-30 per minute per account, separate from app publication requests.
+header. The shared demo can browse a native project and its records read-only: its reads skip
+the runtime preflight and answer `readOnly: true`, its writes (install, record actions) are
+refused with `403` `demo_readonly`, and its installed app does not run. Record requests have
+their own limit of 30 per minute per account, separate from app publication requests; the demo
+account's reads are counted per account and client IP, since every demo visitor shares it.
 
 | Request | Result |
 |---|---|
@@ -448,25 +451,40 @@ in `private/install.json` (the install journal) before the phase's work begins:
 
 | Phase | What has changed on disk |
 | --- | --- |
-| `staged` | The new source and media are staged beside the installation; nothing active has changed. |
-| `config-changed` | `private/config.json` carries the new capability list; the previous file is kept as `config.previous-<op>.json`. |
+| `staged` | The new source and media are staged beside the installation; nothing active has changed. The journal already names every file the update may create. A first install creates `private/config.json` in this phase. |
+| `config-changed` | `private/config.json` carries the new capability list; the previous file is kept as `config.previous-<op>.json` and the previous `project.json` as `project.previous-<op>.json`. The pre-install snapshot is taken and checked in this phase. |
 | `activating` | A verified pre-install snapshot (`pre-install-<op>.sqlite`) exists when there was a database; the source swap is about to happen. |
 | `source-activated` | The new source is in `app/`; the previous source is in `previous-<version>-<op>/`. |
-| `migrated` | The runtime validated the manifest and applied migrations against the real database. |
+| `migrated` | The runtime validated the manifest and applied migrations against the real database; `project.json` is being replaced. |
 | `metadata-promoted` | `project.json` names the new version: the new generation is complete. |
 
 The journal is removed when the update is complete. If the PHP process is terminated at any
 point, the journal stays behind, and the next operation to touch the installation (a request,
 the records browser, a backup, event delivery, or another update) settles it under the lock
-before doing anything else: a journal at `metadata-promoted` is rolled forward (snapshots and
-the older source retired); any earlier phase is rolled back, restoring the previous source,
-the database from its verified snapshot, and the previous configuration. A first install that
-did not finish is rolled back to nothing (its fresh database and configuration are removed) and
-can simply be retried. Every rollback step is checked. If one cannot complete, the journal is
-kept in phase `recovery`, `private/recovery-required` names what is unfinished, and every
-input the operator needs (the staged source, the previous source, the snapshot, the
-configuration backup) is retained. That marker stops runtime, records and backups until an
-operator completes the recovery and removes it; do not delete it without doing so.
+before doing anything else: a journal at `metadata-promoted` is rolled forward (snapshots,
+backups and the older source retired); any earlier phase is rolled back, restoring the previous
+source, the database from its verified snapshot, the previous configuration and the previous
+`project.json`, then deleting every snapshot and backup the journal names. A first install that
+did not finish is rolled back to nothing (its fresh database, configuration and `project.json`
+are removed) and can simply be retried. Every rollback step is checked. If one cannot complete,
+the journal is kept in phase `recovery`, `private/recovery-required` names what is unfinished,
+and every input the operator needs (the staged source, the previous source, the snapshot, the
+configuration and project backups) is retained. A journal that reads but cannot be decoded is
+treated the same way (one that momentarily cannot be read at all only answers busy). While the
+journal is in `recovery`, runtime, records, backups, event delivery, updates and restores refuse
+as needing operator recovery rather than as an update in progress, and nothing the journal names
+is overwritten or cleaned up. On the owner's routes (project, install, records) that refusal is
+a `503` with code `recovery_required` and the recovery text, server locations replaced by
+labels relative to the installation; visitors of the app runtime and the shared demo get the
+generic `503` "native app host is unavailable". The full text also goes to the PHP error log
+and `private/recovery-required`. A request that races another reader for the lock may still get
+a busy `409`, and the app runtime answers `409` while an update holds the lock, since it reads
+the project under the lock rather than serving a `project.json` an unfinished update left.
+
+The recovery is finished only when the operator has put the installation back together by hand
+(using the inputs listed in `private/install.json`) and removed **both** `private/install.json`
+and `private/recovery-required`. Removing only the marker does not unblock the app: the next
+operation finds the journal still in `recovery` and writes the marker again.
 
 Every file the host publishes (`project.json`, `config.json`, staged source and media, the
 journal, the marker) is written completely or not at all: to a private temporary file beside

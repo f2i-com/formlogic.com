@@ -159,6 +159,7 @@ final class NativeAppLifecycleTest extends TestCase
         $this->assertSame([], glob($root . '/staging-*') ?: []);
         $this->assertSame([], glob($root . '/private/pre-install-*') ?: []);
         $this->assertSame([], glob($root . '/private/config.previous-*') ?: []);
+        $this->assertSame([], glob($root . '/private/project.previous-*') ?: []);
         // And the installation is ready for the next update.
         $this->assertSame($expectedVersion + 1, $this->service->install('notes', $this->projectV2(), $expectedVersion)['version']);
     }
@@ -177,6 +178,124 @@ final class NativeAppLifecycleTest extends TestCase
         $this->assertDirectoryDoesNotExist($root . '/app');
         $this->assertSame(1, $this->service->install('notes', $this->project(), 0)['version']);
         $this->assertSame(201, $this->createNote($this->service, 'Retried')['status']);
+    }
+
+    public function testAnUpdateTerminatedAfterWritingProjectJsonRollsBackToThePreviousProject(): void
+    {
+        $this->service->install('notes', $this->project(), 0);
+        $this->createNote($this->service, 'Kept');
+        $this->terminateInstallAt('project-written', 1, 'afterStep');
+        $root = $this->root();
+        $this->assertSame('migrated', json_decode(file_get_contents($root . '/private/install.json'), true)['phase'], 'the journal never reached metadata-promoted');
+        $this->assertSame(2, json_decode(file_get_contents($root . '/project.json'), true)['version'], 'the terminated process had replaced project.json');
+        $this->assertSame(201, $this->createNote($this->service, 'After')['status']);
+        $this->assertFileDoesNotExist($root . '/private/install.json');
+        $this->assertFileDoesNotExist($root . '/private/recovery-required');
+        $this->assertSame(1, $this->service->get('notes')['version'], 'project.json belongs to the generation that was rolled back to');
+        $this->assertArrayNotHasKey('server/migrations/002.sql', $this->service->get('notes')['files']);
+        $this->assertStringContainsString('<Text>Notes</Text>', file_get_contents($root . '/app/ui/main.ui'));
+        $this->assertSame(['notes'], $this->tables($this->service));
+        $this->assertSame(['Kept', 'After'], array_column($this->service->records('notes', 'notes')['rows'], 'title'));
+        $this->assertSame([], glob($root . '/private/project.previous-*') ?: [], 'the project backup is retired');
+        $this->assertSame(2, $this->service->install('notes', $this->projectV2(), 1)['version']);
+    }
+
+    public function testAFirstInstallTerminatedAfterWritingProjectJsonLeavesNoProject(): void
+    {
+        $this->terminateInstallAt('project-written', 0, 'afterStep');
+        $root = $this->root();
+        $this->assertFileExists($root . '/project.json');
+        $this->assertFileExists($root . '/private/data/application.sqlite', 'the migration created a database');
+        // Event delivery, which runs every minute for every app, is as likely as anything to settle it.
+        $this->assertSame(0, $this->service->dispatchRecordEvents('notes', static fn() => throw new \LogicException('delivered')));
+        $this->assertNull($this->service->get('notes'));
+        foreach (['project.json', 'app', 'private/install.json', 'private/config.json', 'private/data/application.sqlite'] as $path) $this->assertFileDoesNotExist($root . '/' . $path, $path . ' (the rolled-back database is not reopened empty)');
+        try { $this->createNote($this->service, 'x'); $this->fail('A half-installed app answered'); }
+        catch (\RuntimeException $error) { $this->assertSame(404, $error->getCode()); }
+        $this->assertSame(1, $this->service->install('notes', $this->project(), 0)['version']);
+    }
+
+    public function testAnUpdateTerminatedAfterWritingItsBackupsLeavesNone(): void
+    {
+        $this->service->install('notes', $this->project(), 0);
+        $this->createNote($this->service, 'Kept');
+        $this->terminateInstallAt('backups-written', 1, 'afterStep');
+        $root = $this->root();
+        $this->assertSame('staged', json_decode(file_get_contents($root . '/private/install.json'), true)['phase'], 'config-changed was never durable');
+        $this->assertCount(1, glob($root . '/private/config.previous-*') ?: [], 'the terminated process had written the configuration backup');
+        $this->assertCount(1, glob($root . '/private/project.previous-*') ?: [], 'and the project backup');
+        $this->assertSame(201, $this->createNote($this->service, 'After')['status']);
+        foreach (['config.previous-*', 'project.previous-*', 'install.json', 'recovery-required'] as $pattern) $this->assertSame([], glob($root . '/private/' . $pattern) ?: [], $pattern);
+        $this->assertSame([], glob($root . '/staging-*') ?: []);
+        $this->assertSame(1, $this->service->get('notes')['version']);
+        $this->assertSame(['Kept', 'After'], array_column($this->service->records('notes', 'notes')['rows'], 'title'));
+    }
+
+    public function testAProjectJsonThatWasReplacedWithoutABackupRequiresRecovery(): void
+    {
+        $this->service->install('notes', $this->project(), 0);
+        $this->terminateInstallAt('project-written', 1, 'afterStep');
+        $root = $this->root();
+        $backups = glob($root . '/private/project.previous-*') ?: [];
+        $this->assertCount(1, $backups);
+        unlink($backups[0]);
+        try { $this->createNote($this->service, 'x'); $this->fail('A rollback kept the new project.json over the previous generation'); }
+        catch (\RuntimeException $error) {
+            $this->assertNotSame(409, $error->getCode());
+            $this->assertStringContainsString('the project metadata backup is missing', $error->getMessage());
+        }
+        $this->assertSame('recovery', json_decode(file_get_contents($root . '/private/install.json'), true)['phase']);
+        $this->assertStringContainsString('the project metadata backup is missing', file_get_contents($root . '/private/recovery-required'));
+    }
+
+    public function testAJournalWithoutAProjectBackupSettlesWhenProjectJsonWasNotReplaced(): void
+    {
+        $this->service->install('notes', $this->project(), 0);
+        $this->createNote($this->service, 'Kept');
+        $this->terminateInstallAt('migrated');
+        $root = $this->root();
+        // As the code before project backups wrote it: no projectBackup, and none on disk.
+        $journal = json_decode(file_get_contents($root . '/private/install.json'), true);
+        unlink($root . '/private/' . $journal['projectBackup']);
+        unset($journal['projectBackup']);
+        file_put_contents($root . '/private/install.json', json_encode($journal));
+        $this->assertSame(201, $this->createNote($this->service, 'After')['status']);
+        $this->assertFileDoesNotExist($root . '/private/install.json');
+        $this->assertFileDoesNotExist($root . '/private/recovery-required');
+        $this->assertSame(1, $this->service->get('notes')['version']);
+        $this->assertSame(['notes'], $this->tables($this->service));
+    }
+
+    public function testASnapshotThatWasNeverVerifiedIsDeletedWhenTheUpdateIsSettled(): void
+    {
+        $this->service->install('notes', $this->project(), 0);
+        $this->createNote($this->service, 'Kept');
+        $root = $this->root();
+        $this->terminateInstallAt('snapshot-taken', 1, 'afterStep');
+        $this->assertCount(1, glob($root . '/private/pre-install-*.sqlite') ?: [], 'the terminated process had written the snapshot');
+        $this->assertSame(201, $this->createNote($this->service, 'After termination')['status']);
+        foreach (['pre-install-*', 'config.previous-*', 'project.previous-*', 'install.json'] as $pattern) $this->assertSame([], glob($root . '/private/' . $pattern) ?: [], $pattern);
+
+        // A snapshot that fails its health check in a live update goes the same way.
+        $corrupt = new CorruptSnapshotNativeAppService($this->storage, $this->runtime, getenv('FORMLOGIC_NODE_BIN'));
+        try { $corrupt->install('notes', $this->projectV2(), 1); $this->fail('An update ran past a snapshot that failed its health check'); }
+        catch (\RuntimeException $error) { $this->assertStringContainsString('integrity check', $error->getMessage()); }
+        foreach (['pre-install-*', 'config.previous-*', 'project.previous-*', 'install.json', 'recovery-required'] as $pattern) $this->assertSame([], glob($root . '/private/' . $pattern) ?: [], $pattern);
+        $this->assertSame(1, $this->service->get('notes')['version']);
+        $this->assertSame(['Kept', 'After termination'], array_column($this->service->records('notes', 'notes')['rows'], 'title'));
+    }
+
+    public function testAFirstInstallTerminatedAfterCreatingItsConfigurationLeavesNone(): void
+    {
+        $this->terminateInstallAt('config-created', 0, 'afterStep');
+        $root = $this->root();
+        $this->assertSame('staged', json_decode(file_get_contents($root . '/private/install.json'), true)['phase']);
+        $this->assertFileExists($root . '/private/config.json');
+        try { $this->createNote($this->service, 'x'); $this->fail('A half-installed app answered'); }
+        catch (\RuntimeException $error) { $this->assertSame(404, $error->getCode()); }
+        foreach (['app', 'private/install.json', 'private/config.json'] as $path) $this->assertFileDoesNotExist($root . '/' . $path);
+        $this->assertSame([], glob($root . '/staging-*') ?: []);
+        $this->assertSame(1, $this->service->install('notes', $this->project(), 0)['version']);
     }
 
     public function testARollbackThatCannotRestoreTheSourceBlocksTheAppAndKeepsEveryInput(): void
@@ -205,6 +324,71 @@ final class NativeAppLifecycleTest extends TestCase
         }
         $this->assertTrue($this->service->describe('notes')['recoveryRequired']);
         $this->assertTrue($this->service->describe('notes')['updateUnfinished']);
+    }
+
+    public function testRemovingOnlyTheRecoveryMarkerLeavesTheAppBlockedAndItsInputsKept(): void
+    {
+        $this->service->install('notes', $this->project(), 0);
+        $this->createNote($this->service, 'Kept');
+        $broken = $this->projectV2();
+        $broken['files']['server/main.logic'] = 'function createNote( {';
+        $stuck = new StuckRollbackNativeAppService($this->storage, $this->runtime, getenv('FORMLOGIC_NODE_BIN'));
+        try { $stuck->install('notes', $broken, 1); $this->fail('Broken source was installed'); }
+        catch (\RuntimeException $error) { $this->assertSame(422, $error->getCode()); }
+        $root = $this->root();
+        $journal = json_decode(file_get_contents($root . '/private/install.json'), true);
+        $this->assertSame('recovery', $journal['phase']);
+        $this->assertDirectoryExists($root . '/' . $journal['previous']);
+        $this->assertDirectoryExists($root . '/' . $journal['staging']);
+        $this->assertRecoveryBlocksEveryEntryPoint();
+        $this->assertRestoreRefusesOverTheJournal(file_get_contents($root . '/private/install.json'));
+    }
+
+    public function testAnUnreadableJournalIsRecoveryRequired(): void
+    {
+        $this->service->install('notes', $this->project(), 0);
+        $this->createNote($this->service, 'Kept');
+        $root = $this->root();
+        file_put_contents($root . '/private/install.json', '{"phase": "migr');
+        // A marker that cannot be written does not let anything through.
+        $short = new ShortWritingNativeAppService($this->storage, $this->runtime, getenv('FORMLOGIC_NODE_BIN'), '~/recovery-required\.pending-~');
+        try { $this->createNote($short, 'x'); $this->fail('A request ran over an unreadable journal whose marker could not be written'); }
+        catch (\RuntimeException $error) {
+            $this->assertNotSame(409, $error->getCode());
+            $this->assertStringContainsString('the install journal could not be read', $error->getMessage());
+        }
+        $this->assertFileDoesNotExist($root . '/private/recovery-required');
+        $this->assertRecoveryBlocksEveryEntryPoint();
+        $this->assertStringContainsString('the install journal could not be read', file_get_contents($root . '/private/recovery-required'));
+        $this->assertRestoreRefusesOverTheJournal('{"phase": "migr');
+        // The operator finishes by removing the journal as well as the marker.
+        unlink($root . '/private/install.json');
+        unlink($root . '/private/recovery-required');
+        $this->assertSame(201, $this->createNote($this->service, 'Recovered')['status']);
+        $this->assertSame(['Kept', 'Recovered'], array_column($this->service->records('notes', 'notes')['rows'], 'title'));
+    }
+
+    public function testAJournalReadThatFailsIsNotRecovery(): void
+    {
+        $this->service->install('notes', $this->project(), 0);
+        $this->createNote($this->service, 'Kept');
+        $this->terminateInstallAt('source-activated');
+        $root = $this->root();
+        $journal = file_get_contents($root . '/private/install.json');
+        // Still there but not readable just now: busy, with no marker and the journal untouched.
+        $failing = new FailingJournalReadNativeAppService($this->storage, $this->runtime, getenv('FORMLOGIC_NODE_BIN'), false);
+        foreach (['request' => fn() => $this->createNote($failing, 'x'), 'install' => fn() => $failing->install('notes', $this->projectV2(), 1)] as $name => $operation) {
+            try { $operation(); $this->fail($name . ' ran past a journal it could not read'); }
+            catch (\RuntimeException $error) { $this->assertSame(409, $error->getCode(), $name); }
+            $this->assertFileDoesNotExist($root . '/private/recovery-required', $name);
+            $this->assertSame($journal, file_get_contents($root . '/private/install.json'), $name);
+        }
+        $this->assertSame(201, $this->createNote($this->service, 'After')['status'], 'once it reads, the journal is settled');
+        $this->assertSame(1, $this->service->get('notes')['version']);
+        // describe() holds no lock: a journal its update retired between the check and the read is no journal.
+        file_put_contents($root . '/private/install.json', $journal);
+        $described = (new FailingJournalReadNativeAppService($this->storage, $this->runtime, getenv('FORMLOGIC_NODE_BIN'), true))->describe('notes');
+        $this->assertSame([false, false], [$described['recoveryRequired'], $described['updateUnfinished']]);
     }
 
     // ── FL-S04: decided under the lock ───────────────────────────────────────
@@ -246,6 +430,20 @@ final class NativeAppLifecycleTest extends TestCase
         $this->assertSame([], $result['rows']);
         $this->assertFileDoesNotExist($this->root() . '/private/install.json');
         $this->assertSame(1, $this->service->get('notes')['version']);
+    }
+
+    public function testEventDeliveryAndSnapshotsTakeTheLockWithoutDecodingTheProject(): void
+    {
+        $this->service->install('notes', $this->project('Notes', true), 0);
+        $this->createNote($this->service, 'One');
+        $counting = new CountingNativeAppService($this->storage, $this->runtime, getenv('FORMLOGIC_NODE_BIN'));
+        $counting->dispatchRecordEvents('notes', static fn() => null);
+        $this->assertNotNull($counting->snapshotDatabase('notes', $this->storage . '/counted.sqlite'));
+        $this->assertSame(0, $counting->reads, 'the lock, journal and recovery checks need no project.json');
+        $counting->records('notes', 'notes');
+        $this->assertSame(1, $counting->reads, 'the records view decodes project.json once');
+        $counting->request('notes', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'Two'], 'client_ip' => '127.0.0.1'], [], [], 1);
+        $this->assertSame(2, $counting->reads, 'a request bound to a generation decodes it once');
     }
 
     public function testARequestDecidedAgainstAnOlderGenerationIsRefused(): void
@@ -339,17 +537,82 @@ final class NativeAppLifecycleTest extends TestCase
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    /** Run an update of `notes` (to the v2 project) in a child PHP process that exits once $phase is durable. */
-    private function terminateInstallAt(string $phase, int $expectedVersion = 1): void
+    /**
+     * Every entry point to the installation refuses with the operator-recovery message (never a
+     * 409), each with the marker removed first; the marker is back afterwards, and the journal and
+     * everything beside it — previous and staged source, snapshot, backups — are as they were.
+     */
+    private function assertRecoveryBlocksEveryEntryPoint(): void
     {
-        $script = $this->storage . '/terminate-' . $phase . '.php';
+        $root = $this->root();
+        $journal = file_get_contents($root . '/private/install.json');
+        $inputs = $this->listing($root);
+        $operations = [
+            'request' => fn() => $this->createNote($this->service, 'x'),
+            'records' => fn() => $this->service->records('notes', 'notes'),
+            'manageRecord' => fn() => $this->service->manageRecord('notes', ['table' => 'notes', 'action' => 'create', 'values' => ['title' => 'x']]),
+            'backup' => fn() => $this->service->captureForBackup('notes', $this->storage . '/snap.sqlite'),
+            'snapshot' => fn() => $this->service->snapshotDatabase('notes', $this->storage . '/snap.sqlite'),
+            'dispatch' => fn() => $this->service->dispatchRecordEvents('notes', static fn() => null),
+            'install' => fn() => $this->service->install('notes', $this->projectV2(), 1),
+        ];
+        foreach ($operations as $name => $operation) {
+            if (is_file($root . '/private/recovery-required')) unlink($root . '/private/recovery-required');
+            $this->assertTrue($this->service->describe('notes')['recoveryRequired'], $name . ': the journal alone means recovery is required');
+            try { $operation(); $this->fail($name . ' ran with the journal in recovery'); }
+            catch (\RuntimeException $error) {
+                $this->assertNotSame(409, $error->getCode(), $name);
+                $this->assertStringContainsString('needs operator recovery', $error->getMessage(), $name);
+            }
+            $this->assertFileExists($root . '/private/recovery-required', $name . ' wrote the marker again');
+            $this->assertSame($journal, file_get_contents($root . '/private/install.json'), $name . ' left the journal as it was');
+            $this->assertSame($inputs, $this->listing($root), $name . ' kept every input');
+        }
+        $this->assertFileDoesNotExist($this->storage . '/snap.sqlite');
+    }
+
+    /** restore() into an empty installation root that holds only $journal refuses, rewrites the marker and writes nothing. */
+    private function assertRestoreRefusesOverTheJournal(string $journal): void
+    {
+        $root = $this->storage . '/' . hash('sha256', 'restored');
+        mkdir($root . '/private', 0700, true);
+        file_put_contents($root . '/private/install.json', $journal);
+        try { $this->service->restore('restored', $this->project(), null, null); $this->fail('A restore ran over a journal in recovery'); }
+        catch (\RuntimeException $error) { $this->assertStringContainsString('needs operator recovery', $error->getMessage()); }
+        $this->assertFileExists($root . '/private/recovery-required');
+        $this->assertSame($journal, file_get_contents($root . '/private/install.json'));
+        foreach (['project.json', 'app', 'private/config.json', 'private/data/application.sqlite'] as $path) $this->assertFileDoesNotExist($root . '/' . $path);
+    }
+
+    /** Every path under $root with its size (-1 for a directory), the recovery marker aside. @return array<string, int> */
+    private function listing(string $root): array
+    {
+        clearstatcache();
+        $base = strlen(str_replace('\\', '/', $root)) + 1;
+        $paths = [];
+        foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS), \RecursiveIteratorIterator::SELF_FIRST) as $entry) {
+            $path = substr(str_replace('\\', '/', $entry->getPathname()), $base);
+            if ($path !== 'private/recovery-required') $paths[$path] = $entry->isDir() ? -1 : $entry->getSize();
+        }
+        ksort($paths);
+        return $paths;
+    }
+
+    /**
+     * Run an update of `notes` (to the v2 project) in a child PHP process that exits at $point:
+     * a phase once it is durable (seam afterPhase), or a step inside a phase once it has changed
+     * the disk (seam afterStep).
+     */
+    private function terminateInstallAt(string $point, int $expectedVersion = 1, string $seam = 'afterPhase'): void
+    {
+        $script = $this->storage . '/terminate-' . $point . '.php';
         $autoload = dirname(__DIR__, 2) . '/vendor/autoload.php';
         $project = $expectedVersion === 0 ? $this->project() : $this->projectV2();
         file_put_contents($script, '<?php
 declare(strict_types=1);
 require ' . var_export($autoload, true) . ';
 final class Terminating extends \FormLogic\Services\NativeAppService {
-    protected function afterPhase(string $root, string $phase): void { if ($phase === ' . var_export($phase, true) . ') { fwrite(STDOUT, "terminated at " . $phase); exit(0); } }
+    protected function ' . $seam . '(string $root, string $point): void { if ($point === ' . var_export($point, true) . ') { fwrite(STDOUT, "terminated at " . $point); exit(0); } }
 }
 $service = new Terminating(' . var_export($this->storage, true) . ', ' . var_export($this->runtime, true) . ', ' . var_export(getenv('FORMLOGIC_NODE_BIN'), true) . ');
 $service->install("notes", ' . var_export($project, true) . ', ' . $expectedVersion . ');
@@ -357,7 +620,7 @@ fwrite(STDOUT, "completed");
 ');
         $php = PHP_BINARY;
         $output = shell_exec(escapeshellarg($php) . ' -d xdebug.mode=off ' . escapeshellarg($script) . ' 2>&1');
-        $this->assertSame('terminated at ' . $phase, trim((string) $output), 'the child process must die at the requested phase');
+        $this->assertSame('terminated at ' . $point, trim((string) $output), 'the child process must die at the requested point');
     }
 }
 
@@ -387,6 +650,43 @@ final class StuckRollbackNativeAppService extends NativeAppService
     {
         if (str_contains(str_replace('\\', '/', $from), '/previous-') && str_ends_with(str_replace('\\', '/', $to), '/app')) return false;
         return parent::renameChecked($from, $to);
+    }
+}
+
+/** Damages the pre-install snapshot as soon as VACUUM INTO has written it, so its health check fails. */
+final class CorruptSnapshotNativeAppService extends NativeAppService
+{
+    protected function afterStep(string $root, string $step): void
+    {
+        if ($step === 'snapshot-taken') foreach (glob($root . '/private/pre-install-*.sqlite') ?: [] as $snapshot) file_put_contents($snapshot, str_repeat('not a database ', 512));
+    }
+}
+
+/** Reading the install journal fails; with $vanish its update retires it first, as clearJournal() racing a reader would. */
+final class FailingJournalReadNativeAppService extends NativeAppService
+{
+    public function __construct(?string $storage, ?string $runtime, ?string $node, private bool $vanish)
+    {
+        parent::__construct($storage, $runtime, $node);
+    }
+
+    protected function readChecked(string $path): string|false
+    {
+        if (!str_ends_with(str_replace('\\', '/', $path), '/private/install.json')) return parent::readChecked($path);
+        if ($this->vanish) unlink($path);
+        return false;
+    }
+}
+
+/** Counts how often project.json is decoded through get(). */
+final class CountingNativeAppService extends NativeAppService
+{
+    public int $reads = 0;
+
+    public function get(string $appId): ?array
+    {
+        $this->reads++;
+        return parent::get($appId);
     }
 }
 

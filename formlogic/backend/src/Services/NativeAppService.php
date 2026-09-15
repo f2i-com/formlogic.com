@@ -25,7 +25,8 @@ use PDO;
  *  - private/data/application.sqlite   records + migration state + record-event queue (restorable, account data)
  *  - private/config.json           host-generated key material + capabilities (restorable ONLY through a
  *                                  privileged recovery backup; otherwise reissued and reported as such)
- *  - private/manage.lock, events.lock, staging-*, previous-*, pre-install-*.sqlite, recovery-required
+ *  - private/manage.lock, events.lock, staging-*, previous-*, pre-install-*.sqlite,
+ *    config.previous-*.json, project.previous-*.json, recovery-required
  *                                  host-local; never archived
  *  - private/install.json          the install journal (FL-S03): written before an update changes
  *                                  anything, advanced at every phase, removed when the update is
@@ -97,7 +98,7 @@ class NativeAppService
      * What a backup can carry for this app, or null when no native installation exists.
      * Never returns key material; hostConfig() is the separate, privileged read.
      *
-     * @return array{manifestId:string, version:int, home:bool, access:string, capabilities:list<string>, hasDatabase:bool, recoveryRequired:bool}|null
+     * @return array{manifestId:string, version:int, home:bool, access:string, capabilities:list<string>, hasDatabase:bool, recoveryRequired:bool, updateUnfinished:bool}|null
      */
     public function describe(string $appId): ?array
     {
@@ -113,7 +114,7 @@ class NativeAppService
             'access' => (string) ($project['access'] ?? 'application'),
             'capabilities' => $capabilities,
             'hasDatabase' => is_file($root . '/private/data/application.sqlite'),
-            'recoveryRequired' => is_file($root . '/private/recovery-required'),
+            'recoveryRequired' => is_file($root . '/private/recovery-required') || ($this->readJournal($root)['phase'] ?? null) === 'recovery',
             'updateUnfinished' => is_file($root . self::JOURNAL),
         ];
     }
@@ -170,7 +171,10 @@ class NativeAppService
      * actually installed: the recovery marker, the project, and — when the caller names the
      * generation it was looking at — that this is still that generation.
      *
-     * @return array{0:string, 1:resource|null, 2:array|null} root, the held shared lock, the project
+     * project.json (every file and base64 asset) is decoded only when the caller needs the project
+     * or a generation check; event delivery and database snapshots need neither.
+     *
+     * @return array{0:string, 1:resource|null, 2:array|null} root, the held shared lock, the project (null when not read)
      */
     private function openShared(string $appId, ?int $generation = null, bool $requireProject = true): array
     {
@@ -193,7 +197,7 @@ class NativeAppService
         try {
             if (is_file($root . self::JOURNAL)) throw new RuntimeException('The app is being updated. Try again shortly.', 409);
             $this->assertNotRecoveryRequired($root);
-            $project = $this->get($appId);
+            $project = $requireProject || $generation !== null ? $this->get($appId) : null;
             if ($project === null && $requireProject) throw new RuntimeException('Native app not found', 404);
             if ($generation !== null && (int) ($project['version'] ?? 0) !== $generation) throw new RuntimeException('The app was updated while this request was in flight. Reload and try again.', 409);
             return [$root, $lock, $project];
@@ -668,13 +672,28 @@ class NativeAppService
 
     // ── The install journal (FL-S03) ─────────────────────────────────────────
 
+    /** file_get_contents() with false as the failure; a seam so a test can make a read fail. */
+    protected function readChecked(string $path): string|false
+    {
+        return @file_get_contents($path);
+    }
+
     private function readJournal(string $root): ?array
     {
         $path = $root . self::JOURNAL;
         if (!is_file($path)) return null;
-        $journal = json_decode((string) file_get_contents($path), true);
-        // An unreadable journal is still an unfinished update: nothing may run until an operator looks.
-        if (!is_array($journal) || !is_string($journal['phase'] ?? null) || !is_string($journal['operation'] ?? null)) return ['operation' => 'unreadable', 'phase' => 'recovery', 'problems' => ['the install journal could not be read'], 'staging' => '', 'previous' => null, 'snapshot' => null, 'configBackup' => null, 'hadConfig' => true, 'hadDatabase' => true, 'firstInstall' => false];
+        $raw = $this->readChecked($path);
+        if ($raw === false) {
+            // A read that failed says nothing about the journal's content. Gone since the check (an
+            // update retired it while describe(), which holds no lock, was reading): no journal.
+            // Still there: busy, try again — never recovery for what may be a passing error.
+            clearstatcache(true, $path);
+            if (!is_file($path)) return null;
+            throw new RuntimeException('The app is being updated. Try again shortly.', 409);
+        }
+        $journal = json_decode($raw, true);
+        // A journal that reads but does not decode is still an unfinished update: nothing may run until an operator looks.
+        if (!is_array($journal) || !is_string($journal['phase'] ?? null) || !is_string($journal['operation'] ?? null)) return ['operation' => 'unreadable', 'phase' => 'recovery', 'problems' => ['the install journal could not be read'], 'reason' => 'an unfinished update left an unreadable journal', 'staging' => '', 'previous' => null, 'snapshot' => null, 'configBackup' => null, 'projectBackup' => null, 'hadConfig' => true, 'hadDatabase' => true, 'firstInstall' => false];
         return $journal;
     }
 
@@ -701,10 +720,22 @@ class NativeAppService
     protected function afterPhase(string $root, string $phase): void {}
 
     /**
+     * A seam for termination tests: called inside a phase once one of its steps has changed the
+     * disk and before the next phase is durable — `config-created` (a first install's
+     * config.json, phase staged), `backups-written` (the configuration and project backups, phase
+     * staged), `snapshot-taken` (VACUUM INTO, before its health check, phase config-changed),
+     * `project-written` (the new project.json, phase migrated).
+     */
+    protected function afterStep(string $root, string $step): void {}
+
+    /**
      * Settle whatever a terminated update left behind. Caller holds the exclusive lock.
      * A journal that reached metadata-promoted describes a complete new generation and is rolled
-     * forward; any earlier phase is rolled back to the previous generation. A journal already in
-     * recovery, or a rollback that cannot complete, leaves the recovery marker and throws.
+     * forward; any earlier phase is rolled back to the previous generation. A journal in phase
+     * recovery — left so, undecodable, or because this rollback could not complete — IS recovery
+     * required: the marker is written again if an operator removed it without finishing (or it
+     * could not be written), and this throws either way. Nothing runs, overwrites the journal or
+     * retires the inputs it names until the journal itself is gone.
      */
     private function resolveJournal(string $root): void
     {
@@ -717,15 +748,53 @@ class NativeAppService
         }
         if ($journal['phase'] === 'metadata-promoted') $this->rollForward($root, $journal);
         elseif ($journal['phase'] !== 'recovery') $this->rollBack($root, $journal, 'the previous update was interrupted at phase ' . $journal['phase']);
-        if (is_file($root . '/private/recovery-required')) throw new RuntimeException('The app needs operator recovery: ' . trim((string) file_get_contents($root . '/private/recovery-required')));
+        $marker = $root . '/private/recovery-required';
+        if ($journal['phase'] === 'recovery' && !is_file($marker)) {
+            try { $this->writeExact($marker, $this->recoveryMessage($journal), 0600); } catch (\Throwable $e) { error_log('Native recovery marker: ' . $e->getMessage()); }
+        }
+        if ($journal['phase'] === 'recovery' || is_file($marker)) throw new RuntimeException('The app needs operator recovery: ' . $this->withoutPaths($root, is_file($marker) ? trim((string) file_get_contents($marker)) : $this->recoveryMessage($journal)));
+    }
+
+    /**
+     * $text with this installation's absolute location (and app storage's) replaced by a relative
+     * label. The recovery refusal reaches the app's owner, and the reason it carries can be a live
+     * install's exception naming a file by its full path (SQLite's VACUUM INTO does); a marker
+     * written before this may hold one too. The journal, the marker and the log keep the full text
+     * for the operator.
+     */
+    private function withoutPaths(string $root, string $text): string
+    {
+        $labels = [];
+        foreach ([[$root, 'the installation'], [$this->storageRoot(), 'app storage']] as [$path, $label]) {
+            foreach (array_filter([$path, realpath($path)]) as $location) {
+                foreach ([$location, str_replace('\\', '/', $location), str_replace('/', '\\', $location)] as $spelling) {
+                    $labels[$spelling . '/'] = $labels[$spelling . '\\'] = $label . '\'s ';
+                    $labels[$spelling] = $label;
+                }
+            }
+        }
+        return str_ireplace(array_keys($labels), array_values($labels), $text);
+    }
+
+    /** What the recovery marker says about a journal in phase recovery. */
+    private function recoveryMessage(array $journal): string
+    {
+        return 'An update could not be rolled back (' . (string) ($journal['reason'] ?? 'no reason was recorded') . '). Unfinished: ' . implode('; ', array_map('strval', (array) ($journal['problems'] ?? []))) . '. Inputs are kept under the installation\'s private/ folder and its staging/previous directories; see private/install.json.';
+    }
+
+    /** Delete each file the journal names that exists: the snapshot and the configuration and project backups. */
+    private function retireBackups(string $root, array $journal): void
+    {
+        foreach (['snapshot', 'configBackup', 'projectBackup'] as $artifact) {
+            if (is_string($journal[$artifact] ?? null) && is_file($root . '/private/' . $journal[$artifact])) unlink($root . '/private/' . $journal[$artifact]);
+        }
     }
 
     /** The new generation is complete: retire what the rollback would have needed. Never throws. */
     private function rollForward(string $root, array $journal): void
     {
         try {
-            if (is_string($journal['snapshot'] ?? null) && is_file($root . '/private/' . $journal['snapshot'])) unlink($root . '/private/' . $journal['snapshot']);
-            if (is_string($journal['configBackup'] ?? null) && is_file($root . '/private/' . $journal['configBackup'])) unlink($root . '/private/' . $journal['configBackup']);
+            $this->retireBackups($root, $journal);
             // Keep one previous source version — this update's — and discard older ones and every staging directory.
             $keep = is_string($journal['previous'] ?? null) ? $journal['previous'] : null;
             foreach (array_merge(glob($root . '/previous-*', GLOB_ONLYDIR) ?: [], glob($root . '/staging-*', GLOB_ONLYDIR) ?: []) as $directory) {
@@ -739,14 +808,15 @@ class NativeAppService
     }
 
     /**
-     * Put the previous generation back: source, database, configuration, in that order, each step
-     * checked. What the filesystem says happened decides what to undo, so this serves both an
-     * exception in a live install and a journal left by a terminated one. When any step cannot be
-     * completed the journal is kept in phase `recovery`, the recovery marker is written naming
-     * the problems, and every input the operator needs (staging, previous source, snapshot,
-     * configuration backup) is retained. Never throws.
+     * Put the previous generation back: source, database, configuration, project metadata, in that
+     * order, each step checked. What the filesystem says happened decides what to undo, so this
+     * serves both an exception in a live install and a journal left by a terminated one. When any
+     * step cannot be completed $journal moves to phase `recovery` — on disk and in the recovery
+     * marker (naming the problems) when those writes succeed, in the caller's $journal regardless —
+     * and every input the operator needs (staging, previous source, snapshot, configuration and
+     * project backups) is retained. Never throws.
      */
-    private function rollBack(string $root, array $journal, string $reason): void
+    private function rollBack(string $root, array &$journal, string $reason): void
     {
         $problems = [];
         $phase = (string) $journal['phase'];
@@ -786,22 +856,41 @@ class NativeAppService
                 foreach (['', '-wal', '-shm'] as $suffix) if (is_file($database . $suffix) && !unlink($database . $suffix)) $problems[] = 'remove the first install\'s database';
             }
         }
-        if ($phase !== 'staged') {
-            $configPath = $root . '/private/config.json';
-            if (!empty($journal['hadConfig'])) {
-                $backup = is_string($journal['configBackup'] ?? null) ? $root . '/private/' . $journal['configBackup'] : null;
-                if ($backup === null || !is_file($backup)) $problems[] = 'the configuration backup is missing';
+        $configPath = $root . '/private/config.json';
+        if (empty($journal['hadConfig'])) {
+            // A first install creates config.json while still staged: it goes in every phase.
+            if (is_file($configPath) && !unlink($configPath)) $problems[] = 'remove the first install\'s configuration';
+        } elseif ($phase !== 'staged') {
+            $backup = is_string($journal['configBackup'] ?? null) ? $root . '/private/' . $journal['configBackup'] : null;
+            if ($backup === null || !is_file($backup)) $problems[] = 'the configuration backup is missing';
+            else {
+                try { $this->writeHostConfig($configPath, (string) file_get_contents($backup)); }
+                catch (\Throwable $error) { $problems[] = 'restore the configuration: ' . $error->getMessage(); }
+            }
+        }
+        if ($phase === 'migrated') {
+            // project.json is replaced in this phase. It is written whole or not at all, so it names
+            // either the old version (nothing to undo — also how a journal from before project
+            // backups existed settles) or the new one, which goes: removed for a first install,
+            // otherwise replaced by the exact bytes kept before the update changed anything.
+            $projectPath = $root . '/project.json';
+            $installed = empty($journal['firstInstall']) && is_file($projectPath) ? json_decode((string) file_get_contents($projectPath), true) : null;
+            if (!empty($journal['firstInstall'])) {
+                if (is_file($projectPath) && !unlink($projectPath)) $problems[] = 'remove the first install\'s project metadata';
+            } elseif ((int) ($installed['version'] ?? -1) !== (int) ($journal['oldVersion'] ?? 0)) {
+                $backup = is_string($journal['projectBackup'] ?? null) ? $root . '/private/' . $journal['projectBackup'] : null;
+                if ($backup === null || !is_file($backup)) $problems[] = 'the project metadata backup is missing';
                 else {
-                    try { $this->writeHostConfig($configPath, (string) file_get_contents($backup)); }
-                    catch (\Throwable $error) { $problems[] = 'restore the configuration: ' . $error->getMessage(); }
+                    try { $this->writeExact($projectPath, (string) file_get_contents($backup), 0600); }
+                    catch (\Throwable $error) { $problems[] = 'restore the project metadata: ' . $error->getMessage(); }
                 }
-            } elseif (is_file($configPath) && !unlink($configPath)) $problems[] = 'remove the first install\'s configuration';
+            }
         }
         if ($problems) {
             $journal['phase'] = 'recovery';
             $journal['problems'] = $problems;
             $journal['reason'] = $reason;
-            $message = 'An update could not be rolled back (' . $reason . '). Unfinished: ' . implode('; ', $problems) . '. Inputs are kept under the installation\'s private/ folder and its staging/previous directories; see private/install.json.';
+            $message = $this->recoveryMessage($journal);
             try { $this->writeJournal($root, $journal); } catch (\Throwable $e) { error_log('Native install journal: ' . $e->getMessage()); }
             try { $this->writeExact($root . '/private/recovery-required', $message, 0600); } catch (\Throwable $e) { error_log('Native recovery marker: ' . $e->getMessage()); }
             error_log('Native app recovery required: ' . $message);
@@ -810,8 +899,7 @@ class NativeAppService
         // Everything is back: retire the update's inputs and the journal.
         try {
             if (is_dir($staging)) $this->removeStagedSource($root, $staging);
-            if (is_string($journal['snapshot'] ?? null) && is_file($root . '/private/' . $journal['snapshot'])) unlink($root . '/private/' . $journal['snapshot']);
-            if (is_string($journal['configBackup'] ?? null) && is_file($root . '/private/' . $journal['configBackup'])) unlink($root . '/private/' . $journal['configBackup']);
+            $this->retireBackups($root, $journal);
             $this->clearJournal($root);
         } catch (\Throwable $error) {
             error_log('Native install rollback cleanup: ' . $error->getMessage());
@@ -823,6 +911,20 @@ class NativeAppService
     {
         $file = $this->root($appId) . '/project.json';
         return is_file($file) ? json_decode(file_get_contents($file), true, 64, JSON_THROW_ON_ERROR) : null;
+    }
+
+    /**
+     * The installed project, read the way every other entry point reads it (FL-S04): under the
+     * shared management lock, after an update a terminated process left unfinished is settled.
+     * get() alone can serve a project.json the journal is about to roll back. Null when nothing
+     * is installed; busy (409) and recovery required throw as they do for a request.
+     */
+    public function project(string $appId): ?array
+    {
+        try { [, $lock, $project] = $this->openShared($appId); }
+        catch (RuntimeException $missing) { if ($missing->getCode() === 404) return null; throw $missing; }
+        flock($lock, LOCK_UN); fclose($lock);
+        return $project;
     }
 
     /** Source/schema validation only; never starts a VM, applies migrations or writes storage. */
@@ -912,19 +1014,30 @@ class NativeAppService
             $this->stageProject($staging, array_merge($files, $decoded));
             // The journal is the durable intent (FL-S03): written before anything active changes,
             // advanced before each phase, so a process that dies leaves a record of how far it got.
-            $journal = ['operation' => $operation, 'startedAt' => gmdate('c'), 'phase' => 'staged', 'firstInstall' => $old === null, 'oldVersion' => (int) ($old['version'] ?? 0), 'newVersion' => $expectedVersion + 1, 'staging' => basename($staging), 'previous' => null, 'snapshot' => null, 'configBackup' => null, 'hadConfig' => is_file($configPath), 'hadDatabase' => is_file($database)];
+            // It names every file the update may create before that file exists, so whichever way
+            // the journal is settled retires them all; a backup is only restored from in a phase
+            // that follows its completion (the snapshot's, after its health check).
+            $hadConfig = is_file($configPath);
+            $hadDatabase = is_file($database);
+            $journal = ['operation' => $operation, 'startedAt' => gmdate('c'), 'phase' => 'staged', 'firstInstall' => $old === null, 'oldVersion' => (int) ($old['version'] ?? 0), 'newVersion' => $expectedVersion + 1, 'staging' => basename($staging), 'previous' => null, 'snapshot' => $hadDatabase ? 'pre-install-' . $operation . '.sqlite' : null, 'configBackup' => $hadConfig ? 'config.previous-' . $operation . '.json' : null, 'projectBackup' => $old !== null ? 'project.previous-' . $operation . '.json' : null, 'hadConfig' => $hadConfig, 'hadDatabase' => $hadDatabase];
             $this->writeJournal($root, $journal);
             $this->afterPhase($root, 'staged');
-            if (!is_file($configPath)) {
+            if (!$hadConfig) {
                 $config = ['appId' => $manifest['id'], 'development' => false, 'keyHex' => bin2hex(random_bytes(32)), 'capabilities' => $capabilities, 'cryptoDomains' => ['hmac' => $manifest['id'] . ':hmac:v1', 'seal' => $manifest['id'] . ':seal:v1']];
                 $this->writeHostConfig($configPath, json_encode($config, JSON_THROW_ON_ERROR));
+                $this->afterStep($root, 'config-created');
             }
             $originalConfig = file_get_contents($configPath);
             if ($originalConfig === false) throw new RuntimeException('Could not read host configuration');
-            if ($journal['hadConfig']) {
-                $journal['configBackup'] = 'config.previous-' . $operation . '.json';
-                $this->writeExact($root . '/private/' . $journal['configBackup'], $originalConfig, 0600);
+            if ($hadConfig) $this->writeExact($root . '/private/' . $journal['configBackup'], $originalConfig, 0600);
+            if ($old !== null) {
+                // The exact bytes a rollback of phase migrated puts back if project.json was replaced.
+                $installed = file_get_contents($root . '/project.json');
+                if ($installed === false) throw new RuntimeException('Could not read the installed project');
+                $this->writeExact($root . '/private/' . $journal['projectBackup'], $installed, 0600);
+                unset($installed);
             }
+            $this->afterStep($root, 'backups-written');
             $this->advance($root, $journal, 'config-changed');
             $config = json_decode($originalConfig, true, 64, JSON_THROW_ON_ERROR);
             // Owner-authorized updates use the same validated capabilities as a new install.
@@ -932,15 +1045,16 @@ class NativeAppService
             $config['capabilities'] = $capabilities;
             $config['enableHostContext'] = true;
             $this->writeHostConfig($configPath, json_encode($config, JSON_THROW_ON_ERROR));
-            if ($journal['hadDatabase']) {
-                $snapshot = 'pre-install-' . $operation . '.sqlite';
+            if ($hadDatabase) {
+                $snapshot = $root . '/private/' . $journal['snapshot'];
                 $db = new PDO('sqlite:' . $database, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
                 $db->exec('PRAGMA busy_timeout=1500');
-                $db->exec('VACUUM INTO ' . $db->quote($root . '/private/' . $snapshot));
+                $db->exec('VACUUM INTO ' . $db->quote($snapshot));
                 $db = null;
-                // Recorded only once it is known to be a snapshot worth restoring from.
-                $this->assertSnapshotHealthy($root . '/private/' . $snapshot);
-                $journal['snapshot'] = $snapshot;
+                $this->afterStep($root, 'snapshot-taken');
+                // Checked before the journal leaves this phase: only source-activated and migrated,
+                // which follow the check, restore the database from it.
+                $this->assertSnapshotHealthy($snapshot);
             }
             $journal['previous'] = is_dir($root . '/app') ? 'previous-' . $journal['oldVersion'] . '-' . $operation : null;
             $this->advance($root, $journal, 'activating');
@@ -953,6 +1067,7 @@ class NativeAppService
             $this->advance($root, $journal, 'migrated');
             $saved = ['home' => ($project['home'] ?? false) === true, 'version' => $expectedVersion + 1, 'updatedAt' => gmdate('c'), 'files' => $files, 'assets' => $assets, 'access' => ($project['access'] ?? '') === 'members' ? 'members' : 'application'];
             $this->writeExact($root . '/project.json', json_encode($saved, JSON_THROW_ON_ERROR), 0600);
+            $this->afterStep($root, 'project-written');
             $this->advance($root, $journal, 'metadata-promoted');
             $this->rollForward($root, $journal);
             $journal = null;
@@ -1003,7 +1118,9 @@ class NativeAppService
         if ($manage === null) return 0;
         $dispatch = fopen($root . '/private/events.lock', 'c');
         try {
-            if (!$dispatch || !flock($dispatch, LOCK_EX | LOCK_NB)) return 0;
+            // The database is checked again under the lock: settling an unfinished first install
+            // removes it, and opening it here would create an empty one in its place.
+            if (!$dispatch || !flock($dispatch, LOCK_EX | LOCK_NB) || !is_file($path)) return 0;
             $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
             $db->exec('PRAGMA busy_timeout=1500');
             if (!$db->query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='_formlogic_record_events'")->fetchColumn()) return 0;
@@ -1068,7 +1185,7 @@ class NativeAppService
     public function records(string $appId, ?string $table = null, int $offset = 0, ?int $generation = null): array
     {
         [$root, $lock] = $this->openShared($appId, $generation);
-        try { return $this->readRecords($appId, $table, $offset); }
+        try { return $this->readRecords($root, $table, $offset); }
         finally { flock($lock, LOCK_UN); fclose($lock); }
     }
 
@@ -1083,10 +1200,11 @@ class NativeAppService
         } finally { flock($lock, LOCK_UN); fclose($lock); }
     }
 
-    private function readRecords(string $appId, ?string $table, int $offset): array
+    /** Caller holds the shared lock from openShared(), which has already required the project. */
+    private function readRecords(string $root, ?string $table, int $offset): array
     {
-        $path = $this->root($appId) . '/private/data/application.sqlite';
-        if (!$this->get($appId) || !is_file($path)) throw new RuntimeException('App database not found', 404);
+        $path = $root . '/private/data/application.sqlite';
+        if (!is_file($path)) throw new RuntimeException('App database not found', 404);
         $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
         $db->exec('PRAGMA query_only=ON; PRAGMA busy_timeout=1500; BEGIN');
         $tables = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND substr(name,1,1) != '_' ORDER BY name")->fetchAll(PDO::FETCH_COLUMN);

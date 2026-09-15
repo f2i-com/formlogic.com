@@ -1926,7 +1926,8 @@ class ApiClient {
   async getNativeEntry(slug: string): Promise<ApiResponse<{ home: boolean; access: 'application' | 'members' }>> {
     return this.request(`/app/${encodeURIComponent(slug)}/entry`);
   }
-  async getNativeProject(id: string): Promise<ApiResponse<{ available: boolean; ready?: boolean; preflight?: NativeRuntimePreflight | null; project: import('./nativeHosting').NativeProject | null }>> {
+  /** `readOnly`: the shared demo, which browses the project and records but cannot import, publish or edit them. */
+  async getNativeProject(id: string): Promise<ApiResponse<{ available: boolean; ready?: boolean; preflight?: NativeRuntimePreflight | null; project: import('./nativeHosting').NativeProject | null; readOnly?: boolean }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/native`);
   }
   async saveNativeProject(id: string, project: import('./nativeHosting').NativeProject, expectedVersion: number): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject }>> {

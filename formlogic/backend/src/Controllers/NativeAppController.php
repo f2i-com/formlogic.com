@@ -11,6 +11,11 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 class NativeAppController
 {
     use JsonResponseTrait;
+
+    private const DEMO_READ_ONLY = 'The shared demo is read-only: you can browse this app’s backend and database, but not change them.';
+    /** NativeAppService's recovery-required refusals (resolveJournal, assertNotRecoveryRequired). */
+    private const RECOVERY_REQUIRED = '/^(?:The app (?:database )?needs operator recovery|Restore the app database before installing another update)/';
+
     public function __construct(private AppService $apps, private AppUserService $users, private NativeAppService $native, private PlanService $plans, private FlowService $flows) {}
 
     public function manage(Request $request, Response $response, array $args): Response
@@ -18,8 +23,12 @@ class NativeAppController
         $app = $this->apps->getApp((string) $args['id']);
         $user = $request->getAttribute('userId');
         if (!$app || !$user || $app['ownerId'] !== $user) return $this->jsonError($response, 'App not found or access denied', 404);
-        if ($blocked = $this->blockIfDemo($request, $response, 'Native hosting is unavailable in the shared demo.')) return $blocked;
-        return $this->respond($response, function () use ($request, $app, $args) {
+        // The shared demo browses its apps' backends and databases read-only: the install PUT and
+        // every records POST (whatever its action) are refused. DemoReadOnlyMiddleware refuses them
+        // first, with its own demo_readonly text; this is the second guard, should that ever change.
+        $readOnly = $this->isDemoRequest($request);
+        if ($request->getMethod() !== 'GET' && ($blocked = $this->blockIfDemo($request, $response, self::DEMO_READ_ONLY))) return $blocked;
+        return $this->respond($response, function () use ($request, $app, $args, $readOnly) {
             if (($args['operation'] ?? '') === 'records') {
                 if ($request->getMethod() === 'POST') {
                     $input = $request->getParsedBody();
@@ -33,22 +42,38 @@ class NativeAppController
                     return $result;
                 }
                 $query = $request->getQueryParams();
-                if (!$this->native->get($app['id']) && !isset($query['table'])) return ['installed' => false, 'tables' => []];
-                return $this->native->records($app['id'], isset($query['table']) && is_string($query['table']) ? $query['table'] : null, (int) ($query['offset'] ?? 0));
+                $notInstalled = ['installed' => false, 'tables' => [], 'readOnly' => $readOnly];
+                if (!$this->native->get($app['id']) && !isset($query['table'])) return $notInstalled;
+                try {
+                    return $this->native->records($app['id'], isset($query['table']) && is_string($query['table']) ? $query['table'] : null, (int) ($query['offset'] ?? 0)) + ['readOnly' => $readOnly];
+                } catch (\RuntimeException $missing) {
+                    // The unlocked get() saw the project.json of a first install a terminated process
+                    // left unfinished; records() settled it under the lock, which removed it.
+                    if ($missing->getCode() === 404 && !isset($query['table']) && !$this->native->get($app['id'])) return $notInstalled;
+                    throw $missing;
+                }
             }
             if ($request->getMethod() === 'GET') {
                 // available = artifacts prepared; preflight = the runtime actually starts here
                 // (audit FL-03). Owner-only endpoint; preflight messages carry no paths or secrets.
-                $preflight = $this->native->available() ? $this->native->preflight() : null;
-                return ['available' => $this->native->available(), 'ready' => $preflight !== null && $preflight['ok'], 'preflight' => $preflight, 'project' => $this->native->get($app['id'])];
+                // The demo is public traffic that cannot install anything: it never forks the preflight.
+                $preflight = !$readOnly && $this->native->available() ? $this->native->preflight() : null;
+                // Read under the management lock, so an update left unfinished is settled before it is shown.
+                return ['available' => $this->native->available(), 'ready' => $preflight !== null && $preflight['ok'], 'preflight' => $preflight, 'project' => $this->native->project($app['id']), 'readOnly' => $readOnly];
             }
             $body = $request->getParsedBody();
             if (!is_array($body) || !is_array($body['project'] ?? null) || !is_int($body['expectedVersion'] ?? null) || $body['expectedVersion'] < 0) throw new \InvalidArgumentException('Provide a project and expectedVersion');
             return ['project' => $this->native->install($app['id'], $body['project'], $body['expectedVersion'])];
-        });
+        }, !$readOnly);
     }
 
-    /** Public entry metadata only; application source remains behind runtime access checks. */
+    /**
+     * Public entry metadata only; application source remains behind runtime access checks.
+     * Read without the management lock on purpose: this runs on every visit, and the locked
+     * read would answer 409 to every visitor for the length of each install (and hold the lock
+     * against the installer). An unsettled update affects only home/access here; the runtime
+     * reads that follow settle it.
+     */
     public function entry(Request $request, Response $response, array $args): Response
     {
         $app = $this->apps->getAppBySlug((string) $args['slug']);
@@ -67,7 +92,8 @@ class NativeAppController
         if (!$app || (!$owner && !$this->apps->isRuntimeVisible($app, (string) ($user ?? '')))) return $this->jsonError($response, 'App not found or access denied', 404);
         if ($blocked = $this->blockIfDemo($request, $response, 'Native hosting is unavailable in the shared demo.')) return $blocked;
         return $this->respond($response, function () use ($request, $app, $user, $owner) {
-            $project = $this->native->get($app['id']);
+            // Access is decided against the settled project (FL-S04), never an update's leftover project.json.
+            $project = $this->native->project($app['id']);
             if (!$project) throw new \RuntimeException('Native app not found', 404);
             $membership = $user && !$owner && $project['access'] === 'members' ? $this->users->getAppUser($app['id'], $user) : null;
             if ($project['access'] === 'members' && !$owner && (!$user || ($membership['status'] ?? '') !== 'active')) throw new \RuntimeException('Sign in with an active app membership to continue', 403);
@@ -106,7 +132,13 @@ class NativeAppController
         });
     }
 
-    private function respond(Response $response, callable $operation): Response
+    /**
+     * $owner: the caller administers this app. Only then is an installation that needs operator
+     * recovery named as such; its message lists the unfinished steps and folders relative to the
+     * installation (the service replaces absolute locations; no keys or record values). Visitors
+     * and the shared demo keep the generic 503.
+     */
+    private function respond(Response $response, callable $operation, bool $owner = false): Response
     {
         $response = $response->withHeader('Cache-Control', 'no-store')->withHeader('X-Content-Type-Options', 'nosniff');
         try { return $this->jsonResponse($response, $operation()); }
@@ -114,6 +146,7 @@ class NativeAppController
         catch (\RuntimeException $e) {
             if (in_array($e->getCode(), [402,403,404,409,422,429], true)) return $this->jsonError($response, $e->getMessage(), $e->getCode());
             error_log('Native app error: ' . $e->getMessage());
+            if ($owner && $e->getCode() === 0 && preg_match(self::RECOVERY_REQUIRED, $e->getMessage())) return $this->jsonError($response, $e->getMessage(), 503, 'recovery_required');
             return $this->jsonError($response, 'The native app host is unavailable. Check its runtime configuration.', 503);
         }
     }

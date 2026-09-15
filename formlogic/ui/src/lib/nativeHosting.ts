@@ -7,11 +7,13 @@ export interface NativeRecordField { name: string; type: string; primary: boolea
 export interface NativeRecordDetail { values: Record<string, string | null>; revision: string; fields: NativeRecordField[] }
 /**
  * A page of records. `offset` is the offset the server actually used (it
- * clamps requests past its browsing window), `end` says why the page ends:
- * more pages follow, the table ended, or the window's limit was reached with
- * rows beyond it. Older servers send only `hasMore`.
+ * clamps requests past its browsing window), `limit` is the page size and
+ * `offsetLimit` the window: the furthest offset a page may start at. `end`
+ * says why the page ends: more pages follow, the table ended, or the window's
+ * limit was reached with rows beyond it. Older servers send only `hasMore`.
+ * `readOnly` is true for the shared demo: records can be browsed, not changed.
  */
-export interface NativeRecords { schema?: { fields: NativeRecordField[]; primaryKey: string[]; canCreate: boolean }; keys?: (Record<string, string> | null)[]; installed?: boolean; tables: string[]; columns?: string[]; rows?: Record<string, unknown>[]; hasMore?: boolean; offset?: number; end?: 'more' | 'end' | 'limit'; limit?: number }
+export interface NativeRecords { schema?: { fields: NativeRecordField[]; primaryKey: string[]; canCreate: boolean }; keys?: (Record<string, string> | null)[]; installed?: boolean; tables: string[]; columns?: string[]; rows?: Record<string, unknown>[]; hasMore?: boolean; offset?: number; end?: 'more' | 'end' | 'limit'; limit?: number; offsetLimit?: number; readOnly?: boolean }
 export async function importNativeProject(file: File): Promise<NativeProject> {
   const { files, review } = reviewAppArchive(new Uint8Array(await file.arrayBuffer()));
   if (review.backend !== 'native') throw new Error('This app has no native server entry. Use App hosting for a client app and named backend actions.');
