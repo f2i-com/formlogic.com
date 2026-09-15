@@ -102,8 +102,7 @@ class FlowCompiler
                     $diagnostics[] = self::diag('error', 'handler_not_supported', $nodeId, "definition \"$type\" carries an invalid core-preset target");
                     continue;
                 }
-                $defaults = is_array($handler['defaults'] ?? null) ? $handler['defaults'] : [];
-                $mergedData = array_replace($defaults, $data); // the node's own data wins over preset defaults
+                $mergedData = self::corePresetData($handler, $data);
                 if (!self::requiredConfigPresent($config, $mergedData, $missing)) {
                     $diagnostics[] = self::diag('error', 'missing_config', $nodeId, "required configuration missing: " . implode(', ', $missing));
                     continue;
@@ -241,6 +240,21 @@ class FlowCompiler
     }
 
     /**
+     * The data a core-preset node lowers with: the preset's defaults, under the node's own data
+     * (the node wins). Shared with FlowLogicLanguages::ofLowered, so the language gate reads a
+     * preset exactly as it compiles.
+     *
+     * @param array<string,mixed> $handler
+     * @param array<string,mixed> $data
+     * @return array<string,mixed>
+     */
+    public static function corePresetData(array $handler, array $data): array
+    {
+        $defaults = is_array($handler['defaults'] ?? null) ? $handler['defaults'] : [];
+        return array_replace($defaults, $data);
+    }
+
+    /**
      * RUN-304: which surfaces can run this whole graph, and which nodes stop the others.
      *
      * @param list<array<string,mixed>> $loweredNodes
@@ -253,8 +267,10 @@ class FlowCompiler
         foreach ($loweredNodes as $node) {
             $type = is_string($node['type'] ?? null) ? $node['type'] : '';
             $nodeId = is_string($node['id'] ?? null) ? $node['id'] : '';
+            // A code node's language narrows where it runs (Python: the browser only).
+            $language = FlowLogicLanguages::ofNode($node) ?? FlowLogicLanguages::JAVASCRIPT;
             foreach ($all as $surface) {
-                if (!RuntimeSupport::supports($surface, $type)) {
+                if (!RuntimeSupport::supports($surface, $type, $language)) {
                     $unsupported[$surface][] = $nodeId;
                 }
             }

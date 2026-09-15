@@ -100,6 +100,34 @@ class FlowSanitizeTest extends TestCase
         FlowService::sanitizeFlowJson(['nodes' => [['id' => 'n1']], 'edges' => []]);
     }
 
+    /** formlogic-python/1: data is kept verbatim; only a code node's language is checked. */
+    public function testCodeNodeLanguageKeptOrRefused(): void
+    {
+        $graph = ['nodes' => [
+            ['id' => 'a', 'type' => 'logic_block', 'data' => ['expr' => 'result = 1', 'language' => 'python']],
+            ['id' => 'b', 'type' => 'condition', 'data' => ['expr' => 'true', 'language' => 'javascript']],
+            ['id' => 'c', 'type' => 'condition', 'data' => ['expr' => 'true', 'language' => null]],
+            ['id' => 'd', 'type' => 'logic_block', 'data' => ['expr' => '1', 'language' => '']],
+            ['id' => 'e', 'type' => 'logic_block', 'data' => ['expr' => '1']],
+            // Not a code node: a voice language is none of this check's business.
+            ['id' => 'f', 'type' => 'tts_speak', 'data' => ['text' => 'hi', 'language' => 'en-AU']],
+        ], 'edges' => []];
+        $this->assertSame($graph['nodes'], FlowService::sanitizeFlowJson($graph)['nodes']);
+
+        foreach (['ruby', 'Python', 'JavaScript', 'js', 5, true, ['python']] as $bad) {
+            try {
+                FlowService::sanitizeFlowJson(['nodes' => [
+                    ['id' => 'ok', 'type' => 'logic_block', 'data' => ['expr' => '1']],
+                    ['id' => 'bad', 'type' => 'condition', 'data' => ['expr' => '1', 'language' => $bad]],
+                ], 'edges' => []]);
+                $this->fail('an unsupported language must be refused: ' . json_encode($bad));
+            } catch (\InvalidArgumentException $e) {
+                $this->assertStringContainsString("Flow node 'bad' has an unsupported language", $e->getMessage());
+                $this->assertStringContainsString('javascript or python', $e->getMessage());
+            }
+        }
+    }
+
     public function testOversizeGraphRejected(): void
     {
         // A single node whose data blob pushes the encoded graph past 256 KiB.

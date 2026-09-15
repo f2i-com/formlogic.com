@@ -75,6 +75,18 @@ describe('logic_block evaluation (kind flow) — both authoring styles on the re
     await expect(runEval('flow', placeholder as string, CONTEXT)).resolves.toEqual({ found: true, name: 'Ada' });
   });
 
+  it("runs the editor's Python placeholders as Python (formlogic-python/1), to the JavaScript ones' values", async () => {
+    // The editor shows these while a node's language select says Python.
+    const python = (type: string) => getNodeSpec(type)?.properties.find((p) => p.key === 'expr')?.python?.placeholder;
+    const block = python('logic_block');
+    expect(block).toMatch(/^result = /m);
+    await expect(runEval('flow', block as string, CONTEXT, { language: 'python' })).resolves.toEqual({ found: true, name: 'Ada' });
+    const condition = python('condition');
+    const jsCondition = getNodeSpec('condition')?.properties.find((p) => p.key === 'expr')?.placeholder as string;
+    await expect(runEval('condition', condition as string, CONTEXT, { language: 'python' })).resolves.toBe(true);
+    await expect(runEval('condition', jsCondition, CONTEXT)).resolves.toBe(true);
+  }, CASE_TIMEOUT_MS);
+
   it('ignores a trailing expression once the code has a top-level return (the gap from the desktop runner)', async () => {
     // Mixed style: the return fires, so its value is the result.
     const mixed = (limit: number) => `if (inputs.durationSeconds > ${limit}) return "big";\n"small"`;

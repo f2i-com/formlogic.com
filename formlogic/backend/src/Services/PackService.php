@@ -1425,8 +1425,15 @@ class PackService
         // ride back in untouched through quickjs/customLogic.json).
         $customLogic = null;
         if (is_array($envelope['customLogic'] ?? null) && !empty($envelope['customLogic'])) {
-            $sanitized = CustomLogicSanitizer::sanitize($envelope['customLogic']);
-            if (!empty($sanitized['scripts']) && CustomLogicSanitizer::withinSizeCap($sanitized)) {
+            try {
+                $sanitized = CustomLogicSanitizer::sanitize($envelope['customLogic']);
+            } catch (\InvalidArgumentException $e) {
+                // A script language outside javascript | python (formlogic-python/1). The pack's
+                // atomic import has already committed, so this is reported, never half-applied.
+                $sanitized = null;
+                $warnings[] = 'Package-level custom logic was not applied: ' . $e->getMessage() . '.';
+            }
+            if ($sanitized !== null && !empty($sanitized['scripts']) && CustomLogicSanitizer::withinSizeCap($sanitized)) {
                 $withheld = [];
                 $customLogic = $this->reviewCustomLogicGrants(
                     $sanitized,
@@ -1439,7 +1446,7 @@ class PackService
                     $withheldGrants = $keys;
                     $warnings[] = 'Package-level custom logic requested connector grants that were not approved and were removed: ' . implode(', ', $keys) . '.';
                 }
-            } else {
+            } elseif ($sanitized !== null) {
                 $warnings[] = 'Package-level custom logic was empty or over the size cap and was not applied.';
             }
         }
@@ -2014,6 +2021,12 @@ class PackService
                 $logicJson = json_encode($app['customLogic']);
                 if ($logicJson !== false && strlen($logicJson) > CustomLogicSanitizer::MAX_BUNDLE_BYTES) {
                     throw new \RuntimeException("App '{$app['packAppId']}' custom logic exceeds 256KB limit");
+                }
+                // Stored as the pack carries it, so a script language is checked here, before
+                // anything is created: exactly javascript or python (formlogic-python/1).
+                $unsupported = CustomLogicSanitizer::firstUnsupportedLanguage($app['customLogic']);
+                if ($unsupported !== null) {
+                    throw new \RuntimeException("App '{$app['packAppId']}' custom logic script '{$unsupported['scriptId']}' has an unsupported language '{$unsupported['language']}': use javascript or python");
                 }
             }
             foreach (['navConfig' => 10240, 'settings' => 10240, 'theme' => 10240, 'reports' => 262144] as $key => $cap) {

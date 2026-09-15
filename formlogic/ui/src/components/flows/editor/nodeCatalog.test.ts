@@ -8,6 +8,7 @@ import {
   CATALOG_EXECUTABLE_TYPES,
   EMPTY_FLOW_EDITOR_CONTEXT,
   NODE_SPECS,
+  codeSpecForLanguage,
   effectiveNodeData,
   evalShowIf,
   formatChipInsert,
@@ -18,7 +19,7 @@ import {
   type FlowEditorContext,
   type NodePropertySpec,
 } from './nodeCatalog';
-import { EXECUTABLE_NODE_TYPES } from '../../../client-runtime/flows/nodes';
+import { CODE_NODE_TYPES, EXECUTABLE_NODE_TYPES, LOGIC_LANGUAGES } from '../../../client-runtime/flows/nodes';
 
 describe('nodeCatalog ↔ executor parity', () => {
   it('every executable catalog node type is implemented by the executor', () => {
@@ -233,6 +234,76 @@ describe('getReferenceSyntax + formatChipInsert (chip-insert must match the exec
   it('formatChipInsert: zipp mode bracket-quotes any non-identifier path segment, not just the node id', () => {
     expect(formatChipInsert('$nodes.condition-1.found', 'zipp')).toBe('nodes["condition-1"].found');
     expect(formatChipInsert('$inputs.caller phone', 'zipp')).toBe('inputs["caller phone"]');
+  });
+
+  it('formatChipInsert: zipp-python mode subscripts EVERY segment (the run data are dicts in Python)', () => {
+    expect(formatChipInsert('$nodes.condition-1.found', 'zipp-python')).toBe('nodes["condition-1"]["found"]');
+    expect(formatChipInsert('$inputs.name', 'zipp-python')).toBe('inputs["name"]');
+    expect(formatChipInsert('$nodes.lookup', 'zipp-python')).toBe('nodes["lookup"]');
+    expect(formatChipInsert('$event', 'zipp-python')).toBe('event');
+  });
+
+  it('a Python code field infers zipp-python', () => {
+    expect(getReferenceSyntax(field({ type: 'code', zipp: true, language: 'python' }))).toBe('zipp-python');
+    expect(getReferenceSyntax(field({ type: 'code', zipp: true, language: 'javascript' }))).toBe('zipp');
+  });
+});
+
+describe('logic languages in the editor (formlogic-python/1)', () => {
+  const expr = (type: string) => getNodeSpec(type)!.properties.find((p) => p.key === 'expr')!;
+
+  it('exactly the executor code nodes carry a language select, before their code, offering exactly its languages', () => {
+    const withSelect = NODE_SPECS.filter((s) => s.properties.some((p) => p.key === 'language')).map((s) => s.type);
+    expect(withSelect.sort()).toEqual([...CODE_NODE_TYPES].sort());
+    for (const type of CODE_NODE_TYPES) {
+      const keys = getNodeSpec(type)!.properties.map((p) => p.key);
+      expect(keys.indexOf('language'), `${type}: language comes before expr`).toBeLessThan(keys.indexOf('expr'));
+      const select = getNodeSpec(type)!.properties.find((p) => p.key === 'language')!;
+      expect(select.type).toBe('select');
+      expect(select.default).toBe('javascript');
+      expect(select.options?.map((o) => o.value)).toEqual([...LOGIC_LANGUAGES]);
+      expect(expr(type).python, `${type}: a Python placeholder and help`).toBeDefined();
+    }
+  });
+
+  it('codeSpecForLanguage: Python swaps the editor mode, placeholder, help and chip syntax; JavaScript is untouched', () => {
+    for (const type of CODE_NODE_TYPES) {
+      const spec = expr(type);
+      const python = codeSpecForLanguage(spec, 'python');
+      expect(python.language).toBe('python');
+      expect(python.placeholder).toBe(spec.python!.placeholder);
+      expect(python.help).toBe(spec.python!.help);
+      expect(python.key).toBe('expr');
+      expect(getReferenceSyntax(python)).toBe('zipp-python');
+      expect(codeSpecForLanguage(spec, 'javascript')).toBe(spec);
+      expect(getReferenceSyntax(codeSpecForLanguage(spec, 'javascript'))).toBe('zipp');
+    }
+    // A field with no Python variant (JSON bodies, other nodes) never changes.
+    const output = getNodeSpec('output')!.properties.find((p) => p.key === 'value')!;
+    expect(codeSpecForLanguage(output, 'python')).toBe(output);
+  });
+
+  it('the Python help states the contract: result, no top-level return, dict subscripts; conditions: truthiness, trigger conditions JS', () => {
+    expect(expr('logic_block').python!.help).toMatch(/result/);
+    expect(expr('logic_block').python!.help).toMatch(/no top-level return/);
+    expect(expr('logic_block').python!.help).toMatch(/inputs\["from"\]/);
+    expect(expr('logic_block').python!.help).toMatch(/datetime, base64, uuid, urllib\.parse/);
+    expect(expr('condition').python!.help).toMatch(/truthiness/);
+    expect(expr('condition').python!.help).toMatch(/Trigger conditions stay JavaScript/);
+  });
+
+  // The ways the two-step compile (bracketed expression first, statements second) can surprise
+  // an author, verified on the engine (docs/FORMLOGIC_FLOWS.md §4.4).
+  it('the Python logic_block help names the compile order, the result-only rule and the line-1 errors', () => {
+    const help = expr('logic_block').python!.help;
+    expect(help).toMatch(/valid inside brackets runs as one expression/);
+    expect(help).toMatch(/x = 1 then x \* 2 gives None/);
+    expect(help).toMatch(/multi-line expression reports line 1/);
+    expect(expr('condition').python!.help).toMatch(/reports line 1/);
+  });
+
+  it('a new code node starts as JavaScript', () => {
+    for (const type of CODE_NODE_TYPES) expect(initialNodeData(getNodeSpec(type)!).language).toBe('javascript');
   });
 });
 

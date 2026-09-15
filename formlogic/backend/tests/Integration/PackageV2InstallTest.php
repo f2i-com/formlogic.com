@@ -608,6 +608,113 @@ class PackageV2InstallTest extends TestCase
         self::$pdo->prepare('DELETE FROM flow_definitions WHERE owner_user_id = ?')->execute([$this->userId]);
     }
 
+    /**
+     * formlogic-python/1 x packages: a core preset may lower to a logic_block whose default
+     * language is Python. The stored graph then holds only the dotted type, so a gate reading the
+     * stored graph saw no code and let a JavaScript-only Desktop reserve, claim, list and fetch a
+     * flow that every runtime executes as Python. The gate reads what the flow lowers to.
+     */
+    public function testPythonFromACorePresetIsSeenByTheLanguageGate(): void
+    {
+        $aggregate = $this->nodeOnlyAggregate('py-preset');
+        $aggregate['contributions']['flowNodes'][0]['type'] = 'com.acme.pypreset.halve';
+        $aggregate['contributions']['flowNodes'][0]['handler'] = [
+            'kind' => 'core-preset',
+            'coreType' => 'logic_block',
+            'defaults' => ['language' => 'python', 'expr' => 'result = inputs["n"] // 2'],
+        ];
+        unset($aggregate['contributions']['flowNodes'][0]['ports'], $aggregate['requirements']);
+        self::$pkgV2->install($aggregate, $this->userId, []);
+
+        $flows = new \FormLogic\Services\FlowService(self::$mysql);
+        $graph = static fn (array $data): array => [
+            'nodes' => [
+                ['id' => 'in', 'type' => 'input', 'data' => [], 'position' => ['x' => 0, 'y' => 0]],
+                ['id' => 'h', 'type' => 'com.acme.pypreset.halve', 'data' => $data, 'position' => ['x' => 200, 'y' => 0]],
+            ],
+            'edges' => [['source' => 'in', 'target' => 'h']],
+        ];
+        $python = $flows->createWorkspaceFlow($this->userId, ['name' => 'Preset Python', 'slug' => 'preset-py', 'flowJson' => $graph([])]);
+        // The node's own data wins over the preset default, as in the compiler.
+        $script = $flows->createWorkspaceFlow($this->userId, ['name' => 'Preset JS', 'slug' => 'preset-js', 'flowJson' => $graph(['language' => 'javascript', 'expr' => 'inputs.n'])]);
+        $reserve = fn (string $slug, ?array $languages, bool $queued = false): array => $flows->reserveOwnerRun($this->userId, [
+            'flowSlug' => $slug,
+            'triggerEvent' => 'manual',
+            'correlationId' => 'c-' . bin2hex(random_bytes(4)),
+            'idempotencyKey' => 'k-' . bin2hex(random_bytes(8)),
+        ] + ($languages !== null ? ['logicLanguages' => $languages] : []) + ($queued ? ['queued' => true] : []));
+
+        try {
+            $this->assertSame(['python'], $flows->logicLanguagesOf($python));
+            $this->assertSame(['javascript'], $flows->logicLanguagesOf($script));
+
+            // Reserve: a caller that says nothing (a Desktop from before Python) is refused.
+            try {
+                $reserve('preset-py', null);
+                $this->fail('a JavaScript-only reserve of preset Python must be refused');
+            } catch (\FormLogic\Services\Flows\LogicLanguageUnsupportedException $e) {
+                $this->assertSame(['python'], $e->languages);
+            }
+            $this->assertTrue($reserve('preset-py', ['javascript', 'python'])['created']);
+            $this->assertTrue($reserve('preset-js', null)['created']);
+
+            // Queued listing and claim.
+            $queued = $reserve('preset-py', null, true)['run'];
+            $this->assertNotContains($queued['runId'], array_column($flows->listOwnerQueuedRuns($this->userId, 50), 'runId'));
+            $this->assertContains($queued['runId'], array_column($flows->listOwnerQueuedRuns($this->userId, 50, ['javascript', 'python']), 'runId'));
+            try {
+                $flows->claimOwnerRun($this->userId, $queued['runId'], ['runtime' => 'desktop']);
+                $this->fail('a JavaScript-only claim of preset Python must be refused');
+            } catch (\FormLogic\Services\Flows\LogicLanguageUnsupportedException) {
+            }
+
+            // The Desktop's graph fetch: left out unless the caller runs Python.
+            $controller = new \FormLogic\Controllers\FlowController(
+                $flows,
+                new \FormLogic\Services\AppService(self::$mysql, new \FormLogic\Services\FormService(self::$mysql, new \FormLogic\Database\SQLiteConnection(sys_get_temp_dir() . '/fl-pkgv2-py-' . bin2hex(random_bytes(4))))),
+                new \FormLogic\Services\AppUserService(self::$mysql)
+            );
+            $list = function (array $query) use ($controller): array {
+                $req = $this->createMock(ServerRequestInterface::class);
+                $req->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
+                $req->method('getQueryParams')->willReturn($query);
+                $out = $controller->listOwnerFlows($req, new SlimResponse());
+                $this->assertSame(200, $out->getStatusCode());
+                return array_column(json_decode((string) $out->getBody(), true)['flows'], null, 'slug');
+            };
+            $this->assertSame(['preset-js'], array_keys($list([])));
+            $withPython = $list(['logicLanguages' => 'javascript,python']);
+            $this->assertEqualsCanonicalizing(['preset-js', 'preset-py'], array_keys($withPython));
+            $this->assertSame(['python'], $withPython['preset-py']['logicLanguages']);
+            $this->assertSame('python', $withPython['preset-py']['compiledIr']['nodes'][1]['data']['language'] ?? null, 'the IR the Desktop runs is Python');
+        } finally {
+            self::$pdo->prepare('DELETE r FROM flow_run_logs r JOIN flow_definitions f ON f.id = r.flow_definition_id WHERE f.owner_user_id = ?')->execute([$this->userId]);
+            self::$pdo->prepare('DELETE v FROM flow_definition_versions v JOIN flow_definitions f ON f.id = v.flow_definition_id WHERE f.owner_user_id = ?')->execute([$this->userId]);
+            self::$pdo->prepare('DELETE FROM flow_definitions WHERE owner_user_id = ?')->execute([$this->userId]);
+        }
+    }
+
+    /** A preset's default language is checked at install: only a language a runtime implements. */
+    public function testInstallRefusesAPresetDefaultLanguageNoRuntimeRuns(): void
+    {
+        $aggregate = $this->nodeOnlyAggregate('py-bad');
+        $aggregate['contributions']['flowNodes'][0]['type'] = 'com.acme.pybad.halve';
+        $aggregate['contributions']['flowNodes'][0]['handler'] = ['kind' => 'core-preset', 'coreType' => 'logic_block', 'defaults' => ['language' => 'python3', 'expr' => '1']];
+        unset($aggregate['contributions']['flowNodes'][0]['ports'], $aggregate['requirements']);
+        $refused = null;
+        try {
+            self::$pkgV2->install($aggregate, $this->userId, []);
+        } catch (\RuntimeException $e) {
+            $refused = $e;
+        }
+        $this->assertNotNull($refused, 'a preset defaulting to an unknown language must not install');
+        $this->assertStringContainsString('Invalid application package', $refused->getMessage());
+        $this->assertStringContainsString('defaults.language', $refused->getMessage());
+        $count = self::$pdo->prepare('SELECT COUNT(*) FROM flow_node_definitions WHERE user_id = ?');
+        $count->execute([$this->userId]);
+        $this->assertSame(0, (int) $count->fetchColumn());
+    }
+
     public function testReceiptEndpointReturnsInstallationDetail(): void
     {
         // Install with a dependency so the receipt carries edges too.

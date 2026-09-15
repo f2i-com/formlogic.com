@@ -49,7 +49,7 @@ import { oaiyAiChat } from '../oaiy/oaiyAi';
 import { executeFlow, type FlowRunOutcome } from './flowExecutor';
 import { resolveExecutableGraph } from './compiledGraph';
 import { invokeChildFlowWith, type ChildFlowBackend } from './childFlowInvoker';
-import type { FlowExecutorDeps } from './nodes';
+import { flowLogicLanguages, logicLanguageCapability, LOGIC_LANGUAGES, type FlowExecutorDeps } from './nodes';
 import {
   buildInputs,
   interpolateTemplate,
@@ -102,6 +102,45 @@ export const CLAIM_POLL_INTERVAL_MS = 20_000;
 const CLAIM_BATCH_LIMIT = 10;
 
 /**
+ * The logic languages this browser runs: every one its executor accepts, since the flow Worker
+ * loads ZIPP web-python (formlogic-python/1). Sent on reserve, claim and the queued listings;
+ * the server refuses (409 language_unsupported) or hides work whose code needs a language the
+ * caller did not declare, which keeps Python away from runtimes that would run it as JavaScript.
+ */
+export const BROWSER_LOGIC_LANGUAGES: readonly string[] = [...LOGIC_LANGUAGES];
+
+/**
+ * The capability token a Desktop heartbeat carries for each non-JavaScript language it runs
+ * (OAIY plan O1: 'logic-language:python'). FlowService stores and returns the list as sent.
+ */
+export function desktopLanguageCapability(language: string): string {
+  return logicLanguageCapability(language);
+}
+
+/** What the Desktop freshness probe saw. */
+export interface DesktopRuntimeStatus {
+  /** A cloud-linked Desktop flow runtime heartbeated within 90 s. */
+  fresh: boolean;
+  /** The capability tokens of each fresh Desktop row, one list per row. */
+  freshCapabilities: string[][];
+}
+
+const NO_DESKTOP: DesktopRuntimeStatus = { fresh: false, freshCapabilities: [] };
+
+/**
+ * Whether a fresh Desktop takes work whose code is in `languages`. JavaScript needs only the
+ * heartbeat. Any other language needs one fresh Desktop advertising a token for each: the server
+ * refuses and hides that work from a Desktop that does not declare the language, so deferring
+ * it there would drop it.
+ */
+export function desktopTakesLanguages(status: DesktopRuntimeStatus, languages: readonly string[]): boolean {
+  if (!status.fresh) return false;
+  const tokens = languages.filter((language) => language !== 'javascript').map(desktopLanguageCapability);
+  if (tokens.length === 0) return true;
+  return status.freshCapabilities.some((capabilities) => tokens.every((token) => capabilities.includes(token)));
+}
+
+/**
  * Stable per-tab claimer id ('browser-…', stamped into flow_run_logs.claimed_by).
  * sessionStorage keeps it stable across reloads of the same tab; unit tests / non-DOM
  * environments fall back to a per-module id.
@@ -152,6 +191,8 @@ export interface FlowDispatcherDeps {
       /** Run lineage (plan §8.7): root/depth are SERVER-derived from the parent row. */
       parentRunId?: string;
       callNodeId?: string;
+      /** The languages this runtime runs (BROWSER_LOGIC_LANGUAGES). */
+      logicLanguages?: readonly string[];
     }
   ): Promise<{ runId: string; idempotent?: boolean } | { error: string }>;
   completeRun(
@@ -168,16 +209,17 @@ export interface FlowDispatcherDeps {
   toast(message: string, level: 'info' | 'success' | 'warning' | 'error'): void;
   delay(ms: number): Promise<void>;
   // ── Queued-run claiming (docs §10) ────────────────────────────────────────────────────
-  /** Claimable 'queued' runs for the active app, oldest first. */
-  listQueuedRuns(slug: string, limit?: number): Promise<FlowRunLog[]>;
-  /** Claim one queued run; {claimed:false} on 409 (another runtime won) or any error.
+  /** Claimable 'queued' runs for the active app, oldest first; only those in `logicLanguages`. */
+  listQueuedRuns(slug: string, limit?: number, logicLanguages?: readonly string[]): Promise<FlowRunLog[]>;
+  /** Claim one queued run; {claimed:false} on 409 (another runtime won, or the flow needs a
+   *  language this runtime did not declare) or any error.
    *  `run` is the server's authoritative copy — the queued LIST omits input snapshots
    *  for non-owner members (FL-AUTH-001), so executors must prefer this over the listing. */
-  claimRun(slug: string, runId: string, payload: { runtime: FlowRuntimeKind; instanceId?: string }): Promise<{ claimed: boolean; run?: FlowRunLog }>;
+  claimRun(slug: string, runId: string, payload: ClaimPayload): Promise<{ claimed: boolean; run?: FlowRunLog }>;
   // ── Workspace scope (the /flows page claim loop — docs §8/§10) ────────────────────────
   fetchWorkspaceFlows(): Promise<FlowDefinition[]>;
-  listWorkspaceQueuedRuns(limit?: number): Promise<FlowRunLog[]>;
-  claimWorkspaceRun(runId: string, payload: { runtime: FlowRuntimeKind; instanceId?: string }): Promise<{ claimed: boolean; run?: FlowRunLog }>;
+  listWorkspaceQueuedRuns(limit?: number, logicLanguages?: readonly string[]): Promise<FlowRunLog[]>;
+  claimWorkspaceRun(runId: string, payload: ClaimPayload): Promise<{ claimed: boolean; run?: FlowRunLog }>;
   completeWorkspaceRun(
     runId: string,
     payload: { status: 'done' | 'error' | 'timeout' | 'cancelled'; result?: Record<string, unknown> | null; error?: FlowRunError | null; instanceId?: string }
@@ -187,13 +229,22 @@ export interface FlowDispatcherDeps {
   /** Executor capabilities OUTSIDE an app runtime (direct owner APIs, workspace KV). */
   workspaceExecutorDeps: FlowExecutorDeps;
   /**
-   * True when a FormLogic Desktop flow runtime heartbeated recently. Connector
-   * (aokie.*) events are DESKTOP-FIRST: the desktop has the local LLM + speech
-   * services, so the browser defers those bindings/claims while the desktop is
-   * alive and only takes over when its heartbeat goes stale (~90s). Optional —
-   * absent (tests/legacy wiring) means "unknown", and the browser proceeds.
+   * Whether a FormLogic Desktop flow runtime heartbeated recently, and what the fresh ones
+   * advertise. Connector (aokie.*) events are DESKTOP-FIRST: the desktop has the local LLM +
+   * speech services, so the browser defers those bindings/claims while the desktop is alive
+   * and only takes over when its heartbeat goes stale (~90s) — except work in a language no
+   * fresh Desktop advertises (desktopTakesLanguages). A boolean (older wiring, tests) is a
+   * Desktop whose capabilities are unknown: it takes JavaScript-only work. Optional — absent
+   * means "unknown", and the browser proceeds.
    */
-  desktopRuntimeFresh?(): Promise<boolean>;
+  desktopRuntimeFresh?(): Promise<boolean | DesktopRuntimeStatus>;
+}
+
+/** Claim body: which runtime claims, its instance, and the languages it runs. */
+interface ClaimPayload {
+  runtime: FlowRuntimeKind;
+  instanceId?: string;
+  logicLanguages?: readonly string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -272,17 +323,18 @@ export function buildDefaultExecutorDeps(): FlowExecutorDeps {
     },
     // NOTE: these forward the node's clamped `timeoutMs` (nodes.ts) as `budgetMs` — the
     // BINDING-level `defaultEvaluateCondition` above is a separate, 2-arg-only evaluator
-    // and is NOT reused here for exactly that reason. logic_block also accepts a function
-    // body with a top-level `return`; conditions stay expressions, as on the desktop runner.
-    evaluateBoolean: async (expr, ctx, budgetMs) => {
+    // and is NOT reused here for exactly that reason (binding conditions stay JavaScript).
+    // logic_block also accepts a function body with a top-level `return`; conditions stay
+    // expressions, as on the desktop runner. Both forward the node's language.
+    evaluateBoolean: async (expr, ctx, budgetMs, language) => {
       const { evaluateCondition } = await import('../../lib/formlogic');
-      return evaluateCondition(expr, ctx, budgetMs);
+      return evaluateCondition(expr, ctx, budgetMs, language);
     },
-    evaluateExpression: async (expr, ctx, budgetMs) => {
+    evaluateExpression: async (expr, ctx, budgetMs, language) => {
       // logic_block uses the non-swallowing variant: a timeout/error must fail the
       // flow run loudly (docs §4), not resolve to null like the calculated-field path.
       const { calculateValueForFlow } = await import('../../lib/formlogic');
-      return calculateValueForFlow(expr, ctx, budgetMs);
+      return calculateValueForFlow(expr, ctx, budgetMs, language);
     },
     listResponses: async (formId, query) => {
       const { useAppRuntimeStore } = await import('../../stores/appRuntimeStore');
@@ -343,13 +395,13 @@ export function buildDefaultExecutorDeps(): FlowExecutorDeps {
  */
 export function buildWorkspaceExecutorDeps(): FlowExecutorDeps {
   return {
-    evaluateBoolean: async (expr, ctx, budgetMs) => {
+    evaluateBoolean: async (expr, ctx, budgetMs, language) => {
       const { evaluateCondition } = await import('../../lib/formlogic');
-      return evaluateCondition(expr, ctx, budgetMs);
+      return evaluateCondition(expr, ctx, budgetMs, language);
     },
-    evaluateExpression: async (expr, ctx, budgetMs) => {
+    evaluateExpression: async (expr, ctx, budgetMs, language) => {
       const { calculateValueForFlow } = await import('../../lib/formlogic');
-      return calculateValueForFlow(expr, ctx, budgetMs);
+      return calculateValueForFlow(expr, ctx, budgetMs, language);
     },
     listResponses: async (formId, query) => {
       const res = await api.getResponses(formId, {
@@ -448,8 +500,8 @@ function buildDefaultDeps(): FlowDispatcherDeps {
       });
     },
     delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    listQueuedRuns: async (slug, limit) => {
-      const res = await api.listQueuedAppFlowRuns(slug, limit);
+    listQueuedRuns: async (slug, limit, logicLanguages) => {
+      const res = await api.listQueuedAppFlowRuns(slug, limit, logicLanguages);
       return res.data?.runs ?? [];
     },
     claimRun: async (slug, runId, payload) => {
@@ -461,7 +513,7 @@ function buildDefaultDeps(): FlowDispatcherDeps {
       const flows = (await api.listWorkspaceFlows()).data?.flows ?? [];
       return api.isDemoMode() ? demoApplyFlowOverlay(null, flows) : flows;
     },
-    listWorkspaceQueuedRuns: async (limit) => (await api.listMyQueuedFlowRuns(limit)).data?.runs ?? [],
+    listWorkspaceQueuedRuns: async (limit, logicLanguages) => (await api.listMyQueuedFlowRuns(limit, logicLanguages)).data?.runs ?? [],
     claimWorkspaceRun: async (runId, payload) => {
       const res = await api.claimMyFlowRun(runId, payload);
       return { claimed: !res.error && !!res.data, run: res.data?.run };
@@ -475,7 +527,7 @@ function buildDefaultDeps(): FlowDispatcherDeps {
       return api.isDemoMode() ? demoApplyFormBindingOverlay(formId, bindings) : bindings;
     },
     workspaceExecutorDeps: buildWorkspaceExecutorDeps(),
-    desktopRuntimeFresh: defaultDesktopRuntimeFresh,
+    desktopRuntimeFresh: defaultDesktopRuntimeStatus,
   };
 }
 
@@ -519,6 +571,7 @@ export function __resetFlowDispatcherForTests(): void {
   currentSlug = null;
   appContext = {};
   startToken += 1;
+  desktopStatusCache = null;
   resetBrowserConnectorEventQueues();
 }
 
@@ -602,25 +655,55 @@ export function isDesktopFirstEvent(name: string): boolean {
  * cloud-linked desktop flow runtime is heartbeating — the browser then skips
  * running raw app-logic/bindings for it. Used by both the flow dispatcher and
  * the app-logic connector-event bridge so the two writers can never disagree.
+ * `languages` are the logic languages the work's code is in (none: JavaScript);
+ * work in a language no fresh Desktop advertises stays in the browser.
  * Fails open (false) — an unreachable probe must never strand an event.
  */
-export async function shouldDeferEventToDesktop(eventName: string): Promise<boolean> {
+export async function shouldDeferEventToDesktop(eventName: string, languages: readonly string[] = []): Promise<boolean> {
   if (!isDesktopFirstEvent(eventName)) return false;
+  return desktopTakesLanguages(await desktopRuntimeStatus(), languages);
+}
+
+/**
+ * Of `languages`, those whose work on `eventName` stays in this browser: every one, unless the
+ * event is desktop-first and a fresh Desktop takes that language (desktopTakesLanguages). The
+ * app-logic bridge runs only scripts in these: JavaScript defers to any fresh Desktop, Python
+ * only to one advertising 'logic-language:python', since GET /api/v1/app-logic hands Python
+ * scripts to no other. One probe for the whole list; fails open like shouldDeferEventToDesktop.
+ */
+export async function languagesKeptInBrowser(eventName: string, languages: readonly string[]): Promise<string[]> {
+  if (!isDesktopFirstEvent(eventName)) return [...languages];
+  const status = await desktopRuntimeStatus();
+  return languages.filter((language) => !desktopTakesLanguages(status, [language]));
+}
+
+/** The probe's answer as a status. Never throws: an unreachable probe is "no Desktop". */
+async function desktopRuntimeStatus(): Promise<DesktopRuntimeStatus> {
   try {
     const probe = getDeps().desktopRuntimeFresh;
-    return probe ? await probe() : false;
+    if (!probe) return NO_DESKTOP;
+    const answer = await probe();
+    return typeof answer === 'boolean' ? { fresh: answer, freshCapabilities: [] } : answer;
   } catch {
-    return false;
+    return NO_DESKTOP;
   }
 }
 
-let desktopFreshCache: { at: number; fresh: boolean } | null = null;
+let desktopStatusCache: { at: number; status: DesktopRuntimeStatus } | null = null;
 
-/** 30s-cached "is a desktop flow runtime heartbeating?" probe (default dep impl). */
+/** 30s-cached "is a desktop flow runtime heartbeating?" probe. */
 export async function defaultDesktopRuntimeFresh(): Promise<boolean> {
+  return (await defaultDesktopRuntimeStatus()).fresh;
+}
+
+/**
+ * 30s-cached probe (default dep impl): whether a desktop flow runtime is heartbeating, and the
+ * capabilities each fresh one advertises.
+ */
+export async function defaultDesktopRuntimeStatus(): Promise<DesktopRuntimeStatus> {
   const now = Date.now();
-  if (desktopFreshCache && now - desktopFreshCache.at < 30_000) return desktopFreshCache.fresh;
-  let fresh: boolean;
+  if (desktopStatusCache && now - desktopStatusCache.at < 30_000) return desktopStatusCache.status;
+  let status: DesktopRuntimeStatus;
   try {
     const res = await api.getDesktopConnections();
     // ROUTE-001 wrapped the payload as {connections:[...]} — the old
@@ -635,7 +718,7 @@ export async function defaultDesktopRuntimeFresh(): Promise<boolean> {
       : data && Array.isArray((data as { connections?: unknown }).connections)
         ? (data as { connections: unknown[] }).connections
         : [];
-    fresh = rows.some((c) => {
+    const freshRows = rows.filter((c) => {
       const raw = (c as { lastSeenAt?: unknown }).lastSeenAt;
       if (typeof raw !== 'string' || raw === '') return false;
       // The API serves MySQL TIMESTAMPs through a session pinned to UTC
@@ -652,16 +735,23 @@ export async function defaultDesktopRuntimeFresh(): Promise<boolean> {
       const ms = Date.parse(normalised);
       return !Number.isNaN(ms) && now - ms < 90_000;
     });
+    status = {
+      fresh: freshRows.length > 0,
+      freshCapabilities: freshRows.map((c) => {
+        const capabilities = (c as { capabilities?: unknown }).capabilities;
+        return Array.isArray(capabilities) ? capabilities.filter((v): v is string => typeof v === 'string') : [];
+      }),
+    };
   } catch {
-    fresh = false; // can't tell → let the browser act (never strand an event)
+    status = NO_DESKTOP; // can't tell → let the browser act (never strand an event)
   }
-  desktopFreshCache = { at: now, fresh };
-  return fresh;
+  desktopStatusCache = { at: now, status };
+  return status;
 }
 
-/** Should the browser defer this event to the desktop runtime? Never throws. */
-async function deferToDesktop(eventName: string): Promise<boolean> {
-  return shouldDeferEventToDesktop(eventName);
+/** Should the browser defer this work (code in `languages`) to the desktop runtime? Never throws. */
+async function deferToDesktop(eventName: string, languages: readonly string[] = []): Promise<boolean> {
+  return shouldDeferEventToDesktop(eventName, languages);
 }
 
 function onDesktopEvent(envelope: DesktopEventEnvelope): void {
@@ -709,6 +799,31 @@ function findFlowById(flowId: string): RuntimeFlowDefinition | undefined {
 }
 
 /**
+ * The logic languages running `flow` needs: its own code nodes plus, through flow_call, those
+ * of the child flows this runtime loaded (a child run is reserved, and gated, on its own).
+ * A flow's `logicLanguages` come from the server (FlowService::logicLanguagesOf), which also
+ * sees the code a package's core preset lowers to — a contributed node is no code node in the
+ * stored graph, so reading the graph alone would call preset Python JavaScript and defer it to
+ * a Desktop the server then refuses.
+ */
+function flowLanguages(flow: RuntimeFlowDefinition | undefined): string[] {
+  const languages = new Set<string>();
+  const seen = new Set<RuntimeFlowDefinition>();
+  const visit = (f: RuntimeFlowDefinition | undefined): void => {
+    if (!f || seen.has(f)) return;
+    seen.add(f);
+    for (const language of flowLogicLanguages(f.flowJson)) languages.add(language);
+    for (const language of f.logicLanguages ?? []) languages.add(language);
+    for (const node of f.flowJson?.nodes ?? []) {
+      const target = node.type === 'flow_call' ? node.data?.flowId : undefined;
+      if (typeof target === 'string') visit(findFlowById(target.trim()));
+    }
+  };
+  visit(flow);
+  return [...languages].sort();
+}
+
+/**
  * APP-runtime flow_call backend (plan §8.5): the shared invoker core
  * (childFlowInvoker.ts) owns the guards; this supplies the app runtime's flow list
  * (the allowlist), app-scoped run APIs, and app executor deps.
@@ -736,6 +851,7 @@ function appChildFlowBackend(): ChildFlowBackend {
         // Lineage (plan §8.7): the server derives root/depth from the parent row.
         parentRunId: req.parentRunId,
         callNodeId: req.callNodeId,
+        logicLanguages: BROWSER_LOGIC_LANGUAGES,
       });
       return reservation;
     },
@@ -784,6 +900,7 @@ function workspaceChildFlowBackend(): ChildFlowBackend {
         inputSnapshot: req.inputs,
         parentRunId: req.parentRunId,
         callNodeId: req.callNodeId,
+        logicLanguages: BROWSER_LOGIC_LANGUAGES,
       });
       if (res.error || !res.data) return { error: res.error ?? 'Reserve failed' };
       return { runId: res.data.run.runId };
@@ -823,12 +940,21 @@ function bindingMatches(binding: RuntimeFlowBinding, event: FlowTriggerEvent): b
 async function handleEvent(event: FlowTriggerEvent): Promise<void> {
   const slug = getDeps().getAppSlug();
   if (!slug || !runtime) return;
-  if (await deferToDesktop(event.name)) {
-    logger.warn(`[flows] deferring ${event.name} to the desktop runtime (heartbeat fresh)`);
-    return;
-  }
+  // Desktop-first events go to a fresh Desktop binding by binding: one whose flow has code in
+  // a language no fresh Desktop advertises (Python, until OAIY runs it) stays here, because
+  // the server would refuse it to that Desktop. The idempotency key still dedupes a run.
+  const desktop = isDesktopFirstEvent(event.name) ? await desktopRuntimeStatus() : null;
   const matches = runtime.bindings.filter((b) => bindingMatches(b, event));
-  for (const binding of matches) {
+  const kept = desktop?.fresh
+    ? matches.filter((b) => !desktopTakesLanguages(desktop, flowLanguages(findFlow(b.flow))))
+    : matches;
+  if (kept.length < matches.length) {
+    logger.warn(
+      `[flows] deferring ${event.name} to the desktop runtime (heartbeat fresh)`
+        + (kept.length > 0 ? `; ${kept.length} binding(s) with logic it does not run stay in the browser` : '')
+    );
+  }
+  for (const binding of kept) {
     if (binding.mode === 'sync') {
       await runBinding(slug, binding, event);
     } else {
@@ -899,6 +1025,7 @@ async function runBinding(
       inputSnapshot: inputs,
       formId: typeof eventData?.formId === 'string' ? eventData.formId : undefined,
       responseId: typeof eventData?.responseId === 'string' ? eventData.responseId : undefined,
+      logicLanguages: BROWSER_LOGIC_LANGUAGES,
     });
   } catch (err) {
     logger.warn(`[flows] binding ${binding.id} reserve failed:`, err);
@@ -1205,6 +1332,7 @@ export async function runFlowBySlug(flowSlug: string, options: RunFlowOptions = 
     correlationId,
     idempotencyKey: `flowrun:${flowSlug}:${correlationId}`,
     inputSnapshot: options.input,
+    logicLanguages: BROWSER_LOGIC_LANGUAGES,
   });
   if ('error' in reservation) throw new Error(reservation.error);
 
@@ -1359,15 +1487,22 @@ export async function claimQueuedAppRuns(): Promise<number> {
   claimSweepInFlight = true;
   let executed = 0;
   try {
-    const runs = await d.listQueuedRuns(slug, CLAIM_BATCH_LIMIT);
+    const runs = await d.listQueuedRuns(slug, CLAIM_BATCH_LIMIT, BROWSER_LOGIC_LANGUAGES);
     for (const run of runs) {
-      if (await deferToDesktop(run.triggerEvent ?? '')) {
-        continue; // desktop-first: its claim loop picks this up; we take over only when its heartbeat is stale
+      // Desktop-first: its claim loop picks this up; we take over only when its heartbeat is
+      // stale, or when the run's flow has code in a language that Desktop does not advertise
+      // (the server hides such runs from it, so skipping here would strand them).
+      if (await deferToDesktop(run.triggerEvent ?? '', flowLanguages(run.flow ? findFlow(run.flow) : undefined))) {
+        continue;
       }
       let claimed = false;
       let claimedRun = run;
       try {
-        const claimRes = await d.claimRun(slug, run.runId, { runtime: 'browser', instanceId: getClaimInstanceId() });
+        const claimRes = await d.claimRun(slug, run.runId, {
+          runtime: 'browser',
+          instanceId: getClaimInstanceId(),
+          logicLanguages: BROWSER_LOGIC_LANGUAGES,
+        });
         claimed = claimRes.claimed;
         // The queued LIST omits input snapshots for non-owner members (FL-AUTH-001);
         // the claim response is the authoritative run — execute from it.
@@ -1419,14 +1554,18 @@ export function startWorkspaceClaimLoop(): () => void {
       const flows = await d.fetchWorkspaceFlows();
       if (stopped || flows.length === 0) return;
       const bySlug = new Map(flows.filter((f) => f.enabled).map((f) => [f.slug, f]));
-      const runs = (await d.listWorkspaceQueuedRuns(CLAIM_BATCH_LIMIT)).filter((r) => r.appId === null);
+      const runs = (await d.listWorkspaceQueuedRuns(CLAIM_BATCH_LIMIT, BROWSER_LOGIC_LANGUAGES)).filter((r) => r.appId === null);
       const bindingsByForm = new Map<string, FlowBinding[]>();
       for (const run of runs) {
         if (stopped) return;
         let claimed = false;
         let claimedRun = run;
         try {
-          const claimRes = await d.claimWorkspaceRun(run.runId, { runtime: 'browser', instanceId: getClaimInstanceId() });
+          const claimRes = await d.claimWorkspaceRun(run.runId, {
+            runtime: 'browser',
+            instanceId: getClaimInstanceId(),
+            logicLanguages: BROWSER_LOGIC_LANGUAGES,
+          });
           claimed = claimRes.claimed;
           if (claimRes.run) claimedRun = claimRes.run;
         } catch (err) {

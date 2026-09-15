@@ -37,11 +37,27 @@ export type CustomAppLogicPermission =
   | `connector.${string}.${string}`
   | `${string}.*`;
 
+/**
+ * The language of a script's source (formlogic-python/1). Absent is JavaScript, as every bundle
+ * saved before Python is: `function run(ctx) { … }`. Python defines `def run(ctx):`. The stored
+ * `runtime` stays 'quickjs' either way.
+ */
+export type CustomAppLogicLanguage = 'javascript' | 'python';
+
+/**
+ * The script languages this client's app-logic host runs (zipp-host: JavaScript, and Python on
+ * ZIPP web-python). Sent as `?languages=` on the runtime reads (GET /api/app/{slug} and
+ * /api/app/{slug}/forms/{id}): the server lists only scripts in these, so a tab on a bundle from
+ * before Python, which sends none, never receives a Python script to run as JavaScript.
+ */
+export const APP_LOGIC_LANGUAGES: readonly CustomAppLogicLanguage[] = ['javascript', 'python'];
+
 export interface CustomAppLogicScript {
   id: string;
   hook: CustomAppLogicHookName;
   runtime: CustomAppLogicRuntime;
   source: string;
+  language?: CustomAppLogicLanguage;
   description?: string;
   enabled?: boolean;
   permissions?: CustomAppLogicPermission[];

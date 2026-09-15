@@ -21,6 +21,12 @@ use FormLogic\Services\CloudFlowRunner;
  * failed run later.
  *
  * Cloud's set is read from CloudFlowRunner so the two cannot drift.
+ *
+ * Code nodes (condition, logic_block) also have a LANGUAGE (FlowLogicLanguages). JavaScript
+ * runs wherever the type does. Python runs only in the browser, whose flow Worker loads ZIPP
+ * web-python: the server's sandbox has no Python frontend (CloudFlowRunner refuses code nodes
+ * anyway), and no Desktop runs it until one advertises 'logic-language:python' (OAIY plan O1),
+ * which the reserve/claim gate checks at run time. A language no runtime implements runs nowhere.
  */
 final class RuntimeSupport
 {
@@ -43,13 +49,20 @@ final class RuntimeSupport
         'connector_request', 'storage_get', 'storage_set', 'aokie_speak',
     ];
 
+    /** Where each non-JavaScript language has a handler (JavaScript: wherever the type does). */
+    private const LANGUAGE_SURFACES = [
+        FlowLogicLanguages::PYTHON => [self::SURFACE_BROWSER],
+    ];
+
     /**
-     * The surfaces that can execute `$type`, in a stable order. An unknown type yields an
-     * EMPTY list — the honest answer for something no host handler claims.
+     * The surfaces that can execute `$type` with its code in `$language`, in a stable order.
+     * The language only matters for code nodes. An unknown type (or a code node in a language
+     * no runtime implements) yields an EMPTY list — the honest answer for something no host
+     * handler claims.
      *
      * @return list<string>
      */
-    public static function surfacesFor(string $type): array
+    public static function surfacesFor(string $type, string $language = FlowLogicLanguages::JAVASCRIPT): array
     {
         $surfaces = [];
         if (in_array($type, CloudFlowRunner::SUPPORTED_TYPES, true)) {
@@ -59,13 +72,17 @@ final class RuntimeSupport
             $surfaces[] = self::SURFACE_BROWSER;
             $surfaces[] = self::SURFACE_DESKTOP;
         }
-        return $surfaces;
+        if ($language === FlowLogicLanguages::JAVASCRIPT || !in_array($type, FlowLogicLanguages::CODE_NODE_TYPES, true)) {
+            return $surfaces;
+        }
+        $languageSurfaces = self::LANGUAGE_SURFACES[$language] ?? [];
+        return array_values(array_filter($surfaces, static fn (string $s): bool => in_array($s, $languageSurfaces, true)));
     }
 
-    /** Does `$surface` have a handler for `$type`? */
-    public static function supports(string $surface, string $type): bool
+    /** Does `$surface` have a handler for `$type` with its code in `$language`? */
+    public static function supports(string $surface, string $type, string $language = FlowLogicLanguages::JAVASCRIPT): bool
     {
-        return in_array($surface, self::surfacesFor($type), true);
+        return in_array($surface, self::surfacesFor($type, $language), true);
     }
 
     /** Every type any surface can execute (the union) — the "is this a real node at all" set. */

@@ -8,6 +8,7 @@ use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Database\SqliteSnapshot;
 use FormLogic\Database\SqliteSnapshotException;
+use FormLogic\Helpers\CustomLogicSanitizer;
 use PDO;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -1342,6 +1343,10 @@ final class AccountBackupService
             foreach ($structure['forms'] as $bf) {
                 $newId = $formIdMap[(string) $bf['id']];
                 $status = in_array($bf['status'] ?? 'draft', ['draft', 'published', 'archived'], true) ? $bf['status'] : 'draft';
+                // App logic is restored as the backup carries it; a script in a language no
+                // runtime runs is refused like a flow node's (formlogic-python/1), failing the
+                // import before it is stored rather than being misread later.
+                CustomLogicSanitizer::assertSupportedLanguages($bf['customLogic'] ?? null);
                 $this->formService->createForm([
                     'id' => $newId,
                     'userId' => $userId,
@@ -1371,6 +1376,7 @@ final class AccountBackupService
             $this->restoreEncryptionRows($structure, $formIdMap, $userId);
 
             foreach ($structure['apps'] as $ba) {
+                CustomLogicSanitizer::assertSupportedLanguages($ba['customLogic'] ?? null); // as for forms
                 $settings = is_array($ba['settings'] ?? null) ? $ba['settings'] : [];
                 $defaultRoleName = is_string($settings['defaultRoleName'] ?? null) ? $settings['defaultRoleName'] : null;
                 unset($settings['defaultRoleName'], $settings['defaultRoleId']);

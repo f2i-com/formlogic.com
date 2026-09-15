@@ -25,10 +25,11 @@ use PDO;
  *                                       (typed 'no_linked_desktop' when none is linked).
  *
  * NOT cloud-executable in v1 (validateCloudEligible() names them at save time and again at
- * run time before any credit is touched): JS logic blocks (logic_block) and JS condition
- * nodes (condition) — this runner does not evaluate flow JavaScript (the backend's ZIPP
- * sandbox, SandboxRunner, is not used for flows) — and every other node type
- * (storage_get/set, aokie_speak, browser_action, image_gen, stt/tts, desktop_services).
+ * run time before any credit is touched): logic blocks (logic_block) and condition nodes
+ * (condition), whether JavaScript or Python — this runner does not evaluate flow code (the
+ * backend's ZIPP sandbox, SandboxRunner, is not used for flows and has no Python) — and
+ * every other node type (storage_get/set, aokie_speak, browser_action, image_gen, stt/tts,
+ * desktop_services).
  * Loop/join: the graph executor's converging-branch semantics (several activated
  * predecessors → the upstream map) provide the join behavior; neither existing runner has
  * a loop node type, so cycles stay an invalid_flow error here too.
@@ -117,8 +118,8 @@ class CloudFlowRunner
                 continue;
             }
             $reason = match ($type) {
-                'logic_block' => 'JS logic blocks cannot run in FormLogic Cloud (v1)',
-                'condition' => 'JS condition nodes cannot run in FormLogic Cloud (v1)',
+                'logic_block' => 'Logic blocks (JavaScript or Python) cannot run in FormLogic Cloud (v1)',
+                'condition' => 'Condition nodes (JavaScript or Python) cannot run in FormLogic Cloud (v1)',
                 'service_action' => 'service actions run on FormLogic Desktop (the ServiceActionHost lives there)',
                 default => "node type '{$type}' is not supported by the cloud runner (v1)",
             };

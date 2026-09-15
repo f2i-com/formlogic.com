@@ -590,6 +590,22 @@ class McpTest extends TestCase
         $this->assertStringContainsString('create_app_form', $guide['text']);
     }
 
+    /** formlogic-python/1: the guide is how an AI learns that flow code may be Python, and how. */
+    public function testGuideDocumentsPythonCodeFields(): void
+    {
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+        $text = $this->tool($tok, 'get_started')['text'];
+        $this->assertStringContainsString('Python with data.language "python" (absent means "javascript"', $text);
+        $this->assertStringContainsString('nodes["lookup"]["found"]', $text);
+        $this->assertStringContainsString('Python has no top-level return', $text);
+        $this->assertStringContainsString('no datetime, base64, uuid or urllib.parse', $text);
+        $this->assertStringContainsString('statements that set a top-level result', $text);
+        $this->assertStringContainsString('ONE expression, judged by Python truthiness', $text);
+        $this->assertStringContainsString("A binding's condition and a pack connector's demoDriver stay JavaScript", $text);
+        // The old wording presented code fields as JavaScript-only.
+        $this->assertStringNotContainsString('data.expr (sandboxed JavaScript boolean)', $text);
+    }
+
     public function testIdleTimedOutTokenFails(): void
     {
         $t = self::$tokens->create($this->userId);

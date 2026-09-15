@@ -7,6 +7,7 @@ namespace FormLogic\Controllers;
 use FormLogic\Services\SubmissionIdempotencyService;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
+use FormLogic\Helpers\CustomLogicSanitizer;
 use FormLogic\Helpers\RelatedRecords;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppDomainService;
@@ -14,6 +15,7 @@ use FormLogic\Services\AppUserService;
 use FormLogic\Services\AppResponseService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\FormService;
+use FormLogic\Services\Flows\FlowLogicLanguages;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Constants\AppPermissions;
@@ -108,6 +110,17 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Not a member of this app'], 403);
         }
 
+        // formlogic-python/1: the app-logic script languages this client runs. A tab still on a
+        // bundle from before Python sends none and would run a Python script as JavaScript, so
+        // it receives JavaScript scripts only; the current client sends javascript,python. Only
+        // this runtime config is filtered — the owner's editing reads (GET /api/apps/{id},
+        // /api/forms/{id}) always carry every script.
+        try {
+            $logicLanguages = FlowLogicLanguages::fromCaller($request->getQueryParams()['languages'] ?? null);
+        } catch (\InvalidArgumentException) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'languages must be a comma-separated list of language ids, e.g. javascript,python'], 400);
+        }
+
         $forms = $this->appService->getAppForms($app['id']);
         $permissions = $this->appUserService->getUserPermissions($app['id'], $userId);
 
@@ -152,8 +165,9 @@ class AppPublicController
                     'icon' => $formData['icon'] ?? null,
                     'description' => $formData['description'] ?? null,
                     'customScreen' => $formData['customScreen'] ?? null,
-                    // Form-scoped app-logic (runs only for this form) — owner-authored, sandboxed.
-                    'customLogic' => (!empty($formData['customLogic'])) ? $formData['customLogic'] : null,
+                    // Form-scoped app-logic (runs only for this form) — owner-authored, sandboxed;
+                    // only the scripts in a language this client runs.
+                    'customLogic' => (!empty($formData['customLogic'])) ? CustomLogicSanitizer::forLanguages($formData['customLogic'], $logicLanguages) : null,
                 ];
             }
         }
@@ -162,6 +176,9 @@ class AppPublicController
         // presence of the (stripped-for-members) ownerId. Owner-only today, matching the server-side
         // update/save checks (AppController gates writes on owner_id).
         $safeApp = $app;
+        if (!empty($safeApp['customLogic'])) {
+            $safeApp['customLogic'] = CustomLogicSanitizer::forLanguages($safeApp['customLogic'], $logicLanguages);
+        }
         $isOwner = ($userId === ($app['ownerId'] ?? null));
         $safeApp['canManage'] = $isOwner;
         // Strip internal fields + narrow the app payload for non-owner members: the nav, dashboard
@@ -521,6 +538,14 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found'], 404);
         }
 
+        // formlogic-python/1: the form's app-logic scripts this client runs, as in getApp (this
+        // is where the app runtime reads the form-level scripts it runs).
+        try {
+            $logicLanguages = FlowLogicLanguages::fromCaller($request->getQueryParams()['languages'] ?? null);
+        } catch (\InvalidArgumentException) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'languages must be a comma-separated list of language ids, e.g. javascript,python'], 400);
+        }
+
         // Record a view for analytics (best-effort; never blocks form serving).
         $this->responseService->recordView($formId);
 
@@ -529,6 +554,9 @@ class AppPublicController
         unset($form['logicScript'], $form['logicPrompt'], $form['userId']);
         if (isset($form['settings']) && is_array($form['settings'])) {
             unset($form['settings']['notifications']);
+        }
+        if (!empty($form['customLogic'])) {
+            $form['customLogic'] = CustomLogicSanitizer::forLanguages($form['customLogic'], $logicLanguages);
         }
 
         return $this->jsonResponse($response, ['form' => $form]);

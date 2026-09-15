@@ -5,6 +5,7 @@
 import type { Form } from '../types/form';
 import type { App, AppForm, AppFormUsageApp, AppListItem, AppSettings, AppVersion, FormAppContext } from '../types/app';
 import { APP_LEVEL_PERMISSIONS, FORM_LEVEL_PERMISSIONS } from '../types/app';
+import { APP_LOGIC_LANGUAGES } from '../types/customAppLogic';
 import type {
   ClaimResult,
   ConnectorCommand,
@@ -542,6 +543,15 @@ export function newIdempotencyKey(): string {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
   } catch { /* ignore */ }
   return `idem-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** `?limit=&logicLanguages=` for the queued-run listings (GET: the languages ride the query). */
+function queuedRunsQuery(limit?: number, logicLanguages?: readonly string[]): string {
+  const params = new URLSearchParams();
+  if (limit) params.set('limit', String(limit));
+  if (logicLanguages) params.set('logicLanguages', logicLanguages.join(','));
+  const query = params.toString();
+  return query ? `?${query}` : '';
 }
 
 /**
@@ -2475,7 +2485,9 @@ class ApiClient {
         };
       }
     }
-    return this.request(`/app/${slug}`);
+    // formlogic-python/1: the app-logic languages this client runs (APP_LOGIC_LANGUAGES). A
+    // client that names none gets JavaScript scripts only.
+    return this.request(`/app/${slug}?languages=${APP_LOGIC_LANGUAGES.join(',')}`);
   }
 
   async getAppMyPermissions(slug: string): Promise<ApiResponse<{ permissions: unknown }>> {
@@ -2656,7 +2668,8 @@ class ApiClient {
 
   async getAppForm(slug: string, formId: string): Promise<ApiResponse<{ form: unknown }>> {
     if (this._demoMode && await getDemoAppBySlug(slug)) return this.getForm(formId);
-    return this.request(`/app/${slug}/forms/${formId}`);
+    // The form-level scripts the runtime runs come from here: named languages, as getAppRuntime.
+    return this.request(`/app/${slug}/forms/${formId}?languages=${APP_LOGIC_LANGUAGES.join(',')}`);
   }
 
   async getAppAnalytics(slug: string, formId: string): Promise<ApiResponse<{ analytics: FormAnalytics }>> {
@@ -3173,6 +3186,11 @@ class ApiClient {
        */
       parentRunId?: string;
       callNodeId?: string;
+      /**
+       * The logic languages this runtime runs (formlogic-python/1). Absent means JavaScript
+       * only: a flow with Python code is then refused with 409 language_unsupported.
+       */
+      logicLanguages?: readonly string[];
     }
   ): Promise<ApiResponse<{ runId: string; idempotent?: boolean; run: FlowRunLog }>> {
     return this.request(`/app/${encodeURIComponent(slug)}/flow-runs`, {
@@ -3193,9 +3211,16 @@ class ApiClient {
     });
   }
 
-  /** Claimable 'queued' runs for this app (member-gated), oldest first. */
-  async listQueuedAppFlowRuns(slug: string, limit?: number): Promise<ApiResponse<{ runs: FlowRunLog[] }>> {
-    return this.request(`/app/${encodeURIComponent(slug)}/flow-runs/queued${limit ? `?limit=${limit}` : ''}`);
+  /**
+   * Claimable 'queued' runs for this app (member-gated), oldest first — only those whose code
+   * is in `logicLanguages` (absent: JavaScript only).
+   */
+  async listQueuedAppFlowRuns(
+    slug: string,
+    limit?: number,
+    logicLanguages?: readonly string[]
+  ): Promise<ApiResponse<{ runs: FlowRunLog[] }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/flow-runs/queued${queuedRunsQuery(limit, logicLanguages)}`);
   }
 
   /**
@@ -3205,7 +3230,7 @@ class ApiClient {
   async claimAppFlowRun(
     slug: string,
     runId: string,
-    payload: { runtime: FlowRuntimeKind; instanceId?: string }
+    payload: { runtime: FlowRuntimeKind; instanceId?: string; logicLanguages?: readonly string[] }
   ): Promise<ApiResponse<ClaimResult>> {
     return this.request(`/app/${encodeURIComponent(slug)}/flow-runs/${encodeURIComponent(runId)}/claim`, {
       method: 'POST',
@@ -3323,9 +3348,9 @@ class ApiClient {
     return this.request(`/flow-runs/${encodeURIComponent(runId)}/children${query ? `?${query}` : ''}`);
   }
 
-  /** Claimable 'queued' runs across every flow the user owns, oldest first. */
-  async listMyQueuedFlowRuns(limit?: number): Promise<ApiResponse<{ runs: FlowRunLog[] }>> {
-    return this.request(`/flow-runs/queued${limit ? `?limit=${limit}` : ''}`);
+  /** Claimable 'queued' runs across every flow the user owns, oldest first, filtered as listQueuedAppFlowRuns. */
+  async listMyQueuedFlowRuns(limit?: number, logicLanguages?: readonly string[]): Promise<ApiResponse<{ runs: FlowRunLog[] }>> {
+    return this.request(`/flow-runs/queued${queuedRunsQuery(limit, logicLanguages)}`);
   }
 
   // ── Blueprints (extensible-flows plan §11/§14) ──────────────────────────────────────
@@ -3480,13 +3505,15 @@ class ApiClient {
     inputSnapshot?: Record<string, unknown>;
     parentRunId?: string;
     callNodeId?: string;
+    /** As reserveFlowRun. */
+    logicLanguages?: readonly string[];
   }): Promise<ApiResponse<{ run: FlowRunLog; created: boolean; idempotent?: boolean }>> {
     return this.request('/flow-runs', { method: 'POST', body: JSON.stringify(payload) });
   }
 
   async claimMyFlowRun(
     runId: string,
-    payload: { runtime: FlowRuntimeKind; instanceId?: string }
+    payload: { runtime: FlowRuntimeKind; instanceId?: string; logicLanguages?: readonly string[] }
   ): Promise<ApiResponse<ClaimResult>> {
     return this.request(`/flow-runs/${encodeURIComponent(runId)}/claim`, {
       method: 'POST',

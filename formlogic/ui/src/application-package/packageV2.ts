@@ -124,6 +124,14 @@ const ARTIFACT_KINDS = ['image', 'audio', 'video', 'file'];
 const SIDE_EFFECTS = ['none', 'read', 'external-write', 'destructive'];
 const IDEMPOTENCY = ['none', 'caller-key'];
 const LATER_HANDLER_KINDS = ['connector-action', 'subflow', 'quickjs', 'hosted-action'];
+/**
+ * formlogic-python/1: the core types whose code runs in `data.language`, and the languages they
+ * may declare (client-runtime/flows/nodes.ts CODE_NODE_TYPES / LOGIC_LANGUAGES, the PHP
+ * FlowLogicLanguages; packageV2.test.ts pins the parity). A core preset's default language
+ * becomes the lowered node's, so it follows the same rule.
+ */
+export const PRESET_CODE_CORE_TYPES: readonly string[] = ['condition', 'logic_block'];
+export const PRESET_LOGIC_LANGUAGES: readonly string[] = ['javascript', 'python'];
 const REF_ALLOWLIST = ['formlogic://schemas/artifact-ref.json'];
 /** Search keyword grammar (MKT-602): lowercase, hyphen-separated, no spaces or punctuation. */
 const KEYWORD = /^[a-z0-9][a-z0-9-]{0,31}$/;
@@ -386,6 +394,17 @@ export function validateFlowNodeDefinitionV1(
         push('bad_handler', `${basePath}.handler.defaults`, 'defaults must be an object');
       } else if (JSON.stringify(handler.defaults).length > MAX_HANDLER_DEFAULTS_BYTES) {
         push('too_large', `${basePath}.handler.defaults`, 'defaults exceed the size cap');
+      } else if (
+        isString(handler.coreType)
+        && PRESET_CODE_CORE_TYPES.includes(handler.coreType)
+        && Object.prototype.hasOwnProperty.call(handler.defaults, 'language')
+        && !PRESET_LOGIC_LANGUAGES.includes(handler.defaults.language as string)
+      ) {
+        push(
+          'bad_handler',
+          `${basePath}.handler.defaults.language`,
+          `defaults.language of a ${handler.coreType} preset must be 'javascript' or 'python'`,
+        );
       }
     }
     // A node that LOWERS to a core type is not thereby a REPLACEMENT for it: most packages

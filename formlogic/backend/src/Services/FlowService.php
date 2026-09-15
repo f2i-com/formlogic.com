@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
+use FormLogic\Helpers\CustomLogicSanitizer;
+use FormLogic\Services\Flows\FlowLogicLanguages;
+use FormLogic\Services\Flows\LogicLanguageUnsupportedException;
 use PDO;
 
 /**
@@ -167,6 +170,15 @@ class FlowService
                 throw new \InvalidArgumentException("Duplicate flow node id: '{$id}'");
             }
             $nodeIds[$id] = true;
+        }
+        // Node data is stored verbatim; only a code node's language is checked, so a flow that
+        // saves also runs (formlogic-python/1; the browser executor refuses anything else).
+        $unsupported = FlowLogicLanguages::firstUnsupported($flowJson);
+        if ($unsupported !== null) {
+            throw new \InvalidArgumentException(
+                "Flow node '{$unsupported['nodeId']}' has an unsupported language '{$unsupported['language']}': use "
+                . implode(' or ', FlowLogicLanguages::SUPPORTED)
+            );
         }
         $edgeIds = [];
         foreach ($flowJson['edges'] as $i => $edge) {
@@ -755,10 +767,8 @@ class FlowService
     public function getRuntimeFlows(string $appId): array
     {
         $flows = [];
-        foreach ($this->listFlows($appId) as $flow) {
-            if (!$flow['enabled']) {
-                continue;
-            }
+        $enabled = array_values(array_filter($this->listFlows($appId), static fn (array $f): bool => (bool) $f['enabled']));
+        foreach ($this->withLogicLanguages($enabled) as $flow) {
             $flows[] = [
                 // Stable flow id — the DURABLE reference flow_call nodes store (extensible-flows
                 // plan §8.1: slugs are presentation/routing aliases and can change).
@@ -772,6 +782,10 @@ class FlowService
                 'nodeCapabilities' => $flow['nodeCapabilities'],
                 'version' => $flow['version'],
                 'executionLocation' => $flow['executionLocation'],
+                // formlogic-python/1: what running it needs, core presets seen through
+                // (logicLanguagesOf). The browser defers a binding to a Desktop only when that
+                // Desktop advertises each of these.
+                'logicLanguages' => $flow['logicLanguages'],
             ];
         }
 
@@ -805,8 +819,13 @@ class FlowService
      * reserve-first pattern as app submissions): the first caller wins and creates the 'running'
      * row; a duplicate event replay gets the existing run back with created=false.
      *
+     * A caller that cannot run every language the flow's code is in (`logicLanguages`, absent =
+     * JavaScript only; logicLanguagesOf) is refused before anything is written — unless it
+     * reserves `queued`, which runs nothing: the claim is gated instead.
+     *
      * @return array{run: array, created: bool}
      * @throws \InvalidArgumentException on invalid payload / unknown flow / key reuse across apps
+     * @throws LogicLanguageUnsupportedException when a caller that runs the flow now lacks a language it needs (→ 409)
      */
     public function reserveRun(string $appId, string $userId, array $data): array
     {
@@ -862,6 +881,13 @@ class FlowService
         // queued:true reserves WITHOUT starting execution (server-initiated queue entry a runtime
         // claims later via the claim endpoint); default reserves as 'running' (caller executes now).
         $queued = ($data['queued'] ?? false) === true;
+
+        // Before anything is written, the revision row included. A queued reserve is not gated:
+        // its reserver never runs it, and whoever does is gated at claim (and never lists it).
+        $logicLanguages = FlowLogicLanguages::fromCaller($data['logicLanguages'] ?? null);
+        if (!$queued) {
+            $this->assertCallerRunsFlow($flow, $logicLanguages);
+        }
 
         $id = $this->uuidV4();
         $flowVersionId = $this->ensureFlowVersion($flow['id']);
@@ -952,28 +978,10 @@ class FlowService
         // Only graphs with contributed (dotted) types need the installed-definition lookup;
         // a core-only graph compiles against the empty set (pure pass-through).
         $installedByType = [];
-        $hasContributed = false;
-        foreach ((is_array($decodedGraph['nodes'] ?? null) ? $decodedGraph['nodes'] : []) as $node) {
-            if (is_array($node) && is_string($node['type'] ?? null) && str_contains($node['type'], '.')) {
-                $hasContributed = true;
-                break;
-            }
-        }
         $bindings = [];
-        if ($hasContributed) {
+        if (FlowLogicLanguages::hasContributedNodes($decodedGraph)) {
             try {
-                $this->packageV2 ??= new \FormLogic\Services\Packages\PackageV2InstallService($this->mysqlConnection);
-                foreach ($this->packageV2->listDefinitions($ownerUserId) as $entry) {
-                    if ($entry['enabled'] === true) {
-                        $installedByType[$entry['type']] = [
-                            'definition' => $entry['definition'],
-                            'digest' => $entry['digest'],
-                            'version' => $entry['version'],
-                            'packageId' => $entry['packageId'],
-                            'installationId' => $entry['installationId'],
-                        ];
-                    }
-                }
+                $installedByType = $this->installedDefinitionsByType($ownerUserId);
                 // SRV-405: the owner's slot bindings decide whether service-action nodes lower
                 // or stay refused. Pinned into the revision's locks, so a later re-binding is
                 // visible as a different lock rather than a silent swap under a live flow.
@@ -992,6 +1000,106 @@ class FlowService
             (string) json_encode($result['locks'], JSON_UNESCAPED_SLASHES),
             $result['irDigest'],
         ];
+    }
+
+    /**
+     * The owner's ENABLED installed node definitions keyed by contributed type — what
+     * FlowCompiler lowers against (compile-at-mint, and the language gate's ofLowered).
+     *
+     * @return array<string, array{definition: array<string, mixed>, digest: string, version: string, packageId: string, installationId: string}>
+     */
+    private function installedDefinitionsByType(string $ownerUserId): array
+    {
+        $this->packageV2 ??= new \FormLogic\Services\Packages\PackageV2InstallService($this->mysqlConnection);
+        $installedByType = [];
+        foreach ($this->packageV2->listDefinitions($ownerUserId) as $entry) {
+            if ($entry['enabled'] === true) {
+                $installedByType[$entry['type']] = [
+                    'definition' => $entry['definition'],
+                    'digest' => $entry['digest'],
+                    'version' => $entry['version'],
+                    'packageId' => $entry['packageId'],
+                    'installationId' => $entry['installationId'],
+                ];
+            }
+        }
+        return $installedByType;
+    }
+
+    /**
+     * The logic languages running this flow needs (formlogic-python/1), read the way its
+     * runtimes execute it: the stored graph's own code nodes and, when it stores contributed
+     * (dotted) nodes, what they lower to — against the owner's installed definitions as they are
+     * now (what a browser run compiles; FlowLogicLanguages::ofLowered) and in the current
+     * revision's pinned IR (what GET /api/v1/flows hands a Desktop). A core preset can make a
+     * graph with no code node of its own run Python. Read-only: it never mints a revision.
+     *
+     * The one reading behind every language gate: reserve, claim, the queued listings, the
+     * Desktop flow list, the Desktop relay and the app runtime's flow list.
+     *
+     * @param array<string, mixed> $flow a formatted flow (id, ownerUserId, flowJson)
+     * @param array<string, array<string, mixed>>|null $installedByType the owner's enabled
+     *        definitions, when the caller already looked them up
+     * @return list<string>
+     */
+    public function logicLanguagesOf(array $flow, ?array $installedByType = null): array
+    {
+        $graph = $flow['flowJson'] ?? null;
+        if (!FlowLogicLanguages::hasContributedNodes($graph)) {
+            return FlowLogicLanguages::of($graph);
+        }
+        $owner = is_string($flow['ownerUserId'] ?? null) ? $flow['ownerUserId'] : '';
+        $installedByType ??= $owner !== '' ? $this->installedDefinitionsByType($owner) : [];
+        $languages = FlowLogicLanguages::ofLowered($graph, $installedByType);
+        if (is_string($flow['id'] ?? null) && $flow['id'] !== '') {
+            $languages = array_merge($languages, FlowLogicLanguages::of(['nodes' => $this->pinnedIrNodes($flow['id'])]));
+        }
+        $languages = array_values(array_unique($languages));
+        sort($languages, SORT_STRING);
+        return $languages;
+    }
+
+    /**
+     * Each flow with the `logicLanguages` its code needs (logicLanguagesOf), the owner's
+     * installed definitions looked up once per owner.
+     *
+     * @param list<array<string, mixed>> $flows formatted flows
+     * @return list<array<string, mixed>>
+     */
+    public function withLogicLanguages(array $flows): array
+    {
+        $installedByOwner = [];
+        foreach ($flows as &$flow) {
+            $installed = null;
+            $owner = is_string($flow['ownerUserId'] ?? null) ? $flow['ownerUserId'] : '';
+            if ($owner !== '' && FlowLogicLanguages::hasContributedNodes($flow['flowJson'] ?? null)) {
+                $installed = $installedByOwner[$owner] ??= $this->installedDefinitionsByType($owner);
+            }
+            $flow['logicLanguages'] = $this->logicLanguagesOf($flow, $installed);
+        }
+        unset($flow);
+        return array_values($flows);
+    }
+
+    /**
+     * The current revision's compiled IR nodes, when that revision is minted and compiled.
+     * Read-only (compiledIrForCurrentVersion mints; the gate must not).
+     *
+     * @return list<mixed>
+     */
+    private function pinnedIrNodes(string $flowDefinitionId): array
+    {
+        $stmt = $this->mysql->prepare('
+            SELECT v.compiled_ir_json
+            FROM flow_definition_versions v
+            JOIN flow_definitions f ON f.id = v.flow_definition_id AND v.version = f.version
+            WHERE f.id = :id
+            LIMIT 1
+        ');
+        $stmt->execute(['id' => $flowDefinitionId]);
+        $raw = $stmt->fetchColumn();
+        $ir = is_string($raw) && $raw !== '' ? json_decode($raw, true) : null;
+        return is_array($ir) && is_array($ir['nodes'] ?? null) ? array_values($ir['nodes']) : [];
     }
 
     /**
@@ -2248,36 +2356,135 @@ class FlowService
 
     // ── Queued runs + claiming (queued → running exactly once) ─────────────────────────────
 
-    /** Claimable queued runs for an app, oldest first. @return array[] */
-    public function listQueuedRuns(string $appId, int $limit = 50): array
+    /**
+     * Claimable queued runs for an app, oldest first — only those the caller can execute:
+     * `$logicLanguages` is what it declared (FlowLogicLanguages::fromCaller; null = JavaScript
+     * only). The filter applies before the LIMIT, so runs a caller cannot take never hold the
+     * head of its queue. @return array[]
+     */
+    public function listQueuedRuns(string $appId, int $limit = 50, ?array $logicLanguages = null): array
     {
         $limit = max(1, min(200, $limit));
+        [$notRunnable, $params] = $this->excludeFlowsCallerCannotRun(
+            "SELECT f.id, f.owner_user_id, f.flow_json FROM flow_definitions f
+             WHERE f.id IN (SELECT r.flow_definition_id FROM flow_run_logs r WHERE r.app_id = :a AND r.status = 'queued')",
+            ['a' => $appId],
+            $logicLanguages
+        );
         $stmt = $this->mysql->prepare("
             SELECT r.*, f.slug AS flow_slug
             FROM flow_run_logs r
             LEFT JOIN flow_definitions f ON f.id = r.flow_definition_id
-            WHERE r.app_id = :a AND r.status = 'queued'
+            WHERE r.app_id = :a AND r.status = 'queued'{$notRunnable}
             ORDER BY r.created_at ASC, r.id ASC
             LIMIT {$limit}
         ");
-        $stmt->execute(['a' => $appId]);
+        $stmt->execute(['a' => $appId] + $params);
         return array_map([$this, 'formatRun'], $stmt->fetchAll());
     }
 
-    /** Claimable queued runs across every flow the user owns, oldest first. @return array[] */
-    public function listOwnerQueuedRuns(string $ownerUserId, int $limit = 50): array
+    /** Claimable queued runs across every flow the user owns, oldest first, filtered as listQueuedRuns. @return array[] */
+    public function listOwnerQueuedRuns(string $ownerUserId, int $limit = 50, ?array $logicLanguages = null): array
     {
         $limit = max(1, min(200, $limit));
+        [$notRunnable, $params] = $this->excludeFlowsCallerCannotRun(
+            "SELECT f.id, f.owner_user_id, f.flow_json FROM flow_definitions f
+             WHERE f.owner_user_id = :o
+               AND EXISTS (SELECT 1 FROM flow_run_logs r WHERE r.flow_definition_id = f.id AND r.status = 'queued')",
+            ['o' => $ownerUserId],
+            $logicLanguages
+        );
         $stmt = $this->mysql->prepare("
             SELECT r.*, f.slug AS flow_slug
             FROM flow_run_logs r
             JOIN flow_definitions f ON f.id = r.flow_definition_id
-            WHERE f.owner_user_id = :o AND r.status = 'queued'
+            WHERE f.owner_user_id = :o AND r.status = 'queued'{$notRunnable}
             ORDER BY r.created_at ASC, r.id ASC
             LIMIT {$limit}
         ");
-        $stmt->execute(['o' => $ownerUserId]);
+        $stmt->execute(['o' => $ownerUserId] + $params);
         return array_map([$this, 'formatRun'], $stmt->fetchAll());
+    }
+
+    /**
+     * formlogic-python/1 gate: refuse a caller that cannot run every language the flow's code
+     * needs (logicLanguagesOf, which sees through core presets). A caller that runs every
+     * language this server knows needs no lookup. @throws LogicLanguageUnsupportedException
+     *
+     * @param array<string, mixed> $flow a formatted flow (id, ownerUserId, flowJson)
+     */
+    private function assertCallerRunsFlow(array $flow, ?array $logicLanguages): void
+    {
+        if (FlowLogicLanguages::runsAll($logicLanguages)) {
+            return;
+        }
+        $missing = FlowLogicLanguages::missing($this->logicLanguagesOf($flow), $logicLanguages);
+        if ($missing !== []) {
+            throw new LogicLanguageUnsupportedException($missing);
+        }
+    }
+
+    /**
+     * The listing clause that drops runs of flows the caller cannot run, and its parameters.
+     * `$flowsSql` selects (id, owner_user_id, flow_json) of the flows with queued runs in scope,
+     * so the cost is one decode per such flow, not per run (and one definitions lookup per owner
+     * of a flow with contributed nodes). Nothing to do for a caller that runs every language
+     * this server knows.
+     *
+     * @param array<string, string> $params
+     * @return array{0: string, 1: array<string, string>}
+     */
+    private function excludeFlowsCallerCannotRun(string $flowsSql, array $params, ?array $logicLanguages): array
+    {
+        if (FlowLogicLanguages::runsAll($logicLanguages)) {
+            return ['', []];
+        }
+        $stmt = $this->mysql->prepare($flowsSql);
+        $stmt->execute($params);
+        $flows = array_map(fn (array $row): array => [
+            'id' => (string) $row['id'],
+            'ownerUserId' => (string) $row['owner_user_id'],
+            'flowJson' => json_decode((string) $row['flow_json'], true),
+        ], $stmt->fetchAll());
+        $excluded = [];
+        foreach ($this->withLogicLanguages($flows) as $flow) {
+            if (FlowLogicLanguages::missing($flow['logicLanguages'], $logicLanguages) !== []) {
+                $excluded['nx' . count($excluded)] = $flow['id'];
+            }
+        }
+        if ($excluded === []) {
+            return ['', []];
+        }
+        $placeholders = implode(', ', array_map(static fn (string $k): string => ':' . $k, array_keys($excluded)));
+        return [" AND r.flow_definition_id NOT IN ({$placeholders})", $excluded];
+    }
+
+    /**
+     * The claim-time gate: the run's flow, as it is now (what the claimant will execute), must
+     * need only languages the caller runs. A run that does not exist in scope passes through to
+     * the claim's own not-found handling. @throws LogicLanguageUnsupportedException
+     */
+    private function assertCallerRunsClaim(string $scopeSql, array $params, ?array $logicLanguages): void
+    {
+        if (FlowLogicLanguages::runsAll($logicLanguages)) {
+            return;
+        }
+        $stmt = $this->mysql->prepare("
+            SELECT f.id, f.owner_user_id, f.flow_json
+            FROM flow_run_logs r
+            JOIN flow_definitions f ON f.id = r.flow_definition_id
+            WHERE {$scopeSql}
+            LIMIT 1
+        ");
+        $stmt->execute($params);
+        $row = $stmt->fetch();
+        if (is_array($row)) {
+            $this->assertCallerRunsFlow([
+                'id' => (string) $row['id'],
+                'ownerUserId' => (string) $row['owner_user_id'],
+                'flowJson' => json_decode((string) $row['flow_json'], true),
+            ], $logicLanguages);
+        }
     }
 
     /**
@@ -2285,10 +2492,12 @@ class FlowService
      * exactly-once gate. Returns the (now running) run; null when the run doesn't exist;
      * throws \RuntimeException('already_claimed') when it exists but isn't queued (→ 409).
      * @throws \InvalidArgumentException on an invalid payload
+     * @throws LogicLanguageUnsupportedException when the caller lacks a language the flow needs (→ 409, nothing changed)
      */
     public function claimRun(string $appId, string $runId, array $data): ?array
     {
-        [$runtime, $claimedBy] = $this->sanitizeClaim($data);
+        [$runtime, $claimedBy, $logicLanguages] = $this->sanitizeClaim($data);
+        $this->assertCallerRunsClaim('r.id = :id AND r.app_id = :a', ['id' => $runId, 'a' => $appId], $logicLanguages);
         $stmt = $this->mysql->prepare("
             UPDATE flow_run_logs
             SET status = 'running', runtime = :rt, claimed_by = :cb, started_at = NOW()
@@ -2306,10 +2515,11 @@ class FlowService
         return $this->getRun($appId, $runId);
     }
 
-    /** Owner-scoped claim (workspace runs + any run of a flow the caller owns). */
+    /** Owner-scoped claim (workspace runs + any run of a flow the caller owns), gated as claimRun. */
     public function claimOwnerRun(string $ownerUserId, string $runId, array $data): ?array
     {
-        [$runtime, $claimedBy] = $this->sanitizeClaim($data);
+        [$runtime, $claimedBy, $logicLanguages] = $this->sanitizeClaim($data);
+        $this->assertCallerRunsClaim('r.id = :id AND f.owner_user_id = :o', ['id' => $runId, 'o' => $ownerUserId], $logicLanguages);
         $stmt = $this->mysql->prepare("
             UPDATE flow_run_logs r
             JOIN flow_definitions f ON f.id = r.flow_definition_id
@@ -2412,7 +2622,10 @@ class FlowService
         return $total;
     }
 
-    /** @return array{0: string, 1: ?string} [runtime, claimedBy] @throws \InvalidArgumentException */
+    /**
+     * @return array{0: string, 1: ?string, 2: ?list<string>} [runtime, claimedBy, logicLanguages]
+     * @throws \InvalidArgumentException
+     */
     private function sanitizeClaim(array $data): array
     {
         $runtime = $data['runtime'] ?? null;
@@ -2426,7 +2639,7 @@ class FlowService
             }
             $claimedBy = $data['instanceId'];
         }
-        return [$runtime, $claimedBy];
+        return [$runtime, $claimedBy, FlowLogicLanguages::fromCaller($data['logicLanguages'] ?? null)];
     }
 
     /**
@@ -2435,10 +2648,12 @@ class FlowService
      * (the flow must belong to the caller), `appId` absent/'workspace' → workspace scope.
      * Same reserve-first UNIQUE idempotency-key gate as reserveRun, so a desktop reserve and a
      * browser reserve of the same event dedupe to exactly ONE run regardless of which runtime
-     * got there first.
+     * got there first. Language-gated as reserveRun: a Desktop that sends no logicLanguages
+     * runs JavaScript only, and a queued reserve is not gated.
      *
      * @return array{run: array, created: bool}
      * @throws \InvalidArgumentException on invalid payload / unknown flow / foreign key reuse
+     * @throws LogicLanguageUnsupportedException when a caller that runs the flow now lacks a language it needs (→ 409)
      */
     public function reserveOwnerRun(string $ownerUserId, array $data): array
     {
@@ -2514,6 +2729,14 @@ class FlowService
 
         $queued = ($data['queued'] ?? false) === true;
 
+        // As reserveRun: an OAIY plugin event always reserves queued, and must not be lost for a
+        // Python flow while no FormLogic tab is open; claim and the listings keep it from a
+        // runtime that would misread it.
+        $logicLanguages = FlowLogicLanguages::fromCaller($data['logicLanguages'] ?? null);
+        if (!$queued) {
+            $this->assertCallerRunsFlow($flow, $logicLanguages);
+        }
+
         $id = $this->uuidV4();
         $flowVersionId = $this->ensureFlowVersion($flow['id']);
         [$parentRunId, $rootRunId, $depth, $callNodeId] = $this->resolveRunLineage($data, null, $ownerUserId);
@@ -2577,9 +2800,15 @@ class FlowService
      * Each entry: {app:{id,slug,name}, customLogic, forms:[{id,name,displayName}]} — the forms
      * list resolves the bundle's formKey references (form title / display name → form id).
      *
+     * The bundle lists only the scripts the caller runs: `$languages` is what it declared
+     * (FlowLogicLanguages::fromCaller; null = JavaScript only). A Desktop built before Python
+     * ignores a script's language and would run a Python script as JavaScript, so it never
+     * receives one; the browser runs those scripts instead (formlogic-python/1).
+     *
+     * @param list<string>|null $languages
      * @return array[]
      */
-    public function getOwnerAppLogic(string $ownerUserId, ?string $selector = null): array
+    public function getOwnerAppLogic(string $ownerUserId, ?string $selector = null, ?array $languages = null): array
     {
         if ($selector !== null && $selector !== '') {
             $stmt = $this->mysql->prepare("
@@ -2622,7 +2851,7 @@ class FlowService
             }, $formsStmt->fetchAll());
             $out[] = [
                 'app' => ['id' => $row['id'], 'slug' => $row['slug'], 'name' => $row['name']],
-                'customLogic' => $this->decodeJson($row['custom_logic']),
+                'customLogic' => CustomLogicSanitizer::forLanguages($this->decodeJson($row['custom_logic']), $languages),
                 'forms' => $forms,
                 // Connector ids this app holds grants for (audit INT-004): the
                 // desktop routes a connector's events only to the ASSIGNED app,
@@ -3102,6 +3331,27 @@ class FlowService
         $find->execute(['o' => $userId, 'i' => $instanceId]);
         $row = $find->fetch();
         return $row ? $this->formatDesktopConnection($row) : throw new \RuntimeException('Desktop connection upsert failed');
+    }
+
+    /**
+     * The logic languages a linked Desktop runs, from the capabilities its last heartbeat sent
+     * (FlowLogicLanguages::fromCapabilities). Null for a Desktop that names none — one built
+     * before Python, which would run Python as JavaScript — and for an instance not linked to
+     * this owner.
+     *
+     * @return list<string>|null
+     */
+    public function desktopLogicLanguages(string $ownerUserId, string $instanceId): ?array
+    {
+        $stmt = $this->mysql->prepare('
+            SELECT capabilities_json FROM desktop_connections
+            WHERE owner_user_id = :o AND desktop_instance_id = :i
+            LIMIT 1
+        ');
+        $stmt->execute(['o' => $ownerUserId, 'i' => $instanceId]);
+        $raw = $stmt->fetchColumn();
+        $capabilities = $this->decodeJson(is_string($raw) ? $raw : null);
+        return FlowLogicLanguages::fromCapabilities($capabilities ?? []);
     }
 
     /**

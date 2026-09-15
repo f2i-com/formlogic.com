@@ -629,14 +629,14 @@ Node ids are unique strings you choose (e.g. "summarise"); each node's config li
 VALUE REFERENCES (how nodes read data):
 - Selector strings: "$inputs.<name>" (trigger inputs), "$nodes.<nodeId>.<key>" (an earlier node's output), "$event" (the raw event). Used in JSON-ish fields (answers, payload, filters values, output value).
 - Templates: free-text fields interpolate {{ inputs.name }} / {{ nodes.summarise.content }} (note: no $ inside braces needed, but tolerated).
-- Sandboxed JavaScript code fields ("expr"): plain JS with variables inputs, nodes, event, upstream, app — e.g. nodes["lookup"].found && inputs.durationSeconds > 5.
+- Sandboxed code fields ("expr" on condition and logic_block): JavaScript by default, or Python with data.language "python" (absent means "javascript"; nothing else is accepted). JavaScript is plain JS with variables inputs, nodes, event, upstream, app — e.g. nodes["lookup"].found && inputs.durationSeconds > 5. Python sees the same names as dicts, so subscript every level — nodes["lookup"]["found"] and inputs["durationSeconds"] > 5. Python has no top-level return; helpers validators, compliance, finance, safety, is_empty, is_not_empty, contains and avg are in scope; its standard library is a subset (no datetime, base64, uuid or urllib.parse). Python code runs only in FormLogic in a browser (not FormLogic Cloud, not a Desktop without Python). A binding's condition and a pack connector's demoDriver stay JavaScript.
 
 NODE TYPES (type → config → output):
 - input — the Trigger. data.inputs = [{ name, example? }] declares what the binding's inputMap provides. Output: $inputs.<name>.
 - output — the flow result. data.value: a selector or JSON (selector strings inside resolve); blank passes the upstream value through. The binding's outputActions read this as $result.
-- condition — data.expr (sandboxed JavaScript boolean). Routes via sourceHandle true/false edges.
+- condition — data.expr, data.language? ("javascript" | "python"). JavaScript: a boolean expression (statements ending in it also work; a top-level return does not). Python: ONE expression, judged by Python truthiness ([], {}, "" and 0 are false). Routes via sourceHandle true/false edges.
 - template — data.template ({{…}} interpolation) → string.
-- logic_block — data.expr (sandboxed JavaScript: an expression, or a function body that returns a JSON value), data.timeoutMs? → the resulting JSON value.
+- logic_block — data.expr, data.language?, data.timeoutMs? → the resulting JSON value. JavaScript: an expression, or a function body that returns a JSON value. Python: one expression, or statements that set a top-level result — e.g. "rows = nodes[\"lookup\"][\"responses\"]\nresult = {\"count\": len(rows)}".
 - llm_chat — data.system?, data.prompt ({{…}} ok), data.model?, data.maxTokens?, data.temperature? → { content } (the reply text: $nodes.<id>.content). Uses the app/Desktop's default model when model/endpoint are omitted — leave them omitted unless you must pin one.
 - http_request — data.url ({{…}} ok; allow-listed to the FormLogic API or the paired Desktop), data.method, data.body (JSON, selectors ok) → { status, ok, body }.
 - formlogic_list_responses — data.form (form id), data.filters? [{ field, op ("eq"|"contains"|…), value ("$inputs.x" ok) }], data.limit? → { first, responses, count, found }.

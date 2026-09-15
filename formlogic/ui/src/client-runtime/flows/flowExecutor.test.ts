@@ -490,7 +490,7 @@ describe('executeFlow — logic_block/condition per-node timeoutMs (docs §4)', 
       timeoutMs: 30_000, // generous flow deadline — the NODE's own 150ms must fire first
       deps: fakeDeps({ evaluateExpression }),
     });
-    expect(evaluateExpression).toHaveBeenCalledWith('neverResolves()', expect.anything(), 150);
+    expect(evaluateExpression).toHaveBeenCalledWith('neverResolves()', expect.anything(), 150, 'javascript');
     expect(outcome.status).toBe('error');
     expect(outcome.error?.code).toBe('timeout');
     expect(outcome.error?.message).toMatch(/150ms/);

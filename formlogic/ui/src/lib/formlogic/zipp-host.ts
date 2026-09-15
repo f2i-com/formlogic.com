@@ -27,12 +27,30 @@
 //     browser profile omits cooperative abort polling by design and expects the
 //     host to kill the Worker; engine.ts already did exactly that for QuickJS,
 //     so the deadline story is unchanged.
-import initZipp, { Engine, zippInstanceUsage } from '../../../vendor/zipp-wasm/zipp_wasm.js';
+//
+// PYTHON. Flow logic blocks, flow conditions and app-logic scripts may also be
+// Python (formlogic-python/1, python/pythonContract.ts), on the same installed
+// engine and under the same three limits: a fresh Engine per attempt, the same
+// instruction budget, no bridges, and the context crossing as a pythonCall
+// argument. Nothing here drains host requests, UI or Python input.
+import initZipp, { Engine, zippInstanceUsage, zippProfile } from '../../../vendor/zipp-wasm/zipp_wasm.js';
 // Canonical standard library — single source of truth, shared with the backend
 // guest (ui/scripts/sync-prelude.mjs writes the backend copy).
 import PRELUDE from './prelude.js?raw';
+import {
+  ENTRY_FUNCTION,
+  ENTRY_MODULE,
+  authorMessage,
+  isPythonKind,
+  modesFor,
+  projectFiles,
+  type PythonMode,
+} from './python/pythonContract';
 
 export type EvalKind = 'condition' | 'calc' | 'validate' | 'test' | 'syntax' | 'applogic' | 'flow';
+
+/** The language of author code. Absent means JavaScript, as all logic was before Python. */
+export type LogicLanguage = 'javascript' | 'python';
 
 /** The subset of `zippInstanceUsage()` a host recycles on (audit ZP-01). */
 export interface InstanceUsage {
@@ -41,15 +59,33 @@ export interface InstanceUsage {
   /** Bytes of dynamically compiled functions/classes the instance still holds. */
   retainedBytes: number;
   dynamicCodeCalls: number;
+  /** A guest trapped the instance (see instanceTrapped); nothing more can run on it. */
+  trapped?: true;
 }
+
+/**
+ * Set when a Python evaluation traps the WASM instance: a panic inside the engine
+ * surfaces as a WebAssembly "unreachable", and every later call on the instance
+ * fails. ZIPP v0.0.18 does this for a long run of sys.stdout.write calls without
+ * a newline (a few thousand; slow enough that the default wall clock usually
+ * kills the Worker first).
+ */
+let instanceTrapped = false;
+const TRAPPED_MESSAGE = 'The app engine stopped on an internal error (a WebAssembly trap) and restarts for the next evaluation.';
 
 /**
  * What THIS WASM instance has accumulated across every engine it disposed.
  * Every evaluation here compiles the expression dynamically, so this grows
  * with use and only a fresh instance (a new Worker) reclaims it. Returns
  * zeros before the engine is loaded or if the artifact cannot answer.
+ *
+ * A trapped instance reports itself over any retention budget, so engine.ts
+ * replaces the Worker through the same quiet-moment recycle.
  */
 export function instanceUsage(): InstanceUsage {
+  if (instanceTrapped) {
+    return { enginesCreated: 0, enginesDisposed: 0, retainedBytes: Number.MAX_SAFE_INTEGER, dynamicCodeCalls: 0, trapped: true };
+  }
   try {
     const usage = zippInstanceUsage() as {
       enginesCreated?: number; enginesDisposed?: number;
@@ -265,6 +301,17 @@ globalThis.console = { log: function(){}, warn: function(){}, error: function(){
 
 export interface EvalOptions {
   budgetMs?: number;
+  /**
+   * Python is for 'flow', 'condition', 'applogic' and 'syntax' only. Absent, null or '' is
+   * JavaScript, as the server reads a stored script or node (CustomLogicSanitizer,
+   * FlowLogicLanguages); any other name is refused, never run as JavaScript.
+   */
+  language?: LogicLanguage;
+}
+
+/** Whether a declared language is JavaScript: named so, or not named at all (absent, null, ''). */
+function isJavaScript(language: unknown): boolean {
+  return language === undefined || language === null || language === '' || language === 'javascript';
 }
 
 /**
@@ -295,14 +342,21 @@ export async function runEval(
 ): Promise<unknown> {
   await ready();
   void (options.budgetMs ?? DEFAULT_BUDGET_MS); // the deadline is the Worker's; see the header
+  if (instanceTrapped) throw new Error(TRAPPED_MESSAGE);
+  if (!isJavaScript(options.language)) {
+    return runPython(kind, expression, context, String(options.language));
+  }
 
   const contextJson = kind === 'syntax' ? '{}' : JSON.stringify(context ?? {});
   const program = EMIT_PREAMBLE + buildProgram(kind, expression, contextJson);
 
   // A fresh Engine per evaluation, with no capabilities granted and no bridges
-  // installed: one expression can never observe or influence another.
-  const engine = new Engine();
+  // installed: one expression can never observe or influence another. It is
+  // built inside the guard: a trap while constructing it (a WebAssembly
+  // "unreachable") poisons the instance exactly like one mid-evaluation.
+  let engine: Engine | undefined;
   try {
+    engine = new Engine();
     engine.setInstructionBudget(INSTRUCTION_BUDGET_STEPS);
     engine.initScript(program);
     const replies = engine.evalInContext('__replies.length ? __replies[__replies.length - 1] : null');
@@ -314,7 +368,132 @@ export async function runEval(
       throw new SandboxGuestError(outcome.error || 'evaluation failed');
     }
     return sanitizeOut(outcome.value);
+  } catch (err) {
+    if (err instanceof WebAssembly.RuntimeError) {
+      // Never a guest result: flag the instance so engine.ts replaces the Worker.
+      instanceTrapped = true;
+      throw new Error(TRAPPED_MESSAGE, { cause: err });
+    }
+    throw err;
   } finally {
-    engine.dispose();
+    // A trapped instance has nothing left to dispose.
+    if (engine && !instanceTrapped) engine.dispose();
   }
+}
+
+/** The languages the loaded engine compiles, from its own profile. */
+function profileLanguages(): string[] {
+  try {
+    const profile = JSON.parse(zippProfile()) as { languages?: unknown };
+    return Array.isArray(profile.languages)
+      ? profile.languages.filter((language): language is string => typeof language === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/** The installed engine's languages (its zippProfile), once the engine has loaded. */
+export async function engineLanguages(): Promise<string[]> {
+  await ready();
+  return profileLanguages();
+}
+
+/** Whether the loaded engine has the Python frontend; a Worker's engine never changes. */
+let pythonAvailable: boolean | undefined;
+
+// Flow sources whose expression compile failed. That compile ran none of the author's
+// code, so repeating it for the same source only costs time: later evaluations start with
+// the module. Keyed by the source itself rather than a digest, because SubtleCrypto is
+// missing on plain-HTTP LAN origins (zipp-bytes.ts) and a weak hash that collided would run
+// an expression as a module and yield None. Per Worker and bounded; a recycle clears it.
+// A source over the size cap is not kept: it pays the failed compile again instead.
+const moduleSources = new Set<string>();
+const MODULE_SOURCES_LIMIT = 256;
+const MODULE_SOURCE_MAX_CHARS = 64 * 1024;
+
+function rememberModuleSource(source: string): void {
+  if (source.length > MODULE_SOURCE_MAX_CHARS) return;
+  if (moduleSources.size >= MODULE_SOURCES_LIMIT) {
+    const oldest = moduleSources.values().next();
+    if (!oldest.done) moduleSources.delete(oldest.value);
+  }
+  moduleSources.add(source);
+}
+
+type PythonAttempt =
+  | { ok: true; value: unknown }
+  | { ok: false; phase: 'init' | 'run'; kind: string; message: string };
+
+/**
+ * One fresh Engine: budget, project, one call, dispose. The Engine is built inside the guard,
+ * so a trap while constructing it is reported (and the instance retired) like any other.
+ */
+function attemptPython(mode: PythonMode, source: string, context: unknown): PythonAttempt {
+  let engine: Engine | undefined;
+  let phase: 'init' | 'run' = 'init';
+  try {
+    engine = new Engine();
+    engine.setInstructionBudget(INSTRUCTION_BUDGET_STEPS);
+    engine.initPythonProject(projectFiles(mode, source), ENTRY_MODULE, []);
+    if (mode === 'syntax') return { ok: true, value: null };
+    phase = 'run';
+    return { ok: true, value: engine.pythonCall(ENTRY_FUNCTION, [context]) };
+  } catch (err) {
+    if (err instanceof WebAssembly.RuntimeError) {
+      instanceTrapped = true;
+      return { ok: false, phase, kind: 'trap', message: TRAPPED_MESSAGE };
+    }
+    // lastErrorKind describes the throw being handled; after a success it is stale.
+    let kind = 'unknown';
+    try {
+      if (engine) kind = engine.lastErrorKind();
+    } catch {
+      // nothing to classify with: reported as a host error
+    }
+    const message = typeof err === 'string' ? err : err instanceof Error ? err.message : String(err);
+    return { ok: false, phase, kind, message };
+  } finally {
+    try {
+      engine?.dispose();
+    } catch {
+      // a 'source' or 'resource' error has already torn it down
+    }
+  }
+}
+
+async function runPython(
+  kind: EvalKind,
+  source: string,
+  context: Record<string, unknown>,
+  language: string
+): Promise<unknown> {
+  // Plain Errors, not SandboxGuestError: a caller asked for something this host cannot
+  // do, which is not a guest result.
+  if (language !== 'python') throw new Error(`Unknown logic language: ${language}`);
+  if (!isPythonKind(kind)) throw new Error(`Python is not available for '${kind}' evaluations.`);
+  pythonAvailable ??= profileLanguages().includes('python');
+  if (!pythonAvailable) {
+    throw new Error('This app engine cannot run Python logic: the installed ZIPP build has no Python frontend.');
+  }
+
+  // The JSON view the JavaScript path parses in the guest: a Date becomes its string and an
+  // undefined member drops out, so both languages see the same values.
+  const ctx: unknown = kind === 'syntax' ? {} : JSON.parse(JSON.stringify(context ?? {}));
+  let modes = modesFor(kind, source);
+  if (modes.length > 1 && moduleSources.has(source)) modes = modes.slice(1);
+
+  let mode = modes[0];
+  let outcome = attemptPython(mode, source, ctx);
+  if (!outcome.ok && outcome.phase === 'init' && outcome.kind === 'source' && modes.length > 1) {
+    rememberModuleSource(source);
+    mode = modes[1];
+    outcome = attemptPython(mode, source, ctx);
+  }
+  if (outcome.ok) return sanitizeOut(outcome.value);
+  if (outcome.kind === 'source' || outcome.kind === 'guest') {
+    throw new SandboxGuestError(authorMessage(outcome.message, mode, source));
+  }
+  // resource (instruction, heap or output budget), conversion, usage, a trap: host errors.
+  throw new Error(outcome.message);
 }

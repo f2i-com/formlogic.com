@@ -84,8 +84,9 @@ export interface CustomAppLogicApi {
    * Run onConnectorEvent for an EXTERNALLY-delivered connector event (a FormLogic
    * Desktop SSE envelope, or a mock simulator push) — the SAME pipeline the host chains
    * after a connector.request effect, so scripts see one event shape either way.
+   * `languages` runs only the scripts in those languages (the desktop bridge's split).
    */
-  runConnectorEvent: (event: Record<string, unknown>) => Promise<AppLogicHookOutcome>;
+  runConnectorEvent: (event: Record<string, unknown>, options?: { languages?: readonly string[] }) => Promise<AppLogicHookOutcome>;
 }
 
 export function useCustomAppLogic({ formId, applyValues, formCustomLogic }: UseCustomAppLogicOptions): CustomAppLogicApi {
@@ -185,7 +186,8 @@ export function useCustomAppLogic({ formId, applyValues, formCustomLogic }: UseC
     async (
       hook: CustomAppLogicHookName,
       answers: Record<string, unknown>,
-      event?: unknown
+      event?: unknown,
+      languages?: readonly string[]
     ): Promise<AppLogicHookOutcome> => {
       const appBundle = useAppRuntimeStore.getState().config?.app.customLogic;
       const bundle = mergeBundles(appBundle, formBundleRef.current);
@@ -195,6 +197,7 @@ export function useCustomAppLogic({ formId, applyValues, formCustomLogic }: UseC
         hook,
         input: { answers, values: answers, meta: buildMeta(), event, storage: readLogicStorageSnapshot() },
         handlers,
+        languages,
       });
     },
     [handlers, buildMeta]
@@ -205,7 +208,7 @@ export function useCustomAppLogic({ formId, applyValues, formCustomLogic }: UseC
     runScreenEnter: useCallback(() => run('onScreenEnter', {}), [run]),
     runBeforeSubmit: useCallback((answers) => run('onBeforeSubmit', answers), [run]),
     runAfterSubmit: useCallback((answers) => run('onAfterSubmit', answers), [run]),
-    runConnectorEvent: useCallback((event) => run('onConnectorEvent', {}, event), [run]),
+    runConnectorEvent: useCallback((event, options) => run('onConnectorEvent', {}, event, options?.languages), [run]),
   };
 }
 

@@ -10,6 +10,7 @@
 // in the full F2I editor degrade loudly, never silently.
 import { getDesktopBaseUrl } from '../desktop/desktopTypes';
 import type { FlowRunErrorCode, WorkflowGraphNode } from '../../types/flows';
+import type { LogicLanguage } from '../../lib/formlogic/zipp-host';
 import { extractByPath, renderRequestTemplate, type AiCapability, type ResolvedAiProvider } from './aiProviders';
 import type { DefaultLlmOutcome } from './aiDefault';
 import {
@@ -75,6 +76,62 @@ const NODE_TIMEOUT_MAX_MS = 30000;
 
 /** Capability a flow must declare (nodeCapabilities) before storage_set / formlogic.store may write. */
 export const KV_WRITE_CAPABILITY = 'formlogic.kv.write';
+
+// ── Logic languages (formlogic-python/1) ──────────────────────────────────────────────────
+// condition and logic_block nodes run author code; `data.language` picks its language.
+// FlowService::sanitizeFlowJson (FlowLogicLanguages.php) accepts exactly the same values,
+// so a flow that saves also runs.
+
+/** The languages a code node may declare. */
+export const LOGIC_LANGUAGES: readonly LogicLanguage[] = ['javascript', 'python'];
+
+/** Node types whose code runs in the sandbox in the language `data.language` names. */
+export const CODE_NODE_TYPES: readonly string[] = ['condition', 'logic_block'];
+
+function isLogicLanguage(value: string): value is LogicLanguage {
+  return (LOGIC_LANGUAGES as readonly string[]).includes(value);
+}
+
+/**
+ * The language a code node declares. Absent, null or '' is JavaScript: every graph saved
+ * before Python has no language. Anything else is returned as written (a non-string as its
+ * JSON text), so the caller decides how to refuse it.
+ */
+export function declaredLogicLanguage(data: Record<string, unknown>): string {
+  const raw = data.language;
+  if (raw === undefined || raw === null || raw === '') return 'javascript';
+  return typeof raw === 'string' ? raw : JSON.stringify(raw) ?? String(raw);
+}
+
+/**
+ * The capability token a Desktop heartbeat carries for each logic language it runs
+ * ('logic-language:python'; FlowLogicLanguages::fromCapabilities). A Desktop that names none is
+ * one built before Python, which runs Python as JavaScript.
+ */
+export function logicLanguageCapability(language: string): string {
+  return `logic-language:${language}`;
+}
+
+/**
+ * Whether a Desktop advertising `capabilities` runs every language in `languages`. JavaScript
+ * needs no token: every Desktop runs it.
+ */
+export function capabilitiesRunLanguages(capabilities: readonly string[], languages: readonly string[]): boolean {
+  return languages.every((language) => language === 'javascript' || capabilities.includes(logicLanguageCapability(language)));
+}
+
+/** Every language a graph's code nodes declare, sorted and distinct (invalid ones as written). */
+export function flowLogicLanguages(graph: { nodes?: unknown } | null | undefined): string[] {
+  const nodes = graph && Array.isArray(graph.nodes) ? (graph.nodes as unknown[]) : [];
+  const languages = new Set<string>();
+  for (const node of nodes) {
+    if (!node || typeof node !== 'object') continue;
+    const { type, data } = node as { type?: unknown; data?: unknown };
+    if (typeof type !== 'string' || !CODE_NODE_TYPES.includes(type)) continue;
+    languages.add(declaredLogicLanguage(data && typeof data === 'object' ? (data as Record<string, unknown>) : {}));
+  }
+  return [...languages].sort();
+}
 
 // ── formlogic_list_responses contract (docs/FORMLOGIC_FLOWS.md §4) ─────────────────────────
 // FROZEN CONTRACT — the desktop Rust runner mirrors this exactly. The node fetches up to
@@ -146,14 +203,15 @@ export interface FlowExecutorDeps {
    * (100ms–30s). It sizes the engine's wall-clock watchdog, which terminates
    * the evaluation Worker, instead of that watchdog always using its default.
    * Inside the VM the limits count work (instructions, heap), not time.
+   * `language` is the node's `data.language`, resolved: executeNode always passes it.
    */
-  evaluateBoolean(expr: string, ctx: Record<string, unknown>, budgetMs?: number): Promise<boolean>;
+  evaluateBoolean(expr: string, ctx: Record<string, unknown>, budgetMs?: number, language?: LogicLanguage): Promise<boolean>;
   /**
    * Sandboxed value expression over a JSON context (ZIPP — never eval).
    * `budgetMs` is logic_block's clamped `data.timeoutMs` (or the 2s default) —
-   * see `evaluateBoolean`.
+   * see `evaluateBoolean`, as is `language`.
    */
-  evaluateExpression(expr: string, ctx: Record<string, unknown>, budgetMs?: number): Promise<unknown>;
+  evaluateExpression(expr: string, ctx: Record<string, unknown>, budgetMs?: number, language?: LogicLanguage): Promise<unknown>;
   /** Read a form's responses with the viewer's session/permissions. */
   listResponses(formId: string, query?: Record<string, unknown>): Promise<unknown[]>;
   /** Submit through the normal authenticated pipeline (validation + onSubmit + idempotency). */
@@ -368,6 +426,17 @@ function exprContext(ctx: FlowNodeContext): Record<string, unknown> {
     nodes: ctx.scope.nodes ?? {},
     upstream: ctx.scope.upstream ?? null,
   };
+}
+
+/** A code node's language; one no runtime implements fails the run as invalid_flow. */
+function requireLogicLanguage(node: WorkflowGraphNode, data: Record<string, unknown>): LogicLanguage {
+  const language = declaredLogicLanguage(data);
+  if (isLogicLanguage(language)) return language;
+  throw new FlowExecError(
+    'invalid_flow',
+    `Node '${node.id}' (${node.type}) has an unknown language ${JSON.stringify(language)}: use 'javascript' or 'python'`,
+    node.id
+  );
 }
 
 /** Default KV scope for a node: node data.scope, else 'flow:<slug>', else 'app' (docs §9). */
@@ -1520,8 +1589,9 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
       // before. condition keeps its existing throw-on-error/timeout behavior — only the
       // ACTUAL budget used is now configurable.
       const expr = requireString(node, data, ['expr', 'expression', 'condition']);
+      const language = requireLogicLanguage(node, data);
       const budgetMs = clampDeclaredTimeoutMs(data);
-      return await deps.evaluateBoolean(expr, exprContext(ctx), budgetMs);
+      return await deps.evaluateBoolean(expr, exprContext(ctx), budgetMs, language);
     }
 
     case 'template': {
@@ -1537,6 +1607,8 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
       // default (data.timeoutMs overrides within 100ms..30s) so a wedged evaluation can't
       // stall the run budget.
       const expr = requireString(node, data, ['expr', 'code', 'expression']);
+      // Before the KV read: an unknown language fails the run with nothing fetched.
+      const language = requireLogicLanguage(node, data);
       let kv: Record<string, unknown> = {};
       if (deps.kvList) {
         try {
@@ -1554,7 +1626,7 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
       // non-swallowing for the flow path: a timeout/error propagates as a rejection
       // instead of resolving to `null`, so withNodeTimeout's race and a sandbox
       // rejection both surface as a real flow failure, matching condition's behavior.
-      return await withNodeTimeout(deps.evaluateExpression(expr, frozenCtx, timeoutMs), timeoutMs, node);
+      return await withNodeTimeout(deps.evaluateExpression(expr, frozenCtx, timeoutMs, language), timeoutMs, node);
     }
 
     case 'llm_chat':

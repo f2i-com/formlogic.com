@@ -93,15 +93,17 @@ All paths are owner-scoped: a key only ever sees flows/bindings/runs of flows it
 
 | Method | Path | Scope |
 |---|---|---|
-| `GET` | `/flows` (`?appId=` / `?workspace=1`) | `flows:read` |
+| `GET` | `/flows` (`?appId=` / `?workspace=1` / `?logicLanguages=javascript,python`) — the graphs a Desktop runs; absent `logicLanguages` = JavaScript only, so flows whose code (including what a package preset lowers to) needs another language are left out; each flow carries the `logicLanguages` it needs; a malformed value is `400`. The E2E flow relay applies the same rule: `POST /api/desktop/flows/run` is `409 language_unsupported` unless the target Desktop's heartbeat advertises `logic-language:<id>`, and `POST /api/v1/desktop-flows/{id}/claim` is `409` unless its body declares `logicLanguages` (see FORMLOGIC_DESKTOP.md §8) | `flows:read` |
 | `GET` | `/flow-bindings` (`?formId=`) | `flows:read` |
 | `GET` | `/flow-runs` (`?flowId=&status=&appId=&page=&limit=`) | `flows:read` |
-| `GET` | `/flow-runs/queued` | `flows:read` |
-| `POST` | `/flow-runs/{runId}/claim` — `{runtime:'browser'\|'desktop', instanceId?}`; `409` if already claimed | `flows:write` |
+| `GET` | `/flow-runs/queued` (`?logicLanguages=javascript,python`; absent = JavaScript only, so runs of flows with Python code are left out) | `flows:read` |
+| `POST` | `/flow-runs` — reserve: `{flowSlug, appId?, bindingId?, triggerEvent, correlationId, idempotencyKey, inputSnapshot?, queued?, logicLanguages?}`; `409 language_unsupported` when the flow has code in a language `logicLanguages` lacks (absent = JavaScript only); a `queued: true` reserve is not gated (it runs nothing; the claim is) | `flows:write` |
+| `POST` | `/flow-runs/{runId}/claim` — `{runtime:'browser'\|'desktop', instanceId?, logicLanguages?}`; `409` if already claimed, or `language_unsupported` as for reserve | `flows:write` |
 | `PATCH` | `/flow-runs/{runId}` — complete: `{status, result?, error?}`; `409` if already finalized | `flows:write` |
 | `GET` | `/flow-kv` (`?scope=&k=&appId=`) | `flows:read` |
 | `PUT` | `/flow-kv` — `{scope, k, v, appId?}` (value ≤ 64 KiB, ≤ 500 keys/scope) | `flows:write` |
 | `DELETE` | `/flow-kv` (`?scope=&k=&appId=`) | `flows:write` |
+| `GET` | `/app-logic` (`?app=<id\|slug>&languages=javascript,python`) — the owner's app-logic bundles, for running `onConnectorEvent` scripts headless; only scripts in `languages` are listed (absent = JavaScript only, so Python scripts are left out); a malformed `languages` is `400` | `flows:read` |
 | `DELETE` | `/desktop-connections/self` — self-unlink: removes the calling install's own connection row and revokes the calling key. No id (the key identifies the install); a hand-entered key with no connection is left untouched | `flows:write` |
 
 ### Remote command relay (`connector:relay`) — desktop runtime side

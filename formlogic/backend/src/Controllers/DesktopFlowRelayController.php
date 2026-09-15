@@ -8,6 +8,7 @@ use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Services\DesktopCommandService;
 use FormLogic\Services\DesktopFlowRelayService;
 use FormLogic\Services\FlowService;
+use FormLogic\Services\Flows\FlowLogicLanguages;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -55,7 +56,9 @@ class DesktopFlowRelayController
      * idempotencyKey?}. The flow must belong to the session user (a run of a foreign flow can
      * never be enqueued — the desktop would execute it with the owner's authority). The SERVER
      * validates an explicit target against the owner's linked computers, or resolves the
-     * flow assignment / single fresh desktop when no target was selected.
+     * flow assignment / single fresh desktop when no target was selected. A flow whose code
+     * needs a language other than JavaScript is queued only for a target Desktop that
+     * advertises it (409 language_unsupported otherwise; formlogic-python/1).
      */
     public function enqueue(Request $request, Response $response): Response
     {
@@ -97,6 +100,25 @@ class DesktopFlowRelayController
         }
         if ($resolved['target'] !== null) {
             $body['targetInstanceId'] = $resolved['target'];
+        }
+
+        // formlogic-python/1: the Desktop that claims this run fetches the flow and runs it. One
+        // built before Python ignores data.language and runs Python as JavaScript, so a flow
+        // whose code needs a language other than JavaScript is queued only for a Desktop whose
+        // heartbeat advertises it ('logic-language:<id>'). With no target (no Desktop online)
+        // any Desktop could claim it, so none is known to run it: refused too.
+        $needed = $this->flows->logicLanguagesOf($flow);
+        if (array_diff($needed, [FlowLogicLanguages::JAVASCRIPT]) !== []) {
+            $target = $resolved['target'];
+            $missing = FlowLogicLanguages::missing(
+                $needed,
+                $target !== null ? $this->flows->desktopLogicLanguages((string) $userId, $target) : null
+            );
+            if ($missing !== []) {
+                return $this->languageUnsupported($response, $missing, $target !== null
+                    ? 'the selected computer does not advertise it. Update OAIY on that computer'
+                    : 'no linked computer that runs it is online. Open an up-to-date OAIY');
+            }
         }
 
         try {
@@ -236,7 +258,11 @@ class DesktopFlowRelayController
         return $this->jsonResponse($response, ['requests' => $requests]);
     }
 
-    /** POST /api/v1/desktop-flows/{id}/claim {instanceId} — pending→claimed, single-flight per target. */
+    /**
+     * POST /api/v1/desktop-flows/{id}/claim {instanceId, logicLanguages?} — pending→claimed,
+     * single-flight per target. A claim that does not declare every language the flow's code
+     * needs (absent = JavaScript only) is 409 language_unsupported and changes nothing.
+     */
     public function claimV1(Request $request, Response $response, array $args): Response
     {
         [$userId, $err] = $this->desktopOwner($request, $response);
@@ -251,6 +277,22 @@ class DesktopFlowRelayController
         }
         if (is_array($body)) {
             $body['instanceId'] = $resolvedInstance;
+        }
+        // formlogic-python/1: the claimant runs the flow as it is now, so it must run every
+        // language that flow's code needs (`logicLanguages`; absent = a Desktop from before
+        // Python, JavaScript only). Checked before the claim, which then changes nothing.
+        try {
+            $claimantLanguages = FlowLogicLanguages::fromCaller(is_array($body) ? ($body['logicLanguages'] ?? null) : null);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonError($response, $e->getMessage(), 400);
+        }
+        $pending = $this->relay->get((string) ($args['id'] ?? ''), (string) $userId);
+        $flow = $pending !== null ? $this->flows->getOwnedFlow((string) $userId, (string) $pending['flowId']) : null;
+        if ($flow !== null && !FlowLogicLanguages::runsAll($claimantLanguages)) {
+            $missing = FlowLogicLanguages::missing($this->flows->logicLanguagesOf($flow), $claimantLanguages);
+            if ($missing !== []) {
+                return $this->languageUnsupported($response, $missing, 'this runtime does not declare it. Update OAIY');
+            }
         }
         try {
             $req = $this->relay->claim((string) ($args['id'] ?? ''), (string) $userId, is_array($body) ? $body : []);
@@ -340,6 +382,27 @@ class DesktopFlowRelayController
     }
 
     // ── Shared helpers ──
+
+    /**
+     * 409 language_unsupported (FlowLogicLanguages), the shape FlowController answers reserve and
+     * claim refusals with: {error, code, languages, message}. Nothing was queued or claimed.
+     *
+     * @param list<string> $languages what the Desktop lacks
+     */
+    private function languageUnsupported(Response $response, array $languages, string $why): Response
+    {
+        $names = array_map(
+            static fn (string $l): string => ['python' => 'Python', 'javascript' => 'JavaScript'][$l] ?? $l,
+            $languages
+        );
+        return $this->jsonResponse($response, [
+            'error' => true,
+            'code' => 'language_unsupported',
+            'languages' => $languages,
+            'message' => 'This flow has ' . implode(', ', $names) . ' code, and ' . $why
+                . ', or run the flow in the browser.',
+        ], 409);
+    }
 
     /**
      * Encode one progress frame as an SSE event. The envelope is base64 sealed bytes — the

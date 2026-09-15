@@ -145,6 +145,12 @@ export interface RuntimeFlowDefinition {
   outputSchema: Record<string, unknown> | null;
   nodeCapabilities: string[] | null;
   version: number;
+  /**
+   * The logic languages running this flow needs (formlogic-python/1), computed by the server
+   * from what the graph lowers to, so a package preset's Python counts. Optional: servers from
+   * before Python omit it.
+   */
+  logicLanguages?: string[];
 }
 
 /** Enabled binding as served to the app runtime (GET /api/app/{slug}/flows). */

@@ -1,10 +1,12 @@
 // Deploy panel: author sandboxed app-logic in-product (spec §54).
 //
 // Owners add scripts through a guided modal (pick a hook with a plain-language description,
-// then start blank or from that hook's starter snippet), edit them in Monaco-backed cards
-// (hook badge, optional description, enable toggle, permission quick-add chips), and
-// "Test run" each one through the real host (ZIPP sandbox) with a sample ctx before saving.
+// a language, then start blank or from that hook's starter snippet), edit them in Monaco-backed
+// cards (hook badge, language, optional description, enable toggle, permission quick-add chips),
+// and "Test run" each one through the real host (ZIPP sandbox) with a sample ctx before saving.
 // Persists via api.updateApp; the backend re-sanitizes + re-validates on save and on submit.
+// A script is JavaScript unless its `language` says Python (formlogic-python/1, `def run(ctx)`);
+// changing a card's language never rewrites its source.
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Braces, ChevronDown, ChevronRight, Play, Plus, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
@@ -17,7 +19,14 @@ import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { Switch } from '../ui/Switch';
 import { CodeEditor } from '../ui/CodeEditor';
 import { EmptyState } from '../ui/EmptyState';
-import type { CustomAppLogicBundle, CustomAppLogicHookName, CustomAppLogicPermission, CustomAppLogicScript } from '../../types/customAppLogic';
+import { BLANK_SOURCES, SAMPLE_CTX, STARTERS } from './appLogicStarters';
+import type {
+  CustomAppLogicBundle,
+  CustomAppLogicHookName,
+  CustomAppLogicLanguage,
+  CustomAppLogicPermission,
+  CustomAppLogicScript,
+} from '../../types/customAppLogic';
 
 // The four hooks most apps reach for first; the rest sit behind "More hooks" in the add modal.
 const PRIMARY_HOOKS: CustomAppLogicHookName[] = ['onScreenEnter', 'onBeforeSubmit', 'onConnectorEvent', 'onAfterSubmit'];
@@ -37,40 +46,15 @@ const HOOK_INFO: Record<CustomAppLogicHookName, string> = {
   calculateDashboardState: 'Compute values for the app dashboard to read.',
 };
 
-// "Start with a starter" source per hook — small, working, and safe to run under Test.
-const STARTER: Record<CustomAppLogicHookName, string> = {
-  onBeforeSubmit: "function run(ctx) {\n  if (Number(ctx.answers.fuel_percent || 0) < 15) {\n    return { reject: true, message: 'Fuel is too low to start this shift.' };\n  }\n  return { ok: true };\n}",
-  onConnectorEvent: "function run(ctx) {\n  var e = ctx.event;\n  if (!e) return {};\n  // Phone abilities: e.result is the device data (see the 'device' connector).\n  if (e.command === 'gps.read') return { ui: { setValues: { latitude: e.result.lat, longitude: e.result.lng } } };\n  var v = e.vehicleStatus;\n  if (v) return { ui: { setValues: { fleet_number: v.fleetNumber, fuel_percent: v.fuelPercent } } };\n  return {};\n}",
-  onScreenEnter: "function run(ctx) {\n  // Ask a connector for data on screen open. Use 'device' for phone abilities\n  // (gps.read, battery.read, network.read, info.read, …) or your own connector.\n  return { effects: [{ type: 'connector.request', connectorId: 'device', command: 'gps.read' }] };\n}",
-  onAfterSubmit: "function run(ctx) {\n  return { ui: { toast: { message: 'Submission saved.', level: 'success' } } };\n}",
-  onAppStart: "function run(ctx) {\n  return { ui: { toast: { message: 'Welcome back.', level: 'info' } } };\n}",
-  onScreenLeave: "function run(ctx) {\n  // Remember the last screen for the next visit.\n  return { effects: [{ type: 'storage.set', key: 'last_screen', value: ctx.meta.screenId || '' }] };\n}",
-  onButtonClick: "function run(ctx) {\n  return { ui: { navigate: { screenId: 'dashboard' } } };\n}",
-  onSyncConflict: "function run(ctx) {\n  // ctx.event carries the clashing copies; return {} to accept the default resolution.\n  return {};\n}",
-  mapConnectorDataToForm: "function run(ctx) {\n  var v = (ctx.event && ctx.event.vehicleStatus) || {};\n  return { ui: { setValues: { fleet_number: v.fleetNumber, fuel_percent: v.fuelPercent } } };\n}",
-  calculateDashboardState: "function run(ctx) {\n  return { value: { lastChecked: ctx.meta.now } };\n}",
-};
-
-const BLANK_SOURCE = 'function run(ctx) {\n  \n}';
-
 // Quick-add grants for the per-script permissions input.
 const COMMON_GRANTS = ['ui.setValues', 'ui.toast', 'connector.device.*', 'connector.vehicle.*'];
 
-// A representative ctx so authors can Test-run without a live form/connector.
-const SAMPLE_CTX = {
-  answers: { fuel_percent: 8, active_fault_codes: '', vehicle_id: 'TRUCK-044' },
-  values: {},
-  params: {},
-  meta: { nativeAvailable: false, offline: false, userRole: 'Owner', now: '2026-07-05T00:00:00Z' },
-  // A device gps.read result so Test-run exercises phone-ability scripts; vehicleStatus
-  // kept for the vehicle examples. Scripts read ctx.event.result.
-  event: {
-    connectorId: 'device',
-    command: 'gps.read',
-    result: { lat: -27.4698, lng: 153.0251, accuracy: 12 },
-    vehicleStatus: { vehicleId: 'TRUCK-044', fleetNumber: 'F044', fuelPercent: 8, faultCodes: ['P0123'] },
-  },
-};
+const LANGUAGE_OPTIONS: { value: CustomAppLogicLanguage; label: string }[] = [
+  { value: 'javascript', label: 'JavaScript' },
+  { value: 'python', label: 'Python' },
+];
+
+const scriptLanguage = (s: CustomAppLogicScript): CustomAppLogicLanguage => (s.language === 'python' ? 'python' : 'javascript');
 
 /** Human-readable summary of a host run — leads with the outcome + denied permissions, then full JSON. */
 function formatOutcome(o: AppLogicHookOutcome, applied: Record<string, unknown>): string {
@@ -86,11 +70,11 @@ function formatOutcome(o: AppLogicHookOutcome, applied: Record<string, unknown>)
 const parsePerms = (text: string) =>
   text.split(',').map((p) => p.trim()).filter(Boolean) as CustomAppLogicPermission[];
 
-/** Guided add-script modal: pick the hook (with descriptions), then blank vs starter. */
+/** Guided add-script modal: pick the hook (with descriptions), the language, then blank vs starter. */
 function AddScriptModal({ isOpen, onClose, onAdd }: {
   isOpen: boolean;
   onClose: () => void;
-  onAdd: (hook: CustomAppLogicHookName, source: string) => void;
+  onAdd: (hook: CustomAppLogicHookName, source: string, language: CustomAppLogicLanguage) => void;
 }) {
   // The shared Modal renders children ONLY while open, so the inner form below mounts fresh on
   // every open — its useState initializers ARE the reset (no reset-on-open effect needed).
@@ -103,11 +87,13 @@ function AddScriptModal({ isOpen, onClose, onAdd }: {
 
 function AddScriptForm({ onClose, onAdd }: {
   onClose: () => void;
-  onAdd: (hook: CustomAppLogicHookName, source: string) => void;
+  onAdd: (hook: CustomAppLogicHookName, source: string, language: CustomAppLogicLanguage) => void;
 }) {
   const [hook, setHook] = useState<CustomAppLogicHookName | null>(null);
+  const [language, setLanguage] = useState<CustomAppLogicLanguage>('javascript');
   const [start, setStart] = useState<'blank' | 'starter'>('blank');
   const [showMore, setShowMore] = useState(false);
+  const languageId = useId();
 
   const hookOption = (h: CustomAppLogicHookName) => {
     const selected = hook === h;
@@ -166,9 +152,21 @@ function AddScriptForm({ onClose, onAdd }: {
         </div>
 
         <div>
+          <label htmlFor={languageId} className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Language</label>
+          <select
+            id={languageId}
+            value={language}
+            onChange={(e) => setLanguage(e.target.value === 'python' ? 'python' : 'javascript')}
+            className="w-full sm:w-auto px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:outline-none cursor-pointer"
+          >
+            {LANGUAGE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+
+        <div>
           <p className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Start with</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {startOption('blank', 'Blank', 'An empty run(ctx) function to write yourself.')}
+            {startOption('blank', 'Blank', language === 'python' ? 'An empty def run(ctx) to write yourself.' : 'An empty run(ctx) function to write yourself.')}
             {startOption('starter', 'Starter example', hook ? `A small working snippet for ${hook}.` : 'A small working snippet for the chosen hook.')}
           </div>
         </div>
@@ -179,7 +177,7 @@ function AddScriptForm({ onClose, onAdd }: {
             size="sm"
             disabled={!hook}
             leftIcon={<Plus className="h-4 w-4" />}
-            onClick={() => { if (hook) onAdd(hook, start === 'starter' ? STARTER[hook] : BLANK_SOURCE); }}
+            onClick={() => { if (hook) onAdd(hook, start === 'starter' ? STARTERS[language][hook] : BLANK_SOURCES[language], language); }}
           >
             Add script
           </Button>
@@ -225,13 +223,15 @@ export function AppLogicPanel({ appId, initialLogic, onDirtyChange }: {
     ...(initialLogic?.connector ? { connector: initialLogic.connector } : {}),
   }), [scripts, appPerms, strict, initialLogic?.connector]);
 
-  const addScript = (hook: CustomAppLogicHookName, source: string) => {
+  const addScript = (hook: CustomAppLogicHookName, source: string, language: CustomAppLogicLanguage) => {
     setScripts((l) => [...l, {
       id: `script_${Math.random().toString(36).slice(2, 8)}`,
       hook,
       runtime: 'quickjs',
       source,
       enabled: true,
+      // Absent is JavaScript, as every script saved before Python is.
+      ...(language === 'python' ? { language } : {}),
     }]);
     setAddOpen(false);
   };
@@ -315,9 +315,10 @@ export function AppLogicPanel({ appId, initialLogic, onDirtyChange }: {
       {open && (
         <div className="mt-4 space-y-4">
           <p className="text-sm text-gray-600 dark:text-slate-400">
-            Sandboxed JavaScript that runs in the app runtime (on ZIPP in the browser) to prefill fields, warn, or block a submit.
+            Sandboxed JavaScript or Python that runs in the app runtime (on ZIPP in the browser) to prefill fields, warn, or block a submit.
             Scripts can only return <em>effects</em>; the server stays authoritative. Every effect needs a matching permission.
-            Device events that a linked desktop runtime handles run these scripts on the desktop instead.
+            Device events that a linked desktop runtime handles run these scripts on the desktop instead, except Python scripts
+            while the desktop does not run Python: those stay in the browser.
           </p>
 
           {scripts.length === 0 ? (
@@ -374,6 +375,15 @@ export function AppLogicPanel({ appId, initialLogic, onDirtyChange }: {
                     >
                       {ALL_HOOKS.map((h) => <option key={h} value={h}>{h}</option>)}
                     </select>
+                    {/* The source is kept as written; only the language it runs as changes. */}
+                    <select
+                      value={scriptLanguage(s)}
+                      onChange={(e) => update(s.id, { language: e.target.value === 'python' ? 'python' : undefined })}
+                      aria-label="Language"
+                      className="px-2.5 py-1.5 rounded-lg border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 text-xs font-medium focus:ring-2 focus:ring-primary-500 focus:outline-none cursor-pointer"
+                    >
+                      {LANGUAGE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
                     <input
                       value={s.description ?? ''}
                       onChange={(e) => update(s.id, { description: e.target.value || undefined })}
@@ -390,10 +400,22 @@ export function AppLogicPanel({ appId, initialLogic, onDirtyChange }: {
 
                   <div className={`p-4 space-y-3 ${s.enabled === false ? 'opacity-60' : ''}`}>
                     <p className="text-xs text-gray-500 dark:text-slate-400">{HOOK_INFO[s.hook]}</p>
+                    {scriptLanguage(s) === 'python' && (
+                      <p className="text-xs text-gray-500 dark:text-slate-400">
+                        Python: define <code className="font-mono">def run(ctx):</code> and return a dict. ctx is a dict
+                        (<code className="font-mono">ctx[&quot;answers&quot;]</code>); there is no datetime, base64, uuid or urllib.parse.
+                      </p>
+                    )}
 
-                    {/* Code editor (lazy Monaco, javascript) */}
+                    {/* Code editor (lazy Monaco, in the script's language) */}
                     <div className="rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden">
-                      <CodeEditor value={s.source} onChange={(v) => update(s.id, { source: v })} language="javascript" sdk="app" height={220} />
+                      <CodeEditor
+                        value={s.source}
+                        onChange={(v) => update(s.id, { source: v })}
+                        language={scriptLanguage(s)}
+                        sdk={scriptLanguage(s) === 'python' ? 'none' : 'app'}
+                        height={220}
+                      />
                     </div>
 
                     {/* Script-level permissions */}

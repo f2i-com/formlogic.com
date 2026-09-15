@@ -1,5 +1,5 @@
 import { logger } from '../logger';
-import type { EvalKind } from './zipp-host';
+import type { EvalKind, LogicLanguage } from './zipp-host';
 import type { WorkerRequest, WorkerResponse } from './formlogic.worker';
 import type { InstanceUsage } from './zipp-host';
 import { getZippWasmBytes } from './zipp-bytes';
@@ -85,7 +85,8 @@ function noteUsage(usage: InstanceUsage | undefined): void {
   workerEvaluations += 1;
   if (usage) lastUsage = usage;
   const overBudget = (usage?.retainedBytes ?? 0) >= INSTANCE_RETAINED_BUDGET_BYTES;
-  if (overBudget || workerEvaluations >= INSTANCE_MAX_EVALUATIONS) recyclePending = true;
+  // A trapped instance refuses every later evaluation (zipp-host instanceTrapped).
+  if (overBudget || usage?.trapped === true || workerEvaluations >= INSTANCE_MAX_EVALUATIONS) recyclePending = true;
 }
 
 /** Replace the Worker at a quiet moment: nothing in flight can be lost. */
@@ -178,7 +179,8 @@ async function evaluate(
   kind: EvalKind,
   expression: string,
   context: Record<string, unknown>,
-  budgetMs = DEFAULT_BUDGET_MS
+  budgetMs = DEFAULT_BUDGET_MS,
+  language?: LogicLanguage
 ): Promise<unknown> {
   const w = getWorker();
   const ready = workerReady;
@@ -194,11 +196,11 @@ async function evaluate(
   // The Worker may have been replaced while we waited; a request must go to the
   // one whose engine is ready.
   if (worker !== w) {
-    return evaluate(kind, expression, context, budgetMs);
+    return evaluate(kind, expression, context, budgetMs, language);
   }
 
   const id = nextId++;
-  const request: WorkerRequest = { id, kind, expression, context, budgetMs };
+  const request: WorkerRequest = { id, kind, expression, context, budgetMs, language };
 
   return new Promise<unknown>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -229,15 +231,18 @@ async function evaluate(
  * behavior for useConditionalLogic (which never passes one). FormLogic Flows'
  * `condition` node (flowDispatcher.ts) passes its own clamped `data.timeoutMs`,
  * which sizes the Worker watchdog (budgetMs + WATCHDOG_GRACE_MS, the only
- * wall-clock limit) instead of it always falling back to this default.
+ * wall-clock limit) instead of it always falling back to this default. It also
+ * passes the node's `data.language`; form conditions never do, so they stay
+ * JavaScript. A Python condition is judged by Python truthiness in the guest.
  */
 export async function evaluateCondition(
   expression: string,
   formData: Record<string, unknown>,
-  budgetMs = DEFAULT_BUDGET_MS
+  budgetMs = DEFAULT_BUDGET_MS,
+  language?: LogicLanguage
 ): Promise<boolean> {
   try {
-    const result = await evaluate('condition', expression, formData, budgetMs);
+    const result = await evaluate('condition', expression, formData, budgetMs, language);
     return Boolean(result);
   } catch (error) {
     logger.error('Error evaluating condition:', error);
@@ -302,7 +307,9 @@ export async function calculateValue(
  * result, or a function body with a top-level `return` (see zipp-host.ts, kind
  * 'flow'). The first two evaluate exactly as calculateValue() evaluates them.
  * Code with a top-level `return` gets only a returned value; a trailing
- * expression after it is ignored.
+ * expression after it is ignored. With `language` 'python' the code is a Python
+ * expression, or a module whose top-level `result` is the value
+ * (formlogic-python/1, python/pythonContract.ts).
  *
  * Reserved for flowDispatcher.ts's FlowExecutorDeps.evaluateExpression — do
  * not use this for calculated fields (useFormLogic.ts must keep calling
@@ -311,9 +318,10 @@ export async function calculateValue(
 export async function calculateValueForFlow(
   expression: string,
   formData: Record<string, unknown>,
-  budgetMs = DEFAULT_BUDGET_MS
+  budgetMs = DEFAULT_BUDGET_MS,
+  language?: LogicLanguage
 ): Promise<unknown> {
-  return evaluate('flow', expression, formData, budgetMs);
+  return evaluate('flow', expression, formData, budgetMs, language);
 }
 
 /**
@@ -325,13 +333,15 @@ export async function calculateValueForFlow(
  * result (effects / ui patch / reject / warnings). The trusted host
  * (appLogicHost) is responsible for permission-checking and applying any effects.
  * Throws on guest error or budget overrun, exactly like the other evaluators.
+ * A Python script declares `def run(ctx):` instead.
  */
 export async function runAppLogic(
   source: string,
   ctx: Record<string, unknown>,
-  budgetMs = DEFAULT_BUDGET_MS
+  budgetMs = DEFAULT_BUDGET_MS,
+  language?: LogicLanguage
 ): Promise<unknown> {
-  return evaluate('applogic', source, ctx, budgetMs);
+  return evaluate('applogic', source, ctx, budgetMs, language);
 }
 
 /**

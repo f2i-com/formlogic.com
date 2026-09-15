@@ -6,6 +6,7 @@ namespace FormLogic\Tests\Integration;
 
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
+use FormLogic\Helpers\CustomLogicSanitizer;
 use FormLogic\Services\AccountBackupService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppUserService;
@@ -493,6 +494,71 @@ class AccountBackupTest extends TestCase
     }
 
     // ── 3-5. rejection + all-or-nothing ─────────────────────────────────────
+
+    /**
+     * formlogic-python/1: app- and form-level app-logic scripts keep their language through an
+     * account backup. Saved the way the owner's PUTs save them (through the sanitizer), so this
+     * fails if either the save or the backup drops the language.
+     */
+    public function testAppLogicScriptLanguageSurvivesBackupRoundTrip(): void
+    {
+        $python = "def run(ctx):\n    return {}";
+        $bundle = static fn (string $id): array => CustomLogicSanitizer::sanitize(['scripts' => [
+            ['id' => $id, 'hook' => 'onBeforeSubmit', 'language' => 'python', 'source' => $python],
+            ['id' => $id . '-js', 'hook' => 'onAppStart', 'source' => 'function run(ctx) { return {}; }'],
+        ]]);
+        self::$apps->updateApp($this->app1, ['customLogic' => $bundle('app-py')]);
+        self::$forms->updateForm($this->f1, ['customLogic' => $bundle('form-py')]);
+
+        $zipPath = self::$backup->exportAccount($this->userId);
+        try {
+            $result = self::$backup->importAccount($zipPath, $this->userId);
+        } finally {
+            @unlink($zipPath);
+        }
+
+        $newApp = self::$apps->getApp((string) array_column($result['apps'], 'id', 'name')['Primary App']);
+        $appScripts = array_column($newApp['customLogic']['scripts'], null, 'id');
+        $this->assertSame('python', $appScripts['app-py']['language'] ?? null);
+        $this->assertSame($python, $appScripts['app-py']['source']);
+        $this->assertArrayNotHasKey('language', $appScripts['app-py-js']);
+
+        $newForm = self::$forms->getForm((string) array_column($result['forms'], 'id', 'title')['Clients']);
+        $formScripts = array_column($newForm['customLogic']['scripts'], null, 'id');
+        $this->assertSame('python', $formScripts['form-py']['language'] ?? null);
+        $this->assertArrayNotHasKey('language', $formScripts['form-py-js']);
+    }
+
+    /**
+     * Restore stores app logic as the backup carries it, so it is where a script in a language no
+     * runtime implements (a row saved before the save-time check, or a hand-edited backup) would
+     * come back to be misread. It is refused the way a flow node's unknown language is: the
+     * import fails naming the script, and nothing is created.
+     */
+    public function testRestoreRefusesAppLogicInALanguageNoRuntimeRuns(): void
+    {
+        $typo = static fn (string $id): string => (string) json_encode(['version' => 1, 'runtime' => 'quickjs', 'scripts' => [
+            ['id' => $id, 'hook' => 'onBeforeSubmit', 'runtime' => 'quickjs', 'language' => 'py', 'source' => "def run(ctx):\n    return {}"],
+        ]]);
+        foreach ([['apps', $this->app1, 'app-typo'], ['forms', $this->f1, 'form-typo']] as [$table, $id, $scriptId]) {
+            // Written directly: saving refuses it now.
+            self::$pdo->prepare("UPDATE {$table} SET custom_logic = ? WHERE id = ?")->execute([$typo($scriptId), $id]);
+            $zipPath = self::$backup->exportAccount($this->userId);
+            $before = $this->countUserResources($this->userId);
+            $refused = null;
+            try {
+                self::$backup->importAccount($zipPath, $this->userId);
+            } catch (\RuntimeException $e) {
+                $refused = $e;
+            } finally {
+                @unlink($zipPath);
+            }
+            $this->assertNotNull($refused, "$table: the restore must not store the script");
+            $this->assertStringContainsString("script '{$scriptId}' has an unsupported language 'py'", $refused->getMessage());
+            $this->assertSame($before, $this->countUserResources($this->userId), 'nothing may be created');
+            self::$pdo->prepare("UPDATE {$table} SET custom_logic = NULL WHERE id = ?")->execute([$id]);
+        }
+    }
 
     public function testTamperedEntryIsRejectedBeforeAnythingIsCreated(): void
     {

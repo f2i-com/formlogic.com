@@ -8,7 +8,8 @@ import { describe, expect, it, vi } from 'vitest';
 // condition node stays on evaluateCondition, an expression, as on the desktop runner.)
 // buildDefaultExecutorDeps() (the app-runtime-store-backed sibling used inside an app
 // runtime) wires these two functions IDENTICALLY — see flowDispatcher.ts — and is checked
-// alongside the workspace builder.
+// alongside the workspace builder. Both forward the node's language as the 4th argument
+// (undefined below, where a call passes none).
 vi.mock('../../lib/formlogic', () => ({
   evaluateCondition: vi.fn(async () => true),
   calculateValue: vi.fn(async () => {
@@ -24,27 +25,35 @@ describe('buildWorkspaceExecutorDeps — timeout-budget + swallow/throw wiring (
   it('evaluateBoolean forwards a declared budgetMs straight through to evaluateCondition', async () => {
     const deps = buildWorkspaceExecutorDeps();
     await deps.evaluateBoolean('inputs.x > 1', { inputs: { x: 2 } }, 4500);
-    expect(evaluateCondition).toHaveBeenCalledWith('inputs.x > 1', { inputs: { x: 2 } }, 4500);
+    expect(evaluateCondition).toHaveBeenCalledWith('inputs.x > 1', { inputs: { x: 2 } }, 4500, undefined);
   });
 
   it('evaluateBoolean forwards undefined when the node declared no timeoutMs', async () => {
     const deps = buildWorkspaceExecutorDeps();
     await deps.evaluateBoolean('true', {});
-    expect(evaluateCondition).toHaveBeenCalledWith('true', {}, undefined);
+    expect(evaluateCondition).toHaveBeenCalledWith('true', {}, undefined, undefined);
   });
 
   it('evaluateExpression uses the NON-swallowing calculateValueForFlow, never calculateValue', async () => {
     const deps = buildWorkspaceExecutorDeps();
     const result = await deps.evaluateExpression('1 + 1', {}, 3000);
     expect(result).toBe('flow-value');
-    expect(calculateValueForFlow).toHaveBeenCalledWith('1 + 1', {}, 3000);
+    expect(calculateValueForFlow).toHaveBeenCalledWith('1 + 1', {}, 3000, undefined);
     expect(calculateValue).not.toHaveBeenCalled();
   });
 
   it('evaluateExpression forwards undefined when logic_block declared no timeoutMs', async () => {
     const deps = buildWorkspaceExecutorDeps();
     await deps.evaluateExpression('1', {});
-    expect(calculateValueForFlow).toHaveBeenCalledWith('1', {}, undefined);
+    expect(calculateValueForFlow).toHaveBeenCalledWith('1', {}, undefined, undefined);
+  });
+
+  it('forwards the node language to both evaluators', async () => {
+    const deps = buildWorkspaceExecutorDeps();
+    await deps.evaluateBoolean('inputs["x"] > 1', { inputs: { x: 2 } }, 900, 'python');
+    expect(evaluateCondition).toHaveBeenLastCalledWith('inputs["x"] > 1', { inputs: { x: 2 } }, 900, 'python');
+    await deps.evaluateExpression('result = 1', {}, 2000, 'python');
+    expect(calculateValueForFlow).toHaveBeenLastCalledWith('result = 1', {}, 2000, 'python');
   });
 });
 
@@ -52,9 +61,13 @@ describe('buildDefaultExecutorDeps — same node evaluator wiring as the workspa
   it('forwards budgetMs to evaluateCondition and to the NON-swallowing calculateValueForFlow', async () => {
     const deps = buildDefaultExecutorDeps();
     await expect(deps.evaluateBoolean('inputs.x > 1', { inputs: { x: 2 } }, 1200)).resolves.toBe(true);
-    expect(evaluateCondition).toHaveBeenCalledWith('inputs.x > 1', { inputs: { x: 2 } }, 1200);
+    expect(evaluateCondition).toHaveBeenCalledWith('inputs.x > 1', { inputs: { x: 2 } }, 1200, undefined);
     await expect(deps.evaluateExpression('return 1;', {}, 2000)).resolves.toBe('flow-value');
-    expect(calculateValueForFlow).toHaveBeenCalledWith('return 1;', {}, 2000);
+    expect(calculateValueForFlow).toHaveBeenCalledWith('return 1;', {}, 2000, undefined);
     expect(calculateValue).not.toHaveBeenCalled();
+    await deps.evaluateBoolean('bool(inputs)', {}, 1000, 'python');
+    expect(evaluateCondition).toHaveBeenLastCalledWith('bool(inputs)', {}, 1000, 'python');
+    await deps.evaluateExpression('result = 2', {}, 2000, 'python');
+    expect(calculateValueForFlow).toHaveBeenLastCalledWith('result = 2', {}, 2000, 'python');
   });
 });

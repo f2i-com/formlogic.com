@@ -3,11 +3,16 @@ import {
   __resetFlowDispatcherForTests,
   __setFlowDispatcherDepsForTests,
   __setRuntimeFlowsForTests,
+  BROWSER_LOGIC_LANGUAGES,
   defaultDesktopRuntimeFresh,
+  defaultDesktopRuntimeStatus,
+  desktopTakesLanguages,
   dispatchFormEvent,
   isDesktopFlowChatProvider,
+  languagesKeptInBrowser,
   runFlowBySlug,
   shouldDeferEventToDesktop,
+  type DesktopRuntimeStatus,
   type FlowDispatcherDeps,
 } from './flowDispatcher';
 import { api } from '../../lib/api';
@@ -279,6 +284,222 @@ describe('desktop-first routing for connector events', () => {
         data: { connections: [{ lastSeenAt: '2026-07-13 03:00:00' }] },
       } as never);
       expect(await defaultDesktopRuntimeFresh()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      spy.mockRestore();
+    }
+  });
+});
+
+// formlogic-python/1: a Desktop built before Python ignores data.language, so the server refuses
+// and hides Python work from any caller that does not declare it. The browser therefore defers
+// a desktop-first binding only when a fresh Desktop can run every language its flow has code in
+// ('logic-language:python' in its heartbeat capabilities); everything else stays here.
+describe('Python bindings and the desktop-first split', () => {
+  function pythonGraph(): RuntimeFlows['flows'][number] {
+    return {
+      id: 'fd-py',
+      slug: 'py-echo',
+      name: 'Py echo',
+      engine: 'f2i',
+      flowJson: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'lb', type: 'logic_block', data: { expr: 'result = inputs["callerPhone"]', language: 'python' } },
+        ],
+        edges: [{ source: 'in', target: 'lb' }],
+      },
+      inputSchema: null,
+      outputSchema: null,
+      nodeCapabilities: null,
+      version: 1,
+    };
+  }
+
+  /** A JavaScript flow whose only step is a flow_call into the Python flow. */
+  function callsPythonGraph(): RuntimeFlows['flows'][number] {
+    return {
+      ...passthroughGraph(),
+      id: 'fd-parent',
+      slug: 'parent',
+      flowJson: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'call', type: 'flow_call', data: { flowId: 'fd-py' } },
+        ],
+        edges: [{ source: 'in', target: 'call' }],
+      },
+    };
+  }
+
+  const EVENT = 'aokie.call.ended';
+  const bindings = [
+    binding({ id: 'b-js', flow: 'echo', event: EVENT }),
+    binding({ id: 'b-py', flow: 'py-echo', event: EVENT }),
+  ];
+
+  function install(desktop: FlowDispatcherDeps['desktopRuntimeFresh']) {
+    const evaluateExpression = vi.fn(async (_expr: string, ctx: Record<string, unknown>) => (ctx.inputs as { callerPhone?: unknown }).callerPhone);
+    const harness = installDeps({
+      desktopRuntimeFresh: desktop,
+      executorDeps: {
+        evaluateBoolean: async () => true,
+        evaluateExpression,
+        listResponses: async () => [],
+        submitResponse: async () => ({}),
+        updateResponse: async () => ({}),
+        connectorRequest: async () => ({ ok: true }),
+      },
+    });
+    __setRuntimeFlowsForTests({ flows: [passthroughGraph(), pythonGraph(), callsPythonGraph()], bindings }, 'my-app');
+    return { harness, evaluateExpression };
+  }
+
+  const reservedBindings = (harness: Harness) => harness.reserveCalls.map((c) => c.bindingId);
+
+  it('a fresh Desktop without the python token takes the JavaScript binding; the Python one runs here', async () => {
+    const status: DesktopRuntimeStatus = { fresh: true, freshCapabilities: [['desktop-capabilities:1', 'logic-engine:zipp']] };
+    const { harness, evaluateExpression } = install(async () => status);
+    await dispatchFormEvent(EVENT, { formId: 'form-1', responseId: 'rp1', answers: { phone: '+617' } });
+    expect(reservedBindings(harness)).toEqual(['b-py']);
+    expect(evaluateExpression).toHaveBeenCalledWith('result = inputs["callerPhone"]', expect.anything(), expect.any(Number), 'python');
+    expect(harness.completeCalls[0].payload).toMatchObject({ status: 'done', result: { value: '+617' } });
+  });
+
+  it('a boolean probe (capabilities unknown) is a JavaScript-only Desktop', async () => {
+    const { harness } = install(async () => true);
+    await dispatchFormEvent(EVENT, { formId: 'form-1', responseId: 'rp2', answers: {} });
+    expect(reservedBindings(harness)).toEqual(['b-py']);
+  });
+
+  it('a fresh Desktop advertising logic-language:python takes every binding', async () => {
+    const status: DesktopRuntimeStatus = { fresh: true, freshCapabilities: [[], ['logic-language:python']] };
+    const { harness } = install(async () => status);
+    await dispatchFormEvent(EVENT, { formId: 'form-1', responseId: 'rp3', answers: {} });
+    expect(harness.reserveCalls).toHaveLength(0);
+  });
+
+  it('a stale Desktop or a failed probe leaves every binding to the browser', async () => {
+    let { harness } = install(async () => ({ fresh: false, freshCapabilities: [['logic-language:python']] }));
+    await dispatchFormEvent(EVENT, { formId: 'form-1', responseId: 'rp4', answers: {} });
+    expect(reservedBindings(harness).sort()).toEqual(['b-js', 'b-py']);
+
+    __resetFlowDispatcherForTests();
+    ({ harness } = install(async () => { throw new Error('offline'); }));
+    await dispatchFormEvent(EVENT, { formId: 'form-1', responseId: 'rp5', answers: {} });
+    expect(reservedBindings(harness).sort()).toEqual(['b-js', 'b-py']);
+  });
+
+  it('a JavaScript flow that calls a Python flow stays in the browser too', async () => {
+    const { harness } = install(async () => true);
+    __setRuntimeFlowsForTests(
+      { flows: [passthroughGraph(), pythonGraph(), callsPythonGraph()], bindings: [binding({ id: 'b-parent', flow: 'parent', event: EVENT })] },
+      'my-app'
+    );
+    await dispatchFormEvent(EVENT, { formId: 'form-1', responseId: 'rp6', answers: {} });
+    expect(reservedBindings(harness)).toEqual(['b-parent']);
+  });
+
+  // A package core preset can lower a contributed node to a Python logic_block. The stored graph
+  // then holds no code node at all, so only the server (which reads what it lowers to) can say.
+  it('a package preset that lowers to Python stays in the browser: the server says so', async () => {
+    const compile = vi.spyOn(api, 'compileFlow').mockResolvedValue({ data: { ok: true, ir: {
+      nodes: [{ id: 'in', type: 'input' }, { id: 'h', type: 'logic_block', data: { expr: 'result = inputs["callerPhone"]', language: 'python' } }],
+      edges: [{ source: 'in', target: 'h' }],
+    } } } as never);
+    try {
+      const { harness } = install(async () => ({ fresh: true, freshCapabilities: [['desktop-capabilities:1']] }));
+      const preset: RuntimeFlows['flows'][number] = {
+        ...passthroughGraph(),
+        id: 'fd-preset',
+        slug: 'preset',
+        flowJson: { nodes: [{ id: 'in', type: 'input' }, { id: 'h', type: 'com.acme.py.halve', data: {} }], edges: [{ source: 'in', target: 'h' }] },
+        logicLanguages: ['python'],
+      };
+      __setRuntimeFlowsForTests(
+        { flows: [passthroughGraph(), preset], bindings: [binding({ id: 'b-js', flow: 'echo', event: EVENT }), binding({ id: 'b-preset', flow: 'preset', event: EVENT })] },
+        'my-app'
+      );
+      await dispatchFormEvent(EVENT, { formId: 'form-1', responseId: 'rp8', answers: {} });
+      expect(reservedBindings(harness)).toEqual(['b-preset']);
+    } finally {
+      compile.mockRestore();
+    }
+  });
+
+  it('every reserve declares the languages this browser runs', async () => {
+    const { harness } = install(async () => false);
+    await dispatchFormEvent(EVENT, { formId: 'form-1', responseId: 'rp7', answers: {} });
+    await runFlowBySlug('py-echo', { input: { callerPhone: '+618' }, mode: 'sync' });
+    expect(harness.reserveCalls).toHaveLength(3);
+    for (const call of harness.reserveCalls) expect(call.logicLanguages).toEqual(['javascript', 'python']);
+    expect(BROWSER_LOGIC_LANGUAGES).toEqual(['javascript', 'python']);
+  });
+
+  it('shouldDeferEventToDesktop takes the languages of the work', async () => {
+    installDeps({ desktopRuntimeFresh: async () => ({ fresh: true, freshCapabilities: [['desktop-capabilities:1']] }) });
+    expect(await shouldDeferEventToDesktop('aokie.call.incoming')).toBe(true);
+    expect(await shouldDeferEventToDesktop('aokie.call.incoming', ['javascript'])).toBe(true);
+    expect(await shouldDeferEventToDesktop('aokie.call.incoming', ['javascript', 'python'])).toBe(false);
+    // A language nobody advertises (an unknown one fails the run here, visibly) is never deferred.
+    expect(await shouldDeferEventToDesktop('aokie.call.incoming', ['ruby'])).toBe(false);
+    expect(await shouldDeferEventToDesktop('form.submitted', [])).toBe(false);
+
+    expect(desktopTakesLanguages({ fresh: true, freshCapabilities: [['logic-language:python']] }, ['python'])).toBe(true);
+    expect(desktopTakesLanguages({ fresh: true, freshCapabilities: [] }, [])).toBe(true);
+    expect(desktopTakesLanguages({ fresh: false, freshCapabilities: [['logic-language:python']] }, [])).toBe(false);
+  });
+
+  it('languagesKeptInBrowser: the app-logic split — what a fresh Desktop does not take stays here', async () => {
+    const probe = vi.fn<NonNullable<FlowDispatcherDeps['desktopRuntimeFresh']>>();
+    installDeps({ desktopRuntimeFresh: probe });
+
+    probe.mockResolvedValue({ fresh: true, freshCapabilities: [['desktop-capabilities:1']] });
+    expect(await languagesKeptInBrowser('aokie.call.incoming', BROWSER_LOGIC_LANGUAGES)).toEqual(['python']);
+    expect(probe).toHaveBeenCalledTimes(1);
+
+    probe.mockResolvedValue({ fresh: true, freshCapabilities: [['logic-language:python']] });
+    expect(await languagesKeptInBrowser('aokie.call.incoming', BROWSER_LOGIC_LANGUAGES)).toEqual([]);
+
+    // A boolean probe (older wiring) is a Desktop that takes JavaScript only.
+    probe.mockResolvedValue(true);
+    expect(await languagesKeptInBrowser('aokie.call.incoming', BROWSER_LOGIC_LANGUAGES)).toEqual(['python']);
+
+    // Stale, unreachable, or not a desktop-first event: everything stays here.
+    probe.mockResolvedValue({ fresh: false, freshCapabilities: [['logic-language:python']] });
+    expect(await languagesKeptInBrowser('aokie.call.incoming', BROWSER_LOGIC_LANGUAGES)).toEqual(['javascript', 'python']);
+    probe.mockRejectedValue(new Error('offline'));
+    expect(await languagesKeptInBrowser('aokie.call.incoming', BROWSER_LOGIC_LANGUAGES)).toEqual(['javascript', 'python']);
+    probe.mockClear();
+    expect(await languagesKeptInBrowser('form.submitted', BROWSER_LOGIC_LANGUAGES)).toEqual(['javascript', 'python']);
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it('defaultDesktopRuntimeStatus reports the capabilities of fresh rows only', async () => {
+    const spy = vi.spyOn(api, 'getDesktopConnections');
+    try {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-15T04:00:00Z'));
+      spy.mockResolvedValue({
+        data: {
+          connections: [
+            { lastSeenAt: '2026-09-15 03:59:40', capabilities: ['desktop-capabilities:1', 'logic-language:python', 7] },
+            { lastSeenAt: '2026-09-15 02:00:00', capabilities: ['logic-language:ruby'] },
+            { lastSeenAt: '2026-09-15 03:59:50' },
+          ],
+        },
+      } as never);
+      expect(await defaultDesktopRuntimeStatus()).toEqual({
+        fresh: true,
+        freshCapabilities: [['desktop-capabilities:1', 'logic-language:python'], []],
+      });
+      // Cached for 30 s, and the boolean probe reads the same cache.
+      expect(await defaultDesktopRuntimeFresh()).toBe(true);
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(new Date('2026-09-15T04:00:31Z'));
+      spy.mockRejectedValue(new Error('offline'));
+      expect(await defaultDesktopRuntimeStatus()).toEqual({ fresh: false, freshCapabilities: [] });
     } finally {
       vi.useRealTimers();
       spy.mockRestore();

@@ -10,7 +10,7 @@
 // and only starts a call's watchdog once the engine exists, so a 5 MB download
 // on a cold cache is never mistaken for a wedged evaluation.
 /// <reference lib="webworker" />
-import { runEval, warmUp, instanceUsage, type EvalKind, type InstanceUsage } from './zipp-host';
+import { runEval, warmUp, instanceUsage, type EvalKind, type InstanceUsage, type LogicLanguage } from './zipp-host';
 
 /** Reserved request id for the readiness handshake. Real requests start at 1. */
 export const READY_ID = 0;
@@ -21,6 +21,8 @@ export interface WorkerRequest {
   expression: string;
   context?: Record<string, unknown>;
   budgetMs?: number;
+  /** The author's language; absent is JavaScript (zipp-host EvalOptions). */
+  language?: LogicLanguage;
 }
 
 export interface WorkerInit {
@@ -63,11 +65,11 @@ self.onmessage = async (event: MessageEvent<WorkerRequest | WorkerInit>) => {
     return;
   }
   if (!('id' in event.data)) return;
-  const { id, kind, expression, context, budgetMs } = event.data;
+  const { id, kind, expression, context, budgetMs, language } = event.data;
   try {
     if (!initialization) throw new Error('The app engine has not been initialized.');
     await initialization;
-    const result = await runEval(kind, expression, context ?? {}, { budgetMs });
+    const result = await runEval(kind, expression, context ?? {}, { budgetMs, language });
     const response: WorkerResponse = { id, ok: true, result, usage: instanceUsage() };
     (self as DedicatedWorkerGlobalScope).postMessage(response);
   } catch (err) {

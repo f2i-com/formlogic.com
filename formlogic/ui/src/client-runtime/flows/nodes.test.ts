@@ -1,11 +1,15 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  CODE_NODE_TYPES,
   executeNode,
   FlowExecError,
+  flowLogicLanguages,
   isAllowedFlowUrl,
   isLoopbackUrl,
   KV_WRITE_CAPABILITY,
   LOGIC_BLOCK_DEFAULT_TIMEOUT_MS,
+  LOGIC_LANGUAGES,
   type FlowExecutorDeps,
   type FlowNodeContext,
 } from './nodes';
@@ -166,7 +170,7 @@ describe('logic_block timeoutMs threading', () => {
     const deps = fakeDeps({ evaluateExpression });
     const node: WorkflowGraphNode = { id: 'lb', type: 'logic_block', data: { expr: '1' } };
     await executeNode(ctxFor(node, deps));
-    expect(evaluateExpression).toHaveBeenCalledWith('1', expect.anything(), LOGIC_BLOCK_DEFAULT_TIMEOUT_MS);
+    expect(evaluateExpression).toHaveBeenCalledWith('1', expect.anything(), LOGIC_BLOCK_DEFAULT_TIMEOUT_MS, 'javascript');
   });
 
   it('clamps a declared timeoutMs into [100, 30000] and passes the SAME value as budgetMs', async () => {
@@ -175,15 +179,15 @@ describe('logic_block timeoutMs threading', () => {
 
     const tooLow: WorkflowGraphNode = { id: 'lb', type: 'logic_block', data: { expr: '1', timeoutMs: 10 } };
     await executeNode(ctxFor(tooLow, deps));
-    expect(evaluateExpression).toHaveBeenLastCalledWith('1', expect.anything(), 100);
+    expect(evaluateExpression).toHaveBeenLastCalledWith('1', expect.anything(), 100, 'javascript');
 
     const tooHigh: WorkflowGraphNode = { id: 'lb', type: 'logic_block', data: { expr: '1', timeoutMs: 999999 } };
     await executeNode(ctxFor(tooHigh, deps));
-    expect(evaluateExpression).toHaveBeenLastCalledWith('1', expect.anything(), 30000);
+    expect(evaluateExpression).toHaveBeenLastCalledWith('1', expect.anything(), 30000, 'javascript');
 
     const inRange: WorkflowGraphNode = { id: 'lb', type: 'logic_block', data: { expr: '1', timeoutMs: 5000 } };
     await executeNode(ctxFor(inRange, deps));
-    expect(evaluateExpression).toHaveBeenLastCalledWith('1', expect.anything(), 5000);
+    expect(evaluateExpression).toHaveBeenLastCalledWith('1', expect.anything(), 5000, 'javascript');
   });
 
   it('FAILS the node (not a silent null) when evaluateExpression hangs past the declared timeoutMs', async () => {
@@ -216,7 +220,7 @@ describe('condition timeoutMs threading', () => {
     const deps = fakeDeps({ evaluateBoolean });
     const node: WorkflowGraphNode = { id: 'c', type: 'condition', data: { expr: 'true' } };
     await executeNode(ctxFor(node, deps));
-    expect(evaluateBoolean).toHaveBeenCalledWith('true', expect.anything(), undefined);
+    expect(evaluateBoolean).toHaveBeenCalledWith('true', expect.anything(), undefined, 'javascript');
   });
 
   it('clamps a declared timeoutMs into [100, 30000] and passes it as budgetMs', async () => {
@@ -225,21 +229,116 @@ describe('condition timeoutMs threading', () => {
 
     const tooLow: WorkflowGraphNode = { id: 'c', type: 'condition', data: { expr: 'true', timeoutMs: 10 } };
     await executeNode(ctxFor(tooLow, deps));
-    expect(evaluateBoolean).toHaveBeenLastCalledWith('true', expect.anything(), 100);
+    expect(evaluateBoolean).toHaveBeenLastCalledWith('true', expect.anything(), 100, 'javascript');
 
     const tooHigh: WorkflowGraphNode = { id: 'c', type: 'condition', data: { expr: 'true', timeoutMs: 999999 } };
     await executeNode(ctxFor(tooHigh, deps));
-    expect(evaluateBoolean).toHaveBeenLastCalledWith('true', expect.anything(), 30000);
+    expect(evaluateBoolean).toHaveBeenLastCalledWith('true', expect.anything(), 30000, 'javascript');
 
     const inRange: WorkflowGraphNode = { id: 'c', type: 'condition', data: { expr: 'true', timeoutMs: 1500 } };
     await executeNode(ctxFor(inRange, deps));
-    expect(evaluateBoolean).toHaveBeenLastCalledWith('true', expect.anything(), 1500);
+    expect(evaluateBoolean).toHaveBeenLastCalledWith('true', expect.anything(), 1500, 'javascript');
   });
 
   it('still throws when evaluateBoolean rejects (unchanged fail-closed behavior)', async () => {
     const deps = fakeDeps({ evaluateBoolean: async () => { throw new Error('condition budget exceeded'); } });
     const node: WorkflowGraphNode = { id: 'c', type: 'condition', data: { expr: 'x', timeoutMs: 300 } };
     await expect(executeNode(ctxFor(node, deps))).rejects.toThrow(/condition budget exceeded/);
+  });
+});
+
+// formlogic-python/1: condition and logic_block read data.language. Absent means JavaScript,
+// so every stored graph runs as before; anything outside the set fails the run closed.
+describe('code node language', () => {
+  it.each([
+    ['absent', {}],
+    ['null', { language: null }],
+    ['empty', { language: '' }],
+    ['javascript', { language: 'javascript' }],
+  ])('%s language runs as javascript', async (_label, extra) => {
+    const evaluateExpression = vi.fn(async () => 1);
+    const evaluateBoolean = vi.fn(async () => true);
+    const deps = fakeDeps({ evaluateExpression, evaluateBoolean });
+    await executeNode(ctxFor({ id: 'lb', type: 'logic_block', data: { expr: '1', ...extra } }, deps));
+    await executeNode(ctxFor({ id: 'c', type: 'condition', data: { expr: 'true', ...extra } }, deps));
+    expect(evaluateExpression).toHaveBeenCalledWith('1', expect.anything(), LOGIC_BLOCK_DEFAULT_TIMEOUT_MS, 'javascript');
+    expect(evaluateBoolean).toHaveBeenCalledWith('true', expect.anything(), undefined, 'javascript');
+  });
+
+  it('passes python to both evaluators, with the same context and budgets', async () => {
+    const evaluateExpression = vi.fn(async () => ({ found: true }));
+    const evaluateBoolean = vi.fn(async () => false);
+    const deps = fakeDeps({ evaluateExpression, evaluateBoolean, kvList: vi.fn(async () => ({ n: 1 })) });
+    const scope = { inputs: { from: '+61' }, event: null, app: null, nodes: {} };
+    const lb: WorkflowGraphNode = { id: 'lb', type: 'logic_block', data: { expr: 'result = {"found": True}', language: 'python', timeoutMs: 4000 } };
+    await expect(executeNode(ctxFor(lb, deps, { scope, flowSlug: 'f' }))).resolves.toEqual({ found: true });
+    expect(evaluateExpression).toHaveBeenCalledWith(
+      'result = {"found": True}',
+      { inputs: { from: '+61' }, event: null, app: null, nodes: {}, upstream: null, kv: { n: 1 } },
+      4000,
+      'python'
+    );
+    const cond: WorkflowGraphNode = { id: 'c', type: 'condition', data: { expr: 'inputs["from"]', language: 'python', timeoutMs: 700 } };
+    await expect(executeNode(ctxFor(cond, deps, { scope }))).resolves.toBe(false);
+    expect(evaluateBoolean).toHaveBeenCalledWith(
+      'inputs["from"]',
+      { inputs: { from: '+61' }, event: null, app: null, nodes: {}, upstream: null },
+      700,
+      'python'
+    );
+  });
+
+  it.each([['ruby'], ['Python'], ['js'], [5], [{ name: 'python' }]])(
+    'an unknown language %j fails the run as invalid_flow before anything runs',
+    async (language) => {
+      const evaluateExpression = vi.fn(async () => 1);
+      const evaluateBoolean = vi.fn(async () => true);
+      const kvList = vi.fn(async () => ({}));
+      const deps = fakeDeps({ evaluateExpression, evaluateBoolean, kvList });
+      for (const [id, type] of [['lb', 'logic_block'], ['c', 'condition']] as const) {
+        const node: WorkflowGraphNode = { id, type, data: { expr: '1', language } };
+        const error = await executeNode(ctxFor(node, deps, { flowSlug: 'f' })).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(FlowExecError);
+        expect(error).toMatchObject({ code: 'invalid_flow', nodeId: id });
+        expect((error as Error).message).toMatch(/unknown language/);
+      }
+      expect(evaluateExpression).not.toHaveBeenCalled();
+      expect(evaluateBoolean).not.toHaveBeenCalled();
+      expect(kvList).not.toHaveBeenCalled();
+    }
+  );
+
+  it('other node types ignore a language key (a voice language is not a logic language)', async () => {
+    const deps = fakeDeps();
+    const node: WorkflowGraphNode = { id: 't', type: 'template', data: { template: 'hi', language: 'en-AU' } };
+    await expect(executeNode(ctxFor(node, deps))).resolves.toBe('hi');
+  });
+
+  it('flowLogicLanguages lists what code nodes declare, sorted, invalid values as written', () => {
+    expect(flowLogicLanguages({ nodes: [{ id: 'in', type: 'input' }] })).toEqual([]);
+    expect(flowLogicLanguages({ nodes: [{ id: 'lb', type: 'logic_block', data: { expr: '1' } }] })).toEqual(['javascript']);
+    expect(flowLogicLanguages({
+      nodes: [
+        { id: 'a', type: 'logic_block', data: { expr: 'x', language: 'python' } },
+        { id: 'b', type: 'condition', data: { expr: 'y' } },
+        { id: 'c', type: 'condition', data: { expr: 'z', language: 'python' } },
+        { id: 'd', type: 'tts_speak', data: { language: 'en-AU' } },
+      ],
+    })).toEqual(['javascript', 'python']);
+    expect(flowLogicLanguages({ nodes: [{ id: 'a', type: 'logic_block', data: { language: 'Python' } }] })).toEqual(['Python']);
+    expect(flowLogicLanguages(null)).toEqual([]);
+    expect(flowLogicLanguages({ nodes: 'nope' })).toEqual([]);
+  });
+
+  it('accepts exactly the languages and node types the server validates (FlowLogicLanguages.php)', () => {
+    const php = readFileSync(new URL('../../../../backend/src/Services/Flows/FlowLogicLanguages.php', import.meta.url), 'utf8');
+    const list = (name: string): string[] => {
+      const match = new RegExp(`const ${name} = \\[([^\\]]*)\\]`).exec(php);
+      expect(match, `FlowLogicLanguages::${name}`).not.toBeNull();
+      return [...(match?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    };
+    expect(list('SUPPORTED')).toEqual([...LOGIC_LANGUAGES]);
+    expect(list('CODE_NODE_TYPES')).toEqual([...CODE_NODE_TYPES]);
   });
 });
 

@@ -6,6 +6,7 @@ namespace FormLogic\Tests\Integration;
 
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
+use FormLogic\Helpers\CustomLogicSanitizer;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppReportService;
 use FormLogic\Services\AppUserService;
@@ -178,6 +179,32 @@ class AppExportTest extends TestCase
         $this->assertStringNotContainsString($formBId, $raw, 'real form id must not leak');
         $this->assertStringNotContainsString('ownerId', $raw);
         $this->assertStringNotContainsString('owner_id', $raw);
+    }
+
+    /**
+     * formlogic-python/1: a Python app-logic script stays Python through a pack export and
+     * import. The bundle is saved the way the owner's PUT saves it (through the sanitizer), so
+     * this fails if either the save or the pack drops the language.
+     */
+    public function testAppLogicScriptLanguageSurvivesPackExportAndImport(): void
+    {
+        $python = "def run(ctx):\n    return {\"warnings\": [\"py\"]}";
+        [$appId] = $this->buildSampleApp();
+        self::$apps->updateApp($appId, ['customLogic' => CustomLogicSanitizer::sanitize(['scripts' => [
+            ['id' => 'py', 'hook' => 'onBeforeSubmit', 'language' => 'python', 'source' => $python],
+            ['id' => 'js', 'hook' => 'onAppStart', 'source' => 'function run(ctx) { return {}; }'],
+        ]])]);
+
+        $pack = self::$packs->exportApp($appId, $this->userId);
+        $exported = array_column($pack['apps'][0]['customLogic']['scripts'], null, 'id');
+        $this->assertSame('python', $exported['py']['language'] ?? null);
+
+        $result = self::$packs->importPack($pack, $this->userId);
+        $scripts = array_column(self::$apps->getApp($result['apps'][0]['id'])['customLogic']['scripts'], null, 'id');
+        $this->assertSame('python', $scripts['py']['language'] ?? null);
+        $this->assertSame($python, $scripts['py']['source']);
+        $this->assertSame('quickjs', $scripts['py']['runtime']);
+        $this->assertArrayNotHasKey('language', $scripts['js'], 'a JavaScript script stays as it was');
     }
 
     public function testRoundTripImportRecreatesApp(): void

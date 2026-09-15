@@ -1,0 +1,2223 @@
+{
+    "contract": "formlogic-python/1",
+    "version": 1,
+    "description": [
+        "Cases every host of FormLogic's Python contract must agree on (formlogic/ui/src/lib/formlogic/python/pythonContract.ts).",
+        "kind: flow (logic_block: one expression, else statements setting `result`), condition (one expression, Python truthiness), applogic (run(ctx)), syntax (compile only).",
+        "context: the evaluation's context object. expect: {ok: true, value} compared as JSON; {threw: <regex>} a guest error (syntax, raise, runtime) whose message matches; {resource: <regex>} an engine limit whose message matches.",
+        "Every host runs these against whatever ZIPP web-python release it installs; a change in ZIPP's Python frontend shows up here as a diff."
+    ],
+    "cases": [
+        {
+            "id": "flow-expression",
+            "kind": "flow",
+            "source": "inputs[\"durationSeconds\"] > 5",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "flow-expression-concat",
+            "kind": "flow",
+            "source": "kv[\"greeting\"] + \", \" + nodes[\"customers\"][1][\"answers\"][\"name\"]",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": "Hello, Ada"
+            }
+        },
+        {
+            "id": "flow-multiline-expression-with-comment",
+            "kind": "flow",
+            "source": "# doubled duration\n(\n  inputs[\"durationSeconds\"] * 2\n)",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": 24
+            }
+        },
+        {
+            "id": "flow-multiline-dict-literal",
+            "kind": "flow",
+            "source": "{\n  \"found\": len(nodes[\"customers\"]) > 0,\n  \"greeting\": kv[\"greeting\"],\n}",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": {
+                    "found": true,
+                    "greeting": "Hello"
+                }
+            }
+        },
+        {
+            "id": "flow-print-expression-is-none",
+            "kind": "flow",
+            "source": "print(\"debug\", inputs)",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": null
+            }
+        },
+        {
+            "id": "flow-trap-expression-lines-join",
+            "kind": "flow",
+            "source": "print(\"a\")\n(print(\"b\"))",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "not callable"
+            },
+            "note": "Implicit line joining inside the expression wrapper makes the second line a call on the first. It fails loudly; write statements and set result instead."
+        },
+        {
+            "id": "flow-module-result",
+            "kind": "flow",
+            "source": "c = next((r for r in nodes[\"customers\"] if r[\"answers\"][\"phone\"] == inputs[\"from\"]), None)\nresult = {\"found\": c is not None, \"name\": c[\"answers\"][\"name\"] if c else None}",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": {
+                    "found": true,
+                    "name": "Ada"
+                }
+            }
+        },
+        {
+            "id": "flow-module-loop-and-helper",
+            "kind": "flow",
+            "source": "result = {\"found\": False}\nif inputs.get(\"from\"):\n    for r in nodes[\"customers\"]:\n        if r[\"answers\"][\"phone\"] == inputs[\"from\"]:\n            result = {\"found\": True, \"name\": r[\"answers\"][\"name\"], \"greeting\": kv[\"greeting\"], \"email\": validators.email(\"a@b.co\")}\n            break",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": {
+                    "found": true,
+                    "name": "Ada",
+                    "greeting": "Hello",
+                    "email": true
+                }
+            }
+        },
+        {
+            "id": "flow-module-without-result-is-none",
+            "kind": "flow",
+            "source": "x = 1\ny = x + 1",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": null
+            }
+        },
+        {
+            "id": "flow-single-line-statement",
+            "kind": "flow",
+            "source": "result = inputs[\"durationSeconds\"] * 2",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": 24
+            }
+        },
+        {
+            "id": "flow-two-calls-run-as-module",
+            "kind": "flow",
+            "source": "print(\"a\")\nprint(\"b\")",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": null
+            }
+        },
+        {
+            "id": "flow-comment-only-is-none",
+            "kind": "flow",
+            "source": "# nothing here yet\n",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": null
+            }
+        },
+        {
+            "id": "flow-empty-is-none",
+            "kind": "flow",
+            "source": "",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": null
+            }
+        },
+        {
+            "id": "flow-future-import-after-header",
+            "kind": "flow",
+            "source": "from __future__ import annotations\nresult = 1",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": 1
+            }
+        },
+        {
+            "id": "flow-runs-once-module",
+            "kind": "flow",
+            "source": "kv[\"runs\"] = kv.get(\"runs\", 0) + 1\nresult = kv[\"runs\"]",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": 1
+            }
+        },
+        {
+            "id": "flow-runs-once-expression",
+            "kind": "flow",
+            "source": "kv.__setitem__(\"runs\", kv.get(\"runs\", 0) + 1) or kv[\"runs\"]",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": 1
+            }
+        },
+        {
+            "id": "flow-runs-once-one-line-statements",
+            "kind": "flow",
+            "source": "kv[\"runs\"] = kv.get(\"runs\", 0) + 1; result = kv[\"runs\"]",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": 1
+            }
+        },
+        {
+            "id": "flow-context-names",
+            "kind": "flow",
+            "source": "[inputs[\"from\"], event, app, upstream, sorted(nodes.keys()), kv[\"greeting\"]]",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": [
+                    "+61491570156",
+                    null,
+                    null,
+                    null,
+                    [
+                        "customers"
+                    ],
+                    "Hello"
+                ]
+            }
+        },
+        {
+            "id": "flow-context-values-are-dicts",
+            "kind": "flow",
+            "source": "inputs.durationSeconds",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "AttributeError"
+            },
+            "note": "Context values are plain dicts: subscript them (inputs[\"durationSeconds\"])."
+        },
+        {
+            "id": "flow-helpers",
+            "kind": "flow",
+            "source": "[validators.email(\"a@b.co\"), compliance.tfnValid(\"123-456-789\"), finance.transferFee(1000, \"Schwab\"), safety.riskLevel(12), is_empty(\"  \"), is_not_empty([1]), contains([1, 2], 2), avg([1, 2, 3])]",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": [
+                    true,
+                    true,
+                    50,
+                    "High",
+                    true,
+                    true,
+                    true,
+                    2
+                ]
+            }
+        },
+        {
+            "id": "flow-builtins-not-shadowed",
+            "kind": "flow",
+            "source": "[sum([1, 2]), [1, 1, 2].count(1), round(2.5)]",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": [
+                    3,
+                    2,
+                    2
+                ]
+            }
+        },
+        {
+            "id": "flow-javascript-globals-absent",
+            "kind": "flow",
+            "source": "def absent(read):\n    try:\n        read()\n        return False\n    except NameError:\n        return True\nresult = [absent(lambda: fetch), absent(lambda: window), absent(lambda: globalThis), absent(lambda: host), absent(lambda: document), absent(lambda: validators)]",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": [
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    false
+                ]
+            },
+            "note": "Checked by name lookup: in ZIPP v0.0.18 globals() inside an imported module returns the entry module's globals."
+        },
+        {
+            "id": "flow-eval-absent",
+            "kind": "flow",
+            "source": "result = eval(\"1\")",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "NameError: name 'eval' is not defined"
+            }
+        },
+        {
+            "id": "flow-no-network-modules",
+            "kind": "flow",
+            "source": "import socket",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "No module named 'socket'"
+            }
+        },
+        {
+            "id": "zipp-defect-cross-module-setattr",
+            "kind": "flow",
+            "source": "import formlogic\nformlogic.inputs = 1",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "Cannot read properties of null"
+            },
+            "note": "A ZIPP v0.0.18 defect: assigning another module's attribute raises. The contract binds names with `global` inside formlogic.py and never depends on it. A fix in ZIPP changes this case."
+        },
+        {
+            "id": "flow-result-normalized",
+            "kind": "flow",
+            "source": "result = {\"t\": (1, 2), \"nan\": float(\"nan\"), \"inf\": [float(\"inf\"), -float(\"inf\")], 1: \"one\", None: \"n\", True: \"t\", 2.5: \"f\"}",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": {
+                    "1": "t",
+                    "t": [
+                        1,
+                        2
+                    ],
+                    "nan": null,
+                    "inf": [
+                        null,
+                        null
+                    ],
+                    "null": "n",
+                    "2.5": "f"
+                }
+            }
+        },
+        {
+            "id": "flow-plain-non-finite-in-guest",
+            "kind": "flow",
+            "source": "import formlogic\nresult = [formlogic._plain(float(\"nan\")) is None, formlogic._plain(float(\"inf\")) is None, formlogic._plain(-float(\"inf\")) is None, formlogic._plain(1.5)]",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": [
+                    true,
+                    true,
+                    true,
+                    1.5
+                ]
+            },
+            "note": "ZIPP also projects non-finite floats to null; _plain does it in the guest so every host agrees before the value crosses."
+        },
+        {
+            "id": "flow-result-safe-integer",
+            "kind": "flow",
+            "source": "2 ** 53 - 1",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": 9007199254740991
+            }
+        },
+        {
+            "id": "flow-result-big-integer",
+            "kind": "flow",
+            "source": "result = 2 ** 64",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "integer outside"
+            }
+        },
+        {
+            "id": "flow-result-set",
+            "kind": "flow",
+            "source": "result = {1, 2}",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "result holds a set"
+            }
+        },
+        {
+            "id": "flow-result-generator",
+            "kind": "flow",
+            "source": "(i for i in range(3))",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "result holds a generator"
+            }
+        },
+        {
+            "id": "flow-result-object",
+            "kind": "flow",
+            "source": "class Point:\n    pass\nresult = Point()",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "result holds a Point"
+            }
+        },
+        {
+            "id": "flow-result-function",
+            "kind": "flow",
+            "source": "lambda x: x",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "result holds a function"
+            }
+        },
+        {
+            "id": "flow-result-nested-40",
+            "kind": "flow",
+            "source": "v = 1\nfor i in range(40):\n    v = [v]\nresult = v",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "nesting limit"
+            },
+            "note": "ZIPP v0.0.18 carries at most 32 levels across the host boundary; deeper results fail there."
+        },
+        {
+            "id": "flow-result-nested-70",
+            "kind": "flow",
+            "source": "v = 1\nfor i in range(70):\n    v = [v]\nresult = v",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "nests deeper than 64"
+            }
+        },
+        {
+            "id": "flow-syntax-error-author-line",
+            "kind": "flow",
+            "source": "x = 1\nif x\n    result = 2",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "^SyntaxError: .*\\(line 2, col \\d+\\)$"
+            }
+        },
+        {
+            "id": "flow-top-level-return",
+            "kind": "flow",
+            "source": "return 1",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "'return' outside function"
+            }
+        },
+        {
+            "id": "flow-runtime-error-author-line",
+            "kind": "flow",
+            "source": "a = 1\nb = nodes[\"missing\"]",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "^KeyError: 'missing' \\(line 2\\)"
+            }
+        },
+        {
+            "id": "flow-expression-runtime-error-author-line",
+            "kind": "flow",
+            "source": "nodes[\"missing\"][\"x\"]",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "^KeyError: 'missing' \\(line 1\\)"
+            }
+        },
+        {
+            "id": "flow-raise-author-line",
+            "kind": "flow",
+            "source": "raise ValueError(\"no caller\")",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "^ValueError: no caller \\(line 1\\)"
+            }
+        },
+        {
+            "id": "flow-no-driver-frames",
+            "kind": "flow",
+            "source": "def f():\n    return nodes[\"missing\"]\nresult = f()",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "^(?![\\s\\S]*(main|formlogic)\\.py)[\\s\\S]*line 2[\\s\\S]*line 3"
+            }
+        },
+        {
+            "id": "flow-await-unsupported",
+            "kind": "flow",
+            "source": "x = 1\nawait x",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "await[\\s\\S]*line 2"
+            }
+        },
+        {
+            "id": "flow-instruction-budget",
+            "kind": "flow",
+            "source": "while True:\n    pass",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "resource": "instruction budget"
+            }
+        },
+        {
+            "id": "flow-print-is-quiet",
+            "kind": "flow",
+            "source": "line = \"x\" * 1000\nfor i in range(9000):\n    print(line)\nresult = \"quiet\"",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": "quiet"
+            },
+            "note": "print is a no-op, so printing never reaches the engine's output limits. (sys.stdout.write is not covered: in ZIPP v0.0.18 a few thousand writes without a newline trap the engine.)"
+        },
+        {
+            "id": "condition-true",
+            "kind": "condition",
+            "source": "inputs[\"durationSeconds\"] > 5 and kv[\"greeting\"] == \"Hello\"",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "condition-python-truthiness",
+            "kind": "condition",
+            "source": "[]",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": false
+            }
+        },
+        {
+            "id": "condition-truthy-value",
+            "kind": "condition",
+            "source": "nodes[\"customers\"]",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "condition-multiline",
+            "kind": "condition",
+            "source": "inputs[\"durationSeconds\"] > 5\n  and len(nodes[\"customers\"]) == 2",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": true
+            }
+        },
+        {
+            "id": "condition-statement-refused",
+            "kind": "condition",
+            "source": "x = 1",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "SyntaxError|invalid syntax"
+            }
+        },
+        {
+            "id": "condition-runtime-error-author-line",
+            "kind": "condition",
+            "source": "inputs[\"durationSeconds\"] > 5 and nodes[\"missing\"]",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "^KeyError: 'missing' \\(line 1\\)"
+            }
+        },
+        {
+            "id": "condition-multiline-error-reports-first-line",
+            "kind": "condition",
+            "source": "inputs[\"durationSeconds\"] > 5 and\n  nodes[\"missing\"]",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "^KeyError: 'missing' \\(line 1\\)"
+            },
+            "note": "ZIPP v0.0.18 reports a runtime error inside a multi-line expression at the line the expression starts on."
+        },
+        {
+            "id": "applogic-run",
+            "kind": "applogic",
+            "source": "def run(ctx):\n    if not validators.email(ctx[\"answers\"].get(\"email\")):\n        return {\"reject\": True, \"message\": \"bad email\"}\n    return {\"effects\": [{\"type\": \"ui.toast\", \"message\": \"ok \" + ctx[\"hook\"]}]}",
+            "context": {
+                "hook": "onBeforeSubmit",
+                "answers": {
+                    "email": "a@b.co"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": {
+                    "effects": [
+                        {
+                            "type": "ui.toast",
+                            "message": "ok onBeforeSubmit"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "id": "applogic-reject",
+            "kind": "applogic",
+            "source": "def run(ctx):\n    if not validators.email(ctx[\"answers\"].get(\"email\")):\n        return {\"reject\": True, \"message\": \"bad email\"}\n    return {}",
+            "context": {
+                "hook": "onBeforeSubmit",
+                "answers": {
+                    "email": "nope"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": {
+                    "reject": true,
+                    "message": "bad email"
+                }
+            }
+        },
+        {
+            "id": "applogic-without-run-is-none",
+            "kind": "applogic",
+            "source": "x = 1",
+            "context": {
+                "hook": "onAppStart"
+            },
+            "expect": {
+                "ok": true,
+                "value": null
+            }
+        },
+        {
+            "id": "applogic-runtime-error-author-line",
+            "kind": "applogic",
+            "source": "def run(ctx):\n    return ctx[\"missing\"]",
+            "context": {
+                "hook": "onAppStart"
+            },
+            "expect": {
+                "threw": "^KeyError: 'missing' \\(line 2\\)"
+            }
+        },
+        {
+            "id": "syntax-runs-nothing",
+            "kind": "syntax",
+            "source": "raise SystemExit(1)",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": null
+            }
+        },
+        {
+            "id": "syntax-accepts-statements",
+            "kind": "syntax",
+            "source": "x = 1\nresult = x",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "ok": true,
+                "value": null
+            }
+        },
+        {
+            "id": "syntax-error",
+            "kind": "syntax",
+            "source": "def f(:\n  pass",
+            "context": {
+                "inputs": {
+                    "from": "+61491570156",
+                    "durationSeconds": 12
+                },
+                "event": null,
+                "app": null,
+                "nodes": {
+                    "customers": [
+                        {
+                            "id": "r1",
+                            "answers": {
+                                "phone": "+61400000000",
+                                "name": "Other"
+                            }
+                        },
+                        {
+                            "id": "r2",
+                            "answers": {
+                                "phone": "+61491570156",
+                                "name": "Ada"
+                            }
+                        }
+                    ]
+                },
+                "upstream": null,
+                "kv": {
+                    "greeting": "Hello"
+                }
+            },
+            "expect": {
+                "threw": "^SyntaxError: .*\\(line \\d+, col \\d+\\)$"
+            }
+        }
+    ]
+}

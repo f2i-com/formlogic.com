@@ -1,7 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { validateApplicationPackageV2, validateFlowNodeDefinitionV1, type PackageV2Issue } from './packageV2';
+import {
+  PRESET_CODE_CORE_TYPES,
+  PRESET_LOGIC_LANGUAGES,
+  validateApplicationPackageV2,
+  validateFlowNodeDefinitionV1,
+  type PackageV2Issue,
+} from './packageV2';
+import { CODE_NODE_TYPES, LOGIC_LANGUAGES } from '../client-runtime/flows/nodes';
 
 // ADR-010 / PKG-101: the TypeScript validator is pinned against the SHARED fixture
 // corpus (docs/contracts/fixtures/application-package-v2-cases.json). The PHP twin
@@ -81,5 +88,11 @@ describe('validator behavior beyond the corpus', () => {
       requirements: { services: [{ slot: 'imageGenerator' }] },
     });
     expect(issues).toEqual([]);
+  });
+
+  it('checks a preset default language against the executor\'s own code nodes and languages', () => {
+    // formlogic-python/1: the validator's copy of the rule must be the executor's.
+    expect([...PRESET_CODE_CORE_TYPES]).toEqual([...CODE_NODE_TYPES]);
+    expect([...PRESET_LOGIC_LANGUAGES]).toEqual([...LOGIC_LANGUAGES]);
   });
 });

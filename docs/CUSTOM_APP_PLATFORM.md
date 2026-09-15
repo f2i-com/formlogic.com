@@ -62,6 +62,45 @@ function run(ctx) {
 `ctx` = `{ hook, answers, values, params, meta, event }`. Result may contain `effects[]`, a
 `ui` shorthand (`setValues`/`toast`/`navigate`), `reject`/`message`, `warnings[]`.
 
+#### Python scripts (formlogic-python/1)
+
+A script may instead be Python: `language: 'python'` on the script (absent means JavaScript, so every
+saved bundle keeps its meaning; the stored `runtime` stays `'quickjs'` either way). It defines
+`def run(ctx):` and returns a dict of the same shape; `ctx` is a dict (`ctx["answers"]`), and the
+result must be JSON data (`_plain` in `ui/src/lib/formlogic/python/formlogic.py`):
+
+```python
+def run(ctx):
+    try:
+        fuel = float(ctx["answers"].get("fuel_percent") or 0)
+    except (TypeError, ValueError):
+        fuel = None  # not a number: never too low, like NaN in JavaScript
+    if fuel is not None and fuel < 15:
+        return {"reject": True, "message": "Fuel is too low to start this shift."}
+    return {"ok": True}
+```
+
+(Python's `float("abc")` raises where JavaScript's `Number("abc")` is `NaN`; the `try` keeps a stray
+letter in the field from failing the submission, as it would not in JavaScript.)
+
+A script's `language` is exactly `'javascript'` or `'python'`, the rule flow code nodes follow; absent,
+`null` or `''` is JavaScript. Any other value (`'py'`, `'Python'`, `'python3'`) is refused with the
+script named — `PUT /api/apps/{id}` answers 400, `PUT /api/forms/{id}` 422, a pack whose app logic
+holds one does not import, and an account backup holding one does not restore — rather than being
+relabelled. (A pack envelope's `quickjs/customLogic.json` is applied after the pack's atomic import, so
+there it is skipped with a warning instead.)
+
+Python scripts run on the same ZIPP engine, budget and permission checks as JavaScript ones, and only
+in FormLogic in the browser. `GET /api/v1/app-logic` (the catalogue a Desktop runs `onConnectorEvent`
+scripts from) lists them only to a caller that sends `?languages=javascript,python`, so a Desktop built
+before Python never runs one as JavaScript; while a fresh Desktop does not advertise
+`logic-language:python`, the browser keeps running the Python scripts for the events it defers
+(`useDesktopConnectorEvents`). The app runtime's own reads — `GET /api/app/{slug}` (app scripts) and
+`GET /api/app/{slug}/forms/{formId}` (form scripts) — follow the same `?languages=` rule, which the
+current client sends: a browser tab still on a bundle from before Python receives only JavaScript
+scripts. The owner's editing reads are never filtered. A pack connector's `demoDriver` stays
+JavaScript. The editor sets the language per script, and changing it never rewrites the source.
+
 #### Hooks
 `onAppStart`, `onScreenEnter`, `onScreenLeave`, `onButtonClick`, `onBeforeSubmit`,
 `onAfterSubmit`, `onConnectorEvent`, `onSyncConflict`, `mapConnectorDataToForm`,
@@ -99,7 +138,8 @@ every submission** — client logic is a UX layer only.
 ### Authoring in-product
 
 Owners edit app logic in **Deploy & share → App logic** (`components/apps/AppLogicPanel.tsx`):
-add/enable/delete scripts, set per-script + app-wide permissions, and **Test run** each script against
+add/enable/delete scripts, pick each script's language (JavaScript or Python; starters in
+`appLogicStarters.ts`), set per-script + app-wide permissions, and **Test run** each script against
 a sample ctx in the real ZIPP sandbox host before saving (persists via `PUT /api/apps/{id}` → sanitizer).
 The whole app can be exported as a signed `.formlogic` from the **Application package** card (see the
 [Application Package Format](#application-package-format) section).

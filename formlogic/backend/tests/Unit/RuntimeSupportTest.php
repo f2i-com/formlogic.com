@@ -32,6 +32,45 @@ class RuntimeSupportTest extends TestCase
         $this->assertFalse(RuntimeSupport::supports('cloud', 'condition'));
     }
 
+    public function testCodeNodeLanguageNarrowsTheSurfaces(): void
+    {
+        // JavaScript (and the default) is exactly today's matrix.
+        $this->assertSame(['browser', 'desktop'], RuntimeSupport::surfacesFor('logic_block', 'javascript'));
+        $this->assertSame(RuntimeSupport::surfacesFor('condition'), RuntimeSupport::surfacesFor('condition', 'javascript'));
+        // Python has a handler only in the browser's web-python Worker: no Desktop runs it yet
+        // and the server's sandbox has no Python frontend.
+        foreach (['logic_block', 'condition'] as $type) {
+            $this->assertSame(['browser'], RuntimeSupport::surfacesFor($type, 'python'));
+            $this->assertTrue(RuntimeSupport::supports('browser', $type, 'python'));
+            $this->assertFalse(RuntimeSupport::supports('desktop', $type, 'python'));
+            $this->assertFalse(RuntimeSupport::supports('cloud', $type, 'python'));
+            // A language no runtime implements runs nowhere.
+            $this->assertSame([], RuntimeSupport::surfacesFor($type, 'ruby'));
+        }
+        // The language only means something on code nodes.
+        $this->assertSame(RuntimeSupport::surfacesFor('template'), RuntimeSupport::surfacesFor('template', 'python'));
+        $this->assertSame([], RuntimeSupport::surfacesFor('com.acme.not.a.core.type', 'python'));
+    }
+
+    public function testCompileAvailabilityFollowsTheNodeLanguage(): void
+    {
+        $graph = ['nodes' => [
+            ['id' => 'n1', 'type' => 'input', 'data' => []],
+            ['id' => 'n2', 'type' => 'logic_block', 'data' => ['expr' => 'result = 1', 'language' => 'python']],
+        ], 'edges' => []];
+        $result = FlowCompiler::compile($graph, []);
+        $this->assertTrue($result['ok'], 'a Python block is a valid flow');
+        $this->assertSame(['browser'], $result['availability']['surfaces']);
+        $this->assertSame(['cloud' => ['n2'], 'desktop' => ['n2']], $result['availability']['unsupported']);
+
+        // A contributed preset lowering to a Python block is judged by what it lowers to.
+        $installed = $this->installed('com.acme.tools.pycheck', [
+            'kind' => 'core-preset', 'coreType' => 'condition', 'defaults' => ['expr' => 'True', 'language' => 'python'],
+        ]);
+        $lowered = FlowCompiler::compile(['nodes' => [['id' => 'p', 'type' => 'com.acme.tools.pycheck', 'data' => []]], 'edges' => []], $installed);
+        $this->assertSame(['browser'], $lowered['availability']['surfaces']);
+    }
+
     public function testCloudSurfaceTracksCloudFlowRunnerExactly(): void
     {
         // Drift between this matrix and the runner would make the editor promise a surface

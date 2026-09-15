@@ -15,6 +15,7 @@ import { Switch } from '../../ui/Switch';
 import { CodeEditor } from '../../ui/CodeEditor';
 import { ErrorBoundary } from '../../ErrorBoundary';
 import {
+  codeSpecForLanguage,
   evalShowIf,
   effectiveNodeData,
   getReferenceSyntax,
@@ -27,7 +28,7 @@ import {
 } from './nodeCatalog';
 import { flowNodeRegistry } from '../registry/FlowNodeRegistry';
 import { filterForms, formsForContext, shouldSearch } from './formPicker';
-import type { FlowFilterOp } from '../../../client-runtime/flows/nodes';
+import { declaredLogicLanguage, type FlowFilterOp } from '../../../client-runtime/flows/nodes';
 import { listProviders } from '../../../client-runtime/flows/aiProviders';
 import { defaultSourceLabel, getAiPreferences } from '../../../client-runtime/flows/aiDefault';
 import { buildAiProviderOptions } from './aiProviderOptions';
@@ -1037,7 +1038,9 @@ function AnswersFieldAdder({
  * A real code editor (Monaco) for `code`-type fields (condition/logic_block expressions, JSON /
  * selector bodies, the output value). Keeps the "ZIPP sandboxed" / "JSON / selectors"
  * affordances, registers itself as the active selector-insert target on focus, and falls back to a
- * monospace textarea if Monaco can't mount (offline chunk, worker failure).
+ * monospace textarea if Monaco can't mount (offline chunk, worker failure). A code node's field
+ * arrives already resolved for its language (codeSpecForLanguage), so the Monaco mode, placeholder,
+ * help and chip syntax all follow the node's language select.
  */
 function CodeField({
   spec,
@@ -1058,6 +1061,10 @@ function CodeField({
   // 'zipp' for condition/logic_block's sandboxed expr, 'selector' for JSON/selector bodies
   // (resolveDeep), matching nodes.ts exactly (see getReferenceSyntax).
   const mode = getReferenceSyntax(spec);
+  // Monaco calls onMount once, but the syntax changes with the node's language select: the
+  // insert reads the current one.
+  const modeRef = useRef(mode);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
 
   const fallback = (
     // data-ref-syntax lets the panel's generic onPanelFocus format chip-inserts correctly if
@@ -1076,7 +1083,7 @@ function CodeField({
   const onEditorMount = (editor: MonacoEditor) => {
     editor.onDidFocusEditorText(() => {
       setInserter((toInsert) => {
-        const formatted = formatChipInsert(toInsert, mode);
+        const formatted = formatChipInsert(toInsert, modeRef.current);
         const sel = editor.getSelection();
         if (sel) editor.executeEdits('insert-selector', [{ range: sel, text: formatted, forceMoveMarkers: true }]);
         editor.focus();
@@ -1090,7 +1097,7 @@ function CodeField({
         {spec.label}
         {spec.zipp && (
           <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:bg-sky-500/15 dark:text-sky-300">
-            ZIPP sandboxed
+            ZIPP sandboxed{spec.python ? ` · ${spec.language === 'python' ? 'Python' : 'JavaScript'}` : ''}
           </span>
         )}
         {json && (
@@ -1397,7 +1404,10 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
                   return <Field key={p.key} spec={pathSpec} value={data[p.key]} onChange={onChange} />;
                 }
                 if (p.type === 'code') {
-                  const codeField = <CodeField key={p.key} spec={p} value={data[p.key]} onChange={onChange} setInserter={setInserter} />;
+                  // condition/logic_block code follows the node's language select; the source is
+                  // never rewritten when it changes (the select patches `language` alone).
+                  const codeSpec = codeSpecForLanguage(p, declaredLogicLanguage(data));
+                  const codeField = <CodeField key={p.key} spec={codeSpec} value={data[p.key]} onChange={onChange} setInserter={setInserter} />;
                   // service_action: §6.4 advice against the catalog action's declared inputSchema
                   // (consumer #2 of the assignability lattice — same conservative machinery).
                   if (p.key === 'input' && type === 'service_action') {

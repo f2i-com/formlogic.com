@@ -259,8 +259,8 @@ class CloudFlowRunnerTest extends TestCase
         $this->assertCount(5, $offenders);
         $byId = array_column($offenders, null, 'nodeId');
         $this->assertSame('cloud_unsupported_node', 'cloud_unsupported_node'); // the code the dispatcher reports
-        $this->assertStringContainsString('JS logic blocks', $byId['lb']['reason']);
-        $this->assertStringContainsString('JS condition nodes', $byId['cond']['reason']);
+        $this->assertStringContainsString('Logic blocks (JavaScript or Python)', $byId['lb']['reason']);
+        $this->assertStringContainsString('Condition nodes (JavaScript or Python)', $byId['cond']['reason']);
         $this->assertSame('storage_get', $byId['kv']['type']);
         $this->assertSame('aokie_speak', $byId['spk']['type']);
         $this->assertSame('browser_action', $byId['ba']['type']);

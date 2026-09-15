@@ -10,11 +10,12 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { runFlowCloudMock, runFlowOnDesktopMock, executeFlowMock, getDesktopConnectionsMock } = vi.hoisted(() => ({
+const { runFlowCloudMock, runFlowOnDesktopMock, executeFlowMock, getDesktopConnectionsMock, compileFlowMock } = vi.hoisted(() => ({
   runFlowCloudMock: vi.fn(),
   runFlowOnDesktopMock: vi.fn(),
   executeFlowMock: vi.fn(),
   getDesktopConnectionsMock: vi.fn(),
+  compileFlowMock: vi.fn(),
 }));
 
 vi.mock('../../lib/api', async (importOriginal) => {
@@ -25,6 +26,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
       isDemoMode: () => false,
       runFlowCloud: (...args: unknown[]) => runFlowCloudMock(...args),
       getDesktopConnections: () => getDesktopConnectionsMock(),
+      compileFlow: (...args: unknown[]) => compileFlowMock(...args),
     },
   };
 });
@@ -55,13 +57,13 @@ vi.mock('react-router-dom', () => ({
 
 import { TestRunDrawer } from './TestRunDrawer';
 import type { CloudRunFeedback } from './editor/executionLocation';
-import type { FlowDefinition } from '../../types/flows';
+import type { FlowDefinition, WorkflowGraphNode } from '../../types/flows';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
 let root: Root | null = null;
 
-function flowWith(location: string | null): FlowDefinition {
+function flowWith(location: string | null, nodes: WorkflowGraphNode[] = [{ id: 'list-1', type: 'formlogic_list_responses' }]): FlowDefinition {
   return {
     id: 'flow-1',
     ownerUserId: 'u1',
@@ -71,7 +73,7 @@ function flowWith(location: string | null): FlowDefinition {
     description: null,
     engine: 'f2i',
     flowJson: {
-      nodes: [{ id: 'list-1', type: 'formlogic_list_responses' }],
+      nodes,
       edges: [],
     },
     inputSchema: null,
@@ -91,12 +93,16 @@ async function flush(): Promise<void> {
   });
 }
 
-async function renderDrawer(props: Record<string, unknown> = {}, location: string | null = 'auto'): Promise<HTMLElement> {
+async function renderDrawer(
+  props: Record<string, unknown> = {},
+  location: string | null = 'auto',
+  nodes?: WorkflowGraphNode[],
+): Promise<HTMLElement> {
   const container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => {
-    root!.render(<TestRunDrawer flow={flowWith(location)} onClose={() => undefined} {...props} />);
+    root!.render(<TestRunDrawer flow={flowWith(location, nodes)} onClose={() => undefined} {...props} />);
   });
   await flush();
   return container;
@@ -274,6 +280,93 @@ describe('TestRunDrawer — run dispatch per executionLocation', () => {
     await click(buttonByText(container, 'Run via Desktop relay'));
     await flush();
     expect(container.textContent).toContain('desktop_offline: Desktop is offline');
+  });
+
+  // formlogic-python/1: the Desktop that claims a relay run fetches the flow and runs it; one
+  // built before Python would run `result = inputs["n"] // 2` as JavaScript (`// 2` is a
+  // comment). The server refuses the enqueue (409 language_unsupported); the drawer says why
+  // before the click instead.
+  describe('desktop relay and Python code', () => {
+    const PY_NODES = [
+      { id: 'in', type: 'input' },
+      { id: 'half', type: 'logic_block', data: { language: 'python', expr: 'result = inputs["n"] // 2' } },
+    ];
+    const now = () => new Date().toISOString();
+
+    async function selectComputer(container: HTMLElement, id: string): Promise<void> {
+      const select = container.querySelector('select')!;
+      await act(async () => {
+        select.value = id;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    }
+
+    it('is disabled, with the reason, when no online computer advertises Python', async () => {
+      getDesktopConnectionsMock.mockResolvedValue({ data: { connections: [
+        { desktopInstanceId: 'oaiy-home', deviceName: 'Home PC', lastSeenAt: now(), capabilities: ['relay.flows'] },
+      ] } });
+      const container = await renderDrawer({}, 'desktop', PY_NODES);
+      const relay = buttonByText(container, 'Run via Desktop relay');
+      expect(relay.disabled).toBe(true);
+      const note = container.querySelector('[data-testid="relay-language-note"]');
+      expect(note?.textContent).toContain('Python');
+      expect(note?.textContent).toContain('run it in the browser');
+      await click(relay);
+      expect(runFlowOnDesktopMock).not.toHaveBeenCalled();
+      // The browser run stays available.
+      expect(buttonByText(container, 'Run in browser').disabled).toBe(false);
+    });
+
+    it('is enabled once the target computer advertises logic-language:python', async () => {
+      getDesktopConnectionsMock.mockResolvedValue({ data: { connections: [
+        { desktopInstanceId: 'oaiy-home', deviceName: 'Home PC', lastSeenAt: now(), capabilities: ['relay.flows', 'logic-language:python'] },
+      ] } });
+      runFlowOnDesktopMock.mockResolvedValue({ ok: true, data: { status: 'done', result: 2 } });
+      const container = await renderDrawer({}, 'desktop', PY_NODES);
+      const relay = buttonByText(container, 'Run via Desktop relay');
+      expect(relay.disabled).toBe(false);
+      expect(container.querySelector('[data-testid="relay-language-note"]')).toBeNull();
+      await click(relay);
+      await flush();
+      expect(runFlowOnDesktopMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('follows the explicitly selected computer', async () => {
+      getDesktopConnectionsMock.mockResolvedValue({ data: { connections: [
+        { desktopInstanceId: 'oaiy-home', deviceName: 'Home PC', lastSeenAt: now(), capabilities: ['logic-language:python'] },
+        { desktopInstanceId: 'oaiy-office', deviceName: 'Office PC', lastSeenAt: now(), capabilities: [] },
+      ] } });
+      const container = await renderDrawer({}, 'desktop', PY_NODES);
+      expect(buttonByText(container, 'Run via Desktop relay').disabled).toBe(false);
+      await selectComputer(container, 'oaiy-office');
+      expect(buttonByText(container, 'Run via Desktop relay').disabled).toBe(true);
+      expect(container.querySelector('[data-testid="relay-language-note"]')?.textContent).toContain('Office PC');
+      await selectComputer(container, 'oaiy-home');
+      expect(buttonByText(container, 'Run via Desktop relay').disabled).toBe(false);
+    });
+
+    it('sees Python that a package preset lowers to, through the server compile', async () => {
+      getDesktopConnectionsMock.mockResolvedValue({ data: { connections: [
+        { desktopInstanceId: 'oaiy-home', deviceName: 'Home PC', lastSeenAt: now(), capabilities: [] },
+      ] } });
+      compileFlowMock.mockResolvedValue({ data: { ok: true, ir: {
+        nodes: [{ id: 'in', type: 'input' }, { id: 'h', type: 'logic_block', data: { language: 'python', expr: '1' } }],
+        edges: [],
+      } } });
+      const container = await renderDrawer({}, 'desktop', [{ id: 'in', type: 'input' }, { id: 'h', type: 'com.acme.py.halve', data: {} }]);
+      expect(compileFlowMock).toHaveBeenCalledWith('flow-1');
+      expect(buttonByText(container, 'Run via Desktop relay').disabled).toBe(true);
+    });
+
+    it('leaves JavaScript flows alone', async () => {
+      getDesktopConnectionsMock.mockResolvedValue({ data: { connections: [
+        { desktopInstanceId: 'oaiy-home', deviceName: 'Home PC', lastSeenAt: now(), capabilities: [] },
+      ] } });
+      const container = await renderDrawer({}, 'desktop', [{ id: 'l', type: 'logic_block', data: { expr: 'inputs.n / 2' } }]);
+      expect(buttonByText(container, 'Run via Desktop relay').disabled).toBe(false);
+      expect(container.querySelector('[data-testid="relay-language-note"]')).toBeNull();
+      expect(compileFlowMock).not.toHaveBeenCalled();
+    });
   });
 
   it('desktop and cloud flows still offer a browser run as the secondary action', async () => {

@@ -11,16 +11,18 @@
 // flow's executionLocation — 'auto' keeps the browser executor untouched, 'desktop' rides the
 // E2E desktop relay with live queue/progress, 'cloud' calls the synchronous cloud runner
 // (credit-metered; typed refusals — credits exhausted / unsupported nodes — surface inline).
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Check, Cloud, Laptop, Loader2, MinusCircle, PlayCircle, ServerCog, X } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { PanelHeader } from './PanelHeader';
 import { RemoteComputerSelect } from './RemoteComputerSelect';
+import { relayLanguageBlock, type RemoteComputer } from './remoteComputers';
 import { toast } from '../../stores/toastStore';
 import { api } from '../../lib/api';
 import { executeFlow, type FlowRunOutcome } from '../../client-runtime/flows/flowExecutor';
-import { resolveExecutableGraph } from '../../client-runtime/flows/compiledGraph';
+import { graphHasContributedNodes, resolveExecutableGraph } from '../../client-runtime/flows/compiledGraph';
+import { flowLogicLanguages } from '../../client-runtime/flows/nodes';
 import { buildWorkspaceExecutorDeps } from '../../client-runtime/flows/flowDispatcher';
 import { runFlowOnDesktop, type DesktopFlowRunState } from '../../client-runtime/desktop/desktopFlowRun';
 import { flowNodeRegistry } from './registry/FlowNodeRegistry';
@@ -104,6 +106,42 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
   const [desktopState, setDesktopState] = useState<DesktopFlowRunState | null>(null);
   const [desktopInstanceId, setDesktopInstanceId] = useState('');
   const [cloudError, setCloudError] = useState<{ kind: 'credits' | 'unsupported' | 'other'; message: string; nodes?: string[] } | null>(null);
+
+  // formlogic-python/1: which linked computers can take this flow over the relay. The flow's
+  // own code nodes, plus what a package preset lowers them to (the server compile, the only
+  // lowering authority); relayLanguageBlock explains a refusal before the click.
+  const [computers, setComputers] = useState<{ list: RemoteComputer[]; checkedAt: number } | null>(null);
+  const onComputersChange = useCallback((list: RemoteComputer[], checkedAt: number) => setComputers({ list, checkedAt }), []);
+  // The compiled graph's languages, for the flow revision they were compiled from.
+  const [compiled, setCompiled] = useState<{ key: string; languages: string[] } | null>(null);
+  const compileKey = `${flow.id}@${flow.version}`;
+  const contributed = graphHasContributedNodes(flow.flowJson);
+  useEffect(() => {
+    if (location !== 'desktop' || !contributed || api.isDemoMode()) return undefined;
+    let alive = true;
+    api.compileFlow(flow.id)
+      .then((res) => {
+        const ir = res.data?.ok ? res.data.ir : null;
+        // A graph that does not compile runs nowhere; the enqueue answers for it.
+        if (alive) setCompiled({ key: compileKey, languages: ir && Array.isArray(ir.nodes) ? flowLogicLanguages(ir) : [] });
+      })
+      .catch(() => {
+        if (alive) setCompiled({ key: compileKey, languages: [] });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [flow.id, compileKey, location, contributed]);
+  const compiledLanguages = compiled !== null && compiled.key === compileKey ? compiled.languages : null;
+  const relayLanguages = useMemo(
+    () => [...new Set([...flowLogicLanguages(flow.flowJson), ...(compiledLanguages ?? [])])].filter((l) => l !== 'javascript').sort(),
+    [flow.flowJson, compiledLanguages],
+  );
+  const relayBlock = useMemo(() => {
+    if (location !== 'desktop' || api.isDemoMode()) return null;
+    if (contributed && compiledLanguages === null) return "Checking what this flow's extension nodes run…";
+    return relayLanguageBlock(relayLanguages, computers?.list ?? null, desktopInstanceId, computers?.checkedAt ?? 0);
+  }, [location, contributed, compiledLanguages, relayLanguages, computers, desktopInstanceId]);
 
   // Friendly label per node id for the timeline (falls back to the raw type / id).
   const nodeLabel = useMemo(() => {
@@ -340,7 +378,9 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
           />
         </div>
 
-        {location === 'desktop' && !api.isDemoMode() && <RemoteComputerSelect value={desktopInstanceId} onChange={setDesktopInstanceId} disabled={running || serverRunning} />}
+        {location === 'desktop' && !api.isDemoMode() && (
+          <RemoteComputerSelect value={desktopInstanceId} onChange={setDesktopInstanceId} disabled={running || serverRunning} onComputersChange={onComputersChange} />
+        )}
         <div className="flex flex-wrap gap-2">
           {location === 'auto' && (
             <Button size="sm" onClick={runBrowser} isLoading={running} disabled={running} leftIcon={<PlayCircle className="h-4 w-4" />}>
@@ -348,7 +388,7 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
             </Button>
           )}
           {location === 'desktop' && (
-            <Button size="sm" onClick={runDesktop} isLoading={running} disabled={running} leftIcon={<Laptop className="h-4 w-4" />}>
+            <Button size="sm" onClick={runDesktop} isLoading={running} disabled={running || relayBlock !== null} leftIcon={<Laptop className="h-4 w-4" />}>
               Run via Desktop relay
             </Button>
           )}
@@ -368,6 +408,15 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
             </Button>
           )}
         </div>
+        {relayBlock && (
+          <p
+            data-testid="relay-language-note"
+            role="note"
+            className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200"
+          >
+            {relayBlock}
+          </p>
+        )}
         <p className="text-[11px] text-gray-400 dark:text-slate-500">
           {location === 'desktop'
             ? 'Run the saved flow on your linked OAIY computer through FormLogic. Inputs and results are end-to-end encrypted; this works from another device without a localhost connection. Queue status appears below; detailed progress depends on the runtime.'

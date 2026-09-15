@@ -65,15 +65,33 @@ export interface RunHookParams {
   input: Omit<CustomAppLogicInput, 'hook'>;
   handlers?: AppLogicEffectHandlers;
   budgetMs?: number;
+  /**
+   * Run only the scripts in these languages (absent: every script). The desktop bridge passes
+   * the languages a fresh Desktop does NOT take for this event (useDesktopConnectorEvents). It
+   * scopes this run only: a hook chained from it (connector.request / sync flow.run →
+   * onConnectorEvent) handles an event no Desktop ever sees, so every script runs there.
+   */
+  languages?: readonly string[];
+}
+
+/**
+ * A script's language: absent, null or '' is JavaScript (every bundle saved before Python), as
+ * the server reads it (CustomLogicSanitizer::scriptLanguage) and zipp-host runs it.
+ */
+function scriptLanguage(script: CustomAppLogicScript): string {
+  const language: unknown = script.language;
+  return language === undefined || language === null || language === '' ? 'javascript' : String(language);
 }
 
 function enabledScriptsForHook(
   bundle: CustomAppLogicBundle,
-  hook: CustomAppLogicHookName
+  hook: CustomAppLogicHookName,
+  languages?: readonly string[]
 ): CustomAppLogicScript[] {
   if (!bundle || !Array.isArray(bundle.scripts)) return [];
   return bundle.scripts.filter(
     (s) => s && s.hook === hook && s.enabled !== false && typeof s.source === 'string' && s.source.trim()
+      && (!languages || languages.includes(scriptLanguage(s)))
   );
 }
 
@@ -99,11 +117,11 @@ export async function runHook(params: RunHookParams): Promise<AppLogicHookOutcom
 }
 
 async function runHookInternal(
-  { bundle, hook, input, handlers, budgetMs }: RunHookParams,
+  { bundle, hook, input, handlers, budgetMs, languages }: RunHookParams,
   depth: number
 ): Promise<AppLogicHookOutcome> {
   const outcome = emptyOutcome();
-  const scripts = enabledScriptsForHook(bundle, hook);
+  const scripts = enabledScriptsForHook(bundle, hook, languages);
   if (scripts.length === 0) return outcome;
 
   // Permission mode (spec §33). Strict (the default — absent or true) requires an explicit grant for
@@ -128,10 +146,13 @@ async function runHookInternal(
 
     let raw: unknown;
     try {
+      // The script's own language; one this host does not run fails the script (zipp-host),
+      // never runs it as JavaScript.
       raw = await runAppLogic(
         script.source,
         ctx as unknown as Record<string, unknown>,
-        script.budgetMs ?? budgetMs ?? DEFAULT_BUDGET_MS
+        script.budgetMs ?? budgetMs ?? DEFAULT_BUDGET_MS,
+        script.language
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

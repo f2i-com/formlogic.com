@@ -112,6 +112,9 @@ class AppController
         }
 
         try {
+            // A script language outside javascript | python is refused here as on update
+            // (formlogic-python/1); createApp stores a body's customLogic as given.
+            \FormLogic\Helpers\CustomLogicSanitizer::assertSupportedLanguages($data['customLogic'] ?? null);
             $app = $this->appService->createApp($data, $userId);
             $this->audit($request, 'app.create', 'app', $app['id'] ?? '');
             return $this->jsonResponse($response, ['app' => $app], 201);
@@ -228,7 +231,12 @@ class AppController
             if (!is_array($data['customLogic'])) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom logic must be an object'], 400);
             }
-            $data['customLogic'] = \FormLogic\Helpers\CustomLogicSanitizer::sanitize($data['customLogic']);
+            try {
+                $data['customLogic'] = \FormLogic\Helpers\CustomLogicSanitizer::sanitize($data['customLogic']);
+            } catch (\InvalidArgumentException $e) {
+                // A script language outside javascript | python (formlogic-python/1).
+                return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+            }
             if (!\FormLogic\Helpers\CustomLogicSanitizer::withinSizeCap($data['customLogic'])) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom logic is too large (100KB max)'], 400);
             }

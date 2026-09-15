@@ -29,6 +29,64 @@ class CustomLogicSanitizerTest extends TestCase
         $this->assertSame('onBeforeSubmit', $out['scripts'][0]['hook']);
     }
 
+    /**
+     * formlogic-python/1: a script's language survives a save. Without it a Python script would
+     * be re-labelled JavaScript and run as such. Absent, null or '' means JavaScript.
+     */
+    public function testKeepsScriptLanguage(): void
+    {
+        $out = CustomLogicSanitizer::sanitize(['scripts' => [
+            ['id' => 'py', 'hook' => 'onBeforeSubmit', 'language' => 'python', 'source' => "def run(ctx):\n    return {}"],
+            ['id' => 'js', 'hook' => 'onBeforeSubmit', 'language' => 'javascript', 'source' => 'function run(c){return {};}'],
+            ['id' => 'none', 'hook' => 'onAppStart', 'source' => 'function run(c){return {};}'],
+            ['id' => 'null', 'hook' => 'onAppStart', 'language' => null, 'source' => 'function run(c){return {};}'],
+            ['id' => 'empty', 'hook' => 'onAppStart', 'language' => '', 'source' => 'function run(c){return {};}'],
+        ]]);
+        $byId = array_column($out['scripts'], null, 'id');
+        $this->assertSame('python', $byId['py']['language']);
+        $this->assertSame('javascript', $byId['js']['language']);
+        foreach (['none', 'null', 'empty'] as $id) {
+            $this->assertArrayNotHasKey('language', $byId[$id], "$id is JavaScript");
+            $this->assertSame('javascript', CustomLogicSanitizer::scriptLanguage($byId[$id]));
+        }
+        $this->assertSame('python', CustomLogicSanitizer::scriptLanguage($byId['py']));
+        // The stored runtime token stays the historical name for every language.
+        $this->assertSame(['quickjs'], array_values(array_unique(array_column($out['scripts'], 'runtime'))));
+        // A stored value that skipped the sanitizer is reported as written, never as JavaScript.
+        $this->assertSame('ruby', CustomLogicSanitizer::scriptLanguage(['language' => 'ruby']));
+    }
+
+    /**
+     * The flows rule, for app logic: a language is exactly 'javascript' or 'python'. Anything else
+     * ('py', 'python3', ' Python ', a non-string) is refused with the script named, rather than
+     * silently relabelled: relabelled JavaScript would run a Python script as JavaScript, and
+     * relabelled Python would hide the author's typo.
+     */
+    public function testRefusesALanguageNoRuntimeRuns(): void
+    {
+        foreach (['py', 'python3', 'Python', ' python', 'PYTHON', 'js', 'ruby', ['python'], 5, true] as $bad) {
+            try {
+                CustomLogicSanitizer::sanitize(['scripts' => [
+                    ['id' => 'ok', 'hook' => 'onAppStart', 'source' => 'function run(c){return {};}'],
+                    ['id' => 'typo', 'hook' => 'onBeforeSubmit', 'language' => $bad, 'source' => "def run(ctx):\n    return {}"],
+                ]]);
+                $this->fail('an unsupported language must be refused: ' . json_encode($bad));
+            } catch (\InvalidArgumentException $e) {
+                $this->assertStringContainsString("script 'typo' has an unsupported language", $e->getMessage());
+                $this->assertStringContainsString('javascript or python', $e->getMessage());
+            }
+        }
+        $this->assertSame(
+            ['scriptId' => 'typo', 'language' => 'py'],
+            CustomLogicSanitizer::firstUnsupportedLanguage(['scripts' => [
+                ['id' => 'ok', 'hook' => 'onAppStart', 'language' => 'python', 'source' => 'x'],
+                ['id' => 'typo', 'hook' => 'onAppStart', 'language' => 'py', 'source' => 'x'],
+            ]])
+        );
+        $this->assertNull(CustomLogicSanitizer::firstUnsupportedLanguage(['scripts' => [['id' => 'ok', 'source' => 'x']]]));
+        $this->assertNull(CustomLogicSanitizer::firstUnsupportedLanguage(['version' => 1]));
+    }
+
     public function testDropsUnknownHookAndEmptySource(): void
     {
         $out = CustomLogicSanitizer::sanitize(['scripts' => [

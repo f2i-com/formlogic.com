@@ -193,6 +193,46 @@ describe('engine.ts — Flows timeout-budget plumbing', () => {
     });
   });
 
+  // formlogic-python/1: the flow evaluators and runAppLogic carry the author's language to the
+  // Worker (zipp-host runEval); form evaluators never do, so form logic stays JavaScript.
+  describe('logic language on the Worker request', () => {
+    it.each([
+      ['calculateValueForFlow', 'flow'],
+      ['evaluateCondition', 'condition'],
+      ['runAppLogic', 'applogic'],
+    ] as const)('%s forwards it with kind %s', async (name, kind) => {
+      const engine = await import('./engine');
+      behavior = { kind: 'reply', delayMs: 0, response: { ok: true, result: true } };
+      const promise = engine[name]('result = 1', { inputs: {} }, 2500, 'python');
+      await vi.advanceTimersByTimeAsync(0);
+      await promise;
+      expect(lastRequest).toMatchObject({ kind, expression: 'result = 1', budgetMs: 2500, language: 'python' });
+    });
+
+    it('is absent when the caller names none', async () => {
+      const engine = await import('./engine');
+      behavior = { kind: 'reply', delayMs: 0, response: { ok: true, result: 1 } };
+      for (const run of [() => engine.calculateValue('1', {}), () => engine.calculateValueForFlow('1', {}), () => engine.runAppLogic('function run(){}', {})]) {
+        const promise = run();
+        await vi.advanceTimersByTimeAsync(0);
+        await promise;
+        expect(lastRequest?.language).toBeUndefined();
+      }
+    });
+
+    it('keeps the same watchdog for Python: budgetMs + grace', async () => {
+      const { calculateValueForFlow } = await import('./engine');
+      behavior = { kind: 'hang' };
+      const promise = calculateValueForFlow('while True: pass', {}, 2000, 'python');
+      const caught = vi.fn();
+      promise.catch(caught);
+      await vi.advanceTimersByTimeAsync(2000 + WATCHDOG_GRACE_MS - 50);
+      expect(caught).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(100);
+      await expect(promise).rejects.toThrow(/timed out/);
+    });
+  });
+
   describe('evaluation kind per entry point — only the Flows logic_block evaluator uses the flow kind', () => {
     it.each([
       ['calculateValue', 'calc'],
@@ -216,6 +256,8 @@ describe('engine.ts — Flows timeout-budget plumbing', () => {
 describe('engine.ts — instance recycling (ZP-01)', () => {
   let spawned = 0;
   let usageToReport: WorkerResponse['usage'] | undefined;
+  /** The next reply is this failure instead of a result. */
+  let failNextWith: string | null = null;
   class CountingWorker {
     onmessage: ((e: { data: WorkerResponse }) => void) | null = null;
     onerror: ((e: unknown) => void) | null = null;
@@ -223,7 +265,12 @@ describe('engine.ts — instance recycling (ZP-01)', () => {
     constructor() { spawned += 1; }
     postMessage(msg: WorkerRequest | WorkerInit): void {
       if ('type' in msg) { queueMicrotask(() => { if (!this.terminated) this.onmessage?.({ data: { id: 0, ok: true, ready: true } }); }); return; }
-      setTimeout(() => { if (!this.terminated) this.onmessage?.({ data: { id: msg.id, ok: true, result: 1, usage: usageToReport } }); }, 5);
+      const error = failNextWith;
+      failNextWith = null;
+      setTimeout(() => {
+        if (this.terminated) return;
+        this.onmessage?.({ data: error === null ? { id: msg.id, ok: true, result: 1, usage: usageToReport } : { id: msg.id, ok: false, error, usage: usageToReport } });
+      }, 5);
     }
     terminate(): void { this.terminated = true; }
   }
@@ -232,6 +279,7 @@ describe('engine.ts — instance recycling (ZP-01)', () => {
     vi.resetModules();
     vi.useFakeTimers();
     spawned = 0;
+    failNextWith = null;
     usageToReport = { enginesCreated: 1, enginesDisposed: 1, retainedBytes: 0, dynamicCodeCalls: 2 };
     vi.stubGlobal('Worker', CountingWorker as unknown as typeof Worker);
   });
@@ -267,6 +315,22 @@ describe('engine.ts — instance recycling (ZP-01)', () => {
     expect(engine.getEngineInstanceStatus().currentWorkerEvaluations).toBe(1);
   });
 
+  it('replaces the Worker after a failed call from an instance that trapped', async () => {
+    // zipp-host reports a trapped instance over every retention budget (instanceUsage).
+    const engine = await import('./engine');
+    await evaluateOnce(engine);
+    failNextWith = 'The app engine stopped on an internal error (a WebAssembly trap) and restarts for the next evaluation.';
+    usageToReport = { enginesCreated: 0, enginesDisposed: 0, retainedBytes: Number.MAX_SAFE_INTEGER, dynamicCodeCalls: 0, trapped: true };
+    const failing = engine.calculateValueForFlow('1', {});
+    const settled = expect(failing).rejects.toThrow(/stopped on an internal error/);
+    await vi.advanceTimersByTimeAsync(10);
+    await settled;
+    expect(engine.getEngineInstanceStatus().workersRecycled).toBe(1);
+    usageToReport = { enginesCreated: 1, enginesDisposed: 1, retainedBytes: 0, dynamicCodeCalls: 1 };
+    await evaluateOnce(engine);
+    expect(spawned).toBe(2);
+  });
+
   it('never recycles while another evaluation is in flight', async () => {
     const engine = await import('./engine');
     usageToReport = { enginesCreated: 1, enginesDisposed: 1, retainedBytes: engine.INSTANCE_RETAINED_BUDGET_BYTES, dynamicCodeCalls: 1 };
@@ -278,6 +342,16 @@ describe('engine.ts — instance recycling (ZP-01)', () => {
     // Both replies arrived on the same Worker; recycling waited for the last one.
     expect(spawned).toBe(1);
     expect(engine.getEngineInstanceStatus().workersRecycled).toBe(1);
+    await evaluateOnce(engine);
+    expect(spawned).toBe(2);
+  });
+
+  it('replaces a trapped instance even when it reports no retained bytes', async () => {
+    const engine = await import('./engine');
+    usageToReport = { enginesCreated: 1, enginesDisposed: 1, retainedBytes: 0, dynamicCodeCalls: 0, trapped: true };
+    await evaluateOnce(engine);
+    expect(engine.getEngineInstanceStatus().workersRecycled).toBe(1);
+    usageToReport = { enginesCreated: 1, enginesDisposed: 1, retainedBytes: 0, dynamicCodeCalls: 0 };
     await evaluateOnce(engine);
     expect(spawned).toBe(2);
   });

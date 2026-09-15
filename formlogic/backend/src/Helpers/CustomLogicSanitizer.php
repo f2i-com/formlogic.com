@@ -8,9 +8,15 @@ namespace FormLogic\Helpers;
  * Normalizes an incoming custom app-logic bundle (app-level or form-level) to a known-safe
  * shape: only recognized hooks, string sources under a per-script cap, at most 50 scripts,
  * runtime forced to 'quickjs' (a historical name kept for stored bundles; the browser host runs
- * the scripts on ZIPP). The stored bundle is never trusted — the client sandboxes it
- * and the server re-validates every submit — but a clean shape avoids storing junk and keeps
- * the payload bounded. Shared by AppController and FormController.
+ * the scripts on ZIPP), and a script's language kept (formlogic-python/1). The stored bundle is
+ * never trusted — the client sandboxes it and the server re-validates every submit — but a clean
+ * shape avoids storing junk and keeps the payload bounded. Shared by AppController and
+ * FormController.
+ *
+ * A script's language follows the rule flow code nodes do (FlowLogicLanguages): exactly
+ * 'javascript' or 'python', absent / null / '' meaning JavaScript. Anything else is refused
+ * (InvalidArgumentException naming the script) rather than relabelled: relabelled JavaScript
+ * would run a Python script as JavaScript, and a guessed Python would hide the author's typo.
  */
 class CustomLogicSanitizer
 {
@@ -19,6 +25,12 @@ class CustomLogicSanitizer
         'onAppStart', 'onScreenEnter', 'onScreenLeave', 'onButtonClick', 'onBeforeSubmit',
         'onAfterSubmit', 'onConnectorEvent', 'onSyncConflict', 'mapConnectorDataToForm', 'calculateDashboardState',
     ];
+
+    /**
+     * Script languages (formlogic-python/1). A script without one is JavaScript, which every
+     * bundle saved before Python is. 'python' scripts define `def run(ctx)`.
+     */
+    public const LANGUAGES = ['javascript', 'python'];
 
     public const MAX_SCRIPTS = 50;
     public const MAX_SOURCE_BYTES = 51200;   // 50KB per script
@@ -31,7 +43,10 @@ class CustomLogicSanitizer
     // (mirror of nativeConnectorClient's BUILT_IN_CONNECTOR_IDS).
     private const RESERVED_CONNECTOR_IDS = ['device', 'vehicle', 'local_http'];
 
-    /** @param array<string,mixed> $bundle */
+    /**
+     * @param array<string,mixed> $bundle
+     * @throws \InvalidArgumentException when a kept script declares a language no runtime runs
+     */
     public static function sanitize(array $bundle): array
     {
         $scriptsIn = is_array($bundle['scripts'] ?? null) ? $bundle['scripts'] : [];
@@ -54,6 +69,15 @@ class CustomLogicSanitizer
                 'runtime' => 'quickjs',
                 'source' => $source,
             ];
+            // Dropping the key would re-label a Python script as JavaScript, which the host would
+            // then run as such; an unknown value is refused (see the class doc).
+            $raw = $s['language'] ?? null;
+            if ($raw !== null && $raw !== '') {
+                if (!in_array($raw, self::LANGUAGES, true)) {
+                    throw new \InvalidArgumentException(self::unsupportedMessage($out['id'], $raw));
+                }
+                $out['language'] = $raw;
+            }
             if (isset($s['description']) && is_string($s['description'])) {
                 $out['description'] = mb_substr($s['description'], 0, 500);
             }
@@ -92,6 +116,82 @@ class CustomLogicSanitizer
             $result['connector'] = $connector;
         }
         return $result;
+    }
+
+    /**
+     * The first script in a bundle whose declared language is not exactly one LANGUAGES names
+     * (absent, null and '' are JavaScript), for callers that store a bundle as written — a pack's
+     * app logic, a backup restore — and must refuse what sanitize() would. A non-string value is
+     * reported as its JSON text.
+     *
+     * @return array{scriptId: string, language: string}|null
+     */
+    public static function firstUnsupportedLanguage(mixed $bundle): ?array
+    {
+        $scripts = is_array($bundle) && is_array($bundle['scripts'] ?? null) ? $bundle['scripts'] : [];
+        foreach ($scripts as $i => $script) {
+            $raw = is_array($script) ? ($script['language'] ?? null) : null;
+            if ($raw === null || $raw === '' || in_array($raw, self::LANGUAGES, true)) {
+                continue;
+            }
+            $id = is_array($script) && is_string($script['id'] ?? null) && $script['id'] !== '' ? $script['id'] : ('script_' . $i);
+            return ['scriptId' => $id, 'language' => is_string($raw) ? $raw : (string) json_encode($raw)];
+        }
+        return null;
+    }
+
+    /**
+     * Refuse a bundle stored as written that holds a script in a language no runtime runs.
+     * @throws \InvalidArgumentException
+     */
+    public static function assertSupportedLanguages(mixed $bundle): void
+    {
+        $unsupported = self::firstUnsupportedLanguage($bundle);
+        if ($unsupported !== null) {
+            throw new \InvalidArgumentException(self::unsupportedMessage($unsupported['scriptId'], $unsupported['language']));
+        }
+    }
+
+    private static function unsupportedMessage(string $scriptId, mixed $language): string
+    {
+        $shown = is_string($language) ? $language : (string) json_encode($language);
+        return "App logic script '{$scriptId}' has an unsupported language '{$shown}': use javascript or python";
+    }
+
+    /**
+     * A stored bundle without the scripts in a language the caller did not declare (null =
+     * JavaScript only, the reading for a caller built before Python, which would run a Python
+     * script as JavaScript). A script in a language no runtime implements is never listed. The
+     * rest of the bundle is unchanged. Serves GET /api/v1/app-logic (a Desktop) and the app
+     * runtime config (a browser tab), both under `?languages=`.
+     *
+     * @param list<string>|null $languages FlowLogicLanguages::fromCaller
+     */
+    public static function forLanguages(mixed $bundle, ?array $languages): mixed
+    {
+        if (!is_array($bundle) || !is_array($bundle['scripts'] ?? null)) {
+            return $bundle;
+        }
+        $runs = $languages ?? ['javascript'];
+        $bundle['scripts'] = array_values(array_filter(
+            $bundle['scripts'],
+            static fn (mixed $script): bool => in_array(self::scriptLanguage($script), $runs, true)
+        ));
+        return $bundle;
+    }
+
+    /**
+     * The language a stored script runs in: its declared one, else JavaScript. Anything else a
+     * stored script holds (only a path that skipped the sanitizer can store one) comes back as
+     * written, so a caller that filters by language never mistakes it for JavaScript.
+     */
+    public static function scriptLanguage(mixed $script): string
+    {
+        $raw = is_array($script) ? ($script['language'] ?? null) : null;
+        if ($raw === null || $raw === '') {
+            return 'javascript';
+        }
+        return is_string($raw) ? $raw : (string) json_encode($raw);
     }
 
     /**

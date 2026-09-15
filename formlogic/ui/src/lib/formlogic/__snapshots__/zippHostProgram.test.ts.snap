@@ -1,0 +1,165 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`zipp-host JavaScript program text > 'applogic' 1`] = `
+"var __replies = [];
+function __emit(o) { __replies.push(o); }
+globalThis.print = function () {};
+globalThis.console = { log: function(){}, warn: function(){}, error: function(){}, info: function(){}, debug: function(){} };
+<PRELUDE>
+var __out;
+try {
+  var __ctx;
+  try { __ctx = JSON.parse("{\\"inputs\\":{\\"n\\":2},\\"note\\":\\"a \\\\\\"quoted\\\\\\" </script> value\\"}"); } catch (e) { __ctx = {}; }
+  var __run = new Function("function run(ctx) { return { n: ctx.inputs.n }; }" + "\\nreturn typeof run === 'function' ? run : null;")();
+  __out = {ok: true, value: (typeof __run === 'function') ? __run(__ctx) : undefined};
+} catch (e) { __out = {ok: false, error: String((e && e.message) || e)}; }
+__emit(__out);"
+`;
+
+exports[`zipp-host JavaScript program text > 'calc' 1`] = `
+"var __replies = [];
+function __emit(o) { __replies.push(o); }
+globalThis.print = function () {};
+globalThis.console = { log: function(){}, warn: function(){}, error: function(){}, info: function(){}, debug: function(){} };
+<PRELUDE>
+globalThis.__ctxJson = "{\\"inputs\\":{\\"n\\":2},\\"note\\":\\"a \\\\\\"quoted\\\\\\" </script> value\\"}";
+;(function(){
+  var __c;
+  try { __c = JSON.parse(globalThis.__ctxJson || "{}"); } catch (e) { __c = {}; }
+  for (var __k in __c) {
+    if (Object.prototype.hasOwnProperty.call(__c, __k)
+        && /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(__k)
+        && __k !== "__proto__" && __k !== "constructor" && __k !== "prototype"
+        && __k.indexOf("__") !== 0) {
+      globalThis[__k] = __c[__k];
+    }
+  }
+})();
+
+var __out;
+try { __out = {ok: true, value: (0, eval)("inputs.n * 2")}; }
+catch (e) { __out = {ok: false, error: String((e && e.message) || e)}; }
+__emit(__out);"
+`;
+
+exports[`zipp-host JavaScript program text > 'condition' 1`] = `
+"var __replies = [];
+function __emit(o) { __replies.push(o); }
+globalThis.print = function () {};
+globalThis.console = { log: function(){}, warn: function(){}, error: function(){}, info: function(){}, debug: function(){} };
+<PRELUDE>
+globalThis.__ctxJson = "{\\"inputs\\":{\\"n\\":2},\\"note\\":\\"a \\\\\\"quoted\\\\\\" </script> value\\"}";
+;(function(){
+  var __c;
+  try { __c = JSON.parse(globalThis.__ctxJson || "{}"); } catch (e) { __c = {}; }
+  for (var __k in __c) {
+    if (Object.prototype.hasOwnProperty.call(__c, __k)
+        && /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(__k)
+        && __k !== "__proto__" && __k !== "constructor" && __k !== "prototype"
+        && __k.indexOf("__") !== 0) {
+      globalThis[__k] = __c[__k];
+    }
+  }
+})();
+
+var __out;
+try { __out = {ok: true, value: (0, eval)("inputs.n * 2")}; }
+catch (e) { __out = {ok: false, error: String((e && e.message) || e)}; }
+__emit(__out);"
+`;
+
+exports[`zipp-host JavaScript program text > 'flow' 1`] = `
+"var __replies = [];
+function __emit(o) { __replies.push(o); }
+globalThis.print = function () {};
+globalThis.console = { log: function(){}, warn: function(){}, error: function(){}, info: function(){}, debug: function(){} };
+<PRELUDE>
+globalThis.__ctxJson = "{\\"inputs\\":{\\"n\\":2},\\"note\\":\\"a \\\\\\"quoted\\\\\\" </script> value\\"}";
+;(function(){
+  var __c;
+  try { __c = JSON.parse(globalThis.__ctxJson || "{}"); } catch (e) { __c = {}; }
+  for (var __k in __c) {
+    if (Object.prototype.hasOwnProperty.call(__c, __k)
+        && /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(__k)
+        && __k !== "__proto__" && __k !== "constructor" && __k !== "prototype"
+        && __k.indexOf("__") !== 0) {
+      globalThis[__k] = __c[__k];
+    }
+  }
+})();
+
+var __out;
+try {
+  var __asBody = (function (src) {
+    try { eval("throw 0;\\n" + src); return null; } catch (e) { if (e === 0) return null; }
+    try { return new Function(src); } catch (e) { if (/\\breturn\\b/.test(src)) throw e; return null; }
+  })("inputs.n * 2");
+  __out = {ok: true, value: __asBody ? __asBody() : (0, eval)("inputs.n * 2")};
+}
+catch (e) { __out = {ok: false, error: String((e && e.message) || e)}; }
+__emit(__out);"
+`;
+
+exports[`zipp-host JavaScript program text > 'syntax' 1`] = `
+"var __replies = [];
+function __emit(o) { __replies.push(o); }
+globalThis.print = function () {};
+globalThis.console = { log: function(){}, warn: function(){}, error: function(){}, info: function(){}, debug: function(){} };
+<PRELUDE>
+var __out;
+try { new Function("return (" + "inputs.n * 2" + "\\n);"); __out = {ok: true, value: null}; }
+catch (e) { __out = {ok: false, error: String((e && e.message) || e)}; }
+__emit(__out);"
+`;
+
+exports[`zipp-host JavaScript program text > 'test' 1`] = `
+"var __replies = [];
+function __emit(o) { __replies.push(o); }
+globalThis.print = function () {};
+globalThis.console = { log: function(){}, warn: function(){}, error: function(){}, info: function(){}, debug: function(){} };
+<PRELUDE>
+globalThis.__ctxJson = "{\\"inputs\\":{\\"n\\":2},\\"note\\":\\"a \\\\\\"quoted\\\\\\" </script> value\\"}";
+;(function(){
+  var __c;
+  try { __c = JSON.parse(globalThis.__ctxJson || "{}"); } catch (e) { __c = {}; }
+  for (var __k in __c) {
+    if (Object.prototype.hasOwnProperty.call(__c, __k)
+        && /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(__k)
+        && __k !== "__proto__" && __k !== "constructor" && __k !== "prototype"
+        && __k.indexOf("__") !== 0) {
+      globalThis[__k] = __c[__k];
+    }
+  }
+})();
+
+var __out;
+try { __out = {ok: true, value: (0, eval)("inputs.n * 2")}; }
+catch (e) { __out = {ok: false, error: String((e && e.message) || e)}; }
+__emit(__out);"
+`;
+
+exports[`zipp-host JavaScript program text > 'validate' 1`] = `
+"var __replies = [];
+function __emit(o) { __replies.push(o); }
+globalThis.print = function () {};
+globalThis.console = { log: function(){}, warn: function(){}, error: function(){}, info: function(){}, debug: function(){} };
+<PRELUDE>
+globalThis.__ctxJson = "{\\"inputs\\":{\\"n\\":2},\\"note\\":\\"a \\\\\\"quoted\\\\\\" </script> value\\"}";
+;(function(){
+  var __c;
+  try { __c = JSON.parse(globalThis.__ctxJson || "{}"); } catch (e) { __c = {}; }
+  for (var __k in __c) {
+    if (Object.prototype.hasOwnProperty.call(__c, __k)
+        && /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(__k)
+        && __k !== "__proto__" && __k !== "constructor" && __k !== "prototype"
+        && __k.indexOf("__") !== 0) {
+      globalThis[__k] = __c[__k];
+    }
+  }
+})();
+
+var __out;
+try { __out = {ok: true, value: (0, eval)("inputs.n * 2")}; }
+catch (e) { __out = {ok: false, error: String((e && e.message) || e)}; }
+__emit(__out);"
+`;

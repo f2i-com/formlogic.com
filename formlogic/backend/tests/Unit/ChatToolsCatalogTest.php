@@ -66,6 +66,37 @@ class ChatToolsCatalogTest extends TestCase
         }
     }
 
+    /**
+     * formlogic-python/1: code fields (flow condition / logic_block, app-logic scripts) may be
+     * Python, and an AI builds them only from these descriptions. Binding conditions and pack
+     * connector demo drivers stay JavaScript, and the descriptions say so.
+     */
+    public function testCodeFieldDescriptionsCoverPython(): void
+    {
+        $defs = array_column(ChatToolsService::toolDefinitions(), null, 'name');
+        $chat = array_column(ChatToolsService::chatCatalog(), null, 'name');
+
+        foreach ([$defs['create_flow'], $chat['create_flow']] as $createFlow) {
+            $this->assertStringContainsString('JavaScript or Python', $createFlow['description']);
+            $graph = $createFlow['inputSchema']['properties']['flowJson']['description'];
+            $this->assertStringContainsString("data.language is 'python'", $graph);
+            $this->assertStringContainsString('top-level result (no top-level return)', $graph);
+            $this->assertStringContainsString('truthiness', $graph);
+            $this->assertStringContainsString("nodes['lookup']['found']", $graph);
+        }
+
+        $binding = $defs['create_flow_binding']['inputSchema']['properties']['condition']['description'];
+        $this->assertStringContainsString('Always JavaScript', $binding);
+
+        foreach ([$defs['update_app'], $chat['update_app']] as $updateApp) {
+            $logic = $updateApp['inputSchema']['properties']['customLogic']['description'];
+            $this->assertStringContainsString('language?', $logic);
+            $this->assertStringContainsString("'python' defines def run(ctx):", $logic);
+            $this->assertStringContainsString('always JavaScript', $logic, 'the pack demo driver stays JavaScript');
+        }
+        $this->assertStringContainsString('JavaScript or Python event handlers', $defs['update_app']['description']);
+    }
+
     public function testSharedDefinitionsStillCarryTheFullMcpSet(): void
     {
         $defs = ChatToolsService::toolDefinitions();

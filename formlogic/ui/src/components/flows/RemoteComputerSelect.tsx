@@ -1,15 +1,15 @@
 import { useEffect, useId, useState } from 'react';
 import { api } from '../../lib/api';
-import { CONNECTION_FRESH_MS, parseDbTimestamp } from '../custom-screen/connector/runtimePresence';
-
-type Computer = { desktopInstanceId: string; deviceName: string; lastSeenAt: string | null };
+import { isComputerOnline, type RemoteComputer } from './remoteComputers';
 
 /** Uses account presence only: opening this control never probes localhost. */
-export function RemoteComputerSelect({ value, onChange, disabled }: {
+export function RemoteComputerSelect({ value, onChange, disabled, onComputersChange }: {
   value: string; onChange: (value: string) => void; disabled: boolean;
+  /** Each loaded list and when it was loaded, so a caller can check what the target runs. */
+  onComputersChange?: (computers: RemoteComputer[], checkedAt: number) => void;
 }) {
   const id = useId();
-  const [computers, setComputers] = useState<Computer[]>([]);
+  const [computers, setComputers] = useState<RemoteComputer[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [refresh, setRefresh] = useState(0);
@@ -29,7 +29,11 @@ export function RemoteComputerSelect({ value, onChange, disabled }: {
     const timer = window.setInterval(() => void load(), 30_000);
     return () => { alive = false; window.clearInterval(timer); };
   }, [refresh]);
-  const missing = value !== '' && !computers.some((computer) => computer.desktopInstanceId === value);
+  useEffect(() => {
+    if (computers !== null) onComputersChange?.(computers, checkedAt);
+  }, [computers, checkedAt, onComputersChange]);
+  const listed = computers ?? [];
+  const missing = value !== '' && !listed.some((computer) => computer.desktopInstanceId === value);
   return (
     <div className="space-y-2 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
       <div className="flex items-center justify-between gap-3">
@@ -41,9 +45,8 @@ export function RemoteComputerSelect({ value, onChange, disabled }: {
         className="min-h-11 w-full min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-900 dark:text-white">
         <option value="">Use account assignment</option>
         {missing && <option value={value}>Selected computer unavailable</option>}
-        {computers.map((computer) => {
-          const seen = parseDbTimestamp(computer.lastSeenAt);
-          const online = seen !== null && checkedAt - seen < CONNECTION_FRESH_MS;
+        {listed.map((computer) => {
+          const online = isComputerOnline(computer, checkedAt);
           return <option key={computer.desktopInstanceId} value={computer.desktopInstanceId}>
             {computer.deviceName || 'OAIY computer'} · {online ? 'Online' : 'Offline'} · {computer.desktopInstanceId.slice(-6)}
           </option>;
@@ -51,7 +54,7 @@ export function RemoteComputerSelect({ value, onChange, disabled }: {
       </select>
       <p role="status" className="text-xs leading-relaxed text-gray-500 dark:text-slate-400">
         {loading ? 'Loading linked computers…' : error ? 'Could not refresh computers. Your selection is kept; try Refresh.'
-          : computers.length === 0 ? 'Open OAIY → Connections and link this FormLogic account to make a computer available.'
+          : listed.length === 0 ? 'Open OAIY → Connections and link this FormLogic account to make a computer available.'
             : 'OAIY can run on another computer. Keep it open and linked to this FormLogic account. With no assignment, a single online computer is selected automatically.'}
       </p>
     </div>

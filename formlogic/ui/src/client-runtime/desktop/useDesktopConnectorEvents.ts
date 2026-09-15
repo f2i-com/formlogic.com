@@ -10,12 +10,18 @@
 // connection, and no mock traffic. Dedupe on idempotencyKey happens centrally in the hub.
 import { useEffect, useRef } from 'react';
 import { isBrowserConnectorRegistered } from '../connectors/nativeConnectorClient';
-import { shouldDeferEventToDesktop } from '../flows/flowDispatcher';
+import { BROWSER_LOGIC_LANGUAGES, languagesKeptInBrowser } from '../flows/flowDispatcher';
 import { logger } from '../../lib/logger';
 import { subscribeDesktopEvents } from './desktopEvents';
 import { enqueueBrowserConnectorEvent } from './browserEventQueue';
 import type { DesktopEventEnvelope } from './desktopTypes';
 import type { AppLogicHookOutcome } from '../logic/appLogicHost';
+
+/** useCustomAppLogic's runConnectorEvent: `languages` limits which scripts run (absent: all). */
+export type RunConnectorEvent = (
+  event: Record<string, unknown>,
+  options?: { languages?: readonly string[] }
+) => Promise<AppLogicHookOutcome>;
 
 export interface UseDesktopConnectorEventsOptions {
   /** The running app's slug; no subscription without one. */
@@ -23,7 +29,7 @@ export interface UseDesktopConnectorEventsOptions {
   /** From useCustomAppLogic — false means the app has no enabled scripts (stay inert). */
   enabled: boolean;
   /** useCustomAppLogic's runConnectorEvent (the shared onConnectorEvent pipeline). */
-  runConnectorEvent: (event: Record<string, unknown>) => Promise<AppLogicHookOutcome>;
+  runConnectorEvent: RunConnectorEvent;
 }
 
 /**
@@ -47,6 +53,29 @@ function toLogicEvent(envelope: DesktopEventEnvelope): Record<string, unknown> {
   };
 }
 
+/**
+ * Hand one desktop envelope to app logic under the single-writer rule (audit FL-001/C-04): while
+ * a cloud-linked desktop flow runtime is heartbeating, IT runs the raw onConnectorEvent record
+ * writes and the browser is a viewer — the exact gate the flow dispatcher applies, so the two
+ * paths can never both write. The rule holds per script language: a Desktop runs only the
+ * languages it advertises (Python: 'logic-language:python'), and the scripts in any other stay
+ * here. Exported for tests.
+ */
+export async function deliverDesktopEnvelope(envelope: DesktopEventEnvelope, run: RunConnectorEvent): Promise<void> {
+  const kept = await languagesKeptInBrowser(envelope.name, BROWSER_LOGIC_LANGUAGES);
+  if (kept.length === 0) {
+    logger.warn(`[app-logic] deferring ${envelope.name} to the desktop runtime (single writer)`);
+    return;
+  }
+  if (kept.length < BROWSER_LOGIC_LANGUAGES.length) {
+    const deferred = BROWSER_LOGIC_LANGUAGES.filter((language) => !kept.includes(language));
+    logger.warn(`[app-logic] deferring the ${deferred.join(', ')} scripts for ${envelope.name} to the desktop runtime (single writer)`);
+    await run(toLogicEvent(envelope), { languages: kept });
+    return;
+  }
+  await run(toLogicEvent(envelope));
+}
+
 export function useDesktopConnectorEvents({
   appSlug,
   enabled,
@@ -65,19 +94,9 @@ export function useDesktopConnectorEvents({
       // browser connector (aokie, vehicle, …) keyed by connectorId or source.
       const id = envelope.connectorId ?? envelope.source;
       if (!id || !isBrowserConnectorRegistered(id)) return;
-      void enqueueBrowserConnectorEvent(envelope, async () => {
-        // Single-writer rule (audit FL-001/C-04): while a cloud-linked desktop
-        // flow runtime is heartbeating, IT runs the raw onConnectorEvent
-        // record writes — the browser is a viewer. The exact gate the flow
-        // dispatcher already applies, so the two paths can never both write.
-        if (await shouldDeferEventToDesktop(envelope.name)) {
-          logger.warn(
-            `[app-logic] deferring ${envelope.name} to the desktop runtime (single writer)`
-          );
-          return;
-        }
-        await runRef.current(toLogicEvent(envelope));
-      }).catch((error) => logger.warn('[app-logic] browser event queue task failed:', error));
+      // Single-writer rule, per script language: deliverDesktopEnvelope.
+      void enqueueBrowserConnectorEvent(envelope, () => deliverDesktopEnvelope(envelope, runRef.current))
+        .catch((error) => logger.warn('[app-logic] browser event queue task failed:', error));
     });
   }, [appSlug, enabled]);
 }

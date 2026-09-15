@@ -226,6 +226,37 @@ class PackTrustAndMetadataTest extends TestCase
         $this->assertStringContainsString('native', $blob, 'native defaults are surfaced as a warning');
     }
 
+    /**
+     * formlogic-python/1: the envelope's customLogic goes through CustomLogicSanitizer before it is
+     * stored, which must keep a Python script Python (and leave a JavaScript one unmarked).
+     */
+    public function testEnvelopeAppLogicKeepsScriptLanguage(): void
+    {
+        $envelope = [
+            'pack' => $this->minimalPack(),
+            'customLogic' => [
+                'version' => 1,
+                'runtime' => 'quickjs',
+                'scripts' => [
+                    ['id' => 'py', 'hook' => 'onAppStart', 'language' => 'python', 'source' => "def run(ctx):\n    return {}"],
+                    ['id' => 'js', 'hook' => 'onAppStart', 'source' => 'function run(ctx){ return {}; }'],
+                ],
+            ],
+        ];
+        $signed = self::$signing->sign($envelope);
+        $r = $this->callImportSigned($this->userId, [
+            'package' => $envelope,
+            'signature' => $signed['signature'],
+            'alg' => $signed['alg'],
+            'approvedConnectorGrants' => [],
+        ]);
+        $this->assertSame(201, $r['status']);
+        $scripts = array_column(self::$apps->getApp($r['body']['apps'][0]['id'])['customLogic']['scripts'], null, 'id');
+        $this->assertSame('python', $scripts['py']['language'] ?? null);
+        $this->assertSame('quickjs', $scripts['py']['runtime'], 'the stored runtime token stays the historical name');
+        $this->assertArrayNotHasKey('language', $scripts['js']);
+    }
+
     public function testUnsignedBarePackImportsWithoutEnvelopeWarnings(): void
     {
         // A bare Pack (no envelope) applies no metadata and produces no warnings.

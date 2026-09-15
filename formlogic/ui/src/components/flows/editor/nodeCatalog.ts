@@ -39,7 +39,7 @@ import {
   Workflow,
   type LucideIcon,
 } from 'lucide-react';
-import { EXECUTABLE_NODE_TYPES } from '../../../client-runtime/flows/nodes';
+import { EXECUTABLE_NODE_TYPES, LOGIC_LANGUAGES } from '../../../client-runtime/flows/nodes';
 
 /** Palette grouping (order here is the palette section order). */
 /**
@@ -133,11 +133,13 @@ export interface ShowIf {
  *     STRING VALUE inside it resolves the same way) — both want the bare `$nodes.x.y` string.
  *   - 'zipp'     — a `code` field with `zipp: true` runs as literal JS in the ZIPP sandbox, where
  *     `inputs`/`nodes`/`event`/`upstream`/`app` are real JS variables (no `$`, no `{{ }}`).
+ *   - 'zipp-python' — the same field written in Python (formlogic-python/1): the same names, but
+ *     every value is a dict, so each path segment is a subscript (`nodes["lookup"]["found"]`).
  *   - 'template' — resolved via `interpolateTemplate`, which only scans for `{{ ... }}`
  *     placeholders in free text; a bare `$selector` dropped outside braces is never resolved and
  *     ends up verbatim in the output (e.g. spoken on a live call).
  */
-export type ReferenceSyntax = 'selector' | 'zipp' | 'template';
+export type ReferenceSyntax = 'selector' | 'zipp' | 'zipp-python' | 'template';
 
 export interface NodePropertySpec {
   key: string;
@@ -152,6 +154,12 @@ export interface NodePropertySpec {
   zipp?: boolean;
   /** Monaco language for a `code` field ('javascript' default, 'json' for structured fields). */
   language?: string;
+  /**
+   * A sandboxed `code` field whose author picks the language in a sibling `language` select
+   * (condition / logic_block; absent = JavaScript). These are what the editor shows instead of
+   * `placeholder`/`help` while that select says Python (codeSpecForLanguage).
+   */
+  python?: { placeholder: string; help: string };
   /** Authoring aid: flag a warning badge when this (visible) property is empty. Never blocks a run. */
   required?: boolean;
   /** Show this property only when the predicate over the node's data holds (presentation only). */
@@ -179,8 +187,19 @@ export interface NodePropertySpec {
  */
 export function getReferenceSyntax(spec: NodePropertySpec): ReferenceSyntax {
   if (spec.referenceSyntax) return spec.referenceSyntax;
-  if (spec.type === 'code' && spec.zipp) return 'zipp';
+  if (spec.type === 'code' && spec.zipp) return spec.language === 'python' ? 'zipp-python' : 'zipp';
   return 'selector';
+}
+
+/**
+ * A sandboxed code field as the editor shows it for the node's language (its `language` select;
+ * nodes.ts declaredLogicLanguage). Python swaps the Monaco mode, placeholder, help and so the chip
+ * syntax; JavaScript and fields without a Python variant are returned as they are. Presentation
+ * only: the stored source is never touched, whatever the language.
+ */
+export function codeSpecForLanguage(spec: NodePropertySpec, language: string): NodePropertySpec {
+  if (language !== 'python' || !spec.python || spec.type !== 'code' || !spec.zipp) return spec;
+  return { ...spec, language: 'python', placeholder: spec.python.placeholder, help: spec.python.help };
 }
 
 /** True when `s` is safe as a bare `.seg` JS property access rather than needing `["seg"]`. */
@@ -202,14 +221,20 @@ function isJsIdentifier(s: string): boolean {
  *     the subtraction `nodes.condition - 1`, not a lookup of `nodes['condition-1']`. So
  *     `$nodes.condition-1` → `nodes["condition-1"]`, while `$inputs.name` → `inputs.name` and
  *     `$event` → `event` stay dotted since those segments are valid identifiers.
+ *   - 'zipp-python' — the same root, then EVERY segment as a string subscript: Python sees the
+ *     run data as dicts, where `.name` is an attribute lookup that fails.
+ *     `$nodes.condition-1.found` → `nodes["condition-1"]["found"]`, `$inputs.name` → `inputs["name"]`.
  */
 export function formatChipInsert(hint: string, mode: ReferenceSyntax): string {
   switch (mode) {
     case 'template':
       return `{{ ${hint} }}`;
-    case 'zipp': {
+    case 'zipp':
+    case 'zipp-python': {
       const path = hint.startsWith('$') ? hint.slice(1) : hint;
       const [root, ...rest] = path.split('.');
+      // JSON string literals are valid Python string literals too.
+      if (mode === 'zipp-python') return rest.reduce((acc, seg) => `${acc}[${JSON.stringify(seg)}]`, root);
       return rest.reduce((acc, seg) => (isJsIdentifier(seg) ? `${acc}.${seg}` : `${acc}[${JSON.stringify(seg)}]`), root);
     }
     case 'selector':
@@ -417,6 +442,27 @@ export function effectiveNodeData(spec: NodeSpec | undefined, data: Record<strin
 const IN: NodeHandleSpec[] = [{ id: 'in', label: 'In' }];
 const OUT: NodeHandleSpec[] = [{ id: 'out', label: 'Out' }];
 
+const LOGIC_LANGUAGE_LABELS: Record<string, string> = { javascript: 'JavaScript', python: 'Python' };
+
+/**
+ * The language select of a code node (condition, logic_block), ahead of its code. Exactly the
+ * executor's languages (nodes.ts LOGIC_LANGUAGES), so the editor never offers one a run refuses.
+ */
+const LOGIC_LANGUAGE_PROPERTY: NodePropertySpec = {
+  key: 'language',
+  label: 'Language',
+  type: 'select',
+  default: 'javascript',
+  options: LOGIC_LANGUAGES.map((value) => ({ value, label: LOGIC_LANGUAGE_LABELS[value] ?? value })),
+  help: 'Changing it keeps your code as written. Python runs in FormLogic in a browser: not in FormLogic Cloud, and not on a Desktop until it runs Python.',
+};
+
+// Help shared by both Python code fields: what formlogic-python/1 gives an author, and what the
+// ZIPP v0.0.18 Python subset lacks.
+const PYTHON_DATA_HELP = 'The run data are dicts: subscript them (inputs["from"], nodes["lookup"]["found"]).';
+const PYTHON_LIBRARY_HELP =
+  'Helpers: validators, compliance, finance, safety, is_empty, is_not_empty, contains, avg; json, re, math and statistics import. Not available: datetime, base64, uuid, urllib.parse.';
+
 // ---------------------------------------------------------------------------
 // EXECUTABLE nodes — one spec per case in executeNode() (nodes.ts).
 // ---------------------------------------------------------------------------
@@ -470,7 +516,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     type: 'condition',
     label: 'Condition',
     category: 'logic',
-    description: 'Branch on a sandboxed boolean expression. The True / False handles route downstream nodes.',
+    description: 'Branch on a sandboxed boolean expression (JavaScript or Python). The True / False handles route downstream nodes.',
     icon: GitBranch,
     accent: 'amber',
     executable: true,
@@ -481,6 +527,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
       { id: 'false', label: 'False', tone: 'false' },
     ],
     properties: [
+      LOGIC_LANGUAGE_PROPERTY,
       {
         key: 'expr',
         label: 'Expression',
@@ -489,6 +536,10 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
         required: true,
         placeholder: "inputs.durationSeconds > 5",
         help: 'Boolean over { inputs, event, app, nodes, upstream }. In the browser it runs in the ZIPP sandbox — never eval. An error or timeout fails the run.',
+        python: {
+          placeholder: 'inputs["durationSeconds"] > 5',
+          help: `One Python expression (it may span lines), judged by Python truthiness: [], {}, "" and 0 are False. Statements are an error. ${PYTHON_DATA_HELP} Trigger conditions stay JavaScript. It runs in the ZIPP sandbox; an error or timeout fails the run, and an error anywhere in a multi-line expression reports line 1.`,
+        },
       },
       { key: 'timeoutMs', label: 'Timeout (ms)', type: 'number', placeholder: '1000', help: 'Optional. 100–30000.' },
     ],
@@ -520,7 +571,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     type: 'logic_block',
     label: 'Logic block',
     category: 'logic',
-    description: 'Run sandboxed JavaScript (ZIPP in the browser) over a copy of the run data, exposed as the globals inputs, event, app, nodes, upstream and kv.',
+    description: 'Run sandboxed JavaScript or Python (ZIPP in the browser) over a copy of the run data, exposed as the globals inputs, event, app, nodes, upstream and kv.',
     icon: Code2,
     accent: 'sky',
     executable: true,
@@ -528,6 +579,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     inputs: IN,
     outputs: OUT,
     properties: [
+      LOGIC_LANGUAGE_PROPERTY,
       {
         key: 'expr',
         label: 'Code',
@@ -537,6 +589,10 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
         language: 'javascript',
         placeholder: 'const c = nodes.customers.find(r => r.answers.phone === inputs.from);\nreturn { found: !!c, name: c?.answers?.name };',
         help: 'Produce a JSON value: return it, or end with an expression whose value is the result. Pick one: once the code has a top-level return, only returned values count and a trailing expression is ignored. Wall clock capped (2s default; data.timeoutMs 100ms–30s). An error or timeout fails the run.',
+        python: {
+          placeholder: 'c = next((r for r in nodes["customers"] if r["answers"]["phone"] == inputs["from"]), None)\nresult = {"found": c is not None, "name": c["answers"]["name"] if c else None}',
+          help: `Produce a JSON value: write one expression, or statements that set a top-level result (None when never set). Code that is valid inside brackets runs as one expression, even across lines. Statements return only result: x = 1 then x * 2 gives None. Python has no top-level return. ${PYTHON_DATA_HELP} ${PYTHON_LIBRARY_HELP} Wall clock capped (2s default; data.timeoutMs 100ms–30s). An error or timeout fails the run; an error in a multi-line expression reports line 1.`,
+        },
       },
       { key: 'timeoutMs', label: 'Timeout (ms)', type: 'number', placeholder: '2000', help: 'Optional. 100–30000.' },
       { key: 'scope', label: 'KV scope (kv)', type: 'text', placeholder: 'flow:<slug>', help: 'Optional. Read-only KV snapshot exposed as kv.' },

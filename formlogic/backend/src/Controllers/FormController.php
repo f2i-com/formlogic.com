@@ -291,6 +291,14 @@ class FormController
             $data['title'] = 'Untitled Form';
         }
 
+        // A script language outside javascript | python is refused here as on update
+        // (formlogic-python/1); createForm stores a body's customLogic as given.
+        try {
+            \FormLogic\Helpers\CustomLogicSanitizer::assertSupportedLanguages($data['customLogic'] ?? null);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 422);
+        }
+
         $data['userId'] = $userId;
 
         if ($overQuota = $this->checkFormQuota($response, $userId)) {
@@ -363,7 +371,12 @@ class FormController
         }
         $this->sanitizeDashboardScreen($data, $formId);
         if (isset($data['customLogic']) && is_array($data['customLogic'])) {
-            $data['customLogic'] = \FormLogic\Helpers\CustomLogicSanitizer::sanitize($data['customLogic']);
+            try {
+                $data['customLogic'] = \FormLogic\Helpers\CustomLogicSanitizer::sanitize($data['customLogic']);
+            } catch (\InvalidArgumentException $e) {
+                // A script language outside javascript | python (formlogic-python/1).
+                return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 422);
+            }
         }
 
         try {

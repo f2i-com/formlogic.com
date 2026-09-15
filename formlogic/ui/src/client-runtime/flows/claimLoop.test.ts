@@ -4,6 +4,7 @@ import {
   __setFlowDispatcherDepsForTests,
   __setRuntimeFlowsForTests,
   claimQueuedAppRuns,
+  startWorkspaceClaimLoop,
   type FlowDispatcherDeps,
 } from './flowDispatcher';
 import type { FlowExecutorDeps } from './nodes';
@@ -77,7 +78,7 @@ function queuedRun(overrides: Partial<FlowRunLog> = {}): FlowRunLog {
 }
 
 interface Harness {
-  claimCalls: Array<{ runId: string; runtime: string; instanceId?: string }>;
+  claimCalls: Array<{ runId: string; runtime: string; instanceId?: string; logicLanguages?: readonly string[] }>;
   completeCalls: Array<{ runId: string; payload: Record<string, unknown> }>;
 }
 
@@ -102,7 +103,7 @@ function installDeps(overrides: Partial<FlowDispatcherDeps>): Harness {
     toast: () => undefined,
     delay: async () => undefined,
     claimRun: async (_slug, runId, payload) => {
-      harness.claimCalls.push({ runId, runtime: payload.runtime, instanceId: payload.instanceId });
+      harness.claimCalls.push({ runId, runtime: payload.runtime, instanceId: payload.instanceId, logicLanguages: payload.logicLanguages });
       return { claimed: true };
     },
     completeRun: async (_slug, runId, payload) => {
@@ -146,6 +147,75 @@ describe('claimQueuedAppRuns', () => {
 
     expect(executed).toBe(0);
     expect(harness.completeCalls).toHaveLength(0);
+  });
+
+  it('lists and claims declaring the languages this browser runs', async () => {
+    const listQueuedRuns = vi.fn(async () => [queuedRun()]);
+    const harness = installDeps({ listQueuedRuns });
+    __setRuntimeFlowsForTests({ flows: [echoFlow()], bindings: [binding()] }, 'my-app');
+
+    await claimQueuedAppRuns();
+
+    expect(listQueuedRuns).toHaveBeenCalledWith('my-app', expect.any(Number), ['javascript', 'python']);
+    expect(harness.claimCalls[0].logicLanguages).toEqual(['javascript', 'python']);
+  });
+
+  // A queued aokie.* run belongs to a fresh Desktop — unless its flow has Python code and no
+  // fresh Desktop advertises Python: the server hides that run from the Desktop, so skipping
+  // it here would leave it queued until the heartbeat died.
+  it('keeps desktop-first runs the Desktop cannot run instead of stranding them', async () => {
+    const pyFlow: RuntimeFlows['flows'][number] = {
+      ...echoFlow(),
+      slug: 'py-echo',
+      flowJson: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'lb', type: 'logic_block', data: { expr: 'inputs["phone"]', language: 'python' } },
+        ],
+        edges: [{ source: 'in', target: 'lb' }],
+      },
+    };
+    const aokieRun = (runId: string, flow: string) =>
+      queuedRun({ runId, flow, bindingId: null, triggerEvent: 'aokie.call.ended', inputSnapshot: { event: { name: 'aokie.call.ended', data: {} } } });
+    const runs = [aokieRun('run-js', 'echo'), aokieRun('run-py', 'py-echo')];
+
+    let harness = installDeps({
+      listQueuedRuns: async () => runs,
+      desktopRuntimeFresh: async () => ({ fresh: true, freshCapabilities: [['desktop-capabilities:1']] }),
+    });
+    __setRuntimeFlowsForTests({ flows: [echoFlow(), pyFlow], bindings: [] }, 'my-app');
+    await claimQueuedAppRuns();
+    expect(harness.claimCalls.map((c) => c.runId)).toEqual(['run-py']);
+
+    __resetFlowDispatcherForTests();
+    harness = installDeps({
+      listQueuedRuns: async () => runs,
+      desktopRuntimeFresh: async () => ({ fresh: true, freshCapabilities: [['logic-language:python']] }),
+    });
+    __setRuntimeFlowsForTests({ flows: [echoFlow(), pyFlow], bindings: [] }, 'my-app');
+    await claimQueuedAppRuns();
+    expect(harness.claimCalls).toHaveLength(0);
+  });
+
+  it('the workspace claim loop declares the languages too', async () => {
+    const listWorkspaceQueuedRuns = vi.fn(async () => [queuedRun({ appId: null, bindingId: null, formId: null })]);
+    const claims: Array<{ runtime: string; logicLanguages?: readonly string[] }> = [];
+    installDeps({
+      fetchWorkspaceFlows: async () => [{ ...echoFlow(), id: 'fd-1', enabled: true } as never],
+      listWorkspaceQueuedRuns,
+      claimWorkspaceRun: async (_runId, payload) => {
+        claims.push(payload);
+        return { claimed: false };
+      },
+    });
+    const stop = startWorkspaceClaimLoop();
+    try {
+      await vi.waitFor(() => expect(claims).toHaveLength(1));
+    } finally {
+      stop();
+    }
+    expect(listWorkspaceQueuedRuns).toHaveBeenCalledWith(expect.any(Number), ['javascript', 'python']);
+    expect(claims[0]).toMatchObject({ runtime: 'browser', logicLanguages: ['javascript', 'python'] });
   });
 
   it('claiming a run whose flow is not loaded completes runner_unavailable', async () => {

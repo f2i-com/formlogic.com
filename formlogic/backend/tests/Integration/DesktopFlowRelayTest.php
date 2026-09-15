@@ -619,4 +619,113 @@ class DesktopFlowRelayTest extends TestCase
         $this->assertSame(404, $result['status']);
         $this->assertSame('desktop_not_linked', $result['body']['code']);
     }
+
+    // ── formlogic-python/1 language gate ──
+    //
+    // The Desktop that claims a relay run fetches the flow's graph and runs it. One built before
+    // Python ignores data.language and would run `result = inputs["n"] // 2` as JavaScript,
+    // where `// 2` is a comment and the "result" is n. So a Python flow is enqueued only for a
+    // Desktop whose heartbeat advertises 'logic-language:python', and a claim must declare it.
+
+    /** A workspace flow whose logic block is Python. */
+    private function pythonFlowId(): string
+    {
+        return self::$flows->createWorkspaceFlow($this->ownerId, [
+            'name' => 'Python relay flow',
+            'flowJson' => [
+                'nodes' => [
+                    ['id' => 'in', 'type' => 'input'],
+                    ['id' => 'half', 'type' => 'logic_block', 'data' => ['language' => 'python', 'expr' => 'result = inputs["n"] // 2']],
+                ],
+                'edges' => [['source' => 'in', 'target' => 'half']],
+            ],
+        ])['id'];
+    }
+
+    private function setCapabilities(string $instanceId, ?array $capabilities): void
+    {
+        self::$pdo->prepare('UPDATE desktop_connections SET capabilities_json = ? WHERE owner_user_id = ? AND desktop_instance_id = ?')
+            ->execute([$capabilities === null ? null : json_encode($capabilities), $this->ownerId, $instanceId]);
+    }
+
+    private function relayRunCount(): int
+    {
+        $stmt = self::$pdo->prepare('SELECT COUNT(*) FROM desktop_flow_runs WHERE owner_user_id = ?');
+        $stmt->execute([$this->ownerId]);
+        return (int) $stmt->fetchColumn();
+    }
+
+    public function testPythonFlowIsNotEnqueuedForADesktopThatDoesNotRunPython(): void
+    {
+        $py = $this->pythonFlowId();
+        $this->addConnection('desk-1'); // fresh, no capabilities: a Desktop from before Python
+
+        $r = $this->webEnqueue($this->ownerId, $this->sealedBody(['flowId' => $py]));
+        $this->assertSame(409, $r['status'], json_encode($r['body']));
+        $this->assertSame('language_unsupported', $r['body']['code'] ?? null);
+        $this->assertSame(['python'], $r['body']['languages'] ?? null);
+        $this->assertStringContainsString('Python', $r['body']['message'] ?? '');
+        $this->assertSame(0, $this->relayRunCount(), 'nothing is queued');
+
+        // Chosen explicitly, or advertising other things (even JavaScript), it is still refused.
+        $this->setCapabilities('desk-1', ['relay.flows', 'logic-language:javascript']);
+        $r = $this->webEnqueue($this->ownerId, $this->sealedBody(['flowId' => $py, 'targetInstanceId' => 'desk-1']));
+        $this->assertSame(409, $r['status']);
+        $this->assertSame('language_unsupported', $r['body']['code'] ?? null);
+        $this->assertSame(0, $this->relayRunCount());
+
+        // A JavaScript flow still goes to that Desktop.
+        $this->assertSame(201, $this->webEnqueue($this->ownerId, $this->sealedBody())['status']);
+
+        // Once its heartbeat advertises Python, the Python flow is queued for it.
+        $this->setCapabilities('desk-1', ['relay.flows', 'logic-language:python']);
+        $ok = $this->webEnqueue($this->ownerId, $this->sealedBody(['flowId' => $py]));
+        $this->assertSame(201, $ok['status'], json_encode($ok['body']));
+        $this->assertSame('desk-1', $ok['body']['targetInstanceId'] ?? null);
+    }
+
+    public function testPythonFlowIsRefusedWhenNoDesktopThatRunsItIsOnline(): void
+    {
+        $py = $this->pythonFlowId();
+        // No fresh Desktop: the run would be untargeted, for whichever Desktop claims it first.
+        $r = $this->webEnqueue($this->ownerId, $this->sealedBody(['flowId' => $py]));
+        $this->assertSame(409, $r['status']);
+        $this->assertSame('language_unsupported', $r['body']['code'] ?? null);
+        $this->assertSame(0, $this->relayRunCount());
+        // JavaScript flows keep the untargeted fan-out.
+        $js = $this->webEnqueue($this->ownerId, $this->sealedBody());
+        $this->assertSame(201, $js['status']);
+        $this->assertArrayNotHasKey('targetInstanceId', $js['body']);
+    }
+
+    public function testRelayClaimOfAPythonRunIsGatedOnTheClaimantsLanguages(): void
+    {
+        $py = $this->pythonFlowId();
+        $this->addConnection('desk-1');
+        $this->setCapabilities('desk-1', ['logic-language:python']);
+        $enq = $this->webEnqueue($this->ownerId, $this->sealedBody(['flowId' => $py]));
+        $this->assertSame(201, $enq['status'], json_encode($enq['body']));
+        $id = $enq['body']['requestId'];
+
+        // A claim that declares no languages comes from a runtime that would run Python as JavaScript.
+        $r = $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1']);
+        $this->assertSame(409, $r['status'], json_encode($r['body']));
+        $this->assertSame('language_unsupported', $r['body']['code'] ?? null);
+        $this->assertSame(['python'], $r['body']['languages'] ?? null);
+        $this->assertSame('pending', self::$relay->get($id, $this->ownerId)['status'], 'nothing changed');
+        $this->assertSame(409, $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1', 'logicLanguages' => ['javascript']])['status']);
+        $this->assertSame(400, $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1', 'logicLanguages' => 'python,,javascript'])['status']);
+        $this->assertSame('pending', self::$relay->get($id, $this->ownerId)['status']);
+
+        $ok = $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1', 'logicLanguages' => ['javascript', 'python']]);
+        $this->assertSame(200, $ok['status'], json_encode($ok['body']));
+        $this->assertSame('claimed', $ok['body']['request']['status']);
+    }
+
+    public function testRelayClaimOfAJavaScriptRunNeedsNoDeclaration(): void
+    {
+        $this->addConnection('desk-1');
+        $id = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $this->assertSame(200, $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1'])['status']);
+    }
 }

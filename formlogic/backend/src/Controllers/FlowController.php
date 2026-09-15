@@ -10,6 +10,8 @@ use FormLogic\Services\ApiKeyService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppUserService;
 use FormLogic\Services\FlowService;
+use FormLogic\Services\Flows\FlowLogicLanguages;
+use FormLogic\Services\Flows\LogicLanguageUnsupportedException;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -385,7 +387,15 @@ class FlowController
 
     // ── Owner-wide reads (session AND /api/v1 API-key routes) ──────────────────────────────
 
-    /** Every flow the user owns; ?appId= narrows to one app, ?workspace=1 to workspace-only. */
+    /**
+     * Every flow the user owns; ?appId= narrows to one app, ?workspace=1 to workspace-only.
+     *
+     * This is the graph a Desktop runs (GET /api/v1/flows). `?logicLanguages=javascript,python`
+     * names the logic languages the caller runs; absent means JavaScript only, so a Desktop built
+     * before Python — which would run a Python block as JavaScript — never receives a flow whose
+     * code needs another language, and its graph fetch for one fails closed (formlogic-python/1).
+     * Each flow listed carries the `logicLanguages` it needs.
+     */
     public function listOwnerFlows(Request $request, Response $response): Response
     {
         $userId = $request->getAttribute('userId');
@@ -393,11 +403,19 @@ class FlowController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
         }
         $q = $request->getQueryParams();
-        $flows = $this->flows->listOwnerFlows(
-            $userId,
-            isset($q['appId']) ? (string) $q['appId'] : null,
-            !empty($q['workspace'])
-        );
+        try {
+            $callerLanguages = FlowLogicLanguages::fromCaller($q['logicLanguages'] ?? null);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
+        $flows = array_values(array_filter(
+            $this->flows->withLogicLanguages($this->flows->listOwnerFlows(
+                $userId,
+                isset($q['appId']) ? (string) $q['appId'] : null,
+                !empty($q['workspace'])
+            )),
+            static fn (array $flow): bool => FlowLogicLanguages::missing($flow['logicLanguages'], $callerLanguages) === []
+        ));
         // RUN-301 desktop leg: flows whose graphs store CONTRIBUTED (dotted) node types carry
         // their revision's server-compiled canonical IR so the desktop runner can execute the
         // lowering (the compiler stays the only authority — the desktop never lowers). Plain
@@ -484,7 +502,32 @@ class FlowController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
         }
         $q = $request->getQueryParams();
-        return $this->jsonResponse($response, ['runs' => $this->flows->listOwnerQueuedRuns($userId, (int) ($q['limit'] ?? 50))]);
+        try {
+            $languages = FlowLogicLanguages::fromCaller($q['logicLanguages'] ?? null);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
+        return $this->jsonResponse($response, ['runs' => $this->flows->listOwnerQueuedRuns($userId, (int) ($q['limit'] ?? 50), $languages)]);
+    }
+
+    /**
+     * 409 language_unsupported (FlowLogicLanguages): the caller cannot run a language the flow's
+     * code is in, so nothing was reserved or claimed. Null for any other runtime error.
+     */
+    private function languageUnsupportedResponse(Response $response, \RuntimeException $e): ?Response
+    {
+        if ($e->getMessage() !== 'language_unsupported') {
+            return null;
+        }
+        $languages = $e instanceof LogicLanguageUnsupportedException ? $e->languages : [];
+        $names = array_map(static fn (string $l): string => ['python' => 'Python', 'javascript' => 'JavaScript'][$l] ?? $l, $languages);
+        return $this->jsonResponse($response, [
+            'error' => true,
+            'code' => 'language_unsupported',
+            'languages' => $languages,
+            'message' => 'This flow has ' . ($names !== [] ? implode(', ', $names) . ' ' : '')
+                . 'code this runtime cannot run. Update it, or run the flow in FormLogic in a browser.',
+        ], 409);
     }
 
     /**
@@ -501,6 +544,8 @@ class FlowController
             $result = $this->flows->reserveOwnerRun($userId, $request->getParsedBody() ?? []);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\RuntimeException $e) {
+            return $this->languageUnsupportedResponse($response, $e) ?? throw $e;
         }
         if ($result['created']) {
             return $this->jsonResponse($response, ['run' => $result['run'], 'created' => true], 201);
@@ -509,8 +554,10 @@ class FlowController
     }
 
     /**
-     * Owner app custom-logic bundles (GET /api/v1/app-logic[?app=<id|slug>]) — lets FormLogic
-     * Desktop apply onConnectorEvent scripts headless. flows:read scoped.
+     * Owner app custom-logic bundles (GET /api/v1/app-logic[?app=<id|slug>][&languages=javascript,python])
+     * — lets FormLogic Desktop apply onConnectorEvent scripts headless. flows:read scoped.
+     * `languages` are the script languages the caller runs; absent means JavaScript only, so a
+     * Desktop built before Python never receives a Python script (formlogic-python/1).
      */
     public function ownerAppLogic(Request $request, Response $response): Response
     {
@@ -520,7 +567,12 @@ class FlowController
         }
         $q = $request->getQueryParams();
         $selector = isset($q['app']) ? (string) $q['app'] : null;
-        return $this->jsonResponse($response, ['apps' => $this->flows->getOwnerAppLogic($userId, $selector)]);
+        try {
+            $languages = FlowLogicLanguages::fromCaller($q['languages'] ?? null);
+        } catch (\InvalidArgumentException) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'languages must be a comma-separated list of language ids, e.g. javascript,python'], 400);
+        }
+        return $this->jsonResponse($response, ['apps' => $this->flows->getOwnerAppLogic($userId, $selector, $languages)]);
     }
 
     /**
@@ -615,7 +667,7 @@ class FlowController
             if ($e->getMessage() === 'already_claimed') {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'This run was already claimed'], 409);
             }
-            throw $e;
+            return $this->languageUnsupportedResponse($response, $e) ?? throw $e;
         }
         if (!$run) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Run not found'], 404);
@@ -755,6 +807,8 @@ class FlowController
             $result = $this->flows->reserveRun($app['id'], $userId, $request->getParsedBody() ?? []);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\RuntimeException $e) {
+            return $this->languageUnsupportedResponse($response, $e) ?? throw $e;
         }
         if ($result['created']) {
             return $this->jsonResponse($response, ['runId' => $result['run']['runId'], 'run' => $result['run']], 201);
@@ -815,7 +869,12 @@ class FlowController
             return $error;
         }
         $q = $request->getQueryParams();
-        $runs = $this->flows->listQueuedRuns($app['id'], (int) ($q['limit'] ?? 50));
+        try {
+            $languages = FlowLogicLanguages::fromCaller($q['logicLanguages'] ?? null);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
+        $runs = $this->flows->listQueuedRuns($app['id'], (int) ($q['limit'] ?? 50), $languages);
         if (($app['ownerId'] ?? null) !== $userId) {
             $permCache = [];
             $runs = array_values(array_filter(
@@ -856,7 +915,7 @@ class FlowController
             if ($e->getMessage() === 'already_claimed') {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'This run was already claimed'], 409);
             }
-            throw $e;
+            return $this->languageUnsupportedResponse($response, $e) ?? throw $e;
         }
         if (!$run) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Run not found'], 404);

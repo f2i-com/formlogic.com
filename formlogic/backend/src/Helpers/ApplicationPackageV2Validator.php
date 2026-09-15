@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace FormLogic\Helpers;
 
+use FormLogic\Services\Flows\FlowLogicLanguages;
+
 /**
  * Application Package v2 + Flow Node Definition v1 — the PHP validation gate
  * (ADR-010; docs/contracts/application-package.v2.schema.json,
@@ -541,6 +543,14 @@ class ApplicationPackageV2Validator
                     $issues[] = self::issue('bad_handler', $basePath . '.handler.defaults', 'defaults must be an object');
                 } elseif (strlen((string) json_encode($handler['defaults'])) > self::MAX_HANDLER_DEFAULTS_BYTES) {
                     $issues[] = self::issue('too_large', $basePath . '.handler.defaults', 'defaults exceed the size cap');
+                } elseif (
+                    // formlogic-python/1: the preset's default language becomes the lowered code
+                    // node's, so it follows the rule a saved flow node does (FlowLogicLanguages).
+                    in_array($handler['coreType'] ?? null, FlowLogicLanguages::CODE_NODE_TYPES, true)
+                    && array_key_exists('language', $handler['defaults'])
+                    && !in_array($handler['defaults']['language'], FlowLogicLanguages::SUPPORTED, true)
+                ) {
+                    $issues[] = self::issue('bad_handler', $basePath . '.handler.defaults.language', 'defaults.language of a ' . $handler['coreType'] . " preset must be 'javascript' or 'python'");
                 }
             }
             // A node that LOWERS to a core type is not thereby a REPLACEMENT for it: most
