@@ -29,6 +29,20 @@ function starterBundle(): Buffer {
   return Buffer.from(zipSync(Object.fromEntries(Object.entries(STARTER.files).map(([path, source]) => [path, strToU8(source)]))));
 }
 
+/**
+ * A client-only app (interface only, no server entry), built from the starter
+ * rather than read from a sibling checkout: the manifest without its `server`
+ * block and the server files left out.
+ */
+function clientOnlyBundle(): Buffer {
+  const manifest = JSON.parse(STARTER.files['manifest.json']) as Record<string, unknown> & { config?: Record<string, unknown> };
+  delete manifest.server;
+  if (manifest.config && typeof manifest.config === 'object') delete (manifest.config as Record<string, unknown>).server;
+  const files: Record<string, Uint8Array> = { 'manifest.json': strToU8(JSON.stringify(manifest, null, 2)) };
+  for (const [path, source] of Object.entries(STARTER.files)) if (path.startsWith('ui/')) files[path] = strToU8(source);
+  return Buffer.from(zipSync(files));
+}
+
 async function login(context: BrowserContext) {
   const r = await context.request.post('/api/auth/login', { data: { email: EMAIL, password: PASSWORD } });
   expect(r.ok(), await r.text()).toBe(true);
@@ -91,7 +105,7 @@ test.describe('embedded editors: round trip and live conflict', () => {
       const dialog = await openHosting(page, app.id);
 
       // A client-only bundle (no server entry) is refused by the native import with its reason.
-      await dialog.getByLabel('Import native app').setInputFiles({ name: 'Fieldnotes.softn', mimeType: 'application/zip', buffer: readFileSync(process.env.FIELDNOTES_SOFTN || '../../../softn.com/apps/softn-site/public/examples/Fieldnotes.softn') });
+      await dialog.getByLabel('Import native app').setInputFiles({ name: 'client-only.softn', mimeType: 'application/zip', buffer: clientOnlyBundle() });
       await expect(dialog.getByRole('alert')).toContainText('no native server entry');
 
       // 1. Import the starter project through the file input and install it (version 1).
