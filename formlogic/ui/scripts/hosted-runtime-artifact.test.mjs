@@ -202,7 +202,7 @@ test('checkZippTree refuses a wasm or glue that is not the recorded one, and a r
   await assert.rejects(checkZippTree(edited(release, {}, source => ({ ...source, build: 'local' })), {}), /build is local, not release/);
 });
 
-test('checkZippTree holds BUILD-INFO to the recorded commit and build, and RELEASE-SHA256SUMS to the recorded release sums and bundle', async () => {
+test('checkZippTree holds BUILD-INFO to the recorded commit, build and toolchain, and RELEASE-SHA256SUMS to the recorded release sums and bundle', async () => {
   const release = zippReleaseFixture();
   const movedCommit = zippReleaseFixture({ buildInfo: text => text.replace(/commit=\w+/, `commit=${'d'.repeat(40)}`) });
   await assert.rejects(checkZippTree(zippTreeMap(movedCommit.files), movedCommit.record), /BUILD-INFO\.txt commit is "d{40}"; SOURCE\.json revision is "a{40}"/);
@@ -210,6 +210,9 @@ test('checkZippTree holds BUILD-INFO to the recorded commit and build, and RELEA
   await assert.rejects(checkZippTree(zippTreeMap(jsOnly.files), jsOnly.record), /BUILD-INFO\.txt variant is "javascript"; SOURCE\.json variant is "javascript-python"/);
   const smallStack = zippReleaseFixture({ buildInfo: text => text.replace('stack-bytes=16777216', 'stack-bytes=1048576') });
   await assert.rejects(checkZippTree(zippTreeMap(smallStack.files), smallStack.record), /stack-bytes is 1048576; SOURCE\.json stackBytes is 16777216/);
+  // The server sandbox is built with the toolchain the record names, so the record must be the bundle's.
+  const otherToolchain = zippReleaseFixture({ buildInfo: text => text.replace('rustc=rustc 1.92.0 (fixture)', 'rustc=rustc 1.93.0 (fixture)') });
+  await assert.rejects(checkZippTree(zippTreeMap(otherToolchain.files), otherToolchain.record), /BUILD-INFO\.txt rustc is "rustc 1\.93\.0 \(fixture\)"; SOURCE\.json rustc is "rustc 1\.92\.0 \(fixture\)"/);
   const releaseSums = release.files['RELEASE-SHA256SUMS'];
   await assert.rejects(checkZippTree(edited(release, { 'RELEASE-SHA256SUMS': Buffer.concat([releaseSums, Buffer.from(`${'0'.repeat(64)}  extra.zip\n`)]) }), release.record), /RELEASE-SHA256SUMS is not the ZIPP v0\.0\.18 SHA256SUMS SOURCE\.json records/);
   const wrongBundle = Buffer.from(releaseSums.toString().replace(release.source.bundleSha256, 'e'.repeat(64)));

@@ -1,0 +1,174 @@
+name: Build or install the server sandbox
+description: Build FormLogic's server sandbox (the guest wasm and the Linux launcher) from the source of the ZIPP release the installed Softn release names, or install the one this run's sandbox jobs built; either way prove it is what its generated SOURCE.json records and that PHP can run it
+inputs:
+  mode:
+    description: >-
+      'build' compiles the guest and the Linux launcher in this job, from ZIPP's source at the
+      release .runtime-source/softn-release/current.json names (so prepare-hosted-runtime runs
+      first), every run: nothing built is reused except the dependency cache. 'install' takes
+      this run's sandbox artifacts instead (package.yml's sandbox-linux and sandbox-windows jobs).
+    required: true
+  artifacts:
+    description: >-
+      Install mode: the launcher artifacts of this run to install, space-separated:
+      sandbox-linux, plus sandbox-windows for packaging. The guest they embed (sandbox-guest)
+      is always installed with them.
+    default: 'sandbox-linux'
+  frozen-release-json:
+    description: >-
+      The run's frozen Softn release record (JSON), as given to prepare-hosted-runtime; when set,
+      the check also requires the sandbox's recorded Softn archive to be the frozen one.
+    default: ''
+  php-preflight:
+    description: >-
+      'true' ends by asking PHP's SandboxRunner whether the sandbox is available (from
+      formlogic/backend, after composer install), so a lost execute bit or a missing launcher
+      fails the job instead of letting the sandbox suites skip and pass. A job that runs no PHP
+      tests sets 'false'.
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - name: Check the inputs
+      id: wanted
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        ARTIFACTS: ${{ inputs.artifacts }}
+      run: |
+        case "$MODE" in
+          build|install) ;;
+          *) echo "::error::prepare-sandbox-runtime mode is '$MODE'; expected build or install"; exit 1 ;;
+        esac
+        linux=false; windows=false
+        for name in $ARTIFACTS; do
+          case "$name" in
+            sandbox-linux) linux=true ;;
+            sandbox-windows) windows=true ;;
+            *) echo "::error::prepare-sandbox-runtime cannot install '$name'; expected sandbox-linux or sandbox-windows"; exit 1 ;;
+          esac
+        done
+        if [ "$MODE" = install ] && [ "$linux$windows" = falsefalse ]; then
+          echo "::error::prepare-sandbox-runtime install mode names no launcher artifact to install"
+          exit 1
+        fi
+        echo "linux=$linux" >> "$GITHUB_OUTPUT"
+        echo "windows=$windows" >> "$GITHUB_OUTPUT"
+
+    # ── Build mode ──────────────────────────────────────────────────────────
+    # Which ZIPP: the release the installed Softn release names (Softn read its
+    # commit from the BUILD-INFO of the SHA256SUMS-verified bundle). Nothing in
+    # this tree names one, so a new ZIPP release reaches the sandbox with no commit.
+    - name: The ZIPP release the installed Softn release names
+      id: zipp
+      if: inputs.mode == 'build'
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      run: |
+        identity="$(node scripts/zipp-source.mjs --identity)"
+        printf '%s\n' "$identity" >> "$GITHUB_OUTPUT"
+        revision="$(printf '%s\n' "$identity" | sed -n 's/^revision=//p')"
+        toolchain="$(node scripts/runtime-provenance.mjs toolchain)"
+        echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
+        lock="$(sha256sum formlogic/runtime/host/Cargo.lock | cut -c1-16)"
+        echo "cache-key=sandbox-deps-${ImageOS:-unknown}-${ImageVersion:-unknown}-rust${toolchain}-zipp${revision}-host${lock}" >> "$GITHUB_OUTPUT"
+    - name: Check out ZIPP's source at that release
+      if: inputs.mode == 'build'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: f2i-com/zipp.org
+        ref: refs/tags/${{ steps.zipp.outputs.release }}
+        path: .runtime-source/zipp/src
+        fetch-depth: 1
+        persist-credentials: false
+    # A tag that moved since Softn verified the bundle fails here: HEAD must be
+    # the recorded commit, at the release's workspace version, with LF sources.
+    - name: Verify the source is the recorded commit
+      if: inputs.mode == 'build'
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      run: node scripts/zipp-source.mjs --verify
+    - name: Rust toolchain (ZIPP's release toolchain) and musl-gcc
+      if: inputs.mode == 'build'
+      shell: bash
+      env:
+        TOOLCHAIN: ${{ steps.zipp.outputs.toolchain }}
+      run: |
+        rustup toolchain install "$TOOLCHAIN" --profile minimal --no-self-update --target wasm32-wasip1,x86_64-unknown-linux-musl
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq musl-tools
+    # Dependencies only, one entry per runner image, toolchain, ZIPP commit and
+    # host lock: the guest, zipp-vm and the launcher are local packages, so
+    # cargo recompiles them (and re-precompiles the guest) every run.
+    - name: Cargo dependency cache
+      if: inputs.mode == 'build'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+          formlogic/runtime/guest/target
+          formlogic/runtime/host/target
+        key: ${{ steps.zipp.outputs.cache-key }}
+    - name: Build the guest and the Linux launcher, smoke-test it and record them
+      if: inputs.mode == 'build'
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      run: bash scripts/build-runtime.sh guest linux smoke provenance
+
+    # ── Install mode ────────────────────────────────────────────────────────
+    # Each artifact holds repository-relative paths (its files and its record
+    # under .runtime-source/sandbox/), so it is extracted at the workspace root.
+    - name: Install the guest this run built
+      if: inputs.mode == 'install'
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        name: sandbox-guest
+        path: ${{ github.workspace }}
+    - name: Install this run's Linux launcher
+      if: inputs.mode == 'install' && steps.wanted.outputs.linux == 'true'
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        name: sandbox-linux
+        path: ${{ github.workspace }}
+    - name: Install this run's Windows launcher
+      if: inputs.mode == 'install' && steps.wanted.outputs.windows == 'true'
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        name: sandbox-windows
+        path: ${{ github.workspace }}
+    # Artifacts keep no file modes: without the execute bit SandboxRunner
+    # reports the runtime unavailable and the sandbox suites skip.
+    - name: Make the Linux launcher executable and record what was installed
+      if: inputs.mode == 'install'
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      run: |
+        if [ -f formlogic/backend/bin/runtime/formlogic-runtime-linux-x86_64 ]; then
+          chmod +x formlogic/backend/bin/runtime/formlogic-runtime-linux-x86_64
+        fi
+        node scripts/runtime-provenance.mjs provenance
+
+    # ── Both ────────────────────────────────────────────────────────────────
+    - name: Check the sandbox against its provenance and the installed Softn release
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        SOFTN_FROZEN_JSON: ${{ inputs.frozen-release-json }}
+      run: |
+        if [ -n "$SOFTN_FROZEN_JSON" ]; then
+          export SOFTN_FROZEN="$RUNNER_TEMP/sandbox-softn-frozen.json"
+          printf '%s\n' "$SOFTN_FROZEN_JSON" > "$SOFTN_FROZEN"
+        fi
+        bash scripts/build-runtime.sh check
+    - name: PHP can run the sandbox (its suites must not pass by skipping)
+      if: inputs.php-preflight == 'true'
+      shell: bash
+      working-directory: ${{ github.workspace }}/formlogic/backend
+      run: |
+        if ! php -r 'require "vendor/autoload.php"; $c = "FormLogic" . chr(92) . "Services" . chr(92) . "SandboxRunner"; exit((new $c())->isAvailable() ? 0 : 1);'; then
+          echo "::error::SandboxRunner::isAvailable() is false (launcher missing or not executable, or no prelude): the sandbox suites would skip instead of failing"
+          exit 1
+        fi
+        echo "SandboxRunner: the sandbox is available to PHP"

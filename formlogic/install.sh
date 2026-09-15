@@ -3,8 +3,9 @@
 # FormLogic Installer
 # =============================================================================
 # Sets up the FormLogic application: backend API, frontend UI, and the ZIPP
-# scripting runtime (the backend/bin/runtime launcher, and the browser engine and
-# Softn runtime installed from the latest Softn release).
+# scripting runtime (the browser engine and Softn runtime installed from the
+# latest Softn release, and the backend/bin/runtime sandbox launcher, built from
+# the source of the ZIPP release that Softn release names).
 #
 # Usage:
 #   chmod +x install.sh
@@ -16,6 +17,11 @@
 #   - Node.js >= 20.19 (or 22.12+) and npm
 #   - MySQL 8.0+
 #   - Git
+#   - Rust via rustup (https://rustup.rs), to build the server sandbox launcher
+#     (and to rebuild one already present that is not the installed Softn release's
+#     ZIPP build). Without it the launcher comes from a FormLogic release zip or a
+#     CI build (see the message this script prints); form logic stays off
+#     server-side until then.
 # =============================================================================
 
 set -euo pipefail
@@ -26,8 +32,8 @@ UI_DIR="$SCRIPT_DIR/ui"
 # Pick the sandbox launcher that matches the OS the backend will actually run on,
 # so the check below doesn't falsely warn (on Windows Git Bash it is the .exe).
 case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*) RUNTIME_BIN="$SCRIPT_DIR/backend/bin/runtime/formlogic-runtime-windows-x86_64.exe" ;;
-    *)                    RUNTIME_BIN="$SCRIPT_DIR/backend/bin/runtime/formlogic-runtime-linux-x86_64" ;;
+    MINGW*|MSYS*|CYGWIN*) RUNTIME_BIN="$SCRIPT_DIR/backend/bin/runtime/formlogic-runtime-windows-x86_64.exe"; RUNTIME_PLATFORM=windows ;;
+    *)                    RUNTIME_BIN="$SCRIPT_DIR/backend/bin/runtime/formlogic-runtime-linux-x86_64"; RUNTIME_PLATFORM=linux ;;
 esac
 
 # Colors
@@ -186,10 +192,54 @@ fi
 # and the Softn hosted runtime, editors and native runtime are not in git; the
 # fetch below installs them from the Softn release (SOFTN_RELEASE=<tag> pins one),
 # and the `npm run build` step bundles the engine, its prebuild step verifying
-# them and syncing the canonical prelude into the backend. The backend
-# uses the vendored sandbox launcher (committed under backend/bin/runtime, a
-# wasmtime host for the zipp engine); it only needs to be executable, which git
-# clone and zip extraction cannot be relied on to preserve.
+# them and syncing the canonical prelude into the backend.
+# Install the Softn release runtime (browser engine included) before the build needs it.
+# The fetcher resolves the repository root from its own path, so the working directory
+# does not matter; the repository root is this script's parent.
+info "Installing the Softn release runtime..."
+node "$SCRIPT_DIR/../scripts/fetch-softn-release.mjs"
+ok "Softn release runtime installed"
+
+# The backend's sandbox launcher (backend/bin/runtime, a wasmtime host for the
+# zipp engine) is not in git either: it is built from the source of the ZIPP
+# release the Softn release just installed names. One already there (an earlier
+# build, or copied from a release zip) is kept only if its SOURCE.json records
+# it and names that ZIPP release (--deployed: a copied launcher has no guest
+# beside it, and runs the same whichever Softn archive named its ZIPP). With
+# Rust present, build the one this machine's backend runs; otherwise say where
+# a built one comes from.
+SANDBOX_STALE=""
+if [[ -f "$RUNTIME_BIN" ]]; then
+    if node "$SCRIPT_DIR/../scripts/runtime-provenance.mjs" check --deployed --require "$RUNTIME_PLATFORM"; then
+        ok "Server sandbox launcher matches the ZIPP release the installed Softn release names"
+    else
+        SANDBOX_STALE=1
+        warn "The server sandbox launcher in backend/bin/runtime is not the installed Softn release's ZIPP build (above): the server would run another engine than the browser"
+    fi
+fi
+if [[ ! -f "$RUNTIME_BIN" || -n "$SANDBOX_STALE" ]]; then
+    ZIPP_RELEASE="$(node "$SCRIPT_DIR/../scripts/zipp-source.mjs" --identity 2>/dev/null | sed -n 's/^release=//p' || true)"
+    if command -v cargo &>/dev/null; then
+        info "Building the server sandbox launcher from ZIPP ${ZIPP_RELEASE:-} source (a few minutes)..."
+        if bash "$SCRIPT_DIR/../scripts/build-runtime.sh" zipp-source guest "$RUNTIME_PLATFORM" smoke provenance; then
+            ok "Server sandbox launcher built"
+        elif [[ -n "$SANDBOX_STALE" ]]; then
+            warn "Rebuilding the server sandbox launcher failed (output above) — the stale one stays, and the server runs another engine than the browser until it is rebuilt"
+        else
+            warn "Building the server sandbox launcher failed (output above) — form logic & scripts will be disabled server-side until it is built"
+        fi
+    else
+        warn "No Rust toolchain: the server sandbox launcher was not built. It must be built from ZIPP ${ZIPP_RELEASE:-(the release the installed Softn release names)}; the check refuses any other. Either install Rust (https://rustup.rs) and run"
+        warn "  scripts/build-runtime.sh all"
+        warn "from the repository root, or copy api/bin/runtime/ (both launchers and SOURCE.json) into backend/bin/runtime/ from a FormLogic"
+        warn "release zip whose engine-identity.json serverSandbox names that ZIPP release (a Package run's formlogic-dist artifact is kept 30 days),"
+        warn "or take a Package run's sandbox-guest and sandbox-linux artifacts (kept 7 days; the run must have frozen a Softn release naming that ZIPP):"
+        warn "  gh run download <package.yml run id> -R f2i-com/formlogic.com -n <artifact> -D <repository root>"
+        warn "then run: node scripts/runtime-provenance.mjs provenance"
+    fi
+fi
+# It only needs to be executable, which git clone and zip extraction cannot be
+# relied on to preserve.
 if [[ -f "$RUNTIME_BIN" ]]; then
     chmod +x "$RUNTIME_BIN" 2>/dev/null || true
     if [[ -x "$RUNTIME_BIN" ]]; then
@@ -200,13 +250,6 @@ if [[ -f "$RUNTIME_BIN" ]]; then
 else
     warn "FormLogic script runtime missing at $RUNTIME_BIN — form logic & scripts will be disabled server-side"
 fi
-
-# Install the Softn release runtime (browser engine included) before the build needs it.
-# The fetcher resolves the repository root from its own path, so the working directory
-# does not matter; the repository root is this script's parent.
-info "Installing the Softn release runtime..."
-node "$SCRIPT_DIR/../scripts/fetch-softn-release.mjs"
-ok "Softn release runtime installed"
 
 # Build frontend
 info "Building frontend..."

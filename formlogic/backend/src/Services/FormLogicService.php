@@ -9,10 +9,11 @@ namespace FormLogic\Services;
  * fields, validation rules) server-side.
  *
  * Expressions run inside the ZIPP sandbox via {@see SandboxRunner}, with the same
- * standard-library prelude the browser uses. The browser runs ZIPP too, but each
- * side pins its own build (runtime/host/SOURCE.json and
- * ui/vendor/zipp-wasm/SOURCE.json), so server/client agreement is checked by the
- * shared expression corpus rather than guaranteed. Each method throws on
+ * standard-library prelude the browser uses. The browser runs ZIPP too: both are
+ * the ZIPP release the installed Softn release names (the browser's is that
+ * release's build, ui/vendor/zipp-wasm/SOURCE.json; the server's guest is built
+ * from its source, bin/runtime/SOURCE.json), and server/client agreement is
+ * checked by the shared expression corpus rather than assumed. Each method throws on
  * evaluation error; the callers (ResponseService) decide the failure policy
  * (visibility fails open, calculated fields are skipped).
  */

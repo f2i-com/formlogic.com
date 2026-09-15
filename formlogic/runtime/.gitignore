@@ -1,5 +1,11 @@
-# Build artefacts for both crates. The shipped launcher binaries are vendored under
-# backend/bin/runtime/, and the guest wasm the launcher embeds is tracked at
-# host/formlogic-runtime-guest.wasm — see README.md.
+# Build artefacts for both crates, and what scripts/build-runtime.sh generates
+# from the ZIPP release the installed Softn release names: the guest wasm the
+# launcher's build.rs embeds, and the guest's Cargo.lock (seeded from ZIPP's own
+# lock on every build). The launchers land in backend/bin/runtime/, which is
+# ignored too; host/SOURCE.json was the hand-kept provenance they replaced
+# (backend/bin/runtime/SOURCE.json is generated) — see README.md.
 target/
 **/target/
+/host/formlogic-runtime-guest.wasm
+/host/SOURCE.json
+/guest/Cargo.lock

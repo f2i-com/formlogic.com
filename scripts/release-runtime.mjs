@@ -47,9 +47,23 @@ export async function zippLicensesText(directory, source) {
   return `${notices.trimEnd()}\n\n${rule}\nZIPP ${source.release ?? source.version} (${source.repository ?? 'https://github.com/f2i-com/zipp.org'}) LICENSE-APACHE\n${rule}\n\n${license}`;
 }
 
-/** engine-identity.json: which ZIPP release the zip carries, and the Softn release it came from (none for a source checkout). */
-export function engineIdentity(source, softnRelease) {
-  return { zipp: softnRelease ? softnRelease.zipp : source, softnRelease: softnRelease ? { tag: softnRelease.tag, archiveSha256: softnRelease.sha256 } : null };
+/**
+ * engine-identity.json: which ZIPP release the zip carries, the Softn release it
+ * came from (none for a source checkout), and, from the server sandbox's
+ * bin/runtime/SOURCE.json, the ZIPP release its guest was built from and the
+ * digests of that guest and of each launcher embedding it.
+ */
+export function engineIdentity(source, softnRelease, sandbox = null) {
+  return {
+    zipp: softnRelease ? softnRelease.zipp : source,
+    softnRelease: softnRelease ? { tag: softnRelease.tag, archiveSha256: softnRelease.sha256 } : null,
+    serverSandbox: sandbox ? {
+      zipp: { release: sandbox.zipp.release, revision: sandbox.zipp.revision },
+      guestSha256: sandbox.guest.sha256,
+      launchers: Object.fromEntries(sandbox.launchers.map(launcher => [launcher.artifact, launcher.sha256])),
+      build: { by: sandbox.build.by, runUrl: sandbox.build.runUrl ?? null },
+    } : null,
+  };
 }
 
 export async function checkReleaseRuntime(directory, expected) {

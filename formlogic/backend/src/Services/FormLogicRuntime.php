@@ -23,10 +23,10 @@ use FormLogic\Helpers\IpSafety;
  * - Any other value as the computed result
  *
  * Execution happens inside the ZIPP sandbox (via {@see SandboxRunner} and the
- * vendored formlogic-runtime launcher: a wasmtime host running the zipp-vm
- * WebAssembly guest from formlogic/runtime) — the same prelude the browser uses,
- * on the ZIPP engine the browser also runs (each side pins its own build; see
- * runtime/host/SOURCE.json). The untrusted script runs with no host bindings;
+ * formlogic-runtime launcher: a wasmtime host running the zipp-vm WebAssembly
+ * guest from formlogic/runtime) — the same prelude the browser uses, on the ZIPP
+ * release the browser also runs (the launcher is built from that release's
+ * source; see bin/runtime/SOURCE.json). The untrusted script runs with no host bindings;
  * ctx.db/ctx.http/ctx.utils are synchronous RPC callbacks handled here in PHP,
  * so all side effects and the SSRF/DNS-pinning HTTP guards stay on the trusted
  * side. A watchdog kill in the runner (plus the guest's own instruction budget)

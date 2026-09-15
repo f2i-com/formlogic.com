@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace FormLogic\Services;
 
 /**
- * Runs FormLogic user code inside the zipp sandbox, via the vendored
- * `formlogic-runtime` child (no Node runtime required). The browser evaluates
- * form logic with zipp too (ui/vendor/zipp-wasm, its own pinned build) and loads
- * the same prelude; the shared expression corpus
+ * Runs FormLogic user code inside the zipp sandbox, via the `formlogic-runtime`
+ * child in bin/runtime (built from the source of the ZIPP release the installed
+ * Softn release names, by CI or scripts/build-runtime.sh; no Node runtime
+ * required). The browser evaluates form logic with that same ZIPP release
+ * (ui/vendor/zipp-wasm) and loads the same prelude; the shared expression corpus
  * (docs/contracts/formlogic-expression-corpus.json) is asserted on both sides, so
  * a divergence between the two shows up as a failing test.
  *

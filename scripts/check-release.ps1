@@ -54,7 +54,8 @@ function Invoke-Gate {
 # --fail-on-skipped: the sandbox suites (SandboxScriptModeTest, ScriptStoreOptOutTest,
 # FormLogicExpressionParityTest) skip themselves when the launcher is unavailable. On
 # a developer box that is a courtesy; on the release bar it is the ONE signal that
-# the vendored runtime is missing or not executable, and a skip must read as red.
+# the runtime is missing (scripts/build-runtime.sh all builds it) or not executable,
+# and a skip must read as red.
 Invoke-Gate 'backend: phpunit (skips are failures here)' (Join-Path $repo 'formlogic/backend') {
     & vendor/bin/phpunit --fail-on-skipped
 }

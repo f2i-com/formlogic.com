@@ -117,10 +117,12 @@ function parseSums(text, name) {
  * consistent: every shipped file ZIPP built is the one the bundle's own
  * SHA256SUMS lists (never the reverse: the bundle also carries gpu-lab/,
  * host-sdk/, docs/ and a README Softn does not ship), BUILD-INFO names the
- * recorded commit and build, RELEASE-SHA256SUMS is the recorded ZIPP release
- * sums and lists the recorded bundle, and SOURCE.json carries every field of
- * `identity` (the release's record) unchanged. Whether that release is
- * authentic is Softn's check against ZIPP; FormLogic never contacts ZIPP.
+ * recorded commit, build and toolchain, RELEASE-SHA256SUMS is the recorded ZIPP
+ * release sums and lists the recorded bundle, and SOURCE.json carries every
+ * field of `identity` (the release's record) unchanged. Whether that release is
+ * authentic is Softn's check against ZIPP: FormLogic never fetches ZIPP's
+ * release assets. (The server sandbox is built from ZIPP's source at the
+ * recorded commit, which scripts/zipp-source.mjs proves; see there.)
  * Returns the tree's SOURCE.json.
  */
 export async function checkZippTree(source, identity) {
@@ -170,6 +172,8 @@ export async function checkZippTree(source, identity) {
     ['variant', buildInfo.get('variant'), record.variant, 'variant'],
     ['languages', languages, record.languages, 'languages'],
     ['stack-bytes', buildInfo.has('stack-bytes') ? Number(buildInfo.get('stack-bytes')) : undefined, record.stackBytes, 'stackBytes'],
+    // scripts/build-runtime.sh builds the server sandbox with the toolchain this record names.
+    ['rustc', buildInfo.get('rustc'), record.rustc, 'rustc'],
   ];
   for (const [key, actual, expected, field] of built) {
     if (actual === undefined || canonical(actual) !== canonical(expected)) throw new Error(`The ZIPP engine tree's BUILD-INFO.txt ${key} is ${canonical(actual) ?? '(absent)'}; SOURCE.json ${field} is ${canonical(expected) ?? '(absent)'}.`);

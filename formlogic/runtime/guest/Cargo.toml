@@ -33,9 +33,14 @@ name = "formlogic-runtime-guest"
 path = "src/main.rs"
 
 [dependencies]
-# Pinned by revision: this is a security boundary and must not move under us on a
-# rebuild. The revision is the one the browser's vendored wasm module
-# (ui/vendor/zipp-wasm) was built from, so the two artifacts are the same engine source.
+# By path, from the source of the ZIPP release the installed Softn release names
+# (.runtime-source/zipp/src, put there and verified against that release's commit
+# by scripts/zipp-source.mjs): the browser's engine (ui/vendor/zipp-wasm) is that
+# release's build, so the two artifacts are the same engine source, and a new
+# ZIPP release reaches the server with no commit here. Cargo.lock is generated per
+# build from ZIPP's root workspace lock (scripts/zipp-source.mjs --seed-lock), never
+# committed; the browser engine resolves from crates/zipp-wasm's own lock, so a
+# third-party crate can sit at another compatible version in each (see zipp-source.mjs).
 #
 #   safe-sandbox      interpreter-only profile: unsafe code is a compile error in the
 #                     VM and the regex engine; no filesystem, process or network
@@ -44,5 +49,5 @@ path = "src/main.rs"
 #                     even a code path that would try std::fs under WASI.
 #   wasm-single-agent removes the `$262.agent` thread harness; a WASI guest has no
 #                     threads and the launcher is the isolation boundary anyway.
-zipp-vm = { git = "https://github.com/f2i-com/zipp.org", rev = "127477bd667eaf264a403ebd41c617b857574de2", default-features = false, features = ["safe-sandbox", "wasm-no-fs-loader", "wasm-single-agent"] }
+zipp-vm = { path = "../../../.runtime-source/zipp/src/crates/zipp-vm", default-features = false, features = ["safe-sandbox", "wasm-no-fs-loader", "wasm-single-agent"] }
 serde_json = "1"

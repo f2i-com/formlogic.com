@@ -389,7 +389,8 @@ function checkRequirements(): array
             : ($qjsOk ? ($qjsFixed ? 'Executable (execute bit restored by the wizard)' : 'Present') : 'Present but NOT executable'),
         'pass' => $qjsOk,
         'help' => !$qjsExists
-            ? 'Vendored under ' . $backendRel . '/bin/runtime; re-clone the repo or rebuild it from formlogic/runtime'
+            ? 'Not in git: it ships in the FormLogic release zip under api/bin/runtime (re-upload it to '
+                . $backendRel . '/bin/runtime); a source checkout builds it with scripts/build-runtime.sh all (needs Rust)'
             : ($qjsOk ? '' : 'Zip extraction drops the execute bit — run on the server: chmod +x "' . $qjsBin . '"'),
     ];
 
@@ -759,7 +760,8 @@ function flScriptRuntimeStep(): array
         : $backendDir . '/bin/runtime/formlogic-runtime-linux-x86_64';
     if (!file_exists($qjsBin)) {
         return ['label' => 'FormLogic script runtime', 'status' => 'warn',
-            'message' => 'Binary not present at ' . basename($backendDir) . '/bin/runtime — form logic & scripts will be disabled'];
+            'message' => 'Binary not present at ' . basename($backendDir) . '/bin/runtime — form logic & scripts will be disabled'
+                . ' (it ships in the release zip; a source checkout builds it with scripts/build-runtime.sh all)'];
     }
     if (!$isWin && !is_executable($qjsBin)) {
         @chmod($qjsBin, 0755); // zip extraction drops the exec bit
@@ -1349,10 +1351,16 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
           <code>cd <?= $backendRelHtml ?> && php bin/provision-demo.php</code>
         </li>
         <li id="ns-wasm" class="hidden">
-          The FormLogic script runtime binary is missing. It is vendored
-          under <code><?= $backendRelHtml ?>/bin/runtime/</code> — re-upload the release
-          files (or re-clone the repository), or rebuild it for your platform from
-          <code>formlogic/runtime</code>.
+          The FormLogic script runtime binary is missing. It is not in git: it ships
+          in the FormLogic release zip, so re-upload the release files to
+          <code><?= $backendRelHtml ?>/bin/runtime/</code>. From a source checkout, build it
+          for your platform with <code>scripts/build-runtime.sh all</code> (needs Rust; it builds
+          from the ZIPP release the installed Softn release names), or copy <code>api/bin/runtime/</code>
+          from a release zip built from that same ZIPP release (its <code>engine-identity.json</code>
+          names it), or install a Package run's sandbox artifacts (kept 7 days; that run must have
+          frozen a Softn release naming the same ZIPP) with <code>gh run download</code>, then
+          <code>node scripts/runtime-provenance.mjs provenance</code>, which refuses a sandbox built
+          from any other ZIPP release.
         </li>
         <?php if ($isBundle): ?>
         <li>

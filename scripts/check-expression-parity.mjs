@@ -28,17 +28,19 @@
  *
  * This closes that. It is a POST-PROCESSING step: run both suites first,
  * then run this. It fails if a leg is missing, if the legs ran different corpora,
- * or if any case disagrees.
+ * if they ran different ZIPP releases (or not the one the installed Softn
+ * release names), or if any case disagrees.
  *
  *   php vendor/bin/phpunit --filter FormLogicExpressionParityTest   # backend
  *   npx vitest run src/lib/formlogic/corpusParity.test.ts           # browser
- *   node scripts/check-expression-parity.mjs
+ *   node scripts/check-expression-parity.mjs [--root <repository>]
  */
 import { readFileSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const rootIndex = process.argv.indexOf('--root');
+const ROOT = rootIndex > 0 ? resolve(process.argv[rootIndex + 1]) : join(dirname(fileURLToPath(import.meta.url)), '..');
 const DIR = join(ROOT, 'test-results', 'parity');
 
 const LEGS = [
@@ -61,7 +63,7 @@ for (const leg of LEGS) {
     const data = JSON.parse(readFileSync(path, 'utf8'));
     const byId = new Map();
     for (const r of data.results ?? []) byId.set(r.id, r);
-    legs.push({ ...leg, engine: data.engine, sha: data.corpus?.sha256 ?? '', byId });
+    legs.push({ ...leg, engine: data.engine, sha: data.corpus?.sha256 ?? '', zipp: data.engineDetail?.zipp ?? null, byId });
   } catch (err) {
     problems.push(`${leg.label} artifact is unreadable: ${err.message}`);
   }
@@ -79,6 +81,25 @@ const shas = new Set(legs.map((l) => l.sha).filter(Boolean));
 if (shas.size > 1) {
   console.error('Legs ran DIFFERENT corpora — re-run them all against the current file:\n');
   for (const l of legs) console.error(`  ${l.label.padEnd(8)} ${l.sha || '(no digest recorded)'}`);
+  process.exit(1);
+}
+
+// Every leg must have run ONE ZIPP release, the one the installed Softn release
+// names (the browser engine is that release's build; the server sandbox is
+// built from its source). Agreement between two different engine versions
+// proves nothing about the pair that ships.
+const zippOf = (l) => (typeof l.zipp?.release === 'string' && typeof l.zipp?.revision === 'string' ? `${l.zipp.release} ${l.zipp.revision}` : null);
+const unnamed = legs.filter((l) => !zippOf(l));
+const installedFile = join(ROOT, '.runtime-source', 'softn-release', 'current.json');
+const installed = existsSync(installedFile) ? JSON.parse(readFileSync(installedFile, 'utf8')).zipp ?? null : null;
+const expectedZipp = installed ? `${installed.release} ${installed.revision}` : null;
+if (unnamed.length || new Set(legs.map(zippOf)).size > 1 || (expectedZipp && legs.some((l) => zippOf(l) !== expectedZipp))) {
+  console.error('Legs did not run one ZIPP release' + (expectedZipp ? `, the installed Softn release's (${expectedZipp})` : '') + ':\n');
+  for (const l of legs) console.error(`  ${l.label.padEnd(8)} ${zippOf(l) ?? '(engineDetail.zipp not recorded)'}`);
+  if (unnamed.length) {
+    console.error('\n  A leg that does not name its ZIPP release cannot be tied to the others: re-run it against the');
+    console.error('  installed engine (the backend reads bin/runtime/SOURCE.json, which must list the launcher it ran).');
+  }
   process.exit(1);
 }
 
@@ -143,7 +164,7 @@ if (absent.length || disagreements.length) process.exit(1);
 
 console.log(
   `expression parity OK — ${compared} cases agree across ${legs.length} runtimes ` +
-    `(${legs.map((l) => l.engine).join(', ')})`
+    `(${legs.map((l) => l.engine).join(', ')}) on ZIPP ${legs[0].zipp.release} (${legs[0].zipp.revision.slice(0, 12)})`
 );
 console.log(
   `  ${agreeMode} of them are engine-defined (timezone/locale/Intl/throw-class) and are ` +

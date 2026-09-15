@@ -28,7 +28,8 @@ jobs:
 
   backend:
     name: Backend (PHP)
-    runs-on: ubuntu-latest
+    # Pinned, like ZIPP's own release lanes: this job builds the server sandbox.
+    runs-on: ubuntu-24.04
     needs: resolve
     defaults:
       run:
@@ -79,6 +80,16 @@ jobs:
         uses: ./.github/actions/prepare-hosted-runtime
         with:
           native-only: 'true'
+          frozen-release-json: ${{ needs.resolve.outputs.frozen }}
+
+      # The server sandbox is not in git: compiled here, every run, from the
+      # source of the ZIPP release the Softn release above names (dependency
+      # cache only), smoke-tested, recorded in bin/runtime/SOURCE.json, and
+      # proved runnable by PHP, so the sandbox suites below run rather than skip.
+      - name: Build the server sandbox
+        uses: ./.github/actions/prepare-sandbox-runtime
+        with:
+          mode: build
           frozen-release-json: ${{ needs.resolve.outputs.frozen }}
 
       - name: Tests (unit + DB integration)
@@ -185,9 +196,10 @@ jobs:
       - name: Security invariants (custom-screen CSP)
         run: node scripts/check-security-invariants.mjs
 
-      # Hard gate: engines come from releases, never git. Static (git ls-files and
-      # the tracked bytes): no tracked wasm/ELF/PE binary outside the sandbox
-      # allowlist, nothing under ui/vendor, no zipp_wasm* file, no zipp.org pin in a Cargo.toml.
+      # Hard gate: engines come from releases and CI builds, never git. Static (git
+      # ls-files and the tracked bytes): no tracked wasm/ELF/PE binary (the sandbox's
+      # included), nothing under ui/vendor, no zipp_wasm* file, no zipp.org pin in a
+      # Cargo.toml, no ZIPP checkout outside the sandbox action.
       - name: Engine provenance guard
         working-directory: ${{ github.workspace }}
         run: node scripts/engine-provenance-guard.mjs
@@ -195,10 +207,11 @@ jobs:
       # The contracts the guard and the fetch stand on, over fixtures (no network, no
       # installed tree): every refusal of a Softn archive, the one-generation install and
       # its rollback, the guard's rules, the manifest never re-pinning ZIPP, source-mode
-      # sync, and what package-dist holds a UI build to.
+      # sync, what package-dist holds a UI build to, the sandbox's ZIPP source and
+      # generated lock, its provenance, and the parity legs tied to one ZIPP release.
       - name: Engine sourcing script tests
         working-directory: ${{ github.workspace }}
-        run: node --test scripts/fetch-softn-release.test.mjs scripts/prepare-hosted-runtime.test.mjs scripts/engine-provenance-guard.test.mjs scripts/ecosystem-manifest.test.mjs scripts/sync-zipp-from-softn.test.mjs scripts/release-runtime.test.mjs
+        run: node --test scripts/fetch-softn-release.test.mjs scripts/prepare-hosted-runtime.test.mjs scripts/engine-provenance-guard.test.mjs scripts/ecosystem-manifest.test.mjs scripts/sync-zipp-from-softn.test.mjs scripts/release-runtime.test.mjs scripts/zipp-source.test.mjs scripts/runtime-provenance.test.mjs scripts/check-expression-parity.test.mjs scripts/prepare-sandbox-runtime.test.mjs
 
       # The build's prebuild step syncs prelude.js into the backend; if that produced a diff,
       # the committed backend copy was stale (someone forgot `npm run sync:prelude`).

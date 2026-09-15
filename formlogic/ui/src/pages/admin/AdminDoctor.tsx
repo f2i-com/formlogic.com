@@ -41,7 +41,7 @@ function humanize(key: string): string {
 // dual_store carry their remedy in the warning, so they're intentionally omitted here).
 const REMEDIATION: Record<string, string> = {
   database: 'Check DB credentials/connectivity in the backend .env.',
-  quickjs: 'Check the ZIPP launcher in backend/bin/runtime and resources/formlogic-prelude.js. If using a custom installation, check FORMLOGIC_RUNTIME_BIN. The launcher must be executable on Linux.',
+  quickjs: 'Check the ZIPP launcher in backend/bin/runtime (it ships in the release zip; a source checkout builds it with scripts/build-runtime.sh) and resources/formlogic-prelude.js. If using a custom installation, check FORMLOGIC_RUNTIME_BIN. The launcher must be executable on Linux.',
 };
 
 const ORDER: Record<Severity, number> = { fail: 0, warn: 1, ok: 2 };

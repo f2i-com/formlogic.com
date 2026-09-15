@@ -30,6 +30,12 @@ packaged releases. Native backend execution requires PHP 8.2+, PDO SQLite,
 `proc_open` and a compatible Node runtime (use the repository's pinned version); configure
 `FORMLOGIC_NODE_BIN` for the PHP worker environment. OAIY is a separate optional desktop host.
 
+The server sandbox launcher (`backend/bin/runtime/`, which runs form logic and scripts) is
+not in git either. The release zip ships it for both platforms; a source deployment builds it
+from the source of the ZIPP release the installed Softn release names with
+`scripts/build-runtime.sh all` (needs Rust; see `formlogic/runtime/README.md`), or installs a
+CI build. Without it the API still serves, but form logic fails open.
+
 Back up `backend/storage/native-apps/`, including private configuration and SQLite-consistent
 database snapshots. These records are not included in ordinary form exports. Schedule
 `php bin/native-record-dispatch.php` from the backend directory to retry committed database
@@ -174,7 +180,7 @@ Without credentials the `/billing` page degrades to "not configured" and no char
 
 - `GET /api/health` — public heartbeat (`{status, timestamp}`); use it for uptime/load-balancer checks.
 - `GET /api/health/deep` — **authenticated** "Doctor": checks DB connectivity, writable
-  `storage/`+`logs/` dirs, the sandbox runtime (`bin/runtime/` launcher + prelude), billing config
+  `storage/`+`logs/` dirs, the sandbox runtime (`bin/runtime/` launcher, built not committed, + prelude), billing config
   (critical only when plan enforcement is on; warns on sandbox / missing webhook id), the
   document-conversion tools (`pdftoppm`, `ghostscript`, `libreoffice`), the webhook retry-worker
   heartbeat, and dual-store file drift. Returns `200` when all critical checks pass, `503`

@@ -1,10 +1,15 @@
 name: Package (distributable zip)
 
 # Builds the single-domain release zip — the built web app at the zip root, the
-# production-filtered PHP backend under api/ (composer --no-dev, the vendored sandbox
-# launchers, the prelude), install.php + INSTALL.txt/UPGRADE.txt/VERSION — via
+# production-filtered PHP backend under api/ (composer --no-dev, the sandbox
+# launchers this run builds, the prelude), install.php + INSTALL.txt/UPGRADE.txt/VERSION — via
 # scripts/package-dist.mjs, the SAME script developers run locally. The result is
 # what a host drops onto a web root and installs through install.php.
+#
+# The server sandbox is built here, every run, from the source of the ZIPP release
+# the frozen Softn release names: sandbox-linux builds the guest and the Linux
+# launcher, sandbox-windows the Windows launcher embedding that same guest. Every
+# gate below tests the Linux launcher this run built, and the zip ships both.
 #
 # TRIGGER: manual, by design. Pushing a tag does NOT start a build (the account
 # sits near its Actions allowance, and a release is a decision, not a side
@@ -43,6 +48,120 @@ jobs:
     with:
       softn-release: ${{ inputs.softn-release }}
 
+  # The server sandbox, compiled in this run from the source of the ZIPP release
+  # the frozen Softn release names (the Softn archive is installed only to read
+  # that record). Its artifacts carry repository-relative paths, including their
+  # build records under .runtime-source/sandbox/, so consumers extract them at
+  # the workspace root.
+  sandbox-linux:
+    name: Server sandbox (guest and Linux launcher)
+    runs-on: ubuntu-24.04
+    needs: resolve
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.node-version'
+
+      - name: Install the frozen Softn release (it names the ZIPP release)
+        uses: ./.github/actions/prepare-hosted-runtime
+        with:
+          native-only: 'true'
+          frozen-release-json: ${{ needs.resolve.outputs.frozen }}
+
+      - name: Build the server sandbox
+        uses: ./.github/actions/prepare-sandbox-runtime
+        with:
+          mode: build
+          frozen-release-json: ${{ needs.resolve.outputs.frozen }}
+          php-preflight: 'false'
+
+      - name: Upload the guest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sandbox-guest
+          path: |
+            formlogic/runtime/host/formlogic-runtime-guest.wasm
+            formlogic/runtime/guest/Cargo.lock
+            .runtime-source/sandbox/guest.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload the Linux launcher
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sandbox-linux
+          path: |
+            formlogic/backend/bin/runtime/formlogic-runtime-linux-x86_64
+            .runtime-source/sandbox/linux.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  # The Windows launcher is built on Windows (wasmtime's C helpers want cl.exe;
+  # cross-compiling msvc from Linux would be a different compiler than it ships
+  # with), and embeds the guest the Linux job built, so both launchers run one guest.
+  sandbox-windows:
+    name: Server sandbox (Windows launcher)
+    runs-on: windows-2022
+    needs: sandbox-linux
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.node-version'
+
+      - name: Install the guest the Linux job built
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sandbox-guest
+          path: ${{ github.workspace }}
+
+      # The toolchain the guest was built with: ZIPP's release toolchain.
+      - name: Rust toolchain
+        id: rust
+        run: |
+          toolchain="$(node scripts/runtime-provenance.mjs toolchain)"
+          rustup toolchain install "$toolchain" --profile minimal --no-self-update
+          lock="$(sha256sum formlogic/runtime/host/Cargo.lock | cut -c1-16)"
+          echo "cache-key=sandbox-deps-${ImageOS:-unknown}-${ImageVersion:-unknown}-rust${toolchain}-host${lock}" >> "$GITHUB_OUTPUT"
+
+      - name: Cargo dependency cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            formlogic/runtime/host/target
+          key: ${{ steps.rust.outputs.cache-key }}
+
+      - name: Build the Windows launcher and smoke-test it
+        run: bash scripts/build-runtime.sh windows smoke
+
+      - name: Upload the Windows launcher
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sandbox-windows
+          path: |
+            formlogic/backend/bin/runtime/formlogic-runtime-windows-x86_64.exe
+            .runtime-source/sandbox/windows.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
   # Audit REL-001/C-09: packaging must depend on the exact SHA passing the
   # required checks — a tagged release could previously publish with failing
   # (or never-run) tests. This runs the same backend + frontend gates ci.yml
@@ -50,7 +169,7 @@ jobs:
   verify:
     name: Verify (tests must pass before packaging)
     runs-on: ubuntu-latest
-    needs: resolve
+    needs: [resolve, sandbox-linux]
     services:
       mysql:
         image: mysql:8.0
@@ -92,14 +211,27 @@ jobs:
         with:
           frozen-release-json: ${{ needs.resolve.outputs.frozen }}
 
-      # Audit FL-REL-001: the release gate must be IDENTICAL-or-stricter than
-      # main CI — a tag could previously package from a commit that never ran
-      # lint, audits, the bundle budget or the prelude-sync check.
-      - name: Backend gates (validate, lint, tests, audit)
+      - name: Backend dependencies
         working-directory: formlogic/backend
         run: |
           composer validate --no-check-publish
           composer install --no-interaction --prefer-dist --no-progress
+
+      # The Linux launcher sandbox-linux built in this run (after composer
+      # install: the action ends by asking PHP whether it can run it).
+      - name: Install this run's server sandbox
+        uses: ./.github/actions/prepare-sandbox-runtime
+        with:
+          mode: install
+          artifacts: sandbox-linux
+          frozen-release-json: ${{ needs.resolve.outputs.frozen }}
+
+      # Audit FL-REL-001: the release gate must be IDENTICAL-or-stricter than
+      # main CI — a tag could previously package from a commit that never ran
+      # lint, audits, the bundle budget or the prelude-sync check.
+      - name: Backend gates (lint, tests, audit)
+        working-directory: formlogic/backend
+        run: |
           find src public config -name '*.php' -print0 | xargs -0 -n1 -P4 php -l > /dev/null
           composer test
           composer analyse
@@ -137,9 +269,10 @@ jobs:
 
       # What the guard and the fetch stand on, over fixtures (no network, no installed
       # tree): the Softn archive's refusals and one-generation install, the guard's rules,
-      # the manifest never re-pinning ZIPP, source-mode sync and package-dist's engine checks.
+      # the manifest never re-pinning ZIPP, source-mode sync, package-dist's engine checks,
+      # the sandbox's ZIPP source, generated lock and provenance, and the parity comparator.
       - name: Engine sourcing script tests
-        run: node --test scripts/fetch-softn-release.test.mjs scripts/prepare-hosted-runtime.test.mjs scripts/engine-provenance-guard.test.mjs scripts/ecosystem-manifest.test.mjs scripts/sync-zipp-from-softn.test.mjs scripts/release-runtime.test.mjs
+        run: node --test scripts/fetch-softn-release.test.mjs scripts/prepare-hosted-runtime.test.mjs scripts/engine-provenance-guard.test.mjs scripts/ecosystem-manifest.test.mjs scripts/sync-zipp-from-softn.test.mjs scripts/release-runtime.test.mjs scripts/zipp-source.test.mjs scripts/runtime-provenance.test.mjs scripts/check-expression-parity.test.mjs scripts/prepare-sandbox-runtime.test.mjs
 
       - name: Frontend gates (lint, tests, build, budget, invariants, audit)
         working-directory: formlogic/ui
@@ -157,19 +290,27 @@ jobs:
             || (echo "::error::backend prelude is out of sync — run 'npm run sync:prelude' in formlogic/ui and commit the result" && exit 1)
           npm audit --audit-level=high
 
+      # Both parity legs ran above (composer test wrote test-results/parity/backend.json
+      # through this run's launcher, npm test wrote browser.json through the installed
+      # engine): the engine-defined cases are compared only here, and both legs must name
+      # the ZIPP release the frozen Softn release names.
+      - name: Expression parity across the two engines
+        run: node scripts/check-expression-parity.mjs
+
   # Audit FL-E2E-001: the launch golden paths are a RELEASE REQUIREMENT — the
   # zip cannot publish from a SHA whose end-to-end suite hasn't passed. Reuses the exact e2e workflow the nightly runs.
   e2e:
     name: E2E golden paths (release gate)
-    needs: resolve
+    needs: [resolve, sandbox-linux]
     uses: ./.github/workflows/e2e.yml
     with:
       frozen-release: ${{ needs.resolve.outputs.frozen }}
+      sandbox-artifact: sandbox-linux
 
   php-floor:
     name: PHP 8.2 compatibility
     runs-on: ubuntu-latest
-    needs: resolve
+    needs: [resolve, sandbox-linux]
     defaults:
       run:
         working-directory: formlogic/backend
@@ -221,6 +362,13 @@ jobs:
           native-only: 'true'
           frozen-release-json: ${{ needs.resolve.outputs.frozen }}
 
+      - name: Install this run's server sandbox
+        uses: ./.github/actions/prepare-sandbox-runtime
+        with:
+          mode: install
+          artifacts: sandbox-linux
+          frozen-release-json: ${{ needs.resolve.outputs.frozen }}
+
       - name: Tests (unit + DB integration)
         run: composer test
 
@@ -230,7 +378,7 @@ jobs:
     permissions:
       contents: write # gh release create/upload/edit (tag builds)
     runs-on: ubuntu-latest
-    needs: [resolve, verify, e2e, php-floor]
+    needs: [resolve, verify, e2e, php-floor, sandbox-linux, sandbox-windows]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -267,11 +415,22 @@ jobs:
         with:
           frozen-release-json: ${{ needs.resolve.outputs.frozen }}
 
+      # Both launchers this run built (one guest, the frozen release's ZIPP),
+      # merged into the bin/runtime/SOURCE.json the zip ships beside them.
+      - name: Install this run's server sandbox, both launchers
+        uses: ./.github/actions/prepare-sandbox-runtime
+        with:
+          mode: install
+          artifacts: sandbox-linux sandbox-windows
+          frozen-release-json: ${{ needs.resolve.outputs.frozen }}
+          php-preflight: 'false'
+
+      # --release: the zip ships only a sandbox one CI run built.
       - name: Build the distributable zip
         env:
           FORMLOGIC_RELEASE_SIGNING_KEY_PEM: ${{ secrets.FORMLOGIC_RELEASE_SIGNING_KEY }}
           FORMLOGIC_RELEASE_PUBLIC_KEY: ${{ vars.FORMLOGIC_RELEASE_PUBLIC_KEY }}
-        run: node scripts/package-dist.mjs
+        run: node scripts/package-dist.mjs --release
 
       # Always keep the zip as a workflow artifact (this is the only output for
       # workflow_dispatch runs on untagged commits).

@@ -19,6 +19,11 @@ on:
         required: false
         default: ''
         type: string
+      sandbox-artifact:
+        description: The calling run's Linux sandbox launcher artifact (sandbox-linux) to install; empty builds the sandbox in this job
+        required: false
+        default: ''
+        type: string
   # schedule:
   #   # Nightly at 15:20 UTC (~01:20 AEST) — off the top-of-hour rush.
   #   - cron: '20 15 * * *'
@@ -26,7 +31,8 @@ on:
 jobs:
   e2e:
     name: E2E golden paths
-    runs-on: ubuntu-latest
+    # Pinned, like ZIPP's own release lanes: dispatched on its own, this job builds the server sandbox.
+    runs-on: ubuntu-24.04
     services:
       mysql:
         image: mysql:8.0
@@ -81,6 +87,18 @@ jobs:
       - name: Install backend dependencies
         working-directory: formlogic/backend
         run: composer install --no-interaction --prefer-dist --no-progress
+
+      # The server evaluates form logic and provisions the demo apps through the
+      # sandbox. Called by package.yml it installs the launcher that run built
+      # (the one every other gate tests); dispatched on its own it builds one
+      # here, from the ZIPP release the Softn release above names. Decided by
+      # the input, never by the event name.
+      - name: Server sandbox (the calling run's, or built here)
+        uses: ./.github/actions/prepare-sandbox-runtime
+        with:
+          mode: ${{ inputs.sandbox-artifact != '' && 'install' || 'build' }}
+          artifacts: ${{ inputs.sandbox-artifact }}
+          frozen-release-json: ${{ inputs.frozen-release }}
 
       - name: Backend config (.env) + storage dirs
         working-directory: formlogic/backend

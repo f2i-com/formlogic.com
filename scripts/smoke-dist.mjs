@@ -345,7 +345,7 @@ return true;
         fields: [
           { id: 'note', type: 'short_text', label: 'Note', required: false, order: 0, properties: {} },
           // A calculated field is the one thing in this smoke that cannot pass
-          // without the sandbox runtime: the server evaluates it in the vendored
+          // without the sandbox runtime: the server evaluates it in the shipped
           // launcher on submit, and ResponseService fails OPEN when that engine is
           // absent (the field is silently skipped, the submission still succeeds).
           // So the round trip below asserts the VALUE, and reaches into the

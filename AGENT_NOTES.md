@@ -47,7 +47,7 @@
 - **Dual Database**: MySQL (metadata, users, apps, analytics) + SQLite (per-form field definitions, responses, computed data)
 - **Auth**: JWT via HttpOnly cookies (firebase/php-jwt, HS256), with Bearer header fallback for API clients
 - **CSRF**: Double-submit cookie pattern (non-HttpOnly cookie readable by JS, matched against `X-CSRF-Token` header)
-- **Scripting**: the zipp JavaScript engine — a wasm build in a Web Worker (frontend) and a WASI guest under a vendored wasmtime launcher (backend, `bin/runtime/`, no Node.js) — sharing one standard-library prelude and one parity corpus. Logic executed by OAIY Desktop (claimed flow runs, headless app scripts) does not use zipp (see `docs/FORMLOGIC_DESKTOP.md`)
+- **Scripting**: the zipp JavaScript engine — a wasm build in a Web Worker (frontend) and a WASI guest under a wasmtime launcher (backend, `bin/runtime/`, no Node.js), both the ZIPP release the installed Softn release names: the browser build comes from that release, the launcher is built from its source by CI or `scripts/build-runtime.sh`, and neither is committed — sharing one standard-library prelude and one parity corpus. Logic executed by OAIY Desktop (claimed flow runs, headless app scripts) does not use zipp (see `docs/FORMLOGIC_DESKTOP.md`)
 - **Audit**: Hash-chained audit log with HMAC-SHA256 integrity verification
 - **RBAC**: Role-based access control with per-form permission granularity (Owner role always bypasses checks)
 - **Webhooks**: HMAC-SHA256 signed deliveries with SSRF protection
@@ -127,7 +127,7 @@ formlogic-app/
 ### `composer.json`
 
 - **PSR-4 Autoload**: `FormLogic\` => `src/`
-- **Dependencies**: `slim/slim` ^4.12, `php-di/slim-bridge`, `slim/psr7`, `monolog/monolog` ^3.5, `firebase/php-jwt` ^7.0, `vlucas/phpdotenv` ^5.6, `respect/validation` ^2.3. FormLogic expressions and `onSubmit` scripts run via the bundled sandbox runtime (vendored launcher under `backend/bin/runtime`, invoked by `SandboxRunner`), not a Composer package.
+- **Dependencies**: `slim/slim` ^4.12, `php-di/slim-bridge`, `slim/psr7`, `monolog/monolog` ^3.5, `firebase/php-jwt` ^7.0, `vlucas/phpdotenv` ^5.6, `respect/validation` ^2.3. FormLogic expressions and `onSubmit` scripts run via the bundled sandbox runtime (the launcher under `backend/bin/runtime`, built from ZIPP source, invoked by `SandboxRunner`), not a Composer package.
 - **Minimum PHP**: 8.1
 
 ### `.env.example`
@@ -633,7 +633,7 @@ Thin client over a ZIPP WASM sandbox: each evaluation is dispatched to a dedicat
 Web Worker (`formlogic.worker.ts` → `zipp-host.ts`, running `ui/vendor/zipp-wasm`, generated from the installed Softn release)
 with an instruction budget, a heap cap and a terminate watchdog. The standard library
 below is the shared prelude (`prelude.js`), which also runs server-side via the
-vendored launcher, so client and server results match — `docs/contracts/formlogic-expression-corpus.json` pins that.
+launcher built from the same ZIPP release, so client and server results match — `docs/contracts/formlogic-expression-corpus.json` pins that.
 
 **Standard-library modules** (from `prelude.js`):
 - `validators`: email, phone, url, minLength, maxLength, pattern (ReDoS-limited 500 chars), required, min, max

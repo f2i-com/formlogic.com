@@ -9,8 +9,8 @@ PHP Slim-based REST API for the FormLogic Form Builder.
 - MySQL 8.0+
 
 > Tip: the assisted installers (`formlogic/install.php` wizard or `install.sh`) handle
-> the steps below — including generating `JWT_SECRET` and `AUDIT_HMAC_KEY`. The vendored
-> The scripting sandbox launcher ships in `bin/runtime/` (no separate install; on Linux it must be executable).
+> the steps below — including generating `JWT_SECRET` and `AUDIT_HMAC_KEY`.
+> The scripting sandbox launcher lives in `bin/runtime/` (on Linux it must be executable). It is not in git: the release zip ships it; a source checkout builds it with `scripts/build-runtime.sh all` from the repository root, or installs a CI build (see `../runtime/README.md`).
 
 ## Setup
 

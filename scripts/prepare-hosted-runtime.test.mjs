@@ -141,6 +141,7 @@ test('every workflow job hands the action its run\'s record; only e2e.yml alone 
   assert.deepEqual(calls, [
     { workflow: 'ci.yml', 'native-only': "'true'", 'frozen-release-json': FROZEN },
     { workflow: 'ci.yml', 'frozen-release-json': FROZEN },
+    { workflow: 'package.yml', 'native-only': "'true'", 'frozen-release-json': FROZEN },
     { workflow: 'package.yml', 'frozen-release-json': FROZEN },
     { workflow: 'package.yml', 'native-only': "'true'", 'frozen-release-json': FROZEN },
     { workflow: 'package.yml', 'frozen-release-json': FROZEN },

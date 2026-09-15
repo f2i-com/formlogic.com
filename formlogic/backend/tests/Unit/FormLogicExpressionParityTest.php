@@ -6,6 +6,7 @@ namespace FormLogic\Tests\Unit;
 
 use FormLogic\Services\FormLogicRuntime;
 use FormLogic\Services\SandboxRunner;
+use FormLogic\Tests\Support\SandboxProvenance;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -57,7 +58,7 @@ use PHPUnit\Framework\TestCase;
  * and two measured caveats decide whether a run means anything:
  *
  *  1. The override applies only when the path EXISTS (`is_file` in
- *     SandboxRunner::detectBinary); otherwise it falls back to the vendored binary
+ *     SandboxRunner::detectBinary); otherwise it falls back to the default binary
  *     without complaint. A typo'd path therefore tests the incumbent engine and
  *     reports a green parity run for a candidate that never executed.
  *  2. SandboxRunner builds engine-SPECIFIC argv (currently `--prelude` / `--heap-mb`).
@@ -69,6 +70,13 @@ use PHPUnit\Framework\TestCase;
  * artifact name what you intended. Cross-ENGINE differencing is done by comparing
  * this leg's artifact with the browser leg's artifact, not by swapping binaries
  * underneath one leg.
+ *
+ * `engineDetail.zipp` names the ZIPP release the executed launcher was built from,
+ * from the SOURCE.json scripts/runtime-provenance.mjs writes beside it, and only
+ * when that record lists this very binary: an overridden binary with no record,
+ * or a stale record beside a swapped binary, gives null, and
+ * scripts/check-expression-parity.mjs refuses a leg without it
+ * (tests/Support/SandboxProvenance.php; SandboxProvenanceTest pins each case).
  */
 class FormLogicExpressionParityTest extends TestCase
 {
@@ -89,8 +97,9 @@ class FormLogicExpressionParityTest extends TestCase
             // engine change did not break every form's server-side logic.
             self::markTestSkipped(
                 'PARITY SUITE DID NOT RUN - the sandbox runtime is unavailable, so the backend '
-                . 'expression engine went UNVERIFIED. Expected the vendored launcher under '
-                . 'backend/bin/runtime/ (executable on Linux/macOS) plus '
+                . 'expression engine went UNVERIFIED. Expected the launcher under '
+                . 'backend/bin/runtime/ (built by scripts/build-runtime.sh, or a CI build; '
+                . 'executable on Linux/macOS) plus '
                 . 'resources/formlogic-prelude.js. Set FORMLOGIC_RUNTIME_BIN to an explicit '
                 . 'binary path to run this suite. CI must treat this skip as a failure of the '
                 . 'parity gate, not as a pass (check-release.ps1 runs phpunit --fail-on-skipped).'
@@ -143,6 +152,7 @@ class FormLogicExpressionParityTest extends TestCase
         };
 
         $binary = self::resolvedBinary();
+        $binarySha256 = is_string($binary) && is_file($binary) ? hash_file('sha256', $binary) : null;
         $artifact = [
             'schemaVersion' => 1,
             // Stable join key for the comparator: which LEG produced this document.
@@ -158,9 +168,12 @@ class FormLogicExpressionParityTest extends TestCase
             'engineDetail' => [
                 'host' => 'backend/src/Services/SandboxRunner.php',
                 'engine' => 'zipp safe-sandbox as a wasm32-wasip1 guest under wasmtime (formlogic/runtime)',
-                'variant' => 'vendored engine child process (NDJSON over stdio)',
+                'variant' => 'launcher child process (NDJSON over stdio)',
                 'binary' => $binary,
-                'binarySha256' => is_string($binary) && is_file($binary) ? hash_file('sha256', $binary) : null,
+                'binarySha256' => $binarySha256,
+                // The ZIPP release this binary was built from; the browser leg records its
+                // engine's, and the comparator requires the two to be one release.
+                'zipp' => SandboxProvenance::launcherZipp($binary),
                 'prelude' => 'backend/resources/formlogic-prelude.js',
                 // No JS harness file: the guest builds the eval/script wrapper itself.
                 'harness' => 'runtime/guest/src/main.rs',
@@ -215,7 +228,7 @@ class FormLogicExpressionParityTest extends TestCase
      * Read reflectively (read-only, metadata only) because the runner exposes no
      * getter, and because guessing is how a parity artifact ends up naming an engine
      * that never executed: FORMLOGIC_RUNTIME_BIN / FORMLOGIC_QJS_BIN are silently
-     * ignored when the path does not exist, and detectBinary's vendored default has
+     * ignored when the path does not exist, and detectBinary's default has
      * itself been repointed at a
      * different engine during this migration.
      */

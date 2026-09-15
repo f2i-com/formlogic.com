@@ -1,9 +1,11 @@
 # Root repo tracks formlogic/. Build artifacts and dependencies are ignored by
 # formlogic/.gitignore. (The old engine source repos formlogic-php and
-# formlogic-rust were removed — the scripting engine is ZIPP: the server sandbox
-# under formlogic/runtime/ and backend/bin/runtime/, and the browser engine,
-# which is generated: formlogic/ui/vendor/zipp-wasm/ is the installed Softn
-# release's zipp/ tree, installed by scripts/fetch-softn-release.mjs.)
+# formlogic-rust were removed — the scripting engine is ZIPP, and neither of its
+# builds is committed: the browser engine, formlogic/ui/vendor/zipp-wasm/, is the
+# installed Softn release's zipp/ tree (scripts/fetch-softn-release.mjs), and the
+# server sandbox (formlogic/runtime/ builds it; backend/bin/runtime/ holds the
+# launchers) is built from the ZIPP release that Softn release names
+# (scripts/build-runtime.sh, or CI).)
 
 # Playwright output (any location)
 test-results/
@@ -22,7 +24,8 @@ node_modules/
 # Isolated local booking test database files
 formlogic/backend/storage/booking-test/
 
-# Pinned runtime source checkout used by manual build workflows
+# Generated runtime inputs: the installed Softn release (softn-release/), the
+# ZIPP source the server sandbox is built from (zipp/) and its build records (sandbox/)
 .runtime-source/
 
 # Default output of the release-key generator (keep private keys outside Git).
@@ -41,6 +44,11 @@ formlogic/backend/storage/booking-test/
 # scripts/package-dist.mjs, no longer kept in public/.
 /formlogic/ui/vendor/
 /formlogic/ui/public/zipp-licenses.txt
+
+# Generated server sandbox: the launchers scripts/build-runtime.sh (or a CI run)
+# builds from the ZIPP release the installed Softn release names, and the
+# SOURCE.json provenance it writes beside them. The guard fails on a tracked binary.
+/formlogic/backend/bin/runtime/
 
 # Private hosted app databases created by local/runtime use
 /formlogic/backend/storage/hosted-apps/

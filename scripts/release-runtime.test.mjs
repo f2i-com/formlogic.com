@@ -75,6 +75,22 @@ test('zippLicensesText is the notices file SOURCE.json names, then ZIPP\'s LICEN
 
 test('engineIdentity names the installed release\'s ZIPP record and its Softn release, or the tree\'s own record from a source checkout', () => {
   const softnRelease = { tag: 'v0.0.15', sha256: 'e'.repeat(64), zipp: RELEASE.record };
-  assert.deepEqual(engineIdentity(RELEASE.source, softnRelease), { zipp: RELEASE.record, softnRelease: { tag: 'v0.0.15', archiveSha256: 'e'.repeat(64) } });
-  assert.deepEqual(engineIdentity(RELEASE.source, null), { zipp: RELEASE.source, softnRelease: null });
+  assert.deepEqual(engineIdentity(RELEASE.source, softnRelease), { zipp: RELEASE.record, softnRelease: { tag: 'v0.0.15', archiveSha256: 'e'.repeat(64) }, serverSandbox: null });
+  assert.deepEqual(engineIdentity(RELEASE.source, null), { zipp: RELEASE.source, softnRelease: null, serverSandbox: null });
+});
+
+test('engineIdentity carries the server sandbox: its ZIPP release, the guest and each launcher\'s digest, and who built it', () => {
+  const softnRelease = { tag: 'v0.0.15', sha256: 'e'.repeat(64), zipp: RELEASE.record };
+  const sandbox = {
+    zipp: { release: RELEASE.record.release, revision: RELEASE.record.revision, version: RELEASE.record.version, sumsSha256: RELEASE.record.sumsSha256 },
+    guest: { artifact: 'formlogic-runtime-guest.wasm', sha256: '1'.repeat(64) },
+    launchers: [{ artifact: 'formlogic-runtime-linux-x86_64', sha256: '2'.repeat(64) }, { artifact: 'formlogic-runtime-windows-x86_64.exe', sha256: '3'.repeat(64) }],
+    build: { by: 'ci', runId: '7', runUrl: 'https://github.com/f2i-com/formlogic.com/actions/runs/7', builtAt: '2026-09-15T00:00:00.000Z' },
+  };
+  assert.deepEqual(engineIdentity(RELEASE.source, softnRelease, sandbox).serverSandbox, {
+    zipp: { release: RELEASE.record.release, revision: RELEASE.record.revision },
+    guestSha256: '1'.repeat(64),
+    launchers: { 'formlogic-runtime-linux-x86_64': '2'.repeat(64), 'formlogic-runtime-windows-x86_64.exe': '3'.repeat(64) },
+    build: { by: 'ci', runUrl: 'https://github.com/f2i-com/formlogic.com/actions/runs/7' },
+  });
 });

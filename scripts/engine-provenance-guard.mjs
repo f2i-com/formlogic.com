@@ -3,7 +3,9 @@
 //
 // FormLogic's browser engine is the installed Softn release's zipp/ tree
 // (scripts/fetch-softn-release.mjs installs it at formlogic/ui/vendor/zipp-wasm,
-// which git ignores), and Softn takes it from a ZIPP release. A committed copy
+// which git ignores), and Softn takes it from a ZIPP release. The server
+// sandbox (guest wasm and launchers) is built from that ZIPP release's source,
+// by CI every run or by scripts/build-runtime.sh. A committed copy of either
 // would be a second, unverified engine that silently outlives the release it
 // came from, so this fails on any tracked file that is:
 //
@@ -11,7 +13,14 @@
 //   - anything under formlogic/ui/vendor/;
 //   - named zipp_wasm* (the engine's glue, declarations or module, under any folder);
 //   - a Cargo.toml naming a zipp.org source (git, tag, rev, branch or [patch]) or
-//     zipp-vm / zipp-regress other than as a path into .runtime-source/zipp/src.
+//     zipp-vm / zipp-regress other than as a path into .runtime-source/zipp/src;
+//   - a file under .github/ other than .github/actions/prepare-sandbox-runtime that
+//     fetches ZIPP (that action checks it out, at the release the installed Softn
+//     release names; anywhere else it would be a second, unchecked source): one
+//     that names f2i-com/zipp.org outside a comment (a checkout, git clone, gh -R,
+//     curl or wget, an API or codeload URL), checks out a repository given by an
+//     expression it cannot read, or runs scripts/zipp-source.mjs or
+//     scripts/build-runtime.sh in a mode that clones ZIPP (fetch; all, zipp-source).
 //
 // Static: it reads `git ls-files` and the tracked bytes, and needs no install.
 //
@@ -21,21 +30,15 @@ import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } fro
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/**
- * Tracked binaries the server sandbox still commits until it is built in CI
- * from the ZIPP release the installed Softn release names; that change empties
- * this list and lifts CARGO_EXEMPT.
- */
-export const BINARY_ALLOWLIST = Object.freeze([
-  'formlogic/backend/bin/runtime/formlogic-runtime-linux-x86_64',
-  'formlogic/backend/bin/runtime/formlogic-runtime-windows-x86_64.exe',
-  'formlogic/runtime/host/formlogic-runtime-guest.wasm',
-]);
-/** The guest still takes zipp-vm by git rev until the same change. */
-export const CARGO_EXEMPT = Object.freeze(['formlogic/runtime/guest/Cargo.toml']);
+/** Tracked binaries allowed anyway: none. Adding one is a decision to commit an engine, and reads as one in review. */
+export const BINARY_ALLOWLIST = Object.freeze([]);
+/** The one file that may check out ZIPP source in CI. */
+export const ZIPP_CHECKOUT_ACTION = '.github/actions/prepare-sandbox-runtime/action.yml';
 
 const ZIPP_SOURCE_PATH = /(^|\/)\.runtime-source\/zipp\/src\//;
 const ZIPP_CRATE = /^(zipp-vm|zipp-regress)$/;
+/** ZIPP's repository, however a step names it: owner/name, a clone or API URL, an ssh remote. */
+const ZIPP_REPOSITORY = /f2i-com\/zipp\.org/i;
 
 /** What the first bytes say a file is, or null. */
 export function binaryKind(header) {
@@ -81,6 +84,30 @@ export function cargoViolations(text) {
   return problems;
 }
 
+/**
+ * How one file under .github (not the sandbox action) fetches ZIPP itself, one
+ * reason per line that does; empty when it does not. YAML and shell comments
+ * are not steps, so they are read past.
+ */
+export function zippFetchViolations(text) {
+  const problems = [];
+  for (const raw of String(text).replace(/\r\n/g, '\n').split('\n')) {
+    const line = raw.replace(/(^|\s)#.*$/, '$1');
+    if (!line.trim()) continue;
+    const step = raw.trim();
+    const repository = /^\s*-?\s*repository:\s*(.*)$/.exec(line)?.[1]?.trim() ?? null;
+    if (repository !== null && ZIPP_REPOSITORY.test(repository)) problems.push(`checks out f2i-com/zipp.org: ${step}`);
+    else if (repository !== null && repository.includes('${{') && !/^["']?\$\{\{\s*github\.repository\s*\}\}["']?$/.test(repository)) problems.push(`checks out a repository named by an expression, which could be f2i-com/zipp.org (name it literally): ${step}`);
+    else if (ZIPP_REPOSITORY.test(line)) problems.push(`fetches from f2i-com/zipp.org: ${step}`);
+    else if (/zipp-source\.mjs(?![\w.-])/.test(line) && !/--(identity|verify|seed-lock)\b/.test(line)) problems.push(`clones ZIPP source (scripts/zipp-source.mjs without --identity, --verify or --seed-lock): ${step}`);
+    else {
+      const steps = /build-runtime\.sh(?![\w.-])([^;&|)]*)/.exec(line)?.[1];
+      if (steps !== undefined && (!steps.trim() || /(^|\s)(all|zipp-source)(?=\s|$)/.test(steps))) problems.push(`clones ZIPP source (scripts/build-runtime.sh ${steps.trim() || 'with no step, which is all'}): ${step}`);
+    }
+  }
+  return problems;
+}
+
 /** Every violation in the repository at `root`, as "<path>: <reason>". */
 export function findViolations({ root }) {
   const git = (args, options = {}) => execFileSync('git', ['-C', root, ...args], { maxBuffer: 1 << 28, ...options });
@@ -102,8 +129,14 @@ export function findViolations({ root }) {
     }
     const kind = binaryKind(header);
     if (kind && !BINARY_ALLOWLIST.includes(path)) violations.push(`${path}: a tracked ${kind} binary; engines and launchers come from releases and CI builds, not git`);
-    if (name === 'Cargo.toml' && !CARGO_EXEMPT.includes(path)) {
+    if (name === 'Cargo.toml') {
       for (const problem of cargoViolations((blob ?? readFileSync(resolve(root, path))).toString('utf8'))) violations.push(`${path}: ${problem}`);
+    }
+    // Workflows, actions and anything they run; prose (*.md) only describes.
+    if (path.startsWith('.github/') && !/\.md$/i.test(name) && path !== ZIPP_CHECKOUT_ACTION && !kind) {
+      for (const problem of zippFetchViolations((blob ?? readFileSync(resolve(root, path))).toString('utf8'))) {
+        violations.push(`${path}: ${problem} (only ${ZIPP_CHECKOUT_ACTION} fetches ZIPP, at the release the installed Softn release names)`);
+      }
     }
   }
   return violations;
@@ -118,5 +151,5 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     for (const violation of violations) console.error(` - ${violation}`);
     process.exit(1);
   }
-  console.log(`engine provenance guard: no tracked engine binaries or zipp.org pins (${BINARY_ALLOWLIST.length} sandbox binaries and ${CARGO_EXEMPT.length} Cargo.toml still allowed until the sandbox is built in CI)`);
+  console.log(`engine provenance guard: no tracked engine binaries, zipp.org pins or ZIPP fetches outside ${ZIPP_CHECKOUT_ACTION}`);
 }

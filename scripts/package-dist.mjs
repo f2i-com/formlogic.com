@@ -19,8 +19,10 @@
  * npm (UI build), composer (backend prod vendor/), git (version), zip OR PowerShell (archive).
  *
  * Usage:
- *   node scripts/package-dist.mjs [--require-signature] [--skip-ui-build] [--no-install] [--out <dir>] [--keep-staging] [--version <v>]
+ *   node scripts/package-dist.mjs [--release] [--require-signature] [--skip-ui-build] [--no-install] [--out <dir>] [--keep-staging] [--version <v>]
  *
+ *   --release        ship only a server sandbox one CI run built (bin/runtime/SOURCE.json build.by 'ci');
+ *                    package.yml passes it, a local package takes launchers built here too
  *   --require-signature  require an Ed25519 signature for offline/custom distribution
  *   --allow-unsigned  compatibility flag; GitHub-verified releases need no signing key
  *   --skip-ui-build  reuse the existing formlogic/ui/dist (must exist and contain .htaccess)
@@ -40,6 +42,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadReleaseSigner, signReleaseManifest } from './release-signing.mjs';
 import { checkReleaseRuntime, checkAppEditors, checkNativeRuntime, checkDistEngines, zippLicensesText, engineIdentity } from './release-runtime.mjs';
+import { checkSandbox } from './runtime-provenance.mjs';
 import { runtimeIdentity, checkZippTree } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 
 const isWindows = process.platform === 'win32';
@@ -53,8 +56,9 @@ const backendDir = path.join(repoRoot, 'formlogic', 'backend');
 //
 // COPY (allowlist) — everything the app needs at runtime:
 //   bin/        maintenance CLIs (upgrade.php, idempotency-cleanup.php, webhook-worker.php,
-//               reconcile.php) + the vendored sandbox binaries (bin/runtime/) the script
-//               script runtime shells out to.
+//               reconcile.php) + the sandbox launchers (bin/runtime/) the script runtime
+//               shells out to, with the SOURCE.json that says which ZIPP release and CI run
+//               built them (generated: CI or scripts/build-runtime.sh, never git).
 //   config/     settings.php
 //   database/   schema.sql + migrate.php (schema files only — no runtime SQLite lives here;
 //               per-form SQLite DBs live under storage/forms which ships EMPTY)
@@ -97,12 +101,13 @@ const BACKEND_SKELETON_DIRS = [
 ];
 
 // --- tiny CLI ---------------------------------------------------------------
-const cli = { requireSignature: false, allowUnsigned: false, skipUiBuild: false, noInstall: false, keepStaging: false, out: null, version: null };
+const cli = { release: false, requireSignature: false, allowUnsigned: false, skipUiBuild: false, noInstall: false, keepStaging: false, out: null, version: null };
 {
   const args = process.argv.slice(2);
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === '--skip-ui-build') cli.skipUiBuild = true;
+    if (a === '--release') cli.release = true;
+    else if (a === '--skip-ui-build') cli.skipUiBuild = true;
     else if (a === '--require-signature') cli.requireSignature = true;
     else if (a === '--allow-unsigned') cli.allowUnsigned = true;
     else if (a === '--no-install') cli.noInstall = true;
@@ -112,7 +117,7 @@ const cli = { requireSignature: false, allowUnsigned: false, skipUiBuild: false,
     else if (a === '--version') cli.version = args[++i];
     else if (a.startsWith('--version=')) cli.version = a.slice('--version='.length);
     else if (a === '--help' || a === '-h') {
-      console.log('Usage: node scripts/package-dist.mjs [--require-signature] [--skip-ui-build] [--no-install] [--out <dir>] [--keep-staging] [--version <v>]');
+      console.log('Usage: node scripts/package-dist.mjs [--release] [--require-signature] [--skip-ui-build] [--no-install] [--out <dir>] [--keep-staging] [--version <v>]');
       process.exit(0);
     } else {
       fail(`Unknown argument: ${a} (see --help)`);
@@ -375,6 +380,12 @@ const softnRelease = existsSync(installedRelease) ? JSON.parse(readFileSync(inst
 try { await checkZippTree(zippDir, softnRelease ? softnRelease.zipp : zippSource); }
 catch (error) { fail(`formlogic/ui/vendor/zipp-wasm is not the ZIPP release ${softnRelease ? `Softn ${softnRelease.tag} installed` : 'its SOURCE.json records'}: ${error.message} Run node scripts/fetch-softn-release.mjs.`); }
 const expectedRuntime = runtimeIdentity(zippSource);
+// The server sandbox is generated too: both launchers must be the ones its
+// SOURCE.json records, embedding one guest built from the ZIPP release the
+// installed Softn release names; a release takes only what one CI run built.
+let sandbox;
+try { sandbox = await checkSandbox(repoRoot, { require: ['linux', 'windows'], ci: cli.release }); }
+catch (error) { fail(`${error.message}\nBuild it with scripts/build-runtime.sh all (Windows builds both launchers), or install a CI run's sandbox artifacts.`); }
 const version = resolveVersion();
 const outDir = path.resolve(repoRoot, cli.out || 'dist-package');
 const staging = path.join(outDir, 'staging');
@@ -498,7 +509,7 @@ writeFileSync(path.join(staging, 'UPGRADE.txt'), upgradeTxt(version));
 try { writeFileSync(path.join(staging, 'zipp-licenses.txt'), await zippLicensesText(zippDir, zippSource)); }
 catch (error) { fail(error.message); }
 // Which engine this zip carries, and which Softn release it came from.
-writeFileSync(path.join(staging, 'engine-identity.json'), JSON.stringify(engineIdentity(zippSource, softnRelease), null, 2) + '\n');
+writeFileSync(path.join(staging, 'engine-identity.json'), JSON.stringify(engineIdentity(zippSource, softnRelease, sandbox), null, 2) + '\n');
 
 // [7] Sanity checks on the staged tree ------------------------------------------
 step('Verifying the staged tree');
@@ -519,6 +530,8 @@ const mustExist = [
   'api/config/settings.php',
   'api/database/schema.sql',
   'api/bin/runtime/formlogic-runtime-linux-x86_64',
+  'api/bin/runtime/formlogic-runtime-windows-x86_64.exe',
+  'api/bin/runtime/SOURCE.json',
   'api/resources/softn-native/runner.mjs',
   'api/resources/softn-native/host-protocol.json',
   'api/resources/softn-native/record-events.mjs',

@@ -950,10 +950,20 @@ class UpgradeService
         // sandbox launcher: every form evaluation then fails at exec while the
         // health check, which only looks for the file, stays green. Restore it by
         // path — the staged copy has no bit to inherit.
-        if (PHP_OS_FAMILY !== 'Windows' && str_contains(str_replace('\\', '/', $dst), '/bin/runtime/')) {
+        if (PHP_OS_FAMILY !== 'Windows' && self::isSandboxLauncher($dst)) {
             @chmod($dst, 0755);
         }
         return 1;
+    }
+
+    /**
+     * Whether an upgrade copies this file to a sandbox launcher's place
+     * (bin/runtime/formlogic-runtime-*), which must be executable. Its
+     * SOURCE.json provenance beside it is data and stays as copied.
+     */
+    public static function isSandboxLauncher(string $path): bool
+    {
+        return (bool) preg_match('#/bin/runtime/formlogic-runtime-[^/]+$#', str_replace('\\', '/', $path));
     }
 
     /**

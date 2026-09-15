@@ -14,9 +14,13 @@ ZIPP release (its `web-python` bundle, checked against ZIPP's top-level and the
 bundle's own `SHA256SUMS`) and ships it in the archive as `zipp/`, with the ZIPP
 release it came from recorded in `softn-release.json` `zipp`. FormLogic names no
 ZIPP release anywhere: a Softn release built with a new ZIPP installs with no
-FormLogic commit, and `scripts/engine-provenance-guard.mjs` (CI) fails if an
-engine binary, anything under `formlogic/ui/vendor/` or a `zipp_wasm*` file is
-ever tracked again.
+FormLogic commit. The server sandbox follows the same record: it is built, by
+CI every run or by `scripts/build-runtime.sh`, from the source of the ZIPP
+release that record names (`formlogic/runtime/README.md`), so the server and the
+browser run one ZIPP release. `scripts/engine-provenance-guard.mjs` (CI) fails if
+an engine or launcher binary, anything under `formlogic/ui/vendor/` or a
+`zipp_wasm*` file is ever tracked again, if a `Cargo.toml` pins a zipp.org source,
+or if anything under `.github/` but the sandbox action fetches ZIPP.
 
 ## How it works
 
@@ -77,7 +81,11 @@ The expected identity is derived from the release, never from this tree:
 
 This proves consistency, not authenticity: checking the bytes against ZIPP's
 published `SHA256SUMS` is Softn's job (at install, and again online when it
-releases). FormLogic never contacts ZIPP.
+releases). FormLogic never fetches ZIPP's release assets. The one thing it takes
+from ZIPP directly is source: the server sandbox is compiled from ZIPP's
+repository at the commit this record names (the commit the verified bundle's
+`BUILD-INFO.txt` names), which `scripts/zipp-source.mjs` proves the checkout is,
+at the release's workspace version, before anything builds from it.
 
 `zipp/` installs as `formlogic/ui/vendor/zipp-wasm/`, the path
 `zipp-host.ts` and `zipp-bytes.ts` import, so no source names a generated
@@ -85,11 +93,16 @@ location. `check-hosted-runtime.mjs` and `check-app-editors.mjs` both run
 `checkZippTree` over it at prebuild; `check-hosted-runtime.mjs` also runs
 before `npm test` and `npm run typecheck:test`, so a fresh clone is told to
 fetch instead of failing on a missing module. `scripts/package-dist.mjs`
-checks it against `current.json` `zipp` (against its own `SOURCE.json` when no
-release is installed, as from a source checkout), requires every engine the UI
-build emitted to be that release's, and writes `zipp-licenses.txt` (the
-notices, then ZIPP's `LICENSE-APACHE`) and `engine-identity.json` (`zipp`, and
-the Softn release tag and archive digest) at the zip root.
+checks it against `current.json` `zipp`, requires every engine the UI
+build emitted to be that release's, holds the server sandbox (both launchers
+and `backend/bin/runtime/SOURCE.json`) to the same record
+(`scripts/runtime-provenance.mjs check`; with `--release`, as `package.yml` runs
+it, only a sandbox one CI run built), and writes `zipp-licenses.txt` (the
+notices, then ZIPP's `LICENSE-APACHE`) and `engine-identity.json` (`zipp`, the
+Softn release tag and archive digest, and `serverSandbox`: the sandbox's ZIPP
+release, guest and launcher digests, and who built it) at the zip root. So
+packaging needs an installed Softn release: the sandbox check reads
+`current.json`, even where the browser engine came from a Softn checkout.
 
 In the browser, form expressions, calculated fields, validation and app logic
 run in a dedicated worker; each evaluation gets a fresh `Engine`, the canonical
@@ -205,9 +218,10 @@ The archive's contract (layout and `softn-release.json`) is
 `softn.com/scripts/package-formlogic-runtime.mjs`; `scripts/fetch-softn-release.test.mjs`
 exercises this side against a fixture built to it, including the frozen
 record's refusals and the interrupted-promotion recoveries. CI runs it with the
-other engine sourcing tests (the guard, the manifest, source-mode sync and
-`scripts/release-runtime.test.mjs`) in `ci.yml`'s frontend job and `package.yml`'s
-verify job.
+other engine sourcing tests (the guard, the manifest, source-mode sync,
+`scripts/release-runtime.test.mjs`, and the server sandbox's ZIPP source,
+generated lock, provenance and parity comparator) in `ci.yml`'s frontend job and
+`package.yml`'s verify job.
 
 ## Developing against a Softn checkout
 

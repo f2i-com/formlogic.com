@@ -1,8 +1,9 @@
 //! Precompile the guest at build time.
 //!
-//! `formlogic-runtime-guest.wasm` (tracked beside this file; produced from
-//! ../guest) is compiled here with Cranelift into wasmtime's serialised form and
-//! embedded by main.rs. Two things about the compile are deliberate:
+//! `formlogic-runtime-guest.wasm` (generated beside this file from ../guest by
+//! scripts/build-runtime.sh, never committed) is compiled here with Cranelift
+//! into wasmtime's serialised form and embedded by main.rs. Two things about the
+//! compile are deliberate:
 //!
 //! * The target triple is set EXPLICITLY, to the triple this launcher is being
 //!   built for. When wasmtime is asked to compile for the machine it is running
@@ -24,8 +25,9 @@ fn main() {
     let wasm = std::fs::read(guest).unwrap_or_else(|e| {
         panic!(
             "cannot read {guest}: {e}\n\
-             Build the guest first — `cargo build --release` in ../guest — and copy\n\
-             target/wasm32-wasip1/release/formlogic-runtime-guest.wasm here (see ../README.md)."
+             Build the guest first: `scripts/build-runtime.sh guest` from the repository\n\
+             root builds it from the ZIPP release the installed Softn release names and\n\
+             copies it here (see ../README.md)."
         )
     });
 
