@@ -1,0 +1,49 @@
+name: Resolve the Softn release
+
+# Release-readiness FL-S01: resolve the Softn release ONCE, before any job
+# installs it, and hand every job the same frozen identity (tag, the commit
+# the annotated tag points at, the asset, the archive's SHA-256). A Softn
+# release published while this run is in flight cannot change what a later
+# job installs: each consumer verifies the bytes against the frozen digest
+# and the archive's own manifest against the frozen tag and commit, and the
+# release gate's manifest check runs in --exact mode.
+#
+# Called by ci.yml and package.yml as their `resolve` job; every other job
+# passes needs.resolve.outputs.frozen to the prepare-hosted-runtime action's
+# frozen-release-json input (e2e.yml receives it as its frozen-release input).
+on:
+  workflow_call:
+    inputs:
+      softn-release:
+        description: Softn release tag to freeze (for example v0.0.13); empty resolves the latest release
+        required: false
+        default: ''
+        type: string
+    outputs:
+      frozen:
+        description: The frozen Softn release record (JSON) every job of the calling run installs
+        value: ${{ jobs.resolve.outputs.frozen }}
+
+jobs:
+  resolve:
+    name: Resolve and freeze
+    runs-on: ubuntu-latest
+    outputs:
+      frozen: ${{ steps.resolve.outputs.frozen }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.node-version'
+
+      - name: Resolve and freeze
+        id: resolve
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOFTN_RELEASE: ${{ inputs.softn-release }}
+        run: |
+          node scripts/fetch-softn-release.mjs --resolve-only --frozen softn-frozen.json
+          { echo 'frozen<<FROZEN_RECORD'; cat softn-frozen.json; echo 'FROZEN_RECORD'; } >> "$GITHUB_OUTPUT"
+          node -e "const f=require('./softn-frozen.json'); console.log('Softn release frozen for this run: '+f.tag+' @ '+f.tagCommit.slice(0,12)+' - '+f.assetName+' sha256 '+f.archiveSha256)" >> "$GITHUB_STEP_SUMMARY"

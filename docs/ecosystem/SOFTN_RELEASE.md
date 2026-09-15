@@ -64,12 +64,17 @@ A rerun of one job installs the frozen release again, from the cache.
 `node scripts/ecosystem-manifest.mjs --check --exact` then asserts the
 installed release **is** the frozen one (tag, commit, digest), on top of the
 compatibility invariants. In the workflows (`package.yml`, `ci.yml`, and
-`e2e.yml` when called), a first `resolve` job freezes the release and every
-other job receives the record and passes it to the
-`prepare-hosted-runtime` action's `frozen-release` input, whose manifest step
-runs in `--exact` mode. The `softn-release` dispatch input still pins a tag
+`e2e.yml` when called), a first `resolve` job (the reusable
+`resolve-softn-release.yml`) freezes the release and every other job passes
+the record it outputs to the `prepare-hosted-runtime` action's
+`frozen-release-json` input; the action writes it to a file of its own, and
+its manifest step runs in `--exact` mode. (Its `frozen-release` input takes
+the path of a record already on disk instead, never together with the JSON.)
+A job given no record fails there unless its caller sets `allow-latest`
+(only `e2e.yml` dispatched on its own does), so a record lost between jobs
+cannot become "latest". The `softn-release` dispatch input still pins a tag
 for the whole run; without a frozen record (plain development use) the
-fetch installs the latest release and the check stays compatibility-only.
+scripts install the latest release and the check stays compatibility-only.
 
 ## One generation per install
 

@@ -1,5 +1,5 @@
 name: Install the Softn runtime from its release
-description: Fetch, verify and install the latest Softn release's FormLogic runtime archive (hosted runtime, embedded editors, native backend runtime)
+description: Fetch, verify and install the FormLogic runtime archive (hosted runtime, embedded editors, native backend runtime) of the Softn release a run froze, or of the latest release where the caller allows it
 inputs:
   native-only:
     description: Kept for callers that only need the native backend runtime; the release archive is small, so everything is installed either way
@@ -7,34 +7,77 @@ inputs:
   softn-release:
     description: A Softn release tag to install instead of the latest (for example v0.0.13); empty means the latest release
     default: ''
+  frozen-release-json:
+    description: >-
+      The frozen release record itself (JSON), as a run's resolve job
+      (.github/workflows/resolve-softn-release.yml) outputs it. The action writes it to a
+      file of its own under the runner's temp directory; then this job installs exactly that
+      release (tag, tag commit, asset, archive digest; any drift fails) and the manifest check
+      runs in --exact mode. A multi-job run passes the same record to every job.
+    default: ''
   frozen-release:
     description: >-
-      Path (in the workspace) of the frozen release record a run resolved once with
-      `node scripts/fetch-softn-release.mjs --resolve-only --frozen <file>`. When set, this
-      job installs exactly that release (tag, tag commit, asset, archive digest; any drift
-      fails) and the manifest check runs in --exact mode. Empty means the latest release,
-      for development use only: a multi-job run must pass the same record to every job.
+      The same, given as the path (in the workspace) of a record already written with
+      `node scripts/fetch-softn-release.mjs --resolve-only --frozen <file>`, for callers that
+      have the file rather than the JSON. Give one of frozen-release and frozen-release-json,
+      never both.
     default: ''
+  allow-latest:
+    description: >-
+      'true' lets a job given no frozen record (frozen-release-json and frozen-release both
+      empty) install the latest release, or the softn-release tag, with a compatibility-only
+      manifest check: for a run of one job (e2e.yml dispatched on its own). Otherwise no record
+      fails the job.
+    default: 'false'
 runs:
   using: composite
   steps:
+    # One Softn release per run (FL-S01): a job hands over the record its
+    # resolve job froze and this step writes it where both scripts read it.
+    # When every job wrote the file itself and then named it here, a job that
+    # named no file silently installed the latest release instead. Here no
+    # record fails the job unless its caller sets allow-latest, so a record
+    # that arrives empty (a renamed or mistyped output) cannot install the
+    # latest release in its place.
+    - name: Frozen Softn release for this job
+      id: frozen
+      shell: bash
+      env:
+        SOFTN_FROZEN_JSON: ${{ inputs.frozen-release-json }}
+        SOFTN_FROZEN_PATH: ${{ inputs.frozen-release }}
+        SOFTN_ALLOW_LATEST: ${{ inputs.allow-latest }}
+      run: |
+        if [ -n "$SOFTN_FROZEN_JSON" ] && [ -n "$SOFTN_FROZEN_PATH" ]; then
+          echo "::error::prepare-hosted-runtime was given both frozen-release-json and frozen-release ($SOFTN_FROZEN_PATH); one run installs one release, so give one record"
+          exit 1
+        fi
+        if [ -z "$SOFTN_FROZEN_JSON$SOFTN_FROZEN_PATH" ] && [ "$SOFTN_ALLOW_LATEST" != 'true' ]; then
+          echo "::error::prepare-hosted-runtime was given no frozen release record (frozen-release-json and frozen-release are both empty); a job installs the record its run froze, and only a caller that sets allow-latest: 'true' installs the latest release"
+          exit 1
+        fi
+        if [ -n "$SOFTN_FROZEN_JSON" ]; then
+          SOFTN_FROZEN_PATH="$RUNNER_TEMP/softn-frozen.json"
+          printf '%s\n' "$SOFTN_FROZEN_JSON" > "$SOFTN_FROZEN_PATH"
+        fi
+        echo "path=$SOFTN_FROZEN_PATH" >> "$GITHUB_OUTPUT"
     # FormLogic embeds three things Softn builds — the hosted app runtime,
     # the two embedded editors and the native backend runtime — plus the
     # source of the vendored FormLogic adapter. Every Softn release publishes
     # them as softn-formlogic-runtime-<tag>.zip, built once and verified by
-    # Softn's release workflow. This fetches the latest release (or the tag
-    # named by the input), checks the archive against its .sha256 and its own
-    # manifest, checks it fits THIS tree (identical ZIPP engine bytes, the same
-    # protocol versions, the adapter this tree has vendored) and installs it
-    # where the build, the tests and the packagers expect it. Nothing is
-    # built from Softn source here.
+    # Softn's release workflow. This fetches the frozen release (or, where the
+    # caller allows it, the latest or the softn-release tag), checks the
+    # archive against its .sha256 and its own manifest, checks it fits THIS
+    # tree (identical ZIPP engine bytes, the same protocol versions, the
+    # adapter this tree has vendored) and installs it where the build, the
+    # tests and the packagers expect it. Nothing is built from Softn source
+    # here.
     - name: Fetch and install the Softn release runtime
       shell: bash
       working-directory: ${{ github.workspace }}
       env:
         GITHUB_TOKEN: ${{ github.token }}
         SOFTN_RELEASE: ${{ inputs.softn-release }}
-        SOFTN_FROZEN: ${{ inputs.frozen-release }}
+        SOFTN_FROZEN: ${{ steps.frozen.outputs.path }}
       run: node scripts/fetch-softn-release.mjs
     - name: Verify the hosted runtime and editors
       if: inputs.native-only != 'true'
@@ -60,5 +103,5 @@ runs:
       shell: bash
       working-directory: ${{ github.workspace }}
       env:
-        SOFTN_FROZEN: ${{ inputs.frozen-release }}
-      run: node scripts/ecosystem-manifest.mjs --check ${{ inputs.frozen-release != '' && '--exact' || '' }}
+        SOFTN_FROZEN: ${{ steps.frozen.outputs.path }}
+      run: node scripts/ecosystem-manifest.mjs --check ${{ steps.frozen.outputs.path != '' && '--exact' || '' }}

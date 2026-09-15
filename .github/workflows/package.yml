@@ -35,34 +35,13 @@ permissions:
 
 jobs:
   # Release-readiness FL-S01: resolve the Softn release ONCE, before any job
-  # installs it, and hand every job the same frozen identity (tag, the commit
-  # the annotated tag points at, the asset, the archive's SHA-256). A Softn
-  # release published while this run is in flight cannot change what a later
-  # job installs: each consumer verifies the bytes against the frozen digest
-  # and the archive's own manifest against the frozen tag and commit, and the
-  # release gate's manifest check runs in --exact mode.
+  # installs it; every job below installs that frozen record
+  # (resolve-softn-release.yml says how).
   resolve:
     name: Resolve the Softn release for this run
-    runs-on: ubuntu-latest
-    outputs:
-      frozen: ${{ steps.resolve.outputs.frozen }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: '.node-version'
-
-      - name: Resolve and freeze
-        id: resolve
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          SOFTN_RELEASE: ${{ inputs.softn-release }}
-        run: |
-          node scripts/fetch-softn-release.mjs --resolve-only --frozen softn-frozen.json
-          { echo 'frozen<<FROZEN_RECORD'; cat softn-frozen.json; echo 'FROZEN_RECORD'; } >> "$GITHUB_OUTPUT"
-          node -e "const f=require('./softn-frozen.json'); console.log('Softn release frozen for this run: '+f.tag+' @ '+f.tagCommit.slice(0,12)+' - '+f.assetName+' sha256 '+f.archiveSha256)" >> "$GITHUB_STEP_SUMMARY"
+    uses: ./.github/workflows/resolve-softn-release.yml
+    with:
+      softn-release: ${{ inputs.softn-release }}
 
   # Audit REL-001/C-09: packaging must depend on the exact SHA passing the
   # required checks — a tagged release could previously publish with failing
@@ -106,17 +85,12 @@ jobs:
           cache: npm
           cache-dependency-path: formlogic/ui/package-lock.json
 
-      # One Softn release per run (FL-S01): the record the resolve job froze,
-      # written where the action reads it, so this job installs exactly what
-      # every other job of this run installs.
-      - name: Frozen Softn release for this run
-        env:
-          SOFTN_FROZEN_JSON: ${{ needs.resolve.outputs.frozen }}
-        run: printf '%s\n' "$SOFTN_FROZEN_JSON" > softn-frozen.json
+      # One Softn release per run (FL-S01): this job installs the record the
+      # resolve job froze, exactly what every other job of this run installs.
       - name: Prepare hosted app runtime
         uses: ./.github/actions/prepare-hosted-runtime
         with:
-          frozen-release: softn-frozen.json
+          frozen-release-json: ${{ needs.resolve.outputs.frozen }}
 
       # Audit FL-REL-001: the release gate must be IDENTICAL-or-stricter than
       # main CI — a tag could previously package from a commit that never ran
@@ -231,17 +205,11 @@ jobs:
         with:
           node-version-file: '.node-version'
 
-      - name: Frozen Softn release for this run
-        working-directory: ${{ github.workspace }}
-        env:
-          SOFTN_FROZEN_JSON: ${{ needs.resolve.outputs.frozen }}
-        run: printf '%s\n' "$SOFTN_FROZEN_JSON" > softn-frozen.json
-
       - name: Prepare native app runtime
         uses: ./.github/actions/prepare-hosted-runtime
         with:
           native-only: 'true'
-          frozen-release: softn-frozen.json
+          frozen-release-json: ${{ needs.resolve.outputs.frozen }}
 
       - name: Tests (unit + DB integration)
         run: composer test
@@ -284,17 +252,10 @@ jobs:
 
       # The packaged runtime is the frozen one every gate above tested; the
       # action's manifest check runs in --exact mode with the same record.
-      # One Softn release per run (FL-S01): the record the resolve job froze,
-      # written where the action reads it, so this job installs exactly what
-      # every other job of this run installs.
-      - name: Frozen Softn release for this run
-        env:
-          SOFTN_FROZEN_JSON: ${{ needs.resolve.outputs.frozen }}
-        run: printf '%s\n' "$SOFTN_FROZEN_JSON" > softn-frozen.json
       - name: Prepare hosted app runtime
         uses: ./.github/actions/prepare-hosted-runtime
         with:
-          frozen-release: softn-frozen.json
+          frozen-release-json: ${{ needs.resolve.outputs.frozen }}
 
       - name: Build the distributable zip
         env:

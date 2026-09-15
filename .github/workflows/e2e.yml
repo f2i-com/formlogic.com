@@ -68,16 +68,15 @@ jobs:
 
       # When package.yml calls this workflow it passes the record it froze, so
       # the golden paths run against the release the other gates tested.
-      - name: Frozen Softn release for this run
-        if: inputs.frozen-release != ''
-        env:
-          SOFTN_FROZEN_JSON: ${{ inputs.frozen-release }}
-        run: printf '%s\n' "$SOFTN_FROZEN_JSON" > softn-frozen.json
-
+      # Dispatched on its own it has no record and, being the run's only job,
+      # installs the latest release (a package.yml record that arrived empty
+      # would do the same here, but fails that run's other jobs, so nothing is
+      # packaged).
       - name: Prepare hosted app runtime
         uses: ./.github/actions/prepare-hosted-runtime
         with:
-          frozen-release: ${{ inputs.frozen-release != '' && 'softn-frozen.json' || '' }}
+          frozen-release-json: ${{ inputs.frozen-release }}
+          allow-latest: ${{ inputs.frozen-release == '' && 'true' || 'false' }}
 
       - name: Install backend dependencies
         working-directory: formlogic/backend
