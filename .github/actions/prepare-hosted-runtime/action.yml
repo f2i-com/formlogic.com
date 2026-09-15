@@ -1,52 +1,51 @@
-name: Build pinned app runtime and editors
-description: Build and verify the compatible Softn runtime from a clean source checkout
+name: Install the Softn runtime from its release
+description: Fetch, verify and install the latest Softn release's FormLogic runtime archive (hosted runtime, embedded editors, native backend runtime)
 inputs:
   native-only:
-    description: Prepare only the native backend runtime for PHP tests
+    description: Kept for callers that only need the native backend runtime; the release archive is small, so everything is installed either way
     default: 'false'
+  softn-release:
+    description: A Softn release tag to install instead of the latest (for example v0.0.13); empty means the latest release
+    default: ''
 runs:
   using: composite
   steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        repository: f2i-com/softn.com
-        ref: 5f9330f342c55cd7ff8ff2ea9c20cde2c005076a
-        path: .runtime-source/softn.com
-        persist-credentials: false
-    - name: Install pinned runtime dependencies
-      if: inputs.native-only != 'true'
+    # FormLogic embeds three things Softn builds — the hosted app runtime,
+    # the two embedded editors and the native backend runtime — plus the
+    # source of the vendored FormLogic adapter. Every Softn release publishes
+    # them as softn-formlogic-runtime-<tag>.zip, built once and verified by
+    # Softn's release workflow. This fetches the latest release (or the tag
+    # named by the input), checks the archive against its .sha256 and its own
+    # manifest, checks it fits THIS tree (identical ZIPP engine bytes, the same
+    # protocol versions, the adapter this tree has vendored) and installs it
+    # where the build, the tests and the packagers expect it. Nothing is
+    # built from Softn source here.
+    - name: Fetch and install the Softn release runtime
       shell: bash
-      working-directory: ${{ github.workspace }}/.runtime-source/softn.com
-      run: npm ci
-    - name: Build and verify hosted runtime
+      working-directory: ${{ github.workspace }}
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        SOFTN_RELEASE: ${{ inputs.softn-release }}
+      run: node scripts/fetch-softn-release.mjs
+    - name: Verify the hosted runtime and editors
       if: inputs.native-only != 'true'
       shell: bash
       working-directory: ${{ github.workspace }}/formlogic/ui
-      env:
-        SOFTN_REPO: ${{ github.workspace }}/.runtime-source/softn.com
       run: |
-        npm run build:hosted-runtime
         npm run test:hosted-runtime
-        npm run build:app-editors
+        node scripts/check-hosted-runtime.mjs
         node scripts/check-app-editors.mjs
-    - name: Prepare native runtime and test runner
+    - name: Name the Node the native runtime tests run with
+      shell: bash
+      run: echo "FORMLOGIC_NODE_BIN=$(command -v node)" >> "$GITHUB_ENV"
+    # ECO-02: every consumer of the runtime (backend tests, UI, e2e, packaging)
+    # asserts that the committed compatibility manifest describes THIS tree:
+    # the vendored ZIPP release (identical bytes in FormLogic and in the
+    # installed runtime), the vendored adapter's provenance against the
+    # release's adapter, protocol versions and data-format ranges. Which
+    # Softn release is installed is recorded, not pinned: it moves with every
+    # Softn release, and a release that does not fit fails the fetch above.
+    - name: Ecosystem compatibility manifest (digests, protocols)
       shell: bash
       working-directory: ${{ github.workspace }}
-      env:
-        SOFTN_REPO: ${{ github.workspace }}/.runtime-source/softn.com
-      run: |
-        node scripts/prepare-native-runtime.mjs
-        echo "FORMLOGIC_NODE_BIN=$(command -v node)" >> "$GITHUB_ENV"
-    # ECO-02: every consumer of the pinned runtime (backend tests, UI, e2e,
-    # packaging) asserts that the committed compatibility manifest describes
-    # THIS tree: the pinned Softn revision, its pinned XDB revision, the
-    # vendored ZIPP release (identical bytes in FormLogic, Softn and the
-    # prepared native runtime), the vendored adapter's provenance, protocol
-    # versions and data-format ranges. A stale manifest, a drifted pin or
-    # mismatched engine bytes fail here before any test or package step.
-    - name: Ecosystem compatibility manifest (pins, digests, protocols)
-      shell: bash
-      working-directory: ${{ github.workspace }}
-      env:
-        SOFTN_REPO: ${{ github.workspace }}/.runtime-source/softn.com
       run: node scripts/ecosystem-manifest.mjs --check

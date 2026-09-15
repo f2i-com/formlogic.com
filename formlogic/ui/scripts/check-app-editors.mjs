@@ -17,5 +17,5 @@ export async function checkAppEditors(directory, expected) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const expected = runtimeIdentity(JSON.parse(await readFile(new URL('../vendor/zipp-wasm/SOURCE.json', import.meta.url), 'utf8')));
   try { await checkAppEditors(fileURLToPath(new URL('../public/app-editors/', import.meta.url)), expected); }
-  catch (error) { throw new Error(`App editors are missing or out of date. Run npm run build:app-editors with the compatible Softn checkout. ${error.message}`); }
+  catch (error) { throw new Error(`App editors are missing or out of date. Run node scripts/fetch-softn-release.mjs from the repository root (or npm run build:app-editors against a Softn source checkout). ${error.message}`); }
 }

@@ -291,15 +291,12 @@ The frontend test suite uses jsdom 30. Node 20 and older Node 22/24 releases can
 ```bash
 git clone git@github.com:f2i-com/formlogic.com.git
 
-# Keep the shared app engine alongside FormLogic.
-git clone https://github.com/f2i-com/softn.com.git
-cd softn.com
+cd formlogic.com/formlogic/ui
 npm install
-cd ../formlogic.com/formlogic/ui
-npm install
-npm run build:hosted-runtime
-npm run build:app-editors
-node ../../scripts/prepare-native-runtime.mjs
+# The app engine's runtime comes from Softn's latest GitHub release: the
+# hosted runtime, the embedded editors and the native backend runtime,
+# fetched, verified and installed in one step. No Softn checkout or build.
+node ../../scripts/fetch-softn-release.mjs
 
 # The installer can now build the web client.
 cd ..
@@ -307,7 +304,7 @@ chmod +x install.sh
 ./install.sh
 ```
 
-The installer creates environment files, generates security keys and prepares the database. Build the shared app host first: every frontend build requires its generated assets, including the build performed by the installer.
+The installer creates environment files, generates security keys and prepares the database. Install the shared app host first: every frontend build requires its generated assets, including the build performed by the installer.
 
 ### Browser installer
 
@@ -322,18 +319,16 @@ http://localhost/<your-folder>/formlogic/install.php
 
 For manual development setup, production web-server examples, environment variables, tests and troubleshooting, see [formlogic/README.md](formlogic/README.md) and [DEPLOYMENT.md](DEPLOYMENT.md).
 
-### Build the portable app host
+### Install the portable app host
 
-Keep `softn.com` beside `formlogic.com` and install dependencies in both repositories. From `formlogic/ui`:
+FormLogic uses the latest Softn release automatically. From `formlogic/ui`:
 
 ```sh
-npm run build:hosted-runtime
-npm run build:app-editors
-node ../../scripts/prepare-native-runtime.mjs
+node ../../scripts/fetch-softn-release.mjs
 npm run build
 ```
 
-These commands prepare `public/hosted-runtime/`, the embedded tools in `public/app-editors/`, and the trusted backend modules in `backend/resources/softn-native/`. Generated artifacts stay out of Git; include them in the deployment. The prebuild checks verify browser runtime and editor assets before compiling the UI. [Hosted apps guide](docs/HOSTED_APPS.md) covers private actions, SQLite storage, static-asset headers and backups.
+The fetch script looks up Softn's latest GitHub release, downloads its `softn-formlogic-runtime-<tag>.zip`, checks it against its `.sha256` and its own manifest, checks it fits this FormLogic (identical ZIPP engine bytes, the same protocol versions, the adapter this tree has vendored) and installs `public/hosted-runtime/`, the embedded tools in `public/app-editors/`, and the trusted backend modules in `backend/resources/softn-native/`. Generated artifacts stay out of Git; include them in the deployment. The prebuild checks verify browser runtime and editor assets before compiling the UI. `SOFTN_RELEASE=v0.0.13` installs one release instead of the latest; `--check` verifies an install without the network; `--sync-adapter` refreshes the vendored adapter when a release changed it (then commit). Developers working on Softn itself can still build from a sibling checkout: set `SOFTN_REPO` and run `npm run build:hosted-runtime`, `npm run build:app-editors` and `node ../../scripts/prepare-native-runtime.mjs`. See [docs/ecosystem/SOFTN_RELEASE.md](docs/ecosystem/SOFTN_RELEASE.md). [Hosted apps guide](docs/HOSTED_APPS.md) covers private actions, SQLite storage, static-asset headers and backups.
 
 For local development, Vite keeps requests on `/api` and proxies to `http://127.0.0.1:8080`. Set `VITE_API_PROXY_TARGET` to change that target.
 

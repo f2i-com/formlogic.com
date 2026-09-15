@@ -120,10 +120,11 @@ jobs:
           cache: npm
           cache-dependency-path: formlogic/ui/package-lock.json
 
-      # ECO-02: the action ends by checking the committed compatibility
-      # manifest against this tree and the pinned Softn checkout, so every
-      # job that prepares the runtime (this one, the backend job, e2e and
-      # packaging) fails on a stale manifest or a drifted pin before any test.
+      # The action installs the latest Softn release's runtime (no Softn
+      # checkout or build) and ends by checking the committed compatibility
+      # manifest against this tree and that release, so every job that
+      # prepares the runtime (this one, the backend job, e2e and packaging)
+      # fails on a stale manifest or an incompatible release before any test.
       - name: Prepare hosted app runtime
         uses: ./.github/actions/prepare-hosted-runtime
 

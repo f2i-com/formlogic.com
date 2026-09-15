@@ -222,7 +222,7 @@ needed — if the app can reach the database, so can the CLI.
 - **Source checkout instead of a release zip?** The backend lives at `formlogic/backend`, so the
   same command is `php formlogic/backend/bin/upgrade.php --check`. After pulling new code, also
   run `composer install` in `formlogic/backend` and rebuild the UI (`cd formlogic/ui && npm
-  ci && npm run build:hosted-runtime && npm run build`) — the release zip ships both pre-built.
+  ci && node ../../scripts/fetch-softn-release.mjs && npm run build`) — the release zip ships both pre-built.
 - **Idempotent by design**: every schema step is guarded, so re-running the CLI (or letting the web
   app re-run the same migrations) never double-applies anything.
 - `schema_meta` is only stamped by deliberate upgrades — `upgrade_source=cli` (this CLI) or

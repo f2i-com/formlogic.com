@@ -1,21 +1,30 @@
 #!/usr/bin/env node
 // Ecosystem compatibility manifest (ecosystem review ECO-02, 14 September 2026).
 //
-// FormLogic is the hub of the tested set: it pins a Softn revision (the hosted
-// runtime and native backend), that Softn revision pins an XDB revision, and
-// both FormLogic and Softn vendor the same ZIPP release. Those pins already
-// exist and are authoritative; this script does NOT add competing constants.
-// It READS them, verifies they agree with the artifacts actually present, and
-// writes one machine-readable manifest that names every revision, digest,
-// protocol version and schema range a release was tested with.
+// FormLogic is the hub of the tested set: it takes Softn's runtime from
+// Softn's latest GitHub release (scripts/fetch-softn-release.mjs, which
+// records what it installed in .runtime-source/softn-release/current.json),
+// that Softn release pins an XDB revision, and both FormLogic and Softn vendor
+// the same ZIPP release. This script does NOT add competing constants. It
+// READS what is present, verifies the pieces agree, and writes one
+// machine-readable manifest that names every revision, digest, protocol
+// version and schema range a release was tested with.
+//
+// Which Softn release is installed is RECORDED, not pinned: it moves with
+// every Softn release without a FormLogic commit, so --check treats the
+// release, its commit and its archive digest as informational. What --check
+// enforces are the invariants: identical ZIPP bytes, equal protocol versions,
+// the vendored adapter being the one the release ships, and this tree's own
+// data-format constants. A Softn release that breaks one of those fails the
+// fetch itself, before anything is installed.
 //
 //   node scripts/ecosystem-manifest.mjs                # write docs/ecosystem/compatibility-manifest.json
 //   node scripts/ecosystem-manifest.mjs --check        # verify the committed manifest matches the tree
-//   SOFTN_REPO=/path/to/softn.com node scripts/ecosystem-manifest.mjs
+//   SOFTN_REPO=/path/to/softn.com node scripts/ecosystem-manifest.mjs   # a developer's source checkout instead of a release
 //
 // Sources (all existing controls):
-//   .github/actions/prepare-hosted-runtime/action.yml        FormLogic -> Softn revision
-//   <softn>/.github/scripts/checkout-xdb.sh                   Softn -> XDB revision
+//   .runtime-source/softn-release/current.json               the installed Softn release (tag, commit, archive digest)
+//   <softn>/.github/scripts/checkout-xdb.sh                   Softn -> XDB revision (source mode)
 //   formlogic/ui/vendor/zipp-wasm/SOURCE.json                 FormLogic's vendored ZIPP release + digest
 //   <softn>/packages/@softn/core/wasm-zipp/SOURCE.json        Softn's vendored ZIPP release + digest
 //   <softn>/apps/softn-host-php/runtime/host-protocol.json         native hosting protocol versions
@@ -38,8 +47,12 @@ import { NATIVE_PROTOCOL, RECORD_EVENTS_PROTOCOL, EDITOR_BRIDGE_PROTOCOL } from 
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
-const softnRepo = resolve(process.env.SOFTN_REPO ?? resolve(root, '..', 'softn.com'));
+// Source mode only when SOFTN_REPO is set: a developer running against a
+// sibling checkout. Otherwise the installed release is what is described.
+const sourceMode = Boolean(process.env.SOFTN_REPO);
+const softnRepo = sourceMode ? resolve(process.env.SOFTN_REPO) : null;
 const xdbRepo = process.env.XDB_REPO ? resolve(process.env.XDB_REPO) : resolve(root, '..', 'xdb.org');
+const currentReleasePath = resolve(root, '.runtime-source/softn-release/current.json');
 const check = process.argv.includes('--check');
 const out = resolve(root, 'docs', 'ecosystem', 'compatibility-manifest.json');
 
@@ -57,33 +70,50 @@ const gitHead = (repo) => {
 };
 
 // ── FormLogic -> Softn ───────────────────────────────────────────────────────
-const action = read(resolve(root, '.github/actions/prepare-hosted-runtime/action.yml'));
-const softnPin = /repository:\s*f2i-com\/softn\.com\s*\n\s*ref:\s*([0-9a-f]{40})/.exec(action)?.[1];
-must(softnPin, 'prepare-hosted-runtime/action.yml does not pin a 40-hex Softn revision');
-
-// ── Softn -> XDB ─────────────────────────────────────────────────────────────
+// Release mode: what scripts/fetch-softn-release.mjs installed. Source mode:
+// the developer's checkout (SOFTN_REPO), whose HEAD is what is described.
 let xdbPin = null;
 let softnHead = null;
 let softnProtocol = null;
 let softnZipp = null;
 let loaderXdbDependency = null;
-if (existsSync(softnRepo)) {
-  softnHead = gitHead(softnRepo);
-  const checkout = read(resolve(softnRepo, '.github/scripts/checkout-xdb.sh'));
-  xdbPin = /XDB_COMMIT="([0-9a-f]{40})"/.exec(checkout)?.[1] ?? null;
-  must(xdbPin, 'softn checkout-xdb.sh does not pin a 40-hex XDB revision');
-  softnProtocol = json(resolve(softnRepo, 'apps/softn-host-php/runtime/host-protocol.json'));
-  softnZipp = json(resolve(softnRepo, 'packages/@softn/core/wasm-zipp/SOURCE.json'));
-  const loaderCargo = read(resolve(softnRepo, 'apps/softn-loader/src-tauri/Cargo.toml'));
-  loaderXdbDependency = /^xdb\s*=\s*\{[^}]*path\s*=\s*"([^"]+)"/m.exec(loaderCargo)?.[1] ?? null;
-  if (softnHead && softnPin && softnHead !== softnPin) {
-    problems.push(`the Softn checkout at ${softnRepo} is ${softnHead}, but FormLogic pins ${softnPin}; run against the pinned revision`);
+let softnRelease = null;
+let softnPin = null;
+let releaseAdapterSha = null;
+if (sourceMode) {
+  if (existsSync(softnRepo)) {
+    softnHead = gitHead(softnRepo);
+    softnPin = softnHead;
+    const checkout = read(resolve(softnRepo, '.github/scripts/checkout-xdb.sh'));
+    xdbPin = /XDB_COMMIT="([0-9a-f]{40})"/.exec(checkout)?.[1] ?? null;
+    must(xdbPin, 'softn checkout-xdb.sh does not pin a 40-hex XDB revision');
+    softnProtocol = json(resolve(softnRepo, 'apps/softn-host-php/runtime/host-protocol.json'));
+    softnZipp = json(resolve(softnRepo, 'packages/@softn/core/wasm-zipp/SOURCE.json'));
+    const loaderCargo = read(resolve(softnRepo, 'apps/softn-loader/src-tauri/Cargo.toml'));
+    loaderXdbDependency = /^xdb\s*=\s*\{[^}]*path\s*=\s*"([^"]+)"/m.exec(loaderCargo)?.[1] ?? null;
+  } else {
+    problems.push(`Softn checkout not found at ${softnRepo} (SOFTN_REPO)`);
+  }
+} else if (existsSync(currentReleasePath)) {
+  softnRelease = json(currentReleasePath);
+  softnPin = softnRelease.commit ?? null;
+  must(/^[0-9a-f]{40}$/.test(softnPin ?? ''), 'the installed Softn release records no 40-hex commit');
+  must(/^v\d/.test(softnRelease.tag ?? ''), 'the installed Softn release records no tag');
+  softnProtocol = softnRelease.protocols ?? null;
+  softnZipp = softnRelease.zipp ?? null;
+  releaseAdapterSha = softnRelease.adapter?.sha256 ?? null;
+  xdbPin = softnRelease.xdb?.revision ?? null;
+  const installedProtocol = resolve(root, 'formlogic/backend/resources/softn-native/host-protocol.json');
+  if (existsSync(installedProtocol)) {
+    const hostProtocol = json(installedProtocol);
+    softnProtocol = { ...hostProtocol, ...(softnProtocol ?? {}) };
+    must(hostProtocol.nativeProtocol === softnProtocol.nativeProtocol && hostProtocol.recordEvents === softnProtocol.recordEvents, 'the installed native runtime and the release record disagree about protocol versions');
   }
 } else {
-  problems.push(`Softn checkout not found at ${softnRepo} (set SOFTN_REPO)`);
+  problems.push('no Softn runtime is installed: run node scripts/fetch-softn-release.mjs (the latest Softn release), or set SOFTN_REPO to a Softn source checkout');
 }
 let xdbHead = null;
-if (existsSync(xdbRepo)) {
+if (sourceMode && existsSync(xdbRepo)) {
   xdbHead = gitHead(xdbRepo);
   if (xdbHead && xdbPin && xdbHead !== xdbPin) problems.push(`the XDB checkout at ${xdbRepo} is ${xdbHead}, but Softn pins ${xdbPin}`);
 }
@@ -95,8 +125,10 @@ must(flZippDigest === flZipp.sha256, `FormLogic vendored ZIPP bytes (${flZippDig
 if (softnZipp) {
   must(softnZipp.version === flZipp.version && softnZipp.sha256 === flZipp.sha256 && softnZipp.revision === flZipp.revision,
     `Softn vendors ZIPP ${softnZipp.version}@${softnZipp.revision} (${softnZipp.sha256}) but FormLogic vendors ${flZipp.version}@${flZipp.revision} (${flZipp.sha256})`);
-  const softnDigest = sha256(resolve(softnRepo, 'packages/@softn/core/wasm-zipp/zipp_wasm_bg.wasm'));
-  must(softnDigest === softnZipp.sha256, `Softn vendored ZIPP bytes (${softnDigest}) differ from its SOURCE.json (${softnZipp.sha256})`);
+  if (sourceMode) {
+    const softnDigest = sha256(resolve(softnRepo, 'packages/@softn/core/wasm-zipp/zipp_wasm_bg.wasm'));
+    must(softnDigest === softnZipp.sha256, `Softn vendored ZIPP bytes (${softnDigest}) differ from its SOURCE.json (${softnZipp.sha256})`);
+  }
 }
 const runtimeProvenancePath = resolve(root, 'formlogic/backend/resources/softn-native/provenance.json');
 let runtimeProvenance = null;
@@ -123,14 +155,16 @@ const vendoredAdapter = read(resolve(adapterDir, 'project.ts'));
 const vendoredBody = vendoredAdapter.slice(vendoredAdapter.indexOf('\n') + 1); // after the one-line provenance header
 must(/^[0-9a-f]{64}$/.test(adapterProvenance.sha256 ?? ''), 'formlogic/ui/src/lib/softn/provenance.json has no sha256');
 must(sha256Text(vendoredBody) === adapterProvenance.sha256, 'the vendored Softn adapter project.ts does not match its provenance.json; run node formlogic/ui/scripts/sync-softn.mjs rather than editing the copy');
-if (existsSync(softnRepo)) {
+if (sourceMode && softnRepo && existsSync(softnRepo)) {
   const adapterSource = resolve(softnRepo, 'packages/@softn/core/src/integrations/formlogic.ts');
   if (existsSync(adapterSource)) {
     const sourceDigest = sha256Text(read(adapterSource));
-    must(sourceDigest === adapterProvenance.sha256, `the vendored FormLogic adapter is stale: provenance.json records ${adapterProvenance.sha256.slice(0, 12)} but Softn's integrations/formlogic.ts at the pinned revision is ${sourceDigest.slice(0, 12)}; run node formlogic/ui/scripts/sync-softn.mjs against the pinned checkout and commit the result`);
+    must(sourceDigest === adapterProvenance.sha256, `the vendored FormLogic adapter is stale: provenance.json records ${adapterProvenance.sha256.slice(0, 12)} but Softn's integrations/formlogic.ts in the checkout is ${sourceDigest.slice(0, 12)}; run node formlogic/ui/scripts/sync-softn.mjs and commit the result`);
   } else {
     problems.push('Softn checkout has no packages/@softn/core/src/integrations/formlogic.ts (the vendored adapter\'s source); update sync-softn.mjs if it moved');
   }
+} else if (releaseAdapterSha) {
+  must(releaseAdapterSha === adapterProvenance.sha256, `the vendored FormLogic adapter (${adapterProvenance.sha256.slice(0, 12)}) is not the one Softn ${softnRelease.tag} ships (${releaseAdapterSha.slice(0, 12)}); run node scripts/fetch-softn-release.mjs --sync-adapter and commit the result`);
 }
 
 // ── FormLogic data formats ───────────────────────────────────────────────────
@@ -156,8 +190,10 @@ const manifest = {
   note: 'Source revisions and digests of files present in the tree at generation time. Release workflows must recompute digests of the artifacts they actually ship; provenance is not verification of downloaded bytes.',
   components: {
     formlogic: { revision: gitHead(root), backupFormat: { current: backupFormat, importable: backupSupported }, formSqliteSchema: formSchema },
-    softn: { pinnedBy: 'formlogic/.github/actions/prepare-hosted-runtime/action.yml', revision: softnPin, checkoutRevision: softnHead, nativeProtocol: softnProtocol?.nativeProtocol ?? null, recordEvents: softnProtocol?.recordEvents ?? null, minimumNode: softnProtocol?.minimumNode ?? null, formlogicAdapter: { vendoredAt: 'formlogic/ui/src/lib/softn/project.ts', source: adapterProvenance.source ?? null, sha256: adapterProvenance.sha256 ?? null } },
-    xdb: { pinnedBy: 'softn/.github/scripts/checkout-xdb.sh', revision: xdbPin, checkoutRevision: xdbHead, consumedAs: loaderXdbDependency, note: 'Native peer networking is opt-in and local-only by default at this revision; see xdb docs/networking-and-restore-policy.md' },
+    softn: sourceMode
+      ? { pinnedBy: 'SOFTN_REPO source checkout (developer mode); releases come from scripts/fetch-softn-release.mjs', revision: softnPin, checkoutRevision: softnHead, nativeProtocol: softnProtocol?.nativeProtocol ?? null, recordEvents: softnProtocol?.recordEvents ?? null, minimumNode: softnProtocol?.minimumNode ?? null, formlogicAdapter: { vendoredAt: 'formlogic/ui/src/lib/softn/project.ts', source: adapterProvenance.source ?? null, sha256: adapterProvenance.sha256 ?? null } }
+      : { pinnedBy: 'latest GitHub release of f2i-com/softn.com (scripts/fetch-softn-release.mjs); SOFTN_RELEASE pins a tag', release: softnRelease?.tag ?? null, revision: softnPin, archiveSha256: softnRelease?.sha256 ?? null, nativeProtocol: softnProtocol?.nativeProtocol ?? null, recordEvents: softnProtocol?.recordEvents ?? null, minimumNode: softnProtocol?.minimumNode ?? null, formlogicAdapter: { vendoredAt: 'formlogic/ui/src/lib/softn/project.ts', source: adapterProvenance.source ?? null, sha256: adapterProvenance.sha256 ?? null } },
+    xdb: { pinnedBy: sourceMode ? 'softn/.github/scripts/checkout-xdb.sh' : 'the installed Softn release (softn-release.json xdb.revision, when it records one)', revision: xdbPin, checkoutRevision: xdbHead, consumedAs: loaderXdbDependency, note: 'Native peer networking is opt-in and local-only by default at this revision; see xdb docs/networking-and-restore-policy.md' },
     zipp: { pinnedBy: 'formlogic/ui/vendor/zipp-wasm/SOURCE.json and softn packages/@softn/core/wasm-zipp/SOURCE.json', version: flZipp.version, revision: flZipp.revision, variant: flZipp.variant, languages: flZipp.languages, artifact: flZipp.artifact, sha256: flZipp.sha256, rustc: flZipp.rustc, wasmBindgen: flZipp.wasmBindgen },
     aokie: aokieContract ?? { note: 'connector contract copy not present in this tree' },
   },
@@ -178,7 +214,19 @@ const rendered = JSON.stringify(manifest, null, 2) + '\n';
 if (check) {
   if (!existsSync(out)) { console.error(`missing ${out}; run without --check to generate it`); process.exit(1); }
   const committed = JSON.parse(read(out));
-  const strip = (m) => { const { generatedAt, components, problems: p, ...rest } = m; const c = JSON.parse(JSON.stringify(components)); if (c.formlogic) delete c.formlogic.revision; if (c.softn) delete c.softn.checkoutRevision; if (c.xdb) delete c.xdb.checkoutRevision; return { ...rest, components: c }; };
+  // Informational fields move without a FormLogic commit: this tree's own
+  // revision, checkout revisions, and (release mode) which Softn release is
+  // installed with its commit, archive digest, minimum Node and native module
+  // digests. Everything else must match the committed manifest.
+  const strip = (m) => {
+    const { generatedAt, components, problems: p, nativeRuntime, ...rest } = m;
+    const c = JSON.parse(JSON.stringify(components));
+    if (c.formlogic) delete c.formlogic.revision;
+    if (c.softn) { delete c.softn.checkoutRevision; delete c.softn.release; delete c.softn.revision; delete c.softn.archiveSha256; delete c.softn.minimumNode; }
+    if (c.xdb) { delete c.xdb.checkoutRevision; delete c.xdb.revision; delete c.xdb.consumedAs; }
+    const n = nativeRuntime ? { nativeProtocol: nativeRuntime.nativeProtocol ?? null, zipp: nativeRuntime.zipp ?? null } : null;
+    return { ...rest, components: c, nativeRuntime: n };
+  };
   const same = JSON.stringify(strip(committed)) === JSON.stringify(strip(manifest));
   // Problems first: a stale manifest is usually a symptom of one of them.
   if (problems.length) {
@@ -197,4 +245,4 @@ if (check) {
     process.exit(1);
   }
 }
-console.log(`ecosystem set: formlogic ${manifest.components.formlogic.revision?.slice(0, 12)} -> softn ${softnPin?.slice(0, 12)} -> xdb ${xdbPin?.slice(0, 12)}; zipp ${flZipp.version}@${flZipp.revision.slice(0, 12)} (${flZipp.sha256.slice(0, 12)})`);
+console.log(`ecosystem set: formlogic ${manifest.components.formlogic.revision?.slice(0, 12)} -> softn ${softnRelease ? `${softnRelease.tag} ` : ''}${softnPin?.slice(0, 12)} -> xdb ${xdbPin?.slice(0, 12) ?? 'as the release pins'}; zipp ${flZipp.version}@${flZipp.revision.slice(0, 12)} (${flZipp.sha256.slice(0, 12)})`);

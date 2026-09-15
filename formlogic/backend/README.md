@@ -145,8 +145,9 @@ backend/
 composer test
 ```
 
-Native app tests need the prepared runtime (`resources/softn-native/`, see
-`scripts/prepare-native-runtime.mjs`) and `FORMLOGIC_NODE_BIN` pointing at a
+Native app tests need the installed runtime (`resources/softn-native/`, from
+`node scripts/fetch-softn-release.mjs` at the repository root, or
+`scripts/prepare-native-runtime.mjs` from a Softn source checkout) and `FORMLOGIC_NODE_BIN` pointing at a
 Node.js binary; they are skipped otherwise. Integration tests use the MySQL
 database named in `.env`.
 

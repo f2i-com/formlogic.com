@@ -13,19 +13,20 @@ back up, replace files (keep `api/.env` + `api/storage/`), then run the `api/bin
 
 ## Native apps and embedded editors
 
-A source deployment must prepare the browser runtime and editors before the UI build.
-From `formlogic/ui`, with matching sibling Softn dependencies installed, run:
+A source deployment must install the browser runtime and editors before the UI build.
+From `formlogic/ui`, run:
 
 ```sh
-npm run build:hosted-runtime
-npm run build:app-editors
-node ../../scripts/prepare-native-runtime.mjs
+node ../../scripts/fetch-softn-release.mjs
 npm run build
 ```
 
-Deploy the generated `hosted-runtime/` and `app-editors/` assets with the UI, and the prepared
-`backend/resources/softn-native/` modules with the API. The pinned release preparation action
-builds these for packaged releases. Native backend execution requires PHP 8.2+, PDO SQLite,
+The first command takes the latest Softn release's `softn-formlogic-runtime-<tag>.zip`,
+verifies it and installs the hosted runtime, the embedded editors and the native backend
+runtime (`SOFTN_RELEASE=<tag>` picks one release). Deploy the generated `hosted-runtime/`
+and `app-editors/` assets with the UI, and the installed `backend/resources/softn-native/`
+modules with the API. The release preparation action installs these the same way for
+packaged releases. Native backend execution requires PHP 8.2+, PDO SQLite,
 `proc_open` and a compatible Node runtime (use the repository's pinned version); configure
 `FORMLOGIC_NODE_BIN` for the PHP worker environment. OAIY is a separate optional desktop host.
 

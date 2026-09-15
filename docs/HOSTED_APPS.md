@@ -135,17 +135,16 @@ Limits: 2 MB package, 100 text client files (200 KB each), 30 actions (50 KB sou
 
 ## Build and operate
 
-Install dependencies in the sibling `softn.com` and FormLogic UI repositories, then:
+Install the FormLogic UI dependencies, then:
 
 ```powershell
 # From formlogic.com/formlogic/ui
-npm run build:hosted-runtime
-npm run build:app-editors
+node ../../scripts/fetch-softn-release.mjs
 npm run test:zipp-sharing
 npm run build
 ```
 
-The first command checks that FormLogic and Softn vendor the same ZIPP version and binary hash, builds the shared core/components and `softn.com/apps/formlogic-host`, then replaces `public/hosted-runtime` with the verified output. A complete asset manifest detects missing, modified or obsolete files. These generated files are ignored by Git; preserve the entire artifact, including `runtime-manifest.json`, if frontend deployment runs without the sibling source checkout. A normal UI build rejects a missing or mismatched runtime. Deploy the parent UI and hosted runtime together. The runtime is excluded from the main PWA precache and SPA fallback.
+The first command takes Softn's latest GitHub release (`softn-formlogic-runtime-<tag>.zip`), checks the archive against its `.sha256` and its own manifest, checks that the release vendors the same ZIPP version and binary hash as FormLogic and speaks the same protocol versions, then replaces `public/hosted-runtime`, `public/app-editors` and `backend/resources/softn-native` with the verified contents. A complete asset manifest detects missing, modified or obsolete files. These generated files are ignored by Git; preserve the entire artifact, including `runtime-manifest.json`, if frontend deployment runs elsewhere. A normal UI build rejects a missing or mismatched runtime. Deploy the parent UI and hosted runtime together. The runtime is excluded from the main PWA precache and SPA fallback. To build from a Softn source checkout instead (Softn development), set `SOFTN_REPO` and run `npm run build:hosted-runtime` and `npm run build:app-editors`; see [ecosystem/SOFTN_RELEASE.md](ecosystem/SOFTN_RELEASE.md).
 
 Both browser integrations currently use the same locally built ZIPP v0.0.18 JavaScript/Python artifact. Its exact commit and checksum are recorded in `formlogic/ui/vendor/zipp-wasm/SOURCE.json`. FormLogic downloads and verifies the binary lazily once per page, then passes cloned bytes to its expression worker and each hosted Softn app. Each context keeps its own WASM instance, memory and permissions. Failed downloads can retry; worker restarts, additional apps and source replacements reuse the cached bytes. The shell announces its version and hash before initialization, so a stale shell displays an update error rather than running mismatched glue. The browser check covers both loading orders, concurrent startup, separate app state, backend actions, source replacement and download recovery using only local fixture data.
 
@@ -180,13 +179,15 @@ Locally generated forms need an explicit backend connection. Native private-serv
 
 ### Clean release builds
 
-The manual CI, E2E and Package workflows use the shared
-[prepare-hosted-runtime action](../.github/actions/prepare-hosted-runtime/action.yml) to check out
-Softn at a pinned commit, install its lockfile and build the runtime. To reproduce this locally,
-check out that same commit and set `SOFTN_REPO` to its absolute directory before running
-`npm run build:hosted-runtime` in `formlogic/ui`. Without this variable the builder uses the
-usual sibling `softn.com` checkout. Updating the pin requires matching ZIPP version and SHA-256
-in both repositories, plus a passing `npm run test:zipp-sharing` browser integration check.
+The CI, E2E and Package workflows use the shared
+[prepare-hosted-runtime action](../.github/actions/prepare-hosted-runtime/action.yml), which
+runs `scripts/fetch-softn-release.mjs`: the latest Softn release's runtime archive, verified and
+installed, with no Softn checkout or build. To reproduce a run locally, run the same script
+(`SOFTN_RELEASE=<tag>` for the release a run used; the tag is in the run log and in
+`.runtime-source/softn-release/current.json`). A Softn release that vendors another ZIPP
+version or SHA-256 than FormLogic, or another protocol version, is refused by the fetch with a
+message naming both; moving FormLogic to it means updating `formlogic/ui/vendor/zipp-wasm`
+(`node scripts/sync-zipp-from-softn.mjs`) and passing `npm run test:zipp-sharing`.
 
 The release ZIP includes `api/storage/hosted-apps/`. The installer creates and checks this private
 SQLite directory alongside other storage, and authenticated deep health reports missing or
@@ -419,21 +420,19 @@ and its authorizer API. Set `FORMLOGIC_NODE_BIN` to the absolute Node executable
 operator environment. From the FormLogic repository root, run:
 
 ```sh
-# Optional: point SOFTN_REPO at a compatible SoftN source checkout.
-node scripts/prepare-native-runtime.mjs
+node scripts/fetch-softn-release.mjs
 cd formlogic/ui
-npm run build:hosted-runtime
-npm run build:app-editors
 npm run build
 ```
 
-All preparation commands must use a compatible SoftN checkout containing native host protocol 1.
-The preparation script verifies the ZIPP artifact against FormLogic's pinned identity.
+The fetch script installs the native runtime together with the browser runtime and editors
+from the latest Softn release, and refuses a release whose native host protocol is not the 1
+this FormLogic speaks or whose ZIPP artifact differs from FormLogic's vendored identity.
 Generated server assets go in `backend/resources/softn-native/`; the browser runtime goes
 in `ui/public/hosted-runtime/`. An older browser runtime is rejected with an update message.
-The shared release preparation action builds the browser runtime, embedded editors and
-native backend from a pinned Softn checkout. The package script checks these artifacts before
-staging a release. Source installations must prepare them explicitly. A host without compatible
+The shared release preparation action installs all three the same way. The package script
+checks these artifacts before staging a release. Source installations must install them
+explicitly (from a Softn source checkout: `SOFTN_REPO=... node scripts/prepare-native-runtime.mjs`). A host without compatible
 Node or native modules reports native hosting unavailable; the frontend also checks editor assets.
 
 Persistent app data is under `backend/storage/native-apps/<sha256(appId)>/private/`, outside
@@ -475,14 +474,14 @@ Read `get_native_app_project` before updates (use `file` for one source file), t
 or a paginated table. Owner/app scope and apps/screens write permissions still apply.
 Installing a project does not publish the parent app to visitors; use the publish step.
 
-Build editor assets from the compatible Softn source checkout containing
-`apps/shared/hostedEditor.ts`. In `formlogic/ui`, set `SOFTN_REPO` to that checkout
-(or keep it as the sibling `softn.com`), install the Softn workspace dependencies, build
-its shared packages, then run `npm run build:app-editors` before `npm run build`.
-This generates `public/app-editors/{builder,studio}`; deploy that directory with the UI.
-Generated editor assets are ignored by Git and excluded from the FormLogic PWA precache.
-The shared release preparation action pins a compatible Softn commit and builds all three
-artifacts: hosted runtime, embedded editors and native backend runtime. The UI prebuild checks
+The editor assets come with the Softn release `node scripts/fetch-softn-release.mjs`
+installs (`public/app-editors/{builder,studio}` with the editor bridge protocol in its
+`manifest.json`); deploy that directory with the UI. To build them from a Softn source
+checkout instead, set `SOFTN_REPO` in `formlogic/ui`, install the Softn workspace
+dependencies, build its shared packages, then run `npm run build:app-editors` before
+`npm run build`. Generated editor assets are ignored by Git and excluded from the FormLogic
+PWA precache. The shared release preparation action installs all three artifacts (hosted
+runtime, embedded editors and native backend runtime) from the release. The UI prebuild checks
 editor manifests and asset hashes; packaging repeats those checks and validates native runtime
 modules. Missing assets or a mixed ZIPP version stop the build. Local development uses the
 checked-out sources; both repositories' matching commits must be pushed before running the

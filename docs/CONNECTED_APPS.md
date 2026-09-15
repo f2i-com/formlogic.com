@@ -136,11 +136,12 @@ commands from `formlogic.com/formlogic/ui`:
 
 ```powershell
 node scripts/sync-workspace-project.mjs
-npm run build:hosted-runtime
+node ../../scripts/fetch-softn-release.mjs
 npm run build
 ```
 
 The sync script updates the generic and Aokie client resource copies used by both
-the UI and PHP tools. The runtime build requires the sibling Softn dependencies.
+the UI and PHP tools. The runtime comes from the latest Softn release (or `SOFTN_REPO`
+with `npm run build:hosted-runtime` for a source checkout).
 Generated runtime assets must be included in deployment; a `.softn` download
 contains the client, not its live records or an authenticated account session.
