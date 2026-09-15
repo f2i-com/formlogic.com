@@ -1,9 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkRuntimeArtifact, runtimeIdentity } from './hosted-runtime-artifact.mjs';
+import { assertNoInterruptedPromotion, checkRuntimeArtifact, runtimeIdentity } from './hosted-runtime-artifact.mjs';
 import { EDITOR_BRIDGE_PROTOCOL } from './softn-protocol.mjs';
 
+/** The fetcher validates promoted trees with this while its promotion journal exists, so the journal check belongs to the CLI below. */
 export async function checkAppEditors(directory, expected) {
   const metadata = JSON.parse(await readFile(resolve(directory, 'manifest.json'), 'utf8'));
   if (metadata.protocol !== EDITOR_BRIDGE_PROTOCOL || JSON.stringify(metadata.editors) !== JSON.stringify(['builder', 'studio'])) throw new Error('Unsupported app editor bridge protocol.');
@@ -15,6 +16,7 @@ export async function checkAppEditors(directory, expected) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  assertNoInterruptedPromotion(fileURLToPath(new URL('../../../', import.meta.url)));
   const expected = runtimeIdentity(JSON.parse(await readFile(new URL('../vendor/zipp-wasm/SOURCE.json', import.meta.url), 'utf8')));
   try { await checkAppEditors(fileURLToPath(new URL('../public/app-editors/', import.meta.url)), expected); }
   catch (error) { throw new Error(`App editors are missing or out of date. Run node scripts/fetch-softn-release.mjs from the repository root (or npm run build:app-editors against a Softn source checkout). ${error.message}`); }

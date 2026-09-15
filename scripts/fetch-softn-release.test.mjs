@@ -10,17 +10,22 @@
  * asset and digest, and every drift is refused) and FL-S05 (one generation
  * per install: staged whole, promoted whole, recorded with a complete
  * inventory, recovered deterministically after an interruption, and --check
- * refusing a mixture of two releases).
+ * refusing a mixture of two releases). The review of that work added the
+ * rest of FL-S05's group: a failed promotion rolled back in process, journal
+ * and record written whole, a journal that names nothing kept rather than
+ * discarded, and a copy fallback that no kill can turn into a partial tree
+ * taken for a whole one.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, cp } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, cp, rename, symlink } from 'node:fs/promises';
+import { existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { resolve, basename } from 'node:path';
 import { createHash } from 'node:crypto';
 import { writeArchive, readArchive } from './lib/archive.mjs';
-import { fetchSoftnRelease, checkInstalled, resolveRelease, resolveOnly, recoverPromotion, loadFrozen, parseSidecar, ReleaseError, FROZEN_FORMAT } from './fetch-softn-release.mjs';
+import { fetchSoftnRelease, checkInstalled, resolveRelease, resolveOnly, recoverPromotion, loadFrozen, parseSidecar, ReleaseError, SimulatedCrash, FROZEN_FORMAT } from './fetch-softn-release.mjs';
+import { assertNoInterruptedPromotion } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const WASM = Buffer.from('fixture zipp engine bytes');
@@ -474,6 +479,256 @@ test('an install recorded by an earlier fetcher without an inventory is told to 
   delete current.generation;
   await writeFile(currentFile, JSON.stringify(current));
   await assert.rejects(checkInstalled({ root, ...quiet }), /records no generation inventory/);
+});
+
+test('a link inside an installed tree is refused by --check as a release error', async (t) => {
+  const root = await formlogicRoot(t);
+  const a = await writeFixtureArchive(resolve(root, 'a'), { tag: 'v0.0.13' });
+  await fetchSoftnRelease({ root, archivePath: a.path, ...quiet });
+  await symlink(resolve(root, 'a'), resolve(root, 'formlogic/backend/resources/softn-native/linked'), 'junction');
+  await assert.rejects(checkInstalled({ root, ...quiet }), (e) => e instanceof ReleaseError && /must not contain links: linked/.test(e.message));
+});
+
+// ── FL-S05: failures, kills and the copy fallback ───────────────────────────
+
+const journalPath = (root) => resolve(root, '.runtime-source/softn-release/promotion.json');
+const refused = (code, path) => Object.assign(new Error(`${code}: operation refused, rename '${path}'`), { code });
+/** Every directory rename refused, as a Windows watcher over the trees (and over any copy of them) refuses it, so every move copies; only a JSON write's rename goes through. */
+const lockedRename = (from, to) => (from.endsWith('.tmp') ? rename(from, to) : Promise.reject(refused('EPERM', from)));
+
+/** Remove one file under a directory: what a copy or a removal killed partway leaves. */
+async function dropOneFile(dir) {
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) return;
+  const file = (await readdir(dir, { recursive: true, withFileTypes: true })).find((entry) => entry.isFile());
+  if (file) await rm(resolve(file.parentPath, file.name));
+}
+
+/**
+ * Promotion filesystem operations that die (SimulatedCrash) at call number
+ * `kill`, having done part of it: a copy missing a file, a removal that
+ * removed one, a write cut short. A run with no kill counts the kill points.
+ */
+function killingOps(kill) {
+  const run = { calls: 0, copies: 0 };
+  const step = async (label, done, partial = async () => {}) => {
+    if (++run.calls !== kill) return done();
+    await partial();
+    throw new SimulatedCrash(`killed during ${label} (call ${kill})`);
+  };
+  run.ops = {
+    rename: (from, to) => step(`rename ${from}`, () => lockedRename(from, to)),
+    cp: (from, to, options) => { run.copies++; return step(`cp ${from}`, () => cp(from, to, options), async () => { await cp(from, to, options); await dropOneFile(to); }); },
+    rm: (path, options) => step(`rm ${path}`, () => rm(path, options), () => dropOneFile(path)),
+    writeFile: (file, data) => step(`write ${file}`, () => writeFile(file, data), () => writeFile(file, String(data).slice(0, 40))),
+  };
+  return run;
+}
+
+/** Releases A and B (same engine, other bytes), and roots with A installed. */
+async function releasesAB(t) {
+  const dir = await mkdtemp(resolve(tmpdir(), 'formlogic-fetch-softn-archives-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const a = await writeFixtureArchive(resolve(dir, 'a'), { tag: 'v0.0.13' });
+  const b = await writeFixtureArchive(resolve(dir, 'b'), { tag: 'v0.0.14', commit: OTHER_COMMIT, hostedCode: 'export const hosted = "b";' });
+  const installedA = async () => { const root = await formlogicRoot(t); await fetchSoftnRelease({ root, archivePath: a.path, ...quiet }); return root; };
+  return { a, b, installedA };
+}
+
+/** One whole generation and nothing beside it (no .previous, partial copy or staging folder): --check holds every tree to the record. Returns its tag. */
+async function wholeGeneration(root, message) {
+  const record = await checkInstalled({ root, ...quiet });
+  assert.equal(await readFile(hostedFile(root), 'utf8'), record.tag === 'v0.0.13' ? 'export const hosted = true;' : 'export const hosted = "b";', message);
+  assert.deepEqual((await readdir(resolve(root, 'formlogic/ui/public'))).sort(), ['app-editors', 'hosted-runtime'], message);
+  assert.deepEqual(await readdir(resolve(root, 'formlogic/backend/resources')), ['softn-native'], message);
+  return record.tag;
+}
+
+test('a move refused mid-promotion is rolled back before the run ends: the old generation whole, no journal, nothing beside the trees', async (t) => {
+  const { b, installedA } = await releasesAB(t);
+  const root = await installedA();
+  const editors = paths(root).appEditors;
+  const messages = [];
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: b.path, ops: { rename: (from, to) => (from === editors ? Promise.reject(refused('EBUSY', from)) : rename(from, to)) }, log: (m) => messages.push(m) }), /EBUSY/);
+  assert.ok(messages.some((m) => /rolled back the install of Softn v0\.0\.14 \(failed: EBUSY/.test(m)));
+  assert.ok(!existsSync(journalPath(root)), 'no journal outlives a rolled-back run');
+  assert.equal(await wholeGeneration(root, 'rolled back in process'), 'v0.0.13');
+  assertNoInterruptedPromotion(root);
+});
+
+test('a promoted tree failing its check is rolled back before the run ends', async (t) => {
+  const { b, installedA } = await releasesAB(t);
+  const root = await installedA();
+  const hosted = paths(root).hostedRuntime;
+  // The staged tree passed; the tree moved in does not (something wrote into it once it was in place).
+  const tampering = async (from, to) => {
+    await rename(from, to);
+    if (to === hosted && basename(from).startsWith('.hosted-runtime-')) await writeFile(hostedFile(root), 'junk');
+  };
+  const messages = [];
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: b.path, ops: { rename: tampering }, log: (m) => messages.push(m) }), /asset has changed: assets\/app\.js/);
+  assert.ok(messages.some((m) => /rolled back the install of Softn v0\.0\.14 \(failed: The hosted runtime asset has changed/.test(m)));
+  assert.ok(!existsSync(journalPath(root)), 'no journal outlives a rolled-back run');
+  assert.equal(await wholeGeneration(root, 'rolled back after a failed check'), 'v0.0.13');
+});
+
+test('a failed promotion is rolled back by copying when every directory rename is refused, as under a dev server watching public/', async (t) => {
+  const { b, installedA } = await releasesAB(t);
+  const root = await installedA();
+  const editors = paths(root).appEditors;
+  const ops = {
+    rename: lockedRename,
+    cp: async (from, to, options) => {
+      await cp(from, to, options);
+      if (to !== editors || !basename(from).startsWith('.app-editors-')) return;
+      await dropOneFile(to);
+      throw Object.assign(new Error(`ENOSPC: no space left on device, copyfile '${from}'`), { code: 'ENOSPC' });
+    },
+  };
+  const messages = [];
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: b.path, ops, log: (m) => messages.push(m) }), /ENOSPC/);
+  assert.ok(messages.some((m) => /rolled back the install of Softn v0\.0\.14 \(failed: ENOSPC/.test(m)));
+  assert.ok(!existsSync(journalPath(root)));
+  assert.equal(await wholeGeneration(root, 'rolled back by copying'), 'v0.0.13');
+});
+
+test('a journal or record rename refused for a moment is retried, not failed', async (t) => {
+  const { b, installedA } = await releasesAB(t);
+  const root = await installedA();
+  const refusedOnce = new Set();
+  const flaky = (from, to) => {
+    if (!from.endsWith('.tmp') || refusedOnce.has(from)) return rename(from, to);
+    refusedOnce.add(from);
+    return Promise.reject(refused('EBUSY', from));
+  };
+  await fetchSoftnRelease({ root, archivePath: b.path, ops: { rename: flaky }, ...quiet });
+  assert.ok(['promotion.json', 'current.json'].every((name) => [...refusedOnce].some((file) => basename(file).startsWith(`${name}.`))), 'the journal and the record were each refused once');
+  assert.ok(!existsSync(journalPath(root)));
+  assert.equal(await wholeGeneration(root, 'installed through momentary refusals'), 'v0.0.14');
+});
+
+test('a rollback that fails too keeps the journal and names both failures; every check refuses until the next run resolves it', async (t) => {
+  const { b, installedA } = await releasesAB(t);
+  const root = await installedA();
+  const editors = paths(root).appEditors;
+  const stuck = (from, to) => (from === editors || from.endsWith('.previous') ? Promise.reject(refused('EBUSY', from)) : rename(from, to));
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: b.path, ops: { rename: stuck }, ...quiet }), (e) => e instanceof ReleaseError && /failed mid-promotion \(EBUSY.*app-editors.*rolling it back failed too \(EBUSY.*hosted-runtime\.previous/.test(e.message));
+  assert.ok(existsSync(journalPath(root)));
+  await assert.rejects(checkInstalled({ root, ...quiet }), /interrupted mid-promotion/);
+  assert.throws(() => assertNoInterruptedPromotion(root), /promotion\.json/);
+  assert.equal((await recoverPromotion(paths(root))).outcome, 'rolled-back');
+  assert.equal(await wholeGeneration(root, 'resolved by the next run'), 'v0.0.13');
+});
+
+test('a cleanup failing after the generation is recorded is not rolled back: the next run completes it', async (t) => {
+  const { b, installedA } = await releasesAB(t);
+  const root = await installedA();
+  const previous = `${paths(root).hostedRuntime}.previous`;
+  let removals = 0;
+  const ops = { rm: (path, options) => (path === previous && ++removals === 2 ? Promise.reject(refused('EBUSY', path)) : rm(path, options)) };
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: b.path, ops, ...quiet }), /EBUSY/);
+  assert.equal(JSON.parse(await readFile(resolve(root, '.runtime-source/softn-release/current.json'), 'utf8')).tag, 'v0.0.14');
+  assert.equal(await readFile(hostedFile(root), 'utf8'), 'export const hosted = "b";', 'the recorded generation stays in place');
+  assert.equal((await recoverPromotion(paths(root))).outcome, 'completed');
+  assert.equal(await wholeGeneration(root, 'completed by the next run'), 'v0.0.14');
+});
+
+test('the journal is replaced whole: a run killed while writing it leaves the journal before, which recovery acts on', async (t) => {
+  const { b, installedA } = await releasesAB(t);
+  const root = await installedA();
+  let journalWrites = 0;
+  const ops = {
+    writeFile: async (file, data) => {
+      if (!basename(file).startsWith('promotion.json') || ++journalWrites !== 4) return writeFile(file, data);
+      await writeFile(file, String(data).slice(0, 64));
+      throw new SimulatedCrash('killed while writing promotion.json');
+    },
+  };
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: b.path, ops, ...quiet }), /killed while writing promotion\.json/);
+  const journal = JSON.parse(await readFile(journalPath(root), 'utf8'));
+  assert.equal(journal.trees['hosted-runtime'].state, 'promoted');
+  assert.equal(journal.trees['app-editors'].state, 'staged');
+  assert.equal((await recoverPromotion(paths(root))).outcome, 'rolled-back');
+  assert.equal(await wholeGeneration(root, 'recovered from the journal before the cut-short write'), 'v0.0.13');
+});
+
+test('a journal that names no trees is kept, and every check refuses, until an install records a complete generation', async (t) => {
+  const { b, installedA } = await releasesAB(t);
+  const root = await installedA();
+  await writeFile(journalPath(root), '{"formatVersion":1,"startedAt":"2026-09-');
+  const messages = [];
+  assert.equal((await recoverPromotion(paths(root), (m) => messages.push(m))).outcome, 'kept-unresolvable-journal');
+  assert.ok(existsSync(journalPath(root)));
+  assert.ok(messages.some((m) => /promotion\.json names no trees .* it is kept/.test(m)));
+  await assert.rejects(checkInstalled({ root, ...quiet }), /interrupted mid-promotion/);
+  assert.throws(() => assertNoInterruptedPromotion(root), /promotion\.json/);
+  // An install over it that is rolled back, in process or by the next run, puts the refusal back with the trees.
+  const editors = paths(root).appEditors;
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: b.path, ops: { rename: (from, to) => (from === editors ? Promise.reject(refused('EBUSY', from)) : rename(from, to)) }, ...quiet }), /EBUSY/);
+  assert.equal((await recoverPromotion(paths(root))).outcome, 'kept-unresolvable-journal');
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: b.path, failAt: 'promote:native-runtime', ...quiet }), SimulatedCrash);
+  assert.equal((await recoverPromotion(paths(root))).outcome, 'rolled-back');
+  assert.equal((await recoverPromotion(paths(root))).outcome, 'kept-unresolvable-journal');
+  await assert.rejects(checkInstalled({ root, ...quiet }), /interrupted mid-promotion/);
+  // An install that records a complete generation replaces it.
+  await fetchSoftnRelease({ root, archivePath: b.path, ...quiet });
+  assert.ok(!existsSync(journalPath(root)));
+  assert.equal(await wholeGeneration(root, 'installed over the kept journal'), 'v0.0.14');
+});
+
+test('a copy fallback killed while setting the old tree aside leaves a partial .previous the journal marks, so recovery drops it and keeps the intact old tree', async (t) => {
+  const { b, installedA } = await releasesAB(t);
+  const root = await installedA();
+  const hosted = paths(root).hostedRuntime;
+  const ops = {
+    rename: lockedRename,
+    cp: async (from, to, options) => {
+      await cp(from, to, options);
+      if (from !== hosted) return;
+      await dropOneFile(to);
+      throw new SimulatedCrash('killed halfway through copying hosted-runtime aside');
+    },
+  };
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: b.path, ops, ...quiet }), /killed halfway/);
+  assert.ok(existsSync(`${hosted}.previous`), 'the half copy is there under the .previous name');
+  assert.equal(JSON.parse(await readFile(journalPath(root), 'utf8')).trees['hosted-runtime'].copyingAside, true);
+  assert.equal((await recoverPromotion(paths(root))).outcome, 'rolled-back');
+  assert.equal(await wholeGeneration(root, 'recovered'), 'v0.0.13');
+  await fetchSoftnRelease({ root, archivePath: b.path, ops: { rename: lockedRename }, ...quiet });
+  assert.equal(await wholeGeneration(root, 'installed by copying'), 'v0.0.14');
+});
+
+test('a run killed at any point of a copy-fallback promotion is recovered to one whole generation', async (t) => {
+  const { b, installedA } = await releasesAB(t);
+  const counted = killingOps(0);
+  await fetchSoftnRelease({ root: await installedA(), archivePath: b.path, ops: counted.ops, ...quiet });
+  assert.equal(counted.copies, 6, 'every tree was set aside and moved in by copying');
+  const tags = new Set();
+  for (let kill = 1; kill <= counted.calls; kill++) {
+    const root = await installedA();
+    await assert.rejects(fetchSoftnRelease({ root, archivePath: b.path, ops: killingOps(kill).ops, ...quiet }), SimulatedCrash);
+    await recoverPromotion(paths(root));
+    tags.add(await wholeGeneration(root, `killed at call ${kill} of ${counted.calls}`));
+  }
+  assert.deepEqual([...tags].sort(), ['v0.0.13', 'v0.0.14'], 'kills before and after the generation was complete were both walked');
+});
+
+test('a recovery killed at any point of copying the old trees back still ends with the old generation whole', async (t) => {
+  const { b, installedA } = await releasesAB(t);
+  const interrupted = async () => {
+    const root = await installedA();
+    await assert.rejects(fetchSoftnRelease({ root, archivePath: b.path, failAt: 'promote:native-runtime', ops: { rename: lockedRename }, ...quiet }), SimulatedCrash);
+    return root;
+  };
+  const counted = killingOps(0);
+  const first = await interrupted();
+  assert.equal((await recoverPromotion(paths(first), () => {}, counted.ops)).outcome, 'rolled-back');
+  assert.equal(counted.copies, 2, 'the hosted runtime and the editors were copied back');
+  for (let kill = 1; kill <= counted.calls; kill++) {
+    const root = await interrupted();
+    await assert.rejects(recoverPromotion(paths(root), () => {}, killingOps(kill).ops), SimulatedCrash);
+    assert.equal((await recoverPromotion(paths(root))).outcome, 'rolled-back');
+    assert.equal(await wholeGeneration(root, `recovery killed at call ${kill} of ${counted.calls}`), 'v0.0.13');
+  }
 });
 
 test('the developer paths still work: a local archive without a sidecar installs, and cp is not needed for the fixture', async (t) => {

@@ -40,10 +40,12 @@
  * One generation per install (release-readiness FL-S05). The three trees are
  * staged and verified together, promoted together with the previous trees
  * kept until the new generation is recorded, and recorded with a complete
- * file inventory; an interrupted promotion is resolved deterministically on
- * the next run, and `--check` verifies every installed file against the
- * inventory, so a mixture of two releases with the same engine cannot pass
- * as an intact install.
+ * file inventory; a promotion that fails is rolled back before the run ends,
+ * an interrupted one is resolved deterministically on the next run, and
+ * `--check` verifies every installed file against the inventory, so a
+ * mixture of two releases with the same engine cannot pass as an intact
+ * install. While the promotion journal exists, `--check` and the UI prebuild
+ * checks refuse the trees.
  *
  * GITHUB_TOKEN / GH_TOKEN, when set, authenticate the API calls (the
  * unauthenticated limit is enough for a laptop, not for a busy CI account).
@@ -56,13 +58,13 @@
  * source path: SOFTN_REPO with formlogic/ui `npm run build:hosted-runtime`,
  * `npm run build:app-editors` and scripts/prepare-native-runtime.mjs.
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile, cp } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, resolve, basename, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readArchive } from './lib/archive.mjs';
-import { runtimeIdentity, assertMatchingRuntime, checkRuntimeArtifact } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
+import { runtimeIdentity, assertMatchingRuntime, checkRuntimeArtifact, artifactFiles, LINKED_ASSET } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 import { checkAppEditors } from '../formlogic/ui/scripts/check-app-editors.mjs';
 import { checkNativeRuntime } from './release-runtime.mjs';
 import { writeAdapter, adapterDigest, ADAPTER_SOURCE } from '../formlogic/ui/scripts/sync-softn.mjs';
@@ -86,6 +88,12 @@ function sortKeys(value) {
 
 /** A refusal the operator can act on; the CLI prints it and exits 1. */
 export class ReleaseError extends Error {}
+/**
+ * What a test hook throws to stand for the process dying at that point: the
+ * install does not roll back in process and leaves the promotion journal as a
+ * kill would, for the next run to resolve.
+ */
+export class SimulatedCrash extends Error {}
 
 function defaultPaths(root) {
   return {
@@ -335,16 +343,10 @@ async function extractTree(entries, prefix, into) {
   if (!count) throw new ReleaseError(`The archive has nothing under ${prefix}.`);
 }
 
-/** Every file under a directory, sorted, as forward-slash paths; links are refused. */
-async function listFiles(directory, prefix = '') {
-  const files = [];
-  for (const entry of await readdir(resolve(directory, prefix), { withFileTypes: true })) {
-    const path = prefix ? `${prefix}/${entry.name}` : entry.name;
-    if (entry.isSymbolicLink()) throw new ReleaseError(`Generated runtime assets must not contain links: ${path}`);
-    if (entry.isDirectory()) files.push(...await listFiles(directory, path));
-    else if (entry.isFile()) files.push(path);
-  }
-  return files.sort();
+/** Every file under a tree, runtime-manifest.json included, by the lister checkRuntimeArtifact uses; a link is a ReleaseError. */
+async function listFiles(directory) {
+  try { return await artifactFiles(directory, { includeManifest: true }); }
+  catch (error) { throw error.code === LINKED_ASSET ? new ReleaseError(error.message) : error; }
 }
 
 /** path -> sha256 of every file in a tree: the generation's inventory. */
@@ -374,14 +376,43 @@ export async function checkTreeManifest(directory, expected) {
   for (const path of listed) if (sha256(await readFile(safeJoin(directory, path))) !== manifest.files[path]) throw new ReleaseError(`${basename(directory)}/${path} differs from its manifest.`);
 }
 
-/** Move a directory; Windows watchers can lock rename, so copy-then-remove is the fallback. */
-async function moveDir(from, to) {
-  try { await rename(from, to); }
-  catch (error) {
-    if (error.code !== 'EPERM' && error.code !== 'EACCES' && error.code !== 'EXDEV') throw error;
-    await cp(from, to, { recursive: true });
-    await rm(from, { recursive: true, force: true });
+/** The filesystem operations promotion goes through; a test replaces some to make a move fail, or die partway. */
+const promotionOps = (ops = {}) => ({ rename, cp, rm, writeFile, ...ops });
+
+/** A rename Windows can refuse for a moment while a scanner or watcher holds the target: a few short retries. */
+async function renameRetrying(from, to, ops) {
+  for (let attempt = 1; ; attempt++) {
+    try { return await ops.rename(from, to); }
+    catch (error) {
+      if ((error.code !== 'EPERM' && error.code !== 'EACCES' && error.code !== 'EBUSY') || attempt === 5) throw error;
+      await new Promise((settle) => setTimeout(settle, 20 * attempt));
+    }
   }
+}
+
+/** JSON written as a temporary sibling renamed over the file, so a kill leaves the old content or the new, never a prefix. */
+async function writeJson(file, value, ops) {
+  const temporary = `${file}.${randomBytes(6).toString('hex')}.tmp`;
+  await ops.writeFile(temporary, JSON.stringify(value, null, 2) + '\n');
+  try { await renameRetrying(temporary, file, ops); }
+  catch (error) { await rm(temporary, { force: true }); throw error; }
+}
+
+/**
+ * Move a directory. Windows refuses to rename a tree while a watcher (Vite's
+ * dev server over public/) holds a folder inside it, and a fresh copy in the
+ * same folder is watched as soon as it appears, so the fallback copies
+ * straight into `to` and then removes `from`. A copy killed partway leaves a
+ * partial `to` beside an intact `from`; `copying(true)` before the copy and
+ * `copying(false)` once it is whole let the caller's journal tell them apart.
+ */
+async function moveDir(from, to, ops, copying = async () => {}) {
+  try { return await ops.rename(from, to); }
+  catch (error) { if (error.code !== 'EPERM' && error.code !== 'EACCES' && error.code !== 'EXDEV') throw error; }
+  await copying(true);
+  await ops.cp(from, to, { recursive: true });
+  await copying(false);
+  await ops.rm(from, { recursive: true, force: true });
 }
 
 /**
@@ -446,19 +477,23 @@ const intact = (diff) => !diff.missing.length && !diff.unlisted.length && !diff.
  * A run that died mid-swap left promotion.json: every tree is either the new
  * generation (if all three are, the generation is completed by recording
  * it) or is put back from the `.previous` copy kept for exactly this, so the
- * result is all-old or all-new, never a mixture. Returns what it did.
+ * result is all-old or all-new, never a mixture. Returns what it did. `ops`
+ * replaces filesystem operations (tests).
  */
-export async function recoverPromotion(paths, log = () => {}) {
+export async function recoverPromotion(paths, log = () => {}, ops = {}) {
+  const io = promotionOps(ops);
   const journalFile = promotionJournalPath(paths);
   if (!existsSync(journalFile)) return null;
   let journal;
   try { journal = JSON.parse(await readFile(journalFile, 'utf8')); }
   catch { journal = null; }
   if (!journal || journal.formatVersion !== 1 || !journal.trees) {
-    // An unreadable journal names nothing to put back; the trees are checked
-    // against current.json by --check, and a fresh install replaces them.
-    await rm(journalFile, { force: true });
-    return { outcome: 'discarded-unreadable-journal' };
+    // A journal that names no trees says nothing about what to put back, and
+    // the trees may be a mixture. Discarding it would let every check pass
+    // them, so it stays until an install records a complete generation,
+    // which replaces it.
+    log('.runtime-source/softn-release/promotion.json names no trees to resolve (it is unreadable, or an install over such a journal was rolled back); it is kept, and --check and the UI prebuild checks refuse the trees, until an install records a complete generation');
+    return { outcome: 'kept-unresolvable-journal' };
   }
   const names = Object.keys(journal.trees);
   // The journal is written before and after every swap, so each tree's state
@@ -468,35 +503,50 @@ export async function recoverPromotion(paths, log = () => {}) {
   if (names.every((name) => journal.trees[name].state === 'promoted')) {
     for (const name of names) {
       const diff = await inventoryDiff(journal.trees[name].destination, journal.trees[name].inventory);
-      if (!intact(diff)) return rollBack(journal, journalFile, paths, log, `${name} was promoted but is not the new generation`);
+      if (!intact(diff)) return rollBack(journal, journalFile, log, io, `${name} was promoted but is not the new generation`);
     }
     await mkdir(paths.cache, { recursive: true });
-    await writeFile(currentRecordPath(paths), JSON.stringify(journal.record, null, 2) + '\n');
-    for (const name of names) await rm(journal.trees[name].previous, { recursive: true, force: true });
-    await rm(journalFile, { force: true });
+    await writeJson(currentRecordPath(paths), journal.record, io);
+    for (const name of names) await io.rm(journal.trees[name].previous, { recursive: true, force: true });
+    await io.rm(journalFile, { force: true });
     log(`completed the interrupted install of Softn ${journal.record.tag}: every tree was already the new generation`);
     return { outcome: 'completed', tag: journal.record.tag };
   }
-  return rollBack(journal, journalFile, paths, log);
+  return rollBack(journal, journalFile, log, io);
 }
 
-async function rollBack(journal, journalFile, paths, log, reason = 'the swap did not finish') {
-  for (const [name, tree] of Object.entries(journal.trees)) {
-    if (tree.state === 'promoted' || tree.state === 'promoting') {
+async function rollBack(journal, journalFile, log, io, reason = 'the swap did not finish') {
+  for (const tree of Object.values(journal.trees)) {
+    if (tree.state === 'restored' || tree.copyingAside) {
+      // Restored: the old tree is back and only .previous is left to remove.
+      // Copying aside: the old tree was being copied to .previous and was not
+      // yet removed, so the destination is still the old tree, whole, and
+      // .previous (partial or not) is not needed.
+      await io.rm(tree.previous, { recursive: true, force: true });
+    } else if (tree.state === 'promoted' || tree.state === 'promoting') {
       if (existsSync(tree.previous)) {
-        // The old tree was set aside (and the new one may or may not be in place): put the old one back.
-        await rm(tree.destination, { recursive: true, force: true });
-        await moveDir(tree.previous, tree.destination);
+        // The old tree was set aside whole and the new one may or may not be
+        // in place: put the old one back. A copy back cut short is redone from
+        // .previous; once it is whole the journal says so before .previous is
+        // removed, since a removal cut short leaves a partial .previous.
+        await io.rm(tree.destination, { recursive: true, force: true });
+        await moveDir(tree.previous, tree.destination, io, async (copying) => {
+          if (copying) return;
+          tree.state = 'restored';
+          await writeJson(journalFile, journal, io);
+        });
       } else if (!tree.hadPrevious && existsSync(tree.destination)) {
         // Promoted with nothing before it (a first install): back to nothing.
-        await rm(tree.destination, { recursive: true, force: true });
+        await io.rm(tree.destination, { recursive: true, force: true });
       }
-      // hadPrevious without a .previous directory: the swap had not begun; the destination is still the old tree.
+      // hadPrevious without a .previous directory: the swap had not begun, or the old tree was renamed back; the destination is the old tree.
     }
-    if (tree.staged && existsSync(tree.staged)) await rm(tree.staged, { recursive: true, force: true });
+    if (tree.staged && existsSync(tree.staged)) await io.rm(tree.staged, { recursive: true, force: true });
   }
-  await rm(journalFile, { force: true });
-  log(`rolled back the interrupted install of Softn ${journal.record?.tag ?? '(unknown)'} (${reason}): the previous generation is back in place`);
+  // An install that began over a journal naming no trees puts that refusal back with the trees.
+  if (journal.unresolvedBefore) await writeJson(journalFile, { formatVersion: 1, unresolved: `an install of Softn ${journal.record?.tag ?? '(unknown)'} over an unresolvable promotion journal was rolled back` }, io);
+  else await io.rm(journalFile, { force: true });
+  log(`rolled back the install of Softn ${journal.record?.tag ?? '(unknown)'} (${reason}): the previous generation is back in place`);
   return { outcome: 'rolled-back', tag: journal.record?.tag ?? null };
 }
 
@@ -504,13 +554,21 @@ async function rollBack(journal, journalFile, paths, log, reason = 'the swap did
  * Install the three trees as one generation: stage and verify all of them,
  * write the promotion journal, swap each destination (keeping the previous
  * tree beside it), record the generation with its complete inventory, and
- * only then drop the previous trees. `failAt` is a test hook: the name of
- * the step to die before ('promote:app-editors', 'record', ...).
+ * only then drop the previous trees. A failure between writing the journal
+ * and recording the generation (a move refused, a promoted tree failing
+ * validation) rolls the generation back before rethrowing; if the rollback
+ * fails too, the journal stays and the error names both. `failAt` is a test
+ * hook: the name of the step to die before ('promote:app-editors', 'record',
+ * ...), as a SimulatedCrash, which is not rolled back. `ops` replaces
+ * filesystem operations (tests).
  */
-export async function installGeneration(entries, expected, paths, record, { failAt = null, log = () => {} } = {}) {
+export async function installGeneration(entries, expected, paths, record, { failAt = null, log = () => {}, ops = {} } = {}) {
+  const io = promotionOps(ops);
   const trees = generationTrees(paths, expected, record);
   await sweepStaging(trees);
   const staged = {};
+  const journalFile = promotionJournalPath(paths);
+  let journal = null;
   try {
     for (const tree of trees) {
       const parent = dirname(tree.destination);
@@ -536,35 +594,52 @@ export async function installGeneration(entries, expected, paths, record, { fail
     const inventory = {};
     for (const tree of trees) inventory[tree.name] = await inventoryOf(staged[tree.name]);
     const full = { ...record, generation: { installedAt: new Date().toISOString(), inventory, transformed } };
-    const journal = { formatVersion: 1, startedAt: new Date().toISOString(), record: full, trees: {} };
+    // A journal already here is one recoverPromotion kept because it names no
+    // trees; if this install is rolled back, that refusal is put back too.
+    journal = { formatVersion: 1, startedAt: new Date().toISOString(), record: full, trees: {}, ...(existsSync(journalFile) && { unresolvedBefore: true }) };
     for (const tree of trees) journal.trees[tree.name] = { state: 'staged', hadPrevious: existsSync(tree.destination), destination: tree.destination, staged: staged[tree.name], previous: `${tree.destination}.previous`, inventory: inventory[tree.name] };
     await mkdir(paths.cache, { recursive: true });
-    const writeJournal = () => writeFile(promotionJournalPath(paths), JSON.stringify(journal, null, 2) + '\n');
+    const writeJournal = () => writeJson(journalFile, journal, io);
     await writeJournal();
 
     for (const tree of trees) {
-      if (failAt === `promote:${tree.name}`) throw new Error(`injected failure before promoting ${tree.name}`);
+      if (failAt === `promote:${tree.name}`) throw new SimulatedCrash(`injected failure before promoting ${tree.name}`);
       const previous = `${tree.destination}.previous`;
-      await rm(previous, { recursive: true, force: true });
+      await io.rm(previous, { recursive: true, force: true });
       journal.trees[tree.name].state = 'promoting';
       await writeJournal();
-      if (existsSync(tree.destination)) await moveDir(tree.destination, previous);
-      await moveDir(staged[tree.name], tree.destination);
+      // A copy aside cut short leaves a partial .previous beside the intact old
+      // tree, so the journal says a copy is under way until it is whole.
+      if (existsSync(tree.destination)) await moveDir(tree.destination, previous, io, async (copying) => { journal.trees[tree.name].copyingAside = copying; await writeJournal(); });
+      await moveDir(staged[tree.name], tree.destination, io);
       staged[tree.name] = null;
       journal.trees[tree.name].staged = null;
       journal.trees[tree.name].state = 'promoted';
       await writeJournal();
       await tree.validate(tree.destination);
     }
-    if (failAt === 'record') throw new Error('injected failure before recording the generation');
-    await writeFile(currentRecordPath(paths), JSON.stringify(full, null, 2) + '\n');
-    for (const tree of trees) await rm(`${tree.destination}.previous`, { recursive: true, force: true });
-    await rm(promotionJournalPath(paths), { force: true });
+    if (failAt === 'record') throw new SimulatedCrash('injected failure before recording the generation');
+    await writeJson(currentRecordPath(paths), full, io);
+    // Recorded, so the new generation stands: a cleanup failing from here
+    // leaves the journal, every tree promoted, for the next run to complete.
+    journal = null;
+    for (const tree of trees) await io.rm(`${tree.destination}.previous`, { recursive: true, force: true });
+    await io.rm(journalFile, { force: true });
     return full;
+  } catch (error) {
+    // Without a journal to act on (not yet written, or the generation already
+    // recorded) nothing is put back, and a simulated crash leaves the journal
+    // for the next run (recoverPromotion). Anything else is rolled back now,
+    // so no mixture of two generations outlives the run.
+    if (!journal || error instanceof SimulatedCrash) throw error;
+    try { await rollBack(journal, journalFile, log, io, `failed: ${error.message}`); }
+    catch (rollbackError) {
+      if (rollbackError instanceof SimulatedCrash) throw rollbackError;
+      throw new ReleaseError(`Installing Softn ${record.tag} failed mid-promotion (${error.message}), and rolling it back failed too (${rollbackError.message}). The trees may be a mixture of two generations; .runtime-source/softn-release/promotion.json is kept, so --check and the UI prebuild checks refuse them until node scripts/fetch-softn-release.mjs is run again and resolves it.`);
+    }
+    throw error;
   } finally {
-    // Whatever failed, no staging directory outlives the run. A failure after
-    // the journal was written leaves the journal for the next run to resolve
-    // (recoverPromotion); a failure before it changed nothing.
+    // Whatever failed, no staging directory outlives the run.
     for (const dir of Object.values(staged)) if (dir && existsSync(dir)) await rm(dir, { recursive: true, force: true });
   }
 }
@@ -589,12 +664,13 @@ export async function fetchSoftnRelease({
   syncAdapter = false,
   fetchImpl = fetch,
   failAt = null,
+  ops = {},
   log = console.log,
 } = {}) {
   const paths = defaultPaths(root);
   const frozenRecord = await loadFrozen(frozen, root);
   if (frozenRecord && tag && tag !== frozenRecord.tag) throw new ReleaseError(`SOFTN_RELEASE names ${tag} but the frozen release record for this run names ${frozenRecord.tag}; one run installs one release.`);
-  const recovered = await recoverPromotion(paths, log);
+  const recovered = await recoverPromotion(paths, log, ops);
   if (recovered?.outcome) log(`previous run: ${recovered.outcome}`);
 
   let zip;
@@ -668,7 +744,7 @@ export async function fetchSoftnRelease({
     builtAt: release.builtAt ?? null,
     fetchedAt: new Date().toISOString(),
   };
-  const full = await installGeneration(entries, expected, paths, record, { failAt, log });
+  const full = await installGeneration(entries, expected, paths, record, { failAt, log, ops });
   log(`Softn ${release.tag} (${release.commit.slice(0, 12)}) installed: hosted runtime, app editors, native runtime; ZIPP ${release.zipp.version}${frozenRecord ? ' (frozen for this run)' : ''}`);
   return full;
 }

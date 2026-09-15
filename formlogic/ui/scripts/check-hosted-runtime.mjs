@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { checkRuntimeArtifact, runtimeIdentity } from './hosted-runtime-artifact.mjs';
+import { assertNoInterruptedPromotion, checkRuntimeArtifact, runtimeIdentity } from './hosted-runtime-artifact.mjs';
+assertNoInterruptedPromotion(fileURLToPath(new URL('../../../', import.meta.url)));
 try {
   const source = JSON.parse(await readFile(new URL('../vendor/zipp-wasm/SOURCE.json', import.meta.url), 'utf8'));
   await checkRuntimeArtifact(fileURLToPath(new URL('../public/hosted-runtime/', import.meta.url)), runtimeIdentity(source));

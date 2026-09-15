@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, dirname, basename } from 'node:path';
-import { checkRuntimeArtifact, installRuntimeArtifact, writeRuntimeManifest } from './hosted-runtime-artifact.mjs';
+import { artifactFiles, assertNoInterruptedPromotion, checkRuntimeArtifact, installRuntimeArtifact, LINKED_ASSET, writeRuntimeManifest } from './hosted-runtime-artifact.mjs';
 
 const identity = { version: '0.0.17', sha256: 'a'.repeat(64) };
 
@@ -44,6 +44,27 @@ test('rejects obsolete hashed files left behind by a previous build', async t =>
   const directory = await fixture(t);
   await writeFile(resolve(directory, 'assets/old-runtime.js'), 'obsolete');
   await assert.rejects(checkRuntimeArtifact(directory, identity), /missing or stale/);
+});
+
+test('lists a tree with or without its root manifest, and refuses a link with a code callers can recognise', async t => {
+  const directory = await fixture(t);
+  await mkdir(resolve(directory, 'editor'));
+  await writeFile(resolve(directory, 'editor/runtime-manifest.json'), '{}');
+  assert.deepEqual(await artifactFiles(directory), ['assets/app.js', 'editor/runtime-manifest.json', 'index.html']);
+  assert.deepEqual(await artifactFiles(directory, { includeManifest: true }), ['assets/app.js', 'editor/runtime-manifest.json', 'index.html', 'runtime-manifest.json']);
+  await symlink(resolve(directory, 'assets'), resolve(directory, 'linked'), 'junction');
+  await assert.rejects(artifactFiles(directory), error => error.code === LINKED_ASSET && /must not contain links: linked/.test(error.message));
+  await assert.rejects(checkRuntimeArtifact(directory, identity), /must not contain links/);
+});
+
+test('refuses while the fetcher has an unfinished promotion, and passes a tree with no .runtime-source', async t => {
+  const root = await mkdtemp(resolve(tmpdir(), 'formlogic-promotion-journal-test-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  assertNoInterruptedPromotion(root);
+  await mkdir(resolve(root, '.runtime-source/softn-release'), { recursive: true });
+  assertNoInterruptedPromotion(root);
+  await writeFile(resolve(root, '.runtime-source/softn-release/promotion.json'), '{');
+  assert.throws(() => assertNoInterruptedPromotion(root), /promotion\.json exists.*Run node scripts\/fetch-softn-release\.mjs/);
 });
 
 test('copies and re-verifies a staged build when Windows locks directory rename', async t => {
