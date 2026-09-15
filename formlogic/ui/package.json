@@ -57,7 +57,7 @@
     "@playwright/test": "^1.63.0",
     "@types/jsdom": "^30.0.0",
     "@types/libsodium-wrappers-sumo": "^0.8.2",
-    "@types/node": "^24.10.1",
+    "@types/node": "^26.5.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
