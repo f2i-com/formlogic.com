@@ -68,4 +68,27 @@ class CorsMiddlewareTest extends TestCase
         $this->assertSame('*', $res->getHeaderLine('Access-Control-Allow-Origin'));
         $this->assertFalse($res->hasHeader('Access-Control-Allow-Credentials'));
     }
+
+    public function testPreflightAllowsTheHostedFrameEngineHeader(): void
+    {
+        // HostedAppFrame sends X-FormLogic-Client-Engine on every action; on a split-origin
+        // deployment the browser preflights it, and a preflight that does not list it fails every
+        // action a frame makes.
+        $mw = new CorsMiddleware('https://app.example.com');
+        $request = (new ServerRequestFactory())->createServerRequest('OPTIONS', 'http://api.test/api/app/notes/actions/save')
+            ->withHeader('Origin', 'https://app.example.com')
+            ->withHeader('Access-Control-Request-Method', 'POST')
+            ->withHeader('Access-Control-Request-Headers', 'content-type, x-formlogic-client-engine');
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                throw new \LogicException('a preflight must be answered by the middleware, not the route');
+            }
+        };
+        $res = $mw->process($request, $handler);
+        $allowed = array_map('trim', explode(',', $res->getHeaderLine('Access-Control-Allow-Headers')));
+        $this->assertContains('X-FormLogic-Client-Engine', $allowed, $res->getHeaderLine('Access-Control-Allow-Headers'));
+        $this->assertContains('Authorization', $allowed, 'the headers every request already needed are still listed');
+        $this->assertSame('https://app.example.com', $res->getHeaderLine('Access-Control-Allow-Origin'));
+    }
 }

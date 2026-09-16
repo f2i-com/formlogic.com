@@ -24,7 +24,7 @@ import { tmpdir } from 'node:os';
 import { resolve, basename } from 'node:path';
 import { createHash } from 'node:crypto';
 import { writeArchive, readArchive } from './lib/archive.mjs';
-import { fetchSoftnRelease, checkInstalled, resolveRelease, resolveOnly, recoverPromotion, loadFrozen, parseSidecar, ReleaseError, SimulatedCrash, FROZEN_FORMAT } from './fetch-softn-release.mjs';
+import { fetchSoftnRelease, checkInstalled, resolveRelease, resolveOnly, recoverPromotion, loadFrozen, parseSidecar, verifyArchive, ReleaseError, SimulatedCrash, FROZEN_FORMAT } from './fetch-softn-release.mjs';
 import { assertNoInterruptedPromotion } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 import { zippReleaseFixture, zippEngineWasm, wasmModule } from '../formlogic/ui/scripts/zipp-release-fixture.mjs';
 
@@ -413,6 +413,59 @@ test('an archive that speaks hostedEngines but ships no host.html is refused bef
   const root = await formlogicRoot(t);
   const fixture = await writeFixtureArchive(root, {}, null, (entries) => { delete entries['hosted-runtime/host.html']; });
   await assert.rejects(fetchSoftnRelease({ root, archivePath: fixture.path, ...quiet }), /The archive has no hosted-runtime\/host\.html\./);
+});
+
+test('a frame-tree .htaccess that redirects or rewrites is refused before it installs, naming the file', async (t) => {
+  // A redirect under /hosted-runtime/ (or /app-editors/) is the measured exfiltration path for host
+  // JavaScript: CSP path matching stops at the redirect, so a rule that sends the frame's requests
+  // to /api carries them out past the runtime's connect-src pin. The archive installs these files
+  // under ui/public/, where check-security-invariants.mjs would only see them after the fact.
+  const root = await formlogicRoot(t);
+  const rewriting = await writeFixtureArchive(root, {}, null, (entries) => {
+    entries['hosted-runtime/.htaccess'] = Buffer.from('<IfModule mod_rewrite.c>\n  RewriteEngine On\n  RewriteRule ^(.*)$ /api/$1 [R=302,L]\n</IfModule>\n');
+  });
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: rewriting.path, ...quiet }), (error) => {
+    assert.ok(error instanceof ReleaseError, `a release error, not a crash: ${error}`);
+    assert.match(error.message, /^hosted-runtime\/\.htaccess redirects or rewrites under a frame tree \(RewriteRule \^\(\.\*\)\$ \/api\/\$1 \[R=302,L\]\)/);
+    return true;
+  });
+  assert.equal(existsSync(resolve(root, 'formlogic/ui/public/hosted-runtime/index.html')), false);
+
+  const redirecting = await writeFixtureArchive(root, { tag: 'v0.0.14' }, null, (entries) => {
+    entries['app-editors/builder/.htaccess'] = Buffer.from('Redirect 302 /app-editors/builder/x /api/x\n');
+  });
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: redirecting.path, ...quiet }), /app-editors\/builder\/\.htaccess redirects or rewrites under a frame tree/);
+
+  // The lines these files exist for install as before (listed in the runtime manifest, as the real
+  // release lists its .htaccess, so the installed tree's own check holds it too).
+  const headers = await writeFixtureArchive(root, { tag: 'v0.0.15' }, null, (entries) => {
+    const htaccess = Buffer.from('<IfModule mod_headers.c>\n  Header always set Access-Control-Allow-Origin "*"\n  Header always set X-Content-Type-Options "nosniff"\n</IfModule>\n');
+    entries['hosted-runtime/.htaccess'] = htaccess;
+    const manifest = JSON.parse(entries['hosted-runtime/runtime-manifest.json'].toString('utf8'));
+    manifest.files['.htaccess'] = sha256(htaccess);
+    entries['hosted-runtime/runtime-manifest.json'] = Buffer.from(JSON.stringify(manifest, null, 2) + '\n');
+  });
+  await fetchSoftnRelease({ root, archivePath: headers.path, ...quiet });
+  assert.equal(existsSync(resolve(root, 'formlogic/ui/public/hosted-runtime/.htaccess')), true);
+});
+
+test('the Softn release this tree installed still verifies, .htaccess included', async (t) => {
+  // The real archive beside this repository, run through verifyArchive alone: nothing is installed
+  // or touched. Its hosted-runtime/.htaccess carries Header lines only, and must keep passing.
+  const repoRoot = resolve(import.meta.dirname, '..');
+  const archiveName = 'softn-formlogic-runtime-v0.0.18-local.zip';
+  const archivePath = resolve(repoRoot, '..', 'softn.com', 'release', archiveName);
+  if (!existsSync(archivePath)) return t.skip(`${archivePath} is not beside this checkout`);
+  const zip = await readFile(archivePath);
+  const sidecarDigest = parseSidecar(await readFile(`${archivePath}.sha256`, 'utf8'), archiveName);
+  const { release, entries } = await verifyArchive(zip, {
+    sidecarDigest,
+    archiveName,
+    paths: { protocolFile: resolve(repoRoot, 'formlogic/ui/src/lib/softn/protocol.json') },
+  });
+  assert.equal(release.tag, 'v0.0.18-local');
+  const htaccess = [...entries.keys()].filter((name) => /^(hosted-runtime|app-editors)\/.*\.htaccess$/.test(name));
+  assert.deepEqual(htaccess, ['hosted-runtime/.htaccess'], 'the guard had a real frame-tree .htaccess to examine');
 });
 
 test('an adapter this tree has not vendored fails naming --sync-adapter, and --sync-adapter vendors it', async (t) => {

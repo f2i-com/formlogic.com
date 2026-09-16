@@ -130,6 +130,21 @@ function HostingEditor({
     setDirty(true);
     setNotice("");
   }
+  // The engine block from a server answer. Absent (an older server, or a resolver that could not
+  // answer after a publish) keeps what the panel already shows.
+  function takeEngine(data: { engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }) {
+    if (!data.engine || !data.enginePolicy) return;
+    setEngine(data.engine);
+    setEnginePolicy(data.enginePolicy);
+  }
+  // After a choice is stored, the engine is re-read from THIS panel's manage GET rather than shown
+  // from the PUT's answer: the PUT answers for the whole column (hosted and native bundles merged),
+  // while this panel and the preview it mounts are about the hosted bundle alone.
+  async function refreshEngine() {
+    const result = await api.getAppHosting(app.id);
+    if (!alive.current || result.error || !result.data) return;
+    takeEngine(result.data);
+  }
   async function publish() {
     if (lock.current || !loaded || importReview) return;
     lock.current = true;
@@ -150,6 +165,9 @@ function HostingEditor({
         return;
       }
       setDeployment(result.data.deployment);
+      // The server decided the engine again from the bundle just published (a `.py` added or
+      // removed changes it); the preview below mounts on this answer.
+      takeEngine(result.data);
       setDirty(false);
       setNotice("Published. Your app database has been kept.");
     } finally {
@@ -387,7 +405,7 @@ function HostingEditor({
                 engine={engine}
                 policy={enginePolicy}
                 disabled={saving || importing}
-                onChanged={(next, policy) => { setEngine(next); setEnginePolicy(policy); }}
+                onChanged={() => void refreshEngine()}
               />
             </div>
           )}

@@ -430,6 +430,14 @@ class RuntimeEngineService
      * an `app.engine_change` audit row, and a caller that forgot to say what the app's logic is
      * written in would record an effective engine the app will never run on.
      *
+     * The verified check runs TWICE: once unlocked, so an owner who was never verified is answered
+     * without a transaction, and again inside the transaction with the owner's user row locked
+     * FOR UPDATE. The revoke paths (AdminService::setCodeTrust, MfaService::disable) lock that same
+     * row before they look for host-js apps to clear, so a revoke and a choice serialise on it: a
+     * host-js choice can never commit after a revoke that found nothing to clear, which is what
+     * lets the admin dialog promise that re-verifying later never switches host JavaScript back on
+     * by itself.
+     *
      * @param list<string> $languages every client bundle this column governs ({@see mergeLanguages})
      * @return array{id: string, requested: string, stored: string|null, reason?: string, revision: string}
      * @throws \InvalidArgumentException when the choice would never take effect
@@ -446,9 +454,17 @@ class RuntimeEngineService
             $this->mysql->beginTransaction();
         }
         try {
-            $read = $this->mysql->prepare('SELECT client_engine FROM apps WHERE id = :id');
+            $read = $this->mysql->prepare('SELECT owner_id, client_engine FROM apps WHERE id = :id');
             $read->execute(['id' => $appId]);
-            $from = $read->fetchColumn();
+            $app = $read->fetch(PDO::FETCH_ASSOC) ?: [];
+            $from = $app['client_engine'] ?? null;
+            // The owner's row, locked for the rest of this transaction, and the check again on what
+            // the lock reads: a revoke that committed between the check above and here is seen.
+            $owner = $this->lockedOwnerFacts(is_string($app['owner_id'] ?? null) ? $app['owner_id'] : '');
+            $refusal = $this->refuseChoice($engine, $owner);
+            if ($refusal !== null) {
+                throw new \InvalidArgumentException($refusal);
+            }
             $this->mysql->prepare('UPDATE apps SET client_engine = :e WHERE id = :id')
                 ->execute(['e' => $engine, 'id' => $appId]);
             // $languages, like every read path: an audit row is read after something has gone
@@ -471,6 +487,22 @@ class RuntimeEngineService
             }
             throw $e;
         }
+    }
+
+    /**
+     * The owner facts read under a row lock that lasts until the caller's transaction ends. An
+     * empty or unknown owner locks nothing and reads as unverified, which refuses host-js.
+     *
+     * @return array{verifiedAt: string|null, isDemo: bool}
+     */
+    private function lockedOwnerFacts(string $ownerId): array
+    {
+        if ($ownerId === '') {
+            return self::ownerOf([]);
+        }
+        $stmt = $this->mysql->prepare('SELECT code_trust_verified_at, mfa_enabled, email FROM users WHERE id = :owner FOR UPDATE');
+        $stmt->execute(['owner' => $ownerId]);
+        return self::ownerOf($stmt->fetch(PDO::FETCH_ASSOC) ?: []);
     }
 
     /**

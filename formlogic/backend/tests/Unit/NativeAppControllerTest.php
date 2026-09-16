@@ -477,4 +477,52 @@ final class NativeAppControllerTest extends TestCase
         $this->assertFalse($leaks($records['message']), $records['message']);
         $this->assertStringContainsString("unable to open database: the installation's private", $records['message']);
     }
+
+    public function testTheInstallAnswerCarriesTheEngineDecidedFromTheProjectJustInstalled(): void
+    {
+        // An owner installs a project that adds a `.py` file: the server now decides zipp-web-python
+        // for it, and the PUT's answer must say so — derived from the INSTALLED files, not from what
+        // the GET saw before the install — or the panel keeps showing the engine of the old project.
+        $asked = new \ArrayObject();
+        $engines = $this->createMock(RuntimeEngineService::class);
+        $engines->method('effective')->willReturnCallback(static function (string $appId, array $languages = []) use ($asked) {
+            $asked[] = $languages;
+            return self::ENGINE;
+        });
+        $engines->method('ownerPolicy')->willReturn(['default' => 'zipp-web-python', 'allowed' => ['zipp-web-python'], 'installed' => ['zipp-web-python']]);
+        $apps = $this->createMock(AppService::class);
+        $apps->method('getApp')->willReturn(['id' => 'notes', 'ownerId' => 'owner', 'name' => 'Notes', 'status' => 'published']);
+        $native = $this->createMock(NativeAppService::class);
+        $installed = ['version' => 2, 'access' => 'application', 'assets' => [], 'files' => ['manifest.json' => '{"id":"notes"}', 'ui/main.ui' => '<Text/>', 'logic/counter.py' => 'count = 0']];
+        $native->method('install')->with('notes', ['files' => []], 1)->willReturn($installed);
+        $controller = new NativeAppController($apps, $this->createMock(AppUserService::class), $native, $this->createMock(PlanService::class), $this->createMock(FlowService::class), $engines);
+        $response = $controller->manage($this->request('PUT')->withParsedBody(['project' => ['files' => []], 'expectedVersion' => 1]), new Response(), ['id' => 'notes']);
+        $this->assertSame(200, $response->getStatusCode());
+        $body = self::body($response);
+        $this->assertSame(2, $body['project']['version']);
+        $this->assertSame(self::ENGINE, $body['engine']);
+        $this->assertSame(['zipp-web-python'], $body['enginePolicy']['allowed']);
+        $this->assertSame([['javascript', 'python']], $asked->getArrayCopy(), 'the resolver was asked about the installed project\'s files');
+    }
+
+    public function testAResolverThatCannotAnswerTheStaleCheckIsTheGeneric503EveryOtherFailureIs(): void
+    {
+        // The stale-engine check runs inside respond(): a resolver that cannot read its rows is the
+        // same generic 503 every other failure here is, not a 500 with a database message.
+        $apps = $this->createMock(AppService::class);
+        $apps->method('getAppBySlug')->willReturn(['id' => 'notes', 'ownerId' => 'owner', 'name' => 'Notes', 'status' => 'published']);
+        $apps->method('isRuntimeVisible')->willReturn(true);
+        $native = $this->createMock(NativeAppService::class);
+        $native->method('clientLanguages')->willReturn(['javascript']);
+        $engines = $this->createMock(RuntimeEngineService::class);
+        $engines->method('effective')->willThrowException(new \PDOException('SQLSTATE[HY000] [2002] Connection refused'));
+        $controller = new NativeAppController($apps, $this->createMock(AppUserService::class), $native, $this->createMock(PlanService::class), $this->createMock(FlowService::class), $engines);
+        $request = (new ServerRequestFactory())->createServerRequest('POST', '/', ['REMOTE_ADDR' => '127.0.0.1'])
+            ->withAttribute('userId', 'owner')->withParsedBody(['method' => 'GET', 'path' => '/api/notes'])
+            ->withHeader('X-FormLogic-Client-Engine', 'zipp-web-python;0123456789abcdef');
+        $response = $controller->runtime($request, new Response(), ['slug' => 'notes']);
+        $this->assertSame(503, $response->getStatusCode());
+        $this->assertSame('The native app host is unavailable. Check its runtime configuration.', self::body($response)['message']);
+        $this->assertArrayNotHasKey('code', self::body($response));
+    }
 }

@@ -130,8 +130,10 @@ class AdminController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Enter your own password to confirm this reset'], 401);
         }
         $wasEnabled = $this->mfaService->isEnabled($userId);
-        $this->mfaService->disable($userId); // transactional; bumps token_version = sessions + pending tokens revoked
-        $this->audit($request, 'admin.mfa_reset', $userId, ['wasEnabled' => $wasEnabled]);
+        // Transactional; bumps token_version = sessions + pending tokens revoked. The admin is the
+        // actor of the code-trust revocation this may carry out, and their row names the apps.
+        $revoked = $this->mfaService->disable($userId, $adminId, $request->getServerParams()['REMOTE_ADDR'] ?? null);
+        $this->audit($request, 'admin.mfa_reset', $userId, ['wasEnabled' => $wasEnabled, 'affectedApps' => $revoked['affectedApps']]);
         if ($wasEnabled && $this->email !== null && is_string($target['email'] ?? null)) {
             // Best-effort notification — the reset must not fail on mail trouble.
             try {
@@ -175,7 +177,12 @@ class AdminController
         }
         $adminId = (string) $request->getAttribute('userId');
         $body = $request->getParsedBody() ?? [];
-        $verified = ($body['verified'] ?? null) === true;
+        // A boolean, or nothing happens: anything else (`"true"`, `1`, a missing key) would otherwise
+        // read as false and REVOKE — clearing the account's host-js apps — on a malformed request.
+        $verified = $body['verified'] ?? null;
+        if (!is_bool($verified)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Provide verified as true or false'], 400);
+        }
         if (!$this->auth->verifyPassword($adminId, (string) ($body['password'] ?? ''))) {
             $this->audit($request, 'admin.code_trust_denied', $userId, ['reason' => 'step_up_failed']);
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Enter your own password to confirm this change'], 403);

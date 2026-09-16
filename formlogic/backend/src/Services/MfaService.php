@@ -133,8 +133,14 @@ class MfaService
      * engine must keep two-factor auth on, so the one place that switches it off — Settings or an
      * admin lockout reset, both of which land here — revokes the verification and clears the
      * account's stored host-js choices in the SAME transaction.
+     *
+     * $actorId and $ipAddress name who did it, for the revocation's audit row: the account itself
+     * from Settings (the default), the acting administrator from a lockout reset. The apps whose
+     * host-js choice was cleared are returned so that caller's own audit row can name them too.
+     *
+     * @return array{affectedApps: list<string>}
      */
-    public function disable(string $userId): void
+    public function disable(string $userId, ?string $actorId = null, ?string $ipAddress = null): array
     {
         $ownsTx = !$this->mysql->inTransaction();
         if ($ownsTx) {
@@ -147,10 +153,11 @@ class MfaService
             )->execute(['id' => $userId]);
             $this->mysql->prepare('DELETE FROM mfa_trusted_browsers WHERE user_id = :id')->execute(['id' => $userId]);
             $this->mysql->prepare('DELETE FROM mfa_challenges WHERE user_id = :id')->execute(['id' => $userId]);
-            $this->revokeCodeTrust($userId);
+            $affected = $this->revokeCodeTrust($userId, $actorId ?? $userId, $ipAddress);
             if ($ownsTx) {
                 $this->mysql->commit();
             }
+            return ['affectedApps' => $affected];
         } catch (\Throwable $e) {
             if ($ownsTx && $this->mysql->inTransaction()) {
                 $this->mysql->rollBack();
@@ -164,14 +171,19 @@ class MfaService
      * recorded) for the overwhelmingly common case of an account that was never verified. When it
      * WAS verified, the record is part of the revocation: without an audit service to write it
      * this throws rather than quietly dropping trust with no trace.
+     *
+     * The user row is read FOR UPDATE: RuntimeEngineService::storeChoice locks the same row before
+     * it re-checks the owner's verification, so this revoke and an owner's host-js choice serialise.
+     *
+     * @return list<string> the apps whose stored host-js choice was cleared
      */
-    private function revokeCodeTrust(string $userId): void
+    private function revokeCodeTrust(string $userId, string $actorId, ?string $ipAddress): array
     {
-        $stmt = $this->mysql->prepare('SELECT code_trust_verified_at FROM users WHERE id = :id');
+        $stmt = $this->mysql->prepare('SELECT code_trust_verified_at FROM users WHERE id = :id FOR UPDATE');
         $stmt->execute(['id' => $userId]);
         $verifiedAt = $stmt->fetchColumn();
         if (!is_string($verifiedAt) || $verifiedAt === '') {
-            return;
+            return [];
         }
         if ($this->audit === null) {
             throw new \RuntimeException('Code-trust revocation cannot be recorded: no audit service is configured');
@@ -185,10 +197,11 @@ class MfaService
         }
         $this->mysql->prepare('UPDATE users SET code_trust_verified_at = NULL, code_trust_verified_by = NULL WHERE id = :id')
             ->execute(['id' => $userId]);
-        $this->audit->logStrict('user.revoke_code_trust', 'user', $userId, $userId, null, [
+        $this->audit->logStrict('user.revoke_code_trust', 'user', $userId, $actorId, $ipAddress, [
             'trigger' => 'mfa_disabled',
             'affectedApps' => $affected,
         ]);
+        return $affected;
     }
 
     // ── One-time login challenges (audit MFA-001) ────────────────────────────

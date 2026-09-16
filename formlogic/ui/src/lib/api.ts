@@ -1958,7 +1958,7 @@ class ApiClient {
   async getNativeProject(id: string): Promise<ApiResponse<{ available: boolean; ready?: boolean; preflight?: NativeRuntimePreflight | null; project: import('./nativeHosting').NativeProject | null; readOnly?: boolean; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/native`);
   }
-  async saveNativeProject(id: string, project: import('./nativeHosting').NativeProject, expectedVersion: number): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject }>> {
+  async saveNativeProject(id: string, project: import('./nativeHosting').NativeProject, expectedVersion: number): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/native`, { method: 'PUT', body: JSON.stringify({ project, expectedVersion }) });
   }
   async manageNativeRecord(id: string, input: { table: string; action: 'read' | 'create' | 'update' | 'delete'; key?: Record<string, string>; revision?: string; values?: Record<string, string | null> }): Promise<ApiResponse<{ saved?: boolean; record?: import('./nativeHosting').NativeRecordDetail }>> {
@@ -1992,7 +1992,7 @@ class ApiClient {
   async putAppEngine(id: string, engine: ClientEngineId | null): Promise<ApiResponse<{ engine: AppEngine; policy: OwnerEnginePolicy }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/engine`, { method: 'PUT', body: JSON.stringify({ engine }) });
   }
-  async publishAppHosting(id: string, pkg: import('./hosting').HostedPackage, expectedVersion: number): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment }>> {
+  async publishAppHosting(id: string, pkg: import('./hosting').HostedPackage, expectedVersion: number): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/hosting`, { method: 'PUT', body: JSON.stringify({ package: pkg, expectedVersion }) });
   }
   async getHostedRuntime(slug: string): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment; name: string; engine?: { id: ClientEngineId; revision: string } }>> {

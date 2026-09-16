@@ -110,9 +110,24 @@ try {
       for (const [name, directive] of Object.entries(directives)) {
         if (name !== 'script-src') assert.ok(!/(?<!-)'unsafe-eval'/.test(directive), `${name} must not carry 'unsafe-eval': ${directive}`);
       }
+      // What the security model rests on for host JavaScript, asserted on the policy each document
+      // actually wrote rather than left to a reader of the shell's source: nothing loads by default;
+      // the shell may connect back to ONE source, its own runtime directory (the document's
+      // directory, which holds its assets) — the pin that keeps an author's host JavaScript off
+      // /api and off every other origin; and no form, frame or base can point anywhere at all. Both
+      // documents, so the host document cannot be the one that quietly gains a source.
+      const runtimeDirectory = `${origin}/hosted-runtime/`;
+      for (const [document, policy] of [['index.html', index], ['host.html', host]]) {
+        const sources = Object.fromEntries(policy.split(';').map(d => d.trim()).filter(Boolean).map(d => { const [name, ...rest] = d.split(/\s+/); return [name, rest]; }));
+        assert.deepEqual(sources['default-src'], ["'none'"], `${document} must write default-src 'none': ${policy}`);
+        assert.deepEqual(sources['connect-src'], [runtimeDirectory], `${document} must write connect-src as exactly its runtime directory ${runtimeDirectory} and no other source: ${policy}`);
+        assert.deepEqual(sources['form-action'], ["'none'"], `${document} must write form-action 'none': ${policy}`);
+        assert.deepEqual(sources['frame-src'], ["'none'"], `${document} must write frame-src 'none': ${policy}`);
+        assert.deepEqual(sources['base-uri'], ["'none'"], `${document} must write base-uri 'none': ${policy}`);
+      }
       assert.deepEqual(errors, [], 'The browser must not report uncaught exceptions');
       assert.equal(wasmRequests.length, 0, 'Loading a runtime document must not fetch an engine');
-      console.log(`PASS ${order}: index.html and host.html differ by exactly one script-src token, read from the running documents`);
+      console.log(`PASS ${order}: index.html and host.html differ by exactly one script-src token, and both pin default-src/connect-src/form-action/frame-src/base-uri, read from the running documents`);
       await context.close();
       continue;
     }

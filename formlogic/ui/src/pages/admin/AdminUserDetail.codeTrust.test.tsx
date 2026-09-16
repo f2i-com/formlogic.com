@@ -120,6 +120,20 @@ it('keeps the dialog open and reports a refused step-up', async () => {
   expect(mocks.success).not.toHaveBeenCalled();
 });
 
+it('reports a 2xx whose body is not a code-trust answer instead of sitting silently', async () => {
+  // The busy flag is already off when the body is read; a throw there would leave the dialog open
+  // with nothing said (the AdminEnginePolicyCard bug, again).
+  mocks.setCodeTrust.mockResolvedValue({ data: {} });
+  await mount();
+  await click('Verify for host JavaScript');
+  await type('admin-pass');
+  await click('Verify account');
+  expect(mocks.error).toHaveBeenCalledWith('Could not verify this account', expect.stringContaining('unexpected answer'));
+  expect(mocks.success).not.toHaveBeenCalled();
+  expect(document.body.textContent).toContain('Verify this account for host JavaScript?');
+  expect(button('Verify account')?.disabled).toBe(false);
+});
+
 it('shows each app\'s requested and effective engine', async () => {
   mocks.getUser.mockResolvedValue({ data: { user: user({
     apps: [{

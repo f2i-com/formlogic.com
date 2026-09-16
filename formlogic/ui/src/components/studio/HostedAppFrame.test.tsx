@@ -412,3 +412,73 @@ describe('a frame that navigates itself', () => {
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 });
+
+describe('a remount on the server’s new decision', () => {
+  const stale = { 'manifest.json': '{}', 'logic/counter.py': 'count = 0' };
+  const fresh = { 'manifest.json': '{"main":"ui/main.ui"}', 'ui/main.ui': '<Text/>' };
+
+  it('hands the new engine the refetched client, not the one this page was loaded with', async () => {
+    // The owner removed the .py; the server now decides host-js. The old client still carries the
+    // .py, and a host shell handed it refuses by name — so the remount must take the client the
+    // refetched decision was made FOR, and the version that goes with it.
+    vi.mocked(api.runHostedAction).mockResolvedValue({ error: 'changed', status: 409, code: 'engine_changed' });
+    vi.mocked(api.getHostedRuntime).mockResolvedValue({
+      data: { name: 'Notes', engine: { id: 'host-js', revision: 'r2' }, deployment: { version: 2, updatedAt: '', client: fresh } },
+    } as unknown as Awaited<ReturnType<typeof api.getHostedRuntime>>);
+    root = createRoot(container);
+    await act(async () => root!.render(<HostedAppFrame slug="notes" client={stale} version={1} engine={{ id: 'zipp-web-python', revision: 'r1' }} />));
+    const { iframe } = spyOnFrame();
+    await act(async () => sendReady(iframe));
+    await callAction(channels[0]);
+    const next = container.querySelector('iframe')!;
+    expect(next).not.toBe(iframe);
+    expect(next.getAttribute('src')).toBe(frameSource('host-js'));
+    const post = vi.spyOn(next.contentWindow!, 'postMessage').mockImplementation(() => undefined);
+    await act(async () => sendReady(next, identity, next.contentWindow!, { 'host-js': true }));
+    const init = initOf(post);
+    expect(init.engine).toBe('host-js');
+    expect(init.client).toEqual(fresh);
+    expect(init.appId).toBe('hosted-notes-2');
+    expect(init).not.toHaveProperty('zippWasm');
+  });
+
+  it('refreshes a native app’s client and assets the same way', async () => {
+    vi.mocked(api.runNativeRequest).mockResolvedValue({ error: 'changed', status: 409, code: 'engine_changed' });
+    vi.mocked(api.getNativeRuntime).mockResolvedValue({
+      data: { name: 'Notes', engine: { id: 'zipp-web-python', revision: 'r2' }, project: { version: 3, client: fresh, assets: { 'logo.png': 'new' }, access: 'application' } },
+    } as unknown as Awaited<ReturnType<typeof api.getNativeRuntime>>);
+    root = createRoot(container);
+    await act(async () => root!.render(<HostedAppFrame slug="notes" client={stale} version={1} native={{ assets: { 'logo.png': 'old' } }} engine={{ id: 'zipp-web', revision: 'r1' }} />));
+    const { iframe } = spyOnFrame();
+    const ready = (frame: HTMLIFrameElement) => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow!, data: { type: 'formlogic:ready', zipp: identity, nativeProtocol: NATIVE_PROTOCOL },
+    }));
+    await act(async () => ready(iframe));
+    await act(async () => channels[0].port1.onmessage?.({ data: { type: 'call', id: 1, action: 'nativeRequest', input: { url: '/api/notes', options: { method: 'GET' } } } }));
+    const next = container.querySelector('iframe')!;
+    expect(next).not.toBe(iframe);
+    const post = vi.spyOn(next.contentWindow!, 'postMessage').mockImplementation(() => undefined);
+    await act(async () => ready(next));
+    const init = initOf(post);
+    expect(init.client).toEqual(fresh);
+    expect(init.assets).toEqual({ 'logo.png': 'new' });
+    expect(init.appId).toBe('native-notes');
+  });
+
+  it('keeps this mount’s client when the refetched answer carries none', async () => {
+    // An answer from a server that decided a new engine but sent no bundle: the engine is taken,
+    // the props stand — the same fallback every older test in this file relies on.
+    vi.mocked(api.runHostedAction).mockResolvedValue({ error: 'changed', status: 409, code: 'engine_changed' });
+    vi.mocked(api.getHostedRuntime).mockResolvedValue({ data: { engine: { id: 'zipp-web-python', revision: 'r2' } } } as unknown as Awaited<ReturnType<typeof api.getHostedRuntime>>);
+    root = createRoot(container);
+    await act(async () => root!.render(<HostedAppFrame slug="notes" client={fresh} version={4} engine={{ id: 'zipp-web-python', revision: 'r1' }} />));
+    const { iframe } = spyOnFrame();
+    await act(async () => sendReady(iframe));
+    await callAction(channels[0]);
+    const next = container.querySelector('iframe')!;
+    const post = vi.spyOn(next.contentWindow!, 'postMessage').mockImplementation(() => undefined);
+    await act(async () => sendReady(next));
+    expect(initOf(post).client).toEqual(fresh);
+    expect(initOf(post).appId).toBe('hosted-notes-4');
+  });
+});

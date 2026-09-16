@@ -8,14 +8,17 @@ use FormLogic\Controllers\HostedAppController;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Models\User;
+use FormLogic\Services\AdminService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppUserService;
 use FormLogic\Services\AuditService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\HostedAppService;
+use FormLogic\Services\MfaService;
 use FormLogic\Services\NativeAppService;
 use FormLogic\Services\RuntimeEngineService;
 use FormLogic\Services\SandboxRunner;
+use FormLogic\Services\TotpService;
 use PDO;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
@@ -600,5 +603,211 @@ class AppEngineEndpointTest extends TestCase
         );
         $this->assertSame(503, $refused->getStatusCode());
         $this->assertArrayNotHasKey('deployment', $this->jsonBody($refused));
+    }
+
+    // ── the revoke ↔ owner-choice race ───────────────────────────────────────
+
+    /**
+     * A SECOND MySQL connection, recording every statement it prepares and every transaction
+     * boundary, with a hook that runs when its transaction begins. The static connection every
+     * service in this file shares is then genuinely another session, so what the hook does on it
+     * is a committed concurrent write, not a sleep.
+     */
+    private function recordingConnection(): array
+    {
+        $config = [
+            'host' => $_ENV['DB_HOST'] ?? '127.0.0.1',
+            'port' => $_ENV['DB_PORT'] ?? '3306',
+            'database' => $_ENV['DB_TEST_DATABASE'] ?? 'formlogic_test',
+            'username' => $_ENV['DB_USERNAME'] ?? 'root',
+            'password' => $_ENV['DB_PASSWORD'] ?? '',
+        ];
+        $pdo = new RecordingPdo(
+            sprintf('mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4', $config['host'], $config['port'], $config['database']),
+            $config['username'],
+            $config['password'],
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_EMULATE_PREPARES => false]
+        );
+        $connection = new class ($config, $pdo) extends MySQLConnection {
+            public function __construct(array $config, private PDO $proxy)
+            {
+                parent::__construct($config);
+            }
+
+            public function getConnection(): PDO
+            {
+                return $this->proxy;
+            }
+        };
+        return [$connection, $pdo];
+    }
+
+    private function audit(): AuditService
+    {
+        return new AuditService(self::$mysql, null, 'app-engine-test-audit-key');
+    }
+
+    public function testARevokeThatCommitsBetweenTheCheckAndTheStoreRefusesTheHostJsChoice(): void
+    {
+        // The interleaving the docblock and the admin dialog rule out: the owner's PUT passes the
+        // unlocked verified check; the admin's revoke then finds no host-js app to clear, NULLs the
+        // verification and commits; the owner's UPDATE would commit host-js on a revoked account.
+        $this->allowHostJs();
+        $this->verifyOwner();
+        [$connection, $pdo] = $this->recordingConnection();
+        $engines = new RuntimeEngineService($connection);
+        $admin = new AdminService(self::$mysql);
+        $revoked = false;
+        // The pre-check has passed by the time the transaction begins; the revoke lands there, on
+        // the other connection, and commits before the store takes its lock.
+        $pdo->onBegin = function () use ($admin, &$revoked): void {
+            $result = $admin->setCodeTrust($this->ownerId, false, $this->otherId, $this->audit());
+            $this->assertSame([], $result['affectedApps'], 'the revoke saw no host-js app to clear');
+            $revoked = true;
+        };
+        try {
+            $engines->storeChoice($this->appId, 'host-js', ['javascript'], $this->audit(), $this->ownerId, '203.0.113.11');
+            $this->fail('a host-js choice committed on an account whose verification had just been revoked');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('verified for code trust', $e->getMessage());
+        }
+        $this->assertTrue($revoked, 'the revoke ran inside the window');
+        $this->assertFalse($pdo->inTransaction(), 'the store rolled back');
+        $this->assertNull($this->storedEngine(), 'nothing was written');
+        $stmt = self::$pdo->prepare('SELECT COUNT(*) FROM audit_log WHERE resource_id = ? AND action = ?');
+        $stmt->execute([$this->appId, 'app.engine_change']);
+        $this->assertSame(0, (int) $stmt->fetchColumn(), 'no engine change was recorded');
+        $this->assertFalse((new AdminService(self::$mysql))->codeTrustRow($this->ownerId)['verified']);
+    }
+
+    public function testEveryWriterOfTheVerificationLocksTheOwnerRowInsideItsTransaction(): void
+    {
+        // The serialisation above is only real if all three paths take the SAME row lock inside their
+        // transactions: the owner's store and both revoke paths. Pinned on the SQL they emit.
+        $lockedUsersRead = static fn (array $log): bool => (bool) array_filter(
+            $log,
+            static fn (string $entry) => str_starts_with($entry, 'prepare:')
+                && preg_match('/^prepare:BEGIN\d+:SELECT\b[^;]*\bFROM users\b[^;]*\bFOR UPDATE\s*$/is', $entry) === 1
+        );
+
+        $this->allowHostJs();
+        $this->verifyOwner();
+        [$connection, $pdo] = $this->recordingConnection();
+        (new RuntimeEngineService($connection))->storeChoice($this->appId, 'host-js', ['javascript'], $this->audit(), $this->ownerId, null);
+        $this->assertTrue($lockedUsersRead($pdo->log), "storeChoice must lock the owner's user row FOR UPDATE inside its transaction:\n" . implode("\n", $pdo->log));
+        $this->assertSame('host-js', $this->storedEngine());
+
+        $pdo->log = [];
+        (new AdminService($connection))->setCodeTrust($this->ownerId, false, $this->otherId, $this->audit());
+        $this->assertTrue($lockedUsersRead($pdo->log), "setCodeTrust must lock the target's user row FOR UPDATE inside its transaction:\n" . implode("\n", $pdo->log));
+        $this->assertNull($this->storedEngine(), 'the revoke cleared the host-js choice');
+
+        $this->verifyOwner();
+        self::$pdo->prepare('UPDATE apps SET client_engine = ? WHERE id = ?')->execute(['host-js', $this->appId]);
+        $pdo->log = [];
+        (new MfaService($connection, new TotpService(), $this->audit()))->disable($this->ownerId);
+        $this->assertTrue($lockedUsersRead($pdo->log), "MfaService::disable must lock the user row FOR UPDATE inside its transaction:\n" . implode("\n", $pdo->log));
+        $this->assertNull($this->storedEngine());
+    }
+
+    // ── what a publish answers with ──────────────────────────────────────────
+
+    public function testTheManagePutCarriesTheEngineDecidedFromTheBundleJustPublished(): void
+    {
+        // A verified owner on host-js publishes a bundle that adds main.py: the server now decides
+        // zipp-web-python (python-required), and the PUT's answer must say so, or the owner's panel
+        // keeps mounting its preview on the host document, which the shell refuses by name.
+        $this->allowHostJs();
+        $this->verifyOwner();
+        $this->publish();
+        $this->assertSame(200, $this->put(['engine' => 'host-js'])->getStatusCode());
+        $response = $this->controller()->manage(
+            $this->request('PUT', '/api/apps/' . $this->appId . '/hosting', [
+                'expectedVersion' => 1,
+                'package' => [
+                    'version' => 1,
+                    'client' => ['manifest.json' => '{"main":"ui/main.ui","name":"Engine app"}', 'ui/main.ui' => '<Text/>', 'logic/main.py' => "count = 0\n"],
+                    'actions' => [],
+                ],
+            ]),
+            (new ResponseFactory())->createResponse(),
+            ['id' => $this->appId]
+        );
+        $this->assertSame(200, $response->getStatusCode());
+        $body = $this->jsonBody($response);
+        $this->assertSame(2, $body['deployment']['version']);
+        $this->assertSame('zipp-web-python', $body['engine']['id']);
+        $this->assertSame('python-required', $body['engine']['reason']);
+        $this->assertSame('host-js', $body['engine']['stored'], 'the choice is kept; the outcome is what changed');
+        $this->assertSame(['zipp-web-python', 'host-js'], $body['enginePolicy']['allowed']);
+
+        // The same answer the GET gives, so the panel can trust either.
+        $get = $this->jsonBody($this->controller()->manage(
+            $this->request('GET', '/api/apps/' . $this->appId . '/hosting'),
+            (new ResponseFactory())->createResponse(),
+            ['id' => $this->appId]
+        ));
+        $this->assertSame($get['engine'], $body['engine']);
+    }
+
+    // ── a resolver that cannot answer ────────────────────────────────────────
+
+    public function testAResolverThatCannotAnswerTheStaleCheckIsTheGeneric503EveryOtherFailureIs(): void
+    {
+        $this->publish();
+        $engines = $this->createMock(RuntimeEngineService::class);
+        $engines->method('effective')->willThrowException(new \PDOException('SQLSTATE[HY000] [2002] Connection refused'));
+        $response = $this->controller($engines)->runtime(
+            $this->request('POST', '/api/app/' . $this->slug . '/actions/noop', [], null, ['X-FormLogic-Client-Engine' => 'zipp-web-python;' . str_repeat('0', 16)]),
+            (new ResponseFactory())->createResponse(),
+            ['slug' => $this->slug, 'action' => 'noop']
+        );
+        $this->assertSame(503, $response->getStatusCode());
+        $this->assertSame('App hosting is temporarily unavailable', $this->jsonBody($response)['message']);
+        $this->assertArrayNotHasKey('code', $this->jsonBody($response));
+    }
+}
+
+/**
+ * A PDO that records what it prepares and where its transactions begin and end, and lets a test
+ * run something the moment a transaction begins — after any unlocked pre-check, before any lock.
+ */
+class RecordingPdo extends PDO
+{
+    /** @var list<string> */
+    public array $log = [];
+    /** @var (callable(): void)|null */
+    public $onBegin = null;
+    private int $transactions = 0;
+
+    #[\ReturnTypeWillChange]
+    public function prepare($query, $options = [])
+    {
+        $this->log[] = 'prepare:' . ($this->inTransaction() ? 'BEGIN' . $this->transactions . ':' : '') . preg_replace('/\s+/', ' ', trim($query));
+        return parent::prepare($query, $options);
+    }
+
+    public function beginTransaction(): bool
+    {
+        $this->transactions++;
+        $this->log[] = 'begin:' . $this->transactions;
+        if ($this->onBegin !== null) {
+            $hook = $this->onBegin;
+            $this->onBegin = null;
+            $hook();
+        }
+        return parent::beginTransaction();
+    }
+
+    public function commit(): bool
+    {
+        $this->log[] = 'commit:' . $this->transactions;
+        return parent::commit();
+    }
+
+    public function rollBack(): bool
+    {
+        $this->log[] = 'rollback:' . $this->transactions;
+        return parent::rollBack();
     }
 }

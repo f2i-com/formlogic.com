@@ -62,8 +62,26 @@ class HostedAppController
             if (!is_array($body) || !is_array($body['package'] ?? null) || !is_int($body['expectedVersion'] ?? null) || $body['expectedVersion'] < 0) {
                 throw new \InvalidArgumentException('Provide a package and expectedVersion');
             }
-            return ['deployment' => $this->hosting->publish($app['id'], $body['package'], $body['expectedVersion'])];
+            // The engine block again, from the bundle JUST published: a `.py` added or removed changes
+            // the server's decision, and the owner's panel mounts its preview on this answer.
+            $published = ['deployment' => $this->hosting->publish($app['id'], $body['package'], $body['expectedVersion'])];
+            return $published + $this->engineAfterPublish($app['id']);
         });
+    }
+
+    /**
+     * The owner's engine view after a publish that has already committed. A resolver failure here
+     * is logged and leaves the block out rather than answering 503 for a publish that succeeded:
+     * the panel keeps the engine it had, and the next GET shows the fresh one.
+     */
+    private function engineAfterPublish(string $appId): array
+    {
+        try {
+            return $this->engineForOwner($appId);
+        } catch (\Throwable $e) {
+            error_log('Hosted app engine after publish unavailable: ' . $e->getMessage());
+            return [];
+        }
     }
 
     public function runtime(Request $request, Response $response, array $args): Response
@@ -74,11 +92,12 @@ class HostedAppController
         $owner = $app['ownerId'] === $userId;
         if (!$owner && ($this->users->getAppUser($app['id'], $userId)['status'] ?? null) !== 'active') return $this->jsonError($response, 'Active app membership required', 403);
         if ($blocked = $this->blockIfDemo($request, $response, 'App hosting is unavailable in the shared demo.')) return $blocked;
-        // The page was loaded on one engine; the server may have decided otherwise since (a
-        // revocation, a policy edit). Checked before respond() so the answer carries the
-        // engine_changed code the parent remounts on, not a bare 409.
-        if ($stale = $this->refuseStaleEngine($request, $response, $app['id'])) return $stale;
-        return $this->respond($response, function () use ($request, $app, $args, $userId, $owner) {
+        return $this->respond($response, function () use ($request, $response, $app, $args, $userId, $owner) {
+            // The page was loaded on one engine; the server may have decided otherwise since (a
+            // revocation, a policy edit). Inside respond(), so a resolver that cannot answer is the
+            // same generic 503 every other failure here is; the refusal itself is a Response, which
+            // respond() passes through, so it keeps the engine_changed code the parent remounts on.
+            if ($stale = $this->refuseStaleEngine($request, $response, $app['id'])) return $stale;
             if ($request->getMethod() === 'GET') {
                 $deployment = $this->hosting->get($app['id']);
                 if (!$deployment) throw new \RuntimeException('This app has no hosted project', 404);
@@ -178,8 +197,10 @@ class HostedAppController
 
     /**
      * 409 engine_changed when the parent's X-FormLogic-Client-Engine no longer matches what the
-     * server decides now. The header grants nothing — a request without it is answered as before,
-     * and costs nothing: the resolver is only asked when there is a header to check.
+     * server decides now. The header grants nothing — a request without it is answered as before
+     * and asks the resolver nothing. A request WITH it pays for the decision: the resolver's reads
+     * (the app and owner row, the policy row, the installed-runtime record) and the deployment's
+     * file names, the same price the GET that mounted the frame paid.
      */
     private function refuseStaleEngine(Request $request, Response $response, string $appId): ?Response
     {
@@ -197,10 +218,14 @@ class HostedAppController
         );
     }
 
+    /** $operation answers with an array to encode, or with a finished Response (a typed refusal). */
     private function respond(Response $response, callable $operation): Response
     {
         $response = $response->withHeader('Cache-Control', 'no-store')->withHeader('X-Content-Type-Options', 'nosniff');
-        try { return $this->jsonResponse($response, $operation()); }
+        try {
+            $result = $operation();
+            return $result instanceof Response ? $result : $this->jsonResponse($response, $result);
+        }
         catch (\InvalidArgumentException $e) { return $this->jsonError($response, $e->getMessage(), 400); }
         catch (\RuntimeException $e) {
             if (in_array($e->getCode(), [404, 409, 422], true)) return $this->jsonError($response, $e->getMessage(), $e->getCode());

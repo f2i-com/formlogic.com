@@ -183,7 +183,9 @@ class CorsMiddleware implements MiddlewareInterface
 
         $response = $response
             ->withHeader('Access-Control-Allow-Origin', $allowedOrigin)
-            ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization, X-CSRF-Token')
+            // X-FormLogic-Client-Engine: what a hosted app frame's actions claim (HostedAppFrame); on
+            // a split-origin deployment every such action preflights, and the preflight must list it.
+            ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization, X-CSRF-Token, X-FormLogic-Client-Engine')
             ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
             ->withHeader('Access-Control-Max-Age', '3600');
 

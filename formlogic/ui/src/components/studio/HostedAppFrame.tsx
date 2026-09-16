@@ -52,18 +52,31 @@ export function HostedAppFrame({
   const [storageIssue, setStorageIssue] = useState<{ message: string; exportable: boolean } | null>(null);
   const [storageEpoch, setStorageEpoch] = useState(0);
   // A 409 engine_changed says this mount's decision is no longer the server's. The refetched one
-  // stands in for the prop only while the parent keeps handing back the decision the server has
-  // already refused; a parent that refetches for itself always wins.
-  const [refetched, setRefetched] = useState<{ replaced: string; engine: FrameEngine } | null>(null);
+  // stands in for the props only while the parent keeps handing back the decision the server has
+  // already refused; a parent that refetches for itself always wins. It carries the whole mount
+  // the runtime GET answered with — client, version, native assets — not only the engine: the
+  // decision changed because the OWNER changed something, often the bundle itself (a `.py` gone),
+  // and a new engine handed the old client is refused by the shell by name.
+  const [refetched, setRefetched] = useState<{
+    replaced: string;
+    engine: FrameEngine;
+    client?: Record<string, string>;
+    version?: number;
+    native?: { assets: Record<string, string>; origins?: string[] };
+  } | null>(null);
   const decided = engine ? `${engine.id};${engine.revision}` : "";
   // Read when a refusal arrives, not when the frame was built: the parent may have refetched for
   // itself since, and an override belongs to the decision it actually replaced.
   const decidedRef = useRef(decided);
   useEffect(() => { decidedRef.current = decided; }, [decided]);
-  const current = refetched?.replaced === decided ? refetched.engine : engine;
+  const override = refetched?.replaced === decided ? refetched : null;
+  const current = override ? override.engine : engine;
+  const mountClient = override?.client ?? client;
+  const mountVersion = override?.version ?? version;
+  const mountNative = native ? (override?.native ?? native) : undefined;
   const engineId = current?.id ?? "";
   const engineRevision = current?.revision ?? "";
-  const frameKey = `${slug}/${version}/${clientIdentity(client)}/${storageEpoch}/${engineId}/${engineRevision}`;
+  const frameKey = `${slug}/${mountVersion}/${clientIdentity(mountClient)}/${storageEpoch}/${engineId}/${engineRevision}`;
   // The frame navigated itself (b3/b1: a sandboxed frame may replace its own document). Nothing
   // here can prevent that, so it is detected after the fact and the frame is taken away.
   const [tripped, setTripped] = useState("");
@@ -78,7 +91,7 @@ export function HostedAppFrame({
     let expired = false;
     let inFlight = 0;
     let remounting = false;
-    const storage = native ? nativeAppStorage(slug) : undefined;
+    const storage = mountNative ? nativeAppStorage(slug) : undefined;
     const controller = new AbortController();
     // What this mount claims on every action. A revision this frame was not given by a runtime GET
     // (AokieWorkspace pins an id, not a decision) claims nothing, so it sends nothing — and an
@@ -93,15 +106,25 @@ export function HostedAppFrame({
     async function remountOnNewEngine() {
       if (remounting) return;
       remounting = true;
-      const result = native ? await api.getNativeRuntime(slug) : await api.getHostedRuntime(slug);
+      const result = mountNative ? await api.getNativeRuntime(slug) : await api.getHostedRuntime(slug);
       if (!active) return;
-      const next = result.data?.engine;
+      const data = result.data;
+      const next = data?.engine;
       if (!next || (next.id === engineId && next.revision === engineRevision)) {
         // Remounting onto the same refused decision would only be refused again.
         setError("This app is now set to run on a different engine. Please reload to continue.");
         return;
       }
-      setRefetched({ replaced: decidedRef.current, engine: next });
+      // The bundle that answer was decided FOR, so the new engine is handed the client it can run.
+      // An answer that lacks it keeps this mount's props.
+      const bundle = data && "project" in data ? data.project : data && "deployment" in data ? data.deployment : undefined;
+      setRefetched({
+        replaced: decidedRef.current,
+        engine: next,
+        client: bundle?.client,
+        version: bundle?.version,
+        native: data && "project" in data && data.project ? { assets: data.project.assets, origins: data.project.origins } : undefined,
+      });
     }
     const timeout = window.setTimeout(
       () => {
@@ -120,7 +143,7 @@ export function HostedAppFrame({
         channel || initializing || expired
       )
         return;
-      if (native && event.data.nativeProtocol !== NATIVE_PROTOCOL) {
+      if (mountNative && event.data.nativeProtocol !== NATIVE_PROTOCOL) {
         clearTimeout(timeout);
         setError("This hosted runtime does not support native apps yet. Update the hosted app runtime and reload.");
         return;
@@ -200,10 +223,10 @@ export function HostedAppFrame({
             reply({ result: storage.mutate(input) });
             return;
           }
-          if (native && action === "nativeRequest") {
+          if (mountNative && action === "nativeRequest") {
             if (typeof input.url !== "string" || !input.options || typeof input.options !== "object" || Array.isArray(input.options)) throw new Error("Invalid app request");
             const url = new URL(input.url, window.location.origin);
-            if (url.origin !== window.location.origin && !native.origins?.includes(url.origin)) throw new Error("This URL is not part of the app backend");
+            if (url.origin !== window.location.origin && !mountNative.origins?.includes(url.origin)) throw new Error("This URL is not part of the app backend");
             const options = input.options as Record<string, unknown>;
             const result = await api.runNativeRequest(slug, { path: url.pathname, query: Object.fromEntries(url.searchParams), method: options.method || "GET", headers: options.headers || {}, body: options.body || {} }, controller.signal, clientEngine);
             if (engineChanged(result)) void remountOnNewEngine();
@@ -232,10 +255,10 @@ export function HostedAppFrame({
       frame.current?.contentWindow?.postMessage(
         {
           type: "formlogic:init",
-          client,
-          appId: native ? `native-${slug}` : `hosted-${slug}-${version}`,
-          native: !!native,
-          assets: native?.assets,
+          client: mountClient,
+          appId: mountNative ? `native-${slug}` : `hosted-${slug}-${mountVersion}`,
+          native: !!mountNative,
+          assets: mountNative?.assets,
           storage: savedStorage,
           dark: document.documentElement.classList.contains("dark"),
           // The id alone: the shell serves engines by name and refuses one it does not, so an
@@ -262,7 +285,7 @@ export function HostedAppFrame({
       port.current = null;
       channel?.port1.close();
     };
-  }, [slug, client, version, native, storageEpoch, engineId, engineRevision]);
+  }, [slug, mountClient, mountVersion, mountNative, storageEpoch, engineId, engineRevision]);
   // Every engine: the first load is the frame starting, a second is the document being replaced
   // under it. Counted per frame, so a remount (new source, reset data, a new engine) starts over.
   const countLoad = () => {

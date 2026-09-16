@@ -73,8 +73,28 @@ class NativeAppController
             }
             $body = $request->getParsedBody();
             if (!is_array($body) || !is_array($body['project'] ?? null) || !is_int($body['expectedVersion'] ?? null) || $body['expectedVersion'] < 0) throw new \InvalidArgumentException('Provide a project and expectedVersion');
-            return ['project' => $this->native->install($app['id'], $body['project'], $body['expectedVersion'])];
+            // The engine block again, from the project JUST installed: a `.py` added or removed
+            // changes the server's decision, and the owner's panel shows this answer.
+            $installed = $this->native->install($app['id'], $body['project'], $body['expectedVersion']);
+            return ['project' => $installed] + $this->engineAfterInstall($app['id'], RuntimeEngineService::languagesOf(NativeAppService::clientFiles($installed)));
         }, !$readOnly);
+    }
+
+    /**
+     * The owner's engine view after an install that has already committed. A resolver failure here
+     * is logged and leaves the block out rather than answering 503 for an install that succeeded:
+     * the panel keeps the engine it had, and the next GET shows the fresh one.
+     *
+     * @param list<string> $languages
+     */
+    private function engineAfterInstall(string $appId, array $languages): array
+    {
+        try {
+            return ['engine' => $this->engines->effective($appId, $languages), 'enginePolicy' => $this->engines->ownerPolicy()];
+        } catch (\Throwable $e) {
+            error_log('Native app engine after install unavailable: ' . $e->getMessage());
+            return [];
+        }
     }
 
     /**
@@ -101,11 +121,12 @@ class NativeAppController
         $owner = $app && $user && $app['ownerId'] === $user;
         if (!$app || (!$owner && !$this->apps->isRuntimeVisible($app, (string) ($user ?? '')))) return $this->jsonError($response, 'App not found or access denied', 404);
         if ($blocked = $this->blockIfDemo($request, $response, 'Native hosting is unavailable in the shared demo.')) return $blocked;
-        // The page was loaded on one engine; the server may have decided otherwise since (a
-        // revocation, a policy edit). Checked before respond() so the answer carries the
-        // engine_changed code the parent remounts on, not a bare 409.
-        if ($stale = $this->refuseStaleEngine($request, $response, $app['id'])) return $stale;
-        return $this->respond($response, function () use ($request, $app, $user, $owner) {
+        return $this->respond($response, function () use ($request, $response, $app, $user, $owner) {
+            // The page was loaded on one engine; the server may have decided otherwise since (a
+            // revocation, a policy edit). Inside respond(), so a resolver that cannot answer is the
+            // same generic 503 every other failure here is; the refusal itself is a Response, which
+            // respond() passes through, so it keeps the engine_changed code the parent remounts on.
+            if ($stale = $this->refuseStaleEngine($request, $response, $app['id'])) return $stale;
             // Access is decided against the settled project (FL-S04), never an update's leftover project.json.
             $project = $this->native->project($app['id']);
             if (!$project) throw new \RuntimeException('Native app not found', 404);
@@ -176,8 +197,10 @@ class NativeAppController
 
     /**
      * 409 engine_changed when the parent's X-FormLogic-Client-Engine no longer matches what the
-     * server decides now. The header grants nothing — a request without it is answered as before,
-     * and costs nothing: the resolver is only asked when there is a header to check.
+     * server decides now. The header grants nothing — a request without it is answered as before
+     * and asks the resolver nothing. A request WITH it pays for the decision: the resolver's reads
+     * (the app and owner row, the policy row, the installed-runtime record) and the project's file
+     * names, the same price the GET that mounted the frame paid.
      */
     private function refuseStaleEngine(Request $request, Response $response, string $appId): ?Response
     {
@@ -195,10 +218,14 @@ class NativeAppController
         );
     }
 
+    /** $operation answers with an array to encode, or with a finished Response (a typed refusal). */
     private function respond(Response $response, callable $operation, bool $owner = false): Response
     {
         $response = $response->withHeader('Cache-Control', 'no-store')->withHeader('X-Content-Type-Options', 'nosniff');
-        try { return $this->jsonResponse($response, $operation()); }
+        try {
+            $result = $operation();
+            return $result instanceof Response ? $result : $this->jsonResponse($response, $result);
+        }
         catch (\InvalidArgumentException|\JsonException $e) { return $this->jsonError($response, $e->getMessage(), 400); }
         catch (\RuntimeException $e) {
             if (in_array($e->getCode(), [402,403,404,409,422,429], true)) return $this->jsonError($response, $e->getMessage(), $e->getCode());

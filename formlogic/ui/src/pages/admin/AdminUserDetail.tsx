@@ -73,8 +73,17 @@ function AdminUserDetailPage({ userId }: { userId: string }) {
     setCodeTrustBusy(true);
     const r = await api.adminSetCodeTrust(userId, next, codeTrustPassword);
     setCodeTrustBusy(false);
-    if (r.error || !r.data) { toast.error(next ? 'Could not verify this account' : 'Could not revoke verification', r.error || undefined); return; }
-    const cleared = r.data.codeTrust.affectedApps.length;
+    // The shape, not only the status: a 2xx with another body must not throw past the busy flag
+    // and leave the dialog sitting silently (the AdminEnginePolicyCard bug, again).
+    const codeTrust = r.data?.codeTrust;
+    if (r.error || !codeTrust || typeof codeTrust.verified !== 'boolean' || !Array.isArray(codeTrust.affectedApps)) {
+      toast.error(
+        next ? 'Could not verify this account' : 'Could not revoke verification',
+        r.error || 'The server gave an unexpected answer. Reload this page to see whether the change was made.'
+      );
+      return;
+    }
+    const cleared = codeTrust.affectedApps.length;
     setConfirmCodeTrust(null);
     setCodeTrustPassword('');
     toast.success(

@@ -274,6 +274,11 @@ class AdminService
      * JavaScript back on without the owner choosing it again. If the row cannot be written, the
      * trust change does not commit.
      *
+     * The target's user row is read FOR UPDATE inside the transaction, before the apps are looked
+     * at: RuntimeEngineService::storeChoice locks the same row before it re-checks the owner's
+     * verification, so a revoke and an owner's host-js choice serialise on it and neither can slip
+     * a host-js choice past the other.
+     *
      * @return array{verified: bool, verifiedAt: string|null, verifiedBy: string|null, affectedApps: list<string>, self: bool}
      * @throws \InvalidArgumentException on guard violations
      */
@@ -284,24 +289,23 @@ class AdminService
         AuditService $audit,
         ?string $ipAddress = null
     ): array {
-        $stmt = $this->mysql->prepare('SELECT id, email, mfa_enabled, code_trust_verified_at FROM users WHERE id = :id');
-        $stmt->execute(['id' => $targetUserId]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        if (!$row) {
-            throw new \InvalidArgumentException('User not found');
-        }
-        if ($verified && $this->isDemoRow($row)) {
-            throw new \InvalidArgumentException('The shared demo account cannot be verified for code trust');
-        }
-        if ($verified && !(bool) ($row['mfa_enabled'] ?? false)) {
-            throw new \InvalidArgumentException('This account must have two-factor authentication enabled before it can be verified for code trust');
-        }
-
         $ownsTx = !$this->mysql->inTransaction();
         if ($ownsTx) {
             $this->mysql->beginTransaction();
         }
         try {
+            $stmt = $this->mysql->prepare('SELECT id, email, mfa_enabled, code_trust_verified_at FROM users WHERE id = :id FOR UPDATE');
+            $stmt->execute(['id' => $targetUserId]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!$row) {
+                throw new \InvalidArgumentException('User not found');
+            }
+            if ($verified && $this->isDemoRow($row)) {
+                throw new \InvalidArgumentException('The shared demo account cannot be verified for code trust');
+            }
+            if ($verified && !(bool) ($row['mfa_enabled'] ?? false)) {
+                throw new \InvalidArgumentException('This account must have two-factor authentication enabled before it can be verified for code trust');
+            }
             $affected = $verified ? [] : $this->clearHostJsApps($targetUserId);
             $upd = $this->mysql->prepare(
                 'UPDATE users SET code_trust_verified_at = :at, code_trust_verified_by = :by WHERE id = :id'

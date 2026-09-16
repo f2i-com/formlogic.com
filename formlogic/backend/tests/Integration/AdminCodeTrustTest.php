@@ -135,10 +135,10 @@ class AdminCodeTrustTest extends TestCase
         return is_string($value) ? $value : null;
     }
 
-    /** @return array<array{action: string, user_id: ?string, details: ?string}> */
+    /** @return array<array{action: string, user_id: ?string, details: ?string, ip_address: ?string}> */
     private function auditRows(string $subjectId): array
     {
-        $stmt = self::$pdo->prepare('SELECT action, user_id, details FROM audit_log WHERE resource_id = ? ORDER BY sequence_number ASC');
+        $stmt = self::$pdo->prepare('SELECT action, user_id, details, ip_address FROM audit_log WHERE resource_id = ? ORDER BY sequence_number ASC');
         $stmt->execute([$subjectId]);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
@@ -252,6 +252,46 @@ class AdminCodeTrustTest extends TestCase
         $this->assertSame([$this->appId], $details['affectedApps']);
     }
 
+    public function testTheRevocationRecordsWhoSwitchedTwoFactorAuthOff(): void
+    {
+        // From Settings, the account itself, with no request address to record.
+        $this->verify($this->ownerId);
+        $revoked = (new MfaService(self::$mysql, new TotpService(), $this->audit()))->disable($this->ownerId);
+        $this->assertSame(['affectedApps' => [$this->appId]], $revoked);
+        $rows = $this->auditRows($this->ownerId);
+        $this->assertSame('user.revoke_code_trust', $rows[0]['action']);
+        $this->assertSame($this->ownerId, $rows[0]['user_id']);
+        $this->assertNull($rows[0]['ip_address']);
+
+        // From an admin's lockout reset, the ADMIN, from their address — not the person being reset.
+        self::$pdo->prepare('DELETE FROM audit_log WHERE resource_id = ?')->execute([$this->ownerId]);
+        self::$pdo->prepare('UPDATE users SET mfa_enabled = 1 WHERE id = ?')->execute([$this->ownerId]);
+        self::$pdo->prepare('UPDATE apps SET client_engine = ? WHERE id = ?')->execute(['host-js', $this->appId]);
+        $this->verify($this->ownerId);
+        $request = (new ServerRequestFactory())
+            ->createServerRequest('POST', '/api/admin/users/' . $this->ownerId . '/mfa/reset', ['REMOTE_ADDR' => '203.0.113.9'])
+            ->withAttribute('userId', $this->adminId)
+            ->withParsedBody(['password' => 'admin-pass-123']);
+        $response = $this->controller(null, new MfaService(self::$mysql, new TotpService(), $this->audit()))
+            ->resetMfa($request, (new ResponseFactory())->createResponse(), ['id' => $this->ownerId]);
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertFalse(self::$admin->codeTrustRow($this->ownerId)['verified']);
+        $this->assertNull($this->clientEngine($this->appId));
+        $byAction = [];
+        foreach ($this->auditRows($this->ownerId) as $row) {
+            $byAction[$row['action']] = $row;
+        }
+        $this->assertSame($this->adminId, $byAction['user.revoke_code_trust']['user_id'], 'the revocation names the admin who caused it');
+        $this->assertSame('203.0.113.9', $byAction['user.revoke_code_trust']['ip_address']);
+        $this->assertSame('mfa_disabled', json_decode((string) $byAction['user.revoke_code_trust']['details'], true)['trigger']);
+        $this->assertSame($this->adminId, $byAction['admin.mfa_reset']['user_id']);
+        $this->assertSame(
+            ['wasEnabled' => true, 'affectedApps' => [$this->appId]],
+            json_decode((string) $byAction['admin.mfa_reset']['details'], true),
+            'the reset row names the apps its revocation moved'
+        );
+    }
+
     public function testSwitchingTwoFactorAuthOffOnAnUnverifiedAccountRecordsNothing(): void
     {
         // The common case, and the one MfaService must handle with no audit service configured.
@@ -264,7 +304,7 @@ class AdminCodeTrustTest extends TestCase
 
     // ── the admin endpoint ───────────────────────────────────────────────────
 
-    private function controller(?AuditService $audit = null): AdminController
+    private function controller(?AuditService $audit = null, ?MfaService $mfa = null): AdminController
     {
         return new AdminController(
             self::$admin,
@@ -279,7 +319,7 @@ class AdminCodeTrustTest extends TestCase
             null,
             null,
             null,
-            null,
+            $mfa,
             null,
             null,
             null,
@@ -310,6 +350,21 @@ class AdminCodeTrustTest extends TestCase
         $denied = self::$pdo->prepare('SELECT action FROM audit_log WHERE resource_id = ? AND action = ?');
         $denied->execute([$this->ownerId, 'admin.code_trust_denied']);
         $this->assertSame('admin.code_trust_denied', $denied->fetchColumn());
+    }
+
+    public function testAVerifiedFlagThatIsNotABooleanIsRefusedAndRevokesNothing(): void
+    {
+        // Anything but a boolean used to read as false — a REVOKE that cleared the account's host-js
+        // apps — on a request whose author almost certainly meant the opposite.
+        $this->verify($this->ownerId);
+        foreach (['true', 1, 'false', 0, null] as $malformed) {
+            $response = $this->post($this->ownerId, ['verified' => $malformed, 'password' => 'admin-pass-123']);
+            $this->assertSame(400, $response->getStatusCode(), var_export($malformed, true));
+            $this->assertStringContainsString('true or false', $this->jsonBody($response)['message']);
+        }
+        $this->assertTrue(self::$admin->codeTrustRow($this->ownerId)['verified'], 'the verification stands');
+        $this->assertSame('host-js', $this->clientEngine($this->appId), 'the host-js choice stands');
+        $this->assertSame([], $this->auditRows($this->ownerId), 'no revoke and no step-up denial was recorded');
     }
 
     public function testTheEndpointVerifiesWithTheAdminsOwnPassword(): void

@@ -121,6 +121,20 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
   }, [dirty, flush]);
   /** Every change to the open draft; the first on a clean editor bases the draft on the installed version. */
   const edit = (next: NativeProject) => { if (readOnly) return; setProject(next); setBase(current => current ?? version); setDirty(true); };
+  // The engine block from a server answer. Absent (an older server, or a resolver that could not
+  // answer after an install) keeps what the editor already shows.
+  const takeEngine = (data: { engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }) => {
+    if (!data.engine || !data.enginePolicy) return;
+    setEngine(data.engine); setEnginePolicy(data.enginePolicy);
+  };
+  // After a choice is stored, the engine is re-read from THIS editor's own GET rather than shown
+  // from the PUT's answer: the PUT answers for the whole column (hosted and native bundles merged),
+  // while this editor is about the native project alone.
+  const refreshEngine = async () => {
+    const result = await api.getNativeProject(app.id);
+    if (!alive.current || result.error || !result.data) return;
+    takeEngine(result.data);
+  };
   const conflict = dirty && base !== null && base !== version;
   const recoverDraft = () => {
     if (!recoverable) return;
@@ -160,6 +174,8 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
       clearTimeout(timer.current); pending.current = null; lastWrite.current = null;
       if (!recoverable) drafts.clear();
       setProject(result.data.project); setVersion(result.data.project.version); setDirty(false); setBase(null); setKept(null);
+      // The server decided the engine again from the project just installed (a `.py` added or removed changes it).
+      takeEngine(result.data);
       setNotice('Installed. The app uses its private SQLite database and ZIPP backend. Existing records were preserved.');
       onInstalled?.(!!result.data.project.home);
     } finally { lock.current = false; if (alive.current) setBusy(false); }
@@ -209,7 +225,7 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
           <label className="block text-sm font-medium text-slate-800 dark:text-slate-200">Visitor access<select aria-label="Visitor access" className={`${control} mt-2`} disabled={busy || readOnly} value={project.access} onChange={event => edit({ ...project, access: event.target.value as NativeProject['access'] })}><option value="application">Use the app’s own sign-in</option><option value="members">Require FormLogic membership</option></select></label>
           <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">The app’s own sign-in keeps its account system intact. FormLogic membership adds a gate for apps without sign-in; configure registration and invitations in Users &amp; roles.</p>
         </>}
-        {engine && enginePolicy && <AppEngineSelect appId={app.id} engine={engine} policy={enginePolicy} disabled={busy || readOnly} onChanged={(next, policy) => { setEngine(next); setEnginePolicy(policy); }} />}
+        {engine && enginePolicy && <AppEngineSelect appId={app.id} engine={engine} policy={enginePolicy} disabled={busy || readOnly} onChanged={() => void refreshEngine()} />}
         {project && <Button variant="secondary" onClick={() => {
           try {
             const bytes = exportNativeProject(project);
