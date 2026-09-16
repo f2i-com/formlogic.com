@@ -4,15 +4,16 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { getBytes } = vi.hoisted(() => ({ getBytes: vi.fn() }));
-// The installed table, stubbed: this page holds ZIPP's bytes, and only their identity matches; it
-// holds nothing at all for host JavaScript, which is the runtime document's own engine and is
-// announced as `true`. OWN_DOCUMENT_ENGINE itself lives in frameEngine, which is never mocked, so
-// this stub cannot also decide what an announcement is compared against.
+// The installed table, stubbed: this page holds ZIPP's bytes and its web variant's, and only
+// their identities match; it holds nothing at all for host JavaScript, which is the runtime
+// document's own engine and is announced as `true`. OWN_DOCUMENT_ENGINE itself lives in
+// frameEngine, which is never mocked, so this stub cannot also decide what an announcement is
+// compared against.
 vi.mock('../../lib/formlogic/zipp-bytes', () => ({
   getZippWasmBytes: getBytes,
   getEngineBytes: getBytes,
   engineIdentity: (id: string) =>
-    id === 'zipp-web-python' ? { version: '0.0.17', sha256: 'current' } : id === 'host-js' ? true : undefined,
+    id === 'zipp-web-python' ? { version: '0.0.17', sha256: 'current' } : id === 'zipp-web' ? { version: '0.0.17', sha256: 'web' } : id === 'host-js' ? true : undefined,
   engineNeedsBytes: (id: string) => id !== 'host-js',
 }));
 vi.mock('../../lib/api', () => ({ api: { runHostedAction: vi.fn(), runNativeRequest: vi.fn(), getHostedRuntime: vi.fn(), getNativeRuntime: vi.fn() } }));
@@ -144,6 +145,29 @@ describe('hosted app engine handoff', () => {
     expect(initOf(post).zippWasm).toBeInstanceOf(ArrayBuffer);
   });
 
+  it('boots the web variant when the server decided it, the shell announces it and this page holds it, taking bytes from the variant\'s own broker', async () => {
+    const web = { version: '0.0.17', sha256: 'web' };
+    const { iframe, post } = await mount({ id: 'zipp-web', revision: 'r7' });
+    expect(iframe.getAttribute('src')).toBe('/hosted-runtime/index.html');
+    // `zipp` stays the primary (unchanged for every older reader); `engines` carries the variant's own identity.
+    await act(async () => sendReady(iframe, identity, iframe.contentWindow!, { 'zipp-web-python': { ...identity }, 'zipp-web': { ...web } }));
+    expect(initOf(post).engine).toBe('zipp-web');
+    expect(getBytes).toHaveBeenCalledTimes(1);
+    expect(getBytes).toHaveBeenCalledWith('zipp-web');
+    expect(initOf(post).zippWasm).toBeInstanceOf(ArrayBuffer);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('refuses a shell that announces the variant under the primary\'s identity', async () => {
+    // The identity the shell announces for zipp-web must be the VARIANT's bytes this page holds,
+    // never the primary's: the frame would otherwise post the wrong engine under the variant's name.
+    const { iframe, post } = await mount({ id: 'zipp-web', revision: 'r7' });
+    await act(async () => sendReady(iframe, identity, iframe.contentWindow!, { 'zipp-web-python': { ...identity }, 'zipp-web': { ...identity } }));
+    // Not honoured, so it falls back to the primary, which IS announced and matches.
+    expect(initOf(post).engine).toBe('zipp-web-python');
+    expect(getBytes).toHaveBeenCalledWith('zipp-web-python');
+  });
+
   it('passes an announced engine through, matching its identity by value', async () => {
     const { iframe, post } = await mount({ id: 'zipp-web-python', revision: 'r1' });
     // The shell's `engines` entry and its `zipp` are one object cloned twice: never this page's.
@@ -254,6 +278,10 @@ describe('chooseFrameEngine', () => {
 
   it('falls back for an engine this page cannot boot, however loudly the shell announces it', () => {
     expect(chooseFrameEngine({ id: 'zipp-next' }, { 'zipp-next': { version: '2', sha256: 'next' } }, installed)).toBe('zipp-web-python');
+    // A build from an install without the web variant holds no zipp-web identity: the server's
+    // decision and the shell's announcement agree, and the frame still runs the primary.
+    const withoutVariant = (id: string) => (id === 'zipp-web' ? undefined : installed(id));
+    expect(chooseFrameEngine({ id: 'zipp-web' }, { 'zipp-web': { version: '1', sha256: 'web' }, 'zipp-web-python': { version: '1', sha256: 'python' } }, withoutVariant)).toBe('zipp-web-python');
   });
 
   it('refuses rather than falls back for host JavaScript, because its document serves nothing else', () => {

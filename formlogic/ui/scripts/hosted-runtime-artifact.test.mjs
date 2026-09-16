@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { resolve, dirname, basename } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { artifactFiles, assertNoInterruptedPromotion, checkEntryDocuments, checkRuntimeArtifact, checkZippTree, installRuntimeArtifact, isZippEngineWasm, LINKED_ASSET, writeRuntimeManifest, zippReleaseIdentity } from './hosted-runtime-artifact.mjs';
+import { artifactFiles, assertNoInterruptedPromotion, checkEntryDocuments, checkRuntimeArtifact, checkZippTree, checkZippVariantTree, installRuntimeArtifact, isZippEngineWasm, LINKED_ASSET, writeRuntimeManifest, zippReleaseIdentity, zippVariantIdentity } from './hosted-runtime-artifact.mjs';
 import { wasmModule, writeZippTree, zippEngineWasm, zippReleaseFixture, zippTreeMap } from './zipp-release-fixture.mjs';
 
 const identity = { version: '0.0.17', sha256: 'a'.repeat(64) };
@@ -270,4 +270,102 @@ test('refuses two documents that do not run the same shell', async t => {
 test('refuses a document with no <html> element or no entry script at all', async t => {
   await assert.rejects(checkEntryDocuments(await entryFixture(t, { index: '<script src="./assets/main-abc.js"></script>' })), /index\.html has no <html> element/);
   await assert.rejects(checkEntryDocuments(await entryFixture(t, { index: '<!doctype html><html><body>nothing</body></html>' })), /index\.html loads no entry script/);
+});
+
+// ── The web variant tree ────────────────────────────────────────────────────
+// Softn ships ZIPP's JavaScript-only web build as a VARIANT of the same release, in a top-level
+// zipp-web/ tree of five files and no glue (it runs under the primary's zipp_wasm.js). What is
+// checked is provenance: that it is the same release built again — same commit, same release
+// sums, the primary named as its primary — and never the same bytes named twice.
+
+/** The web tree with `changes`, and its SOURCE.json rewritten by `source` when given. */
+function editedWeb(release, changes = {}, source = null) {
+  const files = { ...release.webFiles, ...changes };
+  if (source) files['SOURCE.json'] = Buffer.from(JSON.stringify(source(structuredClone(release.webSource))));
+  return zippTreeMap(files);
+}
+
+test('zippVariantIdentity accepts the eight-key variant record and refuses a malformed one', () => {
+  const { variant } = zippReleaseFixture({ webVariant: true });
+  assert.deepEqual(zippVariantIdentity(variant), variant);
+  assert.deepEqual(Object.keys(variant), ['bundle', 'bundleSha256', 'sha256', 'glueSha256', 'variant', 'languages', 'stackBytes', 'commit']);
+  assert.throws(() => zippVariantIdentity(undefined), /The ZIPP web variant record is missing/);
+  assert.throws(() => zippVariantIdentity({ ...variant, sha256: 'not hex' }), /sha256 is not a SHA-256/);
+  assert.throws(() => zippVariantIdentity({ ...variant, commit: 'abc' }), /commit is not a 40-hex commit/);
+  assert.throws(() => zippVariantIdentity({ ...variant, stackBytes: '1048576' }), /stackBytes is not a positive integer/);
+  assert.throws(() => zippVariantIdentity({ ...variant, languages: 'javascript' }), /languages is not a list of names/);
+  assert.throws(() => zippVariantIdentity({ ...variant, bundle: '../web.zip' }), /no bundle file name/);
+});
+
+test('checkZippVariantTree accepts a consistent web tree from a map or a directory, with or without the release sums, and the primary tree still passes with the variant recorded', async t => {
+  const release = zippReleaseFixture({ webVariant: true });
+  assert.deepEqual(Object.keys(release.webFiles).sort(), ['BUILD-INFO.txt', 'PROFILE.json', 'SHA256SUMS', 'SOURCE.json', 'zipp_wasm_bg.wasm']);
+  assert.match(release.webFiles.SHA256SUMS.toString(), /host-sdk\/zipp-host\.mjs[\s\S]*LICENSE-APACHE[\s\S]*zipp_wasm\.js/, 'the web bundle sums list files Softn does not ship');
+  assert.deepEqual(await checkZippVariantTree(zippTreeMap(release.webFiles), release.variant, release.record), release.webSource);
+  assert.deepEqual(await checkZippVariantTree(zippTreeMap(release.webFiles), release.variant, release.source, { releaseSums: release.files['RELEASE-SHA256SUMS'] }), release.webSource);
+  const directory = await mkdtemp(resolve(tmpdir(), 'formlogic-zipp-web-tree-test-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeZippTree(directory, release.webFiles);
+  assert.deepEqual(await checkZippVariantTree(directory, release.variant, release.record), release.webSource);
+  // The primary's record gained one key, `variants`, and the primary tree's SOURCE.json carries it: the existing check passes.
+  assert.equal(Object.keys(release.record).at(-1), 'variants');
+  assert.deepEqual(await checkZippTree(zippTreeMap(release.files), release.record), release.source);
+  // And a primary tree that does NOT carry the variant the release records fails that check.
+  const plain = zippReleaseFixture();
+  await assert.rejects(checkZippTree(zippTreeMap(plain.files), release.record), /SOURCE\.json variants is \(absent\); the release records \{"web":/);
+});
+
+test('checkZippVariantTree refuses a tampered variant file and a variant not built from the release commit', async () => {
+  const release = zippReleaseFixture({ webVariant: true });
+  // Tampered bytes: the engine against the recorded digest, every other shipped file against the web bundle's sums.
+  const replaced = zippEngineWasm('replaced');
+  await assert.rejects(checkZippVariantTree(editedWeb(release, { 'zipp_wasm_bg.wasm': replaced }), release.variant, release.record), /web variant tree's zipp_wasm_bg\.wasm differs from ZIPP v0\.0\.18's web bundle SHA256SUMS/);
+  // With the inner sums rewritten to match, the recorded digest is what refuses it.
+  const resummed = Buffer.from(release.webFiles.SHA256SUMS.toString().replace(release.variant.sha256, sha256(replaced)));
+  await assert.rejects(checkZippVariantTree(editedWeb(release, { 'zipp_wasm_bg.wasm': replaced, SHA256SUMS: resummed }), release.variant, release.record), /web variant tree's zipp_wasm_bg\.wasm differs from the recorded variant sha256/);
+  await assert.rejects(checkZippVariantTree(editedWeb(release, { 'BUILD-INFO.txt': Buffer.from(`${release.webFiles['BUILD-INFO.txt']}extra=1\n`) }), release.variant, release.record), /web variant tree's BUILD-INFO\.txt differs from ZIPP v0\.0\.18's web bundle SHA256SUMS/);
+  await assert.rejects(checkZippVariantTree(editedWeb(release, { 'PROFILE.json': Buffer.from('{}') }), release.variant, release.record), /web variant tree's PROFILE\.json differs from ZIPP v0\.0\.18's web bundle SHA256SUMS/);
+  await assert.rejects(checkZippVariantTree(editedWeb(release, { 'zipp_wasm.js': release.webGlue }), release.variant, release.record), /web variant tree ships zipp_wasm\.js, which .* it runs under the primary's glue/);
+  await assert.rejects(checkZippVariantTree(editedWeb(release, { 'extra.txt': Buffer.from('x') }), release.variant, release.record), /web variant tree ships extra\.txt, which ZIPP v0\.0\.18's web bundle SHA256SUMS does not list/);
+  const { 'PROFILE.json': _profile, ...withoutProfile } = release.webFiles;
+  await assert.rejects(checkZippVariantTree(zippTreeMap(withoutProfile), release.variant, release.record), /web variant tree is missing PROFILE\.json/);
+  // The commit: in the record, in the tree's SOURCE.json, and in BUILD-INFO.
+  await assert.rejects(checkZippVariantTree(zippTreeMap(release.webFiles), { ...release.variant, commit: 'd'.repeat(40) }, release.record), /web variant record was built from dddddddddddd; the release is aaaaaaaaaaaa/);
+  await assert.rejects(checkZippVariantTree(editedWeb(release, {}, s => ({ ...s, revision: 'd'.repeat(40) })), release.variant, release.record), /web variant tree's SOURCE\.json revision is "d{40}"; the release's is "a{40}"/);
+  const movedCommit = zippReleaseFixture({ webVariant: true, webBuildInfo: text => text.replace(/commit=\w+/, `commit=${'d'.repeat(40)}`) });
+  await assert.rejects(checkZippVariantTree(zippTreeMap(movedCommit.webFiles), movedCommit.variant, movedCommit.record), /web variant tree's BUILD-INFO\.txt commit is "d{40}"; SOURCE\.json revision is "a{40}"/);
+  const bigStack = zippReleaseFixture({ webVariant: true, webBuildInfo: text => text.replace('stack-bytes=1048576', 'stack-bytes=16777216') });
+  await assert.rejects(checkZippVariantTree(zippTreeMap(bigStack.webFiles), bigStack.variant, bigStack.record), /web variant tree's BUILD-INFO\.txt stack-bytes is 16777216; SOURCE\.json stackBytes is 1048576/);
+});
+
+test('checkZippVariantTree refuses a variant identical to the primary, one that runs Python, and one whose record or primary block is not the release\'s', async () => {
+  const release = zippReleaseFixture({ webVariant: true });
+  // The same bytes named twice: a fully re-recorded substitution (the primary in the variant tree, both digests rewritten) is refused by the record alone.
+  const identical = zippReleaseFixture({ webVariant: true, webWasm: release.wasm });
+  assert.equal(identical.variant.sha256, identical.source.sha256);
+  await assert.rejects(checkZippVariantTree(zippTreeMap(identical.webFiles), identical.variant, identical.record), /names the primary engine's own digest; a variant is the same source built again, not the same bytes named twice/);
+  // The primary's bytes in the variant tree under the genuine record: not the variant.
+  await assert.rejects(checkZippVariantTree(editedWeb(release, { 'zipp_wasm_bg.wasm': release.wasm }), release.variant, release.record), /zipp_wasm_bg\.wasm differs from ZIPP v0\.0\.18's web bundle SHA256SUMS/);
+  const primarySummed = Buffer.from(release.webFiles.SHA256SUMS.toString().replace(release.variant.sha256, release.source.sha256));
+  await assert.rejects(checkZippVariantTree(editedWeb(release, { 'zipp_wasm_bg.wasm': release.wasm, SHA256SUMS: primarySummed }), release.variant, release.record), /zipp_wasm_bg\.wasm differs from the recorded variant sha256/);
+  // zipp-web is the JavaScript-only build by definition: a variant that runs Python is not it.
+  await assert.rejects(checkZippVariantTree(zippTreeMap(release.webFiles), { ...release.variant, languages: ['javascript', 'python'] }, release.record), /record is variant "javascript" with languages \["javascript","python"\]; zipp-web is the JavaScript-only build/);
+  await assert.rejects(checkZippVariantTree(zippTreeMap(release.webFiles), { ...release.variant, variant: 'javascript-python' }, release.record), /record is variant "javascript-python"/);
+  // The record's every key against the tree's SOURCE.json.
+  await assert.rejects(checkZippVariantTree(zippTreeMap(release.webFiles), { ...release.variant, stackBytes: 2097152 }, release.record), /web variant tree's SOURCE\.json stackBytes is 1048576; the release records 2097152/);
+  await assert.rejects(checkZippVariantTree(zippTreeMap(release.webFiles), { ...release.variant, glueSha256: 'e'.repeat(64) }, release.record), /web variant tree's SOURCE\.json glueSha256 is "[0-9a-f]{64}"; the release records "e{64}"/);
+  // The tree must be the SAME release as the primary: version, release tag, release sums, build, toolchain.
+  await assert.rejects(checkZippVariantTree(editedWeb(release, {}, s => ({ ...s, sumsSha256: 'e'.repeat(64) })), release.variant, release.record), /web variant tree's SOURCE\.json sumsSha256 is "e{64}"; the release's is/);
+  await assert.rejects(checkZippVariantTree(editedWeb(release, {}, s => ({ ...s, version: '0.0.19', release: 'v0.0.19' })), release.variant, release.record), /web variant tree's SOURCE\.json version is "0\.0\.19"; the release's is "0\.0\.18"/);
+  await assert.rejects(checkZippVariantTree(editedWeb(release, {}, s => ({ ...s, build: 'local' })), release.variant, release.record), /web variant tree's SOURCE\.json build is "local"; the release's is "release"/);
+  await assert.rejects(checkZippVariantTree(editedWeb(release, {}, s => ({ ...s, rustc: 'rustc 1.93.0 (fixture)' })), release.variant, release.source), /web variant tree's SOURCE\.json rustc is "rustc 1\.93\.0 \(fixture\)"; the release's is "rustc 1\.92\.0 \(fixture\)"/);
+  // The primary block names the engine this is a variant OF.
+  await assert.rejects(checkZippVariantTree(editedWeb(release, {}, s => ({ ...s, primary: { ...s.primary, sha256: 'e'.repeat(64) } })), release.variant, release.record), /web variant tree's SOURCE\.json primary is \{.*"sha256":"e{64}".*\}; the release's engine is zipp-wasm-0\.0\.18-web-python\.zip/);
+  await assert.rejects(checkZippVariantTree(editedWeb(release, {}, s => { delete s.primary; return s; }), release.variant, release.record), /web variant tree's SOURCE\.json primary is \(absent\)/);
+  // The release sums, when the caller has them: the recorded ZIPP SHA256SUMS, listing the web bundle with the recorded digest.
+  await assert.rejects(checkZippVariantTree(zippTreeMap(release.webFiles), release.variant, release.record, { releaseSums: Buffer.from('not the sums\n') }), /RELEASE-SHA256SUMS has a line that is not/);
+  const otherSums = Buffer.from(release.files['RELEASE-SHA256SUMS'].toString().replace(release.variant.bundleSha256, 'e'.repeat(64)));
+  await assert.rejects(checkZippVariantTree(zippTreeMap(release.webFiles), release.variant, release.record, { releaseSums: otherSums }), /RELEASE-SHA256SUMS is not the ZIPP v0\.0\.18 SHA256SUMS the release records/);
+  const primaryRecordWithOtherSums = { ...release.record, sumsSha256: sha256(otherSums) };
+  await assert.rejects(checkZippVariantTree(editedWeb(release, {}, s => ({ ...s, sumsSha256: sha256(otherSums) })), release.variant, primaryRecordWithOtherSums, { releaseSums: otherSums }), /SHA256SUMS does not list zipp-wasm-0\.0\.18-web\.zip with the digest the variant record says/);
 });

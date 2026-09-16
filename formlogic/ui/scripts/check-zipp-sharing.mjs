@@ -1,6 +1,7 @@
 // A production-bundle browser check, with no account or external API calls.
 // Build the hosted runtime first: npm run build:hosted-runtime
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -14,6 +15,10 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const fixture = join(root, 'e2e/fixtures/zipp-sharing.html');
 const hostedRoot = join(root, 'public/hosted-runtime');
 await import('./check-hosted-runtime.mjs');
+// The installed engine and, when the installed Softn release ships it, its JavaScript-only web
+// variant (served as zipp-web). The variant-dependent order below runs only when it is there.
+const primary = JSON.parse(await readFile(join(root, 'vendor/zipp-wasm/SOURCE.json'), 'utf8'));
+const webVariant = primary.variants?.web ?? null;
 const output = await mkdtemp(join(tmpdir(), 'formlogic-zipp-sharing-'));
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm' };
 let browser;
@@ -47,7 +52,7 @@ try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   browser = await chromium.launch();
-  for (const order of ['expression-first', 'app-first', 'concurrent', 'without-webcrypto', 'download-retry', 'stale-host', 'self-navigation', 'frame-policy', 'host-js-frame', 'python-app']) {
+  for (const order of ['expression-first', 'app-first', 'concurrent', 'without-webcrypto', 'download-retry', 'stale-host', 'self-navigation', 'frame-policy', 'host-js-frame', 'python-app', 'web-variant-app']) {
     // Fresh context + fixture without PWA registration avoids cached engines.
     // Playwright's serviceWorkers:block init script itself throws when reading
     // navigator.serviceWorker inside this deliberately opaque sandboxed iframe.
@@ -168,6 +173,53 @@ try {
       assert.equal(wasmRequests.length, 1, `Python needs the one ZIPP engine, once: ${wasmRequests.join(', ')}`);
       assert.deepEqual(errors, [], 'The browser must not report uncaught exceptions');
       console.log(`PASS ${order}: a .py bundle ran on index.html, state mirrored and a handler called`);
+      await context.close();
+      continue;
+    }
+    // An app whose owner chose the JavaScript-only build, on a shell that announces it: the frame
+    // is handed the WEB VARIANT's bytes, while the page's own expression Worker keeps the primary.
+    // Two engines, two downloads, two digests — read from the actual response bodies, never from
+    // file names (both assets are called zipp_wasm_bg-<hash>.wasm). Runs only when the installed
+    // Softn release ships the variant; otherwise says so, so a silent skip cannot pass for a run.
+    if (order === 'web-variant-app') {
+      if (!webVariant) {
+        console.log(`skipped: installed Softn release has no zipp-web (${order})`);
+        await context.close();
+        continue;
+      }
+      const digests = new Map();
+      context.on('response', response => {
+        if (!/zipp[^/]*\.wasm(?:\?|$)/.test(response.url())) return;
+        digests.set(response.url(), response.body().then(body => createHash('sha256').update(body).digest('hex')));
+      });
+      await page.goto(`${origin}/e2e/fixtures/zipp-sharing.html?engine=zipp-web`);
+      await page.getByRole('button', { name: 'Open app', exact: true }).click();
+      await expect(page.locator('iframe')).toHaveAttribute('src', '/hosted-runtime/index.html');
+      const frame = page.getByTestId('app-0').frameLocator('iframe');
+      await expect(frame.getByTestId('count')).toHaveText('0', { timeout: 60_000 });
+      await frame.getByRole('button', { name: 'Add one' }).click();
+      await expect(frame.getByTestId('count')).toHaveText('1');
+      await frame.getByRole('button', { name: 'Check backend' }).click();
+      await expect(frame.getByTestId('backend')).toHaveText('Connected');
+      assert.equal(wasmRequests.length, 1, `The app alone needs one engine, the variant: ${wasmRequests.join(', ')}`);
+      const [frameDigest] = await Promise.all([...digests.values()]);
+      assert.equal(frameDigest, webVariant.sha256, 'the frame received the web variant');
+      // The page's expression Worker is not on the variant: it fetches the primary, a second URL.
+      await page.getByRole('button', { name: 'Evaluate expression' }).click();
+      await expect(page.getByTestId('answer')).toHaveText('42', { timeout: 60_000 });
+      assert.equal(wasmRequests.length, 2, `Two engines, two downloads: ${wasmRequests.join(', ')}`);
+      assert.notEqual(wasmRequests[0], wasmRequests[1], 'two engines are two assets');
+      const all = await Promise.all([...digests.values()]);
+      assert.deepEqual(all.sort(), [primary.sha256, webVariant.sha256].sort(), `the Worker keeps the primary ${primary.sha256.slice(0, 12)} while the frame runs ${webVariant.sha256.slice(0, 12)}`);
+      assert(wasmRequests.every(url => !url.includes('/hosted-runtime/')), 'Hosted apps must reuse parent bytes');
+      await expect(page.locator('iframe').first()).toHaveAttribute('sandbox', 'allow-scripts');
+      assert.deepEqual(errors, [], 'The browser must not report uncaught exceptions');
+      // The negative, in the same shell: a .py bundle asked to run on zipp-web is refused by the
+      // shell before configuration (the server would have clamped it; the fixture has no server).
+      await page.goto(`${origin}/e2e/fixtures/zipp-sharing.html?engine=zipp-web&logic=python`);
+      await page.getByRole('button', { name: 'Open app', exact: true }).click();
+      await expect(page.getByRole('alert')).toContainText('could not load', { timeout: 60_000 });
+      console.log(`PASS ${order}: the frame ran on the web variant ${webVariant.sha256.slice(0, 12)} while the expression Worker kept ${primary.sha256.slice(0, 12)}; a .py bundle on zipp-web was refused by the shell`);
       await context.close();
       continue;
     }

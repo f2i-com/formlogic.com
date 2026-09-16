@@ -318,7 +318,10 @@ class AppEngineEndpointTest extends TestCase
         $this->assertNull($body['engine']['stored']);
         $this->assertSame(['zipp-web-python'], $body['enginePolicy']['allowed'], 'the site default allow-list, which host-js is not in');
         // The install serves more than the policy allows: the owner is offered the intersection.
-        $this->assertSame(['zipp-web-python', 'host-js'], $body['enginePolicy']['installed']);
+        // What it serves is the real install record (zipp-web is in it exactly when the fetch
+        // installed the release's web variant tree), so the expectation is read from the same record.
+        $this->assertSame($this->engines()->installedEngines(), $body['enginePolicy']['installed']);
+        $this->assertContains('host-js', $body['enginePolicy']['installed']);
     }
 
     public function testTheRuntimeGetCarriesTheEngineAndItsRevisionAndStaysNoStore(): void
@@ -480,6 +483,68 @@ class AppEngineEndpointTest extends TestCase
             ['slug' => $this->slug]
         ))['engine']['id'], 'zipp-web cannot run Python at all, whatever the site prefers');
         $this->assertSame('python-required', $this->everyEngine()->effective($this->appId, ['javascript', 'python'])['reason']);
+    }
+
+    /**
+     * The clamp against the runtime this tree has ACTUALLY installed, through the real runtime GET:
+     * zipp-web is a live, installed site default only since a Softn release ships the web variant
+     * tree and the fetch stamps it, so this is the first case in which the resolver's Python clamp
+     * fires on an install record rather than on a fixture. It runs only against such an install
+     * and says so otherwise — never a silent pass.
+     */
+    public function testTheInstalledRuntimeServesAJavaScriptAppTheWebVariantAndClampsAPythonAppOntoWebPython(): void
+    {
+        $installed = $this->engines();
+        if (!in_array('zipp-web', $installed->installedEngines(), true)) {
+            $this->markTestSkipped('skipped: installed Softn release has no zipp-web');
+        }
+        $this->engines()->writePolicy(['default' => 'zipp-web', 'allowed' => ['zipp-web-python', 'zipp-web']]);
+        $controller = $this->controller($installed);
+
+        // A JavaScript app takes the site default: the variant IS installed. The member-facing
+        // runtime GET carries the id and revision alone; the owner's manage GET carries the reason.
+        $this->publish();
+        $engine = $this->jsonBody($controller->runtime(
+            $this->request('GET', '/api/app/' . $this->slug . '/hosting'),
+            (new ResponseFactory())->createResponse(),
+            ['slug' => $this->slug]
+        ))['engine'];
+        $this->assertSame('zipp-web', $engine['id']);
+        $owner = $this->jsonBody($controller->manage(
+            $this->request('GET', '/api/apps/' . $this->appId . '/hosting'),
+            (new ResponseFactory())->createResponse(),
+            ['id' => $this->appId]
+        ))['engine'];
+        $this->assertSame('zipp-web', $owner['id']);
+        $this->assertArrayNotHasKey('reason', $owner, 'nothing stood in the way of the site default');
+        $this->assertContains('zipp-web', $this->jsonBody($controller->manage(
+            $this->request('GET', '/api/apps/' . $this->appId . '/hosting'),
+            (new ResponseFactory())->createResponse(),
+            ['id' => $this->appId]
+        ))['enginePolicy']['installed']);
+
+        // The same app with a .py client file: clamped onto the engine that runs Python, and told why.
+        (new HostedAppService(new SandboxRunner(), self::$tmpRoot . '/hosted'))->publish($this->appId, [
+            'version' => 1,
+            'client' => ['manifest.json' => '{"main":"ui/main.ui","name":"Engine app"}', 'ui/main.ui' => '<Text/>', 'logic/counter.py' => "count = 0\n"],
+            'actions' => [],
+        ], 1);
+        $clamped = $this->jsonBody($controller->runtime(
+            $this->request('GET', '/api/app/' . $this->slug . '/hosting'),
+            (new ResponseFactory())->createResponse(),
+            ['slug' => $this->slug]
+        ))['engine'];
+        $this->assertSame('zipp-web-python', $clamped['id'], json_encode($clamped));
+        $this->assertSame($clamped['revision'], $installed->effective($this->appId, ['javascript', 'python'])['revision'], 'the revision an action sends back is the one the clamp computed');
+        $clampedForOwner = $this->jsonBody($controller->manage(
+            $this->request('GET', '/api/apps/' . $this->appId . '/hosting'),
+            (new ResponseFactory())->createResponse(),
+            ['id' => $this->appId]
+        ))['engine'];
+        $this->assertSame('zipp-web-python', $clampedForOwner['id']);
+        $this->assertSame('python-required', $clampedForOwner['reason'] ?? null, json_encode($clampedForOwner));
+        $this->assertSame('zipp-web', $clampedForOwner['requested'], 'the site default was asked for; the app\'s own .py file is what overrode it');
+        $this->assertNull($clampedForOwner['stored'], 'no owner choice was involved');
     }
 
     public function testAnActionFromAClampedPythonFrameIsNotToldTheEngineChanged(): void

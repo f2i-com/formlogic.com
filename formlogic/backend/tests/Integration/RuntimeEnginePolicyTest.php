@@ -214,11 +214,17 @@ class RuntimeEnginePolicyTest extends TestCase
     {
         // Not a fixture: the record the fetch stamped from the archive this tree actually
         // installed. It advertises the fallback and host JavaScript, because the hosted runtime
-        // ships the second entry document (host.html) that serves the latter. zipp-web is a real
-        // id no runtime serves, so it stays absent here and resolves with reason 'not-installed'.
+        // ships the second entry document (host.html) that serves the latter. zipp-web is stamped
+        // exactly when the fetch installed the release's web variant tree (whose record is
+        // formlogic/ui/vendor/zipp-wasm/SOURCE.json variants.web): the manifest lists it whether
+        // or not the release ships it, and the stamp says what is INSTALLED.
         $installed = (new RuntimeEngineService(self::$mysql))->installedEngines();
-        $this->assertSame(['zipp-web-python', 'host-js'], $installed);
-        $this->assertNotContains('zipp-web', $installed);
+        $source = json_decode((string) file_get_contents(dirname(__DIR__, 3) . '/ui/vendor/zipp-wasm/SOURCE.json'), true);
+        $variantInstalled = isset($source['variants']['web']) && is_dir(dirname(__DIR__, 3) . '/ui/vendor/zipp-wasm-web');
+        $this->assertSame($variantInstalled ? ['zipp-web-python', 'zipp-web', 'host-js'] : ['zipp-web-python', 'host-js'], $installed);
+        if (!$variantInstalled) {
+            fwrite(STDERR, "skipped: installed Softn release has no zipp-web (zipp-web absent from the installed record, as required)\n");
+        }
     }
 
     // ── the admin endpoints ──────────────────────────────────────────────────
@@ -230,8 +236,10 @@ class RuntimeEnginePolicyTest extends TestCase
         $this->assertSame(200, $response->getStatusCode());
         $this->assertSame(RuntimeEngineService::defaults(), $body['policy']);
         // What the install serves, against every id the server knows: an administrator's
-        // allow-list can only ever take effect for an engine that is in both.
-        $this->assertSame(['zipp-web-python', 'host-js'], $body['installed']);
+        // allow-list can only ever take effect for an engine that is in both. The list is the real
+        // install record's (zipp-web in it exactly when the release's web variant tree is installed).
+        $this->assertSame((new RuntimeEngineService(self::$mysql))->installedEngines(), $body['installed']);
+        $this->assertContains('host-js', $body['installed']);
         $this->assertSame(['zipp-web-python', 'zipp-web', 'host-js'], $body['engines']);
     }
 

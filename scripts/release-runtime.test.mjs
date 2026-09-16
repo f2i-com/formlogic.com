@@ -94,3 +94,47 @@ test('engineIdentity carries the server sandbox: its ZIPP release, the guest and
     build: { by: 'ci', runUrl: 'https://github.com/f2i-com/formlogic.com/actions/runs/7' },
   });
 });
+
+// ── The web variant in a build ──────────────────────────────────────────────
+// An install with the variant tree puts a SECOND hashed assets/zipp_wasm_bg-*.wasm in the build
+// (the same base name: Vite hashes the vendor file it globbed). That is the one place the
+// variant's digest may appear, and it must appear there when the variant is installed.
+const WITH_WEB = zippReleaseFixture({ webVariant: true });
+const webDist = (extra = {}) => ({
+  'index.html': '<!doctype html>',
+  'assets/index-abc.js': 'export {};',
+  'assets/zipp_wasm_bg-CAyqw9Mx.wasm': WITH_WEB.wasm,
+  'assets/zipp_wasm_bg-DJYZzo8n.wasm': WITH_WEB.webWasm,
+  'hosted-runtime/assets/core-runtime/zipp_wasm_bg.wasm': WITH_WEB.wasm,
+  'app-editors/studio/assets/zipp_wasm_bg-CAyqw9Mx.wasm': WITH_WEB.wasm,
+  ...extra,
+});
+
+test('checkDistEngines accepts the web variant as one more hashed app asset when the install carries it, and requires it then', async (t) => {
+  const dist = await tree(t, webDist());
+  assert.deepEqual(await checkDistEngines(dist, WITH_WEB.source, { web: WITH_WEB.variant }), ['app-editors/studio/assets/zipp_wasm_bg-CAyqw9Mx.wasm', 'assets/zipp_wasm_bg-CAyqw9Mx.wasm', 'assets/zipp_wasm_bg-DJYZzo8n.wasm', 'hosted-runtime/assets/core-runtime/zipp_wasm_bg.wasm']);
+  // A build from before the variant was installed: rebuild, do not ship half an install.
+  const { 'assets/zipp_wasm_bg-DJYZzo8n.wasm': _web, ...withoutWeb } = webDist();
+  await assert.rejects(checkDistEngines(await tree(t, withoutWeb), WITH_WEB.source, { web: WITH_WEB.variant }), /formlogic\/ui\/dist has no assets\/zipp_wasm_bg-\*\.wasm carrying the installed ZIPP v0\.0\.18 web variant \([0-9a-f]{12}\); the build predates the variant's install/);
+  // The variant alone is not the app's engine: the primary's hashed asset is still required.
+  const { 'assets/zipp_wasm_bg-CAyqw9Mx.wasm': _app, ...onlyWeb } = webDist();
+  await assert.rejects(checkDistEngines(await tree(t, onlyWeb), WITH_WEB.source, { web: WITH_WEB.variant }), /formlogic\/ui\/dist has no assets\/zipp_wasm_bg-\*\.wasm engine \(found: .*assets\/zipp_wasm_bg-DJYZzo8n\.wasm/);
+  // Twice is a build nobody asked for.
+  await assert.rejects(checkDistEngines(await tree(t, webDist({ 'assets/zipp_wasm_bg-again.wasm': WITH_WEB.webWasm })), WITH_WEB.source, { web: WITH_WEB.variant }), /carries the ZIPP web variant twice \(assets\/zipp_wasm_bg-again\.wasm, assets\/zipp_wasm_bg-DJYZzo8n\.wasm\)/);
+});
+
+test('checkDistEngines refuses the web variant under any other name or in any other tree, and as a second engine when the install has no variant', async (t) => {
+  // The plan's negative: the web engine copied to another name in assets/.
+  const renamed = await tree(t, webDist({ 'assets/other-fake.wasm': WITH_WEB.webWasm }));
+  await assert.rejects(checkDistEngines(renamed, WITH_WEB.source, { web: WITH_WEB.variant }), /formlogic\/ui\/dist\/assets\/other-fake\.wasm is the installed ZIPP v0\.0\.18 web variant \([0-9a-f]{12}\) under a name other than the app's hashed engine asset \(assets\/zipp_wasm_bg-\*\.wasm\); the variant is served from that asset alone/);
+  // The hosted runtime and the editors carry only the primary.
+  const inHosted = await tree(t, webDist({ 'hosted-runtime/assets/zipp_wasm_bg-DJYZzo8n.wasm': WITH_WEB.webWasm }));
+  await assert.rejects(checkDistEngines(inHosted, WITH_WEB.source, { web: WITH_WEB.variant }), /hosted-runtime\/assets\/zipp_wasm_bg-DJYZzo8n\.wasm is the installed ZIPP v0\.0\.18 web variant/);
+  const inEditor = await tree(t, webDist({ 'app-editors/builder/assets/core-runtime/zipp_wasm_bg.wasm': WITH_WEB.webWasm }));
+  await assert.rejects(checkDistEngines(inEditor, WITH_WEB.source, { web: WITH_WEB.variant }), /app-editors\/builder\/assets\/core-runtime\/zipp_wasm_bg\.wasm is the installed ZIPP v0\.0\.18 web variant/);
+  // A third engine is refused naming both digests the build may carry.
+  const stranger = await tree(t, webDist({ 'assets/zipp_wasm_bg-other.wasm': zippEngineWasm('a third engine') }));
+  await assert.rejects(checkDistEngines(stranger, WITH_WEB.source, { web: WITH_WEB.variant }), /assets\/zipp_wasm_bg-other\.wasm is a ZIPP engine \([0-9a-f]{12}\) other than the installed ZIPP v0\.0\.18 \([0-9a-f]{12}\) or its web variant \([0-9a-f]{12}\)/);
+  // No variant installed: the same build is a stale second engine, as it always was (the plan's round trip).
+  await assert.rejects(checkDistEngines(await tree(t, webDist()), RELEASE.source), /assets\/zipp_wasm_bg-DJYZzo8n\.wasm is a ZIPP engine \([0-9a-f]{12}\) other than the installed ZIPP v0\.0\.18 \([0-9a-f]{12}\); rebuild the UI/);
+});

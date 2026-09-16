@@ -161,3 +161,32 @@ test('a SOFTN_REPO source checkout that installed the same ZIPP release passes -
   assert.notEqual(released.status, 0);
   assert.match(released.stderr, /components\.zipp\.pinnedBy: committed "something else"/);
 });
+
+test('the web variant a release ships is recorded, never pinned: a manifest written without one passes --check with one installed, and the reverse', async (t) => {
+  const { root, run } = await manifestRoot(t);
+  const plain = zippReleaseFixture();
+  const withWeb = zippReleaseFixture({ webVariant: true });
+  await install(root, plain);
+  assert.equal(run().status, 0);
+  const manifestFile = resolve(root, 'docs/ecosystem/compatibility-manifest.json');
+  assert.equal(JSON.parse(await readFile(manifestFile, 'utf8')).components.zipp.variants, null);
+  // The same release, now shipped with its web variant: every existing field is byte-identical, one key is added.
+  await install(root, withWeb);
+  const checked = run('--check');
+  assert.equal(checked.status, 0, `a variant must not make the manifest stale: ${checked.stderr}`);
+  // Regenerated, the manifest records the variant as information.
+  assert.equal(run().status, 0);
+  assert.deepEqual(JSON.parse(await readFile(manifestFile, 'utf8')).components.zipp.variants, { web: withWeb.variant });
+  // And an install without it passes against that manifest too.
+  await install(root, plain);
+  const back = run('--check');
+  assert.equal(back.status, 0, `removing a variant must not make the manifest stale: ${back.stderr}`);
+  // What IS still enforced: the release record and the installed tree must agree about the variant.
+  await install(root, withWeb);
+  const current = JSON.parse(await readFile(resolve(root, '.runtime-source/softn-release/current.json'), 'utf8'));
+  current.zipp = { ...current.zipp, variants: { web: { ...withWeb.variant, sha256: 'e'.repeat(64) } } };
+  await writeFile(resolve(root, '.runtime-source/softn-release/current.json'), JSON.stringify(current));
+  const differs = run('--check');
+  assert.notEqual(differs.status, 0);
+  assert.match(differs.stderr, /they differ in variants/);
+});

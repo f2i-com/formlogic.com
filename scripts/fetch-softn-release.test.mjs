@@ -32,6 +32,10 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 /** The ZIPP release the fixture Softn releases ship, unless a test names another. */
 const ZIPP_RELEASE = zippReleaseFixture();
 const ZIPP_NEXT = zippReleaseFixture({ version: '0.0.19', revision: 'd'.repeat(40) });
+/** The same ZIPP release shipped with its JavaScript-only web build as a variant, in a top-level zipp-web/ tree. */
+const ZIPP_WITH_WEB = zippReleaseFixture({ webVariant: true });
+/** What Softn's hosted runtime advertises since it serves the variant: every engine, UNCONDITIONALLY (a shared constant, not a per-archive fact). */
+const EVERY_ENGINE = { engines: ['host-js', 'zipp-web', 'zipp-web-python'], features: ['python-logic/1'] };
 const PROTOCOLS = { nativeProtocol: 1, recordEvents: 1, editorBridge: 1, hostedEngines: 1, logicLanguages: 1 };
 const ADAPTER = '/** fixture adapter */\r\nexport const project = 1;\r\n';
 const adapterSha = sha256(ADAPTER.replace(/\r\n/g, '\n'));
@@ -57,8 +61,9 @@ function archiveEntries({ tag = 'v0.0.13', commit = COMMIT, zippRelease = ZIPP_R
   const put = (name, data) => { entries[name] = Buffer.isBuffer(data) ? data : Buffer.from(data); };
   const { wasm, source, record: zipp } = zippRelease;
   put('README.md', '# Softn runtime for FormLogic\n');
-  // the ZIPP release, as Softn installed it
+  // the ZIPP release, as Softn installed it, and its web variant as a top-level tree when the release carries one
   for (const [n, d] of Object.entries(zippRelease.files)) put(`zipp/${n}`, d);
+  if (zippRelease.webFiles) for (const [n, d] of Object.entries(zippRelease.webFiles)) put(`zipp-web/${n}`, d);
   // hosted runtime
   // Two entry documents, as `protocols.hostedEngines` declares: host.html is index.html with the
   // one attribute that selects the host-JavaScript engine and its weaker policy.
@@ -1034,4 +1039,154 @@ test('the developer paths still work: a local archive without a sidecar installs
   await checkInstalled({ root, ...quiet });
   await cp(resolve(root, 'formlogic/ui/public/hosted-runtime'), resolve(root, 'copy'), { recursive: true });
   assert.ok(existsSync(resolve(root, 'copy/index.html')));
+});
+
+// ── The web variant: a fifth tree, a per-path engine scan, and an install record that says what is served ──
+// Softn ships ZIPP's JavaScript-only build as a verified variant of the same release, as a
+// top-level zipp-web/ tree beside zipp/. Its engine is a SECOND digest in the archive, which the
+// content scan has always refused ("one release ships one engine"); it is allowed at exactly one
+// path, required there when the release records the variant, and refused everywhere else. An
+// archive without the variant installs exactly as before.
+
+const webTree = (root) => resolve(root, 'formlogic/ui/vendor/zipp-wasm-web');
+const provenanceFile = (root) => resolve(root, 'formlogic/backend/resources/softn-native/provenance.json');
+const currentFile = (root) => resolve(root, '.runtime-source/softn-release/current.json');
+
+test('an archive carrying the web variant installs it as a fifth tree, records it, and stamps zipp-web as installed only then', async (t) => {
+  const root = await formlogicRoot(t);
+  const fixture = await writeFixtureArchive(root, { zippRelease: ZIPP_WITH_WEB, advertised: EVERY_ENGINE });
+  const record = await fetchSoftnRelease({ root, archivePath: fixture.path, ...quiet });
+  assert.deepEqual(record.zipp, ZIPP_WITH_WEB.record);
+  assert.deepEqual(record.zipp.variants.web, ZIPP_WITH_WEB.variant);
+  assert.deepEqual((await readdir(resolve(root, 'formlogic/ui/vendor'))).sort(), ['zipp-wasm', 'zipp-wasm-web'], 'the variant is its own generated tree, and nothing is left beside the two');
+  assert.deepEqual((await readdir(webTree(root))).sort(), ['BUILD-INFO.txt', 'PROFILE.json', 'SHA256SUMS', 'SOURCE.json', 'zipp_wasm_bg.wasm']);
+  assert.ok((await readFile(resolve(webTree(root), 'zipp_wasm_bg.wasm'))).equals(ZIPP_WITH_WEB.webWasm));
+  assert.ok(!(await readFile(resolve(webTree(root), 'zipp_wasm_bg.wasm'))).equals(ZIPP_WITH_WEB.wasm), 'the variant is not the primary');
+  // The primary tree is exactly what it always was; its SOURCE.json carries the variant record too.
+  assert.deepEqual((await readdir(paths(root).zippWasm)).sort(), Object.keys(ZIPP_WITH_WEB.files).sort());
+  assert.deepEqual(JSON.parse(await readFile(engineFile(root, 'SOURCE.json'), 'utf8')).variants, { web: ZIPP_WITH_WEB.variant });
+  // The generation records the fifth tree.
+  const current = JSON.parse(await readFile(currentFile(root), 'utf8'));
+  assert.deepEqual(Object.keys(current.generation.inventory).sort(), ['app-editors', 'hosted-runtime', 'native-runtime', 'zipp-wasm', 'zipp-wasm-web']);
+  assert.equal(current.generation.inventory['zipp-wasm-web']['zipp_wasm_bg.wasm'], ZIPP_WITH_WEB.variant.sha256);
+  // The runtime manifest lists zipp-web unconditionally; the install record lists it because the tree is INSTALLED.
+  assert.deepEqual(JSON.parse(await readFile(provenanceFile(root), 'utf8')).hostedRuntime, { engines: ['host-js', 'zipp-web', 'zipp-web-python'], features: ['python-logic/1'], protocols: PROTOCOLS });
+  await checkInstalled({ root, ...quiet });
+  // --check holds the web tree to the generation like any other.
+  await writeFile(resolve(webTree(root), 'zipp_wasm_bg.wasm'), ZIPP_WITH_WEB.wasm);
+  await assert.rejects(checkInstalled({ root, ...quiet }), /zipp-wasm-web is not the generation current\.json records for Softn v0\.0\.13 \(changed: zipp_wasm_bg\.wasm\)/);
+  await writeFile(resolve(webTree(root), 'zipp_wasm_bg.wasm'), ZIPP_WITH_WEB.webWasm);
+  await writeFile(resolve(webTree(root), 'zipp_wasm.js'), 'a glue nobody checks');
+  await assert.rejects(checkInstalled({ root, ...quiet }), /zipp-wasm-web is not the generation .*not in the recorded generation: zipp_wasm\.js/);
+  await rm(resolve(webTree(root), 'zipp_wasm.js'));
+  await checkInstalled({ root, ...quiet });
+
+  // The same manifest, an archive WITHOUT the variant: zipp-web is advertised and NOT installed, so it is not stamped.
+  const plain = await writeFixtureArchive(resolve(root, 'plain'), { tag: 'v0.0.14', commit: OTHER_COMMIT, advertised: EVERY_ENGINE });
+  await fetchSoftnRelease({ root, archivePath: plain.path, ...quiet });
+  assert.deepEqual(JSON.parse(await readFile(provenanceFile(root), 'utf8')).hostedRuntime, { engines: ['host-js', 'zipp-web-python'], features: ['python-logic/1'], protocols: PROTOCOLS });
+  // And a manifest that does not list zipp-web is never widened by the tree being there.
+  const quiet14 = await writeFixtureArchive(resolve(root, 'quiet'), { tag: 'v0.0.15', commit: OTHER_COMMIT, zippRelease: ZIPP_WITH_WEB, advertised: { engines: ['host-js', 'zipp-web-python'], features: ['python-logic/1'] } });
+  await fetchSoftnRelease({ root, archivePath: quiet14.path, ...quiet });
+  assert.deepEqual(JSON.parse(await readFile(provenanceFile(root), 'utf8')).hostedRuntime.engines, ['host-js', 'zipp-web-python']);
+  assert.ok(existsSync(webTree(root)), 'the tree is installed all the same; only the record does not offer it');
+});
+
+test('the engine scan is a per-path rule: the web digest only at zipp-web/zipp_wasm_bg.wasm, required there when recorded, refused as a second engine when not', async (t) => {
+  const root = await formlogicRoot(t);
+  const withWeb = { zippRelease: ZIPP_WITH_WEB, advertised: EVERY_ENGINE };
+  // The web engine anywhere else, whatever it is called.
+  const elsewhere = await writeFixtureArchive(resolve(root, 'elsewhere'), withWeb, null, (entries) => { entries['hosted-runtime/assets/other-abc.wasm'] = ZIPP_WITH_WEB.webWasm; });
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: elsewhere.path, ...quiet }), (e) => e instanceof ReleaseError && /^hosted-runtime\/assets\/other-abc\.wasm is the ZIPP v0\.0\.18 web variant engine \([0-9a-f]{12}\) softn-release\.json records at zipp-web\/zipp_wasm_bg\.wasm and nowhere else; every other engine copy is the ZIPP v0\.0\.18 engine \([0-9a-f]{12}\)\.$/.test(e.message));
+  const inEditor = await writeFixtureArchive(resolve(root, 'in-editor'), withWeb, null, (entries) => { entries['app-editors/studio/assets/core-runtime/zipp_wasm_bg.wasm'] = ZIPP_WITH_WEB.webWasm; });
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: inEditor.path, ...quiet }), /app-editors\/studio\/assets\/core-runtime\/zipp_wasm_bg\.wasm is the ZIPP v0\.0\.18 web variant engine/);
+  // The primary at the variant's path: the same bytes named twice.
+  const primaryAtWeb = await writeFixtureArchive(resolve(root, 'primary-at-web'), withWeb, null, (entries) => { entries['zipp-web/zipp_wasm_bg.wasm'] = ZIPP_WITH_WEB.wasm; });
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: primaryAtWeb.path, ...quiet }), (e) => e instanceof ReleaseError && /^zipp-web\/zipp_wasm_bg\.wasm holds the ZIPP v0\.0\.18 engine \([0-9a-f]{12}\), not the web variant \([0-9a-f]{12}\) softn-release\.json records there; a variant is the same source built again, not the same bytes named twice\.$/.test(e.message));
+  // A third engine at the variant's path.
+  const strangerAtWeb = await writeFixtureArchive(resolve(root, 'stranger-at-web'), withWeb, null, (entries) => { entries['zipp-web/zipp_wasm_bg.wasm'] = zippEngineWasm('a third engine'); });
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: strangerAtWeb.path, ...quiet }), /zipp-web\/zipp_wasm_bg\.wasm holds a ZIPP engine \([0-9a-f]{12}\) that is neither the ZIPP v0\.0\.18 engine \([0-9a-f]{12}\) nor its web variant \([0-9a-f]{12}\)/);
+  // The variant recorded but its engine not there: the known copy is required.
+  const noWebEngine = await writeFixtureArchive(resolve(root, 'no-web-engine'), withWeb, null, (entries) => { entries['zipp-web/zipp_wasm_bg.wasm'] = Buffer.from('not a module'); });
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: noWebEngine.path, ...quiet }), /No ZIPP engine copy matches zipp-web\/zipp_wasm_bg\.wasm in Softn v0\.0\.13/);
+  // No variant recorded: a zipp-web/ tree is refused whether or not it holds an engine, and a second engine anywhere is what it always was.
+  const unrecorded = await writeFixtureArchive(resolve(root, 'unrecorded'), {}, null, (entries) => { for (const [n, d] of Object.entries(ZIPP_WITH_WEB.webFiles)) entries[`zipp-web/${n}`] = d; });
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: unrecorded.path, ...quiet }), (e) => e instanceof ReleaseError && /^zipp-web\/zipp_wasm_bg\.wasm is a ZIPP engine \([0-9a-f]{12}\) other than the ZIPP v0\.0\.18 engine \([0-9a-f]{12}\) softn-release\.json records; one release ships one engine\.$/.test(e.message));
+  const unrecordedFiles = await writeFixtureArchive(resolve(root, 'unrecorded-files'), {}, null, (entries) => { entries['zipp-web/BUILD-INFO.txt'] = ZIPP_WITH_WEB.webFiles['BUILD-INFO.txt']; });
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: unrecordedFiles.path, ...quiet }), /Softn v0\.0\.13 ships a zipp-web\/ tree but softn-release\.json records no zipp\.variants\.web; FormLogic installs only what the release describes\./);
+  // A variant recorded with no tree to install.
+  const noTree = await writeFixtureArchive(resolve(root, 'no-tree'), withWeb, null, (entries) => { for (const name of Object.keys(entries)) if (name.startsWith('zipp-web/')) delete entries[name]; });
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: noTree.path, ...quiet }), /Softn v0\.0\.13 records zipp\.variants\.web but ships no zipp-web\/ tree\./);
+  // The tree is held to the variant check at the door, before anything is staged.
+  const otherCommit = await writeFixtureArchive(resolve(root, 'other-commit'), withWeb, null, (entries) => {
+    entries['zipp-web/BUILD-INFO.txt'] = Buffer.from(ZIPP_WITH_WEB.webFiles['BUILD-INFO.txt'].toString().replace(/commit=\w+/, `commit=${'d'.repeat(40)}`));
+    entries['zipp-web/SHA256SUMS'] = Buffer.from(ZIPP_WITH_WEB.webFiles.SHA256SUMS.toString().replace(sha256(ZIPP_WITH_WEB.webFiles['BUILD-INFO.txt']), sha256(entries['zipp-web/BUILD-INFO.txt'])));
+  });
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: otherCommit.path, ...quiet }), /zipp-web\/ in Softn v0\.0\.13 is not the ZIPP v0\.0\.18 web variant softn-release\.json records: The ZIPP web variant tree's BUILD-INFO\.txt commit is "d{40}"; SOURCE\.json revision is "a{40}"/);
+  // A malformed variant record is refused as such, not as a missing tree.
+  const malformed = await writeFixtureArchive(resolve(root, 'malformed'), withWeb, null, (entries, build) => {
+    // Recorded consistently in softn-release.json and zipp/SOURCE.json (which the primary check compares), so only the record's shape can refuse it.
+    build.zipp = { ...build.zipp, variants: { web: { ...build.zipp.variants.web, commit: 'short' } } };
+    entries['zipp/SOURCE.json'] = Buffer.from(JSON.stringify({ ...ZIPP_WITH_WEB.source, variants: build.zipp.variants }, null, 2) + '\n');
+  });
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: malformed.path, ...quiet }), /Softn v0\.0\.13 records a zipp\.variants\.web FormLogic cannot install \(The ZIPP web variant record is not a variant of a ZIPP release: commit is not a 40-hex commit\.\)/);
+  // The good archive still installs after all of that, and --check passes.
+  const good = await writeFixtureArchive(resolve(root, 'good'), withWeb);
+  await fetchSoftnRelease({ root, archivePath: good.path, ...quiet });
+  await checkInstalled({ root, ...quiet });
+});
+
+test('a release without the variant retires an installed web tree with the generation: gone after the install, back after a rollback, refused by --check when stale', async (t) => {
+  const root = await formlogicRoot(t);
+  const withWeb = await writeFixtureArchive(resolve(root, 'with-web'), { tag: 'v0.0.13', zippRelease: ZIPP_WITH_WEB, advertised: EVERY_ENGINE });
+  const plain = await writeFixtureArchive(resolve(root, 'plain'), { tag: 'v0.0.14', commit: OTHER_COMMIT, hostedCode: 'export const hosted = "b";', zippRelease: ZIPP_NEXT, advertised: EVERY_ENGINE });
+  await fetchSoftnRelease({ root, archivePath: withWeb.path, ...quiet });
+  assert.ok(existsSync(webTree(root)));
+
+  // A rolled-back install of the plain release puts the web tree back with the rest of the old generation.
+  const editors = paths(root).appEditors;
+  const messages = [];
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: plain.path, ops: { rename: (from, to) => (from === editors ? Promise.reject(refused('EBUSY', from)) : rename(from, to)) }, log: (m) => messages.push(m) }), /EBUSY/);
+  assert.ok(messages.some((m) => /rolled back the install of Softn v0\.0\.14/.test(m)));
+  assert.deepEqual((await readdir(resolve(root, 'formlogic/ui/vendor'))).sort(), ['zipp-wasm', 'zipp-wasm-web'], 'the old generation, its web tree included, is whole again');
+  assert.ok((await readFile(resolve(webTree(root), 'zipp_wasm_bg.wasm'))).equals(ZIPP_WITH_WEB.webWasm));
+  assert.equal((await checkInstalled({ root, ...quiet })).tag, 'v0.0.13');
+
+  // A completed install of the plain release leaves no web tree: the UI build would otherwise embed a stale variant.
+  const logged = [];
+  await fetchSoftnRelease({ root, archivePath: plain.path, log: (m) => logged.push(m) });
+  assert.ok(logged.some((m) => /retired formlogic\/ui\/vendor\/zipp-wasm-web: Softn v0\.0\.14 ships no web variant/.test(m)), logged.join('\n'));
+  assert.deepEqual(await readdir(resolve(root, 'formlogic/ui/vendor')), ['zipp-wasm']);
+  const current = JSON.parse(await readFile(currentFile(root), 'utf8'));
+  assert.deepEqual(Object.keys(current.generation.inventory).sort(), ['app-editors', 'hosted-runtime', 'native-runtime', 'zipp-wasm']);
+  assert.deepEqual(JSON.parse(await readFile(provenanceFile(root), 'utf8')).hostedRuntime.engines, ['host-js', 'zipp-web-python']);
+  await checkInstalled({ root, ...quiet });
+
+  // A web tree that is present but not part of the recorded generation is stale, and --check says so.
+  await mkdir(webTree(root), { recursive: true });
+  await writeFile(resolve(webTree(root), 'zipp_wasm_bg.wasm'), ZIPP_WITH_WEB.webWasm);
+  await assert.rejects(checkInstalled({ root, ...quiet }), /formlogic\/ui\/vendor\/zipp-wasm-web is present but Softn v0\.0\.14 ships no web variant, so it is not part of the generation current\.json records; a UI build would embed a stale engine\. Run node scripts\/fetch-softn-release\.mjs\./);
+  // The next install, of either release, resolves it.
+  await fetchSoftnRelease({ root, archivePath: withWeb.path, ...quiet });
+  await checkInstalled({ root, ...quiet });
+  assert.ok((await readFile(resolve(webTree(root), 'zipp_wasm_bg.wasm'))).equals(ZIPP_WITH_WEB.webWasm));
+
+  // A run killed after the plain release's trees are all promoted is completed next time, web tree retired.
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: plain.path, failAt: 'record', ...quiet }), SimulatedCrash);
+  assert.ok(existsSync(`${webTree(root)}.previous`), 'the retired tree is set aside, not dropped, until the generation is recorded');
+  const recovered = await recoverPromotion(paths(root));
+  assert.equal(recovered.outcome, 'completed');
+  assert.deepEqual(await readdir(resolve(root, 'formlogic/ui/vendor')), ['zipp-wasm']);
+  await checkInstalled({ root, ...quiet });
+});
+
+test('verifyArchive returns the variant beside the expected identity, and only when the release records one', async (t) => {
+  const root = await formlogicRoot(t);
+  const withWeb = await writeFixtureArchive(resolve(root, 'with-web'), { zippRelease: ZIPP_WITH_WEB });
+  const verified = await verifyArchive(await readFile(withWeb.path), { sidecarDigest: null, paths: { protocolFile: resolve(root, 'formlogic/ui/src/lib/softn/protocol.json') }, archiveName: basename(withWeb.path) });
+  assert.deepEqual(verified.expected, { version: '0.0.18', sha256: ZIPP_WITH_WEB.source.sha256 });
+  assert.deepEqual(verified.webVariant, ZIPP_WITH_WEB.variant);
+  const plain = await writeFixtureArchive(resolve(root, 'plain'));
+  const plainVerified = await verifyArchive(await readFile(plain.path), { sidecarDigest: null, paths: { protocolFile: resolve(root, 'formlogic/ui/src/lib/softn/protocol.json') }, archiveName: basename(plain.path) });
+  assert.equal(plainVerified.webVariant, null);
 });

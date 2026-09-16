@@ -187,6 +187,129 @@ export async function checkZippTree(source, identity) {
   return record;
 }
 
+/** The files Softn ships for the web variant: the engine and its declarations, no glue (it runs under the primary's). */
+export const ZIPP_VARIANT_TREE_REQUIRED = Object.freeze(['zipp_wasm_bg.wasm', 'BUILD-INFO.txt', 'PROFILE.json', 'SHA256SUMS', 'SOURCE.json']);
+/** The keys Softn records for a variant, in softn-release.json `zipp.variants.<name>` and in zipp/SOURCE.json. */
+export const ZIPP_VARIANT_KEYS = Object.freeze(['bundle', 'bundleSha256', 'sha256', 'glueSha256', 'variant', 'languages', 'stackBytes', 'commit']);
+
+/**
+ * The record of a ZIPP release VARIANT a Softn release carries (softn-release.json
+ * `zipp.variants.web`): the same release's other bundle, with its own engine and glue digests,
+ * its build's variant name, languages and stack size, and the commit it was built from. Returns
+ * a copy; a malformed record is refused rather than guessed at.
+ */
+export function zippVariantIdentity(variant, name = 'web') {
+  if (!variant || typeof variant !== 'object' || Array.isArray(variant)) throw new Error(`The ZIPP ${name} variant record is missing.`);
+  const problems = [];
+  if (typeof variant.bundle !== 'string' || !/^[^/\\]+$/.test(variant.bundle)) problems.push('no bundle file name');
+  for (const key of ['bundleSha256', 'sha256', 'glueSha256']) if (!HEX64.test(variant[key] ?? '')) problems.push(`${key} is not a SHA-256`);
+  if (typeof variant.variant !== 'string' || !variant.variant) problems.push('no variant name');
+  if (!Array.isArray(variant.languages) || !variant.languages.length || !variant.languages.every(language => typeof language === 'string' && language)) problems.push('languages is not a list of names');
+  if (!Number.isInteger(variant.stackBytes) || variant.stackBytes <= 0) problems.push('stackBytes is not a positive integer');
+  if (!/^[0-9a-f]{40}$/.test(variant.commit ?? '')) problems.push('commit is not a 40-hex commit');
+  if (problems.length) throw new Error(`The ZIPP ${name} variant record is not a variant of a ZIPP release: ${problems.join('; ')}.`);
+  return JSON.parse(JSON.stringify(variant));
+}
+
+/**
+ * The web variant tree as Softn ships it (the archive's top-level zipp-web/, installed as
+ * formlogic/ui/vendor/zipp-wasm-web): ZIPP's JavaScript-only build of the SAME release as the
+ * primary engine, served to apps as `zipp-web`. `source` is a directory or a Map of path to
+ * bytes, `variant` the release's `zipp.variants.web` record, `primary` the release's `zipp`
+ * record (or the primary tree's whole SOURCE.json).
+ *
+ * What is proved is provenance, since the variant changes size and not containment: exactly the
+ * five files Softn ships and no glue (the variant runs under the primary's zipp_wasm.js — a glue
+ * here would be a second engine loader nobody checks); every shipped file is the one the web
+ * bundle's own SHA256SUMS lists (never the reverse: that bundle also carries the glue, its
+ * declarations, a licence and the host SDK, which Softn does not ship in this tree); the variant's
+ * SOURCE.json carries the record's every key, names the primary it is a variant OF by bundle,
+ * engine and glue digest, and is the same release — version, tag, revision, release sums, build
+ * and toolchain — as the primary; BUILD-INFO says what SOURCE.json says; the record was built
+ * from the release's own commit; the web bundle's sums list the recorded glue; and, when the
+ * caller has them (`releaseSums`, the primary tree's RELEASE-SHA256SUMS — the variant tree
+ * carries none), they are the recorded ZIPP SHA256SUMS and list the web bundle with the recorded
+ * digest. The engine bytes are the recorded digest, are a ZIPP engine module, and are NOT the
+ * primary's: a variant is the same source built again, never the same bytes named twice (that
+ * substitution, with both digests rewritten to match, would otherwise pass every check here).
+ *
+ * `zipp-web` is the JavaScript-only build by definition — the server clamps every app with
+ * Python onto zipp-web-python on the strength of that — so the record must say variant
+ * `javascript` with languages exactly `["javascript"]`. Returns the tree's SOURCE.json.
+ */
+export async function checkZippVariantTree(source, variant, primary, { releaseSums = null } = {}) {
+  const files = new Map();
+  if (typeof source === 'string') {
+    for (const path of await artifactFiles(source, { includeManifest: true })) files.set(path, await readFile(resolve(source, path)));
+  } else {
+    for (const [path, value] of source) files.set(path, Buffer.isBuffer(value) ? value : value.data);
+  }
+  const missing = ZIPP_VARIANT_TREE_REQUIRED.filter(name => !files.has(name));
+  if (missing.length) throw new Error(`The ZIPP web variant tree is missing ${missing.join(', ')}.`);
+  variant = zippVariantIdentity(variant);
+  const primaryRecord = zippReleaseIdentity(primary);
+  if (variant.variant !== 'javascript' || canonical(variant.languages) !== canonical(['javascript'])) {
+    throw new Error(`The ZIPP web variant record is variant ${canonical(variant.variant)} with languages ${canonical(variant.languages)}; zipp-web is the JavaScript-only build (variant "javascript", languages ["javascript"]).`);
+  }
+  if (variant.commit !== primaryRecord.revision) throw new Error(`The ZIPP web variant record was built from ${variant.commit.slice(0, 12)}; the release is ${primaryRecord.revision.slice(0, 12)}. A variant ships only from the release's own commit.`);
+  if (variant.sha256 === primaryRecord.sha256) throw new Error('The ZIPP web variant record names the primary engine\'s own digest; a variant is the same source built again, not the same bytes named twice.');
+
+  const text = name => files.get(name).toString('utf8');
+  let record;
+  try { record = JSON.parse(text('SOURCE.json')); }
+  catch (error) { throw new Error(`The ZIPP web variant tree's SOURCE.json is not JSON: ${error.message}`); }
+  if (!record || typeof record !== 'object') throw new Error('The ZIPP web variant tree\'s SOURCE.json is not a record.');
+  for (const [key, value] of Object.entries(variant)) {
+    if (canonical(record[key]) !== canonical(value)) throw new Error(`The ZIPP web variant tree's SOURCE.json ${key} is ${canonical(record[key]) ?? '(absent)'}; the release records ${canonical(value)}.`);
+  }
+  // The same release as the primary, field by field.
+  const same = [['version', primaryRecord.version], ['release', primaryRecord.release], ['revision', primaryRecord.revision], ['sumsSha256', primaryRecord.sumsSha256], ['build', 'release'], ...(primaryRecord.rustc !== undefined ? [['rustc', primaryRecord.rustc]] : [])];
+  for (const [key, value] of same) {
+    if (canonical(record[key]) !== canonical(value)) throw new Error(`The ZIPP web variant tree's SOURCE.json ${key} is ${canonical(record[key]) ?? '(absent)'}; the release's is ${canonical(value)}.`);
+  }
+  const named = record.primary;
+  if (!named || typeof named !== 'object' || named.bundle !== primaryRecord.bundle || named.sha256 !== primaryRecord.sha256 || named.glueSha256 !== primaryRecord.glueSha256) {
+    throw new Error(`The ZIPP web variant tree's SOURCE.json primary is ${canonical(named) ?? '(absent)'}; the release's engine is ${primaryRecord.bundle} (${primaryRecord.sha256.slice(0, 12)}, glue ${primaryRecord.glueSha256.slice(0, 12)}).`);
+  }
+
+  // Shipped file -> the web bundle's sums; only Softn's own additions are exempt. No glue.
+  const inner = parseSums(text('SHA256SUMS'), 'zipp-web/SHA256SUMS');
+  const exempt = new Set(['SOURCE.json', 'SHA256SUMS']);
+  for (const [path, bytes] of files) {
+    if (exempt.has(path)) continue;
+    if (path === 'zipp_wasm.js') throw new Error(`The ZIPP web variant tree ships zipp_wasm.js, which Softn does not ship for a variant: it runs under the primary's glue.`);
+    if (!inner.has(path)) throw new Error(`The ZIPP web variant tree ships ${path}, which ZIPP ${record.release}'s web bundle SHA256SUMS does not list.`);
+    if (digest(bytes) !== inner.get(path)) throw new Error(`The ZIPP web variant tree's ${path} differs from ZIPP ${record.release}'s web bundle SHA256SUMS.`);
+  }
+  if (inner.get('zipp_wasm.js') !== variant.glueSha256) throw new Error(`ZIPP ${record.release}'s web bundle SHA256SUMS lists zipp_wasm.js as ${inner.get('zipp_wasm.js')?.slice(0, 12) ?? '(absent)'}; the variant record says glueSha256 ${variant.glueSha256.slice(0, 12)}.`);
+
+  const buildInfo = new Map(text('BUILD-INFO.txt').replace(/\r\n/g, '\n').split('\n').filter(line => line.includes('=')).map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
+  let languages = null;
+  try { languages = JSON.parse(buildInfo.get('languages') ?? 'null'); } catch { /* compared below */ }
+  const built = [
+    ['commit', buildInfo.get('commit'), record.revision, 'revision'],
+    ['version', buildInfo.get('version'), record.version, 'version'],
+    ['variant', buildInfo.get('variant'), record.variant, 'variant'],
+    ['languages', languages, record.languages, 'languages'],
+    ['stack-bytes', buildInfo.has('stack-bytes') ? Number(buildInfo.get('stack-bytes')) : undefined, record.stackBytes, 'stackBytes'],
+    ['rustc', buildInfo.get('rustc'), record.rustc, 'rustc'],
+  ];
+  for (const [key, actual, expected, field] of built) {
+    if (actual === undefined || canonical(actual) !== canonical(expected)) throw new Error(`The ZIPP web variant tree's BUILD-INFO.txt ${key} is ${canonical(actual) ?? '(absent)'}; SOURCE.json ${field} is ${canonical(expected) ?? '(absent)'}.`);
+  }
+
+  if (releaseSums) {
+    const sums = parseSums(releaseSums.toString('utf8'), 'RELEASE-SHA256SUMS');
+    if (digest(releaseSums) !== primaryRecord.sumsSha256) throw new Error(`RELEASE-SHA256SUMS is not the ZIPP ${primaryRecord.release} SHA256SUMS the release records (${primaryRecord.sumsSha256.slice(0, 12)}).`);
+    if (sums.get(variant.bundle) !== variant.bundleSha256) throw new Error(`ZIPP ${primaryRecord.release}'s SHA256SUMS does not list ${variant.bundle} with the digest the variant record says.`);
+  }
+
+  const wasm = files.get('zipp_wasm_bg.wasm');
+  if (digest(wasm) !== variant.sha256) throw new Error('The ZIPP web variant tree\'s zipp_wasm_bg.wasm differs from the recorded variant sha256.');
+  if (!isZippEngineWasm(wasm)) throw new Error('The ZIPP web variant tree\'s zipp_wasm_bg.wasm is not a ZIPP engine module: its exports are not the engine\'s.');
+  return record;
+}
+
 /**
  * Every file under a generated tree, sorted, as forward-slash paths, the root
  * runtime-manifest.json only when asked for; links are refused.

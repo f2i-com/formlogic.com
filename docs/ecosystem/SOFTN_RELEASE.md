@@ -39,7 +39,10 @@ and its `.sha256`, built once by Softn's release workflow and verified there.
    the archive was built from the commit the tag points at; the engine (below);
    the release's protocol versions equal `formlogic/ui/src/lib/softn/protocol.json`;
    the adapter the release ships is the one this tree has vendored.
-4. Installs the four trees as one generation (below).
+4. Installs the trees as one generation (below): four, or five when the
+   release ships ZIPP's JavaScript-only web build as a variant (`zipp-web/`,
+   installed as `formlogic/ui/vendor/zipp-wasm-web/` and served to apps as the
+   `zipp-web` engine).
 5. Records what it installed, with a complete file inventory, in
    `.runtime-source/softn-release/current.json`, which
    `scripts/ecosystem-manifest.mjs` reads.
@@ -127,6 +130,40 @@ npm run test:hosted-runtime
 npm run test:zipp-sharing
 ```
 
+### The web variant
+
+A Softn release may also ship ZIPP's JavaScript-only web build, as a
+top-level `zipp-web/` tree of five files (`zipp_wasm_bg.wasm`, `BUILD-INFO.txt`,
+`PROFILE.json`, the web bundle's own `SHA256SUMS`, `SOURCE.json`) and no glue:
+it runs under the primary's `zipp_wasm.js`. `softn-release.json` `zipp`
+gains `variants.web` (bundle, bundle digest, engine and glue digests, variant
+`javascript`, languages `["javascript"]`, stack size, commit), which the
+primary's `zipp/SOURCE.json` carries too. The fetcher then installs it as a
+fifth tree, `formlogic/ui/vendor/zipp-wasm-web/`, and:
+
+- holds it to `checkZippVariantTree`: exactly the five files, each the one the
+  web bundle's `SHA256SUMS` lists; `SOURCE.json` carrying the record's every
+  key, naming the primary it is a variant of, and the same release (version,
+  tag, revision, release sums, build, toolchain); `BUILD-INFO` agreeing; the
+  variant built from the release's own commit; the web bundle listed in the
+  primary tree's `RELEASE-SHA256SUMS`; the engine bytes the recorded digest,
+  a ZIPP engine module, and NOT the primary's bytes (a variant is the same
+  source built again, never the same bytes named twice);
+- makes the engine-copy content scan a per-path rule: the variant's digest is
+  allowed at `zipp-web/zipp_wasm_bg.wasm` and nowhere else, required there
+  when the release records the variant, and refused as a second engine (the
+  rule that has always held) when it does not;
+- stamps `zipp-web` into the native runtime's `hostedRuntime.engines` only
+  when the tree is installed — the runtime manifest lists it unconditionally,
+  and the server reads the stamp as "installed".
+
+A release without the variant installs the four trees exactly as before, and
+retires a web tree an earlier generation left (below). The UI build picks the
+variant up through a glob (`src/lib/formlogic/zipp-bytes.ts`) that emits
+nothing when the tree is absent, so a build works either way; the frame hands
+`zipp-web` the variant's bytes from a second byte broker, and falls back to
+`zipp-web-python` when the build holds none.
+
 ## One release per run
 
 A CI run prepares the runtime in several jobs. "Latest" is a moving target:
@@ -170,15 +207,19 @@ scripts install the latest release and the check stays compatibility-only.
 
 ## One generation per install
 
-The four trees are staged beside their destinations and verified there
-(the engine tree's release check, `runtime-manifest.json` per tree, per-editor
-manifests, the native runtime's `provenance.json` plus `release: {tag, commit}`)
-before any destination
+The trees are staged beside their destinations and verified there
+(the engine tree's release check, the web variant tree's variant check,
+`runtime-manifest.json` per tree, per-editor manifests, the native runtime's
+`provenance.json` plus `release: {tag, commit}`) before any destination
 changes. They are then promoted together: a journal
 (`.runtime-source/softn-release/promotion.json`) records the step, each old
 tree is set aside as `<tree>.previous`, the new tree moves in, and only after
-all four are in place is `current.json` written and the previous trees
-dropped. A run that dies mid-swap is resolved by the next run before it does
+all of them are in place is `current.json` written and the previous trees
+dropped. A release WITHOUT the web variant retires a web tree a previous
+generation left, through the same journal (a rollback puts it back), and
+`--check` refuses to certify while an unrecorded one is present: the UI build
+globs that directory, so a stale variant would otherwise be embedded under an
+identity the installed release never recorded. A run that dies mid-swap is resolved by the next run before it does
 anything else: if every tree had been promoted, the generation is completed
 by recording it; otherwise every tree is put back from its `.previous` copy
 (or removed, on a first install), so the result is all-old or all-new, never

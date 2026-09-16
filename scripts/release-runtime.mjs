@@ -5,15 +5,27 @@ import { checkRuntimeArtifact, isZippEngineWasm } from '../formlogic/ui/scripts/
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 
+/** Where a UI build puts the engine assets the page itself fetches: Vite's hashed copy of each vendor engine. */
+const APP_ENGINE_ASSET = /^assets\/zipp_wasm_bg-[^/]+\.wasm$/;
+
 /**
  * Every ZIPP engine a UI build emitted, found by its exports whatever Vite
  * named it, is the installed release's (`source`, the engine tree's
  * SOURCE.json), and the app's own hashed copy is among them. Links, and the
  * top-level folders in `skip` (the staged backend), are not followed. Returns
  * the engines found, as `label`-relative paths.
+ *
+ * `web` is the installed release's web variant record (`source.variants.web`)
+ * when the vendor tree formlogic/ui/vendor/zipp-wasm-web is installed, or
+ * null. With it, the build must ALSO carry the variant — as one more hashed
+ * `assets/zipp_wasm_bg-*.wasm`, the asset the page's second byte broker
+ * fetches, and there alone: the hosted runtime and the editors carry only the
+ * primary, and a variant under any other name is a second engine nobody
+ * serves. Without it, a second digest anywhere is refused as it always was.
  */
-export async function checkDistEngines(directory, source, { label = 'formlogic/ui/dist', skip = ['api'] } = {}) {
+export async function checkDistEngines(directory, source, { label = 'formlogic/ui/dist', skip = ['api'], web = null } = {}) {
   const engines = [];
+  const webCopies = [];
   const walk = async prefix => {
     for (const entry of await readdir(resolve(directory, prefix), { withFileTypes: true })) {
       const path = prefix ? `${prefix}/${entry.name}` : entry.name;
@@ -27,13 +39,24 @@ export async function checkDistEngines(directory, source, { label = 'formlogic/u
       const bytes = await readFile(resolve(directory, path));
       if (!isZippEngineWasm(bytes)) continue;
       const digest = sha256(bytes);
-      if (digest !== source.sha256) throw new Error(`${label}/${path} is a ZIPP engine (${digest.slice(0, 12)}) other than the installed ZIPP ${source.release ?? source.version} (${source.sha256.slice(0, 12)}); rebuild the UI after node scripts/fetch-softn-release.mjs`);
+      if (web && digest === web.sha256) {
+        if (!APP_ENGINE_ASSET.test(path)) throw new Error(`${label}/${path} is the installed ZIPP ${source.release ?? source.version} web variant (${digest.slice(0, 12)}) under a name other than the app's hashed engine asset (assets/zipp_wasm_bg-*.wasm); the variant is served from that asset alone. Rebuild the UI after node scripts/fetch-softn-release.mjs`);
+        webCopies.push(path);
+        engines.push(path);
+        continue;
+      }
+      if (digest !== source.sha256) throw new Error(`${label}/${path} is a ZIPP engine (${digest.slice(0, 12)}) other than the installed ZIPP ${source.release ?? source.version} (${source.sha256.slice(0, 12)})${web ? ` or its web variant (${web.sha256.slice(0, 12)})` : ''}; rebuild the UI after node scripts/fetch-softn-release.mjs`);
       engines.push(path);
     }
   };
   await walk('');
   engines.sort();
-  if (!engines.some(path => /^assets\/zipp_wasm_bg-[^/]+\.wasm$/.test(path))) throw new Error(`${label} has no assets/zipp_wasm_bg-*.wasm engine (found: ${engines.join(', ') || 'none'})`);
+  const appCopies = engines.filter(path => APP_ENGINE_ASSET.test(path) && !webCopies.includes(path));
+  if (!appCopies.length) throw new Error(`${label} has no assets/zipp_wasm_bg-*.wasm engine (found: ${engines.join(', ') || 'none'})`);
+  if (web) {
+    if (!webCopies.length) throw new Error(`${label} has no assets/zipp_wasm_bg-*.wasm carrying the installed ZIPP ${source.release ?? source.version} web variant (${web.sha256.slice(0, 12)}); the build predates the variant's install (found: ${engines.join(', ')}). Rebuild the UI after node scripts/fetch-softn-release.mjs`);
+    if (webCopies.length > 1) throw new Error(`${label} carries the ZIPP web variant twice (${webCopies.join(', ')}); the page fetches one asset for it`);
+  }
   return engines;
 }
 

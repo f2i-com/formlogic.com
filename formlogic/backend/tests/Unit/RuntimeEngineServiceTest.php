@@ -117,7 +117,15 @@ class RuntimeEngineServiceTest extends TestCase
         $file = dirname(__DIR__, 2) . '/resources/softn-native/provenance.json';
         $this->assertFileExists($file, 'Run node scripts/fetch-softn-release.mjs from the repository root.');
         $provenance = json_decode((string) file_get_contents($file), true);
-        $this->assertSame(['zipp-web-python', 'host-js'], Engines::enginesFromRecord($provenance));
+        // zipp-web is in the stamp exactly when the fetch installed the release's web variant tree
+        // (recorded in the engine tree's SOURCE.json as variants.web); the runtime manifest lists
+        // it unconditionally, so the stamp — not the manifest — is what says it is installed.
+        $source = json_decode((string) file_get_contents(dirname(__DIR__, 3) . '/ui/vendor/zipp-wasm/SOURCE.json'), true);
+        $variantInstalled = isset($source['variants']['web']) && is_dir(dirname(__DIR__, 3) . '/ui/vendor/zipp-wasm-web');
+        $this->assertSame($variantInstalled ? ['zipp-web-python', 'zipp-web', 'host-js'] : ['zipp-web-python', 'host-js'], Engines::enginesFromRecord($provenance));
+        if (!$variantInstalled) {
+            fwrite(STDERR, "skipped: installed Softn release has no zipp-web (stamp checked without it)\n");
+        }
         // And the same runtime speaks the hosted-engines protocol that made it installable at all.
         $this->assertSame(1, $provenance['hostedRuntime']['protocols']['hostedEngines'] ?? null);
     }

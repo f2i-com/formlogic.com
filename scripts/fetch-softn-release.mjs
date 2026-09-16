@@ -11,13 +11,22 @@
  * the archive is the one the release page describes, that every copy of the
  * engine in it is the one ZIPP release its softn-release.json records, and
  * that it fits THIS FormLogic (same protocol versions, the adapter this tree
- * has vendored), and installs the four generated trees where the build and
- * the tests expect them:
+ * has vendored), and installs the generated trees where the build and the
+ * tests expect them:
  *
- *   zipp/            -> formlogic/ui/vendor/zipp-wasm/   (the browser engine)
+ *   zipp/            -> formlogic/ui/vendor/zipp-wasm/      (the browser engine)
+ *   zipp-web/        -> formlogic/ui/vendor/zipp-wasm-web/  (its JavaScript-only variant, when the release ships one)
  *   hosted-runtime/  -> formlogic/ui/public/hosted-runtime/
  *   app-editors/     -> formlogic/ui/public/app-editors/
  *   native-runtime/  -> formlogic/backend/resources/softn-native/
+ *
+ * The variant (release.zipp.variants.web, a Softn release since it carries
+ * ZIPP's web build beside its web-python build) is the engine served to an
+ * app whose owner chose `zipp-web`. It is a SECOND engine digest in the
+ * archive, allowed at exactly one path and refused everywhere else; a
+ * release without it installs the four trees exactly as before, and retires
+ * a web tree a previous generation left, so the UI build never embeds one
+ * the installed release does not describe.
  *
  * Which ZIPP release that is, is Softn's choice: nothing in this tree names
  * one, so a Softn release that moves ZIPP installs without a FormLogic commit.
@@ -43,7 +52,7 @@
  * digest and checks the archive's own manifest names the frozen tag and
  * commit. Any drift is a hard failure naming both values.
  *
- * One generation per install (release-readiness FL-S05). The four trees are
+ * One generation per install (release-readiness FL-S05). The trees are
  * staged and verified together, promoted together with the previous trees
  * kept until the new generation is recorded, and recorded with a complete
  * file inventory; a promotion that fails is rolled back before the run ends,
@@ -72,7 +81,7 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve, basename, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readArchive } from './lib/archive.mjs';
-import { runtimeIdentity, assertMatchingRuntime, checkEntryDocuments, checkRuntimeArtifact, checkZippTree, isZippEngineWasm, zippReleaseIdentity, artifactFiles, LINKED_ASSET } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
+import { runtimeIdentity, assertMatchingRuntime, checkEntryDocuments, checkRuntimeArtifact, checkZippTree, checkZippVariantTree, isZippEngineWasm, zippReleaseIdentity, zippVariantIdentity, artifactFiles, LINKED_ASSET } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 import { checkAppEditors } from '../formlogic/ui/scripts/check-app-editors.mjs';
 import { checkNativeRuntime } from './release-runtime.mjs';
 import { writeAdapter, adapterDigest, ADAPTER_SOURCE } from '../formlogic/ui/scripts/sync-softn.mjs';
@@ -114,17 +123,28 @@ const PROTOCOL_KEYS = ['nativeProtocol', 'recordEvents', 'editorBridge', 'hosted
  */
 const PYTHON_LOGIC_FEATURE = 'python-logic/1';
 /**
+ * Where the web variant's engine lives when a release ships one: the only path in the archive
+ * that may hold the variant's digest, and a copy the content scan must find there when
+ * release.zipp.variants.web is recorded.
+ */
+const WEB_ENGINE_PATH = 'zipp-web/zipp_wasm_bg.wasm';
+/**
  * Where a release's engine copies live, as Softn's packager requires them: the
  * browser engine tree, the native runtime, and in the hosted runtime and each
- * editor the hashed app asset and the core-runtime copy. Each must yield one
- * to the content scan, so an engine whose exports changed, or a copy a Softn
- * packaging change dropped, fails the fetch instead of a later build or package.
+ * editor the hashed app asset and the core-runtime copy — and, when the
+ * release records a web variant, that variant's engine at WEB_ENGINE_PATH.
+ * Each must yield one to the content scan, so an engine whose exports changed,
+ * or a copy a Softn packaging change dropped, fails the fetch instead of a
+ * later build or package.
  */
-const KNOWN_ENGINE_COPIES = [
-  'zipp/zipp_wasm_bg.wasm',
-  'native-runtime/wasm/zipp_wasm_bg.wasm',
-  ...['hosted-runtime', 'app-editors/builder', 'app-editors/studio'].flatMap((prefix) => [`${prefix}/assets/zipp_wasm_bg-*.wasm`, `${prefix}/assets/core-runtime/zipp_wasm_bg.wasm`]),
-].map((where) => ({ where, pattern: new RegExp(`^${where.replace(/[.]/g, '\\.').replace('*', '[^/]+')}$`) }));
+function knownEngineCopies(withWebVariant) {
+  return [
+    'zipp/zipp_wasm_bg.wasm',
+    ...(withWebVariant ? [WEB_ENGINE_PATH] : []),
+    'native-runtime/wasm/zipp_wasm_bg.wasm',
+    ...['hosted-runtime', 'app-editors/builder', 'app-editors/studio'].flatMap((prefix) => [`${prefix}/assets/zipp_wasm_bg-*.wasm`, `${prefix}/assets/core-runtime/zipp_wasm_bg.wasm`]),
+  ].map((where) => ({ where, pattern: new RegExp(`^${where.replace(/[.]/g, '\\.').replace('*', '[^/]+')}$`) }));
+}
 /** The first Softn release that ships its ZIPP engine as a zipp/ tree with the ZIPP release it came from. */
 const FIRST_ZIPP_TREE_RELEASE = 'v0.0.15';
 
@@ -151,6 +171,7 @@ function defaultPaths(root) {
     root,
     protocolFile: resolve(root, 'formlogic/ui/src/lib/softn/protocol.json'),
     zippWasm: resolve(root, 'formlogic/ui/vendor/zipp-wasm'),
+    zippWasmWeb: resolve(root, 'formlogic/ui/vendor/zipp-wasm-web'),
     adapterDir: resolve(root, 'formlogic/ui/src/lib/softn'),
     hostedRuntime: resolve(root, 'formlogic/ui/public/hosted-runtime'),
     appEditors: resolve(root, 'formlogic/ui/public/app-editors'),
@@ -373,16 +394,47 @@ export async function verifyArchive(zip, { sidecarDigest, paths, archiveName }) 
   catch { throw new ReleaseError(`native-runtime/wasm/SOURCE.json names ZIPP ${shippedSource?.version} (${String(shippedSource?.sha256).slice(0, 12)}); softn-release.json records ${expected.version} (${expected.sha256.slice(0, 12)}).`); }
   const nativeGlue = entries.get('native-runtime/wasm/zipp_wasm.mjs');
   if (!nativeGlue || !nativeGlue.data.equals(zippTree.get('zipp_wasm.js'))) throw new ReleaseError('native-runtime/wasm/zipp_wasm.mjs is not zipp/zipp_wasm.js: the native runtime and the browser engine must share one glue build.');
-  // By content, not by name: a hashed asset or a renamed copy is still found.
+
+  // The web variant: the same release's JavaScript-only build, in a top-level zipp-web/ tree,
+  // when and only when release.zipp.variants.web records it. The tree is held to the variant
+  // check here, at the door, and again in staging and at --check (generationTrees).
+  const webTree = new Map();
+  for (const [name, entry] of entries) if (name.startsWith('zipp-web/') && !name.endsWith('/')) webTree.set(name.slice('zipp-web/'.length), entry.data);
+  let webVariant = null;
+  if (zipp.variants?.web !== undefined) {
+    try { webVariant = zippVariantIdentity(zipp.variants.web); }
+    catch (error) { throw new ReleaseError(`Softn ${release.tag} records a zipp.variants.web FormLogic cannot install (${error.message})`); }
+    if (!webTree.size) throw new ReleaseError(`Softn ${release.tag} records zipp.variants.web but ships no zipp-web/ tree.`);
+  } else if (webTree.size) {
+    // An engine there is refused by the scan below (a second engine); anything else is a tree
+    // the release does not describe, and FormLogic installs only what the release describes.
+    const engine = webTree.get('zipp_wasm_bg.wasm');
+    if (!engine || !isZippEngineWasm(engine)) throw new ReleaseError(`Softn ${release.tag} ships a zipp-web/ tree but softn-release.json records no zipp.variants.web; FormLogic installs only what the release describes.`);
+  }
+  // By content, not by name: a hashed asset or a renamed copy is still found. A per-path rule:
+  // every engine copy is the primary, except the one path that holds the variant when the
+  // release records one — and that path may hold nothing else.
   const copies = [];
   for (const [name, entry] of entries) {
     if (!isZippEngineWasm(entry.data)) continue;
     const digest = sha256(entry.data);
-    if (digest !== expected.sha256) throw new ReleaseError(`${name} is a ZIPP engine (${digest.slice(0, 12)}) other than the ZIPP ${zipp.release} engine (${expected.sha256.slice(0, 12)}) softn-release.json records; one release ships one engine.`);
+    if (digest === expected.sha256) {
+      if (webVariant && name === WEB_ENGINE_PATH) throw new ReleaseError(`${name} holds the ZIPP ${zipp.release} engine (${digest.slice(0, 12)}), not the web variant (${webVariant.sha256.slice(0, 12)}) softn-release.json records there; a variant is the same source built again, not the same bytes named twice.`);
+    } else if (webVariant && digest === webVariant.sha256) {
+      if (name !== WEB_ENGINE_PATH) throw new ReleaseError(`${name} is the ZIPP ${zipp.release} web variant engine (${digest.slice(0, 12)}) softn-release.json records at ${WEB_ENGINE_PATH} and nowhere else; every other engine copy is the ZIPP ${zipp.release} engine (${expected.sha256.slice(0, 12)}).`);
+    } else if (webVariant && name === WEB_ENGINE_PATH) {
+      throw new ReleaseError(`${name} holds a ZIPP engine (${digest.slice(0, 12)}) that is neither the ZIPP ${zipp.release} engine (${expected.sha256.slice(0, 12)}) nor its web variant (${webVariant.sha256.slice(0, 12)}) softn-release.json records.`);
+    } else {
+      throw new ReleaseError(`${name} is a ZIPP engine (${digest.slice(0, 12)}) other than the ZIPP ${zipp.release} engine (${expected.sha256.slice(0, 12)}) softn-release.json records; one release ships one engine.`);
+    }
     copies.push(name);
   }
-  const unfound = KNOWN_ENGINE_COPIES.filter(({ pattern }) => !copies.some((name) => pattern.test(name)));
+  const unfound = knownEngineCopies(Boolean(webVariant)).filter(({ pattern }) => !copies.some((name) => pattern.test(name)));
   if (unfound.length) throw new ReleaseError(`No ZIPP engine copy matches ${unfound.map(({ where }) => where).join(', ')} in Softn ${release.tag} (found: ${copies.join(', ') || 'none'}); a copy is missing or the engine's exports changed, so the content check cannot vouch for this archive.`);
+  if (webVariant) {
+    try { await checkZippVariantTree(webTree, webVariant, zipp, { releaseSums: zippTree.get('RELEASE-SHA256SUMS') }); }
+    catch (error) { throw new ReleaseError(`zipp-web/ in Softn ${release.tag} is not the ZIPP ${zipp.release} web variant softn-release.json records: ${error.message}`); }
+  }
 
   // The protocols: exactly what this FormLogic speaks.
   const protocol = JSON.parse(await readFile(paths.protocolFile, 'utf8'));
@@ -416,7 +468,7 @@ export async function verifyArchive(zip, { sidecarDigest, paths, archiveName }) 
   if (!hostedFeatures.includes(PYTHON_LOGIC_FEATURE)) {
     throw new ReleaseError(`Softn ${release.tag} speaks logicLanguages ${releaseProtocols.logicLanguages} but its hosted-runtime/runtime-manifest.json does not advertise ${PYTHON_LOGIC_FEATURE} (features: ${hostedFeatures.join(', ') || 'none'}); FormLogic would install it and then refuse every app with Python logic.`);
   }
-  return { release, entries, zipDigest, expected, adapterSha, adapterText };
+  return { release, entries, zipDigest, expected, webVariant, adapterSha, adapterText };
 }
 
 // ── Installing: one generation, staged whole, promoted whole ────────────────
@@ -529,16 +581,31 @@ function idList(value) {
 }
 
 /**
+ * The engines every install of this fetcher carries, whatever the release: the primary ZIPP
+ * engine (zipp/) and host JavaScript (hosted-runtime/host.html, which verifyArchive requires).
+ * `zipp-web` is carried only by an install with the web variant tree.
+ */
+const CARRIED_ENGINES = ['zipp-web-python', 'host-js'];
+
+/**
  * What the hosted runtime this release installs advertises, taken from the archive itself:
  * `engines` and `features` from hosted-runtime/runtime-manifest.json, `protocols` from
  * softn-release.json. Stamped into the native runtime's provenance (the one file the install
  * already transforms, and the one the backend already reads) so the server can decide an app's
  * engine from what is INSTALLED without guessing at a web root. Every field is optional: a
  * release from before Softn advertises them stamps an empty record, and the reader fails closed.
+ *
+ * `engines` is the manifest's list INTERSECTED with the engines this install carries. The
+ * runtime manifest names every engine the shell can serve (a shared constant in Softn — it lists
+ * zipp-web whether or not the release ships the variant), while the server reads this stamp as
+ * "installed": so zipp-web is stamped only when the zipp-web/ tree is installed with it, and an
+ * app whose owner chose it resolves to the fallback with reason not-installed until then.
  */
 export function hostedRuntimeRecord(entries, release) {
   const manifest = JSON.parse(entryText(entries, 'hosted-runtime/runtime-manifest.json'));
-  const engines = idList(manifest?.engines);
+  const carried = new Set([...CARRIED_ENGINES, ...(release?.zipp?.variants?.web !== undefined ? ['zipp-web'] : [])]);
+  const advertised = idList(manifest?.engines);
+  const engines = advertised ? idList(advertised.filter((id) => carried.has(id))) : null;
   const features = idList(manifest?.features);
   const protocols = release?.protocols && typeof release.protocols === 'object' && !Array.isArray(release.protocols)
     ? sortKeys(release.protocols)
@@ -551,14 +618,27 @@ export function hostedRuntimeRecord(entries, release) {
 }
 
 /**
- * The four trees a release installs, in promotion order. `prepare` edits a
+ * The trees a release installs, in promotion order. `prepare` edits a
  * staged tree before it is verified (the native runtime's provenance gains
  * the release it came from and what the hosted runtime advertises);
  * `validate` is the same check the source builders and `--check` apply.
  * `releaseInfo.zipp` is the release's ZIPP record, which the installed engine
  * tree's SOURCE.json must carry.
+ *
+ * The web variant tree is the fifth, present only when `releaseInfo.zipp`
+ * records `variants.web`. A release WITHOUT the variant lists it as a tree to
+ * RETIRE instead: an install sets aside whatever a previous generation left
+ * at its destination (and a rollback puts it back), and `--check` refuses to
+ * certify while one is there — the UI build globs that directory, so a stale
+ * variant would otherwise be embedded under an identity the installed release
+ * never recorded. `releaseSums` reads the primary tree's RELEASE-SHA256SUMS
+ * (the variant tree carries none): the archive's copy during an install,
+ * since the primary's destination is still the previous release's while the
+ * new trees are staged; the installed copy at `--check`.
  */
-function generationTrees(paths, expected, releaseInfo, hostedRuntime = null) {
+function generationTrees(paths, expected, releaseInfo, hostedRuntime = null, { releaseSums = async () => null } = {}) {
+  const webVariant = releaseInfo.zipp?.variants?.web;
+  const webPath = () => relative(paths.root, paths.zippWasmWeb).replace(/\\/g, '/') || paths.zippWasmWeb;
   return [
     {
       name: 'zipp-wasm', prefix: 'zipp/', destination: paths.zippWasm, stagePrefix: '.zipp-wasm-',
@@ -567,6 +647,19 @@ function generationTrees(paths, expected, releaseInfo, hostedRuntime = null) {
         catch (error) { throw new ReleaseError(`The browser engine tree (${relative(paths.root, dir) || dir}) is not the ZIPP ${releaseInfo.zipp?.release ?? '(unrecorded)'} Softn ${releaseInfo.tag} records: ${error.message}`); }
       },
     },
+    webVariant !== undefined
+      ? {
+        name: 'zipp-wasm-web', prefix: 'zipp-web/', destination: paths.zippWasmWeb, stagePrefix: '.zipp-wasm-web-',
+        validate: async (dir) => {
+          try { await checkZippVariantTree(dir, webVariant, releaseInfo.zipp, { releaseSums: await releaseSums() }); }
+          catch (error) { throw new ReleaseError(`The web variant tree (${relative(paths.root, dir) || dir}) is not the ZIPP ${releaseInfo.zipp?.release ?? '(unrecorded)'} web variant Softn ${releaseInfo.tag} records: ${error.message}`); }
+        },
+      }
+      : {
+        name: 'zipp-wasm-web', destination: paths.zippWasmWeb, stagePrefix: '.zipp-wasm-web-', retire: true,
+        retired: () => `retired ${webPath()}: Softn ${releaseInfo.tag} ships no web variant`,
+        stale: () => `${webPath()} is present but Softn ${releaseInfo.tag} ships no web variant, so it is not part of the generation current.json records; a UI build would embed a stale engine. Run node scripts/fetch-softn-release.mjs.`,
+      },
     {
       name: 'hosted-runtime', prefix: 'hosted-runtime/', destination: paths.hostedRuntime, stagePrefix: '.hosted-runtime-',
       validate: async (dir) => { await checkRuntimeArtifact(dir, expected); await checkEntryDocuments(dir); },
@@ -696,10 +789,11 @@ async function rollBack(journal, journalFile, log, io, reason = 'the swap did no
 }
 
 /**
- * Install the four trees as one generation: stage and verify all of them,
- * write the promotion journal, swap each destination (keeping the previous
- * tree beside it), record the generation with its complete inventory, and
- * only then drop the previous trees. A failure between writing the journal
+ * Install the trees as one generation: stage and verify all of them, write
+ * the promotion journal, swap each destination (keeping the previous tree
+ * beside it), record the generation with its complete inventory, and only
+ * then drop the previous trees. A tree to retire (a web variant tree the
+ * release does not ship) is set aside like the others and never replaced. A failure between writing the journal
  * and recording the generation (a move refused, a promoted tree failing
  * validation) rolls the generation back before rethrowing; if the rollback
  * fails too, the journal stays and the error names both. `failAt` is a test
@@ -709,13 +803,16 @@ async function rollBack(journal, journalFile, log, io, reason = 'the swap did no
  */
 export async function installGeneration(entries, expected, paths, record, { failAt = null, log = () => {}, ops = {} } = {}) {
   const io = promotionOps(ops);
-  const trees = generationTrees(paths, expected, record, hostedRuntimeRecord(entries, record));
+  const releaseSums = async () => entries.get('zipp/RELEASE-SHA256SUMS')?.data ?? null;
+  // A tree to retire with nothing at its destination is nothing to do.
+  const trees = generationTrees(paths, expected, record, hostedRuntimeRecord(entries, record), { releaseSums }).filter((tree) => !tree.retire || existsSync(tree.destination));
+  const installing = trees.filter((tree) => !tree.retire);
   await sweepStaging(trees);
   const staged = {};
   const journalFile = promotionJournalPath(paths);
   let journal = null;
   try {
-    for (const tree of trees) {
+    for (const tree of installing) {
       const parent = dirname(tree.destination);
       await mkdir(parent, { recursive: true });
       const dir = await mkdtemp(resolve(parent, tree.stagePrefix));
@@ -737,12 +834,14 @@ export async function installGeneration(entries, expected, paths, record, { fail
       },
     };
     const inventory = {};
-    for (const tree of trees) inventory[tree.name] = await inventoryOf(staged[tree.name]);
+    for (const tree of installing) inventory[tree.name] = await inventoryOf(staged[tree.name]);
     const full = { ...record, generation: { installedAt: new Date().toISOString(), inventory, transformed } };
     // A journal already here is one recoverPromotion kept because it names no
-    // trees; if this install is rolled back, that refusal is put back too.
+    // trees; if this install is rolled back, that refusal is put back too. A
+    // retired tree is journaled with an empty inventory: once promoted, its
+    // destination holds nothing, which is exactly what recovery then expects.
     journal = { formatVersion: 1, startedAt: new Date().toISOString(), record: full, trees: {}, ...(existsSync(journalFile) && { unresolvedBefore: true }) };
-    for (const tree of trees) journal.trees[tree.name] = { state: 'staged', hadPrevious: existsSync(tree.destination), destination: tree.destination, staged: staged[tree.name], previous: `${tree.destination}.previous`, inventory: inventory[tree.name] };
+    for (const tree of trees) journal.trees[tree.name] = { state: 'staged', ...(tree.retire && { retire: true }), hadPrevious: existsSync(tree.destination), destination: tree.destination, staged: staged[tree.name] ?? null, previous: `${tree.destination}.previous`, inventory: inventory[tree.name] ?? {} };
     await mkdir(paths.cache, { recursive: true });
     const writeJournal = () => writeJson(journalFile, journal, io);
     await writeJournal();
@@ -756,6 +855,12 @@ export async function installGeneration(entries, expected, paths, record, { fail
       // A copy aside cut short leaves a partial .previous beside the intact old
       // tree, so the journal says a copy is under way until it is whole.
       if (existsSync(tree.destination)) await moveDir(tree.destination, previous, io, async (copying) => { journal.trees[tree.name].copyingAside = copying; await writeJournal(); });
+      if (tree.retire) {
+        journal.trees[tree.name].state = 'promoted';
+        await writeJournal();
+        log(tree.retired());
+        continue;
+      }
       await moveDir(staged[tree.name], tree.destination, io);
       staged[tree.name] = null;
       journal.trees[tree.name].staged = null;
@@ -858,7 +963,7 @@ export async function fetchSoftnRelease({
     }
   }
 
-  const { release, entries, zipDigest, expected, adapterSha } = await verifyArchive(zip, { sidecarDigest, paths, archiveName });
+  const { release, entries, zipDigest, expected, webVariant, adapterSha } = await verifyArchive(zip, { sidecarDigest, paths, archiveName });
   if (resolved && resolved.tag !== release.tag) throw new ReleaseError(`The archive says it is ${release.tag}, the release page says ${resolved.tag}.`);
   if (resolved && resolved.commit && resolved.commit !== release.commit) throw new ReleaseError(`The archive was built from ${release.commit.slice(0, 12)}, but tag ${resolved.tag} points at ${resolved.commit.slice(0, 12)}; the archive is not the tag's build.`);
   if (frozenRecord) assertFrozenIdentity(frozenRecord, { tag: release.tag, commit: release.commit, zipDigest, archiveName });
@@ -890,7 +995,7 @@ export async function fetchSoftnRelease({
     fetchedAt: new Date().toISOString(),
   };
   const full = await installGeneration(entries, expected, paths, record, { failAt, log, ops });
-  log(`Softn ${release.tag} (${release.commit.slice(0, 12)}) installed: browser engine, hosted runtime, app editors, native runtime; ZIPP ${release.zipp.release} (${release.zipp.revision.slice(0, 12)}, engine ${release.zipp.sha256.slice(0, 12)})${frozenRecord ? ' (frozen for this run)' : ''}`);
+  log(`Softn ${release.tag} (${release.commit.slice(0, 12)}) installed: browser engine${webVariant ? ' and its web variant' : ''}, hosted runtime, app editors, native runtime; ZIPP ${release.zipp.release} (${release.zipp.revision.slice(0, 12)}, engine ${release.zipp.sha256.slice(0, 12)}${webVariant ? `, web variant ${webVariant.sha256.slice(0, 12)}` : ''})${frozenRecord ? ' (frozen for this run)' : ''}`);
   return full;
 }
 
@@ -924,8 +1029,12 @@ export async function checkInstalled({ root = resolve(dirname(fileURLToPath(impo
   // self-consistent manifests each; only the inventory tells them apart.
   const inventory = record.generation?.inventory;
   if (!inventory || typeof inventory !== 'object') throw new ReleaseError(`current.json for Softn ${record.tag} records no generation inventory (installed by an earlier fetcher); run node scripts/fetch-softn-release.mjs to install and record it.`);
-  const trees = generationTrees(paths, expected, record);
+  const trees = generationTrees(paths, expected, record, null, { releaseSums: () => readFile(resolve(paths.zippWasm, 'RELEASE-SHA256SUMS')) });
   for (const tree of trees) {
+    if (tree.retire) {
+      if (existsSync(tree.destination)) throw new ReleaseError(tree.stale());
+      continue;
+    }
     if (!inventory[tree.name]) throw new ReleaseError(`current.json records no inventory for ${tree.name}; fetch again.`);
     const diff = await inventoryDiff(tree.destination, inventory[tree.name]);
     if (!intact(diff)) {

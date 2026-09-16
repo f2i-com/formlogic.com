@@ -32,8 +32,12 @@ use PDO;
  * Everything fails closed to zipp-web-python: a missing or corrupt policy row, an install record
  * that does not advertise an engine, an owner who is not verified. host-js became effective when
  * the installed hosted runtime began advertising it (its second entry document, host.html) and
- * the frame learned to mount that document; zipp-web is still advertised by no runtime, so it
- * still resolves to the fallback with reason 'not-installed'.
+ * the frame learned to mount that document. zipp-web became effective when a Softn release began
+ * shipping ZIPP's JavaScript-only build as a variant tree (zipp-web/) and the fetcher began
+ * installing it: the runtime manifest lists zipp-web unconditionally, so the fetcher stamps it into
+ * hostedRuntime.engines only when that tree is installed with it, and an install without the
+ * variant resolves an owner's zipp-web choice to the fallback with reason 'not-installed'. This
+ * class reads the stamp and nothing else — no code here changed for the variant.
  */
 class RuntimeEngineService
 {

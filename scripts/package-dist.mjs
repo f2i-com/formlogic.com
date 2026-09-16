@@ -43,7 +43,7 @@ import { fileURLToPath } from 'node:url';
 import { loadReleaseSigner, signReleaseManifest } from './release-signing.mjs';
 import { checkReleaseRuntime, checkAppEditors, checkNativeRuntime, checkDistEngines, zippLicensesText, engineIdentity } from './release-runtime.mjs';
 import { checkSandbox } from './runtime-provenance.mjs';
-import { runtimeIdentity, checkZippTree } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
+import { runtimeIdentity, checkZippTree, checkZippVariantTree } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 
 const isWindows = process.platform === 'win32';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -380,6 +380,18 @@ const softnRelease = existsSync(installedRelease) ? JSON.parse(readFileSync(inst
 try { await checkZippTree(zippDir, softnRelease ? softnRelease.zipp : zippSource); }
 catch (error) { fail(`formlogic/ui/vendor/zipp-wasm is not the ZIPP release ${softnRelease ? `Softn ${softnRelease.tag} installed` : 'its SOURCE.json records'}: ${error.message} Run node scripts/fetch-softn-release.mjs.`); }
 const expectedRuntime = runtimeIdentity(zippSource);
+// The web variant (the release's zipp-web/ tree, served as zipp-web), when the installed release
+// ships one: generated too, held to the same record, and then required in the build — exactly
+// once, as the second hashed app asset — by checkDistEngines below. Without one, no tree may be
+// there: the build globs it, and would embed an engine the release never described.
+const zippWebDir = path.join(uiDir, 'vendor/zipp-wasm-web');
+const webVariant = zippSource.variants?.web ?? null;
+if (webVariant) {
+  try { await checkZippVariantTree(zippWebDir, webVariant, softnRelease ? softnRelease.zipp : zippSource, { releaseSums: readFileSync(path.join(zippDir, 'RELEASE-SHA256SUMS')) }); }
+  catch (error) { fail(`formlogic/ui/vendor/zipp-wasm-web is not the ZIPP web variant ${softnRelease ? `Softn ${softnRelease.tag} installed` : 'SOURCE.json records'}: ${error.message} Run node scripts/fetch-softn-release.mjs.`); }
+} else if (existsSync(zippWebDir)) {
+  fail('formlogic/ui/vendor/zipp-wasm-web is present but the installed release records no web variant; the UI build would embed a stale engine. Run node scripts/fetch-softn-release.mjs.');
+}
 // The server sandbox is generated too: both launchers must be the ones its
 // SOURCE.json records, embedding one guest built from the ZIPP release the
 // installed Softn release names; a release takes only what one CI run built.
@@ -421,8 +433,8 @@ for (const f of ['index.html', '.htaccess', 'assets']) {
 // Every ZIPP engine the build emitted (found by its exports, whatever Vite
 // named it) is the installed release's, and the app's own copy is among them.
 try {
-  const engines = await checkDistEngines(distDir, zippSource);
-  info(`${engines.length} ZIPP engine copies in formlogic/ui/dist, all ${expectedRuntime.sha256.slice(0, 12)}`);
+  const engines = await checkDistEngines(distDir, zippSource, { web: webVariant });
+  info(`${engines.length} ZIPP engine copies in formlogic/ui/dist, all ${expectedRuntime.sha256.slice(0, 12)}${webVariant ? ` but the one web variant asset (${webVariant.sha256.slice(0, 12)})` : ''}`);
 } catch (error) { fail(error.message); }
 
 // Even --skip-ui-build must supply a complete, matching hosted runtime.

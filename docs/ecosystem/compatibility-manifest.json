@@ -1,11 +1,11 @@
 {
   "kind": "formlogic.ecosystemCompatibilityManifest",
   "formatVersion": 1,
-  "generatedAt": "2026-09-16T08:59:39.079Z",
+  "generatedAt": "2026-09-16T15:53:21.724Z",
   "note": "Source revisions and digests of files present in the tree at generation time. Release workflows must recompute digests of the artifacts they actually ship; provenance is not verification of downloaded bytes.",
   "components": {
     "formlogic": {
-      "revision": "bdf514541bcdd446987b83c0315df55df1b544ca",
+      "revision": "a6c269dff9d3f3ff96af4343862ef7f9ff94fb54",
       "backupFormat": {
         "current": 2,
         "importable": [
@@ -17,9 +17,9 @@
     },
     "softn": {
       "pinnedBy": "latest GitHub release of f2i-com/softn.com (scripts/fetch-softn-release.mjs); SOFTN_RELEASE pins a tag; a release run freezes one record (--resolve-only) that every job installs (--frozen) and the release gate checks with --exact",
-      "release": "v0.0.18-local",
-      "revision": "451bd51690ae72504ff2e1301c86e3bfbfd7c827",
-      "archiveSha256": "3d6980c56eadfce2474065d73091b1663ad4cf23f305a8b8dccd4acce0a28fa9",
+      "release": "v0.0.19-local",
+      "revision": "c6f34d31b91c91d2f9ffce695222ec3e7c93e17c",
+      "archiveSha256": "1acbb22a762b0d95eeb4e0a0d60c3366582b31d43bd02aa02df0d279ea16f511",
       "frozen": null,
       "nativeProtocol": 1,
       "recordEvents": 1,
@@ -54,7 +54,21 @@
       "artifact": "zipp_wasm_bg.wasm",
       "sha256": "43db864f0c4101e6fe6c8836606a20b75abe63e75548f397a7f3fa08af4232aa",
       "rustc": "rustc 1.92.0 (ded5c06cf 2025-12-08)",
-      "wasmBindgen": "0.2.126"
+      "wasmBindgen": "0.2.126",
+      "variants": {
+        "web": {
+          "bundle": "zipp-wasm-0.0.18-web.zip",
+          "bundleSha256": "aec1c78e26d78cfbe660408ebff9435246382665b25b707f3d008d3442b33139",
+          "sha256": "512fd864e2831fa2cb46047a7a044d32d4214b2b9caaf44200e8c153f994f1a8",
+          "glueSha256": "1a3deed1b1ba491de00c7fbfab7e62490c16b7df739240b26a21680950062c19",
+          "variant": "javascript",
+          "languages": [
+            "javascript"
+          ],
+          "stackBytes": 1048576,
+          "commit": "fc474d15758827770f06d0dc2ebfe3055ebaa625"
+        }
+      }
     },
     "aokie": {
       "path": "docs/contracts/aokie-connector-contract.v1.json",
@@ -89,6 +103,20 @@
         "file": "THIRD_PARTY_LICENSES.txt",
         "source": "softn-curated",
         "sha256": "7626c68307e5a7efdc3e405ca0d02031589801576c0e94cee41fccc81eb2cd4c"
+      },
+      "variants": {
+        "web": {
+          "bundle": "zipp-wasm-0.0.18-web.zip",
+          "bundleSha256": "aec1c78e26d78cfbe660408ebff9435246382665b25b707f3d008d3442b33139",
+          "sha256": "512fd864e2831fa2cb46047a7a044d32d4214b2b9caaf44200e8c153f994f1a8",
+          "glueSha256": "1a3deed1b1ba491de00c7fbfab7e62490c16b7df739240b26a21680950062c19",
+          "variant": "javascript",
+          "languages": [
+            "javascript"
+          ],
+          "stackBytes": 1048576,
+          "commit": "fc474d15758827770f06d0dc2ebfe3055ebaa625"
+        }
       }
     },
     "modules": {
