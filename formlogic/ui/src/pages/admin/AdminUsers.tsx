@@ -33,6 +33,8 @@ export function AdminUsers() {
             {u.name || '—'}
             {u.isAdmin && <span className="ml-2 text-primary-600 dark:text-primary-400 font-semibold">admin</span>}
             {u.isDemo && <span className="ml-2 text-amber-600 dark:text-amber-400 font-semibold">demo</span>}
+            {/* Code trust: this account's apps may ask for the host-JavaScript engine. */}
+            {u.codeTrustVerified && <span className="ml-2 text-emerald-600 dark:text-emerald-400 font-semibold" title="Verified for host JavaScript">verified for host JavaScript</span>}
           </p>
         </div>
       ),

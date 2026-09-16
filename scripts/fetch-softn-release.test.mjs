@@ -38,10 +38,10 @@ const adapterSha = sha256(ADAPTER.replace(/\r\n/g, '\n'));
 const COMMIT = 'b'.repeat(40);
 const OTHER_COMMIT = 'c'.repeat(40);
 
-function runtimeManifest(files, zipp) {
+function runtimeManifest(files, zipp, advertised = {}) {
   const digests = {};
   for (const [name, data] of Object.entries(files)) digests[name] = sha256(data);
-  return Buffer.from(JSON.stringify({ formatVersion: 1, zipp: { version: zipp.version, sha256: zipp.sha256 }, files: digests }, null, 2) + '\n');
+  return Buffer.from(JSON.stringify({ formatVersion: 1, zipp: { version: zipp.version, sha256: zipp.sha256 }, ...advertised, files: digests }, null, 2) + '\n');
 }
 
 /**
@@ -49,7 +49,7 @@ function runtimeManifest(files, zipp) {
  * the zipp/ tree, and the same engine in the native runtime and, as hashed and
  * core-runtime assets, in the hosted runtime and both editors.
  */
-function archiveEntries({ tag = 'v0.0.13', commit = COMMIT, zippRelease = ZIPP_RELEASE, protocols = PROTOCOLS, adapter = ADAPTER, hostedCode = 'export const hosted = true;' } = {}) {
+function archiveEntries({ tag = 'v0.0.13', commit = COMMIT, zippRelease = ZIPP_RELEASE, protocols = PROTOCOLS, adapter = ADAPTER, hostedCode = 'export const hosted = true;', advertised = {} } = {}) {
   const entries = {};
   const put = (name, data) => { entries[name] = Buffer.isBuffer(data) ? data : Buffer.from(data); };
   const { wasm, source, record: zipp } = zippRelease;
@@ -59,7 +59,7 @@ function archiveEntries({ tag = 'v0.0.13', commit = COMMIT, zippRelease = ZIPP_R
   // hosted runtime
   const hosted = { 'index.html': Buffer.from('<script src="./assets/app.js"></script>'), 'assets/app.js': Buffer.from(hostedCode), 'assets/zipp_wasm_bg-hosted.wasm': wasm, 'assets/core-runtime/zipp_wasm_bg.wasm': wasm, 'README.txt': Buffer.from('fixture') };
   for (const [n, d] of Object.entries(hosted)) put(`hosted-runtime/${n}`, d);
-  put('hosted-runtime/runtime-manifest.json', runtimeManifest(hosted, zipp));
+  put('hosted-runtime/runtime-manifest.json', runtimeManifest(hosted, zipp, advertised));
   // app editors
   const editors = {};
   for (const editor of ['builder', 'studio']) {
@@ -192,6 +192,9 @@ test('a local archive with a good sidecar installs all four trees and records wh
   const provenance = JSON.parse(await readFile(resolve(root, 'formlogic/backend/resources/softn-native/provenance.json'), 'utf8'));
   assert.deepEqual(provenance.release, { tag: 'v0.0.13', commit: COMMIT });
   assert.equal(provenance.nativeProtocol, 1);
+  // A release that advertises no engines stamps the protocols alone; the backend reads
+  // hostedRuntime.engines and fails closed to zipp-web-python when it is absent.
+  assert.deepEqual(provenance.hostedRuntime, { protocols: PROTOCOLS });
   // No staging or previous directories are left behind.
   const publicEntries = await readdir(resolve(root, 'formlogic/ui/public'));
   assert.deepEqual(publicEntries.sort(), ['app-editors', 'hosted-runtime']);
@@ -203,7 +206,7 @@ test('a local archive with a good sidecar installs all four trees and records wh
   assert.equal(current.generation.inventory['hosted-runtime']['assets/app.js'], sha256('export const hosted = true;'));
   assert.equal(current.generation.inventory['zipp-wasm']['zipp_wasm_bg.wasm'], ZIPP_RELEASE.source.sha256);
   assert.ok(current.generation.inventory['native-runtime']['provenance.json']);
-  assert.equal(current.generation.transformed['native-runtime/provenance.json'].transformation, 'release: {tag, commit} added');
+  assert.equal(current.generation.transformed['native-runtime/provenance.json'].transformation, 'release: {tag, commit} and hostedRuntime added');
   assert.ok(!existsSync(resolve(root, '.runtime-source/softn-release/promotion.json')), 'no journal outlives a completed install');
   // --check finds the install intact, and finds a modified asset.
   await checkInstalled({ root, ...quiet });
@@ -574,6 +577,40 @@ test('the transformed provenance is held to the archive\'s content plus the reco
   current.generation.inventory['native-runtime']['provenance.json'] = sha256(await readFile(file));
   await writeFile(currentFile, JSON.stringify(current));
   await assert.rejects(checkInstalled({ root, ...quiet }), /beyond the recorded transformation|module is missing or changed/);
+});
+
+test('the engines and features the hosted runtime advertises are stamped into the native provenance, and --check holds it to them', async (t) => {
+  const root = await formlogicRoot(t);
+  const advertised = { engines: ['host-js', 'zipp-web-python'], features: ['python-logic/1'] };
+  const a = await writeFixtureArchive(resolve(root, 'a'), { tag: 'v0.0.13', advertised });
+  await fetchSoftnRelease({ root, archivePath: a.path, ...quiet });
+  const file = resolve(root, 'formlogic/backend/resources/softn-native/provenance.json');
+  const provenance = JSON.parse(await readFile(file, 'utf8'));
+  assert.deepEqual(provenance.hostedRuntime, { engines: ['host-js', 'zipp-web-python'], features: ['python-logic/1'], protocols: PROTOCOLS });
+  // Everything else about the native runtime is unchanged by the stamp.
+  assert.equal(provenance.modules['runner.mjs'], sha256('// runner.mjs\n'));
+  assert.deepEqual(provenance.release, { tag: 'v0.0.13', commit: COMMIT });
+  await checkInstalled({ root, ...quiet });
+  // The stamp is inside the recorded generation: editing it is an edit like any other.
+  provenance.hostedRuntime.engines.push('zipp-web');
+  await writeFile(file, JSON.stringify(provenance, null, 2) + '\n');
+  await assert.rejects(checkInstalled({ root, ...quiet }), /native-runtime is not the generation .*changed: provenance\.json/);
+});
+
+test('a generation recorded before the hostedRuntime stamp still passes --check', async (t) => {
+  const root = await formlogicRoot(t);
+  const a = await writeFixtureArchive(resolve(root, 'a'), { tag: 'v0.0.13' });
+  await fetchSoftnRelease({ root, archivePath: a.path, ...quiet });
+  // Reproduce a pre-E0 install exactly: no hostedRuntime on disk, the older transformation string.
+  const file = resolve(root, 'formlogic/backend/resources/softn-native/provenance.json');
+  const { hostedRuntime: _dropped, ...older } = JSON.parse(await readFile(file, 'utf8'));
+  await writeFile(file, JSON.stringify(older, null, 2) + '\n');
+  const currentFile = resolve(root, '.runtime-source/softn-release/current.json');
+  const current = JSON.parse(await readFile(currentFile, 'utf8'));
+  current.generation.inventory['native-runtime']['provenance.json'] = sha256(await readFile(file));
+  current.generation.transformed['native-runtime/provenance.json'].transformation = 'release: {tag, commit} added';
+  await writeFile(currentFile, JSON.stringify(current));
+  await checkInstalled({ root, ...quiet });
 });
 
 test('an install recorded by an earlier fetcher without an inventory is told to fetch again', async (t) => {

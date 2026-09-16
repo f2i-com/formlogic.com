@@ -107,6 +107,33 @@ describe('hosted app engine handoff', () => {
     expect(post).not.toHaveBeenCalled();
   });
 
+  it('runs every engine id on the ZIPP path until the seam lands: same init keys, same src', async () => {
+    // E0 threads the server's engine decision into this frame but changes nothing about how it
+    // boots — the installed runtime serves zipp-web-python only. The seam that acts on the id is
+    // E1-FL, so an engine the frame cannot serve must not alter the handshake here.
+    const baseline = await mount();
+    await act(async () => sendReady(baseline.iframe));
+    const withoutEngine = baseline.post.mock.calls[0][0] as Record<string, unknown>;
+    await act(async () => root!.unmount());
+    root = undefined;
+    container.remove();
+
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root!.render(
+      <HostedAppFrame slug="notes" client={{ 'manifest.json': '{}' }} version={1} engine={{ id: 'host-js', revision: 'abcdef0123456789' }} />
+    ));
+    const iframe = container.querySelector('iframe')!;
+    expect(iframe.getAttribute('src')).toBe('/hosted-runtime/index.html');
+    expect(iframe.getAttribute('sandbox')).toBe('allow-scripts');
+    const post = vi.spyOn(iframe.contentWindow!, 'postMessage').mockImplementation(() => undefined);
+    await act(async () => sendReady(iframe));
+    const withEngine = post.mock.calls[0][0] as Record<string, unknown>;
+    expect(Object.keys(withEngine).sort()).toEqual(Object.keys(withoutEngine).sort());
+    expect(withEngine.zippWasm).toBeInstanceOf(ArrayBuffer);
+  });
+
   it('boots a new frame when source changes at the same slug and version', async () => {
     const first = await mount();
     await act(async () => sendReady(first.iframe));

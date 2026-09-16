@@ -11,7 +11,7 @@ import {
   Plus,
   Upload,
 } from "lucide-react";
-import { api } from "../../lib/api";
+import { api, type AppEngine, type OwnerEnginePolicy } from "../../lib/api";
 import { reviewAppArchive, type AppImportReview } from "../../lib/appImportReview";
 import { Link } from "react-router-dom";
 import {
@@ -23,6 +23,7 @@ import {
 import { Button } from "../ui/Button";
 import { Modal } from "../ui/Modal";
 import { HostedAppFrame } from "./HostedAppFrame";
+import { AppEngineSelect } from "./AppEngineSelect";
 import { cn } from "../../lib/utils";
 import { zipSync, strToU8, strFromU8 } from "fflate";
 import { AppEditorDialog, type AppEditorKind } from "./AppEditorDialog";
@@ -76,6 +77,9 @@ function HostingEditor({
   const [pkg, setPkg] = useState<HostedPackage>(() => hostedStarter(app.name));
   const [editor, setEditor] = useState<{kind: AppEditorKind; bundle: Uint8Array} | null>(null);
   const [deployment, setDeployment] = useState<HostedDeployment | null>(null);
+  // The server's engine decision for this app, and what this site lets the owner choose between.
+  const [engine, setEngine] = useState<AppEngine | undefined>(undefined);
+  const [enginePolicy, setEnginePolicy] = useState<OwnerEnginePolicy | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -104,6 +108,8 @@ function HostingEditor({
         return;
       }
       setLoaded(true);
+      setEngine(result.data?.engine);
+      setEnginePolicy(result.data?.enginePolicy);
       if (result.data?.deployment) {
         const d = result.data.deployment;
         setDeployment(d);
@@ -374,6 +380,17 @@ function HostingEditor({
               <Link className="mt-2 inline-flex min-h-11 items-center text-sm font-medium text-indigo-600 dark:text-indigo-300" to={`/apps/${app.id}/studio/access`}>Manage users &amp; roles</Link>
             </div>
           </div>
+          {engine && enginePolicy && (
+            <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+              <AppEngineSelect
+                appId={app.id}
+                engine={engine}
+                policy={enginePolicy}
+                disabled={saving || importing}
+                onChanged={(next, policy) => { setEngine(next); setEnginePolicy(policy); }}
+              />
+            </div>
+          )}
           {importReview && <section aria-label="Import compatibility" className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/30">
             <h3 className="break-words font-semibold text-amber-950 dark:text-amber-100">{importReview.name}: hosting support needed</h3>
             <p className="text-sm text-amber-900 dark:text-amber-200">{importReview.fileCount} files · {importReview.assets} assets · {importReview.routes} backend routes · {importReview.migrations} migrations</p>
@@ -718,6 +735,7 @@ function HostingEditor({
                     slug={app.slug}
                     client={deployment.client}
                     version={deployment.version}
+                    engine={engine ? { id: engine.id, revision: engine.revision } : undefined}
                   />
                 </div>
               </div>

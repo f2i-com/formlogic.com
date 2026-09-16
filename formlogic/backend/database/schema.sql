@@ -528,6 +528,7 @@ CREATE TABLE `apps` (
   `custom_logic` mediumtext COLLATE utf8mb4_unicode_ci,
   `published_version` int NOT NULL DEFAULT '0',
   `published_at` timestamp NULL DEFAULT NULL,
+  `client_engine` varchar(16) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `slug` (`slug`),
   KEY `idx_owner_id` (`owner_id`),
@@ -1834,6 +1835,8 @@ CREATE TABLE `users` (
   `mfa_secret` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `mfa_enabled` tinyint(1) NOT NULL DEFAULT '0',
   `mfa_recovery_codes` text COLLATE utf8mb4_unicode_ci,
+  `code_trust_verified_at` datetime DEFAULT NULL,
+  `code_trust_verified_by` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `email` (`email`),
   KEY `idx_email` (`email`)

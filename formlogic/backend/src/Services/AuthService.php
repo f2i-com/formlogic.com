@@ -165,7 +165,22 @@ class AuthService
             'isDemo' => strtolower($user->email) === $demoEmail,
             'isAdmin' => $this->isPlatformAdmin($user),
             'mfaEnabled' => $this->isMfaEnabled($user->id),
+            // Advisory only — it tells the app-settings UI whether to offer the host-JavaScript
+            // engine. Enforcement re-reads the column server-side (RuntimeEngineService).
+            'isCodeTrustVerified' => $this->isCodeTrustVerified($user->id),
         ];
+    }
+
+    /** Whether an admin verified this account for the host-JavaScript client engine. */
+    private function isCodeTrustVerified(string $userId): bool
+    {
+        try {
+            $stmt = $this->mysql->prepare("SELECT code_trust_verified_at FROM users WHERE id = :id");
+            $stmt->execute(['id' => $userId]);
+            return !empty($stmt->fetchColumn());
+        } catch (\Exception $e) {
+            return false; // column not migrated yet
+        }
     }
 
     /** Whether TOTP MFA is switched on (drives the Settings card + signup nudge). */

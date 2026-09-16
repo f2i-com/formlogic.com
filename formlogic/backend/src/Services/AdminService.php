@@ -23,10 +23,19 @@ class AdminService
     private const NOTICE_MAX_LENGTH = 500;
 
     private PDO $mysql;
+    private MySQLConnection $connection;
+    private ?RuntimeEngineService $engineService = null;
 
     public function __construct(MySQLConnection $mysql)
     {
+        $this->connection = $mysql;
         $this->mysql = $mysql->getConnection();
+    }
+
+    /** Lazy so every existing `new AdminService($mysql)` keeps its one-argument shape. */
+    private function engines(): RuntimeEngineService
+    {
+        return $this->engineService ??= new RuntimeEngineService($this->connection);
     }
 
     // ── Overview ─────────────────────────────────────────────────────────────
@@ -79,6 +88,7 @@ class AdminService
 
         $stmt = $this->mysql->prepare("
             SELECT u.id, u.email, u.name, u.plan, u.cloud_until, u.is_admin, u.created_at, u.last_seen_at,
+                   u.code_trust_verified_at,
                    (SELECT COUNT(*) FROM apps a WHERE a.owner_id = u.id) AS apps_count,
                    (SELECT COUNT(*) FROM forms f WHERE f.user_id = u.id) AS forms_count,
                    (SELECT COUNT(*) FROM flow_definitions fd WHERE fd.owner_user_id = u.id) AS flows_count,
@@ -96,7 +106,8 @@ class AdminService
     public function getUserOverview(string $userId): ?array
     {
         $stmt = $this->mysql->prepare("
-            SELECT u.id, u.email, u.name, u.plan, u.cloud_until, u.is_admin, u.created_at, u.last_seen_at, u.mfa_enabled
+            SELECT u.id, u.email, u.name, u.plan, u.cloud_until, u.is_admin, u.created_at, u.last_seen_at, u.mfa_enabled,
+                   u.code_trust_verified_at, u.code_trust_verified_by
             FROM users u WHERE u.id = :id
         ");
         $stmt->execute(['id' => $userId]);
@@ -106,9 +117,15 @@ class AdminService
         }
         $user = $this->formatUserRow($row);
 
+        // One owner row and one policy read for the whole list: the per-app resolver is pure, so
+        // the admin sees exactly what each app's runtime GET would answer.
+        $owner = RuntimeEngineService::ownerOf($row);
+        $policy = $this->engines()->readPolicy();
+        $installed = $this->engines()->installedEngines();
+
         // Apps the user OWNS, with structure counts (no record data).
         $apps = $this->mysql->prepare("
-            SELECT a.id, a.name, a.slug, a.status, a.created_at,
+            SELECT a.id, a.name, a.slug, a.status, a.created_at, a.client_engine,
                    (SELECT COUNT(*) FROM app_forms af WHERE af.app_id = a.id) AS form_count,
                    (SELECT COUNT(*) FROM flow_definitions fd WHERE fd.app_id = a.id) AS flow_count,
                    (SELECT COUNT(*) FROM app_flow_bindings b WHERE b.app_id = a.id) AS binding_count,
@@ -121,6 +138,12 @@ class AdminService
             'createdAt' => $a['created_at'],
             'formCount' => (int) $a['form_count'], 'flowCount' => (int) $a['flow_count'],
             'bindingCount' => (int) $a['binding_count'], 'memberCount' => (int) $a['member_count'],
+            'engine' => RuntimeEngineService::resolve(
+                is_string($a['client_engine'] ?? null) ? $a['client_engine'] : null,
+                $policy,
+                $installed,
+                $owner
+            ),
         ], $apps->fetchAll(PDO::FETCH_ASSOC));
 
         // Every form the user owns (record COUNTS only — never the records).
@@ -200,6 +223,119 @@ class AdminService
         }
         $upd = $this->mysql->prepare('UPDATE users SET is_admin = :a WHERE id = :id');
         $upd->execute(['a' => $isAdmin ? 1 : 0, 'id' => $targetUserId]);
+    }
+
+    // ── Code trust (the host-JavaScript engine) ──────────────────────────────
+
+    /**
+     * Mark an account verified (or revoke it) for the host-JavaScript client engine — the one
+     * engine that runs the owner's code without the ZIPP VM around it, so this is an explicit
+     * transfer of trust to that account, not a convenience flag.
+     *
+     * Guards, mirroring setAdminFlag: the shared demo account can never be verified. Verifying
+     * also REQUIRES the account's own two-factor auth to be on, so the trusted account cannot be
+     * taken over with a password alone; MfaService::disable revokes verification again the moment
+     * that stops being true. An admin may verify their own account (a single-admin install has no
+     * second admin to ask) — the audit row says so.
+     *
+     * ONE transaction, and the audit row is inside it — the caller supplies the AuditService as an
+     * argument, not a constructor dependency, so every existing `new AdminService($mysql)` keeps
+     * its shape, and required, so the row can never be skipped. Revoking clears every stored
+     * host-js choice on the account's apps, so a later re-verification cannot silently switch host
+     * JavaScript back on without the owner choosing it again. If the row cannot be written, the
+     * trust change does not commit.
+     *
+     * @return array{verified: bool, verifiedAt: string|null, verifiedBy: string|null, affectedApps: list<string>, self: bool}
+     * @throws \InvalidArgumentException on guard violations
+     */
+    public function setCodeTrust(
+        string $targetUserId,
+        bool $verified,
+        string $actingUserId,
+        AuditService $audit,
+        ?string $ipAddress = null
+    ): array {
+        $stmt = $this->mysql->prepare('SELECT id, email, mfa_enabled, code_trust_verified_at FROM users WHERE id = :id');
+        $stmt->execute(['id' => $targetUserId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$row) {
+            throw new \InvalidArgumentException('User not found');
+        }
+        if ($verified && $this->isDemoRow($row)) {
+            throw new \InvalidArgumentException('The shared demo account cannot be verified for code trust');
+        }
+        if ($verified && !(bool) ($row['mfa_enabled'] ?? false)) {
+            throw new \InvalidArgumentException('This account must have two-factor authentication enabled before it can be verified for code trust');
+        }
+
+        $ownsTx = !$this->mysql->inTransaction();
+        if ($ownsTx) {
+            $this->mysql->beginTransaction();
+        }
+        try {
+            $affected = $verified ? [] : $this->clearHostJsApps($targetUserId);
+            $upd = $this->mysql->prepare(
+                'UPDATE users SET code_trust_verified_at = :at, code_trust_verified_by = :by WHERE id = :id'
+            );
+            $upd->execute([
+                'at' => $verified ? date('Y-m-d H:i:s') : null,
+                'by' => $verified ? $actingUserId : null,
+                'id' => $targetUserId,
+            ]);
+            $result = $this->codeTrustRow($targetUserId) + [
+                'affectedApps' => $affected,
+                'self' => $targetUserId === $actingUserId,
+            ];
+            $audit->logStrict(
+                $verified ? 'admin.verify_code_trust' : 'admin.revoke_code_trust',
+                'user',
+                $targetUserId,
+                $actingUserId,
+                $ipAddress,
+                ['affectedApps' => $affected, 'self' => $result['self']]
+            );
+            if ($ownsTx) {
+                $this->mysql->commit();
+            }
+            return $result;
+        } catch (\Throwable $e) {
+            if ($ownsTx && $this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Drop every stored host-js choice on one account's apps, naming the apps that changed.
+     * Shared with MfaService, which revokes code trust when two-factor auth is switched off.
+     *
+     * @return list<string>
+     */
+    public function clearHostJsApps(string $userId): array
+    {
+        $ids = $this->mysql->prepare('SELECT id FROM apps WHERE owner_id = :id AND client_engine = :e');
+        $ids->execute(['id' => $userId, 'e' => RuntimeEngineService::HOST_JS]);
+        $affected = array_map('strval', $ids->fetchAll(PDO::FETCH_COLUMN));
+        if ($affected !== []) {
+            $this->mysql->prepare('UPDATE apps SET client_engine = NULL WHERE owner_id = :id AND client_engine = :e')
+                ->execute(['id' => $userId, 'e' => RuntimeEngineService::HOST_JS]);
+        }
+        return $affected;
+    }
+
+    /** @return array{verified: bool, verifiedAt: string|null, verifiedBy: string|null} */
+    public function codeTrustRow(string $userId): array
+    {
+        $stmt = $this->mysql->prepare('SELECT code_trust_verified_at, code_trust_verified_by FROM users WHERE id = :id');
+        $stmt->execute(['id' => $userId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+        $at = $row['code_trust_verified_at'] ?? null;
+        return [
+            'verified' => is_string($at) && $at !== '',
+            'verifiedAt' => is_string($at) && $at !== '' ? $at : null,
+            'verifiedBy' => $row['code_trust_verified_by'] ?? null,
+        ];
     }
 
     // ── Account tools (support operations, all audited by the controller) ────
@@ -379,6 +515,14 @@ class AdminService
         // Present only on queries that select it (the user-detail overview).
         if (array_key_exists('mfa_enabled', $r)) {
             $out['mfaEnabled'] = (bool) $r['mfa_enabled'];
+        }
+        // Advisory for the admin UI; enforcement always re-reads the column (RuntimeEngineService).
+        if (array_key_exists('code_trust_verified_at', $r)) {
+            $out['codeTrustVerified'] = !empty($r['code_trust_verified_at']);
+            $out['codeTrustVerifiedAt'] = $r['code_trust_verified_at'] ?: null;
+        }
+        if (array_key_exists('code_trust_verified_by', $r)) {
+            $out['codeTrustVerifiedBy'] = $r['code_trust_verified_by'] ?: null;
         }
         foreach (['apps_count' => 'appsCount', 'forms_count' => 'formsCount', 'flows_count' => 'flowsCount', 'responses_count' => 'responsesCount'] as $src => $dst) {
             if (array_key_exists($src, $r)) {

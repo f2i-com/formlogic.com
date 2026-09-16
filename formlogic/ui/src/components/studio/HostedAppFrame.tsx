@@ -30,6 +30,13 @@ export function HostedAppFrame({
   client: Record<string, string>;
   version: number;
   native?: { assets: Record<string, string>; origins?: string[] };
+  /**
+   * The engine the SERVER decided this app runs on, from the runtime GET, with the revision the
+   * action-time X-FormLogic-Client-Engine check compares against. Threaded in now so the callers
+   * already carry it; this frame still runs every id on the ZIPP web-python path, because that is
+   * the only engine the installed runtime serves. The seam that acts on it is E1-FL.
+   */
+  engine?: { id: string; revision: string };
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
 

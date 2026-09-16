@@ -32,11 +32,13 @@ class MfaService
 
     private PDO $mysql;
     private TotpService $totp;
+    private ?AuditService $audit;
 
-    public function __construct(MySQLConnection $mysql, TotpService $totp)
+    public function __construct(MySQLConnection $mysql, TotpService $totp, ?AuditService $audit = null)
     {
         $this->mysql = $mysql->getConnection();
         $this->totp = $totp;
+        $this->audit = $audit;
     }
 
     public function isEnabled(string $userId): bool
@@ -126,6 +128,11 @@ class MfaService
      * rows). Bumps token_version in the same statement so every outstanding
      * session, pending-MFA token and remembered device is revoked; callers
      * that want the CURRENT session to survive re-issue its cookie after.
+     *
+     * Code trust goes with it (RuntimeEngineService): an account verified for the host-JavaScript
+     * engine must keep two-factor auth on, so the one place that switches it off — Settings or an
+     * admin lockout reset, both of which land here — revokes the verification and clears the
+     * account's stored host-js choices in the SAME transaction.
      */
     public function disable(string $userId): void
     {
@@ -140,6 +147,7 @@ class MfaService
             )->execute(['id' => $userId]);
             $this->mysql->prepare('DELETE FROM mfa_trusted_browsers WHERE user_id = :id')->execute(['id' => $userId]);
             $this->mysql->prepare('DELETE FROM mfa_challenges WHERE user_id = :id')->execute(['id' => $userId]);
+            $this->revokeCodeTrust($userId);
             if ($ownsTx) {
                 $this->mysql->commit();
             }
@@ -149,6 +157,38 @@ class MfaService
             }
             throw $e;
         }
+    }
+
+    /**
+     * Revoke code trust because two-factor auth just went away. Nothing happens (and nothing is
+     * recorded) for the overwhelmingly common case of an account that was never verified. When it
+     * WAS verified, the record is part of the revocation: without an audit service to write it
+     * this throws rather than quietly dropping trust with no trace.
+     */
+    private function revokeCodeTrust(string $userId): void
+    {
+        $stmt = $this->mysql->prepare('SELECT code_trust_verified_at FROM users WHERE id = :id');
+        $stmt->execute(['id' => $userId]);
+        $verifiedAt = $stmt->fetchColumn();
+        if (!is_string($verifiedAt) || $verifiedAt === '') {
+            return;
+        }
+        if ($this->audit === null) {
+            throw new \RuntimeException('Code-trust revocation cannot be recorded: no audit service is configured');
+        }
+        $ids = $this->mysql->prepare('SELECT id FROM apps WHERE owner_id = :id AND client_engine = :e');
+        $ids->execute(['id' => $userId, 'e' => RuntimeEngineService::HOST_JS]);
+        $affected = array_map('strval', $ids->fetchAll(PDO::FETCH_COLUMN));
+        if ($affected !== []) {
+            $this->mysql->prepare('UPDATE apps SET client_engine = NULL WHERE owner_id = :id AND client_engine = :e')
+                ->execute(['id' => $userId, 'e' => RuntimeEngineService::HOST_JS]);
+        }
+        $this->mysql->prepare('UPDATE users SET code_trust_verified_at = NULL, code_trust_verified_by = NULL WHERE id = :id')
+            ->execute(['id' => $userId]);
+        $this->audit->logStrict('user.revoke_code_trust', 'user', $userId, $userId, null, [
+            'trigger' => 'mfa_disabled',
+            'affectedApps' => $affected,
+        ]);
     }
 
     // ── One-time login challenges (audit MFA-001) ────────────────────────────

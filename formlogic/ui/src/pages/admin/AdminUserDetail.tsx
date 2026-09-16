@@ -1,11 +1,12 @@
 import { useCallback, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Archive, ArrowLeft, Boxes, FileJson, FileText, KeyRound, Recycle, ShieldCheck, Workflow } from 'lucide-react';
+import { Archive, ArrowLeft, Boxes, Cpu, FileJson, FileText, KeyRound, Recycle, ShieldCheck, Workflow } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { Input } from '../../components/ui/Input';
 import { api, type ScheduledBackupRun } from '../../lib/api';
+import { engineLabel } from '../../lib/clientEngines';
 import { formatDateInZone, formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
 import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
@@ -58,6 +59,32 @@ function AdminUserDetailPage({ userId }: { userId: string }) {
     setConfirmMfaReset(false);
     setMfaResetPassword('');
     toast.success('Two-factor authentication reset', 'The user can sign in with their password and set it up again.');
+    load();
+  };
+
+  // Code trust: whether this account's apps may run on the host-JavaScript engine (no virtual
+  // machine around the author's code). Step-up, as the MFA reset does: the acting admin confirms
+  // with THEIR OWN password. Verifying needs the account's own two-factor auth on, and switching
+  // that off revokes it again. Revoking also clears the account's stored host-JavaScript choices.
+  const [confirmCodeTrust, setConfirmCodeTrust] = useState<boolean | null>(null);
+  const [codeTrustBusy, setCodeTrustBusy] = useState(false);
+  const [codeTrustPassword, setCodeTrustPassword] = useState('');
+  const setCodeTrust = async (next: boolean) => {
+    setCodeTrustBusy(true);
+    const r = await api.adminSetCodeTrust(userId, next, codeTrustPassword);
+    setCodeTrustBusy(false);
+    if (r.error || !r.data) { toast.error(next ? 'Could not verify this account' : 'Could not revoke verification', r.error || undefined); return; }
+    const cleared = r.data.codeTrust.affectedApps.length;
+    setConfirmCodeTrust(null);
+    setCodeTrustPassword('');
+    toast.success(
+      next ? 'Verified for host JavaScript' : 'Verification revoked',
+      next
+        ? 'This account can now choose host JavaScript for its apps.'
+        : cleared > 0
+          ? `${cleared} app${cleared === 1 ? '' : 's'} went back to the site default engine.`
+          : 'Their apps stay on the site default engine.'
+    );
     load();
   };
 
@@ -147,6 +174,31 @@ function AdminUserDetailPage({ userId }: { userId: string }) {
                 </Button>
               )}
             </div>
+            <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-gray-600 dark:text-slate-300">
+              {user.codeTrustVerified
+                ? <Badge variant="success">verified for host JavaScript</Badge>
+                : <span className="text-xs text-gray-500 dark:text-slate-400">Not verified for host JavaScript</span>}
+              {user.codeTrustVerified && user.codeTrustVerifiedAt && (
+                <span className="text-xs text-gray-500 dark:text-slate-400">
+                  since {formatDateTimeInZone(user.codeTrustVerifiedAt, tz)}
+                  {user.codeTrustVerifiedBy ? ` · by ${user.codeTrustVerifiedBy === me?.id ? 'you' : user.codeTrustVerifiedBy}` : ''}
+                </span>
+              )}
+              {!user.isDemo && (
+                <Button
+                  size="sm"
+                  variant={user.codeTrustVerified ? 'outline' : 'secondary'}
+                  disabled={!user.codeTrustVerified && !user.mfaEnabled}
+                  title={!user.codeTrustVerified && !user.mfaEnabled
+                    ? 'This account needs two-factor authentication switched on before it can be verified'
+                    : 'Lets this account choose host JavaScript for its apps'}
+                  onClick={() => setConfirmCodeTrust(!user.codeTrustVerified)}
+                  leftIcon={<Cpu className="h-3.5 w-3.5" />}
+                >
+                  {user.codeTrustVerified ? 'Revoke code trust' : 'Verify for host JavaScript'}
+                </Button>
+              )}
+            </div>
           </div>
 
           <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
@@ -161,6 +213,15 @@ function AdminUserDetailPage({ userId }: { userId: string }) {
                     <span className="ml-2 text-xs text-gray-500 dark:text-slate-400">
                       {a.status} · {a.formCount} forms · {a.flowCount} flows · {a.memberCount} members
                     </span>
+                    {/* Requested vs effective: the same answer this app's runtime GET would give. */}
+                    {a.engine && (
+                      <span className="mt-0.5 block text-xs text-gray-500 dark:text-slate-400">
+                        engine {engineLabel(a.engine.id)}
+                        {a.engine.stored && a.engine.stored !== a.engine.id
+                          ? ` · owner asked for ${engineLabel(a.engine.stored)}${a.engine.reason ? ` (${a.engine.reason})` : ''}`
+                          : a.engine.stored === null ? ' · site default' : ''}
+                      </span>
+                    )}
                   </Link>
                 ))}
               </div>
@@ -295,6 +356,28 @@ function AdminUserDetailPage({ userId }: { userId: string }) {
           type="password"
           value={mfaResetPassword}
           onChange={(e) => setMfaResetPassword(e.target.value)}
+          autoComplete="current-password"
+        />
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        isOpen={confirmCodeTrust !== null}
+        onClose={() => { if (!codeTrustBusy) { setConfirmCodeTrust(null); setCodeTrustPassword(''); } }}
+        onConfirm={() => { if (confirmCodeTrust !== null) void setCodeTrust(confirmCodeTrust); }}
+        title={confirmCodeTrust ? 'Verify this account for host JavaScript?' : 'Revoke host-JavaScript verification?'}
+        message={confirmCodeTrust
+          ? `${user?.email ?? 'This account'} will be able to set its apps to run as host JavaScript: their code runs in the sandboxed frame with no virtual machine around it. The frame still has no access to FormLogic cookies, storage or the API, but a runaway app can freeze a viewer's tab.${user?.id === me?.id ? ' You are verifying your OWN account; the audit record says so.' : ''} Two-factor authentication must stay on — switching it off revokes this. Confirm with YOUR password.`
+          : `${user?.email ?? 'This account'} loses host JavaScript. Any of their apps set to it go back to the site default engine, so re-verifying later never switches it back on by itself. Confirm with YOUR password.`}
+        confirmLabel={confirmCodeTrust ? 'Verify account' : 'Revoke verification'}
+        variant={confirmCodeTrust ? 'default' : 'danger'}
+        isLoading={codeTrustBusy}
+        confirmDisabled={codeTrustPassword === ''}
+      >
+        <Input
+          label="Your password"
+          type="password"
+          value={codeTrustPassword}
+          onChange={(e) => setCodeTrustPassword(e.target.value)}
           autoComplete="current-password"
         />
       </ConfirmDialog>

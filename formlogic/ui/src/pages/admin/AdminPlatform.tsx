@@ -9,6 +9,7 @@ import { formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
 import { toast } from '../../stores/toastStore';
 import { AdminPlansCard } from './AdminPlansCard';
 import { AdminAllowancesCard } from './AdminAllowancesCard';
+import { AdminEnginePolicyCard } from './AdminEnginePolicyCard';
 import { AdminError, AdminSpinner } from './adminUi';
 import { useAdminQuery } from './useAdminQuery';
 
@@ -145,9 +146,10 @@ export function AdminPlatform() {
   return (
     <div className="space-y-6">
       <nav aria-label="Platform settings" className="flex flex-wrap gap-2">
-        {[['plans', 'Plans & AI'], ['availability', 'Site availability'], ['notices', 'Notices'], ['backups', 'Backups'], ['allowances', 'Usage limits']].map(([id, label]) => <a key={id} href={`#${id}`} className="inline-flex min-h-11 items-center rounded-full border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-white focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">{label}</a>)}
+        {[['plans', 'Plans & AI'], ['app-engine', 'App engine'], ['availability', 'Site availability'], ['notices', 'Notices'], ['backups', 'Backups'], ['allowances', 'Usage limits']].map(([id, label]) => <a key={id} href={`#${id}`} className="inline-flex min-h-11 items-center rounded-full border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-white focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">{label}</a>)}
       </nav>
       <section id="plans" className="scroll-mt-24"><AdminPlansCard /></section>
+      <section id="app-engine" className="scroll-mt-24"><AdminEnginePolicyCard /></section>
       <Card id="availability" className="scroll-mt-24">
         <CardContent className="p-5 sm:p-6 space-y-4">
           <div className="flex items-center justify-between gap-3 flex-wrap">

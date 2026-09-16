@@ -2584,6 +2584,27 @@ class MySQLConnection
             }
         }
 
+        // Code-trust verification (RuntimeEngineService): the only accounts whose apps may run on
+        // the host-JavaScript engine. NULL = not verified; the history lives in audit_log, and
+        // _by names the admin who verified. Deliberately not a bare is_verified — this install
+        // already uses "verified" for custom_screen_trust, app domains and pack publishers.
+        foreach ([
+            'code_trust_verified_at' => 'ALTER TABLE users ADD COLUMN code_trust_verified_at DATETIME NULL DEFAULT NULL',
+            'code_trust_verified_by' => 'ALTER TABLE users ADD COLUMN code_trust_verified_by VARCHAR(36) NULL DEFAULT NULL',
+        ] as $column => $ddl) {
+            if ($pdo->query("SHOW COLUMNS FROM users LIKE '{$column}'")->rowCount() === 0) {
+                $pdo->exec($ddl);
+            }
+        }
+
+        // The app owner's client-engine choice, in its own column for the same reason
+        // custom_screen_trust has one: apps.settings is replaced wholesale by updateApp, the
+        // acting-as PUT, the MCP merge and pack imports, so a security choice kept there could be
+        // replayed or imported. NULL = the site default. Written only by PUT /api/apps/{id}/engine.
+        if ($pdo->query("SHOW COLUMNS FROM apps LIKE 'client_engine'")->rowCount() === 0) {
+            $pdo->exec('ALTER TABLE apps ADD COLUMN client_engine VARCHAR(16) NULL DEFAULT NULL');
+        }
+
         // Seed the first-party OAuth clients (idempotent) now that mcp_oauth_clients exists.
         $this->seedFirstPartyOAuthClients($pdo);
     }

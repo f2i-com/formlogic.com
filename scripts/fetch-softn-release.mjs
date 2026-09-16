@@ -460,14 +460,52 @@ async function moveDir(from, to, ops, copying = async () => {}) {
   await ops.rm(from, { recursive: true, force: true });
 }
 
+/** How the archive's provenance.json differs from the installed copy, for the generation record. */
+const PROVENANCE_TRANSFORM = 'release: {tag, commit} and hostedRuntime added';
+
+/**
+ * A sorted, distinct list of ids from either shape a manifest may use (a list, or an object keyed
+ * by id), or null when there is nothing usable. Null means "this release says nothing", which the
+ * reader treats as fail-closed — never as "no engines".
+ */
+function idList(value) {
+  const ids = Array.isArray(value) ? value : (value && typeof value === 'object' ? Object.keys(value) : null);
+  if (!ids) return null;
+  const clean = [...new Set(ids.filter((id) => typeof id === 'string' && id !== ''))].sort();
+  return clean.length ? clean : null;
+}
+
+/**
+ * What the hosted runtime this release installs advertises, taken from the archive itself:
+ * `engines` and `features` from hosted-runtime/runtime-manifest.json, `protocols` from
+ * softn-release.json. Stamped into the native runtime's provenance (the one file the install
+ * already transforms, and the one the backend already reads) so the server can decide an app's
+ * engine from what is INSTALLED without guessing at a web root. Every field is optional: a
+ * release from before Softn advertises them stamps an empty record, and the reader fails closed.
+ */
+export function hostedRuntimeRecord(entries, release) {
+  const manifest = JSON.parse(entryText(entries, 'hosted-runtime/runtime-manifest.json'));
+  const engines = idList(manifest?.engines);
+  const features = idList(manifest?.features);
+  const protocols = release?.protocols && typeof release.protocols === 'object' && !Array.isArray(release.protocols)
+    ? sortKeys(release.protocols)
+    : null;
+  return {
+    ...(engines ? { engines } : {}),
+    ...(features ? { features } : {}),
+    ...(protocols ? { protocols } : {}),
+  };
+}
+
 /**
  * The four trees a release installs, in promotion order. `prepare` edits a
  * staged tree before it is verified (the native runtime's provenance gains
- * the release it came from); `validate` is the same check the source
- * builders and `--check` apply. `releaseInfo.zipp` is the release's ZIPP
- * record, which the installed engine tree's SOURCE.json must carry.
+ * the release it came from and what the hosted runtime advertises);
+ * `validate` is the same check the source builders and `--check` apply.
+ * `releaseInfo.zipp` is the release's ZIPP record, which the installed engine
+ * tree's SOURCE.json must carry.
  */
-function generationTrees(paths, expected, releaseInfo) {
+function generationTrees(paths, expected, releaseInfo, hostedRuntime = null) {
   return [
     {
       name: 'zipp-wasm', prefix: 'zipp/', destination: paths.zippWasm, stagePrefix: '.zipp-wasm-',
@@ -495,6 +533,7 @@ function generationTrees(paths, expected, releaseInfo) {
         for (const name of [...NATIVE_MODULES, ...NATIVE_EXTRA]) if (!existsSync(resolve(dir, name))) throw new ReleaseError(`native-runtime/${name} is missing from the archive.`);
         const provenance = JSON.parse(await readFile(resolve(dir, 'provenance.json'), 'utf8'));
         provenance.release = { tag: releaseInfo.tag, commit: releaseInfo.commit };
+        if (hostedRuntime) provenance.hostedRuntime = hostedRuntime;
         await writeFile(resolve(dir, 'provenance.json'), JSON.stringify(provenance, null, 2) + '\n');
       },
       validate: (dir) => checkNativeRuntime(dir, expected),
@@ -617,7 +656,7 @@ async function rollBack(journal, journalFile, log, io, reason = 'the swap did no
  */
 export async function installGeneration(entries, expected, paths, record, { failAt = null, log = () => {}, ops = {} } = {}) {
   const io = promotionOps(ops);
-  const trees = generationTrees(paths, expected, record);
+  const trees = generationTrees(paths, expected, record, hostedRuntimeRecord(entries, record));
   await sweepStaging(trees);
   const staged = {};
   const journalFile = promotionJournalPath(paths);
@@ -638,7 +677,7 @@ export async function installGeneration(entries, expected, paths, record, { fail
     const archiveProvenance = JSON.parse(entryText(entries, PROVENANCE));
     const transformed = {
       [PROVENANCE]: {
-        transformation: 'release: {tag, commit} added',
+        transformation: PROVENANCE_TRANSFORM,
         archiveSha256: sha256(entries.get(PROVENANCE).data),
         contentSha256: canonicalDigest(archiveProvenance),
         release: { tag: record.tag, commit: record.commit },
@@ -846,8 +885,10 @@ export async function checkInstalled({ root = resolve(dirname(fileURLToPath(impo
   const provenance = JSON.parse(await readFile(resolve(paths.nativeRuntime, 'provenance.json'), 'utf8'));
   if (provenance.release?.tag !== record.tag || provenance.release?.commit !== record.commit) throw new ReleaseError(`The native runtime on disk is from ${provenance.release?.tag ?? 'a source build'}, current.json says ${record.tag}. Fetch again.`);
   if (transformed) {
-    const { release: _release, ...content } = provenance;
-    if (canonicalDigest(content) !== transformed.contentSha256) throw new ReleaseError('native-runtime/provenance.json differs from the archive\'s beyond the recorded transformation (release added). Fetch again.');
+    // Both keys the install adds are dropped before the comparison, so a generation recorded by an
+    // earlier fetcher (whose provenance carries no hostedRuntime) still holds to its archive.
+    const { release: _release, hostedRuntime: _hostedRuntime, ...content } = provenance;
+    if (canonicalDigest(content) !== transformed.contentSha256) throw new ReleaseError('native-runtime/provenance.json differs from the archive\'s beyond the recorded transformation (release and hostedRuntime added). Fetch again.');
   }
   log(`Softn ${record.tag} (${record.commit.slice(0, 12)}) is installed and intact${frozenRecord ? ' and is the frozen release of this run' : ''}.`);
   return record;

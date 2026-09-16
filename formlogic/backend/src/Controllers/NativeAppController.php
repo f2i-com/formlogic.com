@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
-use FormLogic\Services\{AppService, AppUserService, NativeAppService, PlanService, FlowService};
+use FormLogic\Services\{AppService, AppUserService, NativeAppService, PlanService, FlowService, RuntimeEngineService};
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -16,7 +16,10 @@ class NativeAppController
     /** NativeAppService's recovery-required refusals (resolveJournal, assertNotRecoveryRequired). */
     private const RECOVERY_REQUIRED = '/^(?:The app (?:database )?needs operator recovery|Restore the app database before installing another update)/';
 
-    public function __construct(private AppService $apps, private AppUserService $users, private NativeAppService $native, private PlanService $plans, private FlowService $flows) {}
+    // $engines is required, not optional-with-a-default: this controller is autowired, and PHP-DI's
+    // reflection autowiring SKIPS optional parameters (ReflectionBasedAutowiring), so an `= null`
+    // here would silently hand production a controller that decides no app's engine.
+    public function __construct(private AppService $apps, private AppUserService $users, private NativeAppService $native, private PlanService $plans, private FlowService $flows, private RuntimeEngineService $engines) {}
 
     public function manage(Request $request, Response $response, array $args): Response
     {
@@ -59,7 +62,10 @@ class NativeAppController
                 // The demo is public traffic that cannot install anything: it never forks the preflight.
                 $preflight = !$readOnly && $this->native->available() ? $this->native->preflight() : null;
                 // Read under the management lock, so an update left unfinished is settled before it is shown.
-                return ['available' => $this->native->available(), 'ready' => $preflight !== null && $preflight['ok'], 'preflight' => $preflight, 'project' => $this->native->project($app['id']), 'readOnly' => $readOnly];
+                // The engine block is the owner's settings view: choice, outcome, reason, and what
+                // this site allows them to choose between.
+                return ['available' => $this->native->available(), 'ready' => $preflight !== null && $preflight['ok'], 'preflight' => $preflight, 'project' => $this->native->project($app['id']), 'readOnly' => $readOnly,
+                    'engine' => $this->engines->effective($app['id']), 'enginePolicy' => $this->engines->ownerPolicy()];
             }
             $body = $request->getParsedBody();
             if (!is_array($body) || !is_array($body['project'] ?? null) || !is_int($body['expectedVersion'] ?? null) || $body['expectedVersion'] < 0) throw new \InvalidArgumentException('Provide a project and expectedVersion');
@@ -91,6 +97,10 @@ class NativeAppController
         $owner = $app && $user && $app['ownerId'] === $user;
         if (!$app || (!$owner && !$this->apps->isRuntimeVisible($app, (string) ($user ?? '')))) return $this->jsonError($response, 'App not found or access denied', 404);
         if ($blocked = $this->blockIfDemo($request, $response, 'Native hosting is unavailable in the shared demo.')) return $blocked;
+        // The page was loaded on one engine; the server may have decided otherwise since (a
+        // revocation, a policy edit). Checked before respond() so the answer carries the
+        // engine_changed code the parent remounts on, not a bare 409.
+        if ($stale = $this->refuseStaleEngine($request, $response, $app['id'])) return $stale;
         return $this->respond($response, function () use ($request, $app, $user, $owner) {
             // Access is decided against the settled project (FL-S04), never an update's leftover project.json.
             $project = $this->native->project($app['id']);
@@ -103,9 +113,14 @@ class NativeAppController
                 $manifest = json_decode($client['manifest.json'], true);
                 $origins = $manifest['config']['server']['allowedOrigins'] ?? [];
                 unset($manifest['server'], $manifest['config']['server']);
+                // The engine is the server's decision, never the project's: a manifest that names
+                // one is stripped here, the way the server block above is, so a published project
+                // can never talk its own shell into another engine.
+                unset($manifest['engine'], $manifest['logicEngine'], $manifest['config']['engine']);
                 $client['manifest.json'] = json_encode($manifest, JSON_THROW_ON_ERROR);
                 $client['permission.json'] = '{"permissions":{}}';
-                return ['name' => $app['name'], 'project' => ['version' => $project['version'], 'client' => $client, 'assets' => $project['assets'], 'access' => $project['access'], 'origins' => $origins]];
+                return ['name' => $app['name'], 'project' => ['version' => $project['version'], 'client' => $client, 'assets' => $project['assets'], 'access' => $project['access'], 'origins' => $origins]]
+                    + $this->engineForRuntime($app['id']);
             }
             $input = $request->getParsedBody();
             if (!is_array($input) || !is_string($input['path'] ?? null) || !preg_match('~^/api/[a-zA-Z0-9/_-]+$~D', $input['path']) || !in_array($input['method'] ?? null, ['GET','POST','PUT','DELETE'], true)) throw new \InvalidArgumentException('Provide an app API path and method');
@@ -138,6 +153,31 @@ class NativeAppController
      * installation (the service replaces absolute locations; no keys or record values). Visitors
      * and the shared demo keep the generic 503.
      */
+    /** What a runtime mount needs: the id to run and the revision it must send back on requests. */
+    private function engineForRuntime(string $appId): array
+    {
+        $effective = $this->engines->effective($appId);
+        return ['engine' => ['id' => $effective['id'], 'revision' => $effective['revision']]];
+    }
+
+    /**
+     * 409 engine_changed when the parent's X-FormLogic-Client-Engine no longer matches what the
+     * server decides now. The header grants nothing — a request without it is answered as before,
+     * and costs nothing: the resolver is only asked when there is a header to check.
+     */
+    private function refuseStaleEngine(Request $request, Response $response, string $appId): ?Response
+    {
+        $header = $request->getMethod() === 'GET' ? '' : $request->getHeaderLine('X-FormLogic-Client-Engine');
+        if ($header === '') return null;
+        if (RuntimeEngineService::headerMatches($header, $this->engines->effective($appId))) return null;
+        return $this->jsonError(
+            $response->withHeader('Cache-Control', 'no-store'),
+            'This app is now set to run on a different engine. Reload to continue.',
+            409,
+            'engine_changed'
+        );
+    }
+
     private function respond(Response $response, callable $operation, bool $owner = false): Response
     {
         $response = $response->withHeader('Cache-Control', 'no-store')->withHeader('X-Content-Type-Options', 'nosniff');

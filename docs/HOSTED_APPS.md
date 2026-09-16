@@ -59,6 +59,18 @@ version conflict by blindly replacing `expectedVersion`.
 
 The hosted interface runs in a sandboxed iframe without same-origin access. The trusted FormLogic parent handles authentication and CSRF. Client code receives neither cookies nor tokens. The app's manifest cannot choose another app's database. Backend actions run in the existing ZIPP sandbox, with bounded record operations handled by PHP.
 
+### App engine
+
+Which engine an embedded app's client code runs on is the server's decision, taken on every runtime request from three things it re-reads each time: the site policy (`system_meta.client_engine_policy`), the owner's code-trust verification (`users.code_trust_verified_at`) and what the installed hosted runtime advertises (`hostedRuntime.engines` in the native runtime's generated `provenance.json`). It is never taken from the client, the package or native manifest, `permission.json` or `apps.settings`.
+
+The ids are `zipp-web-python` (this install's ZIPP engine, and the universal fallback), `zipp-web` (a JavaScript-only ZIPP build) and `host-js` ("None (host JavaScript, verified accounts)" — the author's code runs as ordinary JavaScript in the sandboxed frame, with no VM around it). Everything fails closed to `zipp-web-python`: a missing or corrupt policy row, an engine the installed runtime does not advertise, an owner who is not verified, and an app whose logic needs Python.
+
+Administrators set the policy in **Admin → Platform → App engine**: the site default (which may only be a ZIPP engine, so a fallback always exists) and which engines owners may choose from (`zipp-web-python` can never be removed). Host JavaScript additionally needs the app OWNER's account to be verified, one account at a time in **Admin → Users**: that action needs the account's own two-factor auth to be on and the acting administrator's password, it is audited (including a self-verification), and switching that account's two-factor auth off revokes it again. Revoking clears the account's stored host-JavaScript app choices, so re-verifying later never switches it back on by itself.
+
+Owners pick the engine per app in App hosting and Native app hosting, within that policy. An administrator acting as the owner cannot: the endpoint is owner-only, and the choice lives in its own `apps.client_engine` column rather than in `apps.settings`, so packs, backups, the MCP merge and the acting-as mirror can neither replay nor import it. A stored choice the installed runtime cannot serve yet is kept and clamped at read time; the settings screen shows what actually runs and why.
+
+Runtime responses carry `engine: {id, revision}`, where the revision changes whenever any input does. The parent may echo it back on an action as `X-FormLogic-Client-Engine: <id>;<revision>`; a mismatch answers `409 engine_changed`, so a page loaded before a revocation is told to remount. The header is optional and grants nothing.
+
 ## Client `.logic`
 
 Reference the entry logic from the interface: `<logic src="../logic/main.logic" />`. The app host supplies this callback API:
@@ -115,8 +127,9 @@ The routes use existing FormLogic session/JWT authentication. Cookie-authenticat
 | `GET /api/apps/{id}/hosting` | Owner; private source, version, record count |
 | `PUT /api/apps/{id}/hosting` | Owner; `{expectedVersion, package}` |
 | `GET /api/apps/{id}/hosting/database` | Owner; consistent SQLite snapshot, including private actions |
-| `GET /api/app/{slug}/hosting` | Owner / active member; client files only |
-| `POST /api/app/{slug}/actions/{action}` | Action's access rule; JSON object input; returns `{result}` |
+| `GET /api/app/{slug}/hosting` | Owner / active member; client files only, plus `engine {id, revision}` |
+| `PUT /api/apps/{id}/engine` | Owner only; `{engine: "zipp-web-python"\|"zipp-web"\|"host-js"\|null}` (null = the site default); 422 when the choice would never take effect |
+| `POST /api/app/{slug}/actions/{action}` | Action's access rule; JSON object input; returns `{result}`. An optional `X-FormLogic-Client-Engine: <id>;<revision>` that no longer matches answers `409 engine_changed` |
 
 The package is `{version:1, client:{"manifest.json":"…","ui/main.ui":"…"}, actions:{name:{source,access,mode}}}`. The editor imports client `.softn`/ZIP bundles or full `hosting-project.json` files. Client-only imports retain existing private actions for review. Public manifest metadata and permissions are rebuilt server-side; private directories and executable HTML/JavaScript files are rejected.
 

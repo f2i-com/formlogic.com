@@ -49,6 +49,7 @@ class AdminController
         private ?\FormLogic\Services\AccountErasureService $erasure = null,
         private ?\FormLogic\Services\EmailService $email = null,
         private ?\FormLogic\Services\PlanService $planService = null,
+        private ?\FormLogic\Services\RuntimeEngineService $engines = null,
     ) {
     }
 
@@ -149,6 +150,86 @@ class AdminController
             }
         }
         return $this->jsonResponse($response, ['success' => true, 'mfaEnabled' => false]);
+    }
+
+    /**
+     * POST /api/admin/users/{id}/code-trust { verified, password } — mark an account trusted to
+     * run its apps on the host-JavaScript engine, or take that back.
+     *
+     * Step-up (same posture as the MFA reset, same 10/min limiter): the acting admin re-enters
+     * THEIR OWN password, so a hijacked admin tab alone cannot hand an account the one engine
+     * that runs author code without the ZIPP VM around it. Unlike the MFA reset, verifying your
+     * OWN account is allowed — a single-admin install has no second admin to ask — and the audit
+     * row records that it was a self-verification. The target account must already have two-factor
+     * auth on; switching that off later revokes this automatically (MfaService::disable).
+     */
+    public function setCodeTrust(Request $request, Response $response, array $args): Response
+    {
+        if ($this->auditService === null) {
+            // The record is part of the change; without somewhere to write it, refuse the change.
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Code trust is not available'], 503);
+        }
+        $userId = (string) $args['id'];
+        if ($this->admin->accountRow($userId) === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'User not found'], 404);
+        }
+        $adminId = (string) $request->getAttribute('userId');
+        $body = $request->getParsedBody() ?? [];
+        $verified = ($body['verified'] ?? null) === true;
+        if (!$this->auth->verifyPassword($adminId, (string) ($body['password'] ?? ''))) {
+            $this->audit($request, 'admin.code_trust_denied', $userId, ['reason' => 'step_up_failed']);
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Enter your own password to confirm this change'], 403);
+        }
+        try {
+            $sp = $request->getServerParams();
+            $result = $this->admin->setCodeTrust($userId, $verified, $adminId, $this->auditService, $sp['REMOTE_ADDR'] ?? null);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\Throwable $e) {
+            // The audit row is part of the change: if it could not be written, nothing committed.
+            $this->logger?->error('Code-trust change failed', ['error' => $e->getMessage()]);
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'The code-trust change could not be recorded, so nothing was changed'], 503);
+        }
+        return $this->jsonResponse($response, ['success' => true, 'codeTrust' => $result]);
+    }
+
+    /** GET /api/admin/engine-policy — the site client-engine policy plus what the install serves. */
+    public function getEnginePolicy(Request $request, Response $response): Response
+    {
+        if ($this->engines === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'The engine policy is not available'], 503);
+        }
+        return $this->jsonResponse($response, [
+            'policy' => $this->engines->readPolicy(),
+            'installed' => $this->engines->installedEngines(),
+            'engines' => \FormLogic\Services\RuntimeEngineService::ENGINES,
+        ]);
+    }
+
+    /** PUT /api/admin/engine-policy { default, allowed[], hostJsRequireWorker } — audited, one transaction. */
+    public function putEnginePolicy(Request $request, Response $response): Response
+    {
+        if ($this->engines === null || $this->auditService === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'The engine policy is not available'], 503);
+        }
+        $body = $request->getParsedBody();
+        if (!is_array($body)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'The engine policy must be an object.'], 400);
+        }
+        try {
+            $sp = $request->getServerParams();
+            $policy = $this->engines->writePolicyAudited($body, $this->auditService, (string) $request->getAttribute('userId'), $sp['REMOTE_ADDR'] ?? null);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\Throwable $e) {
+            $this->logger?->error('Engine policy update failed', ['error' => $e->getMessage()]);
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'The engine policy change could not be recorded, so nothing was changed'], 503);
+        }
+        return $this->jsonResponse($response, [
+            'policy' => $policy,
+            'installed' => $this->engines->installedEngines(),
+            'engines' => \FormLogic\Services\RuntimeEngineService::ENGINES,
+        ]);
     }
 
     // ── Account tools (support operations) ───────────────────────────────────

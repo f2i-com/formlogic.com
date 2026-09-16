@@ -44,9 +44,48 @@ class AuditService
         ?string $ipAddress,
         array $details = []
     ): void {
-        $gotLock = false;
         try {
-            $alreadyInTransaction = $this->mysql->inTransaction();
+            $this->write($action, $resourceType, $resourceId, $userId, $ipAddress, $details);
+        } catch (\Exception $e) {
+            // Never let audit failures break the main operation
+            $this->logger->warning('Audit log failed', [
+                'action' => $action,
+                'exception' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * The same chain row as log(), but the caller owns the failure: it rethrows instead of
+     * warning. For security-relevant trust changes (code-trust verification, the engine policy)
+     * the record is part of the change — committing the change without it is not acceptable.
+     * Called inside the caller's transaction, it neither commits nor rolls back: the exception
+     * reaches the caller, whose rollback takes the change with it.
+     *
+     * @throws \Throwable whatever stopped the row being written
+     */
+    public function logStrict(
+        string $action,
+        string $resourceType,
+        ?string $resourceId,
+        ?string $userId,
+        ?string $ipAddress,
+        array $details = []
+    ): void {
+        $this->write($action, $resourceType, $resourceId, $userId, $ipAddress, $details);
+    }
+
+    private function write(
+        string $action,
+        string $resourceType,
+        ?string $resourceId,
+        ?string $userId,
+        ?string $ipAddress,
+        array $details = []
+    ): void {
+        $gotLock = false;
+        $alreadyInTransaction = $this->mysql->inTransaction();
+        try {
             if (!$alreadyInTransaction) {
                 $this->mysql->beginTransaction();
             }
@@ -117,7 +156,7 @@ class AuditService
                 $this->mysql->query("SELECT RELEASE_LOCK('formlogic_audit_chain')");
                 $gotLock = false;
             }
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             if (!$alreadyInTransaction && $this->mysql->inTransaction()) {
                 $this->mysql->rollBack();
             }
@@ -128,11 +167,7 @@ class AuditService
                     // ignore — the lock auto-releases when the connection closes
                 }
             }
-            // Never let audit failures break the main operation
-            $this->logger->warning('Audit log failed', [
-                'action' => $action,
-                'exception' => $e->getMessage(),
-            ]);
+            throw $e;
         }
     }
 

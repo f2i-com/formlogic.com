@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../../lib/api';
+import { api, type AppEngine, type OwnerEnginePolicy } from '../../lib/api';
+import { AppEngineSelect } from './AppEngineSelect';
 import { importNativeProject, exportNativeProject, type NativeProject } from '../../lib/nativeHosting';
 import { nativeDraftStore, type NativeDraftCheckpoint, type NativeDraftWrite } from '../../lib/nativeDraft';
 import { useAuthStore } from '../../stores/authStore';
@@ -42,6 +43,9 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
   const [available, setAvailable] = useState(false);
   // Runtime preflight (audit FL-03): artifacts can be prepared while the runtime still cannot start.
   const [preflight, setPreflight] = useState<import('../../lib/api').NativeRuntimePreflight | null>(null);
+  // The server's engine decision for this app, and what this site lets the owner choose between.
+  const [engine, setEngine] = useState<AppEngine | undefined>(undefined);
+  const [enginePolicy, setEnginePolicy] = useState<OwnerEnginePolicy | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState('');
@@ -78,6 +82,7 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
       if (cancelled) return;
       setReady(!result.error); setAvailable(!!result.data?.available && result.data?.ready !== false); setPreflight(result.data?.preflight ?? null);
       if (typeof result.data?.readOnly === 'boolean') setServerReadOnly(result.data.readOnly);
+      setEngine(result.data?.engine); setEnginePolicy(result.data?.enginePolicy);
       if (result.error) setError(result.error);
       if (result.data?.project) { setProject(result.data.project); setVersion(result.data.project.version); setSourceFile(Object.keys(result.data.project.files).find(path => path.startsWith('server/') && path.endsWith('.logic')) || ''); }
       // A read-only editor has no draft to offer back.
@@ -204,6 +209,7 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
           <label className="block text-sm font-medium text-slate-800 dark:text-slate-200">Visitor access<select aria-label="Visitor access" className={`${control} mt-2`} disabled={busy || readOnly} value={project.access} onChange={event => edit({ ...project, access: event.target.value as NativeProject['access'] })}><option value="application">Use the app’s own sign-in</option><option value="members">Require FormLogic membership</option></select></label>
           <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">The app’s own sign-in keeps its account system intact. FormLogic membership adds a gate for apps without sign-in; configure registration and invitations in Users &amp; roles.</p>
         </>}
+        {engine && enginePolicy && <AppEngineSelect appId={app.id} engine={engine} policy={enginePolicy} disabled={busy || readOnly} onChanged={(next, policy) => { setEngine(next); setEnginePolicy(policy); }} />}
         {project && <Button variant="secondary" onClick={() => {
           try {
             const bytes = exportNativeProject(project);

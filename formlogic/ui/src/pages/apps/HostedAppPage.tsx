@@ -10,6 +10,8 @@ export default function HostedAppPage() {
   const [app, setApp] = useState<{
     name: string;
     deployment: HostedDeployment;
+    // The server's engine decision for this mount (absent from a server before E0).
+    engine?: { id: string; revision: string };
   } | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -65,6 +67,7 @@ export default function HostedAppPage() {
             slug={appSlug}
             client={app.deployment.client}
             version={app.deployment.version}
+            engine={app.engine}
           />
         </div>
       ) : (

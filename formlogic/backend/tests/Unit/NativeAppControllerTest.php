@@ -4,7 +4,7 @@ namespace FormLogic\Tests\Unit;
 
 use FormLogic\Controllers\NativeAppController;
 use FormLogic\Models\User;
-use FormLogic\Services\{AppService, AppUserService, NativeAppService, PlanService, FlowService};
+use FormLogic\Services\{AppService, AppUserService, NativeAppService, PlanService, FlowService, RuntimeEngineService};
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -26,6 +26,17 @@ final class NativeAppControllerTest extends TestCase
         rmdir($root);
     }
 
+    /** The engine this install serves. Nothing here reaches MySQL: the resolver's own rules are pinned in Unit\RuntimeEngineServiceTest. */
+    private const ENGINE = ['id' => 'zipp-web-python', 'requested' => 'zipp-web-python', 'stored' => null, 'revision' => '0123456789abcdef'];
+
+    private function engines(): RuntimeEngineService
+    {
+        $engines = $this->createMock(RuntimeEngineService::class);
+        $engines->method('effective')->willReturn(self::ENGINE);
+        $engines->method('ownerPolicy')->willReturn(['default' => 'zipp-web-python', 'allowed' => ['zipp-web-python'], 'installed' => ['zipp-web-python']]);
+        return $engines;
+    }
+
     private function fixture(string $access, ?NativeAppService $service = null): array
     {
         $apps = $this->createMock(AppService::class);
@@ -42,7 +53,7 @@ final class NativeAppControllerTest extends TestCase
             $native->method('get')->willReturn($project);
             $native->method('project')->willReturn($project);
         }
-        return [new NativeAppController($apps, $users, $native, $this->createMock(PlanService::class), $this->createMock(FlowService::class)), $users, $native];
+        return [new NativeAppController($apps, $users, $native, $this->createMock(PlanService::class), $this->createMock(FlowService::class), $this->engines()), $users, $native];
     }
 
     private function request(string $method, bool $demo = false, string $user = 'owner'): ServerRequestInterface
@@ -65,6 +76,62 @@ final class NativeAppControllerTest extends TestCase
         $data = json_decode((string) $response->getBody(), true);
         $this->assertArrayNotHasKey('server/main.logic', $data['project']['client']);
         $this->assertArrayNotHasKey('server', json_decode($data['project']['client']['manifest.json'], true));
+    }
+
+    public function testThePublishedManifestCannotNameItsOwnEngine(): void
+    {
+        // The engine is the server's decision (RuntimeEngineService), so a manifest that names one
+        // is stripped the way the private server block is — a published project must never be able
+        // to talk its own shell into another engine.
+        $apps = $this->createMock(AppService::class);
+        $apps->method('getAppBySlug')->willReturn(['id' => 'notes', 'ownerId' => 'owner', 'name' => 'Notes', 'status' => 'published']);
+        $apps->method('isRuntimeVisible')->willReturn(true);
+        $native = $this->createMock(NativeAppService::class);
+        $project = ['access' => 'application', 'version' => 1, 'assets' => [], 'files' => [
+            'manifest.json' => '{"id":"notes","engine":"host-js","logicEngine":"host-js","config":{"engine":"host-js","theme":"dark"}}',
+            'ui/main.ui' => '<Text>Notes</Text>',
+        ]];
+        $native->method('get')->willReturn($project);
+        $native->method('project')->willReturn($project);
+        $controller = new NativeAppController($apps, $this->createMock(AppUserService::class), $native, $this->createMock(PlanService::class), $this->createMock(FlowService::class), $this->engines());
+        $response = $controller->runtime((new ServerRequestFactory())->createServerRequest('GET', '/'), new Response(), ['slug' => 'notes']);
+        $manifest = json_decode(self::body($response)['project']['client']['manifest.json'], true);
+        $this->assertArrayNotHasKey('engine', $manifest);
+        $this->assertArrayNotHasKey('logicEngine', $manifest);
+        $this->assertArrayNotHasKey('engine', $manifest['config']);
+        $this->assertSame('dark', $manifest['config']['theme'], 'the rest of the manifest is untouched');
+    }
+
+    public function testTheRuntimeGetCarriesTheEngineTheServerDecided(): void
+    {
+        [$controller] = $this->fixture('application');
+        $response = $controller->runtime((new ServerRequestFactory())->createServerRequest('GET', '/'), new Response(), ['slug' => 'notes']);
+        $this->assertSame(['id' => 'zipp-web-python', 'revision' => '0123456789abcdef'], self::body($response)['engine']);
+        $this->assertSame('no-store', $response->getHeaderLine('Cache-Control'));
+    }
+
+    public function testTheOwnerGetCarriesTheChoiceAndWhatMayBeChosen(): void
+    {
+        [$controller] = $this->fixture('application');
+        $body = self::body($controller->manage($this->request('GET'), new Response(), ['id' => 'notes']));
+        $this->assertSame(self::ENGINE, $body['engine']);
+        $this->assertSame(['zipp-web-python'], $body['enginePolicy']['allowed']);
+    }
+
+    public function testAnAppRequestWithNoEngineHeaderIsAnsweredAsBeforeAndAStaleOneIsRefused(): void
+    {
+        [$controller, $users, $native] = $this->fixture('members');
+        $users->method('getAppUser')->willReturn(['status' => 'active', 'roleId' => 'editor']);
+        $native->method('request')->willReturn(['status' => 200, 'body' => []]);
+        $request = (new ServerRequestFactory())->createServerRequest('POST', '/', ['REMOTE_ADDR' => '127.0.0.1'])
+            ->withAttribute('userId', 'member')->withParsedBody(['method' => 'GET', 'path' => '/api/notes']);
+        $this->assertSame(200, $controller->runtime($request, new Response(), ['slug' => 'notes'])->getStatusCode());
+        $this->assertSame(200, $controller->runtime($request->withHeader('X-FormLogic-Client-Engine', 'zipp-web-python;0123456789abcdef'), new Response(), ['slug' => 'notes'])->getStatusCode());
+        // What a page loaded before a revocation or a policy edit would still be sending.
+        $stale = $controller->runtime($request->withHeader('X-FormLogic-Client-Engine', 'host-js;0123456789abcdef'), new Response(), ['slug' => 'notes']);
+        $this->assertSame(409, $stale->getStatusCode());
+        $this->assertSame('engine_changed', self::body($stale)['code']);
+        $this->assertSame('no-store', $stale->getHeaderLine('Cache-Control'));
     }
 
     public function testMemberAppRequiresAnActiveMembership(): void
@@ -118,7 +185,7 @@ final class NativeAppControllerTest extends TestCase
         $apps->method('getApp')->willReturn(['id' => 'plain', 'ownerId' => 'owner']);
         $empty = $this->createMock(NativeAppService::class);
         $empty->method('get')->willReturn(null);
-        $plain = new NativeAppController($apps, $this->createMock(AppUserService::class), $empty, $this->createMock(PlanService::class), $this->createMock(FlowService::class));
+        $plain = new NativeAppController($apps, $this->createMock(AppUserService::class), $empty, $this->createMock(PlanService::class), $this->createMock(FlowService::class), $this->engines());
         $response = $plain->manage($this->request('GET', true), new Response(), ['id' => 'plain', 'operation' => 'records']);
         $this->assertSame(200, $response->getStatusCode());
         $this->assertSame(['installed' => false, 'tables' => [], 'readOnly' => true], self::body($response));
@@ -180,7 +247,7 @@ final class NativeAppControllerTest extends TestCase
         $native = $this->createMock(NativeAppService::class);
         $native->method('project')->willThrowException(new \RuntimeException($recovery));
         $native->method('install')->willThrowException(new \RuntimeException('Restore the app database before installing another update'));
-        $controller = new NativeAppController($apps, $this->createMock(AppUserService::class), $native, $this->createMock(PlanService::class), $this->createMock(FlowService::class));
+        $controller = new NativeAppController($apps, $this->createMock(AppUserService::class), $native, $this->createMock(PlanService::class), $this->createMock(FlowService::class), $this->engines());
 
         $owner = $controller->manage($this->request('GET'), new Response(), ['id' => 'notes']);
         $this->assertSame(503, $owner->getStatusCode());

@@ -6,6 +6,9 @@ import type { Form } from '../types/form';
 import type { App, AppForm, AppFormUsageApp, AppListItem, AppSettings, AppVersion, FormAppContext } from '../types/app';
 import { APP_LEVEL_PERMISSIONS, FORM_LEVEL_PERMISSIONS } from '../types/app';
 import { APP_LOGIC_LANGUAGES } from '../types/customAppLogic';
+import type { ClientEngineId } from './clientEngines';
+
+export type { ClientEngineId };
 import type {
   ClaimResult,
   ConnectorCommand,
@@ -1937,7 +1940,7 @@ class ApiClient {
     return this.request(`/app/${encodeURIComponent(slug)}/entry`);
   }
   /** `readOnly`: the shared demo, which browses the project and records but cannot import, publish or edit them. */
-  async getNativeProject(id: string): Promise<ApiResponse<{ available: boolean; ready?: boolean; preflight?: NativeRuntimePreflight | null; project: import('./nativeHosting').NativeProject | null; readOnly?: boolean }>> {
+  async getNativeProject(id: string): Promise<ApiResponse<{ available: boolean; ready?: boolean; preflight?: NativeRuntimePreflight | null; project: import('./nativeHosting').NativeProject | null; readOnly?: boolean; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/native`);
   }
   async saveNativeProject(id: string, project: import('./nativeHosting').NativeProject, expectedVersion: number): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject }>> {
@@ -1954,20 +1957,30 @@ class ApiClient {
     if (table) params.set('table', table);
     return this.request(`/apps/${encodeURIComponent(id)}/native/records?${params}`);
   }
-  async getNativeRuntime(slug: string): Promise<ApiResponse<{ name: string; project: import('./nativeHosting').NativeRuntimeProject }>> {
+  async getNativeRuntime(slug: string): Promise<ApiResponse<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string } }>> {
     return this.request(`/app/${encodeURIComponent(slug)}/native`);
   }
   async runNativeRequest(slug: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<ApiResponse<{ result: { status: number; body: unknown } }>> {
     return this.request(`/app/${encodeURIComponent(slug)}/native/request`, { method: 'POST', body: JSON.stringify(input), signal });
   }
 
-  async getAppHosting(id: string): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment | null }>> {
+  async getAppHosting(id: string): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment | null; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/hosting`);
+  }
+
+  /**
+   * The owner's client-engine choice for one app (null = the site default). Its own endpoint and
+   * its own column: it is deliberately not part of the app settings object, which is replaced
+   * wholesale by updateApp and replayed by packs, the MCP merge and the admin acting-as mirror.
+   * 422 means the choice would never take effect; the server's answer names what actually runs.
+   */
+  async putAppEngine(id: string, engine: ClientEngineId | null): Promise<ApiResponse<{ engine: AppEngine; policy: OwnerEnginePolicy }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/engine`, { method: 'PUT', body: JSON.stringify({ engine }) });
   }
   async publishAppHosting(id: string, pkg: import('./hosting').HostedPackage, expectedVersion: number): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/hosting`, { method: 'PUT', body: JSON.stringify({ package: pkg, expectedVersion }) });
   }
-  async getHostedRuntime(slug: string): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment; name: string }>> {
+  async getHostedRuntime(slug: string): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment; name: string; engine?: { id: ClientEngineId; revision: string } }>> {
     return this.request(`/app/${encodeURIComponent(slug)}/hosting`);
   }
   async runHostedAction(slug: string, action: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<ApiResponse<{ result: unknown }>> {
@@ -4451,6 +4464,22 @@ class ApiClient {
     return this.request(`/admin/users/${encodeURIComponent(id)}/mfa/reset`, { method: 'POST', body: JSON.stringify({ password }) });
   }
 
+  /** Verify (or revoke) an account for the host-JavaScript engine. Step-up: the admin's OWN password.
+   *  The account needs two-factor auth on; switching that off revokes it again. Revoking also clears
+   *  the account's stored host-JavaScript app choices, which come back in `affectedApps`. */
+  async adminSetCodeTrust(id: string, verified: boolean, password: string): Promise<ApiResponse<{ success: boolean; codeTrust: { verified: boolean; verifiedAt: string | null; verifiedBy: string | null; affectedApps: string[]; self: boolean } }>> {
+    return this.request(`/admin/users/${encodeURIComponent(id)}/code-trust`, { method: 'POST', body: JSON.stringify({ verified, password }) });
+  }
+
+  /** The site client-engine policy, the engines the installed runtime advertises, and every known id. */
+  async adminGetEnginePolicy(): Promise<ApiResponse<{ policy: EnginePolicy; installed: ClientEngineId[]; engines: ClientEngineId[] }>> {
+    return this.request('/admin/engine-policy');
+  }
+
+  async adminPutEnginePolicy(policy: { default: ClientEngineId; allowed: ClientEngineId[]; hostJsRequireWorker: boolean }): Promise<ApiResponse<{ policy: EnginePolicy; installed: ClientEngineId[]; engines: ClientEngineId[] }>> {
+    return this.request('/admin/engine-policy', { method: 'PUT', body: JSON.stringify(policy) });
+  }
+
   /** Set (or generate) a user's password; their sessions are revoked. The temp password is shown ONCE. */
   async adminResetPassword(id: string, password?: string): Promise<ApiResponse<{ success: boolean; tempPassword?: string }>> {
     return this.request(`/admin/users/${encodeURIComponent(id)}/password`, {
@@ -4652,6 +4681,32 @@ export interface AdminOverview {
   sessionEpoch: number;
 }
 
+/** The site client-engine policy (GET/PUT /api/admin/engine-policy). */
+export interface EnginePolicy {
+  /** Server-owned and monotonic: it is part of every app's engine revision. */
+  revision: number;
+  default: ClientEngineId;
+  allowed: ClientEngineId[];
+  hostJsRequireWorker: boolean;
+}
+
+/** What one app runs on, as the server decides it. `stored` is the owner's choice (null = default). */
+export interface AppEngine {
+  id: ClientEngineId;
+  requested: ClientEngineId;
+  stored: ClientEngineId | null;
+  reason?: 'policy' | 'unverified' | 'not-installed' | 'python-required';
+  /** Changes whenever the policy, the owner's verification, the choice or the install does. */
+  revision: string;
+}
+
+/** What an owner may choose between, without exposing the whole admin policy row. */
+export interface OwnerEnginePolicy {
+  default: ClientEngineId;
+  allowed: ClientEngineId[];
+  installed: ClientEngineId[];
+}
+
 export interface AdminUser {
   id: string;
   email: string;
@@ -4667,12 +4722,17 @@ export interface AdminUser {
   formsCount?: number;
   flowsCount?: number;
   responsesCount?: number;
+  /** Verified for the host-JavaScript client engine. Advisory: the server re-reads it per request. */
+  codeTrustVerified?: boolean;
+  codeTrustVerifiedAt?: string | null;
 }
 
 export interface AdminUserDetail extends AdminUser {
   /** Two-factor auth switched on — shows the lockout-recovery "Reset 2FA" control. */
   mfaEnabled?: boolean;
-  apps: Array<{ id: string; name: string; slug?: string | null; status?: string | null; createdAt?: string; formCount: number; flowCount: number; bindingCount: number; memberCount: number }>;
+  /** The admin who verified this account for code trust. */
+  codeTrustVerifiedBy?: string | null;
+  apps: Array<{ id: string; name: string; slug?: string | null; status?: string | null; createdAt?: string; formCount: number; flowCount: number; bindingCount: number; memberCount: number; engine?: AppEngine }>;
   forms: Array<{ id: string; title: string; status?: string | null; createdAt?: string; updatedAt?: string; responseCount: number | null; apps?: string | null }>;
   flows: Array<{ id: string; appId?: string | null; appName?: string | null; name: string; slug: string; enabled: boolean; version: number; updatedAt?: string }>;
 }

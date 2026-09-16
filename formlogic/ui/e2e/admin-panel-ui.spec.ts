@@ -15,6 +15,7 @@ test.beforeEach(async ({ page }) => {
       '/admin/users/user-preview/payments': { payments: [], plan: 'free', cloudUntil: null, complimentary: false },
       '/admin/maintenance': { maintenance: { enabled: false, message: 'We will be back shortly.' }, onlineUsers: 8 },
       '/admin/plans': { plans }, '/admin/notices': { notices: [] },
+      '/admin/engine-policy': { policy: { revision: 1, default: 'zipp-web-python', allowed: ['zipp-web-python'], hostJsRequireWorker: false }, installed: ['zipp-web-python'], engines: ['zipp-web-python', 'zipp-web', 'host-js'] },
       '/admin/backups': { runs: [], lastRun: null },
       '/admin/allowances': { allowances: [{ plan: 'free', metric: 'ai_messages', monthlyValue: 100, enabled: false }] },
       '/admin/upgrade/status': { currentVersion: '0.0.1', layout: { supported: true, mode: 'deployed' }, staged: null, backups: [], history: [], maintenance: { enabled: false } },

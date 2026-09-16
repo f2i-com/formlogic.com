@@ -30,7 +30,9 @@ use Slim\Routing\RouteCollectorProxy;
  *     records), the /api/app/{slug} runtime, api-keys/mcp-tokens/oauth
  *     (minting owner credentials would bypass the boundary via /api/v1),
  *     flow-run queue/claim (their purpose is handing answer snapshots to an
- *     executor) and flow-kv (state can carry record-derived values).
+ *     executor) and flow-kv (state can carry record-derived values). So is
+ *     PUT /apps/{id}/engine: the client engine is a transfer of trust the app
+ *     OWNER makes, not something an administrator makes on their behalf.
  *   - Routes that RETURN flow runs are flagged REDACT_RUNS: run metadata is
  *     visible, but inputSnapshot/result/outputActions/error are stripped by
  *     AdminRunLogRedactionMiddleware (submission answers live in there).

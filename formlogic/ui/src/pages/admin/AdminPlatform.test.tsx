@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({ maintenance: vi.fn(), notices: vi.fn(), backup
 vi.mock('../../lib/api', () => ({ api: { adminGetMaintenance: mocks.maintenance, adminListNotices: mocks.notices, adminListScheduledBackups: mocks.backups, adminCreateNotice: mocks.create, adminRevokeNotice: mocks.revoke, adminSetMaintenance: mocks.toggle } }));
 vi.mock('./AdminPlansCard', () => ({ AdminPlansCard: () => <div>Plans</div> }));
 vi.mock('./AdminAllowancesCard', () => ({ AdminAllowancesCard: () => <div>Allowances</div> }));
+vi.mock('./AdminEnginePolicyCard', () => ({ AdminEnginePolicyCard: () => <div>App engine</div> }));
 vi.mock('../../lib/timezone', () => ({ useAdminTimezone: () => 'UTC', formatDateTimeInZone: (date: string) => date }));
 vi.mock('../../stores/toastStore', () => ({ toast: { error: mocks.error, success: mocks.success } }));
 import { AdminPlatform } from './AdminPlatform';

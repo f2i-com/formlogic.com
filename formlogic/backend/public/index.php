@@ -174,8 +174,15 @@ $container->set(\FormLogic\Controllers\AdminController::class, function (Contain
             $c->get(MySQLConnection::class)->getConnection()
         ),
         $c->get(\FormLogic\Services\EmailService::class),
-        $c->get(\FormLogic\Services\PlanService::class)
+        $c->get(\FormLogic\Services\PlanService::class),
+        $c->get(\FormLogic\Services\RuntimeEngineService::class)
     );
+});
+
+// Which client engine an embedded Softn app runs on: the site policy, the owner's code-trust
+// verification and what the installed hosted runtime advertises. Fails closed to zipp-web-python.
+$container->set(\FormLogic\Services\RuntimeEngineService::class, function (Container $c) {
+    return new \FormLogic\Services\RuntimeEngineService($c->get(MySQLConnection::class));
 });
 
 // Scheduled nightly site backups (bin/backup-accounts.php + the admin panel's
@@ -336,7 +343,9 @@ $container->set(AuthController::class, function (Container $c) {
 $container->set(\FormLogic\Services\MfaService::class, function (Container $c) {
     return new \FormLogic\Services\MfaService(
         $c->get(MySQLConnection::class),
-        new \FormLogic\Services\TotpService()
+        new \FormLogic\Services\TotpService(),
+        // Switching two-factor auth off revokes code trust; that revocation must be recorded.
+        $c->get(AuditService::class)
     );
 });
 
@@ -1326,6 +1335,11 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     $group->post('/users/{id}/mfa/reset', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->resetMfa($request, $response, $adminArgs($request));
     })->add($adminStepUpRateLimiter);
+    // Code trust: whether this account's apps may run on the host-JavaScript engine. Same
+    // step-up + limiter as the MFA reset — it is the other password oracle in this group.
+    $group->post('/users/{id}/code-trust', function ($request, $response) use ($ctrl, $adminArgs) {
+        return $ctrl()->setCodeTrust($request, $response, $adminArgs($request));
+    })->add($adminStepUpRateLimiter);
     // Account tools (support operations, all audited): set/generate a password
     // (sessions revoked), change the email, view the payment ledger, toggle
     // complimentary access, and — heavily gated — erase the whole account.
@@ -1406,6 +1420,10 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     // (plan Phase 2; updates audited as admin.allowance_update).
     $group->get('/plans', function ($request, $response) use ($ctrl) { return $ctrl()->getPlans($request, $response); });
     $group->put('/plans', function ($request, $response) use ($ctrl) { return $ctrl()->putPlans($request, $response); });
+    // Site client-engine policy: the default engine and the engines owners may choose from
+    // (audited as admin.engine_policy_update, which commits with the policy or not at all).
+    $group->get('/engine-policy', function ($request, $response) use ($ctrl) { return $ctrl()->getEnginePolicy($request, $response); });
+    $group->put('/engine-policy', function ($request, $response) use ($ctrl) { return $ctrl()->putEnginePolicy($request, $response); });
     $group->get('/allowances', function ($request, $response) use ($ctrl) {
         return $ctrl()->listAllowances($request, $response);
     });
@@ -2961,6 +2979,12 @@ $app->get('/api/apps/{id}/hosting/{download:database}', function ($request, $res
 })->add($hostingLimiter)->add($authRequired);
 $app->put('/api/apps/{id}/hosting', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\HostedAppController::class)->manage($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+// The owner's client-engine choice: its own endpoint and its own column, deliberately outside
+// PUT /api/apps/{id} (whose settings object is replaced wholesale and replayed by packs, the MCP
+// merge and the admin acting-as mirror) and outside AdminActingAsRoutes — owner-only.
+$app->put('/api/apps/{id}/engine', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\HostedAppController::class)->engine($request, $response, $getArgs($request));
 })->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
 $app->get('/api/app/{slug}/hosting', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\HostedAppController::class)->runtime($request, $response, $getArgs($request));

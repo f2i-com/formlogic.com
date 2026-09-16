@@ -6,6 +6,9 @@ import { useDesktopConnectorEvents } from '../../client-runtime/desktop/useDeskt
 import { downloadHostedClient } from '../../lib/hosting';
 import template from '../../data/aokie-workspace.json';
 
+/** A constant, so the frame never remounts on it. */
+const AOKIE_ENGINE = { id: 'zipp-web-python', revision: '' } as const;
+
 /** This portable client can be the home or a view within another app. */
 export function AokieWorkspace({ listen = true }: { listen?: boolean }) {
   const slug = useAppRuntimeStore(state => state.appSlug);
@@ -27,7 +30,9 @@ export function AokieWorkspace({ listen = true }: { listen?: boolean }) {
   return <div className="p-3 sm:p-6">
     <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-sm"><span className="text-slate-600 dark:text-slate-400">Your app's receptionist workspace</span><button disabled={downloading} className="min-h-11 rounded-lg border border-slate-300 px-4 font-medium disabled:opacity-50 dark:border-slate-600" onClick={() => void download()}>{downloading ? 'Preparing download…' : 'Download editable app'}</button></div>
     {error && <p role="alert">{error}</p>}
-    <div className="h-[calc(100dvh-13rem)] min-h-[560px]"><HostedAppFrame slug={slug} client={template.client} version={1} /></div>
+    {/* FormLogic's own template, not owner code, and it has no runtime GET: it always runs on
+        the ZIPP web-python engine rather than following an app's engine choice. */}
+    <div className="h-[calc(100dvh-13rem)] min-h-[560px]"><HostedAppFrame slug={slug} client={template.client} version={1} engine={AOKIE_ENGINE} /></div>
     {config?.app.canManage && <p className="mt-3 text-xs text-slate-500">Customise the downloaded project in App hosting, or share these forms with another app in App Studio.</p>}
   </div>;
 }
