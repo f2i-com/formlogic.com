@@ -2,5 +2,6 @@
   "nativeProtocol": 1,
   "recordEvents": 1,
   "editorBridge": 1,
-  "hostedEngines": 1
+  "hostedEngines": 1,
+  "logicLanguages": 1
 }

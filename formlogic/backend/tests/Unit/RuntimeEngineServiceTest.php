@@ -291,6 +291,86 @@ class RuntimeEngineServiceTest extends TestCase
         $this->assertArrayNotHasKey('reason', $plain);
     }
 
+    // ── what an app's logic is written in ────────────────────────────────────
+
+    /**
+     * The rule that turns a published app into an engine requirement, and the one place it lives.
+     * It must be Softn's rule exactly (apps/formlogic-host/src/engineInit.ts bundleLanguages): the
+     * shell derives the languages it will hold the engine to from the same client file names this
+     * server derives them from, so if the two ever differed an app would be one thing to the engine
+     * chooser and another to the engine.
+     */
+    public function testAClientFileNameEndingPyIsTheWholeDeclarationOfPython(): void
+    {
+        $this->assertSame(['javascript', 'python'], Engines::languagesOf(['manifest.json' => '{}', 'logic/counter.py' => 'x = 1']));
+        // The NAME, in any case: Softn lowercases before it compares, and a file this server read
+        // as JavaScript while the shell read it as Python is the disagreement this rule exists to
+        // make impossible.
+        foreach (['Counter.PY', 'counter.Py', 'a/B/C.pY'] as $path) {
+            $this->assertSame(['javascript', 'python'], Engines::languagesOf([$path => '']), $path);
+        }
+        // A list of names answers the same as a map keyed by them.
+        $this->assertSame(['javascript', 'python'], Engines::languagesOf(['ui/main.ui', 'logic/app.py']));
+    }
+
+    public function testEveryOtherFileNameIsJavaScriptAndJavaScriptIsAlwaysThere(): void
+    {
+        $this->assertSame(['javascript'], Engines::languagesOf([]));
+        // `.py` only at the END of the name: these are not Python files, and a rule that matched
+        // them anywhere would clamp ordinary apps onto the Python engine.
+        foreach (['logic/app.py.logic', 'logic/py', 'logic/python.logic', 'ui/spy.ui', 'logic/a.pyc', 'copy.json'] as $path) {
+            $this->assertSame(['javascript'], Engines::languagesOf([$path => '']), $path);
+        }
+        $this->assertSame(['javascript'], Engines::languagesOf(['manifest.json' => '{}', 'ui/main.ui' => '', 'logic/app.logic' => '']));
+    }
+
+    public function testNothingButAStringNameIsRead(): void
+    {
+        // Whatever a caller hands over, only the names decide; a value that is not a string is not
+        // a file name and cannot make an app Python (or stop it being Python).
+        $this->assertSame(['javascript'], Engines::languagesOf([1, null, false, ['a.py']]));
+        $this->assertSame(['javascript', 'python'], Engines::languagesOf(['a.py' => null, 'b.ui' => 'x']));
+    }
+
+    // ── what the install can be asked to run ─────────────────────────────────
+
+    public function testAnInstallThatDoesNotAdvertiseThePythonLogicContractCannotBeAskedToRunPython(): void
+    {
+        $this->assertTrue(Engines::featuresRun(['python-logic/1'], ['javascript', 'python']));
+        $this->assertTrue(Engines::featuresRun(['host-js-worker', 'python-logic/1'], ['javascript', 'python']));
+
+        // Absent, empty, malformed, or naming something else: fail CLOSED. An install from before
+        // the stamp, or a runtime that does not know the `.py` rule, would inline a member's Python
+        // as JavaScript, so the app is not served at all.
+        foreach ([
+            ['hostedRuntime' => ['engines' => ['zipp-web-python']]],
+            ['hostedRuntime' => ['engines' => ['zipp-web-python'], 'features' => []]],
+            ['hostedRuntime' => ['engines' => ['zipp-web-python'], 'features' => 'python-logic/1']],
+            ['hostedRuntime' => ['engines' => ['zipp-web-python'], 'features' => ['features' => 'python-logic/1']]],
+            ['hostedRuntime' => ['engines' => ['zipp-web-python'], 'features' => ['host-js-worker']]],
+            ['hostedRuntime' => ['engines' => ['zipp-web-python'], 'features' => ['python-logic/2']]],
+            ['release' => ['tag' => 'v0.0.15-local']],
+            null,
+        ] as $record) {
+            $features = Engines::featuresFromRecord($record);
+            $this->assertFalse(Engines::featuresRun($features, ['javascript', 'python']), json_encode($record));
+            // And a JavaScript-only app is unaffected by any of it.
+            $this->assertTrue(Engines::featuresRun($features, ['javascript']), json_encode($record));
+        }
+    }
+
+    public function testTheRuntimeInstalledInThisTreeAdvertisesThePythonLogicContract(): void
+    {
+        // The link the fixtures cannot cover: the file on disk. hosted-runtime/runtime-manifest.json
+        // declares the feature, fetch-softn-release.mjs stamps it into the native provenance, and
+        // this is what the server reads before serving a member an app with Python logic.
+        $file = dirname(__DIR__, 2) . '/resources/softn-native/provenance.json';
+        $this->assertFileExists($file, 'Run node scripts/fetch-softn-release.mjs from the repository root.');
+        $provenance = json_decode((string) file_get_contents($file), true);
+        $this->assertContains('python-logic/1', Engines::featuresFromRecord($provenance));
+        $this->assertSame(1, $provenance['hostedRuntime']['protocols']['logicLanguages'] ?? null);
+    }
+
     public function testTheClampCanOnlyEverNameAnEngineEveryPolicyAllowsAndEveryInstallServes(): void
     {
         // Why the clamp is safe to apply last: the one engine it can produce is the one a policy

@@ -26,7 +26,13 @@ class AdminService
     private MySQLConnection $connection;
     private ?RuntimeEngineService $engineService = null;
 
-    public function __construct(MySQLConnection $mysql)
+    /**
+     * $hosting and $native are optional and default to the production stores, so every existing
+     * `new AdminService($mysql)` keeps its one-argument shape; tests point them at their own roots.
+     * They exist only to answer what an app's client logic is written in, which the per-app engine
+     * below cannot be truthful without.
+     */
+    public function __construct(MySQLConnection $mysql, private ?HostedAppService $hosting = null, private ?NativeAppService $native = null)
     {
         $this->connection = $mysql;
         $this->mysql = $mysql->getConnection();
@@ -36,6 +42,24 @@ class AdminService
     private function engines(): RuntimeEngineService
     {
         return $this->engineService ??= new RuntimeEngineService($this->connection);
+    }
+
+    /**
+     * What one app's client logic is written in, across both bundles the engine choice governs.
+     * One derivation (RuntimeEngineService::languagesOf), one reader per store, the same as every
+     * runtime GET uses. Each store answers null cheaply for an app it holds nothing for, so an app
+     * with no deployment costs two stat calls.
+     *
+     * @return list<string>
+     */
+    private function appLanguages(string $appId): array
+    {
+        $this->hosting ??= new HostedAppService(new SandboxRunner());
+        $this->native ??= new NativeAppService();
+        return RuntimeEngineService::mergeLanguages(
+            $this->hosting->clientLanguages($appId),
+            $this->native->clientLanguages($appId),
+        );
     }
 
     // ── Overview ─────────────────────────────────────────────────────────────
@@ -117,8 +141,9 @@ class AdminService
         }
         $user = $this->formatUserRow($row);
 
-        // One owner row and one policy read for the whole list: the per-app resolver is pure, so
-        // the admin sees exactly what each app's runtime GET would answer.
+        // One owner row and one policy read for the whole list; the per-app resolver is pure, and
+        // the only per-app input left is what that app's client logic is written in (below). With
+        // all four the admin sees exactly what each app's runtime GET would answer.
         $owner = RuntimeEngineService::ownerOf($row);
         $policy = $this->engines()->readPolicy();
         $installed = $this->engines()->installedEngines();
@@ -133,16 +158,20 @@ class AdminService
             FROM apps a WHERE a.owner_id = :id ORDER BY a.created_at DESC
         ");
         $apps->execute(['id' => $userId]);
-        $user['apps'] = array_map(static fn (array $a) => [
+        $user['apps'] = array_map(fn (array $a) => [
             'id' => $a['id'], 'name' => $a['name'], 'slug' => $a['slug'], 'status' => $a['status'],
             'createdAt' => $a['created_at'],
             'formCount' => (int) $a['form_count'], 'flowCount' => (int) $a['flow_count'],
             'bindingCount' => (int) $a['binding_count'], 'memberCount' => (int) $a['member_count'],
+            // The languages too: an admin reads this column to decide whether an account still
+            // needs its code-trust verification, and an app whose logic is Python can never run on
+            // host JavaScript however that account is set.
             'engine' => RuntimeEngineService::resolve(
                 is_string($a['client_engine'] ?? null) ? $a['client_engine'] : null,
                 $policy,
                 $installed,
-                $owner
+                $owner,
+                $this->appLanguages((string) $a['id'])
             ),
         ], $apps->fetchAll(PDO::FETCH_ASSOC));
 

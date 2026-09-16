@@ -47,7 +47,7 @@ try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   browser = await chromium.launch();
-  for (const order of ['expression-first', 'app-first', 'concurrent', 'without-webcrypto', 'download-retry', 'stale-host', 'self-navigation', 'frame-policy', 'host-js-frame']) {
+  for (const order of ['expression-first', 'app-first', 'concurrent', 'without-webcrypto', 'download-retry', 'stale-host', 'self-navigation', 'frame-policy', 'host-js-frame', 'python-app']) {
     // Fresh context + fixture without PWA registration avoids cached engines.
     // Playwright's serviceWorkers:block init script itself throws when reading
     // navigator.serviceWorker inside this deliberately opaque sandboxed iframe.
@@ -135,6 +135,24 @@ try {
       assert.equal(wasmRequests.length, 0, `Host JavaScript must fetch no engine: ${wasmRequests.join(', ')}`);
       assert.deepEqual(errors, [], 'The browser must not report uncaught exceptions');
       console.log(`PASS ${order}: host.html ran the app with 0 WASM requests, sandbox=allow-scripts`);
+      await context.close();
+      continue;
+    }
+    // An app whose logic is Python, on the engine the server would have clamped it onto. One
+    // client file name apart from every other order here: the bundle's `.py` file is what makes
+    // it a Python app, the shell derives that from the name and holds the engine to it, and this
+    // is the only check that the author's Python actually RUNS in a real browser frame.
+    if (order === 'python-app') {
+      await page.goto(`${origin}/e2e/fixtures/zipp-sharing.html?logic=python`);
+      await page.getByRole('button', { name: 'Open app', exact: true }).click();
+      await expect(page.locator('iframe')).toHaveAttribute('src', '/hosted-runtime/index.html');
+      const frame = page.getByTestId('app-0').frameLocator('iframe');
+      await expect(frame.getByTestId('count')).toHaveText('0', { timeout: 60_000 });
+      await frame.getByRole('button', { name: 'Add one' }).click();
+      await expect(frame.getByTestId('count')).toHaveText('1');
+      assert.equal(wasmRequests.length, 1, `Python needs the one ZIPP engine, once: ${wasmRequests.join(', ')}`);
+      assert.deepEqual(errors, [], 'The browser must not report uncaught exceptions');
+      console.log(`PASS ${order}: a .py bundle ran on index.html, state mirrored and a handler called`);
       await context.close();
       continue;
     }

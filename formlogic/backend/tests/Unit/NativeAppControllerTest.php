@@ -134,6 +134,116 @@ final class NativeAppControllerTest extends TestCase
         $this->assertSame('no-store', $stale->getHeaderLine('Cache-Control'));
     }
 
+    // ── what the app's logic is written in ───────────────────────────────────
+
+    /**
+     * A controller over one project, recording every ($appId, $languages) the resolver was asked.
+     *
+     * @return array{0: NativeAppController, 1: AppUserService&\PHPUnit\Framework\MockObject\MockObject, 2: \ArrayObject}
+     */
+    private function recordingFixture(array $files, string $access = 'application'): array
+    {
+        $asked = new \ArrayObject();
+        $engines = $this->createMock(RuntimeEngineService::class);
+        $engines->method('effective')->willReturnCallback(static function (string $appId, array $languages = []) use ($asked) {
+            $asked[] = $languages;
+            return self::ENGINE;
+        });
+        $engines->method('ownerPolicy')->willReturn(['default' => 'zipp-web-python', 'allowed' => ['zipp-web-python'], 'installed' => ['zipp-web-python']]);
+        $engines->method('assertInstalledRuns');
+        $apps = $this->createMock(AppService::class);
+        $apps->method('getAppBySlug')->willReturn(['id' => 'notes', 'ownerId' => 'owner', 'name' => 'Notes', 'status' => 'published']);
+        $apps->method('getApp')->willReturn(['id' => 'notes', 'ownerId' => 'owner', 'name' => 'Notes', 'status' => 'published']);
+        $apps->method('isRuntimeVisible')->willReturn(true);
+        $users = $this->createMock(AppUserService::class);
+        $native = $this->createMock(NativeAppService::class);
+        $project = ['access' => $access, 'version' => 1, 'assets' => [], 'files' => $files + ['manifest.json' => '{"id":"notes","server":{"entry":"server/main.logic"}}']];
+        $native->method('get')->willReturn($project);
+        $native->method('project')->willReturn($project);
+        $native->method('request')->willReturn(['status' => 200, 'body' => []]);
+        // The REAL rule over this fixture's files, not a canned answer: the mock stands in for the
+        // store, never for the derivation. NativeAppServiceTest pins the same two helpers against
+        // a real project on disk.
+        $native->method('clientLanguages')->willReturnCallback(
+            static fn () => RuntimeEngineService::languagesOf(NativeAppService::clientFiles($project))
+        );
+        $controller = new NativeAppController($apps, $users, $native, $this->createMock(PlanService::class), $this->createMock(FlowService::class), $engines);
+        return [$controller, $users, $asked];
+    }
+
+    /**
+     * The whole point of this slice: the server is told an app needs Python by the app's own client
+     * file NAMES, and nothing else. Softn's shell derives the same list from the same names
+     * (apps/formlogic-host/src/engineInit.ts bundleLanguages), so the engine the server decides and
+     * the engine the shell will accept cannot disagree.
+     */
+    public function testTheRuntimeGetTellsTheResolverThatAPyClientFileMeansPython(): void
+    {
+        [$controller, , $asked] = $this->recordingFixture(['ui/main.ui' => '<Text/>', 'logic/counter.py' => 'count = 0']);
+        $controller->runtime((new ServerRequestFactory())->createServerRequest('GET', '/'), new Response(), ['slug' => 'notes']);
+        $this->assertSame([['javascript', 'python']], $asked->getArrayCopy());
+    }
+
+    public function testAnAppWithNoPyClientFileIsJavaScriptOnly(): void
+    {
+        [$controller, , $asked] = $this->recordingFixture(['ui/main.ui' => '<Text/>', 'logic/counter.logic' => 'let a = 0;']);
+        $controller->runtime((new ServerRequestFactory())->createServerRequest('GET', '/'), new Response(), ['slug' => 'notes']);
+        $this->assertSame([['javascript']], $asked->getArrayCopy());
+    }
+
+    public function testAPyFileInThePrivateServerTreeIsNotTheAppsClientLogic(): void
+    {
+        // The member's frame never receives it, so it cannot be what the frame will run, and a
+        // server tree that somehow held one must not clamp a JavaScript app onto the Python engine.
+        [$controller, , $asked] = $this->recordingFixture(['ui/main.ui' => '<Text/>', 'server/main.logic' => 'x', 'server/helper.py' => 'y']);
+        $response = $controller->runtime((new ServerRequestFactory())->createServerRequest('GET', '/'), new Response(), ['slug' => 'notes']);
+        $this->assertArrayNotHasKey('server/helper.py', self::body($response)['project']['client']);
+        $this->assertSame([['javascript']], $asked->getArrayCopy());
+    }
+
+    public function testTheOwnerGetIsToldTheSameLanguagesTheMembersFrameIs(): void
+    {
+        // Otherwise the settings screen would show the owner their stored choice as effective while
+        // every member was served the clamped engine.
+        [$controller, , $asked] = $this->recordingFixture(['ui/main.ui' => '<Text/>', 'logic/counter.py' => 'count = 0']);
+        $controller->manage($this->request('GET'), new Response(), ['id' => 'notes']);
+        $this->assertSame([['javascript', 'python']], $asked->getArrayCopy());
+    }
+
+    public function testTheActionTimeStaleCheckAsksTheSameQuestionTheGetDid(): void
+    {
+        // Without the languages the check would compute a different engine than the GET answered
+        // with, and every action on a Python app would be told the engine had changed — a remount
+        // loop, not a revocation.
+        [$controller, $users, $asked] = $this->recordingFixture(['ui/main.ui' => '<Text/>', 'logic/counter.py' => 'count = 0'], 'members');
+        $users->method('getAppUser')->willReturn(['status' => 'active', 'roleId' => 'editor']);
+        $request = (new ServerRequestFactory())->createServerRequest('POST', '/', ['REMOTE_ADDR' => '127.0.0.1'])
+            ->withAttribute('userId', 'member')->withParsedBody(['method' => 'GET', 'path' => '/api/notes'])
+            ->withHeader('X-FormLogic-Client-Engine', 'zipp-web-python;0123456789abcdef');
+        $this->assertSame(200, $controller->runtime($request, new Response(), ['slug' => 'notes'])->getStatusCode());
+        $this->assertSame([['javascript', 'python']], $asked->getArrayCopy());
+    }
+
+    public function testAnAppWhoseLogicThisInstallCannotRunIsNotServedAtAll(): void
+    {
+        // Fail closed: the resolver refuses, and the runtime GET carries no project at all rather
+        // than handing a member's frame Python that the installed runtime would read as JavaScript.
+        $engines = $this->createMock(RuntimeEngineService::class);
+        $engines->method('effective')->willReturn(self::ENGINE);
+        $engines->method('assertInstalledRuns')->willThrowException(new \RuntimeException('no python-logic/1', 503));
+        $apps = $this->createMock(AppService::class);
+        $apps->method('getAppBySlug')->willReturn(['id' => 'notes', 'ownerId' => 'owner', 'name' => 'Notes', 'status' => 'published']);
+        $apps->method('isRuntimeVisible')->willReturn(true);
+        $native = $this->createMock(NativeAppService::class);
+        $project = ['access' => 'application', 'version' => 1, 'assets' => [], 'files' => ['manifest.json' => '{"id":"notes"}', 'ui/main.ui' => '<Text/>', 'logic/counter.py' => 'count = 0']];
+        $native->method('get')->willReturn($project);
+        $native->method('project')->willReturn($project);
+        $controller = new NativeAppController($apps, $this->createMock(AppUserService::class), $native, $this->createMock(PlanService::class), $this->createMock(FlowService::class), $engines);
+        $response = $controller->runtime((new ServerRequestFactory())->createServerRequest('GET', '/'), new Response(), ['slug' => 'notes']);
+        $this->assertSame(503, $response->getStatusCode());
+        $this->assertArrayNotHasKey('project', self::body($response));
+    }
+
     public function testMemberAppRequiresAnActiveMembership(): void
     {
         [$controller, $users, $native] = $this->fixture('members');

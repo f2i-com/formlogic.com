@@ -54,6 +54,58 @@ final class NativeAppServiceTest extends TestCase
         return $this->service->request('notes', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => $title], 'client_ip' => '127.0.0.1']);
     }
 
+    /**
+     * Python as a client logic language. The file NAME is the whole declaration — it is what
+     * RuntimeEngineService::languagesOf reads to clamp the app onto the ZIPP web-python engine, and
+     * what Softn's shell reads to hold the engine to the same answer.
+     */
+    public function testPythonClientLogicIsAcceptedAndThePrivateServerTreeStaysJavaScript(): void
+    {
+        $project = $this->project();
+        $project['files']['logic/counter.py'] = "count = 0\n";
+        [$files] = NativeAppService::validateProject($project);
+        $this->assertArrayHasKey('logic/counter.py', $files);
+
+        // The native backend is executed by the Node runner as JavaScript and nothing derives a
+        // language from it, so a Python file there is refused rather than installed unrunnable.
+        foreach (['server/helper.py', 'backend/helper.py', 'private/helper.py', 'Server/helper.py'] as $path) {
+            $private = $this->project();
+            $private['files'][$path] = 'x = 1';
+            try { NativeAppService::validateProject($private); $this->fail('accepted ' . $path); }
+            catch (\InvalidArgumentException $e) { $this->assertStringContainsString('client logic language', $e->getMessage(), $path); }
+        }
+
+        // Lower case only, like every other extension in the rule: a `.PY` is refused at install
+        // rather than accepted and then read as JavaScript by something comparing case-sensitively.
+        $upper = $this->project();
+        $upper['files']['logic/Counter.PY'] = 'count = 0';
+        $this->expectException(\InvalidArgumentException::class);
+        NativeAppService::validateProject($upper);
+    }
+
+    /**
+     * The other half of the same rule, on a real installed project: what the frame receives, and
+     * what that says the app's logic is written in. Everything that decides an engine — both
+     * controllers' runtime GETs, the owner's settings view, the action-time staleness check, the
+     * write endpoint's audit row and the admin's per-app list — reads these two and nothing else.
+     */
+    public function testTheInstalledProjectAnswersWhatItsClientLogicIsWrittenIn(): void
+    {
+        $project = $this->project();
+        $project['files']['logic/counter.py'] = "count = 0\n";
+        $this->service->install('languages', $project, 0);
+
+        $client = NativeAppService::clientFiles($this->service->get('languages'));
+        $this->assertArrayHasKey('logic/counter.py', $client);
+        $this->assertArrayNotHasKey('server/main.logic', $client, 'the private backend is not the frame\'s');
+        $this->assertArrayNotHasKey('server/migrations/001.sql', $client);
+        $this->assertSame(['javascript', 'python'], $this->service->clientLanguages('languages'));
+
+        // An app with no installation at all is not a Python app, and says so without throwing:
+        // every caller is deciding an engine, not serving source.
+        $this->assertSame(['javascript'], $this->service->clientLanguages('never-installed'));
+    }
+
     public function testAiToolsCreateAndEditTheStarterWithRealZippAndSqlite(): void
     {
         $apps = $this->createMock(\FormLogic\Services\AppService::class);

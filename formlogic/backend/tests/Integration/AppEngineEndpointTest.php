@@ -13,6 +13,7 @@ use FormLogic\Services\AppUserService;
 use FormLogic\Services\AuditService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\HostedAppService;
+use FormLogic\Services\NativeAppService;
 use FormLogic\Services\RuntimeEngineService;
 use FormLogic\Services\SandboxRunner;
 use PDO;
@@ -137,8 +138,24 @@ class AppEngineEndpointTest extends TestCase
             self::$appUsers,
             new HostedAppService(new SandboxRunner(), self::$tmpRoot . '/hosted'),
             $engines ?? $this->engines(),
-            new AuditService(self::$mysql, null, 'app-engine-test-audit-key')
+            new AuditService(self::$mysql, null, 'app-engine-test-audit-key'),
+            new NativeAppService(self::$tmpRoot . '/native')
         );
+    }
+
+    /**
+     * A native project on disk for this app, as the read paths see one: `get()` reads project.json
+     * and nothing else, so a file is the whole fixture. Installing one for real would start the
+     * ZIPP runtime, which is not what is under test here.
+     */
+    private function installNativeProject(array $files): void
+    {
+        $root = self::$tmpRoot . '/native/' . hash('sha256', $this->appId);
+        if (!is_dir($root)) mkdir($root, 0700, true);
+        file_put_contents($root . '/project.json', json_encode([
+            'home' => false, 'version' => 1, 'updatedAt' => gmdate('c'), 'access' => 'application', 'assets' => [],
+            'files' => $files + ['manifest.json' => '{"id":"engine-app","main":"ui/main.ui"}'],
+        ], JSON_THROW_ON_ERROR));
     }
 
     private function request(string $method, string $path, ?array $body = null, ?string $userId = null, array $headers = []): ServerRequestInterface
@@ -370,5 +387,218 @@ class AppEngineEndpointTest extends TestCase
         );
         $this->assertSame(409, $response->getStatusCode());
         $this->assertSame('engine_changed', $this->jsonBody($response)['code']);
+    }
+
+    // ── an app whose logic is Python ─────────────────────────────────────────
+
+    /** The one Python thing about a Python app: a client file whose NAME ends `.py`. */
+    private function publishPython(): void
+    {
+        (new HostedAppService(new SandboxRunner(), self::$tmpRoot . '/hosted'))->publish($this->appId, [
+            'version' => 1,
+            'client' => [
+                'manifest.json' => '{"main":"ui/main.ui","name":"Engine app","files":{"logic":["logic/counter.py"]}}',
+                'ui/main.ui' => '<Text>{count}</Text>',
+                'logic/counter.py' => "count = 0\n",
+            ],
+            'actions' => ['noop' => ['access' => 'owner', 'mode' => 'read', 'source' => 'function onRequest(ctx) { return 1; }']],
+        ], 0);
+    }
+
+    /** An install serving all three engines, so a fallback to zipp-web is genuinely available. */
+    private function everyEngine(): RuntimeEngineService
+    {
+        return $this->engines(['hostedRuntime' => [
+            'engines' => ['zipp-web-python', 'zipp-web', 'host-js'],
+            'features' => ['python-logic/1'],
+        ]]);
+    }
+
+    public function testAPythonAppRunsOnWebPythonEvenWhenItsOwnerChoseHostJavaScript(): void
+    {
+        $this->engines()->writePolicy(['default' => 'zipp-web-python', 'allowed' => ['zipp-web-python', 'zipp-web', 'host-js']]);
+        $this->verifyOwner();
+        $this->publishPython();
+        self::$pdo->prepare('UPDATE apps SET client_engine = ? WHERE id = ?')->execute(['host-js', $this->appId]);
+        $controller = $this->controller($this->everyEngine());
+
+        // The control first: with nothing but the owner's choice to go on, host-js is effective —
+        // the policy allows it, the owner is verified and the install serves it.
+        $this->assertSame('host-js', $this->everyEngine()->effective($this->appId)['id']);
+
+        // And what a member is actually served, because the app's own file names say it is Python.
+        $body = $this->jsonBody($controller->runtime(
+            $this->request('GET', '/api/app/' . $this->slug . '/hosting'),
+            (new ResponseFactory())->createResponse(),
+            ['slug' => $this->slug]
+        ));
+        $this->assertSame('zipp-web-python', $body['engine']['id']);
+
+        // The owner's settings screen is told the same thing, with the reason.
+        $owner = $this->jsonBody($controller->manage(
+            $this->request('GET', '/api/apps/' . $this->appId . '/hosting'),
+            (new ResponseFactory())->createResponse(),
+            ['id' => $this->appId]
+        ))['engine'];
+        $this->assertSame('zipp-web-python', $owner['id']);
+        $this->assertSame('host-js', $owner['stored'], 'the choice is kept; it is the outcome that is clamped');
+        $this->assertSame('python-required', $owner['reason']);
+
+        // The same pair against the runtime this tree has actually installed, not a fixture: the
+        // resolver's before and after for one app, one argument apart.
+        $installed = $this->engines();
+        $this->assertSame('host-js', $installed->effective($this->appId)['id']);
+        $clamped = $installed->effective($this->appId, ['javascript', 'python']);
+        $this->assertSame('zipp-web-python', $clamped['id']);
+        $this->assertSame('python-required', $clamped['reason']);
+    }
+
+    public function testAPythonAppRunsOnWebPythonEvenWhereTheSiteDefaultIsTheJavaScriptOnlyBuild(): void
+    {
+        $this->engines()->writePolicy(['default' => 'zipp-web', 'allowed' => ['zipp-web-python', 'zipp-web']]);
+        $controller = $this->controller($this->everyEngine());
+
+        // The control: the same app, same site, one file name apart.
+        $this->publish();
+        $this->assertSame('zipp-web', $this->jsonBody($controller->runtime(
+            $this->request('GET', '/api/app/' . $this->slug . '/hosting'),
+            (new ResponseFactory())->createResponse(),
+            ['slug' => $this->slug]
+        ))['engine']['id'], 'a JavaScript app takes the site default');
+
+        (new HostedAppService(new SandboxRunner(), self::$tmpRoot . '/hosted'))->publish($this->appId, [
+            'version' => 1,
+            'client' => ['manifest.json' => '{"main":"ui/main.ui","name":"Engine app"}', 'ui/main.ui' => '<Text/>', 'logic/counter.py' => "count = 0\n"],
+            'actions' => [],
+        ], 1);
+        $this->assertSame('zipp-web-python', $this->jsonBody($controller->runtime(
+            $this->request('GET', '/api/app/' . $this->slug . '/hosting'),
+            (new ResponseFactory())->createResponse(),
+            ['slug' => $this->slug]
+        ))['engine']['id'], 'zipp-web cannot run Python at all, whatever the site prefers');
+        $this->assertSame('python-required', $this->everyEngine()->effective($this->appId, ['javascript', 'python'])['reason']);
+    }
+
+    public function testAnActionFromAClampedPythonFrameIsNotToldTheEngineChanged(): void
+    {
+        // The engine the GET answered with is the engine the action-time check must compute, or the
+        // frame is sent round a remount loop it can never settle: it reloads, is given the same
+        // clamped engine, sends it back, and is refused again.
+        $this->engines()->writePolicy(['default' => 'zipp-web-python', 'allowed' => ['zipp-web-python', 'zipp-web', 'host-js']]);
+        $this->verifyOwner();
+        $this->publishPython();
+        self::$pdo->prepare('UPDATE apps SET client_engine = ? WHERE id = ?')->execute(['host-js', $this->appId]);
+        $controller = $this->controller($this->everyEngine());
+        $mounted = $this->jsonBody($controller->runtime(
+            $this->request('GET', '/api/app/' . $this->slug . '/hosting'),
+            (new ResponseFactory())->createResponse(),
+            ['slug' => $this->slug]
+        ))['engine'];
+        $this->assertSame('zipp-web-python', $mounted['id']);
+        $action = $controller->runtime(
+            $this->request('POST', '/api/app/' . $this->slug . '/actions/noop', [], null, ['X-FormLogic-Client-Engine' => $mounted['id'] . ';' . $mounted['revision']]),
+            (new ResponseFactory())->createResponse(),
+            ['slug' => $this->slug, 'action' => 'noop']
+        );
+        $this->assertSame(200, $action->getStatusCode(), (string) ($this->jsonBody($action)['code'] ?? ''));
+        $this->assertSame(1, $this->jsonBody($action)['result']);
+    }
+
+    /**
+     * The audit row is the record an incident is reconstructed from. `effective: host-js` for an
+     * app that can never run host JavaScript would read as evidence that host JavaScript was in
+     * play — for the one decision an administrator verified an account in order to permit.
+     */
+    public function testTheAuditRowForAPythonAppRecordsTheEngineItWillActuallyRunOn(): void
+    {
+        $this->allowHostJs();
+        $this->verifyOwner();
+        $this->publishPython();
+        $response = $this->put(['engine' => 'host-js']);
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertSame('host-js', $this->storedEngine(), 'the choice is still stored: it is storable, just not effective');
+        $this->assertSame('zipp-web-python', $this->jsonBody($response)['engine']['id']);
+        $this->assertSame('python-required', $this->jsonBody($response)['engine']['reason']);
+
+        $stmt = self::$pdo->prepare('SELECT details FROM audit_log WHERE resource_id = ? ORDER BY sequence_number DESC LIMIT 1');
+        $stmt->execute([$this->appId]);
+        $details = json_decode((string) $stmt->fetchColumn(), true);
+        $this->assertSame('host-js', $details['to'], 'what the owner asked for');
+        $this->assertSame('zipp-web-python', $details['effective'], 'and what it actually produced');
+        $this->assertSame('python-required', $details['reason']);
+    }
+
+    public function testTheChoiceCoversTheNativeClientToo(): void
+    {
+        // One column covers an app's hosted deployment AND its native client. A Python native
+        // project with no hosted deployment at all is the case a hosted-only derivation misses.
+        $this->allowHostJs();
+        $this->verifyOwner();
+        $this->installNativeProject(['ui/main.ui' => '<Text/>', 'logic/counter.py' => "count = 0\n"]);
+        $response = $this->put(['engine' => 'host-js']);
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertSame('zipp-web-python', $this->jsonBody($response)['engine']['id']);
+
+        $stmt = self::$pdo->prepare('SELECT details FROM audit_log WHERE resource_id = ? ORDER BY sequence_number DESC LIMIT 1');
+        $stmt->execute([$this->appId]);
+        $this->assertSame('zipp-web-python', json_decode((string) $stmt->fetchColumn(), true)['effective']);
+
+        // The control: the same app one file name apart records the choice as effective.
+        $this->installNativeProject(['ui/main.ui' => '<Text/>', 'logic/counter.logic' => 'let count = 0;']);
+        $again = $this->put(['engine' => 'host-js']);
+        $this->assertSame('host-js', $this->jsonBody($again)['engine']['id']);
+        $stmt->execute([$this->appId]);
+        $this->assertSame('host-js', json_decode((string) $stmt->fetchColumn(), true)['effective']);
+    }
+
+    public function testTheAdminsPerAppEngineIsTheOneTheRuntimeGetWouldAnswer(): void
+    {
+        // An admin reads this to decide whether an account still needs code-trust verification.
+        $this->allowHostJs();
+        $this->verifyOwner();
+        $this->publishPython();
+        self::$pdo->prepare('UPDATE apps SET client_engine = ? WHERE id = ?')->execute(['host-js', $this->appId]);
+        $admin = new \FormLogic\Services\AdminService(
+            self::$mysql,
+            new HostedAppService(new SandboxRunner(), self::$tmpRoot . '/hosted'),
+            new NativeAppService(self::$tmpRoot . '/native')
+        );
+        $apps = $admin->getUserOverview($this->ownerId)['apps'];
+        $row = null;
+        foreach ($apps as $app) {
+            if ($app['id'] === $this->appId) $row = $app;
+        }
+        $this->assertNotNull($row);
+        $this->assertSame('zipp-web-python', $row['engine']['id']);
+        $this->assertSame('python-required', $row['engine']['reason']);
+        $this->assertSame('host-js', $row['engine']['stored'], 'the stored choice is still shown');
+    }
+
+    public function testAnInstallThatDoesNotAdvertiseThePythonContractServesNoPythonAppAtAll(): void
+    {
+        // The state of any tree whose runtime was installed by a FormLogic from before the `.py`
+        // rule: it would inline the author's Python as JavaScript. Fail closed.
+        $stale = $this->engines(['hostedRuntime' => ['engines' => ['zipp-web-python', 'host-js']]]);
+        $controller = $this->controller($stale);
+
+        $this->publish();
+        $this->assertSame(200, $controller->runtime(
+            $this->request('GET', '/api/app/' . $this->slug . '/hosting'),
+            (new ResponseFactory())->createResponse(),
+            ['slug' => $this->slug]
+        )->getStatusCode(), 'a JavaScript app is unaffected');
+
+        (new HostedAppService(new SandboxRunner(), self::$tmpRoot . '/hosted'))->publish($this->appId, [
+            'version' => 1,
+            'client' => ['manifest.json' => '{"main":"ui/main.ui","name":"Engine app"}', 'ui/main.ui' => '<Text/>', 'logic/counter.py' => "count = 0\n"],
+            'actions' => [],
+        ], 1);
+        $refused = $controller->runtime(
+            $this->request('GET', '/api/app/' . $this->slug . '/hosting'),
+            (new ResponseFactory())->createResponse(),
+            ['slug' => $this->slug]
+        );
+        $this->assertSame(503, $refused->getStatusCode());
+        $this->assertArrayNotHasKey('deployment', $this->jsonBody($refused));
     }
 }

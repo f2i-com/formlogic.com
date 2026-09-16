@@ -32,7 +32,7 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 /** The ZIPP release the fixture Softn releases ship, unless a test names another. */
 const ZIPP_RELEASE = zippReleaseFixture();
 const ZIPP_NEXT = zippReleaseFixture({ version: '0.0.19', revision: 'd'.repeat(40) });
-const PROTOCOLS = { nativeProtocol: 1, recordEvents: 1, editorBridge: 1, hostedEngines: 1 };
+const PROTOCOLS = { nativeProtocol: 1, recordEvents: 1, editorBridge: 1, hostedEngines: 1, logicLanguages: 1 };
 const ADAPTER = '/** fixture adapter */\r\nexport const project = 1;\r\n';
 const adapterSha = sha256(ADAPTER.replace(/\r\n/g, '\n'));
 const COMMIT = 'b'.repeat(40);
@@ -49,7 +49,10 @@ function runtimeManifest(files, zipp, advertised = {}) {
  * the zipp/ tree, and the same engine in the native runtime and, as hashed and
  * core-runtime assets, in the hosted runtime and both editors.
  */
-function archiveEntries({ tag = 'v0.0.13', commit = COMMIT, zippRelease = ZIPP_RELEASE, protocols = PROTOCOLS, adapter = ADAPTER, hostedCode = 'export const hosted = true;', advertised = {} } = {}) {
+// `advertised` is what hosted-runtime/runtime-manifest.json says this runtime serves. The default
+// carries `python-logic/1` because the default `protocols` speak logicLanguages: the fetcher
+// refuses an archive that declares the protocol without advertising the feature.
+function archiveEntries({ tag = 'v0.0.13', commit = COMMIT, zippRelease = ZIPP_RELEASE, protocols = PROTOCOLS, adapter = ADAPTER, hostedCode = 'export const hosted = true;', advertised = { features: ['python-logic/1'] } } = {}) {
   const entries = {};
   const put = (name, data) => { entries[name] = Buffer.isBuffer(data) ? data : Buffer.from(data); };
   const { wasm, source, record: zipp } = zippRelease;
@@ -196,9 +199,10 @@ test('a local archive with a good sidecar installs all four trees and records wh
   const provenance = JSON.parse(await readFile(resolve(root, 'formlogic/backend/resources/softn-native/provenance.json'), 'utf8'));
   assert.deepEqual(provenance.release, { tag: 'v0.0.13', commit: COMMIT });
   assert.equal(provenance.nativeProtocol, 1);
-  // A release that advertises no engines stamps the protocols alone; the backend reads
-  // hostedRuntime.engines and fails closed to zipp-web-python when it is absent.
-  assert.deepEqual(provenance.hostedRuntime, { protocols: PROTOCOLS });
+  // A release that advertises no ENGINES stamps only what it does advertise; the backend reads
+  // hostedRuntime.engines and fails closed to zipp-web-python when it is absent. The feature list
+  // is here because a runtime speaking logicLanguages must advertise it to be installable at all.
+  assert.deepEqual(provenance.hostedRuntime, { features: ['python-logic/1'], protocols: PROTOCOLS });
   // No staging or previous directories are left behind.
   const publicEntries = await readdir(resolve(root, 'formlogic/ui/public'));
   assert.deepEqual(publicEntries.sort(), ['app-editors', 'hosted-runtime']);
@@ -358,6 +362,49 @@ test('an install that predates hostedEngines fails --check rather than passing a
     checkInstalled({ root, ...quiet }),
     /The installed Softn v0\.0\.13 speaks hostedEngines undefined; this tree speaks 1\. Fetch again\./
   );
+});
+
+test('a Softn from before the .py logic rule is refused: it speaks no logicLanguages', async (t) => {
+  // This tree derives an app's logic languages from its client file NAMES and clamps a `.py` app
+  // onto zipp-web-python (backend RuntimeEngineService::languagesOf). A runtime that does not
+  // follow the same rule would inline that file as JavaScript, so it is never installed.
+  const root = await formlogicRoot(t);
+  const { logicLanguages: _dropped, ...older } = PROTOCOLS;
+  const fixture = await writeFixtureArchive(root, { protocols: older });
+  await assert.rejects(
+    fetchSoftnRelease({ root, archivePath: fixture.path, ...quiet }),
+    /Softn v0\.0\.13 speaks logicLanguages undefined; this FormLogic speaks 1\./
+  );
+  assert.equal(existsSync(resolve(root, 'formlogic/ui/public/hosted-runtime/index.html')), false);
+});
+
+test('an install that predates logicLanguages fails --check rather than passing as intact', async (t) => {
+  const root = await formlogicRoot(t);
+  const fixture = await writeFixtureArchive(root);
+  await fetchSoftnRelease({ root, archivePath: fixture.path, ...quiet });
+  await checkInstalled({ root, ...quiet });
+  const currentFile = resolve(paths(root).cache, 'current.json');
+  const current = JSON.parse(await readFile(currentFile, 'utf8'));
+  delete current.protocols.logicLanguages;
+  await writeFile(currentFile, JSON.stringify(current));
+  await assert.rejects(
+    checkInstalled({ root, ...quiet }),
+    /The installed Softn v0\.0\.13 speaks logicLanguages undefined; this tree speaks 1\. Fetch again\./
+  );
+});
+
+test('an archive that speaks logicLanguages but advertises no python-logic/1 is refused before it installs', async (t) => {
+  // The protocol number and the runtime manifest's feature list are two halves of one claim, and
+  // the SERVER reads the feature (through the provenance stamp) before it will serve a member an
+  // app with Python logic. An archive carrying one without the other would install cleanly and
+  // then refuse every Python app.
+  const root = await formlogicRoot(t);
+  const fixture = await writeFixtureArchive(root, { advertised: { engines: ['zipp-web-python', 'host-js'] } });
+  await assert.rejects(
+    fetchSoftnRelease({ root, archivePath: fixture.path, ...quiet }),
+    /speaks logicLanguages 1 but its hosted-runtime\/runtime-manifest\.json does not advertise python-logic\/1/
+  );
+  assert.equal(existsSync(resolve(root, 'formlogic/ui/public/hosted-runtime/index.html')), false);
 });
 
 test('an archive that speaks hostedEngines but ships no host.html is refused before it installs', async (t) => {

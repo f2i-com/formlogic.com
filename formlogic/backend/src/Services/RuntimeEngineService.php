@@ -23,6 +23,12 @@ use PDO;
  *   - the site policy in system_meta 'client_engine_policy'.
  * Nothing is read from the client, the package/native manifest, permission.json or apps.settings.
  *
+ * A fourth input arrives from the caller rather than the database, and is not a preference: the
+ * languages the app's logic is written in, derived by {@see languagesOf} from its CLIENT FILE NAMES
+ * — the same names, by the same rule, as Softn's shell derives them from. An app with a `.py` file
+ * needs Python, only zipp-web-python runs Python, and so the decision is clamped to it whatever the
+ * policy, the verification or the owner's choice said.
+ *
  * Everything fails closed to zipp-web-python: a missing or corrupt policy row, an install record
  * that does not advertise an engine, an owner who is not verified. host-js became effective when
  * the installed hosted runtime began advertising it (its second entry document, host.html) and
@@ -44,6 +50,23 @@ class RuntimeEngineService
 
     public const POLICY_KEY = 'client_engine_policy';
 
+    /** The language every app's markup and template expressions are evaluated in, whatever its logic is. */
+    public const JAVASCRIPT = 'javascript';
+    /** The language only zipp-web-python runs. */
+    public const PYTHON = 'python';
+    /**
+     * The name ending that declares a client logic file is Python. The NAME is the whole
+     * declaration — Softn's `bundleLanguages` (apps/formlogic-host/src/engineInit.ts) reads exactly
+     * this and nothing else, so the shell's answer and this server's are the same answer.
+     */
+    public const PYTHON_SUFFIX = '.py';
+    /**
+     * What the installed hosted runtime must advertise before this server will serve it an app with
+     * Python logic: the contract that a `.py` client file is Python and an engine that cannot run it
+     * is refused by name. `hosted-runtime/runtime-manifest.json` features -> provenance.
+     */
+    public const PYTHON_LOGIC_FEATURE = 'python-logic/1';
+
     /** Why the effective engine is not the requested one. */
     public const REASON_POLICY = 'policy';
     public const REASON_UNVERIFIED = 'unverified';
@@ -53,6 +76,8 @@ class RuntimeEngineService
     private PDO $mysql;
     /** Memoized: installedEngines() is read on every runtime GET and every action. */
     private ?array $installed = null;
+    /** Memoized alongside it, from the same decode of the same file. */
+    private ?array $features = null;
 
     public function __construct(MySQLConnection $mysql, private ?string $provenancePath = null)
     {
@@ -201,14 +226,132 @@ class RuntimeEngineService
      */
     public function installedEngines(): array
     {
-        if ($this->installed !== null) {
-            return $this->installed;
+        if ($this->installed === null) {
+            $this->readInstalled();
         }
+        return $this->installed;
+    }
+
+    /**
+     * What the INSTALLED hosted runtime can be asked for beyond its engines, from the same stamp:
+     * hostedRuntime.features. Absent (an install from before the stamp, or one whose runtime
+     * advertised none — the stamp drops an empty list), malformed or a non-string entry: nothing is
+     * advertised, and every caller of {@see assertInstalledRuns} fails closed on that.
+     *
+     * @return list<string>
+     */
+    public function installedFeatures(): array
+    {
+        if ($this->features === null) {
+            $this->readInstalled();
+        }
+        return $this->features;
+    }
+
+    /** One decode of the one file, for both lists: this runs on every runtime GET. */
+    private function readInstalled(): void
+    {
         $record = null;
         if (is_string($this->provenancePath) && is_file($this->provenancePath)) {
             $record = json_decode((string) @file_get_contents($this->provenancePath), true);
         }
-        return $this->installed = self::enginesFromRecord($record);
+        $this->installed = self::enginesFromRecord($record);
+        $this->features = self::featuresFromRecord($record);
+    }
+
+    /**
+     * Refuse to serve an app whose logic the installed hosted runtime does not know how to read.
+     *
+     * The install-time protocol gate (`protocols.logicLanguages` in scripts/fetch-softn-release.mjs)
+     * already refuses an archive that does not follow the `.py` rule, so this is the read-time half
+     * of the same guarantee, for the one case that gate cannot cover: a runtime installed by an
+     * OLDER FormLogic, still on disk when this code is deployed. Such a runtime would inline a `.py`
+     * file as JavaScript. Fail CLOSED — the app does not load — because the alternative is a
+     * member's frame running the author's Python through a JavaScript parser.
+     *
+     * @param list<string> $languages
+     * @throws \RuntimeException when this install cannot serve them
+     */
+    public function assertInstalledRuns(array $languages): void
+    {
+        if (!self::featuresRun($this->installedFeatures(), $languages)) {
+            throw new \RuntimeException(
+                'This app\'s logic is written in Python and the installed Softn runtime does not advertise '
+                . self::PYTHON_LOGIC_FEATURE . '; install a runtime that does (node scripts/fetch-softn-release.mjs).',
+                503
+            );
+        }
+    }
+
+    /**
+     * Whether an install advertising $features can be asked to run $languages. Only Python needs
+     * anything advertised: JavaScript is what every hosted runtime has always run.
+     *
+     * @param list<string> $features
+     * @param list<string> $languages
+     */
+    public static function featuresRun(array $features, array $languages): bool
+    {
+        return !in_array(self::PYTHON, $languages, true) || in_array(self::PYTHON_LOGIC_FEATURE, $features, true);
+    }
+
+    /**
+     * The languages an app's logic is written in, from its CLIENT file names and nothing else.
+     *
+     * The same rule as Softn's `bundleLanguages` (apps/formlogic-host/src/engineInit.ts), applied to
+     * the same file names — the ones the runtime GET hands the frame — so the engine the server
+     * decides and the engine the shell will accept cannot disagree. Nothing inside a file is read,
+     * no manifest is consulted, and a package cannot declare its own language: a name that ends
+     * `.py`, in any case, is Python, and `javascript` is always present because an app's markup and
+     * template expressions are evaluated on the JavaScript side whatever its logic files are.
+     *
+     * @param iterable<string, mixed>|list<string> $clientPaths file names, or a map keyed by them
+     * @return list<string>
+     */
+    public static function languagesOf(iterable $clientPaths): array
+    {
+        foreach ($clientPaths as $key => $value) {
+            $path = is_string($key) ? $key : $value;
+            if (is_string($path) && str_ends_with(strtolower($path), self::PYTHON_SUFFIX)) {
+                return [self::JAVASCRIPT, self::PYTHON];
+            }
+        }
+        return [self::JAVASCRIPT];
+    }
+
+    /**
+     * The languages of SEVERAL client bundles as one answer, for the two callers that decide about
+     * the apps.client_engine COLUMN rather than about one mount: the owner's write endpoint (whose
+     * audit row records what the choice actually produces) and the admin's per-app list. That one
+     * column covers an app's hosted deployment and its native client, so a choice that cannot take
+     * effect for either of them has not taken effect, and saying otherwise would put a false record
+     * of a security-relevant decision in the audit log.
+     *
+     * @param list<string> ...$lists
+     * @return list<string>
+     */
+    public static function mergeLanguages(array ...$lists): array
+    {
+        foreach ($lists as $list) {
+            if (in_array(self::PYTHON, $list, true)) {
+                return [self::JAVASCRIPT, self::PYTHON];
+            }
+        }
+        return [self::JAVASCRIPT];
+    }
+
+    /**
+     * @return list<string>
+     */
+    public static function featuresFromRecord(mixed $record): array
+    {
+        $features = is_array($record) && is_array($record['hostedRuntime'] ?? null)
+            ? ($record['hostedRuntime']['features'] ?? null)
+            : null;
+        if (!is_array($features) || !array_is_list($features)) {
+            return [];
+        }
+        return array_values(array_filter($features, static fn (mixed $id) => is_string($id) && $id !== ''));
     }
 
     /**
@@ -238,8 +381,9 @@ class RuntimeEngineService
     }
 
     /**
-     * The engine one app runs on. $languages names the logic languages the app needs (empty today:
-     * no Softn app declares Python yet).
+     * The engine one app runs on. $languages names the logic languages the app needs, as
+     * {@see languagesOf} derives them from its client file names; empty means "do not clamp", which
+     * is what a caller that is not about to serve the app (the admin's per-app list) passes.
      *
      * @return array{id: string, requested: string, stored: string|null, reason?: string, revision: string}
      */
@@ -282,10 +426,15 @@ class RuntimeEngineService
      * packs, backups, the MCP merge and the admin acting-as allowlist, so nothing can replay or
      * import it.
      *
+     * $languages is required rather than defaulted: this is the one write path, its answer becomes
+     * an `app.engine_change` audit row, and a caller that forgot to say what the app's logic is
+     * written in would record an effective engine the app will never run on.
+     *
+     * @param list<string> $languages every client bundle this column governs ({@see mergeLanguages})
      * @return array{id: string, requested: string, stored: string|null, reason?: string, revision: string}
      * @throws \InvalidArgumentException when the choice would never take effect
      */
-    public function storeChoice(string $appId, ?string $engine, AuditService $audit, ?string $userId, ?string $ipAddress): array
+    public function storeChoice(string $appId, ?string $engine, array $languages, AuditService $audit, ?string $userId, ?string $ipAddress): array
     {
         $owner = $this->ownerFacts($appId);
         $refusal = $this->refuseChoice($engine, $owner);
@@ -302,7 +451,10 @@ class RuntimeEngineService
             $from = $read->fetchColumn();
             $this->mysql->prepare('UPDATE apps SET client_engine = :e WHERE id = :id')
                 ->execute(['e' => $engine, 'id' => $appId]);
-            $effective = self::resolve($engine, $this->readPolicy(), $this->installedEngines(), $owner);
+            // $languages, like every read path: an audit row is read after something has gone
+            // wrong, and one saying `effective: host-js` for an app that can never run host-js
+            // would be evidence that host JavaScript was in play when it never was.
+            $effective = self::resolve($engine, $this->readPolicy(), $this->installedEngines(), $owner, $languages);
             $audit->logStrict('app.engine_change', 'app', $appId, $userId, $ipAddress, [
                 'from' => is_string($from) ? $from : null,
                 'to' => $engine,

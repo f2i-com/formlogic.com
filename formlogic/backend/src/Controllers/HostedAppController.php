@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
-use FormLogic\Services\{AppService, AppUserService, AuditService, HostedAppService, RuntimeEngineService};
+use FormLogic\Services\{AppService, AppUserService, AuditService, HostedAppService, NativeAppService, RuntimeEngineService};
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -16,12 +16,18 @@ class HostedAppController
     // Required, not optional-with-a-default: this controller is autowired, and PHP-DI's reflection
     // autowiring SKIPS optional parameters (ReflectionBasedAutowiring::getParametersDefinition),
     // so an `= null` here would silently hand production a controller with no engine service.
+    // $native is here for one reason: the engine endpoint below writes the apps.client_engine
+    // column, which covers this app's hosted deployment AND its native client, so the effective
+    // engine it records must account for both. Required, not optional-with-a-default, for the
+    // autowiring reason above — an omitted one would silently record an effective engine derived
+    // from half the app.
     public function __construct(
         private AppService $apps,
         private AppUserService $users,
         private HostedAppService $hosting,
         private RuntimeEngineService $engines,
         private AuditService $audit,
+        private NativeAppService $native,
     ) {}
 
     public function manage(Request $request, Response $response, array $args): Response
@@ -76,7 +82,13 @@ class HostedAppController
             if ($request->getMethod() === 'GET') {
                 $deployment = $this->hosting->get($app['id']);
                 if (!$deployment) throw new \RuntimeException('This app has no hosted project', 404);
-                return ['deployment' => $deployment, 'name' => $app['name']] + $this->engineForRuntime($app['id']);
+                // What this app's logic is written in, from the client file names about to be posted
+                // into the frame and nothing else. A `.py` among them means Python, which only
+                // zipp-web-python runs; the resolver clamps to it, and this install must already
+                // know the rule or the app is not served at all.
+                $languages = RuntimeEngineService::languagesOf($deployment['client'] ?? []);
+                $this->engines->assertInstalledRuns($languages);
+                return ['deployment' => $deployment, 'name' => $app['name']] + $this->engineForRuntime($app['id'], $languages);
             }
             $input = $request->getParsedBody();
             if (!is_array($input) || (array_is_list($input) && $input !== [])) throw new \InvalidArgumentException('Action input must be a JSON object');
@@ -109,7 +121,7 @@ class HostedAppController
         $response = $response->withHeader('Cache-Control', 'no-store')->withHeader('X-Content-Type-Options', 'nosniff');
         try {
             $sp = $request->getServerParams();
-            $effective = $this->engines->storeChoice($app['id'], $engine, $this->audit, (string) $userId, $sp['REMOTE_ADDR'] ?? null);
+            $effective = $this->engines->storeChoice($app['id'], $engine, $this->choiceLanguages($app['id']), $this->audit, (string) $userId, $sp['REMOTE_ADDR'] ?? null);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonError($response, $e->getMessage(), 422, 'engine_not_available');
         } catch (\Throwable $e) {
@@ -120,17 +132,48 @@ class HostedAppController
         return $this->jsonResponse($response, ['engine' => $effective, 'policy' => $this->engines->ownerPolicy()]);
     }
 
-    /** The settings view of the engine: the choice, the outcome, and what may be chosen. */
+    /**
+     * The settings view of the engine: the choice, the outcome, and what may be chosen. Derived from
+     * the same client files a member's frame receives, so the owner is shown the engine (and the
+     * reason) their members actually get.
+     */
     private function engineForOwner(string $appId): array
     {
-        return ['engine' => $this->engines->effective($appId), 'enginePolicy' => $this->engines->ownerPolicy()];
+        return ['engine' => $this->engines->effective($appId, $this->languagesOf($appId)), 'enginePolicy' => $this->engines->ownerPolicy()];
     }
 
-    /** What a runtime mount needs: the id to run and the revision it must send back on actions. */
-    private function engineForRuntime(string $appId): array
+    /**
+     * What a runtime mount needs: the id to run and the revision it must send back on actions.
+     *
+     * @param list<string> $languages
+     */
+    private function engineForRuntime(string $appId, array $languages): array
     {
-        $effective = $this->engines->effective($appId);
+        $effective = $this->engines->effective($appId, $languages);
         return ['engine' => ['id' => $effective['id'], 'revision' => $effective['revision']]];
+    }
+
+    /**
+     * The logic languages of the HOSTED deployment — the bundle this controller's frame mounts,
+     * so the server's answer and the shell's are derived from one file list.
+     */
+    private function languagesOf(string $appId): array
+    {
+        return $this->hosting->clientLanguages($appId);
+    }
+
+    /**
+     * The logic languages the engine CHOICE governs: this app's hosted deployment and its native
+     * client, merged. The mount paths above each answer for their own bundle, because each must
+     * agree with the shell it hands files to; the column covers both, so a choice that cannot take
+     * effect for either has not taken effect, and the audit row must not claim it did.
+     */
+    private function choiceLanguages(string $appId): array
+    {
+        return RuntimeEngineService::mergeLanguages(
+            $this->hosting->clientLanguages($appId),
+            $this->native->clientLanguages($appId),
+        );
     }
 
     /**
@@ -142,7 +185,10 @@ class HostedAppController
     {
         $header = $request->getMethod() === 'GET' ? '' : $request->getHeaderLine('X-FormLogic-Client-Engine');
         if ($header === '') return null;
-        if (RuntimeEngineService::headerMatches($header, $this->engines->effective($appId))) return null;
+        // The SAME decision the GET made, languages included: without them a Python app whose owner
+        // stored another engine would be handed zipp-web-python on the GET and then told on every
+        // action that the engine had changed, which is a remount loop, not a revocation.
+        if (RuntimeEngineService::headerMatches($header, $this->engines->effective($appId, $this->languagesOf($appId)))) return null;
         return $this->jsonError(
             $response->withHeader('Cache-Control', 'no-store'),
             'This app is now set to run on a different engine. Reload to continue.',

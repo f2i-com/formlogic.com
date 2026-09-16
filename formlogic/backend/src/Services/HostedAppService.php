@@ -66,11 +66,16 @@ class HostedAppService
         if (count($files) > 100 || !is_string($files['manifest.json'] ?? null)) {
             throw new InvalidArgumentException('Include manifest.json and at most 100 client files');
         }
+        // `.py` is client LOGIC written in Python: the name is the whole declaration, the way Softn's
+        // shell reads it, and RuntimeEngineService::languagesOf reads the same names to clamp the
+        // app onto the one engine that runs Python. Lower case only, like every other extension
+        // here — a `.PY` is refused at publish rather than accepted and then run as JavaScript by
+        // something that compares case-sensitively. Backend actions below stay JavaScript.
         foreach ($files as $path => $source) {
-            if (!is_string($path) || !preg_match('~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:ui|logic|json)$~D', $path)
+            if (!is_string($path) || !preg_match('~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:ui|logic|py|json)$~D', $path)
                 || str_contains($path, '..') || preg_match('~^(?:server|backend|private)/~i', $path)
                 || !is_string($source) || strlen($source) > 200000) {
-                throw new InvalidArgumentException('Client files must be .ui, .logic or .json files without private directories (200 KB each)');
+                throw new InvalidArgumentException('Client files must be .ui, .logic, .py or .json files without private directories (200 KB each)');
             }
         }
         $manifest = json_decode($files['manifest.json'], true);
@@ -81,7 +86,7 @@ class HostedAppService
         $logic = $manifest['files']['logic'] ?? [];
         if (!is_array($logic) || !array_is_list($logic)) throw new InvalidArgumentException('Invalid logic file list');
         foreach ($logic as $path) {
-            if (!is_string($path) || !str_ends_with($path, '.logic') || !isset($files[$path])) throw new InvalidArgumentException('Missing client logic file');
+            if (!is_string($path) || (!str_ends_with($path, '.logic') && !str_ends_with($path, '.py')) || !isset($files[$path])) throw new InvalidArgumentException('Missing client logic file');
         }
         $files['manifest.json'] = json_encode([
             'name' => mb_substr((string) ($manifest['name'] ?? 'App'), 0, 120),
@@ -108,6 +113,21 @@ class HostedAppService
         $clean = ['version' => 1, 'client' => $files, 'actions' => $actions];
         if (strlen(json_encode($clean, JSON_THROW_ON_ERROR)) > 2 * 1024 * 1024) throw new InvalidArgumentException('App package exceeds 2 MB');
         return $clean;
+    }
+
+    /**
+     * What the published deployment's client logic is written in, by the one rule
+     * ({@see RuntimeEngineService::languagesOf}) applied to the one file list a member's frame
+     * receives. Never throws: every caller is deciding an engine, and an unreadable or absent
+     * deployment is not a Python app.
+     *
+     * @return list<string>
+     */
+    public function clientLanguages(string $appId): array
+    {
+        try { $deployment = $this->get($appId); }
+        catch (\Throwable) { $deployment = null; }
+        return RuntimeEngineService::languagesOf($deployment['client'] ?? []);
     }
 
     public function get(string $appId, bool $private = false): ?array

@@ -64,8 +64,12 @@ class NativeAppController
                 // Read under the management lock, so an update left unfinished is settled before it is shown.
                 // The engine block is the owner's settings view: choice, outcome, reason, and what
                 // this site allows them to choose between.
-                return ['available' => $this->native->available(), 'ready' => $preflight !== null && $preflight['ok'], 'preflight' => $preflight, 'project' => $this->native->project($app['id']), 'readOnly' => $readOnly,
-                    'engine' => $this->engines->effective($app['id']), 'enginePolicy' => $this->engines->ownerPolicy()];
+                $project = $this->native->project($app['id']);
+                // Derived from the same client files a member's frame receives, so the owner is
+                // shown the engine (and the reason) their members actually get.
+                $languages = RuntimeEngineService::languagesOf(NativeAppService::clientFiles($project ?? []));
+                return ['available' => $this->native->available(), 'ready' => $preflight !== null && $preflight['ok'], 'preflight' => $preflight, 'project' => $project, 'readOnly' => $readOnly,
+                    'engine' => $this->engines->effective($app['id'], $languages), 'enginePolicy' => $this->engines->ownerPolicy()];
             }
             $body = $request->getParsedBody();
             if (!is_array($body) || !is_array($body['project'] ?? null) || !is_int($body['expectedVersion'] ?? null) || $body['expectedVersion'] < 0) throw new \InvalidArgumentException('Provide a project and expectedVersion');
@@ -109,7 +113,13 @@ class NativeAppController
             if ($project['access'] === 'members' && !$owner && (!$user || ($membership['status'] ?? '') !== 'active')) throw new \RuntimeException('Sign in with an active app membership to continue', 403);
             $identity = $project['access'] === 'members' ? ['formlogic' => ['appId' => $app['id'], 'userId' => $user, 'roleId' => $owner ? 'owner' : ($membership['roleId'] ?? null)]] : [];
             if ($request->getMethod() === 'GET') {
-                $client = array_filter($project['files'], static fn($path) => !preg_match('~^(server|backend|private)/~i', $path) && !str_ends_with($path, '.sql'), ARRAY_FILTER_USE_KEY);
+                $client = NativeAppService::clientFiles($project);
+                // What this app's logic is written in, from these file names — the ones about to be
+                // posted into the frame — and nothing else. A `.py` among them means the app needs
+                // Python, which only zipp-web-python runs; the resolver clamps to it, and this
+                // install must already know the rule or the app is not served at all.
+                $languages = RuntimeEngineService::languagesOf($client);
+                $this->engines->assertInstalledRuns($languages);
                 $manifest = json_decode($client['manifest.json'], true);
                 $origins = $manifest['config']['server']['allowedOrigins'] ?? [];
                 unset($manifest['server'], $manifest['config']['server']);
@@ -120,7 +130,7 @@ class NativeAppController
                 $client['manifest.json'] = json_encode($manifest, JSON_THROW_ON_ERROR);
                 $client['permission.json'] = '{"permissions":{}}';
                 return ['name' => $app['name'], 'project' => ['version' => $project['version'], 'client' => $client, 'assets' => $project['assets'], 'access' => $project['access'], 'origins' => $origins]]
-                    + $this->engineForRuntime($app['id']);
+                    + $this->engineForRuntime($app['id'], $languages);
             }
             $input = $request->getParsedBody();
             if (!is_array($input) || !is_string($input['path'] ?? null) || !preg_match('~^/api/[a-zA-Z0-9/_-]+$~D', $input['path']) || !in_array($input['method'] ?? null, ['GET','POST','PUT','DELETE'], true)) throw new \InvalidArgumentException('Provide an app API path and method');
@@ -153,10 +163,14 @@ class NativeAppController
      * installation (the service replaces absolute locations; no keys or record values). Visitors
      * and the shared demo keep the generic 503.
      */
-    /** What a runtime mount needs: the id to run and the revision it must send back on requests. */
-    private function engineForRuntime(string $appId): array
+    /**
+     * What a runtime mount needs: the id to run and the revision it must send back on requests.
+     *
+     * @param list<string> $languages
+     */
+    private function engineForRuntime(string $appId, array $languages): array
     {
-        $effective = $this->engines->effective($appId);
+        $effective = $this->engines->effective($appId, $languages);
         return ['engine' => ['id' => $effective['id'], 'revision' => $effective['revision']]];
     }
 
@@ -169,7 +183,10 @@ class NativeAppController
     {
         $header = $request->getMethod() === 'GET' ? '' : $request->getHeaderLine('X-FormLogic-Client-Engine');
         if ($header === '') return null;
-        if (RuntimeEngineService::headerMatches($header, $this->engines->effective($appId))) return null;
+        // The SAME decision the GET made, languages included: without them a Python app whose owner
+        // stored another engine would be handed zipp-web-python on the GET and then told on every
+        // action that the engine had changed, which is a remount loop, not a revocation.
+        if (RuntimeEngineService::headerMatches($header, $this->engines->effective($appId, $this->native->clientLanguages($appId)))) return null;
         return $this->jsonError(
             $response->withHeader('Cache-Control', 'no-store'),
             'This app is now set to run on a different engine. Reload to continue.',

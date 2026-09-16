@@ -87,6 +87,58 @@ class HostedAppTest extends TestCase
         $this->expectExceptionCode(409);
         $this->host->publish('app-a', $this->package(), 0);
     }
+    /**
+     * Python as a client logic language: the file NAME is the whole declaration, and it is what
+     * RuntimeEngineService::languagesOf reads to clamp this app onto the ZIPP web-python engine.
+     */
+    public function testPythonClientLogicIsAcceptedAndListedInTheRebuiltManifest(): void
+    {
+        $p = $this->package();
+        $p['client']['logic/counter.py'] = "count = 0\n";
+        $p['client']['manifest.json'] = '{"main":"ui/main.ui","name":"Test","files":{"logic":["logic/counter.py"]}}';
+        $clean = $this->host->validate($p);
+        $this->assertArrayHasKey('logic/counter.py', $clean['client']);
+        $manifest = json_decode($clean['client']['manifest.json'], true);
+        $this->assertSame(['logic/counter.py'], $manifest['files']['logic']);
+        $this->assertSame(['ui/main.ui'], $manifest['files']['ui'], 'a .py is logic, never a screen');
+        $this->assertNotContains('logic/counter.py', $manifest['files']['json']);
+    }
+
+    public function testAPythonFileOutsideTheLogicListIsKeptButNotDeclared(): void
+    {
+        $p = $this->package();
+        $p['client']['extra/unused.py'] = "x = 1\n";
+        $clean = $this->host->validate($p);
+        $this->assertArrayHasKey('extra/unused.py', $clean['client']);
+        $this->assertSame([], json_decode($clean['client']['manifest.json'], true)['files']['logic']);
+    }
+
+    public function testAPythonFileUnderThePrivateServerTreeIsStillRefused(): void
+    {
+        // Backend actions are JavaScript and are run server-side by the sandbox; the client-only
+        // rule that keeps a server/ file out of a download does not change for Python.
+        $p = $this->package(); $p['client']['server/secret.py'] = 'token = 1';
+        $this->expectException(\InvalidArgumentException::class);
+        $this->host->validate($p);
+    }
+
+    public function testAnUpperCasePythonExtensionIsRefusedAtPublishRatherThanRunAsJavaScript(): void
+    {
+        $p = $this->package(); $p['client']['logic/Counter.PY'] = 'count = 0';
+        $this->expectException(\InvalidArgumentException::class);
+        $this->host->validate($p);
+    }
+
+    public function testALogicListEntryMustStillNameAnIncludedLogicOrPythonFile(): void
+    {
+        foreach ([['logic/missing.py'], ['ui/main.ui'], ['manifest.json']] as $logic) {
+            $p = $this->package();
+            $p['client']['manifest.json'] = '{"main":"ui/main.ui","name":"Test","files":{"logic":' . json_encode($logic) . '}}';
+            try { $this->host->validate($p); $this->fail('accepted ' . json_encode($logic)); }
+            catch (\InvalidArgumentException $e) { $this->assertStringContainsString('logic file', $e->getMessage()); }
+        }
+    }
+
     public function testPrivateClientFileIsRefused(): void
     {
         $p = $this->package(); $p['client']['server/main.logic'] = 'secret';

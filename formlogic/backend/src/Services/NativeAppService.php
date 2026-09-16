@@ -906,6 +906,36 @@ class NativeAppService
         }
     }
 
+    /**
+     * The files a member's frame receives: never the private server tree, never schema. Defined
+     * here, beside the project, because two things must agree about it — the runtime GET's response
+     * and the languages the engine decision is clamped on. A `.py` under `server/` is not the app's
+     * client logic and must not make a member's frame look like a Python app.
+     *
+     * @return array<string, string>
+     */
+    public static function clientFiles(array $project): array
+    {
+        $files = is_array($project['files'] ?? null) ? $project['files'] : [];
+        return array_filter($files, static fn($path) => !preg_match('~^(server|backend|private)/~i', $path) && !str_ends_with($path, '.sql'), ARRAY_FILTER_USE_KEY);
+    }
+
+    /**
+     * What the installed project's client logic is written in, by the one rule
+     * ({@see RuntimeEngineService::languagesOf}) applied to those same names. Read without the
+     * management lock, like entry(): every caller is deciding an engine, not serving source, and
+     * the locked read that serves a request answers for itself. Never throws — an absent or
+     * unreadable project is not a Python app.
+     *
+     * @return list<string>
+     */
+    public function clientLanguages(string $appId): array
+    {
+        try { $project = $this->get($appId); }
+        catch (\Throwable) { $project = null; }
+        return RuntimeEngineService::languagesOf(self::clientFiles($project ?? []));
+    }
+
     /** Source inspection requires owner authorization at the controller. Keys and database contents are never included. */
     public function get(string $appId): ?array
     {
@@ -934,7 +964,13 @@ class NativeAppService
         if (!is_array($files) || count($files) > 200 || !is_string($files['manifest.json'] ?? null)) throw new InvalidArgumentException('Include the app manifest and at most 200 source files');
         $bytes = 0;
         foreach ($files as $path => $source) {
-            if (!is_string($path) || !preg_match('~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:ui|logic|json|sql)$~D', $path) || str_contains($path, '..') || !is_string($source) || strlen($source) > 1000000) throw new InvalidArgumentException('Invalid app source file');
+            if (!is_string($path) || !preg_match('~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:ui|logic|py|json|sql)$~D', $path) || str_contains($path, '..') || !is_string($source) || strlen($source) > 1000000) throw new InvalidArgumentException('Invalid app source file');
+            // `.py` is CLIENT logic written in Python, which runs in the member's frame on the ZIPP
+            // web-python engine. The private tree is the native backend: it is executed by the Node
+            // runner as JavaScript, which would read a Python file as a syntax error at best, and
+            // nothing derives a language from it — so a `.py` there is refused rather than installed
+            // as a file no runtime can run. Lower case only, like every other extension here.
+            if (str_ends_with($path, '.py') && preg_match('~^(?:server|backend|private)/~i', $path)) throw new InvalidArgumentException('Python is a client logic language; the app backend stays JavaScript');
             $bytes += strlen($source);
         }
         $assets = $project['assets'] ?? [];

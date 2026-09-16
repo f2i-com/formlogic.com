@@ -95,11 +95,24 @@ const PROVENANCE = 'native-runtime/provenance.json';
  * pairing now runs the other way too: a Softn from before host.html speaks no `hostedEngines` and
  * is refused by the same rule.
  *
+ * `logicLanguages` is the rule that a client logic file whose name ends `.py` is Python: the
+ * runtime derives an app's languages from those names alone and refuses an engine that cannot run
+ * one of them, and FormLogic's server derives the same list from the same names and clamps such an
+ * app onto zipp-web-python (backend RuntimeEngineService::languagesOf). A runtime that does not
+ * speak it would inline a `.py` file as JavaScript, so it is never installed here.
+ *
  * NOTE: this is a list of KNOWN keys, compared by value. A release carrying a protocol key this
  * list does not name is NOT refused — an unknown key is ignored, which is what lets Softn add one
  * before every FormLogic understands it.
  */
-const PROTOCOL_KEYS = ['nativeProtocol', 'recordEvents', 'editorBridge', 'hostedEngines'];
+const PROTOCOL_KEYS = ['nativeProtocol', 'recordEvents', 'editorBridge', 'hostedEngines', 'logicLanguages'];
+/**
+ * What a runtime that speaks `logicLanguages` must also advertise in
+ * hosted-runtime/runtime-manifest.json. The server gates a Python app on this feature at read time
+ * (RuntimeEngineService::assertInstalledRuns), so an archive whose two declarations disagree would
+ * install cleanly and then refuse every Python app; it is refused here instead.
+ */
+const PYTHON_LOGIC_FEATURE = 'python-logic/1';
 /**
  * Where a release's engine copies live, as Softn's packager requires them: the
  * browser engine tree, the native runtime, and in the hosted runtime and each
@@ -381,6 +394,15 @@ export async function verifyArchive(zip, { sidecarDigest, paths, archiveName }) 
   // without carrying the document would be a 404 in a member's frame rather than a failed install.
   for (const name of ['hosted-runtime/runtime-manifest.json', 'hosted-runtime/index.html', 'hosted-runtime/host.html', 'app-editors/manifest.json', 'app-editors/builder/runtime-manifest.json', 'app-editors/studio/runtime-manifest.json', PROVENANCE, ...NATIVE_MODULES.map((m) => `native-runtime/${m}`)]) {
     if (!entries.has(name)) throw new ReleaseError(`The archive has no ${name}.`);
+  }
+  // The same pairing for `logicLanguages`: the protocol number says the runtime follows the `.py`
+  // rule, and the runtime manifest's feature list is what the SERVER reads (through the provenance
+  // stamp) before it will serve a member an app with Python logic. An archive that declares one
+  // without the other would install and then refuse every Python app for a reason no operator
+  // could see from the outside.
+  const hostedFeatures = idList(JSON.parse(entryText(entries, 'hosted-runtime/runtime-manifest.json'))?.features) ?? [];
+  if (!hostedFeatures.includes(PYTHON_LOGIC_FEATURE)) {
+    throw new ReleaseError(`Softn ${release.tag} speaks logicLanguages ${releaseProtocols.logicLanguages} but its hosted-runtime/runtime-manifest.json does not advertise ${PYTHON_LOGIC_FEATURE} (features: ${hostedFeatures.join(', ') || 'none'}); FormLogic would install it and then refuse every app with Python logic.`);
   }
   return { release, entries, zipDigest, expected, adapterSha, adapterText };
 }
