@@ -986,7 +986,7 @@
         {
             "id": "zipp-defect-cross-module-setattr",
             "kind": "flow",
-            "source": "import formlogic\nformlogic.inputs = 1",
+            "source": "import formlogic\nformlogic.inputs = 1\nresult = formlogic.inputs",
             "context": {
                 "inputs": {
                     "from": "+61491570156",
@@ -1018,9 +1018,10 @@
                 }
             },
             "expect": {
-                "threw": "Cannot read properties of null"
+                "ok": true,
+                "value": 1
             },
-            "note": "A ZIPP v0.0.18 defect: assigning another module's attribute raises. The contract binds names with `global` inside formlogic.py and never depends on it. A fix in ZIPP changes this case."
+            "note": "Fixed in ZIPP v0.0.19: assigning another module's attribute takes effect and reads back. ZIPP v0.0.18 raised 'Cannot read properties of null' here, which this case pinned as a defect. The contract binds names with `global` inside formlogic.py and never depended on either behaviour."
         },
         {
             "id": "flow-result-normalized",

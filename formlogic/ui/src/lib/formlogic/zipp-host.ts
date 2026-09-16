@@ -66,9 +66,11 @@ export interface InstanceUsage {
 /**
  * Set when a Python evaluation traps the WASM instance: a panic inside the engine
  * surfaces as a WebAssembly "unreachable", and every later call on the instance
- * fails. ZIPP v0.0.18 does this for a long run of sys.stdout.write calls without
+ * fails. ZIPP v0.0.18 did this for a long run of sys.stdout.write calls without
  * a newline (a few thousand; slow enough that the default wall clock usually
- * kills the Worker first).
+ * killed the Worker first). ZIPP v0.0.19 completes 5,000 such writes and stops
+ * 60,000 on its memory budget instead of trapping; the guard stays for the next
+ * engine panic, whatever triggers it.
  */
 let instanceTrapped = false;
 const TRAPPED_MESSAGE = 'The app engine stopped on an internal error (a WebAssembly trap) and restarts for the next evaluation.';

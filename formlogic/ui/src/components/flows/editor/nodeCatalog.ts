@@ -458,7 +458,7 @@ const LOGIC_LANGUAGE_PROPERTY: NodePropertySpec = {
 };
 
 // Help shared by both Python code fields: what formlogic-python/1 gives an author, and what the
-// ZIPP v0.0.18 Python subset lacks.
+// ZIPP Python subset lacks (the same modules on v0.0.18 and v0.0.19, checked on each).
 const PYTHON_DATA_HELP = 'The run data are dicts: subscript them (inputs["from"], nodes["lookup"]["found"]).';
 const PYTHON_LIBRARY_HELP =
   'Helpers: validators, compliance, finance, safety, is_empty, is_not_empty, contains, avg; json, re, math and statistics import. Not available: datetime, base64, uuid, urllib.parse.';

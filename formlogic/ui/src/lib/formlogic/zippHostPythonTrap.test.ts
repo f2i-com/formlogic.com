@@ -4,8 +4,9 @@
 // "unreachable") leaves nothing usable in it. zipp-host must report it as a host error,
 // refuse anything more on the instance, and report the instance over any retention budget
 // so engine.ts replaces the Worker. The trap is simulated: ZIPP v0.0.18's real trigger
-// (thousands of sys.stdout.write calls without a newline) takes seconds and would poison the
-// instance for every other case in the file.
+// (thousands of sys.stdout.write calls without a newline) took seconds, would poison the
+// instance for every other case in the file, and no longer traps v0.0.19 (which stops such a
+// run on its memory budget), so no released engine offers a trigger to run here.
 import { describe, expect, it, vi } from 'vitest';
 import { Engine } from '../../../vendor/zipp-wasm/zipp_wasm.js';
 import { INSTANCE_RETAINED_BUDGET_BYTES } from './engine';

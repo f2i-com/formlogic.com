@@ -6,9 +6,11 @@
 #
 # This module gives the author's code:
 #   * the context names inputs, event, app, nodes, upstream and kv. The entry calls _bind()
-#     before logic_block runs. The names are set with `global` here because ZIPP v0.0.18
-#     cannot assign another module's attributes and has no builtins hook. The values are
-#     plain dict, list, str, int, float, bool and None, so authors write inputs["from"].
+#     before logic_block runs. The names are set with `global` here: ZIPP v0.0.18 could
+#     not assign another module's attributes (v0.0.19 can; the corpus case
+#     zipp-defect-cross-module-setattr records both) and no ZIPP has a builtins hook, so
+#     the binding never depends on either. The values are plain dict, list, str, int,
+#     float, bool and None, so authors write inputs["from"].
 #   * a no-op print, like the JavaScript console stubs, so chatty code never reaches the
 #     engine's 8 MiB output ceiling. (sys.stdout.write still counts toward it.)
 #   * the prelude.js helpers, with the same names and the same answers

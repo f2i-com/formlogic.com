@@ -168,7 +168,7 @@ wasmtime is FormLogic's own choice, fixed by the committed `host/Cargo.toml`
 (`"44"`) and `host/Cargo.lock` (44.0.3); the toolchain is not. The toolchain
 follows the installed ZIPP release's BUILD-INFO `rustc` with no commit here, and
 a newer rustc builds wasmtime 44 unchanged. 44 is the newest line whose minimum
-Rust (`rust-version` 1.92.0) the toolchain ZIPP v0.0.18 was built with (1.92.0)
+Rust (`rust-version` 1.92.0) the toolchain ZIPP v0.0.18 and v0.0.19 were built with (1.92.0)
 meets. Moving to a newer line (wasmtime 48 needs 1.95.0) is a FormLogic commit to
 `host/Cargo.toml` and `host/Cargo.lock`, and builds only once the installed ZIPP
 release's toolchain reaches that line's minimum.

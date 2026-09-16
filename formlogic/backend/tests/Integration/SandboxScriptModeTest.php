@@ -178,4 +178,36 @@ class SandboxScriptModeTest extends TestCase
         self::assertArrayHasKey('error', $out);
         self::assertNotSame('', (string) $out['error']);
     }
+
+    /**
+     * A typed array in a script result or a host-call argument crosses to PHP as
+     * its elements: a JSON array of the numbers JavaScript reads from it, a
+     * non-finite element null as JSON.stringify spells it. ZIPP 0.0.19 marshals a
+     * Float32Array to a Rust host as HostValue::Float32Array where 0.0.18 gave an
+     * opaque value; this guest never reads a HostValue (it takes strings from the
+     * VM's own JSON.stringify after __sanitize flattened the array), so the shape
+     * is the same on either engine and the same one Softn's Rust host serves.
+     */
+    public function testATypedArrayCrossesAsItsElements(): void
+    {
+        $script = <<<'JS'
+        function onSubmit(ctx) {
+          ctx.db.setField('samples', new Float32Array([1, 2]));
+          return { samples: new Float32Array([1.5, 2, 0.1, NaN, Infinity, -0]) };
+        }
+        JS;
+
+        $out = $this->runner->runScript($script, [], $this->host());
+
+        self::assertArrayNotHasKey('error', $out, (string) json_encode($out));
+        self::assertSame(
+            '[1.5,2,0.10000000149011612,null,null,0]',
+            json_encode($out['result']['samples']),
+            'a Float32Array result is its elements as JavaScript reads them (an f32 0.1 is the f64 0.10000000149011612), NaN and Infinity null'
+        );
+        self::assertSame([['db', 'setField', ['samples', [1, 2]]]], $this->calls, 'a Float32Array host-call argument arrives as a plain array');
+
+        $eval = $this->runner->evaluate('new Float32Array([0.5, NaN])');
+        self::assertSame('[0.5,null]', json_encode($eval['value'] ?? $eval), (string) json_encode($eval));
+    }
 }
