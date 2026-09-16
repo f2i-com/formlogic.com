@@ -10,6 +10,7 @@ use FormLogic\Services\ApiKeyService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppUserService;
 use FormLogic\Services\FlowService;
+use FormLogic\Services\Flows\DesktopEngineUnavailableException;
 use FormLogic\Services\Flows\FlowLogicLanguages;
 use FormLogic\Services\Flows\LogicLanguageUnsupportedException;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -394,7 +395,10 @@ class FlowController
      * names the logic languages the caller runs; absent means JavaScript only, so a Desktop built
      * before Python — which would run a Python block as JavaScript — never receives a flow whose
      * code needs another language, and its graph fetch for one fails closed (formlogic-python/1).
-     * Each flow listed carries the `logicLanguages` it needs.
+     * A caller that is a linked Desktop (its API key's connection binding) is also judged on its
+     * stored heartbeat (FlowService::callerLogicLanguages): a ZIPP-era Desktop whose engine is
+     * not reporting healthy receives no flows at all. Each flow listed carries the
+     * `logicLanguages` it needs.
      */
     public function listOwnerFlows(Request $request, Response $response): Response
     {
@@ -408,7 +412,12 @@ class FlowController
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }
-        $flows = array_values(array_filter(
+        [$instanceId, $identityError] = $this->readerInstance($request, $response, (string) $userId);
+        if ($identityError !== null) {
+            return $identityError;
+        }
+        $callerLanguages = $this->flows->callerLogicLanguages((string) $userId, $instanceId, $callerLanguages);
+        $flows = $callerLanguages === [] ? [] : array_values(array_filter(
             $this->flows->withLogicLanguages($this->flows->listOwnerFlows(
                 $userId,
                 isset($q['appId']) ? (string) $q['appId'] : null,
@@ -495,6 +504,10 @@ class FlowController
         return $this->jsonResponse($response, $result);
     }
 
+    /**
+     * Claimable queued runs the caller can take (`?logicLanguages=`; a linked Desktop is also
+     * judged on its stored heartbeat, and lists nothing while its engine is not reporting healthy).
+     */
     public function listOwnerQueuedRuns(Request $request, Response $response): Response
     {
         $userId = $request->getAttribute('userId');
@@ -507,15 +520,58 @@ class FlowController
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }
-        return $this->jsonResponse($response, ['runs' => $this->flows->listOwnerQueuedRuns($userId, (int) ($q['limit'] ?? 50), $languages)]);
+        [$instanceId, $identityError] = $this->readerInstance($request, $response, (string) $userId);
+        if ($identityError !== null) {
+            return $identityError;
+        }
+        return $this->jsonResponse($response, ['runs' => $this->flows->listOwnerQueuedRuns($userId, (int) ($q['limit'] ?? 50), $languages, $instanceId)]);
     }
 
     /**
-     * 409 language_unsupported (FlowLogicLanguages): the caller cannot run a language the flow's
-     * code is in, so nothing was reserved or claimed. Null for any other runtime error.
+     * The Desktop instance an owner-surface READ comes from — the FL-01 identity
+     * bindOwnerRunIdentity gives a write: the API key's connection binding, checked against an
+     * optional `?instanceId=`. Null for a session caller, or a key bound to no connection.
+     * @return array{0: ?string, 1: ?Response} [instanceId, errorResponse]
      */
-    private function languageUnsupportedResponse(Response $response, \RuntimeException $e): ?Response
+    private function readerInstance(Request $request, Response $response, string $userId): array
     {
+        $apiKeyId = $request->getAttribute('apiKeyId');
+        if (!is_string($apiKeyId) || $apiKeyId === '') {
+            return [null, null];
+        }
+        $q = $request->getQueryParams();
+        $claimed = is_string($q['instanceId'] ?? null) && $q['instanceId'] !== '' ? (string) $q['instanceId'] : null;
+        try {
+            return [$this->flows->resolveDesktopIdentity($userId, $apiKeyId, $claimed), null];
+        } catch (\RuntimeException $e) {
+            if ($e->getMessage() === 'instance_mismatch') {
+                return [null, $this->jsonResponse($response, [
+                    'error' => true,
+                    'code' => 'instance_mismatch',
+                    'message' => 'This desktop instance identity belongs to a different API key',
+                ], 403)];
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * The 409s of the run gate (FlowService::assertCallerRunsFlow), nothing reserved or claimed:
+     * engine_unavailable — the caller is a ZIPP-era Desktop whose last heartbeat did not report
+     * its engine healthy, so it runs nothing; language_unsupported (FlowLogicLanguages) — it
+     * cannot run a language the flow's code is in. Null for any other runtime error.
+     */
+    private function callerCannotRunResponse(Response $response, \RuntimeException $e): ?Response
+    {
+        if ($e->getMessage() === DesktopEngineUnavailableException::CODE) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => DesktopEngineUnavailableException::CODE,
+                'message' => 'This runtime\'s engine is not reporting healthy (its last heartbeat did not carry '
+                    . FlowLogicLanguages::ENGINE_CAPABILITY . '), so it cannot run flows right now. '
+                    . 'Check OAIY on that computer, or run the flow in FormLogic in a browser.',
+            ], 409);
+        }
         if ($e->getMessage() !== 'language_unsupported') {
             return null;
         }
@@ -540,12 +596,17 @@ class FlowController
         if (!$userId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
         }
+        // The reserver's identity (FL-01) is what its stored heartbeat is looked up by.
+        [$body, $identityError] = $this->bindOwnerRunIdentity($request, $response, (string) $userId);
+        if ($identityError !== null) {
+            return $identityError;
+        }
         try {
-            $result = $this->flows->reserveOwnerRun($userId, $request->getParsedBody() ?? []);
+            $result = $this->flows->reserveOwnerRun($userId, $body);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\RuntimeException $e) {
-            return $this->languageUnsupportedResponse($response, $e) ?? throw $e;
+            return $this->callerCannotRunResponse($response, $e) ?? throw $e;
         }
         if ($result['created']) {
             return $this->jsonResponse($response, ['run' => $result['run'], 'created' => true], 201);
@@ -667,7 +728,7 @@ class FlowController
             if ($e->getMessage() === 'already_claimed') {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'This run was already claimed'], 409);
             }
-            return $this->languageUnsupportedResponse($response, $e) ?? throw $e;
+            return $this->callerCannotRunResponse($response, $e) ?? throw $e;
         }
         if (!$run) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Run not found'], 404);
@@ -808,7 +869,7 @@ class FlowController
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\RuntimeException $e) {
-            return $this->languageUnsupportedResponse($response, $e) ?? throw $e;
+            return $this->callerCannotRunResponse($response, $e) ?? throw $e;
         }
         if ($result['created']) {
             return $this->jsonResponse($response, ['runId' => $result['run']['runId'], 'run' => $result['run']], 201);
@@ -915,7 +976,7 @@ class FlowController
             if ($e->getMessage() === 'already_claimed') {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'This run was already claimed'], 409);
             }
-            return $this->languageUnsupportedResponse($response, $e) ?? throw $e;
+            return $this->callerCannotRunResponse($response, $e) ?? throw $e;
         }
         if (!$run) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Run not found'], 404);

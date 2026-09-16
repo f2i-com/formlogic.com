@@ -626,6 +626,27 @@ class DesktopFlowRelayTest extends TestCase
     // Python ignores data.language and would run `result = inputs["n"] // 2` as JavaScript,
     // where `// 2` is a comment and the "result" is n. So a Python flow is enqueued only for a
     // Desktop whose heartbeat advertises 'logic-language:python', and a claim must declare it.
+    // And a Desktop that names any language is ZIPP-era, which runs logic only while its
+    // heartbeat also carries 'logic-engine:zipp' (docs/FORMLOGIC_DESKTOP.md §8): without it,
+    // nothing is queued for it and it can claim nothing — 409 engine_unavailable, the code its
+    // own CLI uses. A legacy Desktop (no tokens) keeps taking JavaScript exactly as before.
+
+    private const ENGINE = 'logic-engine:zipp';
+
+    /** A workspace flow whose logic block is JavaScript (no language named, as every graph before Python). */
+    private function javaScriptFlowId(): string
+    {
+        return self::$flows->createWorkspaceFlow($this->ownerId, [
+            'name' => 'JavaScript relay flow',
+            'flowJson' => [
+                'nodes' => [
+                    ['id' => 'in', 'type' => 'input'],
+                    ['id' => 'half', 'type' => 'logic_block', 'data' => ['expr' => 'result = inputs.n / 2']],
+                ],
+                'edges' => [['source' => 'in', 'target' => 'half']],
+            ],
+        ])['id'];
+    }
 
     /** A workspace flow whose logic block is Python. */
     private function pythonFlowId(): string
@@ -668,7 +689,7 @@ class DesktopFlowRelayTest extends TestCase
         $this->assertSame(0, $this->relayRunCount(), 'nothing is queued');
 
         // Chosen explicitly, or advertising other things (even JavaScript), it is still refused.
-        $this->setCapabilities('desk-1', ['relay.flows', 'logic-language:javascript']);
+        $this->setCapabilities('desk-1', ['relay.flows', 'logic-language:javascript', self::ENGINE]);
         $r = $this->webEnqueue($this->ownerId, $this->sealedBody(['flowId' => $py, 'targetInstanceId' => 'desk-1']));
         $this->assertSame(409, $r['status']);
         $this->assertSame('language_unsupported', $r['body']['code'] ?? null);
@@ -677,8 +698,14 @@ class DesktopFlowRelayTest extends TestCase
         // A JavaScript flow still goes to that Desktop.
         $this->assertSame(201, $this->webEnqueue($this->ownerId, $this->sealedBody())['status']);
 
-        // Once its heartbeat advertises Python, the Python flow is queued for it.
+        // Naming Python without the engine token is a different refusal: the Desktop runs nothing.
         $this->setCapabilities('desk-1', ['relay.flows', 'logic-language:python']);
+        $r = $this->webEnqueue($this->ownerId, $this->sealedBody(['flowId' => $py]));
+        $this->assertSame(409, $r['status']);
+        $this->assertSame('engine_unavailable', $r['body']['code'] ?? null);
+
+        // Once its heartbeat advertises Python, with its engine up, the Python flow is queued for it.
+        $this->setCapabilities('desk-1', ['relay.flows', 'logic-language:python', self::ENGINE]);
         $ok = $this->webEnqueue($this->ownerId, $this->sealedBody(['flowId' => $py]));
         $this->assertSame(201, $ok['status'], json_encode($ok['body']));
         $this->assertSame('desk-1', $ok['body']['targetInstanceId'] ?? null);
@@ -702,7 +729,7 @@ class DesktopFlowRelayTest extends TestCase
     {
         $py = $this->pythonFlowId();
         $this->addConnection('desk-1');
-        $this->setCapabilities('desk-1', ['logic-language:python']);
+        $this->setCapabilities('desk-1', ['logic-language:python', self::ENGINE]);
         $enq = $this->webEnqueue($this->ownerId, $this->sealedBody(['flowId' => $py]));
         $this->assertSame(201, $enq['status'], json_encode($enq['body']));
         $id = $enq['body']['requestId'];
@@ -727,5 +754,135 @@ class DesktopFlowRelayTest extends TestCase
         $this->addConnection('desk-1');
         $id = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
         $this->assertSame(200, $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1'])['status']);
+    }
+
+    /**
+     * The case the language-only gate never examined: a JavaScript flow to a ZIPP-era Desktop
+     * whose engine is down. A legacy target keeps taking it, exactly as before.
+     */
+    public function testJavaScriptFlowIsEnqueuedForALegacyDesktopButNotForAZippEraDesktopWhoseEngineIsDown(): void
+    {
+        $js = $this->javaScriptFlowId();
+        $this->addConnection('desk-1'); // fresh, no capabilities: a legacy Desktop
+
+        $ok = $this->webEnqueue($this->ownerId, $this->sealedBody(['flowId' => $js]));
+        $this->assertSame(201, $ok['status'], json_encode($ok['body']));
+        $this->assertSame('desk-1', $ok['body']['targetInstanceId'] ?? null);
+        $this->assertSame(1, $this->relayRunCount());
+
+        // The same Desktop after OAIY on ZIPP is installed there, with its script host down: its
+        // heartbeat names JavaScript but not the engine. Nothing is queued for it.
+        $this->setCapabilities('desk-1', ['relay.flows', 'logic-language:javascript']);
+        $r = $this->webEnqueue($this->ownerId, $this->sealedBody(['flowId' => $js]));
+        $this->assertSame(409, $r['status'], json_encode($r['body']));
+        $this->assertSame('engine_unavailable', $r['body']['code'] ?? null);
+        $this->assertStringContainsString('not reporting healthy', $r['body']['message'] ?? '');
+        $this->assertStringContainsString('run the flow in the browser', $r['body']['message'] ?? '');
+        $this->assertArrayNotHasKey('languages', $r['body'], 'not a language gap');
+        $this->assertSame(1, $this->relayRunCount(), 'nothing is queued');
+
+        // Chosen explicitly, the same; and a flow with no code at all is refused too — the
+        // Desktop takes nothing, as the browser's own gate hands it nothing.
+        $r = $this->webEnqueue($this->ownerId, $this->sealedBody(['flowId' => $js, 'targetInstanceId' => 'desk-1']));
+        $this->assertSame(409, $r['status']);
+        $this->assertSame('engine_unavailable', $r['body']['code'] ?? null);
+        $r = $this->webEnqueue($this->ownerId, $this->sealedBody());
+        $this->assertSame(409, $r['status']);
+        $this->assertSame('engine_unavailable', $r['body']['code'] ?? null);
+        $this->assertSame(1, $this->relayRunCount());
+
+        // Its next heartbeat reports the engine healthy: queued again.
+        $this->setCapabilities('desk-1', ['relay.flows', 'logic-language:javascript', self::ENGINE]);
+        $ok = $this->webEnqueue($this->ownerId, $this->sealedBody(['flowId' => $js]));
+        $this->assertSame(201, $ok['status'], json_encode($ok['body']));
+        $this->assertSame(2, $this->relayRunCount());
+    }
+
+    /** An untargeted run (no fresh Desktop) is not judged at enqueue: whichever Desktop claims it is. */
+    public function testUntargetedJavaScriptRunsKeepTheFanOutAndAreJudgedAtClaim(): void
+    {
+        $js = $this->javaScriptFlowId();
+        $enq = $this->webEnqueue($this->ownerId, $this->sealedBody(['flowId' => $js]));
+        $this->assertSame(201, $enq['status']);
+        $this->assertArrayNotHasKey('targetInstanceId', $enq['body']);
+        $id = $enq['body']['requestId'];
+
+        // A ZIPP-era Desktop with its engine down comes online and tries to claim it.
+        $this->addConnection('desk-1');
+        $this->setCapabilities('desk-1', ['logic-language:javascript', 'logic-language:python']);
+        $r = $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1', 'logicLanguages' => ['javascript', 'python']]);
+        $this->assertSame(409, $r['status'], json_encode($r['body']));
+        $this->assertSame('engine_unavailable', $r['body']['code'] ?? null);
+        $this->assertSame('pending', self::$relay->get($id, $this->ownerId)['status'], 'stays pending for a healthy Desktop');
+    }
+
+    public function testRelayClaimByAnEngineDownInstanceIsRefusedAndTheRunStaysPending(): void
+    {
+        $js = $this->javaScriptFlowId();
+        $this->addConnection('desk-1');
+        $id = $this->webEnqueue($this->ownerId, $this->sealedBody(['flowId' => $js]))['body']['requestId'];
+
+        // Between enqueue and claim the Desktop's heartbeat dropped the engine token.
+        $this->setCapabilities('desk-1', ['logic-language:javascript']);
+        $r = $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1']);
+        $this->assertSame(409, $r['status'], json_encode($r['body']));
+        $this->assertSame('engine_unavailable', $r['body']['code'] ?? null);
+        $this->assertStringContainsString('not reporting healthy', $r['body']['message'] ?? '');
+        $this->assertSame('pending', self::$relay->get($id, $this->ownerId)['status'], 'nothing changed');
+        // The body's own declaration does not override the heartbeat.
+        $r = $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1', 'logicLanguages' => ['javascript', 'python']]);
+        $this->assertSame(409, $r['status']);
+        $this->assertSame('engine_unavailable', $r['body']['code'] ?? null);
+        // A malformed body is still 400, before any heartbeat is read.
+        $this->assertSame(400, $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1', 'logicLanguages' => 'python,,javascript'])['status']);
+
+        // The engine comes back: the claim goes through.
+        $this->setCapabilities('desk-1', ['logic-language:javascript', self::ENGINE]);
+        $ok = $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1']);
+        $this->assertSame(200, $ok['status'], json_encode($ok['body']));
+        $this->assertSame('claimed', $ok['body']['request']['status']);
+    }
+
+    /**
+     * The stored heartbeat against the claim body's `logicLanguages` when they disagree: the
+     * heartbeat alone says whether the engine is up; a language runs only when both name it. A
+     * legacy heartbeat (no tokens) leaves the body in charge, as it always was.
+     */
+    public function testRelayClaimReconcilesTheStoredHeartbeatWithTheDeclaredLanguages(): void
+    {
+        $py = $this->pythonFlowId();
+        $this->addConnection('desk-1');
+        $this->setCapabilities('desk-1', ['logic-language:python', self::ENGINE]);
+        $enqueuePython = function () use ($py): string {
+            $enq = $this->webEnqueue($this->ownerId, $this->sealedBody(['flowId' => $py]));
+            $this->assertSame(201, $enq['status'], json_encode($enq['body']));
+            return $enq['body']['requestId'];
+        };
+        $id = $enqueuePython();
+
+        // The heartbeat now names JavaScript only: a body declaring Python cannot widen it.
+        $this->setCapabilities('desk-1', ['logic-language:javascript', self::ENGINE]);
+        $r = $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1', 'logicLanguages' => ['javascript', 'python']]);
+        $this->assertSame(409, $r['status'], json_encode($r['body']));
+        $this->assertSame('language_unsupported', $r['body']['code'] ?? null);
+        $this->assertSame(['python'], $r['body']['languages'] ?? null);
+        $this->assertSame('pending', self::$relay->get($id, $this->ownerId)['status']);
+
+        // The heartbeat names Python again, but the body declares JavaScript only (or nothing):
+        // the Desktop is never handed a language it did not itself declare.
+        $this->setCapabilities('desk-1', ['logic-language:python', self::ENGINE]);
+        $this->assertSame(409, $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1', 'logicLanguages' => ['javascript']])['status']);
+        $this->assertSame(409, $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1'])['status']);
+        // Both agree: claimed.
+        $ok = $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1', 'logicLanguages' => ['javascript', 'python']]);
+        $this->assertSame(200, $ok['status'], json_encode($ok['body']));
+        self::$pdo->prepare('DELETE FROM desktop_flow_runs WHERE id = ?')->execute([$id]); // free the single-flight lane
+
+        // A legacy heartbeat (an older build, or one that sends no capabilities): the body
+        // decides, exactly as before this vocabulary existed.
+        $id = $enqueuePython();
+        $this->setCapabilities('desk-1', null);
+        $ok = $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1', 'logicLanguages' => ['javascript', 'python']]);
+        $this->assertSame(200, $ok['status'], json_encode($ok['body']));
     }
 }

@@ -99,6 +99,56 @@ class FlowLogicLanguagesTest extends TestCase
     }
 
     /**
+     * The engine-aware reading of a heartbeat (docs/FORMLOGIC_DESKTOP.md §8 vocabulary), the
+     * rule the browser's desktopTakesLanguages applies: no language token is a legacy Desktop
+     * (null, JavaScript as always); a language token without logic-engine:zipp runs NOTHING ([]);
+     * both run what the tokens name.
+     */
+    public function testDesktopRunsIsEngineAware(): void
+    {
+        // Legacy: no logic-language token at all — unrelated tokens do not change that.
+        $this->assertNull(FlowLogicLanguages::desktopRuns([]));
+        $this->assertNull(FlowLogicLanguages::desktopRuns(['relay.flows', 'ai.chat', 5, null]));
+        // The engine token alone is not a ZIPP-era marker: still legacy.
+        $this->assertNull(FlowLogicLanguages::desktopRuns(['logic-engine:zipp']));
+
+        // ZIPP-era, engine not reporting healthy: runs nothing, whatever it names.
+        $this->assertSame([], FlowLogicLanguages::desktopRuns(['logic-language:javascript']));
+        $this->assertSame([], FlowLogicLanguages::desktopRuns(['relay.flows', 'logic-language:python']));
+        $this->assertSame([], FlowLogicLanguages::desktopRuns(['logic-language:javascript', 'logic-language:python']));
+
+        // ZIPP-era with its engine up: the named languages, JavaScript always among them.
+        $this->assertSame(['javascript'], FlowLogicLanguages::desktopRuns(['logic-language:javascript', 'logic-engine:zipp']));
+        $this->assertSame(['javascript', 'python'], FlowLogicLanguages::desktopRuns(['logic-engine:zipp', 'relay.flows', 'logic-language:python']));
+        $this->assertSame('logic-engine:zipp', FlowLogicLanguages::ENGINE_CAPABILITY);
+
+        // [] is distinct from legacy for the gates: it lacks even JavaScript, but needs nothing for a code-free flow.
+        $this->assertSame(['javascript'], FlowLogicLanguages::missing(['javascript'], []));
+        $this->assertSame([], FlowLogicLanguages::missing([], []));
+        $this->assertFalse(FlowLogicLanguages::runsAll([]));
+    }
+
+    /** The stored heartbeat against the body's declaration: engine from the heartbeat alone, a language only when both name it. */
+    public function testReconcileStoredHeartbeatWithDeclaredLanguages(): void
+    {
+        $both = ['javascript', 'python'];
+        // Legacy heartbeat (or none): the body decides, exactly as before — today's OAIY declares
+        // its languages in the body and sends no tokens.
+        $this->assertNull(FlowLogicLanguages::reconcile(null, null));
+        $this->assertSame($both, FlowLogicLanguages::reconcile(null, $both));
+        $this->assertSame(['javascript'], FlowLogicLanguages::reconcile(null, ['javascript']));
+        // Engine down: nothing, whatever the body says.
+        $this->assertSame([], FlowLogicLanguages::reconcile([], $both));
+        $this->assertSame([], FlowLogicLanguages::reconcile([], null));
+        // Engine up: the body never widens what the heartbeat names...
+        $this->assertSame(['javascript'], FlowLogicLanguages::reconcile(['javascript'], $both));
+        // ...and is never handed a language it did not declare (absent = JavaScript).
+        $this->assertSame(['javascript'], FlowLogicLanguages::reconcile($both, ['javascript']));
+        $this->assertSame(['javascript'], FlowLogicLanguages::reconcile($both, null));
+        $this->assertSame($both, FlowLogicLanguages::reconcile($both, $both));
+    }
+
+    /**
      * formlogic-python/1 x packages: a contributed node that lowers to a core code node through a
      * core preset carries the language its merged data names. The stored graph alone would say
      * "no code" (dotted types are not code nodes), which is what let preset Python past the gate.

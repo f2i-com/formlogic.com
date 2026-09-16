@@ -6,6 +6,7 @@ namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Helpers\CustomLogicSanitizer;
+use FormLogic\Services\Flows\DesktopEngineUnavailableException;
 use FormLogic\Services\Flows\FlowLogicLanguages;
 use FormLogic\Services\Flows\LogicLanguageUnsupportedException;
 use PDO;
@@ -2383,10 +2384,18 @@ class FlowService
         return array_map([$this, 'formatRun'], $stmt->fetchAll());
     }
 
-    /** Claimable queued runs across every flow the user owns, oldest first, filtered as listQueuedRuns. @return array[] */
-    public function listOwnerQueuedRuns(string $ownerUserId, int $limit = 50, ?array $logicLanguages = null): array
+    /**
+     * Claimable queued runs across every flow the user owns, oldest first, filtered as
+     * listQueuedRuns. `$instanceId` is the Desktop instance the caller is (FL-01 identity), whose
+     * stored heartbeat is reconciled with what it declared (callerLogicLanguages): a ZIPP-era
+     * Desktop whose engine is not reporting healthy lists nothing, since it can claim nothing.
+     *
+     * @return array[]
+     */
+    public function listOwnerQueuedRuns(string $ownerUserId, int $limit = 50, ?array $logicLanguages = null, ?string $instanceId = null): array
     {
         $limit = max(1, min(200, $limit));
+        $logicLanguages = $this->callerLogicLanguages($ownerUserId, $instanceId, $logicLanguages);
         [$notRunnable, $params] = $this->excludeFlowsCallerCannotRun(
             "SELECT f.id, f.owner_user_id, f.flow_json FROM flow_definitions f
              WHERE f.owner_user_id = :o
@@ -2407,14 +2416,22 @@ class FlowService
     }
 
     /**
-     * formlogic-python/1 gate: refuse a caller that cannot run every language the flow's code
-     * needs (logicLanguagesOf, which sees through core presets). A caller that runs every
-     * language this server knows needs no lookup. @throws LogicLanguageUnsupportedException
+     * The run gate. A caller that runs nothing — a ZIPP-era Desktop whose engine is not
+     * reporting healthy (FlowLogicLanguages::desktopRuns / reconcile gave []) — is refused
+     * whatever the flow holds, code or not: it takes nothing, as the browser's deferral gate
+     * hands it nothing. Then formlogic-python/1: refuse a caller that cannot run every language
+     * the flow's code needs (logicLanguagesOf, which sees through core presets). A caller that
+     * runs every language this server knows needs no lookup.
      *
      * @param array<string, mixed> $flow a formatted flow (id, ownerUserId, flowJson)
+     * @throws DesktopEngineUnavailableException
+     * @throws LogicLanguageUnsupportedException
      */
     private function assertCallerRunsFlow(array $flow, ?array $logicLanguages): void
     {
+        if ($logicLanguages === []) {
+            throw new DesktopEngineUnavailableException();
+        }
         if (FlowLogicLanguages::runsAll($logicLanguages)) {
             return;
         }
@@ -2429,13 +2446,18 @@ class FlowService
      * `$flowsSql` selects (id, owner_user_id, flow_json) of the flows with queued runs in scope,
      * so the cost is one decode per such flow, not per run (and one definitions lookup per owner
      * of a flow with contributed nodes). Nothing to do for a caller that runs every language
-     * this server knows.
+     * this server knows; nothing to list for one that runs nothing ([]: a ZIPP-era Desktop whose
+     * engine is not reporting healthy), code-free flows included, since its claim of any run
+     * would be refused.
      *
      * @param array<string, string> $params
      * @return array{0: string, 1: array<string, string>}
      */
     private function excludeFlowsCallerCannotRun(string $flowsSql, array $params, ?array $logicLanguages): array
     {
+        if ($logicLanguages === []) {
+            return [' AND 1 = 0', []];
+        }
         if (FlowLogicLanguages::runsAll($logicLanguages)) {
             return ['', []];
         }
@@ -2515,10 +2537,19 @@ class FlowService
         return $this->getRun($appId, $runId);
     }
 
-    /** Owner-scoped claim (workspace runs + any run of a flow the caller owns), gated as claimRun. */
+    /**
+     * Owner-scoped claim (workspace runs + any run of a flow the caller owns), gated as claimRun —
+     * and, for a claimant that is a linked Desktop (`instanceId`, bound to its API key by the
+     * controller), by its stored heartbeat too (callerLogicLanguages): a ZIPP-era Desktop whose
+     * engine is not reporting healthy claims nothing.
+     *
+     * @throws DesktopEngineUnavailableException when the claimant's engine is not reporting healthy (→ 409, nothing changed)
+     * @throws LogicLanguageUnsupportedException when the claimant lacks a language the flow needs (→ 409, nothing changed)
+     */
     public function claimOwnerRun(string $ownerUserId, string $runId, array $data): ?array
     {
         [$runtime, $claimedBy, $logicLanguages] = $this->sanitizeClaim($data);
+        $logicLanguages = $this->callerLogicLanguages($ownerUserId, $claimedBy, $logicLanguages);
         $this->assertCallerRunsClaim('r.id = :id AND f.owner_user_id = :o', ['id' => $runId, 'o' => $ownerUserId], $logicLanguages);
         $stmt = $this->mysql->prepare("
             UPDATE flow_run_logs r
@@ -2649,10 +2680,14 @@ class FlowService
      * Same reserve-first UNIQUE idempotency-key gate as reserveRun, so a desktop reserve and a
      * browser reserve of the same event dedupe to exactly ONE run regardless of which runtime
      * got there first. Language-gated as reserveRun: a Desktop that sends no logicLanguages
-     * runs JavaScript only, and a queued reserve is not gated.
+     * runs JavaScript only, and a queued reserve is not gated. A reserver that is a linked
+     * Desktop (`instanceId`, bound to its API key by the controller) is also judged on its stored
+     * heartbeat (callerLogicLanguages): one whose engine is not reporting healthy runs nothing
+     * now — though it may still reserve queued, so the event is not lost.
      *
      * @return array{run: array, created: bool}
      * @throws \InvalidArgumentException on invalid payload / unknown flow / foreign key reuse
+     * @throws DesktopEngineUnavailableException when a caller that would run the flow now has its engine down (→ 409)
      * @throws LogicLanguageUnsupportedException when a caller that runs the flow now lacks a language it needs (→ 409)
      */
     public function reserveOwnerRun(string $ownerUserId, array $data): array
@@ -2731,8 +2766,12 @@ class FlowService
 
         // As reserveRun: an OAIY plugin event always reserves queued, and must not be lost for a
         // Python flow while no FormLogic tab is open; claim and the listings keep it from a
-        // runtime that would misread it.
-        $logicLanguages = FlowLogicLanguages::fromCaller($data['logicLanguages'] ?? null);
+        // runtime that would misread it, or whose engine is down.
+        $logicLanguages = $this->callerLogicLanguages(
+            $ownerUserId,
+            is_string($data['instanceId'] ?? null) ? $data['instanceId'] : null,
+            FlowLogicLanguages::fromCaller($data['logicLanguages'] ?? null)
+        );
         if (!$queued) {
             $this->assertCallerRunsFlow($flow, $logicLanguages);
         }
@@ -3334,10 +3373,11 @@ class FlowService
     }
 
     /**
-     * The logic languages a linked Desktop runs, from the capabilities its last heartbeat sent
-     * (FlowLogicLanguages::fromCapabilities). Null for a Desktop that names none — one built
-     * before Python, which would run Python as JavaScript — and for an instance not linked to
-     * this owner.
+     * What a linked Desktop runs right now, from the capabilities its last heartbeat sent
+     * (FlowLogicLanguages::desktopRuns). Null for a legacy Desktop that names no language — one
+     * built before the vocabulary, which runs JavaScript and would run Python as JavaScript — and
+     * for an instance not linked to this owner; [] for a ZIPP-era Desktop whose engine is not
+     * reporting healthy, which runs nothing; otherwise the languages it names.
      *
      * @return list<string>|null
      */
@@ -3351,7 +3391,26 @@ class FlowService
         $stmt->execute(['o' => $ownerUserId, 'i' => $instanceId]);
         $raw = $stmt->fetchColumn();
         $capabilities = $this->decodeJson(is_string($raw) ? $raw : null);
-        return FlowLogicLanguages::fromCapabilities($capabilities ?? []);
+        return FlowLogicLanguages::desktopRuns(is_array($capabilities) ? $capabilities : []);
+    }
+
+    /**
+     * The languages a caller on the owner surface runs: what it declared (`logicLanguages`,
+     * FlowLogicLanguages::fromCaller) reconciled with the stored heartbeat of the Desktop
+     * instance it is (FlowLogicLanguages::reconcile). The heartbeat decides whether the engine
+     * is up — [] when it is not, whatever was declared — and a language counts only when both
+     * name it. A caller with no instance, an instance with no heartbeat row, or a legacy
+     * heartbeat (no `logic-language:*` token) is judged on its declaration alone, as before.
+     *
+     * @param list<string>|null $declared
+     * @return list<string>|null
+     */
+    public function callerLogicLanguages(string $ownerUserId, ?string $instanceId, ?array $declared): ?array
+    {
+        if ($instanceId === null || $instanceId === '') {
+            return $declared;
+        }
+        return FlowLogicLanguages::reconcile($this->desktopLogicLanguages($ownerUserId, $instanceId), $declared);
     }
 
     /**

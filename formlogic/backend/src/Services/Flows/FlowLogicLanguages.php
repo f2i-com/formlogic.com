@@ -19,6 +19,13 @@ namespace FormLogic\Services\Flows;
  * (`logic-language:<id>`, fromCapabilities), which is what the Desktop relay checks before it
  * queues a run for one.
  *
+ * A Desktop that names a language in its heartbeat is a ZIPP-era build, and one of those runs
+ * logic only while its script host is healthy — which it says with ENGINE_CAPABILITY on the same
+ * heartbeat. desktopRuns() is the one reading of a heartbeat that knows both clauses (the rule
+ * the browser's deferral gate applies, ui/src/client-runtime/flows/flowDispatcher.ts
+ * desktopTakesLanguages); reconcile() weighs it against what the same Desktop declares in a
+ * request body. docs/FORMLOGIC_DESKTOP.md §8 "Desktop capability vocabulary".
+ *
  * A contributed (dotted) node runs no code of its own, but a core preset can lower it to a code
  * node whose language comes from the preset's defaults. ofLowered() reads a graph the way its
  * runtimes execute it; FlowService::logicLanguagesOf() is the gate's single entry point.
@@ -34,8 +41,18 @@ final class FlowLogicLanguages
     /** Core node types whose code runs in the language `data.language` names. */
     public const CODE_NODE_TYPES = ['condition', 'logic_block'];
 
-    /** Prefix of the Desktop heartbeat capability naming a logic language it runs. */
+    /**
+     * Prefix of the Desktop heartbeat capability naming a logic language it runs. Any token with
+     * this prefix marks a ZIPP-era Desktop; a heartbeat with none is a legacy build.
+     */
     public const CAPABILITY_PREFIX = 'logic-language:';
+
+    /**
+     * The Desktop heartbeat capability a ZIPP-era Desktop sends only while its ZIPP script host
+     * is healthy. Without it such a Desktop runs no logic at all. A legacy build never sends it,
+     * and on its own it does not make a heartbeat ZIPP-era.
+     */
+    public const ENGINE_CAPABILITY = 'logic-engine:zipp';
 
     private const MAX_CALLER_LANGUAGES = 16;
     private const MAX_LANGUAGE_ID_LENGTH = 32;
@@ -153,6 +170,55 @@ final class FlowLogicLanguages
     }
 
     /**
+     * The languages a Desktop runs right now, from its heartbeat capabilities — the engine-aware
+     * reading every server gate keys on. Three answers:
+     *  - null: no `logic-language:*` token. A LEGACY Desktop, from before this vocabulary: it runs
+     *    JavaScript (and would run Python, or an unknown language, as JavaScript), exactly the
+     *    reading fromCaller gives a caller that sends no logicLanguages.
+     *  - []: a `logic-language:*` token but no ENGINE_CAPABILITY. A ZIPP-era Desktop whose script
+     *    host is not reporting healthy: it runs NOTHING, whatever languages it names.
+     *  - the named languages (JavaScript always among them): a ZIPP-era Desktop with its engine up.
+     *
+     * @param array<mixed> $capabilities
+     * @return list<string>|null
+     */
+    public static function desktopRuns(array $capabilities): ?array
+    {
+        $languages = self::fromCapabilities($capabilities);
+        if ($languages === null) {
+            return null;
+        }
+        return in_array(self::ENGINE_CAPABILITY, $capabilities, true) ? $languages : [];
+    }
+
+    /**
+     * What a Desktop caller runs when its stored heartbeat (desktopRuns) and the request body
+     * (fromCaller) both speak. The heartbeat is the authority on the engine, and a language
+     * counts only when both name it:
+     *  - stored null (a legacy heartbeat, or no heartbeat at all): the body decides, as it always
+     *    has — this is every Desktop built before the vocabulary, which declares its languages in
+     *    the body alone.
+     *  - stored []: [] — the engine is down, and nothing the body says runs anything.
+     *  - stored names languages: their intersection with the body's (a body that says nothing
+     *    runs JavaScript only). The body can never widen what the heartbeat names, and is never
+     *    handed a language it did not itself declare.
+     *
+     * @param list<string>|null $stored
+     * @param list<string>|null $declared
+     * @return list<string>|null
+     */
+    public static function reconcile(?array $stored, ?array $declared): ?array
+    {
+        if ($stored === null) {
+            return $declared;
+        }
+        if ($stored === []) {
+            return [];
+        }
+        return array_values(array_intersect($stored, $declared ?? [self::JAVASCRIPT]));
+    }
+
+    /**
      * @param array<array-key, true> $languages
      * @return list<string>
      */
@@ -219,6 +285,10 @@ final class FlowLogicLanguages
      * preset's default, can hold one) is missing for a caller that did not declare its
      * languages, because that runtime would run it as JavaScript. A caller that declared them
      * reads data.language and fails such a run itself (invalid_flow), where the author sees it.
+     *
+     * An empty $caller (desktopRuns: a ZIPP-era Desktop with its engine down) runs nothing, so it
+     * lacks every language — but a flow without code needs none, so gates answer
+     * engine_unavailable for [] BEFORE asking this; missing([], []) is [].
      *
      * @param list<string> $needed
      * @param list<string>|null $caller

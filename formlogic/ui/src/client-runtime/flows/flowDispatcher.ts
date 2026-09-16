@@ -50,9 +50,8 @@ import { executeFlow, type FlowRunOutcome } from './flowExecutor';
 import { resolveExecutableGraph } from './compiledGraph';
 import { invokeChildFlowWith, type ChildFlowBackend } from './childFlowInvoker';
 import {
-  DESKTOP_ENGINE_CAPABILITY,
+  capabilitiesEngineDown,
   flowLogicLanguages,
-  LOGIC_LANGUAGE_CAPABILITY_PREFIX,
   logicLanguageCapability,
   LOGIC_LANGUAGES,
   type FlowExecutorDeps,
@@ -155,8 +154,7 @@ export function desktopTakesLanguages(status: DesktopRuntimeStatus, languages: r
   const tokens = languages.filter((language) => language !== 'javascript').map(desktopLanguageCapability);
   const rows = status.freshCapabilities.length === 0 ? LEGACY_ROWS : status.freshCapabilities;
   return rows.some((capabilities) => {
-    const zippEra = capabilities.some((token) => token.startsWith(LOGIC_LANGUAGE_CAPABILITY_PREFIX));
-    if (zippEra && !capabilities.includes(DESKTOP_ENGINE_CAPABILITY)) return false;
+    if (capabilitiesEngineDown(capabilities)) return false;
     return tokens.every((token) => capabilities.includes(token));
   });
 }

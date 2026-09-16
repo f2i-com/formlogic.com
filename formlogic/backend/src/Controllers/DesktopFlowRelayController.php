@@ -8,6 +8,7 @@ use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Services\DesktopCommandService;
 use FormLogic\Services\DesktopFlowRelayService;
 use FormLogic\Services\FlowService;
+use FormLogic\Services\Flows\DesktopEngineUnavailableException;
 use FormLogic\Services\Flows\FlowLogicLanguages;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -56,9 +57,11 @@ class DesktopFlowRelayController
      * idempotencyKey?}. The flow must belong to the session user (a run of a foreign flow can
      * never be enqueued — the desktop would execute it with the owner's authority). The SERVER
      * validates an explicit target against the owner's linked computers, or resolves the
-     * flow assignment / single fresh desktop when no target was selected. A flow whose code
-     * needs a language other than JavaScript is queued only for a target Desktop that
-     * advertises it (409 language_unsupported otherwise; formlogic-python/1).
+     * flow assignment / single fresh desktop when no target was selected. The target's last
+     * heartbeat must say it can run the flow: a ZIPP-era Desktop whose engine is not reporting
+     * healthy takes nothing (409 engine_unavailable), and a flow whose code needs a language
+     * other than JavaScript is queued only for a target that advertises it (409
+     * language_unsupported; formlogic-python/1).
      */
     public function enqueue(Request $request, Response $response): Response
     {
@@ -102,23 +105,30 @@ class DesktopFlowRelayController
             $body['targetInstanceId'] = $resolved['target'];
         }
 
-        // formlogic-python/1: the Desktop that claims this run fetches the flow and runs it. One
-        // built before Python ignores data.language and runs Python as JavaScript, so a flow
-        // whose code needs a language other than JavaScript is queued only for a Desktop whose
-        // heartbeat advertises it ('logic-language:<id>'). With no target (no Desktop online)
-        // any Desktop could claim it, so none is known to run it: refused too.
-        $needed = $this->flows->logicLanguagesOf($flow);
-        if (array_diff($needed, [FlowLogicLanguages::JAVASCRIPT]) !== []) {
-            $target = $resolved['target'];
-            $missing = FlowLogicLanguages::missing(
-                $needed,
-                $target !== null ? $this->flows->desktopLogicLanguages((string) $userId, $target) : null
+        // The Desktop that claims this run fetches the flow and runs it, so the target is judged
+        // on its last heartbeat (FlowLogicLanguages::desktopRuns) for EVERY flow, JavaScript-only
+        // and code-free ones included:
+        //  - a ZIPP-era target whose engine is not reporting healthy runs nothing, so nothing is
+        //    queued for it (409 engine_unavailable) — the browser runs the flow instead;
+        //  - formlogic-python/1: a Desktop built before Python ignores data.language and runs
+        //    Python as JavaScript, so a flow whose code needs a language other than JavaScript is
+        //    queued only for a target whose heartbeat advertises it ('logic-language:<id>'). With
+        //    no target (no Desktop online) any Desktop could claim it, so none is known to run
+        //    it: refused too (409 language_unsupported).
+        $target = $resolved['target'];
+        $targetRuns = $target !== null ? $this->flows->desktopLogicLanguages((string) $userId, $target) : null;
+        if ($targetRuns === []) {
+            return $this->engineUnavailable(
+                $response,
+                'The selected computer\'s engine is not reporting healthy, so it cannot run flows right now. '
+                . 'Check OAIY on that computer, pick another computer, or run the flow in the browser.'
             );
-            if ($missing !== []) {
-                return $this->languageUnsupported($response, $missing, $target !== null
-                    ? 'the selected computer does not advertise it. Update OAIY on that computer'
-                    : 'no linked computer that runs it is online. Open an up-to-date OAIY');
-            }
+        }
+        $missing = FlowLogicLanguages::missing($this->flows->logicLanguagesOf($flow), $targetRuns);
+        if ($missing !== []) {
+            return $this->languageUnsupported($response, $missing, $target !== null
+                ? 'the selected computer does not advertise it. Update OAIY on that computer'
+                : 'no linked computer that runs it is online. Open an up-to-date OAIY');
         }
 
         try {
@@ -260,8 +270,11 @@ class DesktopFlowRelayController
 
     /**
      * POST /api/v1/desktop-flows/{id}/claim {instanceId, logicLanguages?} — pending→claimed,
-     * single-flight per target. A claim that does not declare every language the flow's code
-     * needs (absent = JavaScript only) is 409 language_unsupported and changes nothing.
+     * single-flight per target. The claimant is judged on its declared languages reconciled with
+     * the stored heartbeat of the instance it is (FlowService::callerLogicLanguages): a ZIPP-era
+     * Desktop whose engine is not reporting healthy is 409 engine_unavailable, and a claim that
+     * does not run every language the flow's code needs (absent = JavaScript only) is 409
+     * language_unsupported. Either changes nothing; the run stays pending.
      */
     public function claimV1(Request $request, Response $response, array $args): Response
     {
@@ -278,15 +291,25 @@ class DesktopFlowRelayController
         if (is_array($body)) {
             $body['instanceId'] = $resolvedInstance;
         }
-        // formlogic-python/1: the claimant runs the flow as it is now, so it must run every
-        // language that flow's code needs (`logicLanguages`; absent = a Desktop from before
-        // Python, JavaScript only). Checked before the claim, which then changes nothing.
+        // The claimant runs the flow as it is now, so it must be able to: its declared languages
+        // (`logicLanguages`; absent = a Desktop from before Python, JavaScript only) reconciled
+        // with its stored heartbeat, which alone says whether its engine is up. Checked before
+        // the claim, which then changes nothing.
         try {
             $claimantLanguages = FlowLogicLanguages::fromCaller(is_array($body) ? ($body['logicLanguages'] ?? null) : null);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonError($response, $e->getMessage(), 400);
         }
+        $claimantLanguages = $this->flows->callerLogicLanguages((string) $userId, $resolvedInstance, $claimantLanguages);
         $pending = $this->relay->get((string) ($args['id'] ?? ''), (string) $userId);
+        if ($pending !== null && $claimantLanguages === []) {
+            return $this->engineUnavailable(
+                $response,
+                'This runtime\'s engine is not reporting healthy (its last heartbeat did not carry '
+                . FlowLogicLanguages::ENGINE_CAPABILITY . '), so it cannot claim runs. '
+                . 'The run stays pending for a computer whose engine is up, or run the flow in the browser.'
+            );
+        }
         $flow = $pending !== null ? $this->flows->getOwnedFlow((string) $userId, (string) $pending['flowId']) : null;
         if ($flow !== null && !FlowLogicLanguages::runsAll($claimantLanguages)) {
             $missing = FlowLogicLanguages::missing($this->flows->logicLanguagesOf($flow), $claimantLanguages);
@@ -382,6 +405,21 @@ class DesktopFlowRelayController
     }
 
     // ── Shared helpers ──
+
+    /**
+     * 409 engine_unavailable (FlowLogicLanguages::desktopRuns gave []): a ZIPP-era Desktop whose
+     * last heartbeat did not report its engine healthy — the code OAIY's own CLI answers with for
+     * the same condition. The shape FlowController answers with: {error, code, message}. Nothing
+     * was queued or claimed.
+     */
+    private function engineUnavailable(Response $response, string $message): Response
+    {
+        return $this->jsonResponse($response, [
+            'error' => true,
+            'code' => DesktopEngineUnavailableException::CODE,
+            'message' => $message,
+        ], 409);
+    }
 
     /**
      * 409 language_unsupported (FlowLogicLanguages), the shape FlowController answers reserve and

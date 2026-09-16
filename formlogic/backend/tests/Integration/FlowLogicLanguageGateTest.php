@@ -10,6 +10,7 @@ use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppUserService;
 use FormLogic\Services\FlowService;
+use FormLogic\Services\Flows\DesktopEngineUnavailableException;
 use FormLogic\Services\Flows\LogicLanguageUnsupportedException;
 use FormLogic\Services\FormService;
 use PDO;
@@ -25,11 +26,17 @@ use Slim\Psr7\Response;
  * flow's code needs — absent means JavaScript only — and the queued listings leave out runs
  * such a caller cannot take, before the LIMIT, so a Python run never holds a JavaScript-only
  * Desktop's queue head. JavaScript flows and idempotent replays behave exactly as before.
- * Skipped without a test DB.
+ *
+ * A caller that is a linked Desktop (its API key's connection binding, FL-01) is also judged on
+ * the capabilities its last heartbeat stored (docs/FORMLOGIC_DESKTOP.md §8): a ZIPP-era Desktop
+ * (any `logic-language:*` token) whose heartbeat lacks `logic-engine:zipp` runs nothing — 409
+ * engine_unavailable on reserve and claim, and empty listings — while a legacy Desktop (no
+ * tokens) is judged on its `logicLanguages` alone, as before. Skipped without a test DB.
  */
 class FlowLogicLanguageGateTest extends TestCase
 {
     private const BOTH = ['javascript', 'python'];
+    private const ENGINE = 'logic-engine:zipp';
 
     private static ?MySQLConnection $mysql = null;
     private static ?PDO $pdo = null;
@@ -116,6 +123,7 @@ class FlowLogicLanguageGateTest extends TestCase
         self::$pdo->prepare('DELETE v FROM flow_definition_versions v JOIN flow_definitions f ON f.id = v.flow_definition_id WHERE f.owner_user_id = ?')
             ->execute([$this->ownerId]);
         self::$pdo->prepare('DELETE FROM flow_definitions WHERE owner_user_id = ?')->execute([$this->ownerId]);
+        self::$pdo->prepare('DELETE FROM desktop_connections WHERE owner_user_id = ?')->execute([$this->ownerId]);
         self::$pdo->prepare('DELETE FROM app_users WHERE app_id = ?')->execute([$this->appId]);
         self::$pdo->prepare('DELETE FROM app_roles WHERE app_id = ?')->execute([$this->appId]);
         self::$pdo->prepare('DELETE FROM apps WHERE id = ?')->execute([$this->appId]);
@@ -191,11 +199,39 @@ class FlowLogicLanguageGateTest extends TestCase
         $this->fail('expected language_unsupported');
     }
 
+    /**
+     * A linked Desktop as its heartbeat left it: the row the FL-01 identity resolves the API key
+     * `key-<instanceId>` to, carrying `$capabilities` (null: a heartbeat that sent none).
+     */
+    private function linkDesktop(string $instanceId, ?array $capabilities): string
+    {
+        $apiKeyId = 'key-' . $instanceId;
+        self::$pdo->prepare(
+            "INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, api_key_id, capabilities_json, last_seen_at)
+             VALUES (?, ?, 'TestBox', ?, ?, ?, NOW())"
+        )->execute(['dc-' . bin2hex(random_bytes(8)), $this->ownerId, $instanceId, $apiKeyId, $capabilities === null ? null : json_encode($capabilities)]);
+        return $apiKeyId;
+    }
+
+    private function refusedForEngine(callable $call): void
+    {
+        try {
+            $call();
+        } catch (DesktopEngineUnavailableException $e) {
+            $this->assertSame('engine_unavailable', $e->getMessage(), 'controllers match on the bare code');
+            return;
+        }
+        $this->fail('expected engine_unavailable');
+    }
+
     /** @param array<string, mixed>|null $body */
-    private function call(string $method, callable $handler, ?array $body = null, array $query = []): array
+    private function call(string $method, callable $handler, ?array $body = null, array $query = [], ?string $apiKeyId = null): array
     {
         $req = (new ServerRequestFactory())->createServerRequest($method, 'http://localhost/api/test')
             ->withAttribute('userId', $this->ownerId);
+        if ($apiKeyId !== null) {
+            $req = $req->withAttribute('apiKeyId', $apiKeyId);
+        }
         if ($body !== null) {
             $req = $req->withParsedBody($body);
         }
@@ -441,6 +477,145 @@ class FlowLogicLanguageGateTest extends TestCase
     }
 
     // ── HTTP surface ────────────────────────────────────────────────────────────────────────
+
+    // ── Engine health (the heartbeat's stored capabilities) ─────────────────────────────────
+
+    public function testAnEngineDownDesktopReservesAndClaimsNothingWhileALegacyOneIsUnchanged(): void
+    {
+        $this->linkDesktop('desk-legacy', null);
+        $this->linkDesktop('desk-down', ['logic-language:javascript', 'logic-language:python']);
+        $this->linkDesktop('desk-up', ['logic-language:javascript', 'logic-language:python', self::ENGINE]);
+
+        // Reserve to run now: refused before anything is written, whatever the body declares —
+        // for a JavaScript flow too, which the language gate alone would have let through.
+        $this->refusedForEngine(fn () => self::$flows->reserveOwnerRun($this->ownerId, $this->reservePayload('js-ws', self::BOTH) + ['instanceId' => 'desk-down']));
+        $this->refusedForEngine(fn () => self::$flows->reserveOwnerRun($this->ownerId, $this->reservePayload('js-ws', null) + ['instanceId' => 'desk-down']));
+        $this->assertSame(['runs' => 0, 'versions' => 0], $this->rowsFor('js-ws'));
+        // Reserving queued runs nothing, so the event is not lost: whoever claims it is judged.
+        $this->assertTrue(self::$flows->reserveOwnerRun($this->ownerId, $this->reservePayload('js-ws', self::BOTH) + ['instanceId' => 'desk-down', 'queued' => true])['created']);
+        // The legacy Desktop, and one with its engine up, reserve as before.
+        $this->assertTrue(self::$flows->reserveOwnerRun($this->ownerId, $this->reservePayload('js-ws', null) + ['instanceId' => 'desk-legacy'])['created']);
+        $this->assertTrue(self::$flows->reserveOwnerRun($this->ownerId, $this->reservePayload('py-ws', self::BOTH) + ['instanceId' => 'desk-up'])['created']);
+
+        // Claim: the run stays queued, then the legacy Desktop takes it.
+        $js = $this->enqueue('js-ws', '2026-01-01 00:00:00');
+        $this->refusedForEngine(fn () => self::$flows->claimOwnerRun($this->ownerId, $js['runId'], ['runtime' => 'desktop', 'instanceId' => 'desk-down', 'logicLanguages' => self::BOTH]));
+        $row = $this->runRow($js['runId']);
+        $this->assertSame('queued', $row['status']);
+        $this->assertNull($row['claimed_by']);
+        $this->assertSame('running', self::$flows->claimOwnerRun($this->ownerId, $js['runId'], ['runtime' => 'desktop', 'instanceId' => 'desk-legacy'])['status']);
+        // An unknown run keeps its not-found answer even for an engine-down claimant.
+        $this->assertNull(self::$flows->claimOwnerRun($this->ownerId, 'no-such-run', ['runtime' => 'desktop', 'instanceId' => 'desk-down']));
+    }
+
+    public function testQueuedListingsAndTheFlowListAreEmptyForAnEngineDownDesktop(): void
+    {
+        $legacyKey = $this->linkDesktop('desk-legacy', null);
+        $downKey = $this->linkDesktop('desk-down', ['logic-language:javascript', 'logic-language:python']);
+        $upKey = $this->linkDesktop('desk-up', ['logic-language:javascript', 'logic-language:python', self::ENGINE]);
+        $py = $this->enqueue('py-ws', '2026-01-01 00:00:00');
+        $js = $this->enqueue('js-ws', '2026-01-01 00:01:00');
+
+        // Service: the instance's stored heartbeat decides, over the declared languages.
+        $this->assertSame([], self::$flows->listOwnerQueuedRuns($this->ownerId, 50, self::BOTH, 'desk-down'));
+        $this->assertSame([$js['runId']], array_column(self::$flows->listOwnerQueuedRuns($this->ownerId, 50, null, 'desk-legacy'), 'runId'));
+        $this->assertSame([$py['runId'], $js['runId']], array_column(self::$flows->listOwnerQueuedRuns($this->ownerId, 50, self::BOTH, 'desk-legacy'), 'runId'));
+        $this->assertSame([$py['runId'], $js['runId']], array_column(self::$flows->listOwnerQueuedRuns($this->ownerId, 50, self::BOTH, 'desk-up'), 'runId'));
+        // No instance (a session caller): the declaration alone, as before.
+        $this->assertSame([$js['runId']], array_column(self::$flows->listOwnerQueuedRuns($this->ownerId, 50, null), 'runId'));
+
+        // Controllers: the API key's connection binding is the identity (FL-01).
+        $queued = fn (?string $key): array => array_column(
+            $this->call('GET', fn ($rq, $rs) => self::$ctrl->listOwnerQueuedRuns($rq, $rs), null, ['logicLanguages' => 'javascript,python'], $key)[1]['runs'],
+            'runId'
+        );
+        $this->assertSame([], $queued($downKey));
+        $this->assertSame([$py['runId'], $js['runId']], $queued($legacyKey));
+        $this->assertSame([$py['runId'], $js['runId']], $queued($upKey));
+        $this->assertSame([$py['runId'], $js['runId']], $queued(null));
+
+        $flows = function (?string $key, array $query = ['logicLanguages' => 'javascript,python']): array {
+            [$code, $body] = $this->call('GET', fn ($rq, $rs) => self::$ctrl->listOwnerFlows($rq, $rs), null, $query, $key);
+            $this->assertSame(200, $code);
+            $out = array_column($body['flows'], 'slug');
+            sort($out);
+            return $out;
+        };
+        $this->assertSame([], $flows($downKey), 'its graph fetch fails closed: it runs nothing');
+        $this->assertSame([], $flows($downKey, []));
+        $this->assertSame(['js-flow', 'js-ws', 'py-flow', 'py-ws'], $flows($legacyKey));
+        $this->assertSame(['js-flow', 'js-ws'], $flows($legacyKey, []));
+        $this->assertSame(['js-flow', 'js-ws', 'py-flow', 'py-ws'], $flows($upKey));
+        $this->assertSame(['js-flow', 'js-ws'], $flows($upKey, []), 'the body never widens beyond what it declared');
+
+        // A key bound to no connection, or a claimed instance the key does not own, behave as the
+        // write surface does: unbound is judged on the declaration, impersonation is 403.
+        $this->assertSame([$py['runId'], $js['runId']], $queued('key-unbound'));
+        [$code, $body] = $this->call('GET', fn ($rq, $rs) => self::$ctrl->listOwnerQueuedRuns($rq, $rs), null, ['instanceId' => 'desk-up'], $downKey);
+        $this->assertSame(403, $code);
+        $this->assertSame('instance_mismatch', $body['code']);
+    }
+
+    public function testControllersAnswer409EngineUnavailable(): void
+    {
+        $downKey = $this->linkDesktop('desk-down', ['logic-language:javascript']);
+        $legacyKey = $this->linkDesktop('desk-legacy', null);
+
+        [$code, $body] = $this->call('POST', fn ($rq, $rs) => self::$ctrl->reserveOwnerRun($rq, $rs), $this->reservePayload('js-ws', null), [], $downKey);
+        $this->assertSame(409, $code);
+        $this->assertSame('engine_unavailable', $body['code']);
+        $this->assertStringContainsString('not reporting healthy', $body['message']);
+        $this->assertArrayNotHasKey('languages', $body);
+        $this->assertSame(['runs' => 0, 'versions' => 0], $this->rowsFor('js-ws'));
+        [$code] = $this->call('POST', fn ($rq, $rs) => self::$ctrl->reserveOwnerRun($rq, $rs), $this->reservePayload('js-ws', null), [], $legacyKey);
+        $this->assertSame(201, $code);
+
+        $js = $this->enqueue('js-ws', '2026-01-01 00:00:00');
+        [$code, $body] = $this->call('POST', fn ($rq, $rs) => self::$ctrl->claimOwnerRun($rq, $rs, ['runId' => $js['runId']]), ['runtime' => 'desktop', 'logicLanguages' => self::BOTH], [], $downKey);
+        $this->assertSame(409, $code);
+        $this->assertSame('engine_unavailable', $body['code']);
+        $this->assertSame('queued', $this->runRow($js['runId'])['status']);
+        [$code] = $this->call('POST', fn ($rq, $rs) => self::$ctrl->claimOwnerRun($rq, $rs, ['runId' => $js['runId']]), ['runtime' => 'desktop'], [], $legacyKey);
+        $this->assertSame(200, $code);
+        $this->assertSame('desk-legacy', $this->runRow($js['runId'])['claimed_by'], 'the key-bound identity, as before');
+    }
+
+    /**
+     * The stored heartbeat against the body's `logicLanguages` when they disagree: the heartbeat
+     * alone says whether the engine is up; a language runs only when both name it.
+     */
+    public function testTheStoredHeartbeatIsReconciledWithTheDeclaredLanguages(): void
+    {
+        $this->linkDesktop('desk-legacy', null);
+        $this->linkDesktop('desk-js', ['logic-language:javascript', self::ENGINE]);
+        $this->linkDesktop('desk-py', ['logic-language:javascript', 'logic-language:python', self::ENGINE]);
+        $run = fn (): array => $this->enqueue('py-ws', '2026-01-01 00:00:00');
+
+        // The heartbeat names JavaScript only: declaring Python in the body does not widen it.
+        $py = $run();
+        $e = $this->refused(fn () => self::$flows->claimOwnerRun($this->ownerId, $py['runId'], ['runtime' => 'desktop', 'instanceId' => 'desk-js', 'logicLanguages' => self::BOTH]));
+        $this->assertSame(['python'], $e->languages);
+        $this->assertSame('queued', $this->runRow($py['runId'])['status']);
+        $this->refused(fn () => self::$flows->reserveOwnerRun($this->ownerId, $this->reservePayload('py-ws', self::BOTH) + ['instanceId' => 'desk-js']));
+
+        // The heartbeat names Python, the body does not (or says nothing): never handed Python.
+        $this->refused(fn () => self::$flows->claimOwnerRun($this->ownerId, $py['runId'], ['runtime' => 'desktop', 'instanceId' => 'desk-py', 'logicLanguages' => ['javascript']]));
+        $this->refused(fn () => self::$flows->claimOwnerRun($this->ownerId, $py['runId'], ['runtime' => 'desktop', 'instanceId' => 'desk-py']));
+        // Both agree: claimed.
+        $this->assertSame('running', self::$flows->claimOwnerRun($this->ownerId, $py['runId'], ['runtime' => 'desktop', 'instanceId' => 'desk-py', 'logicLanguages' => self::BOTH])['status']);
+
+        // A legacy heartbeat leaves the body in charge — today's OAIY declares its languages in
+        // the body and sends no tokens, and keeps claiming Python exactly as before.
+        $py = $run();
+        $this->assertSame('running', self::$flows->claimOwnerRun($this->ownerId, $py['runId'], ['runtime' => 'desktop', 'instanceId' => 'desk-legacy', 'logicLanguages' => self::BOTH])['status']);
+        $this->assertTrue(self::$flows->reserveOwnerRun($this->ownerId, $this->reservePayload('py-ws', self::BOTH) + ['instanceId' => 'desk-legacy'])['created']);
+        // Listings follow the same reconciliation.
+        $py = $run();
+        $this->assertSame([], array_column(self::$flows->listOwnerQueuedRuns($this->ownerId, 50, self::BOTH, 'desk-js'), 'runId'));
+        $this->assertSame([], array_column(self::$flows->listOwnerQueuedRuns($this->ownerId, 50, null, 'desk-py'), 'runId'));
+        $this->assertSame([$py['runId']], array_column(self::$flows->listOwnerQueuedRuns($this->ownerId, 50, self::BOTH, 'desk-py'), 'runId'));
+        $this->assertSame([$py['runId']], array_column(self::$flows->listOwnerQueuedRuns($this->ownerId, 50, self::BOTH, 'desk-legacy'), 'runId'));
+    }
 
     public function testControllersAnswer409LanguageUnsupportedAnd400ForMalformedLists(): void
     {

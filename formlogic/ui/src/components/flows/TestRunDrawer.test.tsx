@@ -317,9 +317,9 @@ describe('TestRunDrawer — run dispatch per executionLocation', () => {
       expect(buttonByText(container, 'Run in browser').disabled).toBe(false);
     });
 
-    it('is enabled once the target computer advertises logic-language:python', async () => {
+    it('is enabled once the target computer advertises logic-language:python with its engine up', async () => {
       getDesktopConnectionsMock.mockResolvedValue({ data: { connections: [
-        { desktopInstanceId: 'oaiy-home', deviceName: 'Home PC', lastSeenAt: now(), capabilities: ['relay.flows', 'logic-language:python'] },
+        { desktopInstanceId: 'oaiy-home', deviceName: 'Home PC', lastSeenAt: now(), capabilities: ['relay.flows', 'logic-language:python', 'logic-engine:zipp'] },
       ] } });
       runFlowOnDesktopMock.mockResolvedValue({ ok: true, data: { status: 'done', result: 2 } });
       const container = await renderDrawer({}, 'desktop', PY_NODES);
@@ -333,7 +333,7 @@ describe('TestRunDrawer — run dispatch per executionLocation', () => {
 
     it('follows the explicitly selected computer', async () => {
       getDesktopConnectionsMock.mockResolvedValue({ data: { connections: [
-        { desktopInstanceId: 'oaiy-home', deviceName: 'Home PC', lastSeenAt: now(), capabilities: ['logic-language:python'] },
+        { desktopInstanceId: 'oaiy-home', deviceName: 'Home PC', lastSeenAt: now(), capabilities: ['logic-language:python', 'logic-engine:zipp'] },
         { desktopInstanceId: 'oaiy-office', deviceName: 'Office PC', lastSeenAt: now(), capabilities: [] },
       ] } });
       const container = await renderDrawer({}, 'desktop', PY_NODES);
@@ -366,6 +366,67 @@ describe('TestRunDrawer — run dispatch per executionLocation', () => {
       expect(buttonByText(container, 'Run via Desktop relay').disabled).toBe(false);
       expect(container.querySelector('[data-testid="relay-language-note"]')).toBeNull();
       expect(compileFlowMock).not.toHaveBeenCalled();
+    });
+  });
+
+  // A Desktop that names a language in its heartbeat is ZIPP-era, and runs logic only while it
+  // also sends logic-engine:zipp. The server refuses the enqueue for one that does not (409
+  // engine_unavailable) — for a JavaScript flow too — and the drawer says why, truthfully.
+  describe('desktop relay and engine health', () => {
+    const JS_NODES = [{ id: 'l', type: 'logic_block', data: { expr: 'inputs.n / 2' } }];
+    const now = () => new Date().toISOString();
+
+    async function selectComputer(container: HTMLElement, id: string): Promise<void> {
+      const select = container.querySelector('select')!;
+      await act(async () => {
+        select.value = id;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    }
+
+    it('a JavaScript flow is blocked when the only online computer has its engine down, with the true reason', async () => {
+      getDesktopConnectionsMock.mockResolvedValue({ data: { connections: [
+        { desktopInstanceId: 'oaiy-home', deviceName: 'Home PC', lastSeenAt: now(), capabilities: ['logic-language:javascript', 'logic-language:python'] },
+      ] } });
+      const container = await renderDrawer({}, 'desktop', JS_NODES);
+      const relay = buttonByText(container, 'Run via Desktop relay');
+      expect(relay.disabled).toBe(true);
+      const note = container.querySelector('[data-testid="relay-language-note"]');
+      expect(note?.textContent).toContain('Home PC');
+      expect(note?.textContent).toContain('engine is not reporting healthy');
+      expect(note?.textContent).not.toContain('does not run');
+      expect(note?.textContent).not.toContain('Python');
+      await click(relay);
+      expect(runFlowOnDesktopMock).not.toHaveBeenCalled();
+      expect(buttonByText(container, 'Run in browser').disabled).toBe(false);
+    });
+
+    it('the same computer with its engine up takes the JavaScript flow', async () => {
+      getDesktopConnectionsMock.mockResolvedValue({ data: { connections: [
+        { desktopInstanceId: 'oaiy-home', deviceName: 'Home PC', lastSeenAt: now(), capabilities: ['logic-language:javascript', 'logic-engine:zipp'] },
+      ] } });
+      runFlowOnDesktopMock.mockResolvedValue({ ok: true, data: { status: 'done', result: 2 } });
+      const container = await renderDrawer({}, 'desktop', JS_NODES);
+      expect(buttonByText(container, 'Run via Desktop relay').disabled).toBe(false);
+      expect(container.querySelector('[data-testid="relay-language-note"]')).toBeNull();
+      await click(buttonByText(container, 'Run via Desktop relay'));
+      await flush();
+      expect(runFlowOnDesktopMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('follows the explicitly selected computer: a healthy one is fine, an engine-down one is refused', async () => {
+      getDesktopConnectionsMock.mockResolvedValue({ data: { connections: [
+        { desktopInstanceId: 'oaiy-home', deviceName: 'Home PC', lastSeenAt: now(), capabilities: ['logic-language:javascript', 'logic-engine:zipp'] },
+        { desktopInstanceId: 'oaiy-office', deviceName: 'Office PC', lastSeenAt: now(), capabilities: ['logic-language:javascript'] },
+      ] } });
+      const container = await renderDrawer({}, 'desktop', JS_NODES);
+      // The server picks: Home PC can take it, so nothing is certain to be refused.
+      expect(buttonByText(container, 'Run via Desktop relay').disabled).toBe(false);
+      await selectComputer(container, 'oaiy-office');
+      expect(buttonByText(container, 'Run via Desktop relay').disabled).toBe(true);
+      expect(container.querySelector('[data-testid="relay-language-note"]')?.textContent).toContain("Office PC's engine is not reporting healthy");
+      await selectComputer(container, 'oaiy-home');
+      expect(buttonByText(container, 'Run via Desktop relay').disabled).toBe(false);
     });
   });
 

@@ -95,7 +95,11 @@ in FormLogic in the browser. `GET /api/v1/app-logic` (the catalogue a Desktop ru
 scripts from) lists them only to a caller that sends `?languages=javascript,python`, so a Desktop built
 before Python never runs one as JavaScript; while a fresh Desktop does not advertise
 `logic-language:python`, the browser keeps running the Python scripts for the events it defers
-(`useDesktopConnectorEvents`). The app runtime's own reads — `GET /api/app/{slug}` (app scripts) and
+(`useDesktopConnectorEvents`) — and while a ZIPP-era Desktop (one advertising any `logic-language:*`
+token) does not also advertise `logic-engine:zipp`, its engine is not reporting healthy and the browser
+keeps every script, JavaScript included; the server's relay, reserve, claim and listing gates apply the
+same rule to the stored heartbeat (`409 engine_unavailable`; docs/FORMLOGIC_DESKTOP.md §8). The app
+runtime's own reads — `GET /api/app/{slug}` (app scripts) and
 `GET /api/app/{slug}/forms/{formId}` (form scripts) — follow the same `?languages=` rule, which the
 current client sends: a browser tab still on a bundle from before Python receives only JavaScript
 scripts. The owner's editing reads are never filtered. A pack connector's `demoDriver` stays
