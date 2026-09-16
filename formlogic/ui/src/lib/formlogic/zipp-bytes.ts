@@ -20,10 +20,23 @@ async function sha256(bytes: ArrayBuffer): Promise<string> {
   return Array.from(digest, value => value.toString(16).padStart(2, '0')).join('');
 }
 
-export function matchesZippRuntime(value: unknown): boolean {
-  if (!value || typeof value !== 'object') return false;
-  const identity = value as { version?: unknown; sha256?: unknown };
-  return identity.version === ZIPP_RUNTIME_IDENTITY.version && identity.sha256 === ZIPP_RUNTIME_IDENTITY.sha256;
+/** What a hosted-runtime shell must announce for an engine to be the one this page holds. */
+export type EngineIdentity = { version: string; sha256: string };
+
+/**
+ * The engines this page can boot, and the identity each one's shell must announce.
+ *
+ * Only the ZIPP JavaScript-and-Python engine today: it is the only one the installed hosted
+ * runtime serves and the only one these bytes are. The table is the parent's half of the
+ * handshake — an id it does not name can never be chosen, so it can never be asked for bytes.
+ */
+const FRAME_ENGINES: Readonly<Record<string, EngineIdentity>> = Object.freeze({
+  'zipp-web-python': ZIPP_RUNTIME_IDENTITY,
+});
+
+/** The identity an engine's shell must announce, or undefined when this page cannot boot it. */
+export function engineIdentity(id: string): EngineIdentity | undefined {
+  return Object.hasOwn(FRAME_ENGINES, id) ? FRAME_ENGINES[id] : undefined;
 }
 
 /**
@@ -55,3 +68,15 @@ export function createWasmByteBroker(expectedSha256: string, load: () => Promise
 export const getZippWasmBytes = createWasmByteBroker(ZIPP_RUNTIME_IDENTITY.sha256, () =>
   fetch(wasmUrl, { credentials: 'omit', signal: AbortSignal.timeout(90_000) })
 );
+
+/**
+ * The engine bytes one id needs, from the page's single cache.
+ *
+ * Only ids {@link engineIdentity} knows can reach here, so the throw is a seam marker rather than
+ * a reachable path: an engine that needs no bytes (host JavaScript) will answer differently here,
+ * not be given ZIPP's.
+ */
+export function getEngineBytes(id: string): Promise<ArrayBuffer> {
+  if (id !== 'zipp-web-python') return Promise.reject(new Error('This app runtime does not have the engine this app needs.'));
+  return getZippWasmBytes();
+}

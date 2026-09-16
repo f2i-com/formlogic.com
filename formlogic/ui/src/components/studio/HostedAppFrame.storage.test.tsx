@@ -9,9 +9,10 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const { getBytes } = vi.hoisted(() => ({ getBytes: vi.fn() }));
 vi.mock('../../lib/formlogic/zipp-bytes', () => ({
   getZippWasmBytes: getBytes,
-  matchesZippRuntime: (value: { version?: string; sha256?: string } | undefined) => value?.version === '0.0.17' && value?.sha256 === 'current',
+  getEngineBytes: getBytes,
+  engineIdentity: (id: string) => (id === 'zipp-web-python' ? { version: '0.0.17', sha256: 'current' } : undefined),
 }));
-vi.mock('../../lib/api', () => ({ api: { runHostedAction: vi.fn(), runNativeRequest: vi.fn() } }));
+vi.mock('../../lib/api', () => ({ api: { runHostedAction: vi.fn(), runNativeRequest: vi.fn(), getHostedRuntime: vi.fn(), getNativeRuntime: vi.fn() } }));
 vi.mock('../../lib/softn/workspaceBridge', () => ({ workspaceBridge: vi.fn() }));
 import { HostedAppFrame } from './HostedAppFrame';
 import { NATIVE_PROTOCOL } from '../../lib/softn/protocol';

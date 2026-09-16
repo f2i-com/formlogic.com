@@ -47,7 +47,7 @@ try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   browser = await chromium.launch();
-  for (const order of ['expression-first', 'app-first', 'concurrent', 'without-webcrypto', 'download-retry', 'stale-host']) {
+  for (const order of ['expression-first', 'app-first', 'concurrent', 'without-webcrypto', 'download-retry', 'stale-host', 'self-navigation']) {
     // Fresh context + fixture without PWA registration avoids cached engines.
     // Playwright's serviceWorkers:block init script itself throws when reading
     // navigator.serviceWorker inside this deliberately opaque sandboxed iframe.
@@ -75,6 +75,11 @@ try {
       if (order === 'stale-host' && url.pathname === '/hosted-runtime/index.html') {
         return route.fulfill({ contentType: 'text/html', body: `<script>parent.postMessage({type:'formlogic:ready',zipp:{version:'0.0.1',sha256:'old'}},'*')</script>` });
       }
+      // A frame that replaces its own document. sandbox=allow-scripts permits this and the parent
+      // cannot prevent it, so the check is that the parent notices: no archive is involved.
+      if (order === 'self-navigation' && url.pathname === '/hosted-runtime/index.html') {
+        return route.fulfill({ contentType: 'text/html', body: `<script>if (!location.search) setTimeout(() => { location.search = '?elsewhere'; }, 50)</script>` });
+      }
       return route.continue();
     });
     await page.goto(`${origin}/e2e/fixtures/zipp-sharing.html`);
@@ -99,6 +104,11 @@ try {
       await page.getByRole('button', { name: 'Open app', exact: true }).click();
       await expect(page.getByRole('alert')).toContainText('out of date');
       assert.equal(wasmRequests.length, 0, 'An incompatible shell must not receive engine bytes');
+    } else if (order === 'self-navigation') {
+      await page.getByRole('button', { name: 'Open app', exact: true }).click();
+      await expect(page.getByRole('alert')).toContainText('tried to navigate away');
+      await expect(page.locator('iframe')).toHaveCount(0);
+      assert.equal(wasmRequests.length, 0, 'A frame that left its runtime must not receive engine bytes');
     } else {
       if (order === 'download-retry') {
         await page.getByRole('button', { name: 'Evaluate expression' }).click();

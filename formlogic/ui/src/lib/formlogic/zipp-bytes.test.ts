@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createWasmByteBroker, matchesZippRuntime, ZIPP_RUNTIME_IDENTITY } from './zipp-bytes';
+import { createWasmByteBroker, engineIdentity, getEngineBytes, ZIPP_RUNTIME_IDENTITY } from './zipp-bytes';
 
 const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
 const sha256 = createHash('sha256').update(bytes).digest('hex');
@@ -39,11 +39,17 @@ describe('page engine byte broker', () => {
     expect(new Uint8Array(await get())).toEqual(bytes);
   });
 
-  it('requires both the version and hash from the hosted shell', () => {
-    expect(matchesZippRuntime(ZIPP_RUNTIME_IDENTITY)).toBe(true);
-    expect(matchesZippRuntime({ version: ZIPP_RUNTIME_IDENTITY.version, sha256: 'old' })).toBe(false);
-    expect(matchesZippRuntime({ ...ZIPP_RUNTIME_IDENTITY, version: '0.0.1' })).toBe(false);
-    expect(matchesZippRuntime(undefined)).toBe(false);
+  it('names the identity of the one engine this page holds, and nothing else', () => {
+    // The parent's half of the handshake: an id that is not in this table can never be chosen,
+    // so the frame can never ask a shell for an engine these bytes are not.
+    expect(engineIdentity('zipp-web-python')).toEqual({ version: ZIPP_RUNTIME_IDENTITY.version, sha256: ZIPP_RUNTIME_IDENTITY.sha256 });
+    expect(engineIdentity('zipp-web')).toBeUndefined();
+    expect(engineIdentity('host-js')).toBeUndefined();
+    expect(engineIdentity('constructor')).toBeUndefined();
+  });
+
+  it('serves bytes for that engine alone', async () => {
+    await expect(getEngineBytes('host-js')).rejects.toThrow('does not have the engine');
   });
 
   it('verifies bytes on an HTTP LAN context without SubtleCrypto', async () => {

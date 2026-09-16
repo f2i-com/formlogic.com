@@ -75,6 +75,21 @@ interface ApiResponse<T> {
    *  404 apart from a transport/server failure. Undefined on network errors and on
    *  success — never branch on it without also checking `error`. */
   status?: number;
+  /** The typed `code` from an error envelope ({error:true, code, message}), when the server sent
+   *  one: a status alone cannot tell engine_changed apart from any other 409. */
+  code?: string;
+}
+
+/**
+ * `<id>;<revision>` of the engine decision a hosted frame was mounted with, if it has one.
+ *
+ * The header grants nothing: the server re-decides for itself and answers 409 engine_changed when
+ * its answer has moved on, so a page opened before a revocation is told to remount instead of
+ * finishing its session on the engine it was given. Sending none is exactly what every page did
+ * before, and is not a mismatch.
+ */
+function clientEngineHeader(clientEngine?: string): { headers?: Record<string, string> } {
+  return clientEngine ? { headers: { 'X-FormLogic-Client-Engine': clientEngine } } : {};
 }
 
 /** Result of running an onSubmit script via the test endpoint (mirrors ScriptResult). */
@@ -871,7 +886,7 @@ class ApiClient {
           const fieldMsgs = Object.values(d.errors as Record<string, unknown>).filter((v): v is string => typeof v === 'string');
           if (fieldMsgs.length > 0) message = `${message}: ${fieldMsgs.join('; ')}`;
         }
-        return { error: message, status: response.status };
+        return { error: message, status: response.status, ...(typeof d?.code === 'string' ? { code: d.code } : {}) };
       }
 
       return { data };
@@ -1960,8 +1975,8 @@ class ApiClient {
   async getNativeRuntime(slug: string): Promise<ApiResponse<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string } }>> {
     return this.request(`/app/${encodeURIComponent(slug)}/native`);
   }
-  async runNativeRequest(slug: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<ApiResponse<{ result: { status: number; body: unknown } }>> {
-    return this.request(`/app/${encodeURIComponent(slug)}/native/request`, { method: 'POST', body: JSON.stringify(input), signal });
+  async runNativeRequest(slug: string, input: Record<string, unknown>, signal?: AbortSignal, clientEngine?: string): Promise<ApiResponse<{ result: { status: number; body: unknown } }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/native/request`, { method: 'POST', body: JSON.stringify(input), signal, ...clientEngineHeader(clientEngine) });
   }
 
   async getAppHosting(id: string): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment | null; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
@@ -1983,8 +1998,8 @@ class ApiClient {
   async getHostedRuntime(slug: string): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment; name: string; engine?: { id: ClientEngineId; revision: string } }>> {
     return this.request(`/app/${encodeURIComponent(slug)}/hosting`);
   }
-  async runHostedAction(slug: string, action: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<ApiResponse<{ result: unknown }>> {
-    return this.request(`/app/${encodeURIComponent(slug)}/actions/${encodeURIComponent(action)}`, { method: 'POST', body: JSON.stringify(input), signal });
+  async runHostedAction(slug: string, action: string, input: Record<string, unknown>, signal?: AbortSignal, clientEngine?: string): Promise<ApiResponse<{ result: unknown }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/actions/${encodeURIComponent(action)}`, { method: 'POST', body: JSON.stringify(input), signal, ...clientEngineHeader(clientEngine) });
   }
 
   async getApp(id: string): Promise<ApiResponse<{ app: unknown }>> {
