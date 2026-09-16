@@ -295,6 +295,10 @@ describe('desktop-first routing for connector events', () => {
 // and hides Python work from any caller that does not declare it. The browser therefore defers
 // a desktop-first binding only when a fresh Desktop can run every language its flow has code in
 // ('logic-language:python' in its heartbeat capabilities); everything else stays here.
+// OAIY-on-ZIPP (docs/FORMLOGIC_DESKTOP.md §8, "Desktop capability vocabulary"): a Desktop whose
+// heartbeat names any 'logic-language:*' token is ZIPP-era and takes work only while it also
+// sends 'logic-engine:zipp' (its script host is healthy); a Desktop naming no token is a legacy
+// build and takes JavaScript as it always has.
 describe('Python bindings and the desktop-first split', () => {
   function pythonGraph(): RuntimeFlows['flows'][number] {
     return {
@@ -357,8 +361,8 @@ describe('Python bindings and the desktop-first split', () => {
 
   const reservedBindings = (harness: Harness) => harness.reserveCalls.map((c) => c.bindingId);
 
-  it('a fresh Desktop without the python token takes the JavaScript binding; the Python one runs here', async () => {
-    const status: DesktopRuntimeStatus = { fresh: true, freshCapabilities: [['desktop-capabilities:1', 'logic-engine:zipp']] };
+  it('a healthy ZIPP-era Desktop without the python token takes the JavaScript binding; the Python one runs here', async () => {
+    const status: DesktopRuntimeStatus = { fresh: true, freshCapabilities: [['logic-language:javascript', 'logic-engine:zipp']] };
     const { harness, evaluateExpression } = install(async () => status);
     await dispatchFormEvent(EVENT, { formId: 'form-1', responseId: 'rp1', answers: { phone: '+617' } });
     expect(reservedBindings(harness)).toEqual(['b-py']);
@@ -366,16 +370,38 @@ describe('Python bindings and the desktop-first split', () => {
     expect(harness.completeCalls[0].payload).toMatchObject({ status: 'done', result: { value: '+617' } });
   });
 
-  it('a boolean probe (capabilities unknown) is a JavaScript-only Desktop', async () => {
+  it('a legacy Desktop (no capability tokens at all) still takes the JavaScript binding; the Python one runs here', async () => {
+    const { harness } = install(async () => ({ fresh: true, freshCapabilities: [[]] }));
+    await dispatchFormEvent(EVENT, { formId: 'form-1', responseId: 'rp1b', answers: {} });
+    expect(reservedBindings(harness)).toEqual(['b-py']);
+  });
+
+  it('a boolean probe (capabilities unknown) is a legacy, JavaScript-only Desktop', async () => {
     const { harness } = install(async () => true);
     await dispatchFormEvent(EVENT, { formId: 'form-1', responseId: 'rp2', answers: {} });
     expect(reservedBindings(harness)).toEqual(['b-py']);
   });
 
-  it('a fresh Desktop advertising logic-language:python takes every binding', async () => {
+  it('a ZIPP-era Desktop whose engine is down (language token, no logic-engine:zipp) takes nothing: both bindings run here', async () => {
+    const { harness } = install(async () => ({ fresh: true, freshCapabilities: [['logic-language:javascript']] }));
+    await dispatchFormEvent(EVENT, { formId: 'form-1', responseId: 'rp2b', answers: {} });
+    expect(reservedBindings(harness).sort()).toEqual(['b-js', 'b-py']);
+  });
+
+  // Before PR-A this fixture "took every binding": the python row took the Python binding on its
+  // language token alone. A row naming a language is ZIPP-era, and without 'logic-engine:zipp'
+  // its engine is down, so it takes nothing; the legacy row still takes JavaScript.
+  it('a legacy row takes JavaScript; a ZIPP-era row advertising logic-language:python without the engine token takes nothing', async () => {
     const status: DesktopRuntimeStatus = { fresh: true, freshCapabilities: [[], ['logic-language:python']] };
     const { harness } = install(async () => status);
     await dispatchFormEvent(EVENT, { formId: 'form-1', responseId: 'rp3', answers: {} });
+    expect(reservedBindings(harness)).toEqual(['b-py']);
+  });
+
+  it('a healthy ZIPP-era Desktop advertising logic-language:python takes every binding', async () => {
+    const status: DesktopRuntimeStatus = { fresh: true, freshCapabilities: [['logic-language:python', 'logic-engine:zipp']] };
+    const { harness } = install(async () => status);
+    await dispatchFormEvent(EVENT, { formId: 'form-1', responseId: 'rp3b', answers: {} });
     expect(harness.reserveCalls).toHaveLength(0);
   });
 
@@ -408,7 +434,7 @@ describe('Python bindings and the desktop-first split', () => {
       edges: [{ source: 'in', target: 'h' }],
     } } } as never);
     try {
-      const { harness } = install(async () => ({ fresh: true, freshCapabilities: [['desktop-capabilities:1']] }));
+      const { harness } = install(async () => ({ fresh: true, freshCapabilities: [['logic-language:javascript', 'logic-engine:zipp']] }));
       const preset: RuntimeFlows['flows'][number] = {
         ...passthroughGraph(),
         id: 'fd-preset',
@@ -437,7 +463,7 @@ describe('Python bindings and the desktop-first split', () => {
   });
 
   it('shouldDeferEventToDesktop takes the languages of the work', async () => {
-    installDeps({ desktopRuntimeFresh: async () => ({ fresh: true, freshCapabilities: [['desktop-capabilities:1']] }) });
+    installDeps({ desktopRuntimeFresh: async () => ({ fresh: true, freshCapabilities: [[]] }) });
     expect(await shouldDeferEventToDesktop('aokie.call.incoming')).toBe(true);
     expect(await shouldDeferEventToDesktop('aokie.call.incoming', ['javascript'])).toBe(true);
     expect(await shouldDeferEventToDesktop('aokie.call.incoming', ['javascript', 'python'])).toBe(false);
@@ -445,23 +471,98 @@ describe('Python bindings and the desktop-first split', () => {
     expect(await shouldDeferEventToDesktop('aokie.call.incoming', ['ruby'])).toBe(false);
     expect(await shouldDeferEventToDesktop('form.submitted', [])).toBe(false);
 
-    expect(desktopTakesLanguages({ fresh: true, freshCapabilities: [['logic-language:python']] }, ['python'])).toBe(true);
+    // ZIPP-era Desktop, engine down: not even JavaScript is deferred (the browser runs it on ZIPP).
+    installDeps({ desktopRuntimeFresh: async () => ({ fresh: true, freshCapabilities: [['logic-language:javascript']] }) });
+    expect(await shouldDeferEventToDesktop('aokie.call.incoming')).toBe(false);
+    expect(await shouldDeferEventToDesktop('aokie.call.incoming', ['javascript'])).toBe(false);
+    // The same Desktop with a healthy engine.
+    installDeps({ desktopRuntimeFresh: async () => ({ fresh: true, freshCapabilities: [['logic-language:javascript', 'logic-engine:zipp']] }) });
+    expect(await shouldDeferEventToDesktop('aokie.call.incoming')).toBe(true);
+    expect(await shouldDeferEventToDesktop('aokie.call.incoming', ['javascript'])).toBe(true);
+    expect(await shouldDeferEventToDesktop('aokie.call.incoming', ['javascript', 'python'])).toBe(false);
+
+    // Before PR-A the python token alone took Python (true); it now marks a ZIPP-era Desktop
+    // whose engine token is absent, so it takes nothing.
+    expect(desktopTakesLanguages({ fresh: true, freshCapabilities: [['logic-language:python']] }, ['python'])).toBe(false);
+    expect(desktopTakesLanguages({ fresh: true, freshCapabilities: [['logic-language:python', 'logic-engine:zipp']] }, ['python'])).toBe(true);
     expect(desktopTakesLanguages({ fresh: true, freshCapabilities: [] }, [])).toBe(true);
     expect(desktopTakesLanguages({ fresh: false, freshCapabilities: [['logic-language:python']] }, [])).toBe(false);
+  });
+
+  // The gate itself, one state per line (docs/FORMLOGIC_DESKTOP.md §8 "Desktop capability vocabulary").
+  describe('desktopTakesLanguages — legacy vs ZIPP-era Desktops', () => {
+    const takes = (rows: string[][], languages: string[]) => desktopTakesLanguages({ fresh: true, freshCapabilities: rows }, languages);
+    const JS = ['javascript'];
+    const JS_PY = ['javascript', 'python'];
+
+    it('a legacy Desktop (no tokens) takes JavaScript only, exactly as before', () => {
+      expect(takes([[]], [])).toBe(true);
+      expect(takes([[]], JS)).toBe(true);
+      expect(takes([[]], ['python'])).toBe(false);
+      expect(takes([[]], JS_PY)).toBe(false);
+      // Unrelated tokens (relay scopes, future vocabulary) do not make a Desktop ZIPP-era.
+      expect(takes([['relay.flows']], JS)).toBe(true);
+    });
+
+    it('fresh with no rows (the boolean probe) is ONE legacy row, not zero rows', () => {
+      expect(takes([], [])).toBe(true);
+      expect(takes([], JS)).toBe(true);
+      expect(takes([], ['python'])).toBe(false);
+    });
+
+    it('a ZIPP-era Desktop without logic-engine:zipp takes NOTHING — the browser runs the event', () => {
+      expect(takes([['logic-language:javascript']], [])).toBe(false);
+      expect(takes([['logic-language:javascript']], JS)).toBe(false);
+      expect(takes([['logic-language:python']], ['python'])).toBe(false);
+      expect(takes([['logic-language:javascript', 'logic-language:python']], JS_PY)).toBe(false);
+    });
+
+    it('a ZIPP-era Desktop with logic-engine:zipp takes the languages its tokens name', () => {
+      expect(takes([['logic-language:javascript', 'logic-engine:zipp']], [])).toBe(true);
+      expect(takes([['logic-language:javascript', 'logic-engine:zipp']], JS)).toBe(true);
+      expect(takes([['logic-language:javascript', 'logic-engine:zipp']], ['python'])).toBe(false);
+      expect(takes([['logic-language:javascript', 'logic-engine:zipp']], JS_PY)).toBe(false);
+      expect(takes([['logic-language:javascript', 'logic-language:python', 'logic-engine:zipp']], JS_PY)).toBe(true);
+      expect(takes([['logic-language:python', 'logic-engine:zipp']], JS_PY)).toBe(true);
+    });
+
+    it('the engine token alone (no language token) is not a ZIPP-era marker: it reads as legacy', () => {
+      expect(takes([['logic-engine:zipp']], JS)).toBe(true);
+      expect(takes([['logic-engine:zipp']], ['python'])).toBe(false);
+    });
+
+    it('a mixed fleet: one legacy row and one ZIPP-era row with its engine down still defers JavaScript via the legacy row', () => {
+      expect(takes([[], ['logic-language:javascript']], JS)).toBe(true);
+      expect(takes([['logic-language:javascript'], []], JS)).toBe(true);
+      expect(takes([[], ['logic-language:python']], ['python'])).toBe(false);
+      expect(takes([['logic-language:javascript'], ['logic-language:python', 'logic-engine:zipp']], JS_PY)).toBe(true);
+    });
+
+    it('a stale probe never defers, whatever the rows say', () => {
+      expect(desktopTakesLanguages({ fresh: false, freshCapabilities: [[]] }, JS)).toBe(false);
+      expect(desktopTakesLanguages({ fresh: false, freshCapabilities: [['logic-language:javascript', 'logic-engine:zipp']] }, JS)).toBe(false);
+      expect(desktopTakesLanguages({ fresh: false, freshCapabilities: [] }, [])).toBe(false);
+    });
   });
 
   it('languagesKeptInBrowser: the app-logic split — what a fresh Desktop does not take stays here', async () => {
     const probe = vi.fn<NonNullable<FlowDispatcherDeps['desktopRuntimeFresh']>>();
     installDeps({ desktopRuntimeFresh: probe });
 
-    probe.mockResolvedValue({ fresh: true, freshCapabilities: [['desktop-capabilities:1']] });
+    probe.mockResolvedValue({ fresh: true, freshCapabilities: [['logic-language:javascript', 'logic-engine:zipp']] });
     expect(await languagesKeptInBrowser('aokie.call.incoming', BROWSER_LOGIC_LANGUAGES)).toEqual(['python']);
     expect(probe).toHaveBeenCalledTimes(1);
 
+    // Before PR-A this row took everything ([]): a language token without 'logic-engine:zipp' is
+    // a ZIPP-era Desktop whose engine is down, so it takes nothing and JavaScript is kept too.
     probe.mockResolvedValue({ fresh: true, freshCapabilities: [['logic-language:python']] });
+    expect(await languagesKeptInBrowser('aokie.call.incoming', BROWSER_LOGIC_LANGUAGES)).toEqual(['javascript', 'python']);
+    probe.mockResolvedValue({ fresh: true, freshCapabilities: [['logic-language:python', 'logic-engine:zipp']] });
     expect(await languagesKeptInBrowser('aokie.call.incoming', BROWSER_LOGIC_LANGUAGES)).toEqual([]);
 
-    // A boolean probe (older wiring) is a Desktop that takes JavaScript only.
+    // A legacy Desktop (no tokens) or a boolean probe (older wiring) takes JavaScript only.
+    probe.mockResolvedValue({ fresh: true, freshCapabilities: [[]] });
+    expect(await languagesKeptInBrowser('aokie.call.incoming', BROWSER_LOGIC_LANGUAGES)).toEqual(['python']);
     probe.mockResolvedValue(true);
     expect(await languagesKeptInBrowser('aokie.call.incoming', BROWSER_LOGIC_LANGUAGES)).toEqual(['python']);
 
@@ -483,7 +584,7 @@ describe('Python bindings and the desktop-first split', () => {
       spy.mockResolvedValue({
         data: {
           connections: [
-            { lastSeenAt: '2026-09-15 03:59:40', capabilities: ['desktop-capabilities:1', 'logic-language:python', 7] },
+            { lastSeenAt: '2026-09-15 03:59:40', capabilities: ['logic-language:javascript', 'logic-language:python', 7] },
             { lastSeenAt: '2026-09-15 02:00:00', capabilities: ['logic-language:ruby'] },
             { lastSeenAt: '2026-09-15 03:59:50' },
           ],
@@ -491,7 +592,7 @@ describe('Python bindings and the desktop-first split', () => {
       } as never);
       expect(await defaultDesktopRuntimeStatus()).toEqual({
         fresh: true,
-        freshCapabilities: [['desktop-capabilities:1', 'logic-language:python'], []],
+        freshCapabilities: [['logic-language:javascript', 'logic-language:python'], []],
       });
       // Cached for 30 s, and the boolean probe reads the same cache.
       expect(await defaultDesktopRuntimeFresh()).toBe(true);
@@ -500,6 +601,39 @@ describe('Python bindings and the desktop-first split', () => {
       vi.setSystemTime(new Date('2026-09-15T04:00:31Z'));
       spy.mockRejectedValue(new Error('offline'));
       expect(await defaultDesktopRuntimeStatus()).toEqual({ fresh: false, freshCapabilities: [] });
+    } finally {
+      vi.useRealTimers();
+      spy.mockRestore();
+    }
+  });
+
+  // Freshness is judged per row, before the gate (unchanged by PR-A): a Desktop whose last
+  // heartbeat is older than 90 s contributes no capabilities at all, so its tokens can neither
+  // take Python nor mark the fleet ZIPP-era. Here the healthy Python-capable row is stale and
+  // the only fresh row is legacy: JavaScript defers, Python stays.
+  it('stale rows (outside the 90 s window) are dropped before the gate sees their tokens', async () => {
+    const spy = vi.spyOn(api, 'getDesktopConnections');
+    try {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-15T04:00:00Z'));
+      spy.mockResolvedValue({
+        data: {
+          connections: [
+            { lastSeenAt: '2026-09-15 03:58:29', capabilities: ['logic-language:javascript', 'logic-language:python', 'logic-engine:zipp'] },
+            { lastSeenAt: '2026-09-15 03:59:30', capabilities: [] },
+          ],
+        },
+      } as never);
+      const status = await defaultDesktopRuntimeStatus();
+      expect(status).toEqual({ fresh: true, freshCapabilities: [[]] });
+      expect(desktopTakesLanguages(status, ['javascript'])).toBe(true);
+      expect(desktopTakesLanguages(status, ['python'])).toBe(false);
+
+      // The same fleet 30 s later: the legacy row has gone stale too, so nothing is deferred.
+      vi.setSystemTime(new Date('2026-09-15T04:01:01Z'));
+      const later = await defaultDesktopRuntimeStatus();
+      expect(later).toEqual({ fresh: false, freshCapabilities: [] });
+      expect(desktopTakesLanguages(later, ['javascript'])).toBe(false);
     } finally {
       vi.useRealTimers();
       spy.mockRestore();

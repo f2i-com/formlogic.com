@@ -103,18 +103,40 @@ export function declaredLogicLanguage(data: Record<string, unknown>): string {
   return typeof raw === 'string' ? raw : JSON.stringify(raw) ?? String(raw);
 }
 
+// ── Desktop capability vocabulary (docs/FORMLOGIC_DESKTOP.md §8) ─────────────────────────────
+// The tokens a Desktop heartbeat upserts to desktop-connections. The browser's deferral gate
+// (flowDispatcher desktopTakesLanguages) reads them; the server reads only the language prefix
+// (FlowLogicLanguages::CAPABILITY_PREFIX). One place for the vocabulary.
+
+/**
+ * Prefix of the token naming a logic language the Desktop runs ('logic-language:python'). Any
+ * token with this prefix marks a ZIPP-era Desktop (OAIY on ZIPP emits 'logic-language:javascript'
+ * at minimum); a Desktop that sends none is a legacy build, which runs JavaScript only.
+ */
+export const LOGIC_LANGUAGE_CAPABILITY_PREFIX = 'logic-language:';
+
+/**
+ * The token a ZIPP-era Desktop sends only while its ZIPP script host is healthy. Without it a
+ * ZIPP-era Desktop cannot run any logic, so the browser keeps the work. A legacy Desktop never
+ * sends it, and it is not itself a ZIPP-era marker.
+ */
+export const DESKTOP_ENGINE_CAPABILITY = 'logic-engine:zipp';
+
 /**
  * The capability token a Desktop heartbeat carries for each logic language it runs
  * ('logic-language:python'; FlowLogicLanguages::fromCapabilities). A Desktop that names none is
  * one built before Python, which runs Python as JavaScript.
  */
 export function logicLanguageCapability(language: string): string {
-  return `logic-language:${language}`;
+  return `${LOGIC_LANGUAGE_CAPABILITY_PREFIX}${language}`;
 }
 
 /**
- * Whether a Desktop advertising `capabilities` runs every language in `languages`. JavaScript
- * needs no token: every Desktop runs it.
+ * Whether the SERVER would queue a relay run of code in `languages` for a Desktop advertising
+ * `capabilities` (DesktopFlowRelayController::enqueue via FlowLogicLanguages::fromCapabilities):
+ * JavaScript needs no token, any other language needs its 'logic-language:<id>'. This mirrors
+ * the server's gate exactly, so it is deliberately blind to DESKTOP_ENGINE_CAPABILITY until the
+ * server checks it too (PR-A2); the browser-side deferral gate is desktopTakesLanguages.
  */
 export function capabilitiesRunLanguages(capabilities: readonly string[], languages: readonly string[]): boolean {
   return languages.every((language) => language === 'javascript' || capabilities.includes(logicLanguageCapability(language)));

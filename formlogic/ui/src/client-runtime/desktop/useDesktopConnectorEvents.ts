@@ -59,7 +59,8 @@ function toLogicEvent(envelope: DesktopEventEnvelope): Record<string, unknown> {
  * writes and the browser is a viewer — the exact gate the flow dispatcher applies, so the two
  * paths can never both write. The rule holds per script language: a Desktop runs only the
  * languages it advertises (Python: 'logic-language:python'), and the scripts in any other stay
- * here. Exported for tests.
+ * here; a ZIPP-era Desktop whose engine is down ('logic-language:*' without 'logic-engine:zipp')
+ * runs none, so every script stays here (desktopTakesLanguages). Exported for tests.
  */
 export async function deliverDesktopEnvelope(envelope: DesktopEventEnvelope, run: RunConnectorEvent): Promise<void> {
   const kept = await languagesKeptInBrowser(envelope.name, BROWSER_LOGIC_LANGUAGES);

@@ -49,7 +49,14 @@ import { oaiyAiChat } from '../oaiy/oaiyAi';
 import { executeFlow, type FlowRunOutcome } from './flowExecutor';
 import { resolveExecutableGraph } from './compiledGraph';
 import { invokeChildFlowWith, type ChildFlowBackend } from './childFlowInvoker';
-import { flowLogicLanguages, logicLanguageCapability, LOGIC_LANGUAGES, type FlowExecutorDeps } from './nodes';
+import {
+  DESKTOP_ENGINE_CAPABILITY,
+  flowLogicLanguages,
+  LOGIC_LANGUAGE_CAPABILITY_PREFIX,
+  logicLanguageCapability,
+  LOGIC_LANGUAGES,
+  type FlowExecutorDeps,
+} from './nodes';
 import {
   buildInputs,
   interpolateTemplate,
@@ -110,8 +117,9 @@ const CLAIM_BATCH_LIMIT = 10;
 export const BROWSER_LOGIC_LANGUAGES: readonly string[] = [...LOGIC_LANGUAGES];
 
 /**
- * The capability token a Desktop heartbeat carries for each non-JavaScript language it runs
- * (OAIY plan O1: 'logic-language:python'). FlowService stores and returns the list as sent.
+ * The capability token a Desktop heartbeat carries for each logic language it runs
+ * ('logic-language:python'; nodes.ts LOGIC_LANGUAGE_CAPABILITY_PREFIX). FlowService stores and
+ * returns the list as sent.
  */
 export function desktopLanguageCapability(language: string): string {
   return logicLanguageCapability(language);
@@ -127,17 +135,30 @@ export interface DesktopRuntimeStatus {
 
 const NO_DESKTOP: DesktopRuntimeStatus = { fresh: false, freshCapabilities: [] };
 
+/** A fresh Desktop whose capabilities are unknown (boolean probe): one legacy row. */
+const LEGACY_ROWS: readonly (readonly string[])[] = [[]];
+
 /**
- * Whether a fresh Desktop takes work whose code is in `languages`. JavaScript needs only the
- * heartbeat. Any other language needs one fresh Desktop advertising a token for each: the server
- * refuses and hides that work from a Desktop that does not declare the language, so deferring
- * it there would drop it.
+ * Whether a fresh Desktop takes work whose code is in `languages` — THE browser-side deferral
+ * gate (docs/FORMLOGIC_DESKTOP.md §8, "Desktop capability vocabulary"). Per fresh row:
+ *  - no 'logic-language:*' token at all → a LEGACY Desktop: takes JavaScript on the heartbeat
+ *    alone, exactly as before; never Python.
+ *  - any 'logic-language:*' token → a ZIPP-era Desktop: takes nothing unless it also sends
+ *    'logic-engine:zipp' (its script host is healthy — the browser runs the work on ZIPP
+ *    otherwise), and then only the languages its tokens name.
+ * Any other language than JavaScript always needs its token: the server refuses and hides that
+ * work from a Desktop that does not declare the language, so deferring it there would drop it.
+ * "Fresh with no rows" (the boolean probe) is one legacy row, not zero rows.
  */
 export function desktopTakesLanguages(status: DesktopRuntimeStatus, languages: readonly string[]): boolean {
   if (!status.fresh) return false;
   const tokens = languages.filter((language) => language !== 'javascript').map(desktopLanguageCapability);
-  if (tokens.length === 0) return true;
-  return status.freshCapabilities.some((capabilities) => tokens.every((token) => capabilities.includes(token)));
+  const rows = status.freshCapabilities.length === 0 ? LEGACY_ROWS : status.freshCapabilities;
+  return rows.some((capabilities) => {
+    const zippEra = capabilities.some((token) => token.startsWith(LOGIC_LANGUAGE_CAPABILITY_PREFIX));
+    if (zippEra && !capabilities.includes(DESKTOP_ENGINE_CAPABILITY)) return false;
+    return tokens.every((token) => capabilities.includes(token));
+  });
 }
 
 /**
@@ -656,7 +677,8 @@ export function isDesktopFirstEvent(name: string): boolean {
  * running raw app-logic/bindings for it. Used by both the flow dispatcher and
  * the app-logic connector-event bridge so the two writers can never disagree.
  * `languages` are the logic languages the work's code is in (none: JavaScript);
- * work in a language no fresh Desktop advertises stays in the browser.
+ * work no fresh Desktop takes (desktopTakesLanguages: a language it does not
+ * advertise, or a ZIPP-era Desktop whose engine is down) stays in the browser.
  * Fails open (false) — an unreachable probe must never strand an event.
  */
 export async function shouldDeferEventToDesktop(eventName: string, languages: readonly string[] = []): Promise<boolean> {
@@ -667,9 +689,11 @@ export async function shouldDeferEventToDesktop(eventName: string, languages: re
 /**
  * Of `languages`, those whose work on `eventName` stays in this browser: every one, unless the
  * event is desktop-first and a fresh Desktop takes that language (desktopTakesLanguages). The
- * app-logic bridge runs only scripts in these: JavaScript defers to any fresh Desktop, Python
- * only to one advertising 'logic-language:python', since GET /api/v1/app-logic hands Python
- * scripts to no other. One probe for the whole list; fails open like shouldDeferEventToDesktop.
+ * app-logic bridge runs only scripts in these: JavaScript defers to a legacy Desktop or a
+ * healthy ZIPP-era one, Python only to a healthy one advertising 'logic-language:python', since
+ * GET /api/v1/app-logic hands Python scripts to no other; a ZIPP-era Desktop without
+ * 'logic-engine:zipp' takes nothing, so every language is kept. One probe for the whole list;
+ * fails open like shouldDeferEventToDesktop.
  */
 export async function languagesKeptInBrowser(eventName: string, languages: readonly string[]): Promise<string[]> {
   if (!isDesktopFirstEvent(eventName)) return [...languages];
@@ -942,7 +966,9 @@ async function handleEvent(event: FlowTriggerEvent): Promise<void> {
   if (!slug || !runtime) return;
   // Desktop-first events go to a fresh Desktop binding by binding: one whose flow has code in
   // a language no fresh Desktop advertises (Python, until OAIY runs it) stays here, because
-  // the server would refuse it to that Desktop. The idempotency key still dedupes a run.
+  // the server would refuse it to that Desktop; so does every binding when the only fresh
+  // Desktop is ZIPP-era with its engine down (desktopTakesLanguages). The idempotency key
+  // still dedupes a run.
   const desktop = isDesktopFirstEvent(event.name) ? await desktopRuntimeStatus() : null;
   const matches = runtime.bindings.filter((b) => bindingMatches(b, event));
   const kept = desktop?.fresh

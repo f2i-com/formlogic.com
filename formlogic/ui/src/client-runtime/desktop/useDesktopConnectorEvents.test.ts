@@ -1,8 +1,9 @@
 // The desktop → app-logic bridge under the single-writer rule, split by script language
-// (formlogic-python/1). A fresh Desktop runs the onConnectorEvent scripts it can: JavaScript
-// always, Python only when its heartbeat advertises 'logic-language:python' (GET
-// /api/v1/app-logic hands it Python scripts only then). The browser runs the rest, so a Python
-// script is never stranded and no script runs in both places.
+// (formlogic-python/1). A fresh Desktop runs the onConnectorEvent scripts it can: a legacy
+// Desktop (no capability tokens) JavaScript always; a ZIPP-era Desktop (any 'logic-language:*'
+// token) the languages it names, and only while it also sends 'logic-engine:zipp' (GET
+// /api/v1/app-logic hands it Python scripts only when it advertises 'logic-language:python').
+// The browser runs the rest, so a script is never stranded and none runs in both places.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { deliverDesktopEnvelope } from './useDesktopConnectorEvents';
 import { __resetFlowDispatcherForTests, __setFlowDispatcherDepsForTests, type DesktopRuntimeStatus } from '../flows/flowDispatcher';
@@ -54,13 +55,23 @@ async function deliver(envelope: DesktopEventEnvelope, status: DesktopRuntimeSta
 
 describe('deliverDesktopEnvelope — the single-writer rule per script language', () => {
   it('a fresh Desktop without Python takes the JavaScript scripts; the Python ones run here', async () => {
-    expect(await deliver(ENVELOPE, { fresh: true, freshCapabilities: [['desktop-capabilities:1']] })).toEqual(['py']);
+    // A legacy Desktop (no capability tokens).
+    expect(await deliver(ENVELOPE, { fresh: true, freshCapabilities: [[]] })).toEqual(['py']);
     // An older probe that only answers "fresh" is the same Desktop.
     expect(await deliver(ENVELOPE, true)).toEqual(['py']);
+    // A healthy ZIPP-era Desktop that names JavaScript only.
+    expect(await deliver(ENVELOPE, { fresh: true, freshCapabilities: [['logic-language:javascript', 'logic-engine:zipp']] })).toEqual(['py']);
   });
 
-  it('a fresh Desktop advertising Python takes every script', async () => {
-    expect(await deliver(ENVELOPE, { fresh: true, freshCapabilities: [['logic-language:python']] })).toEqual([]);
+  it('a fresh Desktop advertising Python with a healthy engine takes every script', async () => {
+    expect(await deliver(ENVELOPE, { fresh: true, freshCapabilities: [['logic-language:python', 'logic-engine:zipp']] })).toEqual([]);
+  });
+
+  // Before PR-A the python token alone took every script ([]): a language token marks a ZIPP-era
+  // Desktop, and without 'logic-engine:zipp' its engine is down, so every script runs here.
+  it('a ZIPP-era Desktop whose engine is down takes no script at all', async () => {
+    expect(await deliver(ENVELOPE, { fresh: true, freshCapabilities: [['logic-language:python']] })).toEqual(['js', 'py']);
+    expect(await deliver(ENVELOPE, { fresh: true, freshCapabilities: [['logic-language:javascript']] })).toEqual(['js', 'py']);
   });
 
   it('no fresh Desktop, or an event that is not desktop-first: every script runs here', async () => {

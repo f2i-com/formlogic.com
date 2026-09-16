@@ -179,14 +179,27 @@ describe('claimQueuedAppRuns', () => {
       queuedRun({ runId, flow, bindingId: null, triggerEvent: 'aokie.call.ended', inputSnapshot: { event: { name: 'aokie.call.ended', data: {} } } });
     const runs = [aokieRun('run-js', 'echo'), aokieRun('run-py', 'py-echo')];
 
+    // A legacy Desktop (no capability tokens) takes JavaScript, as it always has.
     let harness = installDeps({
       listQueuedRuns: async () => runs,
-      desktopRuntimeFresh: async () => ({ fresh: true, freshCapabilities: [['desktop-capabilities:1']] }),
+      desktopRuntimeFresh: async () => ({ fresh: true, freshCapabilities: [[]] }),
     });
     __setRuntimeFlowsForTests({ flows: [echoFlow(), pyFlow], bindings: [] }, 'my-app');
     await claimQueuedAppRuns();
     expect(harness.claimCalls.map((c) => c.runId)).toEqual(['run-py']);
 
+    // A healthy ZIPP-era Desktop that runs Python takes every run.
+    __resetFlowDispatcherForTests();
+    harness = installDeps({
+      listQueuedRuns: async () => runs,
+      desktopRuntimeFresh: async () => ({ fresh: true, freshCapabilities: [['logic-language:python', 'logic-engine:zipp']] }),
+    });
+    __setRuntimeFlowsForTests({ flows: [echoFlow(), pyFlow], bindings: [] }, 'my-app');
+    await claimQueuedAppRuns();
+    expect(harness.claimCalls).toHaveLength(0);
+
+    // Before PR-A the python token alone took every run (0 claims here). It marks a ZIPP-era
+    // Desktop, and without 'logic-engine:zipp' its engine is down: the browser claims both runs.
     __resetFlowDispatcherForTests();
     harness = installDeps({
       listQueuedRuns: async () => runs,
@@ -194,7 +207,7 @@ describe('claimQueuedAppRuns', () => {
     });
     __setRuntimeFlowsForTests({ flows: [echoFlow(), pyFlow], bindings: [] }, 'my-app');
     await claimQueuedAppRuns();
-    expect(harness.claimCalls).toHaveLength(0);
+    expect(harness.claimCalls.map((c) => c.runId).sort()).toEqual(['run-js', 'run-py']);
   });
 
   it('the workspace claim loop declares the languages too', async () => {
