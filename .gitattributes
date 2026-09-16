@@ -5,3 +5,13 @@
 *.wasm  binary
 *.cwasm binary
 *.exe   binary
+
+# Documents whose exact BYTES are a contract with another program, pinned to LF so a Windows
+# checkout and a Linux CI runner serve and hash the same thing.
+#   * the served leaf-script profile — the server's ETag is a sha256 of these bytes, and its
+#     `preambleSha256` is verified by the consumer before anything runs, so a checkout that
+#     rewrote its newlines would hand two machines two different documents;
+#   * the vendored copy of OAIY's schema — scriptProfile.test.ts recomputes its git blob hash
+#     and compares it to the recorded one, which only holds if the copy is byte-identical.
+formlogic/backend/resources/formlogic-script-profile.json  text eol=lf
+formlogic/ui/src/lib/oaiy/vendored/script-profile.schema.json  text eol=lf

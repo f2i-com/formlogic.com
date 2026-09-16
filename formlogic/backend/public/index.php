@@ -2747,6 +2747,15 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
         return $container->get(\FormLogic\Controllers\FlowController::class)->ownerAppLogic($request, $response);
     })->add($flowsReadAuth);
 
+    // The leaf-script profile — FormLogic's own logic semantics as data (OAIY's ScriptProfile:
+    // the prelude every expression sees, its sha256, the instruction budget and the
+    // formlogic-python/1 contract). A Desktop fetches it so a flow condition means the same thing
+    // on its machine as in the browser, instead of running a copy that drifts. Same flows:read
+    // gate as /app-logic; ETag + 304, so a five-minute poll transfers it once.
+    $group->get('/script-profile', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->ownerScriptProfile($request, $response);
+    })->add($flowsReadAuth);
+
     // Connector→app assignment (audit INT-004/C-13): which ONE app receives a local
     // connector's events. Desktop reads it with its snapshot; ambiguous routing
     // (2+ candidate apps, no assignment) is rejected by runtimes until set here.

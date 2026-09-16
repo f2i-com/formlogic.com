@@ -105,6 +105,15 @@ current client sends: a browser tab still on a bundle from before Python receive
 scripts. The owner's editing reads are never filtered. A pack connector's `demoDriver` stays
 JavaScript. The editor sets the language per script, and changing it never rewrites the source.
 
+A Desktop that runs a script headless also fetches `GET /api/v1/script-profile` (`flows:read`, the
+same gate as `/app-logic`): the **leaf-script profile**, which carries the standard library every
+script sees (`prelude.js`), its sha256, the instruction budget and the `formlogic-python/1` shared
+guest module — FormLogic's semantics as *data*, so the Desktop runs the same bytes the browser does
+rather than a copy that drifts. It is generated from those sources by
+`formlogic/ui/scripts/build-script-profile.mjs` and is OAIY's `ScriptProfile` document exactly; see
+`docs/API.md` for the body and `docs/FORMLOGIC_DESKTOP.md` for what a consumer can and cannot build
+from it.
+
 #### Hooks
 `onAppStart`, `onScreenEnter`, `onScreenLeave`, `onButtonClick`, `onBeforeSubmit`,
 `onAfterSubmit`, `onConnectorEvent`, `onSyncConflict`, `mapConnectorDataToForm`,

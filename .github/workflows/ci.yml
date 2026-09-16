@@ -172,6 +172,15 @@ jobs:
       - name: Unit tests (Vitest)
         run: npm test
 
+      # The leaf-script profile FormLogic serves to a Desktop is GENERATED from prelude.js,
+      # formlogic.py and the constants in zipp-host.ts/pythonContract.ts. This runs BEFORE the
+      # build, so it judges the COMMITTED bytes — after `npm run build` its prebuild has already
+      # regenerated them and the check would be trivially true. The refusals it carries (a
+      # preamble declaring a name OAIY binds, a source constant that moved, a CRLF checkout
+      # changing the digest) all land as a remote refusal by the consumer otherwise.
+      - name: Leaf-script profile in sync (sources → served document)
+        run: npm run test:script-profile
+
       - name: Typecheck + build
         run: npm run build
 
@@ -213,12 +222,15 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: node --test scripts/fetch-softn-release.test.mjs scripts/prepare-hosted-runtime.test.mjs scripts/engine-provenance-guard.test.mjs scripts/ecosystem-manifest.test.mjs scripts/sync-zipp-from-softn.test.mjs scripts/release-runtime.test.mjs scripts/zipp-source.test.mjs scripts/runtime-provenance.test.mjs scripts/check-expression-parity.test.mjs scripts/prepare-sandbox-runtime.test.mjs
 
-      # The build's prebuild step syncs prelude.js into the backend; if that produced a diff,
-      # the committed backend copy was stale (someone forgot `npm run sync:prelude`).
+      # The build's prebuild step syncs prelude.js into the backend and regenerates the served
+      # leaf-script profile; if either produced a diff, the committed backend copy was stale
+      # (someone forgot `npm run sync:prelude` / `npm run build:script-profile`).
       - name: FormLogic prelude in sync (frontend ↔ backend)
         run: |
           git diff --exit-code ../backend/resources/formlogic-prelude.js \
             || (echo "::error::backend prelude is out of sync — run 'npm run sync:prelude' in formlogic/ui and commit the result" && exit 1)
+          git diff --exit-code ../backend/resources/formlogic-script-profile.json \
+            || (echo "::error::the served leaf-script profile is out of sync — run 'npm run build:script-profile' in formlogic/ui and commit the result" && exit 1)
 
       # Hard gate: high/critical advisories fail CI. Run `npm audit fix` to resolve, or pin/
       # override intentionally. (Dev-only tooling advisories: prefer `npm audit fix`; if truly

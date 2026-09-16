@@ -636,6 +636,98 @@ class FlowController
         return $this->jsonResponse($response, ['apps' => $this->flows->getOwnerAppLogic($userId, $selector, $languages)]);
     }
 
+    /** The generated leaf-script profile. Written by formlogic/ui/scripts/build-script-profile.mjs. */
+    public const SCRIPT_PROFILE_FILE = __DIR__ . '/../../resources/formlogic-script-profile.json';
+
+    /**
+     * The leaf-script profile (GET /api/v1/script-profile) — what FormLogic's logic MEANS, as
+     * data, so a Desktop that claims a flow condition, a logic block or an app-logic script means
+     * the same thing by it that the browser does.
+     *
+     * The body is OAIY's `ScriptProfile` exactly (oaiy.com protocol/v1/script-profile.schema.json):
+     * `{v, preamble, preambleSha256, instructionSteps, python:{contract, files, entry, call}}` and
+     * nothing else — that schema refuses every unknown key, so there is no room for an envelope
+     * here. The document's own id and revision therefore live OUTSIDE it: the id is this path (one
+     * provider, one document) and the revision is the ETag. Budgets are not in it at all; a timeout
+     * belongs to the machine running the work, and the Desktop reads it from its connector
+     * descriptor.
+     *
+     * AUTHENTICATION: the same `flows:read` gate as /app-logic, not public. The document is
+     * FormLogic-authored code, not the user's data — but it is the executable definition of how
+     * that user's flows are interpreted, and it is fetched by a paired Desktop that already bears
+     * an owner token for every other route in this group. Serving it openly would make it the one
+     * unauthenticated route among them and would stand up a second, ungated distribution channel
+     * for code that clients execute; there is no caller that needs it and has no token.
+     *
+     * CACHING: `ETag` is a sha256 of the served bytes and `Cache-Control: private, max-age=300`
+     * matches the Desktop's poll. The hash is over the whole document rather than over
+     * `preambleSha256` alone, because a change to `python.files` (the Python contract) moves no
+     * preamble and would otherwise leave every Desktop on a stale copy until the prelude next
+     * changed. `If-None-Match` carrying the current tag gets a bodiless 304 with the same ETag and
+     * Cache-Control, so a Desktop that polls every five minutes transfers ~30 KB once.
+     *
+     * Read (flows:read) — no owner data is involved, so the row is the same for every caller.
+     */
+    public function ownerScriptProfile(Request $request, Response $response): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+
+        $path = self::SCRIPT_PROFILE_FILE;
+        $digest = is_file($path) ? hash_file('sha256', $path) : false;
+        if ($digest === false) {
+            // A deploy that shipped no artifact. Say so rather than serving an empty or partial
+            // document: the consumer verifies the preamble digest and would refuse it anyway, and
+            // 'no profile' is a state the Desktop already handles (it runs without a preamble).
+            return $this->jsonError(
+                $response,
+                'The script profile has not been generated for this deployment (run build-script-profile.mjs).',
+                503,
+                'script_profile_unavailable'
+            );
+        }
+
+        $etag = '"' . $digest . '"';
+        $validators = static fn (Response $r): Response => $r
+            ->withHeader('ETag', $etag)
+            ->withHeader('Cache-Control', 'private, max-age=300');
+
+        if (self::ifNoneMatchSatisfied($request->getHeaderLine('If-None-Match'), $etag)) {
+            return $validators($response)->withStatus(304);
+        }
+
+        $body = file_get_contents($path);
+        if ($body === false) {
+            return $this->jsonError($response, 'The script profile could not be read.', 503, 'script_profile_unavailable');
+        }
+        $response->getBody()->write($body);
+        return $validators($response)->withStatus(200)->withHeader('Content-Type', 'application/json');
+    }
+
+    /**
+     * Whether an `If-None-Match` header matches the current entity tag (RFC 9110 §13.1.2).
+     * A list, `*`, and the weak `W/` prefix are all legal on the wire and a client is entitled to
+     * send any of them; treating the header as one opaque string would answer 200 to a correct
+     * conditional request and re-send the document every poll.
+     */
+    private static function ifNoneMatchSatisfied(string $header, string $etag): bool
+    {
+        $header = trim($header);
+        if ($header === '') {
+            return false;
+        }
+        $bare = static fn (string $tag): string => preg_replace('/^W\//', '', trim($tag)) ?? trim($tag);
+        foreach (explode(',', $header) as $candidate) {
+            $candidate = trim($candidate);
+            if ($candidate === '*' || $bare($candidate) === $bare($etag)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Connector→app assignments (GET /api/v1/connector-assignments — audit INT-004).
      * Returns the owner's explicit assignments plus per-connector candidate apps so

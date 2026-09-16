@@ -1,0 +1,133 @@
+{
+  "what": [
+    "Copies of OAIY's leaf-script contract, vendored so FormLogic can hold the profile it serves",
+    "to OAIY's own rules without depending on a sibling checkout. formlogic.com and oaiy.com are",
+    "separate repositories with separate release trains: an import across them would make a",
+    "FormLogic test pass or fail on whichever revision of oaiy.com happens to be on the disk, and",
+    "would make FormLogic unbuildable for anyone who does not have that checkout at all.",
+    "",
+    "The failure this guards against is the one that already happened once: the plans this work",
+    "came from described a profile body of {v, id, revision, preamble, preambleSha256,",
+    "instructionSteps, budgetsMs, hooks} with a python section carrying kinds and lineOffsets.",
+    "OAIY's schema is additionalProperties:false at the top level AND inside `python`, so every",
+    "one of those extra keys is a refusal, not an ignored field. Validating the served document",
+    "against this copy is what turns that from a discovery at integration time into a red test.",
+    "",
+    "REFRESHING: re-copy the schema verbatim (no reformatting - scriptProfile.test.ts recomputes",
+    "the git blob hash and compares it to schema.blobSha1, so a copy that differs by a byte fails),",
+    "re-read the three name lists from the paths below, and update every commit and blob here."
+  ],
+  "vendoredFrom": {
+    "repo": "oaiy.com (sibling checkout; formlogic.com does not depend on it)",
+    "readAt": "224cb83",
+    "note": "The spec this work follows was written against oaiy.com d1aac68. `git diff d1aac68..224cb83 -- protocol/v1/script-profile.schema.json` is empty: the schema is unchanged between them."
+  },
+  "schema": {
+    "file": "script-profile.schema.json",
+    "path": "protocol/v1/script-profile.schema.json",
+    "blobSha1": "8f33bd7043d36c876891a331e2d2895a25c1f6dc",
+    "lastChangedIn": "591449f726008724c74b5bf348ab83fd7ac556a3",
+    "lastChangedSubject": "A leaf-script envelope for ZIPP: one request shape for a logic block, a condition, an entry call or a Python project, refused whole when any part of it is malformed"
+  },
+  "reservedPreambleNames": {
+    "what": [
+      "Names a served preamble may not DECLARE at any level a text scan can see. OAIY refuses such",
+      "a profile twice over: `detectPreambleCollision` (zipp-script.ts) is a text scan the browser",
+      "envelope runs, and `parseScriptProfile` (cli/src/zipp/profile.ts) re-checks it against the",
+      "syntax tree with a wider list. build-script-profile.mjs applies the UNION, because a profile",
+      "has to be acceptable to both consumers and the generator is the only place that can refuse",
+      "before the document is committed.",
+      "",
+      "The scan is deliberately indent-tolerant on OAIY's side (its regex leads with whitespace), so",
+      "a `var host = ...` nested three functions deep inside prelude.js is a refusal even though it",
+      "shadows nothing at the top level. FormLogic's prelude declares 74 names under that scan",
+      "(12 of them at the top level) and none of them is on this list - but `db`, `host` and",
+      "`window` are ordinary local-variable names, so this is a live hazard, not a theoretical one."
+    ],
+    "vendoredFrom": {
+      "zippPreambleGlobals": {
+        "path": "ui/vendor/oaiy-core/src/zipp-executor.ts",
+        "symbol": "ZIPP_PREAMBLE_GLOBALS",
+        "blobSha1": "15055f78903599149acc7c0c8238aa39e754989a"
+      },
+      "scriptEnvelopeGlobals": {
+        "path": "ui/vendor/oaiy-core/src/zipp-script.ts",
+        "symbol": "SCRIPT_ENVELOPE_GLOBALS",
+        "blobSha1": "daae542f56f7d075b219f3bcb2310c4a1e113759"
+      },
+      "wrapperGlobals": {
+        "path": "cli/src/zipp/profile.ts",
+        "symbol": "WRAPPER_GLOBALS",
+        "blobSha1": "4e79b8311de0be43628397207e86d0a566f16ca7"
+      }
+    },
+    "zippPreambleGlobals": [
+      "window",
+      "navigator",
+      "localStorage",
+      "db",
+      "host",
+      "__zEvents",
+      "__zHostQueue",
+      "__zHostCbs",
+      "__zHostId",
+      "__zippHostCall"
+    ],
+    "scriptEnvelopeGlobals": [
+      "__replies",
+      "__emit",
+      "__out",
+      "__ctx",
+      "__args",
+      "__k",
+      "__fn",
+      "__asBody"
+    ],
+    "wrapperGlobals": [
+      "__oaiyConsole"
+    ]
+  },
+  "guestShimNames": {
+    "what": [
+      "The `var`s OAIY's guest shims declare at program top level, emitted immediately before the",
+      "profile preamble (`buildScriptProgram`, zipp-script.ts). A preamble that redeclares one of",
+      "these with let/const/class is a SyntaxError that takes the whole program, and the CLI refuses",
+      "it (`parseScriptProfile`'s second loop). A `var` or `function` of the same name is legal and",
+      "REPLACES the stub, which OAIY allows as a deliberate choice - so only lexical declarations",
+      "are checked against this list."
+    ],
+    "vendoredFrom": {
+      "path": "ui/vendor/oaiy-core/src/zipp-executor.ts",
+      "symbol": "ZIPP_GUEST_SHIMS",
+      "blobSha1": "15055f78903599149acc7c0c8238aa39e754989a"
+    },
+    "names": [
+      "__oaiyUnavailable",
+      "__oaiyNoTimers",
+      "__oaiyNoNet",
+      "setTimeout",
+      "setInterval",
+      "setImmediate",
+      "requestAnimationFrame",
+      "requestIdleCallback",
+      "clearTimeout",
+      "clearInterval",
+      "fetch",
+      "XMLHttpRequest",
+      "WebSocket",
+      "EventSource",
+      "importScripts",
+      "Worker",
+      "crypto",
+      "queueMicrotask",
+      "__oaiyT0",
+      "performance",
+      "structuredClone",
+      "TextEncoder",
+      "TextDecoder",
+      "__oaiyB64",
+      "btoa",
+      "atob"
+    ]
+  }
+}

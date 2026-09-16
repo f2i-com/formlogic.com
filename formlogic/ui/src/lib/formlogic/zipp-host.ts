@@ -5,8 +5,12 @@
 // boundary is the form-data context, and it crosses as a JSON *value* parsed
 // inside the sandbox — never concatenated into program source. The trusted
 // PRELUDE standard library is the same canonical module the backend guest loads,
-// so an expression means the same thing in the browser and on the server. (Runs
-// claimed by OAIY Desktop do not load it.)
+// so an expression means the same thing in the browser and on the server — and
+// the same module a Desktop receives, as the `preamble` of the leaf-script profile
+// served at GET /api/v1/script-profile (scripts/build-script-profile.mjs generates
+// the document from these same `?raw` sources; docs/API.md). A host that does not
+// fetch it runs no standard library at all: `validators.email(x)` is "is not
+// defined" there and a value here.
 //
 // zipp's synchronous host channel is default-deny: an Engine grants nothing until
 // the host calls setSyncHostCapabilities, and this host never calls it. There is
