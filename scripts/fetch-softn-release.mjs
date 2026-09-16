@@ -1039,7 +1039,7 @@ export async function checkInstalled({ root = resolve(dirname(fileURLToPath(impo
     const diff = await inventoryDiff(tree.destination, inventory[tree.name]);
     if (!intact(diff)) {
       const detail = [diff.missing.length && `missing: ${diff.missing.slice(0, 5).join(', ')}${diff.missing.length > 5 ? ', …' : ''}`, diff.unlisted.length && `not in the recorded generation: ${diff.unlisted.slice(0, 5).join(', ')}${diff.unlisted.length > 5 ? ', …' : ''}`, diff.changed.length && `changed: ${diff.changed.slice(0, 5).join(', ')}${diff.changed.length > 5 ? ', …' : ''}`].filter(Boolean).join('; ');
-      throw new ReleaseError(`${tree.name} is not the generation current.json records for Softn ${record.tag} (${detail}). The trees are stale, edited or a mixture of two installs; run node scripts/fetch-softn-release.mjs.`);
+      throw new ReleaseError(`${tree.name} is not the generation current.json records for Softn ${record.tag} (${detail}). The trees are stale, edited, a mixture of two installs, or replaced by a source sync (scripts/sync-zipp-from-softn.mjs records no release); run node scripts/fetch-softn-release.mjs.`);
     }
     await tree.validate(tree.destination);
   }

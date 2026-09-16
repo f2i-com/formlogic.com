@@ -270,7 +270,11 @@ Set `SOFTN_REPO` to the checkout, run `npm run fetch:zipp` there (its
 `wasm-zipp/` is generated from the ZIPP release its Cargo tag names), and use the
 source builders: `node scripts/sync-zipp-from-softn.mjs` (runs the checkout's
 `fetch-zipp-release.mjs --check`, then installs its whole ZIPP release as
-`formlogic/ui/vendor/zipp-wasm` and checks it like a release's `zipp/`),
+`formlogic/ui/vendor/zipp-wasm` and checks it like a release's `zipp/`; when that
+install records `variants.web`, its `wasm-zipp-web/` goes to
+`formlogic/ui/vendor/zipp-wasm-web` under the same variant check as a release's
+`zipp-web/`, and when it does not, a web tree left there is retired as a release
+without the variant retires it),
 `node scripts/prepare-native-runtime.mjs`, and `npm run build:hosted-runtime` and
 `npm run build:app-editors` (from `formlogic/ui`); `formlogic/ui/scripts/sync-softn.mjs`
 refreshes the adapter from that checkout. `SOFTN_REPO=... node scripts/ecosystem-manifest.mjs`
