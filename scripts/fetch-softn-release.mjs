@@ -72,7 +72,7 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve, basename, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readArchive } from './lib/archive.mjs';
-import { runtimeIdentity, assertMatchingRuntime, checkRuntimeArtifact, checkZippTree, isZippEngineWasm, zippReleaseIdentity, artifactFiles, LINKED_ASSET } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
+import { runtimeIdentity, assertMatchingRuntime, checkEntryDocuments, checkRuntimeArtifact, checkZippTree, isZippEngineWasm, zippReleaseIdentity, artifactFiles, LINKED_ASSET } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 import { checkAppEditors } from '../formlogic/ui/scripts/check-app-editors.mjs';
 import { checkNativeRuntime } from './release-runtime.mjs';
 import { writeAdapter, adapterDigest, ADAPTER_SOURCE } from '../formlogic/ui/scripts/sync-softn.mjs';
@@ -84,6 +84,22 @@ export const FROZEN_FORMAT = 1;
 const NATIVE_MODULES = ['runner.mjs', 'request-worker.mjs', 'request-hook.mjs', 'wasm-host.mjs', 'migrations.mjs', 'crypto.mjs', 'time.mjs', 'host-protocol.json', 'record-events.mjs'];
 const NATIVE_EXTRA = ['wasm/zipp_wasm.mjs', 'wasm/zipp_wasm_bg.wasm', 'wasm/SOURCE.json', 'LICENSE', 'NOTICE', 'ZIPP-THIRD-PARTY-LICENSES.txt', 'provenance.json'];
 const PROVENANCE = 'native-runtime/provenance.json';
+/**
+ * The protocols a release must speak, at exactly the versions this FormLogic speaks.
+ *
+ * `hostedEngines` is how many hosted-runtime ENTRY DOCUMENTS the archive carries beyond the one
+ * every release has always had: at 1, `hosted-runtime/host.html` beside `index.html`, serving the
+ * `host-js` engine under a policy `index.html` must never have. A FormLogic that mounts only
+ * `index.html` cannot serve what such an archive's runtime-manifest advertises, so it refuses the
+ * archive rather than installing a runtime it would only half use. This tree serves both, so the
+ * pairing now runs the other way too: a Softn from before host.html speaks no `hostedEngines` and
+ * is refused by the same rule.
+ *
+ * NOTE: this is a list of KNOWN keys, compared by value. A release carrying a protocol key this
+ * list does not name is NOT refused — an unknown key is ignored, which is what lets Softn add one
+ * before every FormLogic understands it.
+ */
+const PROTOCOL_KEYS = ['nativeProtocol', 'recordEvents', 'editorBridge', 'hostedEngines'];
 /**
  * Where a release's engine copies live, as Softn's packager requires them: the
  * browser engine tree, the native runtime, and in the hosted runtime and each
@@ -346,7 +362,7 @@ export async function verifyArchive(zip, { sidecarDigest, paths, archiveName }) 
   // The protocols: exactly what this FormLogic speaks.
   const protocol = JSON.parse(await readFile(paths.protocolFile, 'utf8'));
   const releaseProtocols = release.protocols ?? {};
-  for (const key of ['nativeProtocol', 'recordEvents', 'editorBridge']) {
+  for (const key of PROTOCOL_KEYS) {
     if (releaseProtocols[key] !== protocol[key]) throw new ReleaseError(`Softn ${release.tag} speaks ${key} ${releaseProtocols[key]}; this FormLogic speaks ${protocol[key]}. A FormLogic that understands that protocol is needed, or an older Softn (SOFTN_RELEASE=<tag>).`);
   }
   const hostProtocol = JSON.parse(entryText(entries, 'native-runtime/host-protocol.json'));
@@ -360,7 +376,10 @@ export async function verifyArchive(zip, { sidecarDigest, paths, archiveName }) 
   if (adapterSha !== adapterProvenance.sha256 || adapterSha !== release.adapter?.sha256) throw new ReleaseError('adapter/formlogic.ts, adapter/provenance.json and softn-release.json disagree about the adapter digest.');
   if (adapterProvenance.source !== ADAPTER_SOURCE) throw new ReleaseError(`adapter/provenance.json names ${adapterProvenance.source}; expected ${ADAPTER_SOURCE}.`);
 
-  for (const name of ['hosted-runtime/runtime-manifest.json', 'hosted-runtime/index.html', 'app-editors/manifest.json', 'app-editors/builder/runtime-manifest.json', 'app-editors/studio/runtime-manifest.json', PROVENANCE, ...NATIVE_MODULES.map((m) => `native-runtime/${m}`)]) {
+  // Both hosted-runtime entry documents: `hostedEngines` above already fixed the count, and
+  // HostedAppFrame mounts host.html by name for host-js, so an archive that speaks the protocol
+  // without carrying the document would be a 404 in a member's frame rather than a failed install.
+  for (const name of ['hosted-runtime/runtime-manifest.json', 'hosted-runtime/index.html', 'hosted-runtime/host.html', 'app-editors/manifest.json', 'app-editors/builder/runtime-manifest.json', 'app-editors/studio/runtime-manifest.json', PROVENANCE, ...NATIVE_MODULES.map((m) => `native-runtime/${m}`)]) {
     if (!entries.has(name)) throw new ReleaseError(`The archive has no ${name}.`);
   }
   return { release, entries, zipDigest, expected, adapterSha, adapterText };
@@ -516,7 +535,7 @@ function generationTrees(paths, expected, releaseInfo, hostedRuntime = null) {
     },
     {
       name: 'hosted-runtime', prefix: 'hosted-runtime/', destination: paths.hostedRuntime, stagePrefix: '.hosted-runtime-',
-      validate: (dir) => checkRuntimeArtifact(dir, expected),
+      validate: async (dir) => { await checkRuntimeArtifact(dir, expected); await checkEntryDocuments(dir); },
     },
     {
       name: 'app-editors', prefix: 'app-editors/', destination: paths.appEditors, stagePrefix: '.app-editors-',
@@ -858,7 +877,7 @@ export async function checkInstalled({ root = resolve(dirname(fileURLToPath(impo
   try { expected = runtimeIdentity(zippReleaseIdentity(record.zipp)); }
   catch (error) { throw new ReleaseError(`The installed Softn ${record.tag} records no ZIPP release FormLogic can install (${error.message}); this FormLogic needs Softn ${FIRST_ZIPP_TREE_RELEASE} or later. Run node scripts/fetch-softn-release.mjs.`); }
   const protocol = JSON.parse(await readFile(paths.protocolFile, 'utf8'));
-  for (const key of ['nativeProtocol', 'recordEvents', 'editorBridge']) {
+  for (const key of PROTOCOL_KEYS) {
     if (record.protocols?.[key] !== protocol[key]) throw new ReleaseError(`The installed Softn ${record.tag} speaks ${key} ${record.protocols?.[key]}; this tree speaks ${protocol[key]}. Fetch again.`);
   }
   const tracked = await trackedAdapterDigest(paths);

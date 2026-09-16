@@ -25,6 +25,12 @@ function checkBackend() {
 }`,
 };
 
+// The engine the server would have decided, as a query parameter, so one fixture can be driven
+// onto either runtime document. `?engine=host-js` is what a verified owner's app gets: the frame
+// mounts host.html and no engine bytes are fetched at all.
+const decided = new URLSearchParams(window.location.search).get('engine');
+const engine = decided ? { id: decided, revision: 'fixture' } : undefined;
+
 function Fixture() {
   const [apps, setApps] = useState<number[]>([]);
   const [answer, setAnswer] = useState('Not evaluated');
@@ -45,7 +51,7 @@ function Fixture() {
     <button onClick={() => setApps([])}>Close apps</button>
     <button onClick={() => setCurrentClient({ ...client, 'logic/main.logic': client['logic/main.logic'].replace('let count = 0;', 'let count = 10;') })}>Replace app source</button>
     {apps.map(id => <section key={id} data-testid={`app-${id}`}>
-      <HostedAppFrame slug={`sharing-test-${id}`} version={1} client={currentClient} />
+      <HostedAppFrame slug={`sharing-test-${id}`} version={1} client={currentClient} engine={engine} />
     </section>)}
   </main>;
 }

@@ -24,8 +24,10 @@ use PDO;
  * Nothing is read from the client, the package/native manifest, permission.json or apps.settings.
  *
  * Everything fails closed to zipp-web-python: a missing or corrupt policy row, an install record
- * that does not advertise an engine, an owner who is not verified. In this slice that is the only
- * effective engine anywhere, because the installed hosted runtime advertises no engines yet.
+ * that does not advertise an engine, an owner who is not verified. host-js became effective when
+ * the installed hosted runtime began advertising it (its second entry document, host.html) and
+ * the frame learned to mount that document; zipp-web is still advertised by no runtime, so it
+ * still resolves to the fallback with reason 'not-installed'.
  */
 class RuntimeEngineService
 {

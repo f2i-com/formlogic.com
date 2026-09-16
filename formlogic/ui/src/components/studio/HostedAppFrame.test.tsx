@@ -4,16 +4,21 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { getBytes } = vi.hoisted(() => ({ getBytes: vi.fn() }));
-// The installed table, stubbed: this page holds one engine, and only its identity matches.
+// The installed table, stubbed: this page holds ZIPP's bytes, and only their identity matches; it
+// holds nothing at all for host JavaScript, which is the runtime document's own engine and is
+// announced as `true`. OWN_DOCUMENT_ENGINE itself lives in frameEngine, which is never mocked, so
+// this stub cannot also decide what an announcement is compared against.
 vi.mock('../../lib/formlogic/zipp-bytes', () => ({
   getZippWasmBytes: getBytes,
   getEngineBytes: getBytes,
-  engineIdentity: (id: string) => (id === 'zipp-web-python' ? { version: '0.0.17', sha256: 'current' } : undefined),
+  engineIdentity: (id: string) =>
+    id === 'zipp-web-python' ? { version: '0.0.17', sha256: 'current' } : id === 'host-js' ? true : undefined,
+  engineNeedsBytes: (id: string) => id !== 'host-js',
 }));
 vi.mock('../../lib/api', () => ({ api: { runHostedAction: vi.fn(), runNativeRequest: vi.fn(), getHostedRuntime: vi.fn(), getNativeRuntime: vi.fn() } }));
 vi.mock('../../lib/softn/workspaceBridge', () => ({ workspaceBridge: vi.fn() }));
 import { HostedAppFrame } from './HostedAppFrame';
-import { chooseFrameEngine } from '../../lib/formlogic/frameEngine';
+import { chooseFrameEngine, frameSource } from '../../lib/formlogic/frameEngine';
 import { api } from '../../lib/api';
 import { NATIVE_PROTOCOL } from '../../lib/softn/protocol';
 
@@ -127,8 +132,10 @@ describe('hosted app engine handoff', () => {
 
   it('falls back to the engine every shell serves when the one decided is not announced', async () => {
     // A shell from before the handshake announces no `engines` at all; a decision it cannot serve
-    // is not sent to it, because it would be refused by name and the app would not start.
-    const { iframe, post } = await mount({ id: 'host-js', revision: 'abcdef0123456789' });
+    // is not sent to it, because it would be refused by name and the app would not start. A ZIPP
+    // decision is mounted on the document every hosted app has always been mounted on, and that
+    // document serves the fallback, so falling back on it is a real option.
+    const { iframe, post } = await mount({ id: 'zipp-web', revision: 'abcdef0123456789' });
     expect(iframe.getAttribute('src')).toBe('/hosted-runtime/index.html');
     expect(iframe.getAttribute('sandbox')).toBe('allow-scripts');
     await act(async () => sendReady(iframe));
@@ -169,6 +176,64 @@ describe('hosted app engine handoff', () => {
   });
 });
 
+describe('host JavaScript', () => {
+  const hostEngine = { id: 'host-js', revision: 'r7' };
+
+  it('mounts the host document, fetches no engine and sends no engine bytes', async () => {
+    const { iframe, post } = await mount(hostEngine);
+    expect(iframe.getAttribute('src')).toBe('/hosted-runtime/host.html');
+    await act(async () => sendReady(iframe, identity, iframe.contentWindow!, { 'host-js': true }));
+    expect(initOf(post).engine).toBe('host-js');
+    // No VM, so nothing to download, hash or clone: the key is absent, not undefined.
+    expect(getBytes).not.toHaveBeenCalled();
+    expect('zippWasm' in initOf(post)).toBe(false);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('keeps exactly the containment every other engine has: allow-scripts alone, and no referrer', async () => {
+    // These two attributes ARE the containment. Host JavaScript relaxes one token of the shell's
+    // own policy inside an opaque origin; it must not relax anything the parent sets. Asserted on
+    // the host document and on the one every hosted app has always run on, so neither can drift.
+    const host = await mount(hostEngine);
+    expect(host.iframe.getAttribute('sandbox')).toBe('allow-scripts');
+    expect(host.iframe.getAttribute('referrerpolicy')).toBe('no-referrer');
+    await act(async () => root!.unmount());
+    root = undefined;
+    const zipp = await mount({ id: 'zipp-web-python', revision: 'r1' });
+    expect(zipp.iframe.getAttribute('sandbox')).toBe('allow-scripts');
+    expect(zipp.iframe.getAttribute('referrerpolicy')).toBe('no-referrer');
+  });
+
+  it('is out of date rather than falling back when the host shell does not announce it', async () => {
+    // A runtime from before host.html, served at that path by a stale deployment: it announces a
+    // perfectly valid `zipp`, which must not be read as permission to boot ZIPP on this document.
+    const { iframe, post } = await mount(hostEngine);
+    await act(async () => sendReady(iframe));
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('out of date');
+    expect(post).not.toHaveBeenCalled();
+    expect(getBytes).not.toHaveBeenCalled();
+  });
+
+  it('is out of date when the shell describes host JavaScript with engine bytes', async () => {
+    const { iframe, post } = await mount(hostEngine);
+    await act(async () => sendReady(iframe, identity, iframe.contentWindow!, { 'host-js': identity }));
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('out of date');
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('rebuilds the frame on the other document when the decision changes', async () => {
+    const { iframe } = await mount(hostEngine);
+    expect(iframe.getAttribute('src')).toBe('/hosted-runtime/host.html');
+    await act(async () => root!.render(
+      <HostedAppFrame slug="notes" client={{ 'manifest.json': '{}' }} version={1} engine={{ id: 'zipp-web-python', revision: 'r8' }} />,
+    ));
+    const next = container.querySelector('iframe')!;
+    expect(next).not.toBe(iframe);
+    expect(next.getAttribute('src')).toBe('/hosted-runtime/index.html');
+    expect(next.getAttribute('sandbox')).toBe('allow-scripts');
+  });
+});
+
 describe('chooseFrameEngine', () => {
   const installed = (id: string) =>
     ({ 'zipp-web-python': { version: '1', sha256: 'python' }, 'zipp-web': { version: '1', sha256: 'web' } } as Record<string, { version: string; sha256: string }>)[id];
@@ -188,7 +253,33 @@ describe('chooseFrameEngine', () => {
   });
 
   it('falls back for an engine this page cannot boot, however loudly the shell announces it', () => {
-    expect(chooseFrameEngine({ id: 'host-js' }, { 'host-js': true }, installed)).toBe('zipp-web-python');
+    expect(chooseFrameEngine({ id: 'zipp-next' }, { 'zipp-next': { version: '2', sha256: 'next' } }, installed)).toBe('zipp-web-python');
+  });
+
+  it('refuses rather than falls back for host JavaScript, because its document serves nothing else', () => {
+    // `null`, not the fallback: frameSource has already mounted host.html, whose shell refuses a
+    // ZIPP init by name — and whose lone `zipp` field would otherwise be read as a valid
+    // announcement for the fallback and initialise an engine that document will not run.
+    expect(chooseFrameEngine({ id: 'host-js' }, { 'host-js': true }, installed)).toBeNull();
+    expect(chooseFrameEngine({ id: 'host-js' }, undefined, installed)).toBeNull();
+    expect(chooseFrameEngine({ id: 'host-js' }, {}, installed)).toBeNull();
+  });
+
+  it('passes host JavaScript through when the page holds it and the shell announces exactly it', () => {
+    const holdsHostJs = (id: string) => (id === 'host-js' ? (true as const) : installed(id));
+    expect(chooseFrameEngine({ id: 'host-js' }, { 'host-js': true }, holdsHostJs)).toBe('host-js');
+    // An engine described by BYTES is a shell answering about a different kind of engine.
+    expect(chooseFrameEngine({ id: 'host-js' }, { 'host-js': { version: '1', sha256: 'python' } }, holdsHostJs)).toBeNull();
+    // And ZIPP is never satisfied by the boolean, in the other direction.
+    expect(chooseFrameEngine({ id: 'zipp-web' }, { 'zipp-web': true }, holdsHostJs)).toBe('zipp-web-python');
+  });
+
+  it('mounts host JavaScript on its own document and everything else on the one that has always served them', () => {
+    expect(frameSource('host-js')).toBe('/hosted-runtime/host.html');
+    expect(frameSource('zipp-web-python')).toBe('/hosted-runtime/index.html');
+    expect(frameSource('zipp-web')).toBe('/hosted-runtime/index.html');
+    expect(frameSource(undefined)).toBe('/hosted-runtime/index.html');
+    expect(frameSource('')).toBe('/hosted-runtime/index.html');
   });
 
   it('reads only the shell’s own announcement, never a prototype', () => {
@@ -207,8 +298,16 @@ describe('the engine an action claims', () => {
 
   it('claims the decision the SERVER made, not the engine this frame fell back to', async () => {
     vi.mocked(api.runHostedAction).mockResolvedValue({ data: { result: 1 } });
-    const { iframe } = await mount({ id: 'host-js', revision: 'r7' });
+    const { iframe } = await mount({ id: 'zipp-web', revision: 'r7' });
     await act(async () => sendReady(iframe));
+    await callAction(channels[0]);
+    expect(api.runHostedAction).toHaveBeenCalledWith('notes', 'save', {}, expect.anything(), 'zipp-web;r7');
+  });
+
+  it('claims host JavaScript when that is what the server decided and the shell served it', async () => {
+    vi.mocked(api.runHostedAction).mockResolvedValue({ data: { result: 1 } });
+    const { iframe } = await mount({ id: 'host-js', revision: 'r7' });
+    await act(async () => sendReady(iframe, identity, iframe.contentWindow!, { 'host-js': true }));
     await callAction(channels[0]);
     expect(api.runHostedAction).toHaveBeenCalledWith('notes', 'save', {}, expect.anything(), 'host-js;r7');
   });

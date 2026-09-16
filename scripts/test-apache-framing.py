@@ -26,7 +26,7 @@ try:
     web = root / 'web'
     web.mkdir()
     shutil.copyfile(repo / 'formlogic/ui/public/.htaccess', web / '.htaccess')
-    for name in ['index.html', 'screen-host.html', 'hosted-runtime/index.html', 'app-editors/builder/index.html', 'app-editors/studio/index.html']:
+    for name in ['index.html', 'screen-host.html', 'hosted-runtime/index.html', 'hosted-runtime/host.html', 'app-editors/builder/index.html', 'app-editors/studio/index.html']:
         path = web / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('<!doctype html><title>Frame header fixture</title>Ready')
@@ -60,7 +60,7 @@ DirectoryIndex index.html
             if process.poll() is not None:
                 raise RuntimeError((root / 'error.log').read_text())
             time.sleep(.1)
-    cases = {'/': ('none', 'DENY'), '/app/example': ('none', 'DENY'), '/settings': ('none', 'DENY'), '/screen-host.html': ('self', 'SAMEORIGIN'), '/hosted-runtime/index.html': ('self', 'SAMEORIGIN'), '/hosted-runtime/': ('self', 'SAMEORIGIN'), '/app-editors/builder/index.html': ('self', 'SAMEORIGIN'), '/app-editors/studio/index.html': ('self', 'SAMEORIGIN'), '/form/example': ('*', None)}
+    cases = {'/': ('none', 'DENY'), '/app/example': ('none', 'DENY'), '/settings': ('none', 'DENY'), '/screen-host.html': ('self', 'SAMEORIGIN'), '/hosted-runtime/index.html': ('self', 'SAMEORIGIN'), '/hosted-runtime/host.html': ('self', 'SAMEORIGIN'), '/hosted-runtime/': ('self', 'SAMEORIGIN'), '/app-editors/builder/index.html': ('self', 'SAMEORIGIN'), '/app-editors/studio/index.html': ('self', 'SAMEORIGIN'), '/form/example': ('*', None)}
     for path, (ancestor, frame) in cases.items():
         with urllib.request.urlopen(base + path) as response:
             expected = f"frame-ancestors '{ancestor}'" if ancestor != '*' else 'frame-ancestors *'

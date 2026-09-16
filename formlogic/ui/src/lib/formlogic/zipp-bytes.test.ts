@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createWasmByteBroker, engineIdentity, getEngineBytes, ZIPP_RUNTIME_IDENTITY } from './zipp-bytes';
+import { createWasmByteBroker, engineIdentity, engineNeedsBytes, getEngineBytes, ZIPP_RUNTIME_IDENTITY } from './zipp-bytes';
+import { OWN_DOCUMENT_ENGINE } from './frameEngine';
 
 const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
 const sha256 = createHash('sha256').update(bytes).digest('hex');
@@ -39,17 +40,30 @@ describe('page engine byte broker', () => {
     expect(new Uint8Array(await get())).toEqual(bytes);
   });
 
-  it('names the identity of the one engine this page holds, and nothing else', () => {
+  it('names what this page holds for each engine it can boot, and nothing else', () => {
     // The parent's half of the handshake: an id that is not in this table can never be chosen,
-    // so the frame can never ask a shell for an engine these bytes are not.
+    // so the frame can never ask a shell for an engine these bytes are not. Host JavaScript is in
+    // the table described by OWN_DOCUMENT_ENGINE rather than an identity — it is the runtime
+    // document's own engine, so there are no bytes to name.
     expect(engineIdentity('zipp-web-python')).toEqual({ version: ZIPP_RUNTIME_IDENTITY.version, sha256: ZIPP_RUNTIME_IDENTITY.sha256 });
+    expect(engineIdentity('host-js')).toBe(OWN_DOCUMENT_ENGINE);
     expect(engineIdentity('zipp-web')).toBeUndefined();
-    expect(engineIdentity('host-js')).toBeUndefined();
     expect(engineIdentity('constructor')).toBeUndefined();
   });
 
-  it('serves bytes for that engine alone', async () => {
+  it('asks for bytes only for the engine that needs them', () => {
+    expect(engineNeedsBytes('zipp-web-python')).toBe(true);
+    expect(engineNeedsBytes('host-js')).toBe(false);
+    // An engine this page cannot boot is never chosen, so it is never asked about; if it were,
+    // "needs bytes" is the answer that leads to a refusal rather than to a silent boot.
+    expect(engineNeedsBytes('zipp-web')).toBe(true);
+  });
+
+  it('serves bytes for the ZIPP engine alone, host JavaScript included in the refusal', async () => {
+    // Defence in depth behind engineNeedsBytes: handing host-js ZIPP's bytes would be giving it
+    // the wrong engine rather than none, so it is refused by the same rule as an unknown id.
     await expect(getEngineBytes('host-js')).rejects.toThrow('does not have the engine');
+    await expect(getEngineBytes('zipp-web')).rejects.toThrow('does not have the engine');
   });
 
   it('verifies bytes on an HTTP LAN context without SubtleCrypto', async () => {

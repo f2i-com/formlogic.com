@@ -69,6 +69,38 @@ Administrators set the policy in **Admin → Platform → App engine**: the site
 
 Owners pick the engine per app in App hosting and Native app hosting, within that policy. An administrator acting as the owner cannot: the endpoint is owner-only, and the choice lives in its own `apps.client_engine` column rather than in `apps.settings`, so packs, backups, the MCP merge and the acting-as mirror can neither replay nor import it. A stored choice the installed runtime cannot serve yet is kept and clamped at read time; the settings screen shows what actually runs and why.
 
+#### Two runtime documents
+
+The hosted runtime ships **two** entry documents, and the frame mounts one of them by name:
+
+| Engine | Document | Engine bytes |
+|---|---|---|
+| `zipp-web-python` (and any fallback) | `/hosted-runtime/index.html` | the ZIPP WASM engine, fetched once per page and cloned into the frame |
+| `host-js` | `/hosted-runtime/host.html` | none — no WASM is fetched at all |
+
+There are two because of one token. Host JavaScript needs `'unsafe-eval'` in the shell's own `script-src`, and a `<meta>` Content-Security-Policy can be tightened after it is written but never relaxed. So the weaker policy gets its own document; `index.html` keeps, byte for byte, the policy every hosted app has always run under. `host.html` is `index.html` plus `data-softn-logic-engine="host-js"`, and that single attribute drives all three of the things that must agree: the policy the shell writes, the engine it will accept in `formlogic:init`, and the engines it announces in `formlogic:ready`. A ZIPP `init` sent to `host.html` is refused by name, and a `host-js` `init` sent to `index.html` is refused by name.
+
+FormLogic will only mount `host.html` for a runtime that says it has one. The Softn release records that as `protocols.hostedEngines`, alongside the native and editor-bridge protocol numbers, and `scripts/fetch-softn-release.mjs` refuses an archive whose value is not the one this tree speaks — in both directions. A Softn from before `host.html` is refused rather than installed and half-used; the same rule on `--check` refuses an install that predates it. Both documents must also carry the same framing headers (below): the document with the weaker script policy must never be the one anybody may frame.
+
+If the shell that answers on `host.html` does not announce `host-js`, the frame shows "This app runtime is out of date" rather than quietly falling back to ZIPP. It cannot fall back: that document does not serve ZIPP, and its ordinary `zipp` announcement would otherwise be read as permission to try.
+
+#### What host JavaScript gives up
+
+Choosing host JavaScript is an explicit transfer of trust, which is why it takes an administrator's verification of the owner's account. It is worth being plain about what it costs, because none of it is theoretical — the list below was measured in Chromium, Firefox and WebKit.
+
+**What does not change.** The frame is still `sandbox="allow-scripts"` with no `allow-same-origin`, so it still has an opaque origin: no FormLogic cookies, no storage, no access to the surrounding page, no pop-ups, no top-level navigation, no forms, no downloads. The shell's policy still pins every kind of loading to the runtime directory, so third-party fetches, WebSockets, images and beacons are still blocked, and no credentialed request to `/api` can be made from inside the frame. The parent bridge is still the only data path, every action is still authorised server-side under the *viewer's* session, and the server still runs every backend action on ZIPP. The editors always run on ZIPP. **The data an app can reach does not change at all** — the same actions, the same workspace records, the same browser storage it could already reach on ZIPP.
+
+**What is lost.** What ZIPP provides, and host JavaScript does not, is a *bound on the author's code*:
+
+- **Runaway code can freeze the viewer's tab.** ZIPP gives every entry a step budget and a memory ceiling. Host JavaScript has neither. A three-second loop froze the whole page for three seconds in Firefox, WebKit and headless Chromium; only full Chromium's site isolation contained it. The in-frame loop guard catches accidents, not intent, and code built with `Function` bypasses it.
+- **The frame can carry data out by navigating itself.** A sandboxed frame may replace its own document, and nothing in the parent can prevent it; FormLogic notices afterwards and takes the frame away. An installed-runtime invariant forbids any redirect or rewrite under `/hosted-runtime/` or `/app-editors/`, because a redirect defeats the policy's path pinning.
+- **WebRTC can reach a STUN server in Chromium.** CSP does not govern it. Firefox and WebKit did not.
+- **The frame's contents are arbitrary.** An app can draw anything, including something that looks like a FormLogic sign-in. Form submission is blocked, but keystrokes can still leave by the two routes above.
+- **`'unsafe-eval'` widens the blast radius of an app bug.** An app that evaluates a string a member typed turns that into script in every viewer's frame.
+- **Softn's own resource limits are gone**, along with `accel` and `softn.sandbox.run`.
+
+**What holds it in.** Only accounts an administrator verified, with an allow-list and a site default that should stay ZIPP-only; a per-app choice kept out of settings, packs, backups and the MCP merge; re-reading the decision on every load, so revocation applies at the next reload; the engine id and revision in the frame's key, so a stale frame can never keep the weaker document; `X-FormLogic-Client-Engine` on every action, answered with `409 engine_changed` so an open page remounts promptly; and a load-count tripwire that removes a frame that navigated itself. Verify an account only when you would be comfortable running that owner's code on your own machine.
+
 Runtime responses carry `engine: {id, revision}`, where the revision changes whenever any input does. The parent may echo it back on an action as `X-FormLogic-Client-Engine: <id>;<revision>`; a mismatch answers `409 engine_changed`, so a page loaded before a revocation is told to remount. The header is optional and grants nothing.
 
 ## Client `.logic`
@@ -163,7 +195,7 @@ Both browser integrations use the same ZIPP engine: the JavaScript/Python (`web-
 
 Hosted apps use main-thread script execution. The iframe's existing opaque origin and `worker-src blob:` policy do not permit Softn's additional URL-based sandbox workers; sharing engine bytes does not change those capabilities.
 
-Serve `/hosted-runtime/` static assets with `Access-Control-Allow-Origin: *` and `X-Content-Type-Options: nosniff`; the opaque iframe needs anonymous CORS access to its trusted JS/WASM. An Apache `.htaccess` is included; equivalent headers must be configured for Nginx or another host. The runtime entry document (`/hosted-runtime/index.html`) and the embedded editor entry documents (`/app-editors/builder/index.html` and `/app-editors/studio/index.html`) must also send `Content-Security-Policy: frame-ancestors 'self'; base-uri 'self'; object-src 'none'` and `X-Frame-Options: SAMEORIGIN`. The web-root `.htaccess` scopes these exceptions to the embedded documents; keep the dashboard's default framing denial. If a proxy or CDN injects another `frame-ancestors 'none'` or `X-Frame-Options: DENY` on these paths, remove that conflicting override for the embedded documents. Do not add permissive CORS to authenticated API routes. Vite development has a middleware limited to the static runtime directory.
+Serve `/hosted-runtime/` static assets with `Access-Control-Allow-Origin: *` and `X-Content-Type-Options: nosniff`; the opaque iframe needs anonymous CORS access to its trusted JS/WASM. An Apache `.htaccess` is included; equivalent headers must be configured for Nginx or another host. **Both** runtime entry documents (`/hosted-runtime/index.html` and `/hosted-runtime/host.html`) and the embedded editor entry documents (`/app-editors/builder/index.html` and `/app-editors/studio/index.html`) must also send `Content-Security-Policy: frame-ancestors 'self'; base-uri 'self'; object-src 'none'` and `X-Frame-Options: SAMEORIGIN`. Do not omit `host.html`: it is the document whose shell policy carries `'unsafe-eval'`, so it is the last one that may be framed by anybody. Never add a redirect or rewrite under `/hosted-runtime/` or `/app-editors/` — CSP path matching stops at a redirect, which is how a frame could reach `/api` with the viewer's cookies; `formlogic/ui/scripts/check-security-invariants.mjs` fails the build if one appears. The web-root `.htaccess` scopes these exceptions to the embedded documents; keep the dashboard's default framing denial. If a proxy or CDN injects another `frame-ancestors 'none'` or `X-Frame-Options: DENY` on these paths, remove that conflicting override for the embedded documents. Do not add permissive CORS to authenticated API routes. Vite development has a middleware limited to the static runtime directory.
 
 PHP needs the existing sandbox binaries, PDO SQLite, and writable `backend/storage/hosted-apps` outside the public document root. No new MySQL migration or Node process is needed on the API server. Deploy the new PHP classes and route wiring with the frontend assets.
 

@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import { workspaceBridge } from "../../lib/softn/workspaceBridge";
 import { NATIVE_PROTOCOL } from "../../lib/softn/protocol";
-import { engineIdentity, getEngineBytes } from "../../lib/formlogic/zipp-bytes";
-import { announcedIdentity, chooseFrameEngine, sameIdentity } from "../../lib/formlogic/frameEngine";
+import { engineIdentity, engineNeedsBytes, getEngineBytes } from "../../lib/formlogic/zipp-bytes";
+import { announcedIdentity, chooseFrameEngine, frameSource, sameIdentity } from "../../lib/formlogic/frameEngine";
 
 import { nativeAppStorage, NativeStorageError } from "../../lib/nativeAppStorage";
 
@@ -126,21 +126,28 @@ export function HostedAppFrame({
         return;
       }
       // The shell answered: now the engine is decided, from what it serves and what this page holds.
+      // `null` means the document that was mounted cannot serve what was asked for — the host
+      // document, whose shell did not announce host-js — and there is nothing to fall back to on it.
       const chosen = chooseFrameEngine(engineId ? { id: engineId } : undefined, event.data.engines, engineIdentity);
-      if (!sameIdentity(announcedIdentity(event.data, chosen), engineIdentity(chosen))) {
+      if (chosen === null || !sameIdentity(announcedIdentity(event.data, chosen), engineIdentity(chosen))) {
         clearTimeout(timeout);
         setError("This app runtime is out of date. Please update the hosted app runtime and reload.");
         return;
       }
       initializing = true;
-      let zippWasm: ArrayBuffer;
-      try {
-        zippWasm = await getEngineBytes(chosen);
-      } catch (reason) {
-        clearTimeout(timeout);
-        if (active) setError(reason instanceof Error ? reason.message : "The app engine could not be loaded.");
-        initializing = false;
-        return;
+      // Host JavaScript is the runtime document's own engine: nothing is fetched, nothing is
+      // hashed and no bytes are put in `init`. The frame never asks for bytes it would then have
+      // to decide what to do with.
+      let zippWasm: ArrayBuffer | undefined;
+      if (engineNeedsBytes(chosen)) {
+        try {
+          zippWasm = await getEngineBytes(chosen);
+        } catch (reason) {
+          clearTimeout(timeout);
+          if (active) setError(reason instanceof Error ? reason.message : "The app engine could not be loaded.");
+          initializing = false;
+          return;
+        }
       }
       if (!active || expired) return;
       let savedStorage: Record<string, string> | undefined;
@@ -235,8 +242,10 @@ export function HostedAppFrame({
           // object here would arrive as "[object Object]" and be refused. A shell from before the
           // handshake ignores the key and runs what it always ran.
           engine: chosen,
-          // Clone the public bytes; never transfer/detach the page's cache.
-          zippWasm,
+          // Clone the public bytes; never transfer/detach the page's cache. The key is ABSENT,
+          // not undefined, for an engine that needs none: a structured clone carries an explicit
+          // undefined across, and the host document must not be sent an engine field at all.
+          ...(zippWasm ? { zippWasm } : {}),
         },
         "*",
         [channel.port2],
@@ -316,7 +325,15 @@ export function HostedAppFrame({
           key={frameKey}
           ref={frame}
           title="Hosted app"
-          src="/hosted-runtime/index.html"
+          // The document the SERVER's decision needs, chosen before the frame loads because it is
+          // the document that decides the shell's policy. `frameKey` carries the engine id, so a
+          // decision that changes builds a new frame on the right document rather than reusing one.
+          src={frameSource(engineId)}
+          // The containment, for EVERY engine and unchanged by any of them. Scripts and nothing
+          // else: the frame keeps an opaque origin, so it has none of this origin's cookies,
+          // storage or DOM, and no popups, top-level navigation, forms or downloads. Host
+          // JavaScript relaxes the shell's own policy by one token; it does not touch this.
+          // check-security-invariants.mjs pins this literal, and the token it must never contain.
           sandbox="allow-scripts"
           referrerPolicy="no-referrer"
           className="min-h-[420px] w-full flex-1 border-0"

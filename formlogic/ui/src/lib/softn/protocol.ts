@@ -11,6 +11,9 @@
  *   native runtime (host-protocol.json).
  * - recordEvents: the native runtime's record automation protocol.
  * - editorBridge: the Builder/Studio iframe bridge (`formlogic-editor-ready`).
+ * - hostedEngines: how many hosted-runtime entry documents beyond `index.html` the runtime
+ *   carries. At 1 that is `host.html`, which serves the `host-js` engine under a policy
+ *   `index.html` must never have; HostedAppFrame mounts it by name.
  */
 import protocol from './protocol.json';
 

@@ -47,7 +47,7 @@ try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   browser = await chromium.launch();
-  for (const order of ['expression-first', 'app-first', 'concurrent', 'without-webcrypto', 'download-retry', 'stale-host', 'self-navigation']) {
+  for (const order of ['expression-first', 'app-first', 'concurrent', 'without-webcrypto', 'download-retry', 'stale-host', 'self-navigation', 'frame-policy', 'host-js-frame']) {
     // Fresh context + fixture without PWA registration avoids cached engines.
     // Playwright's serviceWorkers:block init script itself throws when reading
     // navigator.serviceWorker inside this deliberately opaque sandboxed iframe.
@@ -82,6 +82,62 @@ try {
       }
       return route.continue();
     });
+    // What each runtime document actually WRITES over itself, read out of a real browser rather
+    // than guessed at from a bundle. The two documents share one entry chunk, in which the
+    // 'unsafe-eval' token is a conditional, so a grep over that chunk finds it for BOTH and proves
+    // nothing; only the running document can say which policy it took. index.html's policy is the
+    // one every hosted app has always run under, and host.html's must differ by exactly the one
+    // token, in exactly the one directive, that makes host JavaScript possible at all.
+    if (order === 'frame-policy') {
+      const policyOf = async (document) => {
+        await page.goto(`${origin}/hosted-runtime/${document}`);
+        return page.evaluate(() => {
+          const meta = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+          if (!meta) throw new Error('the runtime document wrote no Content-Security-Policy');
+          return meta.getAttribute('content');
+        });
+      };
+      const index = await policyOf('index.html');
+      const host = await policyOf('host.html');
+      assert.ok(!index.includes("'unsafe-eval'"), `index.html must never write 'unsafe-eval': ${index}`);
+      // 'wasm-unsafe-eval' is a different token and index.html has always had it; the check above
+      // must not be passing merely because the assertion is looking at the wrong string.
+      assert.ok(index.includes("'wasm-unsafe-eval'"), `index.html must still write 'wasm-unsafe-eval': ${index}`);
+      assert.equal([...host.matchAll(/(?<!-)'unsafe-eval'/g)].length, 1, `host.html must write 'unsafe-eval' exactly once: ${host}`);
+      assert.equal(host.replace(" 'unsafe-eval'", ''), index, 'one token must be the whole difference between the two policies');
+      const directives = Object.fromEntries(host.split('; ').map(directive => [directive.split(' ')[0], directive]));
+      assert.ok(directives['script-src'].includes("'unsafe-eval'"), `'unsafe-eval' must be in script-src: ${host}`);
+      for (const [name, directive] of Object.entries(directives)) {
+        if (name !== 'script-src') assert.ok(!/(?<!-)'unsafe-eval'/.test(directive), `${name} must not carry 'unsafe-eval': ${directive}`);
+      }
+      assert.deepEqual(errors, [], 'The browser must not report uncaught exceptions');
+      assert.equal(wasmRequests.length, 0, 'Loading a runtime document must not fetch an engine');
+      console.log(`PASS ${order}: index.html and host.html differ by exactly one script-src token, read from the running documents`);
+      await context.close();
+      continue;
+    }
+    // A verified owner's app, end to end on the real production runtime: the frame mounts the
+    // host document, the author's logic runs as that document's own JavaScript, and no WASM is
+    // fetched at all because there is no VM to load.
+    if (order === 'host-js-frame') {
+      await page.goto(`${origin}/e2e/fixtures/zipp-sharing.html?engine=host-js`);
+      await page.getByRole('button', { name: 'Open app', exact: true }).click();
+      await expect(page.locator('iframe')).toHaveAttribute('src', '/hosted-runtime/host.html');
+      const frame = page.getByTestId('app-0').frameLocator('iframe');
+      await expect(frame.getByTestId('count')).toHaveText('0', { timeout: 60_000 });
+      await frame.getByRole('button', { name: 'Add one' }).click();
+      await expect(frame.getByTestId('count')).toHaveText('1');
+      await frame.getByRole('button', { name: 'Check backend' }).click();
+      await expect(frame.getByTestId('backend')).toHaveText('Connected');
+      // The containment is unchanged, and nothing was downloaded to provide the engine.
+      await expect(page.locator('iframe').first()).toHaveAttribute('sandbox', 'allow-scripts');
+      await expect(page.locator('iframe').first()).toHaveAttribute('referrerpolicy', 'no-referrer');
+      assert.equal(wasmRequests.length, 0, `Host JavaScript must fetch no engine: ${wasmRequests.join(', ')}`);
+      assert.deepEqual(errors, [], 'The browser must not report uncaught exceptions');
+      console.log(`PASS ${order}: host.html ran the app with 0 WASM requests, sandbox=allow-scripts`);
+      await context.close();
+      continue;
+    }
     await page.goto(`${origin}/e2e/fixtures/zipp-sharing.html`);
     await page.getByRole('button', { name: 'Open app', exact: true }).waitFor();
     assert.equal(wasmRequests.length, 0, 'Ordinary pages must not preload the engine');

@@ -11,6 +11,7 @@ vi.mock('../../lib/formlogic/zipp-bytes', () => ({
   getZippWasmBytes: getBytes,
   getEngineBytes: getBytes,
   engineIdentity: (id: string) => (id === 'zipp-web-python' ? { version: '0.0.17', sha256: 'current' } : undefined),
+  engineNeedsBytes: () => true,
 }));
 vi.mock('../../lib/api', () => ({ api: { runHostedAction: vi.fn(), runNativeRequest: vi.fn(), getHostedRuntime: vi.fn(), getNativeRuntime: vi.fn() } }));
 vi.mock('../../lib/softn/workspaceBridge', () => ({ workspaceBridge: vi.fn() }));

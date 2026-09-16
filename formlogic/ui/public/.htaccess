@@ -51,7 +51,11 @@ Options -Indexes
   Header always set Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" env=IS_SCREEN_HOST
   # FormLogic embeds its hosted apps and authoring tools from these entry points.
   # Keep the dashboard protected; only these documents accept same-origin frames.
-  SetEnvIf Request_URI "^/(hosted-runtime/(index\.html)?|app-editors/(builder|studio)/(index\.html)?)$" IS_APP_FRAME
+  # host.html is the hosted runtime's SECOND entry document: it serves the host-js
+  # engine, whose shell policy carries 'unsafe-eval'. It must therefore be held to
+  # exactly the same framing rule as index.html — the document with the weaker
+  # script policy must never also be the one anybody may frame.
+  SetEnvIf Request_URI "^/(hosted-runtime/(index\.html|host\.html)?|app-editors/(builder|studio)/(index\.html)?)$" IS_APP_FRAME
   Header always set X-Frame-Options "SAMEORIGIN" env=IS_APP_FRAME
   Header always set Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" env=IS_APP_FRAME
 </IfModule>

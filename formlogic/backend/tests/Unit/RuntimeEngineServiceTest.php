@@ -102,8 +102,24 @@ class RuntimeEngineServiceTest extends TestCase
 
     public function testAProvenanceWithNoHostedRuntimeFailsClosed(): void
     {
-        // The state of every install from before the stamp — including this tree's today.
+        // The state of every install from before the stamp.
         $this->assertSame(['zipp-web-python'], Engines::enginesFromRecord(['source' => 'softn', 'release' => ['tag' => 'v0.0.15-local']]));
+    }
+
+    public function testTheRuntimeInstalledInThisTreeAdvertisesBothEngines(): void
+    {
+        // The one link the fixtures above cannot cover: the actual file on disk. The hosted
+        // runtime FormLogic serves declares its engines in hosted-runtime/runtime-manifest.json,
+        // scripts/fetch-softn-release.mjs stamps them into the native runtime's provenance.json
+        // at install time, and this is what the server reads on every runtime request. If they
+        // ever disagree, an owner's host-js choice silently resolves to the fallback (or, worse,
+        // does not) for a reason no other test would show.
+        $file = dirname(__DIR__, 2) . '/resources/softn-native/provenance.json';
+        $this->assertFileExists($file, 'Run node scripts/fetch-softn-release.mjs from the repository root.');
+        $provenance = json_decode((string) file_get_contents($file), true);
+        $this->assertSame(['zipp-web-python', 'host-js'], Engines::enginesFromRecord($provenance));
+        // And the same runtime speaks the hosted-engines protocol that made it installable at all.
+        $this->assertSame(1, $provenance['hostedRuntime']['protocols']['hostedEngines'] ?? null);
     }
 
     public function testAnEnginesFieldThatIsMissingEmptyOrMalformedFailsClosed(): void
@@ -181,7 +197,8 @@ class RuntimeEngineServiceTest extends TestCase
 
     public function testHostJsWithAVerifiedOwnerStillFallsBackUntilTheInstallAdvertisesIt(): void
     {
-        // This slice's live state: allowed, verified — and the installed runtime serves ZIPP only.
+        // An install whose runtime serves ZIPP only — every Softn before host.html, and any tree
+        // whose provenance stamp does not name the engine. Allowed and verified are not enough.
         $policy = self::policy(allowed: ['zipp-web-python', 'host-js']);
         $engine = Engines::resolve('host-js', $policy, ['zipp-web-python'], self::VERIFIED);
         $this->assertSame('zipp-web-python', $engine['id']);

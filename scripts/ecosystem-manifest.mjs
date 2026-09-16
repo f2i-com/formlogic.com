@@ -49,7 +49,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { NATIVE_PROTOCOL, RECORD_EVENTS_PROTOCOL, EDITOR_BRIDGE_PROTOCOL } from '../formlogic/ui/scripts/softn-protocol.mjs';
+import { NATIVE_PROTOCOL, RECORD_EVENTS_PROTOCOL, EDITOR_BRIDGE_PROTOCOL, HOSTED_ENGINES_PROTOCOL } from '../formlogic/ui/scripts/softn-protocol.mjs';
 import { canonical } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -245,6 +245,9 @@ const manifest = {
     nativeHostingProtocol: NATIVE_PROTOCOL,
     recordEventsProtocol: RECORD_EVENTS_PROTOCOL,
     editorBridgeProtocol: EDITOR_BRIDGE_PROTOCOL,
+    // How many hosted-runtime entry documents beyond index.html this FormLogic serves: at 1,
+    // host.html for the host-js engine. A Softn release must declare the same number.
+    hostedEnginesProtocol: HOSTED_ENGINES_PROTOCOL,
     accountBackupFormats: backupSupported,
     formSqliteSchema: formSchema,
     migrationDirection: 'forward only: newer FormLogic imports older backup formats; older FormLogic refuses newer ones',

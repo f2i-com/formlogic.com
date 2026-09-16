@@ -228,6 +228,53 @@ export async function writeRuntimeManifest(directory, zipp) {
   await writeFile(resolve(directory, manifestName), JSON.stringify({ formatVersion: 1, zipp: runtimeIdentity(zipp), files }, null, 2) + '\n');
 }
 
+/**
+ * The hosted runtime's two entry documents, and the one thing that tells them apart.
+ *
+ * The shell writes its Content-Security-Policy over itself from ONE input: the
+ * `data-softn-logic-engine` attribute on `<html>`. `host.html` carries `"host-js"` and gets
+ * `'unsafe-eval'` in `script-src`; `index.html` carries nothing and gets the policy every hosted
+ * app has always run under. Both load the SAME entry module, so it is the same code reading the
+ * same attribute — which is why the attribute, and not a token in a shared chunk, is what can be
+ * checked here at all. (Greping the entry chunk for `'unsafe-eval'` CANNOT work: the two
+ * documents share `main-*.js`, where the token is a conditional and is therefore present for
+ * both.) What each document actually WRITES is evaluated in a real browser by
+ * scripts/check-zipp-sharing.mjs — see its `frame-policy` order.
+ *
+ * An attribute value neither document should carry is refused rather than guessed at: the shell
+ * serves no engine for an attribute it does not know, so such a document would be a runtime that
+ * silently runs nothing.
+ */
+export const ENGINE_ATTRIBUTE = 'data-softn-logic-engine';
+export async function checkEntryDocuments(directory) {
+  const read = async (name) => {
+    try { return await readFile(resolve(directory, name), 'utf8'); }
+    catch { throw new Error(`The hosted runtime has no ${name}: it must carry both entry documents.`); }
+  };
+  const attributeOf = (html, name) => {
+    const tag = html.match(/<html\b[^>]*>/i);
+    if (!tag) throw new Error(`${name} has no <html> element, so the shell cannot read which engine it serves.`);
+    const attribute = tag[0].match(new RegExp(`${ENGINE_ATTRIBUTE}\\s*=\\s*"([^"]*)"`, 'i'));
+    return attribute ? attribute[1] : null;
+  };
+  const entryOf = (html) => [...html.matchAll(/<script\b[^>]*\bsrc\s*=\s*"([^"]+)"/gi)].map((m) => m[1]).sort();
+  const index = await read('index.html');
+  const host = await read('host.html');
+  const indexAttribute = attributeOf(index, 'index.html');
+  if (indexAttribute !== null && indexAttribute !== '') {
+    throw new Error(`hosted-runtime/index.html declares ${ENGINE_ATTRIBUTE}="${indexAttribute}"; it must declare none, so its policy stays the one every hosted app has always had.`);
+  }
+  const hostAttribute = attributeOf(host, 'host.html');
+  if (hostAttribute !== 'host-js') {
+    throw new Error(`hosted-runtime/host.html declares ${ENGINE_ATTRIBUTE}=${hostAttribute === null ? '(none)' : `"${hostAttribute}"`}; it must declare "host-js", which is the single input that gives it its own policy.`);
+  }
+  const indexEntry = entryOf(index);
+  if (indexEntry.length === 0) throw new Error('hosted-runtime/index.html loads no entry script.');
+  if (JSON.stringify(entryOf(host)) !== JSON.stringify(indexEntry)) {
+    throw new Error(`hosted-runtime/host.html loads ${JSON.stringify(entryOf(host))} and index.html loads ${JSON.stringify(indexEntry)}; both documents must run the same shell, or the attribute is not the only difference between them.`);
+  }
+}
+
 export async function checkRuntimeArtifact(directory, expected) {
   const manifest = JSON.parse(await readFile(resolve(directory, manifestName), 'utf8'));
   if (manifest.formatVersion !== 1 || !manifest.files || typeof manifest.files !== 'object' || Array.isArray(manifest.files)) {

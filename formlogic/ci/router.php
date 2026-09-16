@@ -50,7 +50,10 @@ if (preg_match('#^/(hosted-runtime|app-editors)/#', $uri)) {
         header('Content-Type: ' . ($types[$ext] ?? 'application/octet-stream'));
         header('X-Content-Type-Options: nosniff');
         header('Access-Control-Allow-Origin: *');
-        if (preg_match('#^/(hosted-runtime/(index\.html)?|app-editors/(builder|studio)/(index\.html)?)$#', $uri)) {
+        // Mirrors ui/public/.htaccess IS_APP_FRAME, host.html included: the hosted runtime's
+        // second entry document serves host-js under a policy carrying 'unsafe-eval', so it is
+        // framed under exactly the same rule as index.html and never a looser one.
+        if (preg_match('#^/(hosted-runtime/(index\.html|host\.html)?|app-editors/(builder|studio)/(index\.html)?)$#', $uri)) {
             header('X-Frame-Options: SAMEORIGIN');
             header("Content-Security-Policy: frame-ancestors 'self'; base-uri 'self'; object-src 'none'");
         }

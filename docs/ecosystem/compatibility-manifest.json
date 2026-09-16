@@ -1,11 +1,11 @@
 {
   "kind": "formlogic.ecosystemCompatibilityManifest",
   "formatVersion": 1,
-  "generatedAt": "2026-09-16T01:32:55.067Z",
+  "generatedAt": "2026-09-16T06:06:10.045Z",
   "note": "Source revisions and digests of files present in the tree at generation time. Release workflows must recompute digests of the artifacts they actually ship; provenance is not verification of downloaded bytes.",
   "components": {
     "formlogic": {
-      "revision": "09650e607acd6b861cb0ec722c8534b7582edfd6",
+      "revision": "00e811db713e37e673c760d059d2dc2073c152fa",
       "backupFormat": {
         "current": 2,
         "importable": [
@@ -17,9 +17,9 @@
     },
     "softn": {
       "pinnedBy": "latest GitHub release of f2i-com/softn.com (scripts/fetch-softn-release.mjs); SOFTN_RELEASE pins a tag; a release run freezes one record (--resolve-only) that every job installs (--frozen) and the release gate checks with --exact",
-      "release": "v0.0.16-local",
-      "revision": "6c13ba771d78a85a9a2b16ebc16c96a5853d42cc",
-      "archiveSha256": "66c1f6eedd7b215c65c4ce82a40ddb06cab63c5328e2a15df9af0ca6e918211e",
+      "release": "v0.0.17-local",
+      "revision": "ac4fd4c4ed3c6b7670cd80d4d48981e2237a74b8",
+      "archiveSha256": "9b58a8da8b3f4f365a346a0577ea10a36c7c0f6a70be1ced6f39fcc545bbad72",
       "frozen": null,
       "nativeProtocol": 1,
       "recordEvents": 1,
@@ -108,6 +108,7 @@
     "nativeHostingProtocol": 1,
     "recordEventsProtocol": 1,
     "editorBridgeProtocol": 1,
+    "hostedEnginesProtocol": 1,
     "accountBackupFormats": [
       1,
       2

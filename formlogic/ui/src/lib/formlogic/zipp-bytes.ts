@@ -1,4 +1,10 @@
 import source from '../../../vendor/zipp-wasm/SOURCE.json';
+// The vocabulary lives with the rule that uses it (frameEngine), which reaches no DOM, message or
+// fetch; this module is the page's actual holdings. Keeping them apart means a test that stubs
+// what this page holds cannot also, silently, stub what the announcement is compared against.
+import { OWN_DOCUMENT_ENGINE, type EngineIdentity, type FrameEngineBytes } from './frameEngine';
+
+export type { EngineIdentity, FrameEngineBytes };
 
 /** Immutable public engine identity, shared with the trusted hosted-app shell. */
 export const ZIPP_RUNTIME_IDENTITY = Object.freeze({ version: source.version, sha256: source.sha256 });
@@ -20,23 +26,28 @@ async function sha256(bytes: ArrayBuffer): Promise<string> {
   return Array.from(digest, value => value.toString(16).padStart(2, '0')).join('');
 }
 
-/** What a hosted-runtime shell must announce for an engine to be the one this page holds. */
-export type EngineIdentity = { version: string; sha256: string };
-
 /**
- * The engines this page can boot, and the identity each one's shell must announce.
+ * The engines this page can boot, and what each one's shell must announce.
  *
- * Only the ZIPP JavaScript-and-Python engine today: it is the only one the installed hosted
- * runtime serves and the only one these bytes are. The table is the parent's half of the
+ * Two today. `zipp-web-python` is the ZIPP JavaScript-and-Python VM, described by the identity of
+ * the bytes this page ships and sends. `host-js` is the author's code run as the host document's
+ * own JavaScript, described by {@link OWN_DOCUMENT_ENGINE}: it is served by its own runtime
+ * document under its own policy, and no bytes ever cross. The table is the parent's half of the
  * handshake — an id it does not name can never be chosen, so it can never be asked for bytes.
  */
-const FRAME_ENGINES: Readonly<Record<string, EngineIdentity>> = Object.freeze({
+const FRAME_ENGINES: Readonly<Record<string, FrameEngineBytes>> = Object.freeze({
   'zipp-web-python': ZIPP_RUNTIME_IDENTITY,
+  'host-js': OWN_DOCUMENT_ENGINE,
 });
 
-/** The identity an engine's shell must announce, or undefined when this page cannot boot it. */
-export function engineIdentity(id: string): EngineIdentity | undefined {
+/** What an engine's shell must announce, or undefined when this page cannot boot it. */
+export function engineIdentity(id: string): FrameEngineBytes | undefined {
   return Object.hasOwn(FRAME_ENGINES, id) ? FRAME_ENGINES[id] : undefined;
+}
+
+/** Whether booting this engine needs engine bytes from the page at all. */
+export function engineNeedsBytes(id: string): boolean {
+  return engineIdentity(id) !== OWN_DOCUMENT_ENGINE;
 }
 
 /**
@@ -72,9 +83,10 @@ export const getZippWasmBytes = createWasmByteBroker(ZIPP_RUNTIME_IDENTITY.sha25
 /**
  * The engine bytes one id needs, from the page's single cache.
  *
- * Only ids {@link engineIdentity} knows can reach here, so the throw is a seam marker rather than
- * a reachable path: an engine that needs no bytes (host JavaScript) will answer differently here,
- * not be given ZIPP's.
+ * Only ids {@link engineIdentity} knows can reach here, and callers ask {@link engineNeedsBytes}
+ * first, so the rejection is a seam marker rather than a reachable path. `host-js` is refused by
+ * the same rule as an unknown id and for the same reason: an engine that is its own document has
+ * no bytes, and handing it ZIPP's would be giving it the wrong engine rather than none.
  */
 export function getEngineBytes(id: string): Promise<ArrayBuffer> {
   if (id !== 'zipp-web-python') return Promise.reject(new Error('This app runtime does not have the engine this app needs.'));

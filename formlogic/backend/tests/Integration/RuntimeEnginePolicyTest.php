@@ -212,8 +212,13 @@ class RuntimeEnginePolicyTest extends TestCase
 
     public function testTheDefaultProvenancePathIsTheInstalledNativeRuntimeRecord(): void
     {
-        // The shipped install must resolve every app to the fallback in this slice.
-        $this->assertSame(['zipp-web-python'], (new RuntimeEngineService(self::$mysql))->installedEngines());
+        // Not a fixture: the record the fetch stamped from the archive this tree actually
+        // installed. It advertises the fallback and host JavaScript, because the hosted runtime
+        // ships the second entry document (host.html) that serves the latter. zipp-web is a real
+        // id no runtime serves, so it stays absent here and resolves with reason 'not-installed'.
+        $installed = (new RuntimeEngineService(self::$mysql))->installedEngines();
+        $this->assertSame(['zipp-web-python', 'host-js'], $installed);
+        $this->assertNotContains('zipp-web', $installed);
     }
 
     // ── the admin endpoints ──────────────────────────────────────────────────
@@ -224,7 +229,9 @@ class RuntimeEnginePolicyTest extends TestCase
         $body = $this->json($response);
         $this->assertSame(200, $response->getStatusCode());
         $this->assertSame(RuntimeEngineService::defaults(), $body['policy']);
-        $this->assertSame(['zipp-web-python'], $body['installed']);
+        // What the install serves, against every id the server knows: an administrator's
+        // allow-list can only ever take effect for an engine that is in both.
+        $this->assertSame(['zipp-web-python', 'host-js'], $body['installed']);
         $this->assertSame(['zipp-web-python', 'zipp-web', 'host-js'], $body['engines']);
     }
 

@@ -17,7 +17,7 @@ import { writeZippTree, zippReleaseFixture } from '../formlogic/ui/scripts/zipp-
 
 const here = dirname(fileURLToPath(import.meta.url));
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
-const PROTOCOLS = { nativeProtocol: 1, recordEvents: 1, editorBridge: 1 };
+const PROTOCOLS = { nativeProtocol: 1, recordEvents: 1, editorBridge: 1, hostedEngines: 1 };
 const ADAPTER_BODY = 'export const project = 1;\n';
 
 async function put(root, path, data) {

@@ -32,7 +32,7 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 /** The ZIPP release the fixture Softn releases ship, unless a test names another. */
 const ZIPP_RELEASE = zippReleaseFixture();
 const ZIPP_NEXT = zippReleaseFixture({ version: '0.0.19', revision: 'd'.repeat(40) });
-const PROTOCOLS = { nativeProtocol: 1, recordEvents: 1, editorBridge: 1 };
+const PROTOCOLS = { nativeProtocol: 1, recordEvents: 1, editorBridge: 1, hostedEngines: 1 };
 const ADAPTER = '/** fixture adapter */\r\nexport const project = 1;\r\n';
 const adapterSha = sha256(ADAPTER.replace(/\r\n/g, '\n'));
 const COMMIT = 'b'.repeat(40);
@@ -57,7 +57,11 @@ function archiveEntries({ tag = 'v0.0.13', commit = COMMIT, zippRelease = ZIPP_R
   // the ZIPP release, as Softn installed it
   for (const [n, d] of Object.entries(zippRelease.files)) put(`zipp/${n}`, d);
   // hosted runtime
-  const hosted = { 'index.html': Buffer.from('<script src="./assets/app.js"></script>'), 'assets/app.js': Buffer.from(hostedCode), 'assets/zipp_wasm_bg-hosted.wasm': wasm, 'assets/core-runtime/zipp_wasm_bg.wasm': wasm, 'README.txt': Buffer.from('fixture') };
+  // Two entry documents, as `protocols.hostedEngines` declares: host.html is index.html with the
+  // one attribute that selects the host-JavaScript engine and its weaker policy.
+  // Two entry documents, as `protocols.hostedEngines` declares, shaped like the real ones: the
+  // same shell script, and one attribute on <html> that is the whole difference between them.
+  const hosted = { 'index.html': Buffer.from('<!doctype html><html><body><script src="./assets/app.js"></script></body></html>'), 'host.html': Buffer.from('<!doctype html><html data-softn-logic-engine="host-js"><body><script src="./assets/app.js"></script></body></html>'), 'assets/app.js': Buffer.from(hostedCode), 'assets/zipp_wasm_bg-hosted.wasm': wasm, 'assets/core-runtime/zipp_wasm_bg.wasm': wasm, 'README.txt': Buffer.from('fixture') };
   for (const [n, d] of Object.entries(hosted)) put(`hosted-runtime/${n}`, d);
   put('hosted-runtime/runtime-manifest.json', runtimeManifest(hosted, zipp, advertised));
   // app editors
@@ -320,8 +324,48 @@ test('every ZIPP engine in the archive is found by its content: a stray engine u
 
 test('a release speaking another protocol version is refused', async (t) => {
   const root = await formlogicRoot(t);
-  const fixture = await writeFixtureArchive(root, { protocols: { nativeProtocol: 2, recordEvents: 1, editorBridge: 1 } });
+  const fixture = await writeFixtureArchive(root, { protocols: { ...PROTOCOLS, nativeProtocol: 2 } });
   await assert.rejects(fetchSoftnRelease({ root, archivePath: fixture.path, ...quiet }), /speaks nativeProtocol 2; this FormLogic speaks 1/);
+});
+
+test('a Softn from before the second hosted-runtime document is refused: it speaks no hostedEngines', async (t) => {
+  // This tree serves host.html for the host-js engine, so an archive whose runtime has only the
+  // one entry document cannot supply what an owner's choice would mount. The pairing is the
+  // ordinary protocol rule, and the refusal names the key and both versions.
+  const root = await formlogicRoot(t);
+  const { hostedEngines: _dropped, ...older } = PROTOCOLS;
+  const fixture = await writeFixtureArchive(root, { protocols: older });
+  await assert.rejects(
+    fetchSoftnRelease({ root, archivePath: fixture.path, ...quiet }),
+    /Softn v0\.0\.13 speaks hostedEngines undefined; this FormLogic speaks 1\./
+  );
+  // And nothing was installed from it.
+  assert.equal(existsSync(resolve(root, 'formlogic/ui/public/hosted-runtime/index.html')), false);
+});
+
+test('an install that predates hostedEngines fails --check rather than passing as intact', async (t) => {
+  // The same rule on the read path: a tree whose current.json records the older protocol set is
+  // a runtime this FormLogic would only half use, and --check says so instead of vouching for it.
+  const root = await formlogicRoot(t);
+  const fixture = await writeFixtureArchive(root);
+  await fetchSoftnRelease({ root, archivePath: fixture.path, ...quiet });
+  await checkInstalled({ root, ...quiet });
+  const currentFile = resolve(paths(root).cache, 'current.json');
+  const current = JSON.parse(await readFile(currentFile, 'utf8'));
+  delete current.protocols.hostedEngines;
+  await writeFile(currentFile, JSON.stringify(current));
+  await assert.rejects(
+    checkInstalled({ root, ...quiet }),
+    /The installed Softn v0\.0\.13 speaks hostedEngines undefined; this tree speaks 1\. Fetch again\./
+  );
+});
+
+test('an archive that speaks hostedEngines but ships no host.html is refused before it installs', async (t) => {
+  // The protocol number is a claim about the archive's documents; HostedAppFrame mounts
+  // /hosted-runtime/host.html by name, so a missing one would be a 404 in a member's frame.
+  const root = await formlogicRoot(t);
+  const fixture = await writeFixtureArchive(root, {}, null, (entries) => { delete entries['hosted-runtime/host.html']; });
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: fixture.path, ...quiet }), /The archive has no hosted-runtime\/host\.html\./);
 });
 
 test('an adapter this tree has not vendored fails naming --sync-adapter, and --sync-adapter vendors it', async (t) => {

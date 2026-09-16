@@ -347,11 +347,11 @@ class AdminCodeTrustTest extends TestCase
         foreach ($overview['apps'] as $app) {
             $engines[$app['id']] = $app['engine'];
         }
-        // Requested host-js, verified owner — and still ZIPP, because the installed runtime
-        // advertises no other engine in this slice.
+        // Requested host-js, verified owner, and the installed runtime serves it: this is the
+        // whole chain agreeing, which is the only way host JavaScript ever becomes effective.
         $this->assertSame('host-js', $engines[$this->appId]['requested']);
-        $this->assertSame('zipp-web-python', $engines[$this->appId]['id']);
-        $this->assertSame('not-installed', $engines[$this->appId]['reason']);
+        $this->assertSame('host-js', $engines[$this->appId]['id']);
+        $this->assertArrayNotHasKey('reason', $engines[$this->appId]);
         $this->assertSame('zipp-web-python', $engines[$this->otherAppId]['id']);
         $this->assertSame('policy', $engines[$this->otherAppId]['reason'], 'zipp-web is not in the default allow-list');
     }

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { resolve, dirname, basename } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { artifactFiles, assertNoInterruptedPromotion, checkRuntimeArtifact, checkZippTree, installRuntimeArtifact, isZippEngineWasm, LINKED_ASSET, writeRuntimeManifest, zippReleaseIdentity } from './hosted-runtime-artifact.mjs';
+import { artifactFiles, assertNoInterruptedPromotion, checkEntryDocuments, checkRuntimeArtifact, checkZippTree, installRuntimeArtifact, isZippEngineWasm, LINKED_ASSET, writeRuntimeManifest, zippReleaseIdentity } from './hosted-runtime-artifact.mjs';
 import { wasmModule, writeZippTree, zippEngineWasm, zippReleaseFixture, zippTreeMap } from './zipp-release-fixture.mjs';
 
 const identity = { version: '0.0.17', sha256: 'a'.repeat(64) };
@@ -217,4 +217,57 @@ test('checkZippTree holds BUILD-INFO to the recorded commit, build and toolchain
   await assert.rejects(checkZippTree(edited(release, { 'RELEASE-SHA256SUMS': Buffer.concat([releaseSums, Buffer.from(`${'0'.repeat(64)}  extra.zip\n`)]) }), release.record), /RELEASE-SHA256SUMS is not the ZIPP v0\.0\.18 SHA256SUMS SOURCE\.json records/);
   const wrongBundle = Buffer.from(releaseSums.toString().replace(release.source.bundleSha256, 'e'.repeat(64)));
   await assert.rejects(checkZippTree(edited(release, { 'RELEASE-SHA256SUMS': wrongBundle }, source => ({ ...source, sumsSha256: sha256(wrongBundle) })), {}), /does not list zipp-wasm-0\.0\.18-web-python\.zip with the digest SOURCE\.json records/);
+});
+
+// ── The two entry documents ─────────────────────────────────────────────────
+// The shell writes its own Content-Security-Policy from one input: the engine attribute on
+// <html>. host.html carries "host-js" and gets 'unsafe-eval'; index.html carries none and keeps
+// the policy every hosted app has always run under. Both documents load the SAME shell, so a
+// token grep over the entry chunk proves nothing (it is a conditional in a chunk both share) —
+// what each document WRITES is evaluated in a real browser by scripts/check-zipp-sharing.mjs.
+// What is checkable statically, and is checked here, is the one input and the shared shell.
+async function entryFixture(t, { index, host } = {}) {
+  const base = resolve(tmpdir());
+  const directory = await mkdtemp(resolve(base, 'formlogic-entry-documents-test-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const shell = '<body><script type="module" src="./assets/main-abc.js"></script></body>';
+  if (index !== null) await writeFile(resolve(directory, 'index.html'), index ?? `<!doctype html><html>${shell}</html>`);
+  if (host !== null) await writeFile(resolve(directory, 'host.html'), host ?? `<!doctype html><html data-softn-logic-engine="host-js">${shell}</html>`);
+  return directory;
+}
+
+test('accepts the hosted runtime\'s two entry documents: one shell, one attribute apart', async t => {
+  await checkEntryDocuments(await entryFixture(t));
+});
+
+test('refuses a hosted runtime that carries only the document it has always had', async t => {
+  // A Softn from before host.html, or a source build that dropped rollupOptions.input: an owner
+  // choosing host-js would be mounted at a path that 404s.
+  await assert.rejects(checkEntryDocuments(await entryFixture(t, { host: null })), /has no host\.html: it must carry both entry documents/);
+  await assert.rejects(checkEntryDocuments(await entryFixture(t, { index: null })), /has no index\.html/);
+});
+
+test('refuses an index.html that declares an engine: its policy must stay the one it has always written', async t => {
+  const directory = await entryFixture(t, { index: '<!doctype html><html data-softn-logic-engine="host-js"><body><script type="module" src="./assets/main-abc.js"></script></body></html>' });
+  await assert.rejects(checkEntryDocuments(directory), /index\.html declares data-softn-logic-engine="host-js"; it must declare none/);
+});
+
+test('refuses a host.html that does not declare the one attribute that gives it its own policy', async t => {
+  const shell = '<body><script type="module" src="./assets/main-abc.js"></script></body>';
+  await assert.rejects(checkEntryDocuments(await entryFixture(t, { host: `<!doctype html><html>${shell}</html>` })), /host\.html declares data-softn-logic-engine=\(none\)/);
+  // An attribute the shell does not know serves NO engine and gets the strict policy, so a
+  // document carrying one is a runtime that would silently run nothing.
+  await assert.rejects(checkEntryDocuments(await entryFixture(t, { host: `<!doctype html><html data-softn-logic-engine="host-js-worker">${shell}</html>` })), /must declare "host-js"/);
+});
+
+test('refuses two documents that do not run the same shell', async t => {
+  // If the entry scripts differ, the attribute is not the only difference between them and
+  // nothing here can say what the second document's policy would be.
+  const directory = await entryFixture(t, { host: '<!doctype html><html data-softn-logic-engine="host-js"><body><script type="module" src="./assets/host-only-xyz.js"></script></body></html>' });
+  await assert.rejects(checkEntryDocuments(directory), /both documents must run the same shell/);
+});
+
+test('refuses a document with no <html> element or no entry script at all', async t => {
+  await assert.rejects(checkEntryDocuments(await entryFixture(t, { index: '<script src="./assets/main-abc.js"></script>' })), /index\.html has no <html> element/);
+  await assert.rejects(checkEntryDocuments(await entryFixture(t, { index: '<!doctype html><html><body>nothing</body></html>' })), /index\.html loads no entry script/);
 });

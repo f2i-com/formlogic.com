@@ -225,15 +225,16 @@ class AppEngineEndpointTest extends TestCase
         $this->assertSame(422, $refused->getStatusCode());
         $this->assertStringContainsString('verified for code trust', $this->jsonBody($refused)['message']);
 
-        // Verified: the choice is STORED even though this install serves ZIPP only, and the
-        // answer says which engine actually runs and why.
+        // Verified: the choice is stored AND effective, because the installed hosted runtime
+        // serves host-js. The answer still says which engine actually runs, and gives no reason
+        // because there is nothing standing between the choice and the frame.
         $this->verifyOwner();
         $accepted = $this->put(['engine' => 'host-js']);
         $this->assertSame(200, $accepted->getStatusCode());
         $this->assertSame('host-js', $this->storedEngine());
         $engine = $this->jsonBody($accepted)['engine'];
-        $this->assertSame('zipp-web-python', $engine['id']);
-        $this->assertSame('not-installed', $engine['reason']);
+        $this->assertSame('host-js', $engine['id']);
+        $this->assertArrayNotHasKey('reason', $engine);
         $this->assertSame(['zipp-web-python', 'host-js'], $this->jsonBody($accepted)['policy']['allowed']);
     }
 
@@ -295,8 +296,9 @@ class AppEngineEndpointTest extends TestCase
         $this->assertSame('no-store', $response->getHeaderLine('Cache-Control'));
         $this->assertSame('zipp-web-python', $body['engine']['id']);
         $this->assertNull($body['engine']['stored']);
-        $this->assertSame(['zipp-web-python'], $body['enginePolicy']['allowed']);
-        $this->assertSame(['zipp-web-python'], $body['enginePolicy']['installed']);
+        $this->assertSame(['zipp-web-python'], $body['enginePolicy']['allowed'], 'the site default allow-list, which host-js is not in');
+        // The install serves more than the policy allows: the owner is offered the intersection.
+        $this->assertSame(['zipp-web-python', 'host-js'], $body['enginePolicy']['installed']);
     }
 
     public function testTheRuntimeGetCarriesTheEngineAndItsRevisionAndStaysNoStore(): void

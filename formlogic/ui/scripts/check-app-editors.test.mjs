@@ -52,7 +52,10 @@ async function prebuildRoot(t) {
   await copyFile(resolve(here, '../src/lib/softn/protocol.json'), resolve(ui, 'src/lib/softn/protocol.json'));
   await writeZippTree(resolve(ui, 'vendor/zipp-wasm'), release.files);
   await mkdir(resolve(ui, 'public/hosted-runtime'), { recursive: true });
-  await writeFile(resolve(ui, 'public/hosted-runtime/index.html'), '<script></script>');
+  // Both entry documents the hosted runtime ships: one shell, one attribute apart.
+  const shell = '<body><script type="module" src="./assets/main-abc.js"></script></body>';
+  await writeFile(resolve(ui, 'public/hosted-runtime/index.html'), `<!doctype html><html>${shell}</html>`);
+  await writeFile(resolve(ui, 'public/hosted-runtime/host.html'), `<!doctype html><html data-softn-logic-engine="host-js">${shell}</html>`);
   await writeRuntimeManifest(resolve(ui, 'public/hosted-runtime'), expected);
   await cp(await fixture(t), resolve(ui, 'public/app-editors'), { recursive: true });
   const checks = () => ['check-hosted-runtime.mjs', 'check-app-editors.mjs'].map(script => ({ script, ...spawnSync(process.execPath, [resolve(ui, 'scripts', script)], { cwd: ui, encoding: 'utf8' }) }));
@@ -68,6 +71,19 @@ test('the prebuild checks refuse while the fetcher\'s promotion journal exists, 
     assert.notEqual(status, 0, `${script} passed during an unfinished promotion`);
     assert.match(stderr, /promotion\.json exists.*Run node scripts\/fetch-softn-release\.mjs/);
   }
+});
+
+test('the hosted-runtime prebuild check refuses a runtime that carries only one entry document', async t => {
+  // A Softn from before host.html, or a source build whose rollupOptions.input was overridden:
+  // the build would succeed and then 404 in the frame of the first owner who chose host-js.
+  const { ui, checks } = await prebuildRoot(t);
+  await rm(resolve(ui, 'public/hosted-runtime/host.html'));
+  await writeRuntimeManifest(resolve(ui, 'public/hosted-runtime'), expected);
+  const [hosted, editors] = checks();
+  assert.notEqual(hosted.status, 0, 'check-hosted-runtime.mjs passed a runtime with no host.html');
+  assert.match(hosted.stderr, /entry documents are not the two this FormLogic serves[\s\S]*has no host\.html/);
+  // The editors have one entry document each and are unaffected by the hosted runtime's second.
+  assert.equal(editors.status, 0, editors.stderr);
 });
 
 test('the prebuild checks name the fetch when the generated engine tree is missing, and refuse one that is not a ZIPP release', async t => {
