@@ -46,6 +46,7 @@ import {
   ENTRY_MODULE,
   authorMessage,
   isPythonKind,
+  mapAuthorLines,
   modesFor,
   projectFiles,
   type PythonMode,
@@ -498,7 +499,10 @@ async function runPython(
   }
   if (outcome.ok) return sanitizeOut(outcome.value);
   if (outcome.kind === 'source' || outcome.kind === 'guest') {
-    throw new SandboxGuestError(authorMessage(outcome.message, mode, source));
+    // Two passes, in the order a consumer applies them: the mode's own line arithmetic (which a
+    // runner unfolding the served profile's `modes` does for itself), then FormLogic's own
+    // dropping and renaming, over lines that are already the author's.
+    throw new SandboxGuestError(authorMessage(mapAuthorLines(outcome.message, mode, source), source));
   }
   // resource (instruction, heap or output budget), conversion, usage, a trap: host errors.
   throw new Error(outcome.message);

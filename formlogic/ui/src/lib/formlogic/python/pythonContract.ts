@@ -106,19 +106,76 @@ export function projectFiles(mode: PythonMode, source: string): Record<string, s
 }
 
 /**
- * The engine's error text in the author's terms. Locations in logic_block.py become the
- * author's own line numbers, and frames and locations in main.py and formlogic.py (the
- * driver) are dropped.
+ * The engine's message with locations in logic_block.py moved onto the author's own lines.
  *
- * ZIPP writes a location as `(logic_block.py:N[:C])`, `Python: logic_block.py:N:C: ...`,
- * `File "logic_block.py", line N` in a traceback, or `logic_block.py: ... (at offset K)`
- * for a construct its parser rejects (K counts characters into the file).
+ * This is the arithmetic the served profile describes rather than performs: a mode's
+ * `lineOffset` (scripts/build-script-profile.mjs, oaiy.com
+ * protocol/v1/script-profile.schema.json `$defs/pythonMode`) says how many generated lines
+ * precede the author's first, and a consumer's mode-aware runner subtracts it before the result
+ * leaves. This host has no such runner in front of it, so it applies the identical rule here -
+ * one implementation of the rule, two callers of it, and the corpus proves they agree.
+ *
+ * ZIPP writes a location in a project file four ways: `(logic_block.py:N)`,
+ * `(logic_block.py:N:C)` (also bare, as `Python: logic_block.py:N:C: ...`),
+ * `File "logic_block.py", line N` in a traceback, and `logic_block.py: ... (at offset K)` for a
+ * construct its parser rejects, where K counts UTF-16 units into the file. Each is renumbered
+ * and NOTHING else is: the file keeps its name, frames in other files keep their lines, and no
+ * text is added, dropped or reworded. Dropping and renaming is authorMessage's pass.
+ *
+ * Which line an engine line means, in three tiers:
+ *   * BELOW the wrapper (N > lineOffset): N - lineOffset, capped at the author's last line. A
+ *     location past the end can only be in the wrapper's closing text, which compiles on its
+ *     own, so it is reached because of what the author wrote.
+ *   * ON the splice line (N === lineOffset), where the wrapper ends in a newline: line 1.
+ *     Python reports a multi-line statement at the line that OPENS it, and the expression
+ *     wrapper's last line (`    return (`) opens the author's expression.
+ *   * ABOVE it: left exactly as the engine wrote it. `from formlogic import *` and the `def`
+ *     header fail on their own account and are not the author's to answer for; reporting no
+ *     line is honest where reporting line 1 is not.
+ *
+ * Columns are never adjusted - lineOffset is a line count and it is the only knob.
  */
-export function authorMessage(raw: string, mode: PythonMode, source: string): string {
+export function mapAuthorLines(raw: string, mode: PythonMode, source: string): string {
+  const [before] = BLOCK_WRAPPERS[mode];
   const offset = LINE_OFFSETS[mode];
   const authorLines = Math.max(1, source.split(/\r\n?|\n/).length);
-  const line = (engineLine: number) => Math.min(authorLines, Math.max(1, engineLine - offset));
-  const block = blockSource(mode, source);
+  // The author's text begins on its own line only when the wrapper ends with one.
+  const splice = before.endsWith('\n') ? offset : offset + 1;
+  /** null: the location is inside the wrapper and is not the author's to own. */
+  const line = (engineLine: number): number | null =>
+    engineLine < splice ? null : Math.min(authorLines, Math.max(1, engineLine - offset));
+  return raw
+    .replace(/(^|\n)(logic_block\.py: .*?) \(at offset (\d+)\)/g, (whole, lead: string, head: string, k: string) => {
+      const at = Number(k) - before.length;
+      return at < 0 ? whole : `${lead}${head} (at offset ${Math.min(source.length, at)})`;
+    })
+    .replace(/File "logic_block\.py", line (\d+)/g, (whole, n: string) => {
+      const at = line(Number(n));
+      return at === null ? whole : `File "logic_block.py", line ${at}`;
+    })
+    .replace(/logic_block\.py:(\d+)(?::(\d+))?/g, (whole, n: string, col?: string) => {
+      const at = line(Number(n));
+      return at === null ? whole : `logic_block.py:${at}${col ? `:${col}` : ''}`;
+    });
+}
+
+/**
+ * The engine's error text in FormLogic's terms, over lines that are ALREADY the author's.
+ *
+ * No arithmetic happens here. The numbers arriving have been moved onto the author's own lines
+ * either by the mode-aware runner that unfolded the served profile or by mapAuthorLines above,
+ * and subtracting a wrapper a second time would move every line twice over. What is left is
+ * presentation, and it is FormLogic's own: frames and locations in main.py and formlogic.py (the
+ * driver) are dropped, a location in logic_block.py is renamed - renamed, not renumbered - to
+ * `line N`, and the wrapper's generated function names are given the names an author knows them
+ * by. A `logic_block.py:N` a runner deliberately left alone (a line inside the wrapper) is
+ * renamed like any other: this pass cannot tell one from another, and it is not told, because
+ * the alternative is a second copy of the arithmetic here.
+ *
+ * A `(at offset K)` counts into the author's `source`, not into the wrapped block - the runner
+ * rebased it - so the line and column are measured against `source`.
+ */
+export function authorMessage(raw: string, source: string): string {
   let droppedLast = false;
   const lines = raw
     .split('\n')
@@ -131,13 +188,13 @@ export function authorMessage(raw: string, mode: PythonMode, source: string): st
     .map((text) =>
       text
         .replace(/^logic_block\.py: (.*) \(at offset (\d+)\)$/, (_m, message: string, at: string) => {
-          const before = block.slice(0, Number(at));
+          const before = source.slice(0, Number(at));
           const column = Number(at) - before.lastIndexOf('\n');
-          return `${message} (line ${line(before.split('\n').length)}, col ${column})`;
+          return `${message} (line ${before.split('\n').length}, col ${column})`;
         })
         .replace(/logic_block\.py:(\d+)(?::(\d+))?/g, (_m, n: string, col?: string) =>
-          `line ${line(Number(n))}${col ? `, col ${col}` : ''}`)
-        .replace(/File "logic_block\.py", line (\d+)/g, (_m, n: string) => `line ${line(Number(n))}`)
+          `line ${n}${col ? `, col ${col}` : ''}`)
+        .replace(/File "logic_block\.py", line (\d+)/g, (_m, n: string) => `line ${n}`)
         .replace(/ \((main|formlogic)\.py:\d+(:\d+)?\)/g, '')
         .replace(/, in __formlogic_value__$/, ', in <expression>')
         .replace(/, in __formlogic_condition__$/, ', in <condition>')

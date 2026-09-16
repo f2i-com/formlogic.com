@@ -21,7 +21,16 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import PRELUDE from '../formlogic/prelude.js?raw';
 import FORMLOGIC_PY from '../formlogic/python/formlogic.py?raw';
-import { CONTRACT_FILES, CONTRACT_ID, ENTRY_FUNCTION, ENTRY_MODULE } from '../formlogic/python/pythonContract';
+import {
+  BLOCK_WRAPPERS,
+  CONTRACT_FILES,
+  CONTRACT_ID,
+  ENTRIES,
+  ENTRY_FUNCTION,
+  ENTRY_MODULE,
+  LINE_OFFSETS,
+  type PythonMode,
+} from '../formlogic/python/pythonContract';
 import provenance from './vendored/provenance.json';
 import schema from './vendored/script-profile.schema.json';
 
@@ -32,9 +41,21 @@ const SCHEMA_FILE = at('./vendored/script-profile.schema.json');
 const lf = (text: string) => text.replace(/\r\n?/g, '\n');
 const sha256 = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
 
+/** The wrappings the document carries, as a consumer reads them. */
+interface ServedMode {
+  name: string;
+  files: Record<string, string>;
+  block: string;
+  before: string;
+  after: string;
+  lineOffset: number;
+  call?: string;
+}
+
 const servedBytes = readFileSync(PROFILE_FILE);
 const servedText = servedBytes.toString('utf8');
 const profile = JSON.parse(servedText) as Record<string, unknown>;
+const servedModes = ((profile.python as { modes?: ServedMode[] } | undefined)?.modes ?? []) as ServedMode[];
 
 // ---------------------------------------------------------------------------
 // A validator for exactly the schema that is vendored.
@@ -111,6 +132,21 @@ function validate(value: unknown, node: unknown, where = 'profile', root: unknow
       case 'propertyNames':
         if (isObject(value)) {
           for (const key of Object.keys(value)) errors.push(...validate(key, rules.propertyNames, `${where}: property name ${JSON.stringify(key)}`, root));
+        }
+        break;
+      case 'items':
+        if (Array.isArray(value)) {
+          value.forEach((item, index) => errors.push(...validate(item, rules.items, `${where}[${index}]`, root)));
+        }
+        break;
+      case 'minItems':
+        if (Array.isArray(value) && value.length < (rules.minItems as number)) {
+          errors.push(`${where}: needs at least ${rules.minItems} items`);
+        }
+        break;
+      case 'maxItems':
+        if (Array.isArray(value) && value.length > (rules.maxItems as number)) {
+          errors.push(`${where}: has more than ${rules.maxItems} items`);
         }
         break;
       case 'minProperties':
@@ -204,7 +240,7 @@ describe('the served profile document', () => {
 
   it('carries exactly the keys the schema allows, and no envelope', () => {
     expect(Object.keys(profile).sort()).toEqual(['instructionSteps', 'preamble', 'preambleSha256', 'python', 'v']);
-    expect(Object.keys(profile.python as object).sort()).toEqual(['call', 'contract', 'entry', 'files']);
+    expect(Object.keys(profile.python as object).sort()).toEqual(['call', 'contract', 'entry', 'files', 'modes']);
     // `hooks` is absent on purpose: the schema's hooks name `prepare` functions THE PREAMBLE
     // DEFINES, FormLogic's preamble is the prelude and defines none, and a job carries its own
     // `prepare` anyway. Naming one here would make every job that used it fail with
@@ -224,6 +260,11 @@ describe('the served bytes', () => {
     expect(profile.preamble as string).not.toMatch(/\r/);
     for (const [name, source] of Object.entries((profile.python as { files: Record<string, string> }).files)) {
       expect(source, `${name} must be LF-only`).not.toMatch(/\r/);
+    }
+    for (const mode of servedModes) {
+      for (const [name, source] of Object.entries(mode.files)) expect(source, `${mode.name}/${name} must be LF-only`).not.toMatch(/\r/);
+      expect(mode.before, `${mode.name} before must be LF-only`).not.toMatch(/\r/);
+      expect(mode.after, `${mode.name} after must be LF-only`).not.toMatch(/\r/);
     }
   });
 
@@ -268,6 +309,79 @@ describe('what crosses is what the browser host itself runs', () => {
     const declared = /^const INSTRUCTION_BUDGET_STEPS = ([\d_]+);/m.exec(host);
     expect(declared, 'zipp-host.ts no longer declares INSTRUCTION_BUDGET_STEPS').not.toBeNull();
     expect(profile.instructionSteps).toBe(Number(declared![1].replace(/_/g, '')));
+  });
+});
+
+describe('the wrappings a consumer unfolds (python.modes)', () => {
+  it('carries one mode per wrapping the browser host uses, in the order the host declares them', () => {
+    // Not a second list: the modes ARE BLOCK_WRAPPERS' keys, which are the PythonMode union, so
+    // a wrapping added to the host without a served mode fails here rather than on a Desktop.
+    expect(servedModes.map((mode) => mode.name)).toEqual(Object.keys(BLOCK_WRAPPERS));
+  });
+
+  it('serves the wrapper text, the entry module and the line offset the host wraps with, byte for byte', () => {
+    for (const mode of servedModes) {
+      const name = mode.name as PythonMode;
+      const [before, after] = BLOCK_WRAPPERS[name];
+      expect(mode.before, `${name} before`).toBe(before);
+      expect(mode.after, `${name} after`).toBe(after);
+      expect(mode.files, `${name} files`).toEqual({ [`${ENTRY_MODULE}.py`]: ENTRIES[name] });
+      expect(mode.block, `${name} block`).toBe('logic_block.py');
+      // The number a consumer SUBTRACTS. It is LINE_OFFSETS, and it is the newline count of
+      // `before` - the two are asserted separately because the consumer derives nothing: a
+      // lineOffset one out reports every error against the wrong line of the author's code.
+      expect(mode.lineOffset, `${name} lineOffset`).toBe(LINE_OFFSETS[name]);
+      expect(mode.lineOffset, `${name} lineOffset is the wrapper's newline count`).toBe(before.split('\n').length - 1);
+    }
+  });
+
+  it('names its own call only where the entry module defines one that is not the shared call', () => {
+    // `syntax`'s entry defines __formlogic_never__ on purpose: a syntax check compiles the block,
+    // and a consumer calling the shared name would find nothing there. Every other entry answers
+    // __formlogic_run__, and the schema asks for `call` to be omitted where that is so.
+    for (const mode of servedModes) {
+      const entry = ENTRIES[mode.name as PythonMode];
+      const defines = [...entry.matchAll(/^def (__formlogic_[A-Za-z0-9_]*)\(/gm)].map((m) => m[1]);
+      expect(defines, `${mode.name} entry module`).toHaveLength(1);
+      expect(mode.call ?? (profile.python as { call: string }).call, `${mode.name} call`).toBe(defines[0]);
+    }
+    expect(servedModes.filter((mode) => 'call' in mode).map((mode) => mode.name)).toEqual(['syntax']);
+  });
+
+  it('unfolds to a project the consumer can actually run', () => {
+    // The four faults `pythonMode`'s own description says a JSON Schema cannot state, and which
+    // the consumer refuses at run time WITH THE WHOLE REQUEST. The generator refuses them too;
+    // this proves the served document is not one of them.
+    const python = profile.python as { files: Record<string, string>; entry: string };
+    const contractFiles = Object.keys(python.files);
+    expect(new Set(servedModes.map((mode) => mode.name)).size).toBe(servedModes.length);
+    for (const mode of servedModes) {
+      const files = Object.keys(mode.files);
+      expect(files.filter((file) => contractFiles.includes(file)), `${mode.name} shadows a contract file`).toEqual([]);
+      expect([...contractFiles, ...files]).not.toContain(mode.block);
+      expect(
+        [...contractFiles, ...files].some((file) => file === python.entry || file === `${python.entry}.py`),
+        `${mode.name} has no ${python.entry} module`,
+      ).toBe(true);
+    }
+  });
+
+  it('is refused when a mode carries an unknown key or drops a required one', () => {
+    // The negative controls that matter for a widening: `modes` is `additionalProperties: false`
+    // like the rest of the document, so a field invented here is a refusal, not an ignored extra.
+    const python = profile.python as Record<string, unknown>;
+    const [first, ...rest] = servedModes;
+    const withExtra = { ...profile, python: { ...python, modes: [{ ...first, kind: 'flow' }, ...rest] } };
+    expect(validate(withExtra, schema)).toContain('profile.python.modes[0]: unknown property "kind"');
+    const withoutOffset = { ...first } as Record<string, unknown>;
+    delete withoutOffset.lineOffset;
+    expect(validate({ ...profile, python: { ...python, modes: [withoutOffset, ...rest] } }, schema)).toContain(
+      'profile.python.modes[0]: missing required property "lineOffset"',
+    );
+    expect(validate({ ...profile, python: { ...python, modes: [] } }, schema)).toContain('profile.python.modes: needs at least 1 items');
+    expect(validate({ ...profile, python: { ...python, modes: [{ ...first, name: 'not a name' }, ...rest] } }, schema)).toContain(
+      'profile.python.modes[0].name: must match ^[A-Za-z][A-Za-z0-9_-]*$',
+    );
   });
 });
 

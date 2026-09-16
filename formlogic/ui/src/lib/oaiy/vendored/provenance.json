@@ -13,21 +13,29 @@
     "one of those extra keys is a refusal, not an ignored field. Validating the served document",
     "against this copy is what turns that from a discovery at integration time into a red test.",
     "",
+    "The schema now carries `python.modes`: the wrappings a job may name, each with the files it",
+    "adds, the block file, the text before and after the author's source, and the generated line",
+    "count a runner subtracts from whatever line the engine blames. FormLogic serves all five of",
+    "its own, so a consumer holding only the profile can build the project and answer in the",
+    "author's line numbers. The strictness cuts the other way too: a host on the older schema",
+    "refuses a profile carrying modes, which is correct - it would otherwise build a project with",
+    "no entry module at all.",
+    "",
     "REFRESHING: re-copy the schema verbatim (no reformatting - scriptProfile.test.ts recomputes",
     "the git blob hash and compares it to schema.blobSha1, so a copy that differs by a byte fails),",
     "re-read the three name lists from the paths below, and update every commit and blob here."
   ],
   "vendoredFrom": {
     "repo": "oaiy.com (sibling checkout; formlogic.com does not depend on it)",
-    "readAt": "224cb83",
-    "note": "The spec this work follows was written against oaiy.com d1aac68. `git diff d1aac68..224cb83 -- protocol/v1/script-profile.schema.json` is empty: the schema is unchanged between them."
+    "readAt": "903e0a10",
+    "note": "Taken at the commit that widened the schema with `python.modes` (\"A profile can describe how to wrap a leaf script...\"). The previous copy was read at 224cb83; the schema changed in this commit, and `scriptEnvelopeGlobals` grew by three names in aeadafe (the commit between them), which is why the lists below are re-read and not only the schema."
   },
   "schema": {
     "file": "script-profile.schema.json",
     "path": "protocol/v1/script-profile.schema.json",
-    "blobSha1": "8f33bd7043d36c876891a331e2d2895a25c1f6dc",
-    "lastChangedIn": "591449f726008724c74b5bf348ab83fd7ac556a3",
-    "lastChangedSubject": "A leaf-script envelope for ZIPP: one request shape for a logic block, a condition, an entry call or a Python project, refused whole when any part of it is malformed"
+    "blobSha1": "c5a58bd2d80aa168aaad4545285beed633e95e44",
+    "lastChangedIn": "903e0a10a0b3915991388f8ed9e055af1f1bbf83",
+    "lastChangedSubject": "A profile can describe how to wrap a leaf script, and the runner does the wrapping — including subtracting its own lines from whatever line the engine blames"
   },
   "reservedPreambleNames": {
     "what": [
@@ -48,17 +56,17 @@
       "zippPreambleGlobals": {
         "path": "ui/vendor/oaiy-core/src/zipp-executor.ts",
         "symbol": "ZIPP_PREAMBLE_GLOBALS",
-        "blobSha1": "15055f78903599149acc7c0c8238aa39e754989a"
+        "blobSha1": "2353a0ec0d64fc5ace28c923b8f3945e6182d364"
       },
       "scriptEnvelopeGlobals": {
         "path": "ui/vendor/oaiy-core/src/zipp-script.ts",
         "symbol": "SCRIPT_ENVELOPE_GLOBALS",
-        "blobSha1": "daae542f56f7d075b219f3bcb2310c4a1e113759"
+        "blobSha1": "eeb659194ea2604e73c2df317d292ced46a21bd8"
       },
       "wrapperGlobals": {
         "path": "cli/src/zipp/profile.ts",
         "symbol": "WRAPPER_GLOBALS",
-        "blobSha1": "4e79b8311de0be43628397207e86d0a566f16ca7"
+        "blobSha1": "f25d13f2601b108693a3856e19460548115dcd9d"
       }
     },
     "zippPreambleGlobals": [
@@ -81,7 +89,10 @@
       "__args",
       "__k",
       "__fn",
-      "__asBody"
+      "__asBody",
+      "__jsonParse",
+      "__isArray",
+      "__hasOwn"
     ],
     "wrapperGlobals": [
       "__oaiyConsole"
@@ -99,7 +110,7 @@
     "vendoredFrom": {
       "path": "ui/vendor/oaiy-core/src/zipp-executor.ts",
       "symbol": "ZIPP_GUEST_SHIMS",
-      "blobSha1": "15055f78903599149acc7c0c8238aa39e754989a"
+      "blobSha1": "2353a0ec0d64fc5ace28c923b8f3945e6182d364"
     },
     "names": [
       "__oaiyUnavailable",
