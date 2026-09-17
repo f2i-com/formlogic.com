@@ -680,7 +680,9 @@ class FlowController
         if ($digest === false) {
             // A deploy that shipped no artifact. Say so rather than serving an empty or partial
             // document: the consumer verifies the preamble digest and would refuse it anyway, and
-            // 'no profile' is a state the Desktop already handles (it runs without a preamble).
+            // 'no profile' is not a state the Desktop rides out: since OAIY PR7 it refuses its
+            // linked lanes and drops its engine capability, so the browser does the work instead.
+            // A deployment that never generates the artifact therefore idles every paired Desktop.
             return $this->jsonError(
                 $response,
                 'The script profile has not been generated for this deployment (run build-script-profile.mjs).',
