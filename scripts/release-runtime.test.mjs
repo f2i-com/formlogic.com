@@ -120,7 +120,7 @@ test('checkDistEngines accepts the web variant as one more hashed app asset when
   const { 'assets/zipp_wasm_bg-CAyqw9Mx.wasm': _app, ...onlyWeb } = webDist();
   await assert.rejects(checkDistEngines(await tree(t, onlyWeb), WITH_WEB.source, { web: WITH_WEB.variant }), /formlogic\/ui\/dist has no assets\/zipp_wasm_bg-\*\.wasm engine \(found: .*assets\/zipp_wasm_bg-DJYZzo8n\.wasm/);
   // Twice is a build nobody asked for.
-  await assert.rejects(checkDistEngines(await tree(t, webDist({ 'assets/zipp_wasm_bg-again.wasm': WITH_WEB.webWasm })), WITH_WEB.source, { web: WITH_WEB.variant }), /carries the ZIPP web variant twice \(assets\/zipp_wasm_bg-again\.wasm, assets\/zipp_wasm_bg-DJYZzo8n\.wasm\)/);
+  await assert.rejects(checkDistEngines(await tree(t, webDist({ 'assets/zipp_wasm_bg-again.wasm': WITH_WEB.webWasm })), WITH_WEB.source, { web: WITH_WEB.variant }), /carries the ZIPP web variant twice \(assets\/zipp_wasm_bg-DJYZzo8n\.wasm, assets\/zipp_wasm_bg-again\.wasm\)/);
 });
 
 test('checkDistEngines refuses the web variant under any other name or in any other tree, and as a second engine when the install has no variant', async (t) => {

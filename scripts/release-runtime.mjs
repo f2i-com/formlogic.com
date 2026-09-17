@@ -51,6 +51,13 @@ export async function checkDistEngines(directory, source, { label = 'formlogic/u
   };
   await walk('');
   engines.sort();
+  // Sorted for the same reason `engines` is. These names reach a person only
+  // inside an error message, and `readdir` returns them in whatever order the
+  // filesystem keeps: a case-insensitive one puts `-again` before `-DJYZzo8n`
+  // and a case-sensitive one does the opposite. Left unsorted, a test pinning
+  // that message passes on the machine it was written on and fails on the
+  // other kind.
+  webCopies.sort();
   const appCopies = engines.filter(path => APP_ENGINE_ASSET.test(path) && !webCopies.includes(path));
   if (!appCopies.length) throw new Error(`${label} has no assets/zipp_wasm_bg-*.wasm engine (found: ${engines.join(', ') || 'none'})`);
   if (web) {
