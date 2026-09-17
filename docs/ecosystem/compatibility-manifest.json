@@ -1,11 +1,11 @@
 {
   "kind": "formlogic.ecosystemCompatibilityManifest",
   "formatVersion": 1,
-  "generatedAt": "2026-09-16T20:47:06.603Z",
+  "generatedAt": "2026-09-17T04:23:45.834Z",
   "note": "Source revisions and digests of files present in the tree at generation time. Release workflows must recompute digests of the artifacts they actually ship; provenance is not verification of downloaded bytes.",
   "components": {
     "formlogic": {
-      "revision": "d9bedbcfe42c2befce2a5f221a222f875e1a88dd",
+      "revision": "2bcf9947235fa142e3155df1d5afa933b1cd29e3",
       "backupFormat": {
         "current": 2,
         "importable": [
@@ -17,9 +17,9 @@
     },
     "softn": {
       "pinnedBy": "latest GitHub release of f2i-com/softn.com (scripts/fetch-softn-release.mjs); SOFTN_RELEASE pins a tag; a release run freezes one record (--resolve-only) that every job installs (--frozen) and the release gate checks with --exact",
-      "release": "v0.0.21-local",
-      "revision": "32c337441f5905a169c8b3509f6731e1c1ecf24b",
-      "archiveSha256": "f51ae4cdfc59c1b2e1e94dc0d2e2469e1ede51a3d1b4667d9eac5c94727bd2f0",
+      "release": "v0.0.15",
+      "revision": "7593d23fad86216f8f7216669f2f628024ea2c78",
+      "archiveSha256": "ef1f915ab4694a265f91631c0958c32467ce9d28aa51525373870d05e76aa88f",
       "frozen": null,
       "nativeProtocol": 1,
       "recordEvents": 1,
@@ -120,14 +120,14 @@
       }
     },
     "modules": {
-      "runner.mjs": "f1766373c27de787aa3173977e1de2a99e98a1001f2061b58e2b386a0bd1f6b9",
-      "request-worker.mjs": "0255450a99f0f2218c219d25fe8627239ff0abb2ef68d4a013ee4298c2a56c68",
-      "request-hook.mjs": "ec1c9dfb3e2fc183574fc1819abd8300c1e9441d4615b71fed3c16b5712a067e",
-      "wasm-host.mjs": "03a566be4dc334e7a1af9e4b7032b3f846ebe36141e25ded345a716d0b7a940d",
-      "migrations.mjs": "f5994e7acd3b1288f8da209d77615334814d5e92cbeba5a78f9a8b88d83b4c7b",
-      "crypto.mjs": "a31f3c8321b08b25170680730c73ff41395a3c47eb44a7f86413f882e67d2d67",
-      "time.mjs": "e5002e6385adb2e51c03da089e1db1f870027af7cd467303b2362dc9822e5311",
-      "host-protocol.json": "96b9f30c72a6d1f014b291a25f652b743eaa44e577106570d858f0527337d94b",
+      "runner.mjs": "c7c2c30574d4e7d495841816197f5607cd983eb5b82512b95d84218e482ff84b",
+      "request-worker.mjs": "79f40d592364e9da7f3811d4b36b64830ce8fde3035f72c14105a9e2269ae6ff",
+      "request-hook.mjs": "a697c6bd8be7d9333b1b95d1d6ff0c31d0b9e056a4b9e80c4314737e742c8da0",
+      "wasm-host.mjs": "66272f54fef6e715c973add05a7bf3aac1d94372e5c7bfe002fdf0d359a28a83",
+      "migrations.mjs": "30bf67bd56f51b162e7b3a25264c695d2c322e16ccc5d48b7d74b830b228a244",
+      "crypto.mjs": "b04e63c0ef2d09a5be3ad67578814e9e2cb2376c09ee7a2aa186aa1ec7972fa8",
+      "time.mjs": "54cd55f771d8366d441ed3a9b221488904d8c2655b2803dbd4794bb166876764",
+      "host-protocol.json": "74bb077291ce87f84268a9cb0372025d3758165a08e137a14d0b58307bf6c2af",
       "record-events.mjs": "0062f0aceac3a965c4e7ef27b897ddc23bf0ae8b6c08ed53d2f265a5c7c6581e"
     }
   },
