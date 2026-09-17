@@ -11,6 +11,11 @@ on:
         required: false
         default: ''
         type: string
+      oaiy-cli-release:
+        description: OAIY release tag whose CLI asset to test against (for example v0.0.5); empty resolves the latest release once
+        required: false
+        default: ''
+        type: string
   # push:
   #   branches: [main]
   # pull_request:
@@ -25,6 +30,15 @@ jobs:
     uses: ./.github/workflows/resolve-softn-release.yml
     with:
       softn-release: ${{ inputs.softn-release }}
+
+  # The same rule for the OAIY CLI the parity job runs against: resolve the
+  # release ONCE and freeze its identity, so an OAIY release published while
+  # this run is in flight cannot change which engine the parity leg certifies.
+  resolve-oaiy:
+    name: Resolve the OAIY CLI release for this run
+    uses: ./.github/workflows/resolve-oaiy-cli.yml
+    with:
+      oaiy-cli-release: ${{ inputs.oaiy-cli-release }}
 
   backend:
     name: Backend (PHP)
@@ -220,7 +234,7 @@ jobs:
       # generated lock, its provenance, and the parity legs tied to one ZIPP release.
       - name: Engine sourcing script tests
         working-directory: ${{ github.workspace }}
-        run: node --test scripts/fetch-softn-release.test.mjs scripts/prepare-hosted-runtime.test.mjs scripts/engine-provenance-guard.test.mjs scripts/ecosystem-manifest.test.mjs scripts/sync-zipp-from-softn.test.mjs scripts/release-runtime.test.mjs scripts/zipp-source.test.mjs scripts/runtime-provenance.test.mjs scripts/check-expression-parity.test.mjs scripts/prepare-sandbox-runtime.test.mjs
+        run: node --test scripts/fetch-softn-release.test.mjs scripts/prepare-hosted-runtime.test.mjs scripts/engine-provenance-guard.test.mjs scripts/ecosystem-manifest.test.mjs scripts/sync-zipp-from-softn.test.mjs scripts/release-runtime.test.mjs scripts/zipp-source.test.mjs scripts/runtime-provenance.test.mjs scripts/check-expression-parity.test.mjs scripts/prepare-sandbox-runtime.test.mjs scripts/fetch-oaiy-cli.test.mjs
 
       # The build's prebuild step syncs prelude.js into the backend and regenerates the served
       # leaf-script profile; if either produced a diff, the committed backend copy was stale
@@ -237,3 +251,54 @@ jobs:
       # unavoidable, document in LAUNCH_CHECKLIST.md.)
       - name: Security audit (high/critical)
         run: npm audit --audit-level=high
+
+  # The leg that certifies OAIY's engine decides FormLogic's own logic the way
+  # FormLogic's browser does. It needs BOTH frozen records: the Softn one to
+  # install the ZIPP engine this tree runs (the test compares its release
+  # against the one the CLI carries, and a mismatch fails loudly rather than
+  # skipping), and the OAIY one for the CLI under test.
+  oaiy-parity:
+    name: OAIY script parity (FormLogic corpora on the OAIY CLI)
+    runs-on: ubuntu-latest
+    needs: [resolve, resolve-oaiy]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+          cache-dependency-path: formlogic/ui/package-lock.json
+
+      # Installs the engine this tree runs, which is one side of the comparison.
+      - name: Prepare hosted app runtime
+        uses: ./.github/actions/prepare-hosted-runtime
+        with:
+          frozen-release-json: ${{ needs.resolve.outputs.frozen }}
+
+      - name: Install the OAIY CLI from this run's frozen release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OAIY_CLI_FROZEN_JSON: ${{ needs.resolve-oaiy.outputs.frozen }}
+        run: |
+          printf '%s' "$OAIY_CLI_FROZEN_JSON" > oaiy-cli-frozen.json
+          node scripts/fetch-oaiy-cli.mjs --frozen oaiy-cli-frozen.json
+
+      - name: Install dependencies
+        working-directory: formlogic/ui
+        run: npm ci
+
+      - name: Parity (Python and JavaScript corpora)
+        working-directory: formlogic/ui
+        env:
+          OAIY_CLI: ${{ github.workspace }}/.runtime-source/oaiy-cli/cli/oaiy.mjs
+        run: npx vitest run src/lib/formlogic/oaiyScriptParity.test.ts
+
+      - name: Keep the parity record
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: oaiy-parity
+          path: formlogic/ui/test-results/parity/
+          if-no-files-found: warn

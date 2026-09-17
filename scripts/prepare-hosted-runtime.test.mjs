@@ -141,6 +141,10 @@ test('every workflow job hands the action its run\'s record; only e2e.yml alone 
   assert.deepEqual(calls, [
     { workflow: 'ci.yml', 'native-only': "'true'", 'frozen-release-json': FROZEN },
     { workflow: 'ci.yml', 'frozen-release-json': FROZEN },
+    // The OAIY parity job. It compares the engine the CLI under test carries
+    // against the one THIS tree runs, so it has to install that engine the same
+    // frozen way every other job does, or the comparison is against nothing.
+    { workflow: 'ci.yml', 'frozen-release-json': FROZEN },
     { workflow: 'package.yml', 'native-only': "'true'", 'frozen-release-json': FROZEN },
     { workflow: 'package.yml', 'frozen-release-json': FROZEN },
     { workflow: 'package.yml', 'native-only': "'true'", 'frozen-release-json': FROZEN },
