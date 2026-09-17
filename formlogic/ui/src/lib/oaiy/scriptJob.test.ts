@@ -57,8 +57,8 @@ describe('pythonModeJob', () => {
   });
 
   it('passes the context as the entry function\'s one argument, and nothing to the syntax call', () => {
-    // `syntax`'s mode overrides the call with the entry's own never-run function, which takes no
-    // argument; every other mode answers __formlogic_run__(ctx).
+    // `syntax`'s mode overrides the call with the one its own entry defines, which takes no
+    // argument (it runs nothing); every other mode answers __formlogic_run__(ctx).
     expect(pythonModeJob('j', 'syntax', 'x = 1', CTX).args).toEqual([]);
     expect(pythonModeJob('j', 'condition', 'x', CTX).args).toEqual([CTX]);
   });

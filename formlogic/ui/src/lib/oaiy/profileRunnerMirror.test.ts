@@ -25,6 +25,10 @@
 // same served document on this same installed engine: for all twelve cases below it produced
 // BYTE-IDENTICAL results to the port here, before FormLogic's own presentation pass. That is a
 // measurement of one revision at one moment, not a gate - nothing in this repository re-runs it.
+// The served document has changed once since, in the `syntax` mode's entry module (the last case
+// in this file is why). None of the twelve can see it - eleven name other modes, and the twelfth
+// fails while the project initialises, before any `call` is reached - but the measurement is of
+// the document as it stood that morning, and says so rather than implying more.
 //
 // WHAT WOULD MAKE IT REAL. A parity job that runs the same corpus through `oaiy script` with this
 // profile and compares the two artifacts, as the Softn value-corpus job already does for ZIPP.
@@ -263,21 +267,29 @@ describe('the served profile, unfolded by a mirror of the mode-aware runner', ()
     expect(await runEval('flow', '', {}, { language: 'python' }), 'and the browser host agrees').toBe(null);
   }, CASE_TIMEOUT_MS);
 
-  it('a syntax job through a runner RUNS the block, which the browser host does not - the one divergence', async () => {
-    // Measured on the installed engine, and reported rather than papered over. FormLogic's host
-    // initialises the syntax project and calls NOTHING: compiling the block is the whole check.
-    // A runner has no such rule - it calls `mode.call ?? python.call` for every mode - and the
-    // syntax entry's `__formlogic_never__` is `import logic_block`, which executes the block's
-    // top level. A block that only compiles (every corpus syntax case) cannot tell the two
-    // apart; a block with a side effect can.
-    const source = 'raise ValueError("the block ran")';
-    const viaHost = await throughTheHost('syntax', source, {});
-    expect(viaHost.ok && viaHost.value, 'the browser host compiles and runs nothing').toBe(null);
+  it('a syntax job runs NOTHING on either path, so a block that would raise still passes', async () => {
+    // The mode's whole point, and the one place the two paths used to disagree. FormLogic's host
+    // initialises the syntax project and calls NOTHING, so the compile initPythonProject performs
+    // over the module the entry imports IS the check. A runner has no such rule - it calls
+    // `mode.call ?? python.call` for every mode - so the check only stays a check while what that
+    // call reaches does not import the block. It used to: the entry's one function was
+    // `import logic_block`, which executes the author's top level, and a `syntax` job through a
+    // runner therefore RAN the code it was asked to parse. The import now lives in a function
+    // nothing calls (it is compiled, which is what makes the project compile the block) and the
+    // call answers None without touching it.
+    //
+    // A block that merely compiles cannot tell the fix from the defect, so two of these three
+    // would raise if anything ran them, and the third is the corpus's own inert case.
+    for (const source of [
+      caseById('syntax-accepts-statements').source,
+      caseById('syntax-runs-nothing').source,
+      'raise ValueError("the block ran")',
+    ]) {
+      const viaHost = await throughTheHost('syntax', source, {});
+      expect(viaHost, `${JSON.stringify(source)} through the browser host`).toEqual({ ok: true, value: null });
 
-    const viaProfile = throughTheProfile('syntax', source, {});
-    expect(viaProfile.ok, 'a runner calling the mode\'s call executes the block').toBe(false);
-    expect((viaProfile as Extract<MirrorResult, { ok: false }>).error).toMatch(/ValueError: the block ran \(line 1\)/);
-    // The line is still the author's, which is what this file is about: the divergence is WHETHER
-    // the block runs, not where the error is reported.
+      const viaProfile = throughTheProfile('syntax', source, {});
+      expect(viaProfile, `${JSON.stringify(source)} through the profile`).toEqual({ ok: true, value: null });
+    }
   }, CASE_TIMEOUT_MS);
 });

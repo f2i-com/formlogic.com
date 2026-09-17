@@ -132,7 +132,7 @@ with nothing wrapped around it — that schema refuses every unknown key, at the
                   "before": "from formlogic import *\ndef __formlogic_value__():\n    return (\n",
                   "after": "\n    )\n", "lineOffset": 3 },
                 // flowModule, condition, applogic, and syntax (which names its own
-                // "call": "__formlogic_never__", because its entry defines that and not the shared one)
+                // "call": "__formlogic_compiled__", because its entry defines that and not the shared one)
               ] } }
 ```
 

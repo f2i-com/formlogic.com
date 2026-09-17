@@ -142,8 +142,10 @@ test('the served wrappings are the ones pythonContract.ts wraps with, read and n
     python.modes.map((mode) => [mode.name, mode.lineOffset]),
     [['flowExpression', 3], ['flowModule', 1], ['condition', 3], ['applogic', 1], ['syntax', 1]],
   );
-  // Only the mode whose entry defines another function names a call of its own.
-  assert.deepEqual(python.modes.filter((mode) => mode.call !== undefined).map((mode) => [mode.name, mode.call]), [['syntax', '__formlogic_never__']]);
+  // Only the mode whose entry defines another function names a call of its own. `syntax`'s does:
+  // its callable deliberately does not import the block, so that a consumer calling it CHECKS the
+  // author's code rather than running it (entry-syntax.py, profileRunnerMirror.test.ts).
+  assert.deepEqual(python.modes.filter((mode) => mode.call !== undefined).map((mode) => [mode.name, mode.call]), [['syntax', '__formlogic_compiled__']]);
 });
 
 test('a wrapping the consumer could not unfold is refused, not served', () => {

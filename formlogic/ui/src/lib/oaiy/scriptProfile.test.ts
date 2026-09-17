@@ -336,9 +336,10 @@ describe('the wrappings a consumer unfolds (python.modes)', () => {
   });
 
   it('names its own call only where the entry module defines one that is not the shared call', () => {
-    // `syntax`'s entry defines __formlogic_never__ on purpose: a syntax check compiles the block,
-    // and a consumer calling the shared name would find nothing there. Every other entry answers
-    // __formlogic_run__, and the schema asks for `call` to be omitted where that is so.
+    // `syntax`'s entry defines __formlogic_compiled__ on purpose: the block is compiled when the
+    // project initialises, so the function a consumer calls has nothing to do and - the point -
+    // does not import the block, which would run it. Every other entry answers __formlogic_run__,
+    // and the schema asks for `call` to be omitted where that is so.
     for (const mode of servedModes) {
       const entry = ENTRIES[mode.name as PythonMode];
       const defines = [...entry.matchAll(/^def (__formlogic_[A-Za-z0-9_]*)\(/gm)].map((m) => m[1]);

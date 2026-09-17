@@ -63,7 +63,8 @@ export function pythonModeJob(id: string, kind: PythonKind, source: string, cont
     source,
     // The JSON view zipp-host parses in the guest: a Date becomes its string and an undefined
     // member drops out, so both hosts see the same values. `syntax` passes nothing at all - its
-    // mode overrides the call with the entry's own never-run function, which takes no argument.
+    // mode overrides the call with the one its entry defines, which takes no argument because it
+    // has no author code to run: the compile the project did at init is the whole check.
     args: kind === 'syntax' ? [] : [JSON.parse(JSON.stringify(context ?? {})) as unknown],
   };
 }
