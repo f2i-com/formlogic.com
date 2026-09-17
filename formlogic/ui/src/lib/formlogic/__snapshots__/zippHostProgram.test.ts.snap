@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`zipp-host JavaScript program text > 'applogic' 1`] = `
+exports[`zipp-host JavaScript program text > applogic 1`] = `
 "var __replies = [];
 function __emit(o) { __replies.push(o); }
 globalThis.print = function () {};
@@ -15,8 +15,7 @@ try {
 } catch (e) { __out = {ok: false, error: String((e && e.message) || e)}; }
 __emit(__out);"
 `;
-
-exports[`zipp-host JavaScript program text > 'calc' 1`] = `
+exports[`zipp-host JavaScript program text > calc 1`] = `
 "var __replies = [];
 function __emit(o) { __replies.push(o); }
 globalThis.print = function () {};
@@ -41,8 +40,7 @@ try { __out = {ok: true, value: (0, eval)("inputs.n * 2")}; }
 catch (e) { __out = {ok: false, error: String((e && e.message) || e)}; }
 __emit(__out);"
 `;
-
-exports[`zipp-host JavaScript program text > 'condition' 1`] = `
+exports[`zipp-host JavaScript program text > condition 1`] = `
 "var __replies = [];
 function __emit(o) { __replies.push(o); }
 globalThis.print = function () {};
@@ -67,8 +65,7 @@ try { __out = {ok: true, value: (0, eval)("inputs.n * 2")}; }
 catch (e) { __out = {ok: false, error: String((e && e.message) || e)}; }
 __emit(__out);"
 `;
-
-exports[`zipp-host JavaScript program text > 'flow' 1`] = `
+exports[`zipp-host JavaScript program text > flow 1`] = `
 "var __replies = [];
 function __emit(o) { __replies.push(o); }
 globalThis.print = function () {};
@@ -99,8 +96,7 @@ try {
 catch (e) { __out = {ok: false, error: String((e && e.message) || e)}; }
 __emit(__out);"
 `;
-
-exports[`zipp-host JavaScript program text > 'syntax' 1`] = `
+exports[`zipp-host JavaScript program text > syntax 1`] = `
 "var __replies = [];
 function __emit(o) { __replies.push(o); }
 globalThis.print = function () {};
@@ -111,8 +107,7 @@ try { new Function("return (" + "inputs.n * 2" + "\\n);"); __out = {ok: true, va
 catch (e) { __out = {ok: false, error: String((e && e.message) || e)}; }
 __emit(__out);"
 `;
-
-exports[`zipp-host JavaScript program text > 'test' 1`] = `
+exports[`zipp-host JavaScript program text > test 1`] = `
 "var __replies = [];
 function __emit(o) { __replies.push(o); }
 globalThis.print = function () {};
@@ -137,8 +132,7 @@ try { __out = {ok: true, value: (0, eval)("inputs.n * 2")}; }
 catch (e) { __out = {ok: false, error: String((e && e.message) || e)}; }
 __emit(__out);"
 `;
-
-exports[`zipp-host JavaScript program text > 'validate' 1`] = `
+exports[`zipp-host JavaScript program text > validate 1`] = `
 "var __replies = [];
 function __emit(o) { __replies.push(o); }
 globalThis.print = function () {};
