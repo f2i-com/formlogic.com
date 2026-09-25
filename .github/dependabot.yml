@@ -9,6 +9,15 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # @types/node describes a Node runtime; its major must follow the runtime this tree
+      # runs, not lead it. `.node-version` pins 24.19.0 and every workflow reads it
+      # (`node-version-file`), as does the qualification lab image. Types for Node 26 would
+      # typecheck calls to APIs Node 24 does not have, and the failure would surface at run
+      # time instead of in `tsc`. Move this major together with `.node-version`, then drop
+      # this entry. Minor and patch updates within the current major still arrive.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       # Order matters: these coupled packages join their first matching group.
       frontend-build:
