@@ -9,7 +9,15 @@ import { test, expect, type Page } from '@playwright/test';
  */
 const API = process.env.E2E_API_URL || 'http://api.formlogic.local';
 
-/** Mint the shared Demo session (no signup) and return the first demo app's slug. */
+/**
+ * The demo app every test here opens. The demo list is ordered by last update, and provisioning
+ * creates its apps within the same few seconds, so "the first demo app" differs from run to run — and
+ * one of them, Aokie Receptionist, opens on its own workspace rather than a chart dashboard. RepairBench
+ * is one app from one pack, with a chart dashboard and seeded records.
+ */
+const DEMO_PACK = 'repairbench-device-repair';
+
+/** Mint the shared Demo session (no signup) and return the slug of DEMO_PACK's demo app. */
 async function startDemo(page: Page): Promise<string> {
   const r = await page.context().request.post(`${API}/api/demo/start`, {
     headers: { 'Content-Type': 'application/json' },
@@ -18,9 +26,11 @@ async function startDemo(page: Page): Promise<string> {
   expect(r.ok(), 'demo/start should succeed (is the demo provisioned?)').toBeTruthy();
   const apps = await page.context().request.get(`${API}/api/demo/apps`);
   const body = await apps.json();
-  const list = body.apps ?? body.data?.apps ?? [];
+  const list: Array<{ slug: string; catalogSlug?: string }> = body.apps ?? body.data?.apps ?? [];
   expect(list.length, 'demo should have apps').toBeGreaterThan(0);
-  return list[0].slug as string;
+  const app = list.find(a => a.catalogSlug === DEMO_PACK);
+  expect(app, `the demo should include the ${DEMO_PACK} pack's app`).toBeTruthy();
+  return app!.slug;
 }
 
 test('marketplace app dashboard renders populated recharts widgets', async ({ page }) => {

@@ -12,6 +12,12 @@ const API = process.env.E2E_API_URL || 'http://api.formlogic.local';
 const EMAIL = process.env.E2E_EMAIL || 'test@example.com';
 const PASSWORD = process.env.E2E_PASSWORD || 'password123';
 
+// The app's service worker registers with autoUpdate: on a first visit it installs, takes control
+// and reloads the page, a second or two after sign-in. A page.evaluate running then loses its
+// execution context ("Execution context was destroyed"). These scans are of the pages, not of
+// offline caching, so the worker is kept out of them.
+test.use({ serviceWorkers: 'block' });
+
 // The dashboard renders its action row ("Start with a form" / "Start from a template")
 // only once the account owns a form; a fresh CI account sees the getting-started state,
 // whose "Browse templates" opens the FORM template picker, not the packs modal. Make that
