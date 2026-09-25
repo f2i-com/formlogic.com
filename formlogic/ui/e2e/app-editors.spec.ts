@@ -1,6 +1,20 @@
 import { expect, test } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 
+/**
+ * Apps a test created, deleted after it. A review app reused across runs carries the last run's
+ * draft, and the next run's save is then refused as a stale version ("The project changed. Reload
+ * before importing.").
+ */
+const created: string[] = [];
+test.afterEach(async ({ context }) => {
+  const csrf = (await context.cookies()).find(c => c.name === 'formlogic_csrf')?.value;
+  for (const id of created.splice(0)) {
+    const r = await context.request.delete(`/api/apps/${id}`, { headers: csrf ? { 'X-CSRF-Token': csrf } : {} }).catch((e: Error) => e);
+    if (r instanceof Error || !r.ok()) console.log('CLEANUP FAILED: app', id, 'was not deleted:', r instanceof Error ? r.message : r.status());
+  }
+});
+
 test('Builder and Studio return an editable native app without losing its backend', async ({ page, context }) => {
   test.setTimeout(180000);
   page.on('pageerror', e => console.log('PAGE ERROR', e.message));
@@ -8,12 +22,10 @@ test('Builder and Studio return an editable native app without losing its backen
   test.skip(!process.env.FORMLOGIC_REVIEW_PASSWORD, 'Local review account required.');
   await context.request.post('/api/auth/login', { data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
   const headers = { 'X-CSRF-Token': (await context.cookies()).find(c => c.name === 'formlogic_csrf')!.value };
-  const apps = (await (await context.request.get('/api/apps')).json()).apps;
-  let app = apps.find((a: {slug: string}) => a.slug === 'editor-integration-review');
-  if (!app) app = (await (await context.request.post('/api/apps', { headers, data: { name: 'Editor integration review', slug: 'editor-integration-review' } })).json()).app;
+  const app = (await (await context.request.post('/api/apps', { headers, data: { name: 'Editor integration review' } })).json()).app;
+  created.push(app.id);
   const project = JSON.parse(readFileSync('../backend/resources/native-app-starter.json', 'utf8'));
-  const installed = (await (await context.request.get(`/api/apps/${app.id}/native`)).json()).project;
-  const save = await context.request.put(`/api/apps/${app.id}/native`, { headers, data: { project, expectedVersion: installed?.version ?? 0 } });
+  const save = await context.request.put(`/api/apps/${app.id}/native`, { headers, data: { project, expectedVersion: 0 } });
   expect(save.ok(), await save.text()).toBe(true);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(`/apps/${app.id}/records`);
@@ -96,14 +108,13 @@ test('Existing hosted apps keep private actions when edited in Builder and Studi
   test.skip(!process.env.FORMLOGIC_REVIEW_PASSWORD, 'Local review account required.');
   await context.request.post('/api/auth/login', { data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
   const headers = { 'X-CSRF-Token': (await context.cookies()).find(c => c.name === 'formlogic_csrf')!.value };
-  const apps = (await (await context.request.get('/api/apps')).json()).apps;
-  let app = apps.find((a: {slug: string}) => a.slug === 'hosted-editor-review');
-  if (!app) app = (await (await context.request.post('/api/apps', { headers, data: { name: 'Hosted editor review', slug: 'hosted-editor-review' } })).json()).app;
+  const app = (await (await context.request.post('/api/apps', { headers, data: { name: 'Hosted editor review' } })).json()).app;
+  created.push(app.id);
   const pkg = JSON.parse(readFileSync('../backend/resources/connected-workspace.json', 'utf8'));
   pkg.actions = { hello: { access: 'owner', mode: 'read', source: 'function onRequest(ctx) { return {message:"Preserved private action"}; }' } };
-  const old = (await (await context.request.get(`/api/apps/${app.id}/hosting`)).json()).deployment;
-  const saved = await context.request.put(`/api/apps/${app.id}/hosting`, { headers, data: { package: pkg, expectedVersion: old?.version ?? 0 } });
+  const saved = await context.request.put(`/api/apps/${app.id}/hosting`, { headers, data: { package: pkg, expectedVersion: 0 } });
   expect(saved.ok(), await saved.text()).toBe(true);
+  let version = (await saved.json()).deployment.version as number;
   await page.goto(`/apps/${app.id}/studio/screens`);
   await page.getByText('Hosting & app tools', { exact: true }).click();
   await page.getByRole('button', { name: 'App hosting', exact: true }).click();
@@ -114,9 +125,12 @@ test('Existing hosted apps keep private actions when edited in Builder and Studi
     await editor.getByRole('button', { name: 'Review changes', exact: true }).click();
     await expect(page.getByRole('dialog', { name: 'App hosting', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Publish changes', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Publish changes', exact: true })).toBeDisabled();
-    const returned = (await (await context.request.get(`/api/apps/${app.id}/hosting`)).json()).deployment;
-    expect(returned.actions).toEqual(pkg.actions);
+    // The button disables as the publish starts; the version line moves once it has committed.
+    version++;
+    await expect(page.getByText(`Version ${version} live`, { exact: true })).toBeVisible({ timeout: 20000 });
+    const hosting = await context.request.get(`/api/apps/${app.id}/hosting`);
+    expect(hosting.ok(), await hosting.text()).toBe(true);
+    expect((await hosting.json()).deployment.actions).toEqual(pkg.actions);
   }
 });
 
