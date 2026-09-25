@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
-import { resolveDefaultLlm } from '../../client-runtime/flows/aiDefault';
+import { resolveDefaultLlm, resolveDefaultLlmTools, TOOLS_UNSUPPORTED } from '../../client-runtime/flows/aiDefault';
+import { EDITOR_AI_TOOLS_VERSION, validateEditorAiToolRequest } from '../../client-runtime/flows/aiToolCalls';
 import { EDITOR_BRIDGE_PROTOCOL } from '../../lib/softn/protocol';
 import { ArrowLeft, Check } from 'lucide-react';
 import { Button } from '../ui/Button';
@@ -78,20 +79,42 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose }: {
     const aiRequests = new Map<string, AbortController>();
     const receive = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow || event.origin !== location.origin || event.data?.kind !== 'formlogic-editor-ready' || event.data?.protocol !== EDITOR_BRIDGE_PROTOCOL || port.current) return;
+      // Native tool calls (`aiTools`) are an optional capability on top of the bridge:
+      // offered back only to an editor that announced it, so an older editor sees
+      // exactly the handshake and the text-only requests it always did.
+      const aiTools = kind === 'studio' && Number.isInteger(event.data.aiTools) && event.data.aiTools >= EDITOR_AI_TOOLS_VERSION;
       const channel = new MessageChannel();
       port.current = channel.port1;
       channel.port1.onmessage = ({ data }) => {
         if (data?.kind === 'ai-cancel' && typeof data.id === 'string') { aiRequests.get(data.id)?.abort(); aiRequests.delete(data.id); setAiPending(false); return; }
         if (data?.kind === 'ai-request' && typeof data.id === 'string') {
-          const reply = (ok: boolean, value: string) => { if (!disposed) channel.port1.postMessage({ kind: 'ai-response', id: data.id, ok, ...(ok ? { value } : { error: value }) }); };
-          if (kind !== 'studio' || aiRequests.size || !Array.isArray(data.messages) || data.messages.length > 100 || !data.messages.every((m: { role?: unknown; content?: unknown }) => ['system', 'user', 'assistant'].includes(String(m?.role)) && typeof m?.content === 'string') || JSON.stringify(data.messages).length > 1000000) {
-            reply(false, 'AI is busy or the request is too large.'); return;
+          const reply = (ok: boolean, value: unknown, code?: string) => { if (!disposed) channel.port1.postMessage({ kind: 'ai-response', id: data.id, ok, ...(ok ? { value } : { error: value, ...(code ? { code } : {}) }) }); };
+          const structured = data.aiTools !== undefined;
+          let ask: (signal: AbortSignal) => Promise<void>;
+          if (!structured) {
+            // The text request every editor version sends: unchanged.
+            if (kind !== 'studio' || aiRequests.size || !Array.isArray(data.messages) || data.messages.length > 100 || !data.messages.every((m: { role?: unknown; content?: unknown }) => ['system', 'user', 'assistant'].includes(String(m?.role)) && typeof m?.content === 'string') || JSON.stringify(data.messages).length > 1000000) {
+              reply(false, 'AI is busy or the request is too large.'); return;
+            }
+            ask = signal => resolveDefaultLlm({ messages: data.messages, signal }).then(result => {
+              if (signal.aborted) return;
+              if (result.ok) reply(true, result.data.content); else reply(false, result.error.message);
+            });
+          } else {
+            if (kind !== 'studio' || aiRequests.size) { reply(false, 'AI is busy or the request is too large.'); return; }
+            if (!aiTools) { reply(false, 'FormLogic did not offer AI tool calls to this editor.', TOOLS_UNSUPPORTED); return; }
+            const checked = validateEditorAiToolRequest(data);
+            if (!checked.ok) { reply(false, checked.error); return; }
+            ask = signal => resolveDefaultLlmTools({ ...checked.request, signal }).then(result => {
+              if (signal.aborted) return;
+              if (result.ok) {
+                const { text, toolCalls, stopReason, usage } = result.data;
+                reply(true, { text, toolCalls, stopReason, ...(usage ? { usage } : {}) });
+              } else reply(false, result.error.message, result.error.code === TOOLS_UNSUPPORTED ? TOOLS_UNSUPPORTED : undefined);
+            });
           }
           const controller = new AbortController(); aiRequests.set(data.id, controller); setAiPending(true);
-          void resolveDefaultLlm({ messages: data.messages, signal: controller.signal }).then(result => {
-            if (controller.signal.aborted) return;
-            if (result.ok) reply(true, result.data.content); else reply(false, result.error.message);
-          }).catch(error => reply(false, error instanceof Error ? error.message : 'Could not contact your AI provider.')).finally(() => { aiRequests.delete(data.id); if (!disposed) setAiPending(aiRequests.size > 0); });
+          void ask(controller.signal).catch(error => reply(false, error instanceof Error ? error.message : 'Could not contact your AI provider.')).finally(() => { aiRequests.delete(data.id); if (!disposed) setAiPending(aiRequests.size > 0); });
           return;
         }
         if (data?.kind === 'save-requested') { applyRef.current(typeof data.id === 'string' ? data.id : undefined); return; }
@@ -102,7 +125,7 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose }: {
         else waiting.reject(new Error(typeof data.error === 'string' ? data.error : 'Editor operation failed.'));
       };
       channel.port1.start();
-      frame.current!.contentWindow!.postMessage({ kind: 'formlogic-editor-connect', protocol: EDITOR_BRIDGE_PROTOCOL }, location.origin, [channel.port2]);
+      frame.current!.contentWindow!.postMessage({ kind: 'formlogic-editor-connect', protocol: EDITOR_BRIDGE_PROTOCOL, ...(aiTools ? { aiTools: EDITOR_AI_TOOLS_VERSION } : {}) }, location.origin, [channel.port2]);
       void Promise.resolve().then(() => request('open', { bytes: editorBundle(bundle), name, theme: document.documentElement.classList.contains("dark") ? "dark" : "light" })).then(() => { if (!disposed) setReady(true); }).catch(reason => { if (!disposed) setError(reason.message); });
     };
     window.addEventListener('message', receive);

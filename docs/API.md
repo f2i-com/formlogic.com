@@ -245,6 +245,20 @@ message regardless of rounds. Streaming interleaves data-only SSE events
 `{"type":"tool_call",…,"status":"running"}` / `{"type":"tool_result",…,"status":"done"|"failed"}`
 between content deltas.
 
+**Caller's tools (hosted Softn Studio):** `POST /api/ai/chat` with `aiTools: 1` runs ONE model
+round with tools the caller supplies and returns the model's tool calls unexecuted — the embedded
+Studio editor runs its own tools. Body: `{aiTools: 1, messages, tools: [{name, description,
+inputSchema}], maxOutputTokens?, stream?: false}`; messages are `{role: 'system'|'user', content}`,
+`{role: 'assistant', content, toolCalls?: [{id, name, arguments: {…}}]}` and `{role: 'tool',
+toolCallId, name, content, isError?}`. Answer: `{data: {content, toolCalls: [{id, name,
+arguments}], stopReason, usage}}`, `arguments` being the upstream's raw JSON string and
+`stopReason` its `finish_reason`. Same auth, allowance unit and metering as plain chat; never
+streamed; the output cap is clamped to the hosted chat's. Malformed shapes are `400` before
+anything is charged (`AIService::validateClientToolChat`: ≤ 64 tools with unique names and
+object schemas ≤ 16 KiB, ≤ 32 calls per message, a tool result must answer a call of the
+assistant message it follows, the plain chat's message and size bounds). Unrelated to
+`tools: true`, which runs FormLogic's own tools server-side.
+
 ---
 
 ## Submitting a response (with full scripting)

@@ -1157,6 +1157,296 @@ PROMPT;
         ];
     }
 
+    /** The editor bridge's `aiTools` version this server takes on POST /api/ai/chat. */
+    public const CLIENT_TOOLS_VERSION = 1;
+    /** Bounds for caller-supplied tools (the hosted Softn Studio editor), on top of the chat bounds above. */
+    public const CLIENT_TOOLS_MAX = 64;
+    public const CLIENT_TOOL_DESCRIPTION_MAX_CHARS = 4096;
+    public const CLIENT_TOOL_SCHEMA_MAX_CHARS = 16384;
+    public const CLIENT_TOOLS_MAX_TOTAL_CHARS = 131072;
+    public const CLIENT_TOOL_CALLS_PER_MESSAGE = 32;
+    /** Tool names: OpenAI's function-name rule. Call ids: as providers mint them, no whitespace or markup. */
+    public const CLIENT_TOOL_NAME_PATTERN = '/^[A-Za-z0-9_-]{1,64}$/';
+    public const CLIENT_TOOL_CALL_ID_PATTERN = '/^[A-Za-z0-9_.:-]{1,128}$/';
+
+    /**
+     * Validate a caller-supplied-tools chat request (POST /api/ai/chat with aiTools: 1) and
+     * return it normalized. The ordinary chat bounds hold — 1..CHAT_MAX_MESSAGES messages,
+     * CHAT_MAX_MESSAGE_CHARS per content, CHAT_MAX_TOTAL_CHARS in total, with tool-call
+     * arguments counted as content — and on top of them:
+     *  - roles system/user (non-empty string content), assistant (string content, empty only
+     *    beside toolCalls; at most CLIENT_TOOL_CALLS_PER_MESSAGE calls, each {id, name,
+     *    arguments: object}, ids unique in the message) and tool ({toolCallId, name, content
+     *    string, isError?: bool}) answering, once, a call of the assistant message it follows;
+     *  - tools: at most CLIENT_TOOLS_MAX, unique names, description a string of at most
+     *    CLIENT_TOOL_DESCRIPTION_MAX_CHARS, inputSchema an object schema (type "object") of
+     *    at most CLIENT_TOOL_SCHEMA_MAX_CHARS as JSON, CLIENT_TOOLS_MAX_TOTAL_CHARS together;
+     *  - maxOutputTokens: absent/null or a positive integer, clamped to CHAT_MAX_TOKENS.
+     * No content parts (images) in this mode.
+     *
+     * @return array{messages: array<int, array<string, mixed>>, tools: array<int, array{name: string, description: string, inputSchema: array<string, mixed>}>, maxTokens: int}
+     * @throws \InvalidArgumentException on malformed input.
+     */
+    public static function validateClientToolChat(mixed $messages, mixed $tools, mixed $maxOutputTokens): array
+    {
+        if ($maxOutputTokens !== null && (!is_int($maxOutputTokens) || $maxOutputTokens < 1)) {
+            throw new \InvalidArgumentException('maxOutputTokens must be a positive integer');
+        }
+        $maxTokens = $maxOutputTokens === null ? self::CHAT_MAX_TOKENS : min($maxOutputTokens, self::CHAT_MAX_TOKENS);
+
+        if (!is_array($tools) || !array_is_list($tools) || count($tools) > self::CLIENT_TOOLS_MAX) {
+            throw new \InvalidArgumentException('tools must be a list of at most ' . self::CLIENT_TOOLS_MAX);
+        }
+        $cleanTools = [];
+        $names = [];
+        $toolsChars = 0;
+        foreach ($tools as $t) {
+            if (!is_array($t) || array_is_list($t)) {
+                throw new \InvalidArgumentException('each tool must be an object');
+            }
+            $name = $t['name'] ?? null;
+            if (!is_string($name) || preg_match(self::CLIENT_TOOL_NAME_PATTERN, $name) !== 1) {
+                throw new \InvalidArgumentException('a tool name must be 1-64 letters, digits, _ or -');
+            }
+            if (isset($names[$name])) {
+                throw new \InvalidArgumentException('tool ' . $name . ' is declared twice');
+            }
+            $names[$name] = true;
+            $description = $t['description'] ?? null;
+            if (!is_string($description) || strlen($description) > self::CLIENT_TOOL_DESCRIPTION_MAX_CHARS) {
+                throw new \InvalidArgumentException('tool ' . $name . ' needs a description of at most ' . self::CLIENT_TOOL_DESCRIPTION_MAX_CHARS . ' characters');
+            }
+            $schema = $t['inputSchema'] ?? null;
+            if (!is_array($schema) || array_is_list($schema) || ($schema['type'] ?? null) !== 'object') {
+                throw new \InvalidArgumentException('tool ' . $name . ' needs an inputSchema of type "object"');
+            }
+            $schemaJson = json_encode($schema);
+            if ($schemaJson === false || strlen($schemaJson) > self::CLIENT_TOOL_SCHEMA_MAX_CHARS) {
+                throw new \InvalidArgumentException('tool ' . $name . ' has an inputSchema over ' . self::CLIENT_TOOL_SCHEMA_MAX_CHARS . ' characters');
+            }
+            $toolsChars += strlen($schemaJson) + strlen($description);
+            if ($toolsChars > self::CLIENT_TOOLS_MAX_TOTAL_CHARS) {
+                throw new \InvalidArgumentException('tools exceed ' . self::CLIENT_TOOLS_MAX_TOTAL_CHARS . ' characters in total');
+            }
+            $cleanTools[] = ['name' => $name, 'description' => $description, 'inputSchema' => $schema];
+        }
+
+        if (!is_array($messages) || !array_is_list($messages) || $messages === [] || count($messages) > self::CHAT_MAX_MESSAGES) {
+            throw new \InvalidArgumentException('messages must contain 1..' . self::CHAT_MAX_MESSAGES . ' items');
+        }
+        $total = 0;
+        $count = static function (string $text) use (&$total): void {
+            if (strlen($text) > self::CHAT_MAX_MESSAGE_CHARS) {
+                throw new \InvalidArgumentException('message content exceeds ' . self::CHAT_MAX_MESSAGE_CHARS . ' characters');
+            }
+            $total += strlen($text);
+            if ($total > self::CHAT_MAX_TOTAL_CHARS) {
+                throw new \InvalidArgumentException('messages exceed ' . self::CHAT_MAX_TOTAL_CHARS . ' characters in total');
+            }
+        };
+        $clean = [];
+        /** @var array<string, string>|null $open the latest assistant message's unanswered calls (id => name) */
+        $open = null;
+        foreach ($messages as $m) {
+            if (!is_array($m)) {
+                throw new \InvalidArgumentException('each message must be an object');
+            }
+            $role = $m['role'] ?? null;
+            $content = $m['content'] ?? null;
+            if (!is_string($content)) {
+                throw new \InvalidArgumentException('message content must be a string');
+            }
+            if ($role === 'system' || $role === 'user') {
+                if ($content === '') {
+                    throw new \InvalidArgumentException('message content must be a non-empty string');
+                }
+                if (array_key_exists('toolCalls', $m)) {
+                    throw new \InvalidArgumentException('only assistant messages carry toolCalls');
+                }
+                $count($content);
+                $clean[] = ['role' => $role, 'content' => $content];
+                $open = null;
+            } elseif ($role === 'assistant') {
+                $count($content);
+                $open = [];
+                $calls = $m['toolCalls'] ?? [];
+                if (!is_array($calls) || !array_is_list($calls) || count($calls) > self::CLIENT_TOOL_CALLS_PER_MESSAGE) {
+                    throw new \InvalidArgumentException('toolCalls must be a list of at most ' . self::CLIENT_TOOL_CALLS_PER_MESSAGE);
+                }
+                if ($calls === [] && $content === '') {
+                    throw new \InvalidArgumentException('an assistant message needs content or toolCalls');
+                }
+                $cleanCalls = [];
+                foreach ($calls as $c) {
+                    if (!is_array($c)) {
+                        throw new \InvalidArgumentException('each tool call must be an object');
+                    }
+                    $id = $c['id'] ?? null;
+                    $name = $c['name'] ?? null;
+                    if (!is_string($id) || preg_match(self::CLIENT_TOOL_CALL_ID_PATTERN, $id) !== 1) {
+                        throw new \InvalidArgumentException('a tool call id must be 1-128 letters, digits or _.:-');
+                    }
+                    if (!is_string($name) || preg_match(self::CLIENT_TOOL_NAME_PATTERN, $name) !== 1) {
+                        throw new \InvalidArgumentException('a tool call name must be 1-64 letters, digits, _ or -');
+                    }
+                    if (isset($open[$id])) {
+                        throw new \InvalidArgumentException('tool call id ' . $id . ' is used twice in one message');
+                    }
+                    $args = $c['arguments'] ?? null;
+                    // A decoded JSON object is a string-keyed array; `{}` decodes to [] and is allowed.
+                    if (!is_array($args) || ($args !== [] && array_is_list($args))) {
+                        throw new \InvalidArgumentException('tool call ' . $id . ' arguments must be an object');
+                    }
+                    $argsJson = $args === [] ? '{}' : json_encode($args, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                    if ($argsJson === false) {
+                        throw new \InvalidArgumentException('tool call ' . $id . ' arguments are not encodable');
+                    }
+                    $count($argsJson);
+                    $cleanCalls[] = ['id' => $id, 'name' => $name, 'arguments' => $argsJson];
+                    $open[$id] = $name;
+                }
+                $clean[] = $cleanCalls === []
+                    ? ['role' => 'assistant', 'content' => $content]
+                    : ['role' => 'assistant', 'content' => $content, 'toolCalls' => $cleanCalls];
+            } elseif ($role === 'tool') {
+                $id = $m['toolCallId'] ?? null;
+                $name = $m['name'] ?? null;
+                $isError = $m['isError'] ?? false;
+                if (!is_string($id) || preg_match(self::CLIENT_TOOL_CALL_ID_PATTERN, $id) !== 1) {
+                    throw new \InvalidArgumentException('a tool result needs a valid toolCallId');
+                }
+                if (!is_string($name) || preg_match(self::CLIENT_TOOL_NAME_PATTERN, $name) !== 1) {
+                    throw new \InvalidArgumentException('a tool result needs a valid name');
+                }
+                if (!is_bool($isError)) {
+                    throw new \InvalidArgumentException('isError must be a boolean');
+                }
+                if ($open === null || ($open[$id] ?? null) !== $name) {
+                    throw new \InvalidArgumentException('tool result ' . $id . ' does not answer an open call of the assistant message before it');
+                }
+                unset($open[$id]);
+                $count($content);
+                $clean[] = ['role' => 'tool', 'toolCallId' => $id, 'name' => $name, 'content' => $content, 'isError' => $isError];
+            } else {
+                throw new \InvalidArgumentException('message role must be system, user, assistant or tool');
+            }
+        }
+        return ['messages' => $clean, 'tools' => $cleanTools, 'maxTokens' => $maxTokens];
+    }
+
+    /**
+     * Normalized caller-tools messages (validateClientToolChat) → OpenAI chat messages.
+     * A failed tool's result is prefixed "Error: ", as the Studio's own OpenAI encoder does.
+     *
+     * @param array<int, array<string, mixed>> $messages
+     * @return array<int, array<string, mixed>>
+     */
+    public static function clientToolMessagesToOpenAi(array $messages): array
+    {
+        $out = [];
+        foreach ($messages as $m) {
+            if ($m['role'] === 'tool') {
+                $out[] = ['role' => 'tool', 'tool_call_id' => $m['toolCallId'], 'content' => $m['isError'] ? 'Error: ' . $m['content'] : $m['content']];
+            } elseif ($m['role'] === 'assistant' && isset($m['toolCalls'])) {
+                $out[] = [
+                    'role' => 'assistant',
+                    'content' => $m['content'] !== '' ? $m['content'] : null,
+                    'tool_calls' => array_map(static fn (array $c): array => [
+                        'id' => $c['id'],
+                        'type' => 'function',
+                        'function' => ['name' => $c['name'], 'arguments' => $c['arguments']],
+                    ], $m['toolCalls']),
+                ];
+            } else {
+                $out[] = ['role' => $m['role'], 'content' => $m['content']];
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * A JSON schema decoded as arrays → one that re-encodes as the same JSON: an empty
+     * `properties` must go out as {} (an empty PHP array encodes as []).
+     */
+    private static function schemaForJson(array $schema): array
+    {
+        foreach ($schema as $key => $value) {
+            if (!is_array($value)) {
+                continue;
+            }
+            if ($key === 'properties' && $value === []) {
+                $schema[$key] = new \stdClass();
+            } elseif ($value !== []) {
+                $schema[$key] = self::schemaForJson($value);
+            }
+        }
+        return $schema;
+    }
+
+    /**
+     * ONE round of a CALLER's tool loop (the hosted Softn Studio editor): the caller's tools and
+     * conversation go to the env-configured OpenAI-compatible upstream, and the requested tool
+     * calls come back for the caller to run — nothing is executed here. Not streamed.
+     *
+     * Takes the request as the caller sent it (the bridge's neutral shape) and validates it
+     * here too, as chat() does, so no caller can skip validateClientToolChat().
+     *
+     * @return array{
+     *   content: string,
+     *   toolCalls: array<int, array{id: string, name: string, arguments: string}>,
+     *   stopReason: ?string,
+     *   usage: array{promptTokens:int, completionTokens:int, totalTokens:int}
+     * } toolCalls[].arguments is the upstream's raw JSON string.
+     */
+    public function chatWithClientTools(mixed $messages, mixed $tools = [], mixed $maxOutputTokens = null): array
+    {
+        $request = self::validateClientToolChat($messages, $tools, $maxOutputTokens);
+        if (!$this->isEnabled()) {
+            throw new \Exception('Operator-funded Site AI is disabled. Open Connect your AI to use OAIY or your own API provider.');
+        }
+        if (!$this->isConfigured()) {
+            throw new \Exception('AI service is not configured. Set AI_BASE_URL (and AI_API_KEY if your provider requires one).');
+        }
+        $payload = [
+            'model' => $this->model,
+            'messages' => self::clientToolMessagesToOpenAi($request['messages']),
+            'temperature' => 0.7,
+            'max_tokens' => $request['maxTokens'],
+        ];
+        if ($request['tools'] !== []) {
+            $payload['tools'] = array_map(static fn (array $t): array => [
+                'type' => 'function',
+                'function' => ['name' => $t['name'], 'description' => $t['description'], 'parameters' => self::schemaForJson($t['inputSchema'])],
+            ], $request['tools']);
+        }
+        $data = $this->chatCompletionsToolsRequest($payload);
+        $choice = $data['choices'][0] ?? null;
+        $message = is_array($choice) ? ($choice['message'] ?? null) : null;
+        if (!is_array($message)) {
+            throw new \Exception('Invalid API response format');
+        }
+        $calls = [];
+        foreach ((is_array($message['tool_calls'] ?? null) ? $message['tool_calls'] : []) as $index => $tc) {
+            $fn = is_array($tc) && is_array($tc['function'] ?? null) ? $tc['function'] : null;
+            $name = is_array($fn) && is_string($fn['name'] ?? null) ? $fn['name'] : '';
+            if ($name === '') {
+                continue;
+            }
+            $id = is_string($tc['id'] ?? null) ? $tc['id'] : '';
+            $calls[] = [
+                'id' => preg_match(self::CLIENT_TOOL_CALL_ID_PATTERN, $id) === 1 ? $id : 'call-' . (int) $index . '-' . bin2hex(random_bytes(4)),
+                'name' => $name,
+                'arguments' => is_string($fn['arguments'] ?? null) ? $fn['arguments'] : '',
+            ];
+        }
+        return [
+            'content' => is_string($message['content'] ?? null) ? $message['content'] : '',
+            'toolCalls' => $calls,
+            'stopReason' => is_string($choice['finish_reason'] ?? null) ? $choice['finish_reason'] : null,
+            'usage' => self::normalizeUsage(is_array($data['usage'] ?? null) ? $data['usage'] : null),
+        ];
+    }
+
     /**
      * The HTTP half of chatToolsRound(), isolated so tests can subclass the transport
      * (the chatCompletionsRequest pattern). Returns the FULL decoded response body —

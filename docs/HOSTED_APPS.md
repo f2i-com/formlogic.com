@@ -600,6 +600,17 @@ checked-out sources; both repositories' matching commits must be pushed before r
 remote package workflow. No workflow is started by this local preparation.
 
 
+### Studio's AI requests
+
+Studio asks FormLogic, not a provider, for each model round, through the user's default AI
+source (Settings → AI). A Studio that announces the bridge's `aiTools` capability is offered
+it back and may send its tools with a request; FormLogic passes them to the source as native
+tool calls and returns the model's calls for Studio to run. Site AI and a browser AI service
+that speaks OpenAI `/chat/completions` (OpenAI, Ollama, LM Studio, or Custom HTTP without a
+request template) take tools. FormLogic Desktop and a templated Custom HTTP service answer
+`tools-unsupported`, and Studio continues with tool calls written as text on the same source.
+An older Studio announces nothing and gets exactly the text exchange it always had.
+
 ### Editing checks and draft safety
 
 Studio cannot return a draft while an AI turn is generating. Wait for completion, or use

@@ -32,6 +32,16 @@ import {
   resolveProviderRequest,
   type ResolvedAiProvider,
 } from './aiProviders';
+import {
+  EDITOR_AI_TOOLS_VERSION,
+  editorToolCall,
+  editorUsage,
+  fromOpenAiChatCompletion,
+  toOpenAiChatMessages,
+  toOpenAiTools,
+  type EditorAiReply,
+  type EditorAiToolRequest,
+} from './aiToolCalls';
 
 // ---------------------------------------------------------------------------
 // Types (contract: GET /api/ai/preferences, POST /api/ai/chat).
@@ -588,5 +598,211 @@ export async function resolveDefaultLlm(
     }
     case 'custom':
       return runCustomSource(prefs, opts, deps);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// resolveDefaultLlmTools — one model round WITH caller-supplied tools (the hosted Softn
+// Studio's `aiTools` bridge capability). The caller runs the tools; this only asks.
+// ---------------------------------------------------------------------------
+
+/**
+ * The code for "this source cannot take tools". The editor bridge answers it as
+ * `{ok:false, code:'tools-unsupported'}` and Studio carries on with tool calls written
+ * as text, so it is a routine answer, not a failure of the source.
+ */
+export const TOOLS_UNSUPPORTED = 'tools-unsupported';
+
+export interface ResolveDefaultLlmToolsOptions extends EditorAiToolRequest {
+  signal?: AbortSignal;
+}
+
+export interface DefaultLlmToolsSuccess extends EditorAiReply {
+  source: AiSource;
+}
+
+export type DefaultLlmToolsOutcome = AiDefaultResult<DefaultLlmToolsSuccess>;
+
+/** Injectable seams, as ResolveDefaultLlmDeps. */
+export interface ResolveDefaultLlmToolsDeps {
+  fetchPreferences?: PrefsFetcher;
+  siteChatTools?: (request: EditorAiToolRequest, signal?: AbortSignal) => Promise<AiDefaultResult<EditorAiReply>>;
+  resolveCustomProvider?: (providerId: string) => Promise<ResolvedAiProvider | null>;
+  fetchFn?: typeof fetch;
+}
+
+/** The response path an OpenAI-compatible service answers on (the provider editor's default). */
+const OPENAI_CHAT_RESPONSE_PATH = 'choices.0.message.content';
+
+/**
+ * Site AI with tools: POST /api/ai/chat {aiTools:1, messages, tools, maxOutputTokens} →
+ * {data:{content, toolCalls, stopReason, usage}}. The backend maps to its OpenAI-compatible
+ * upstream, applies its own bounds, and charges one allowance unit per round, as for text.
+ */
+async function defaultSiteChatTools(request: EditorAiToolRequest, signal?: AbortSignal): Promise<AiDefaultResult<EditorAiReply>> {
+  const res = await contractFetch('POST', '/ai/chat', {
+    aiTools: EDITOR_AI_TOOLS_VERSION,
+    messages: request.messages,
+    tools: request.tools,
+    ...(request.maxOutputTokens !== undefined ? { maxOutputTokens: request.maxOutputTokens } : {}),
+    stream: false,
+  }, signal);
+  const status = res.status || undefined;
+  if (!res.ok) {
+    if (status === 401) return failure({ code: 'auth_required', message: 'Sign in again to use Site AI.', status });
+    return failure({ code: status === undefined ? 'transport' : res.code ?? 'request_failed', message: res.message ?? 'The Site AI request failed.', status });
+  }
+  return readSiteToolsReply(res.data, status);
+}
+
+/** The backend's tools-mode `data` → the bridge reply. A server from before this mode answers without toolCalls: tools-unsupported. */
+export function readSiteToolsReply(data: unknown, status?: number): AiDefaultResult<EditorAiReply> {
+  const rec = asRecord(data);
+  if (!rec || typeof rec.content !== 'string' || !Array.isArray(rec.toolCalls)) {
+    return failure({ code: TOOLS_UNSUPPORTED, message: 'This FormLogic server does not pass tools to Site AI.', status });
+  }
+  const toolCalls: EditorAiReply['toolCalls'] = [];
+  rec.toolCalls.forEach((raw, index) => {
+    const call = asRecord(raw);
+    if (!call || typeof call.name !== 'string' || call.name === '') return;
+    toolCalls.push(editorToolCall(index, call.id, call.name, call.arguments));
+  });
+  const usage = asRecord(rec.usage);
+  const counts = usage ? editorUsage(usage.promptTokens, usage.completionTokens) : undefined;
+  return {
+    ok: true,
+    data: {
+      text: rec.content,
+      toolCalls,
+      stopReason: typeof rec.stopReason === 'string' ? rec.stopReason : null,
+      ...(counts ? { usage: counts } : {}),
+    },
+  };
+}
+
+async function runCustomSourceTools(
+  prefs: AiPreferences,
+  opts: ResolveDefaultLlmToolsOptions,
+  deps: ResolveDefaultLlmToolsDeps
+): Promise<DefaultLlmToolsOutcome> {
+  const providerId = prefs.customProviderId?.trim() ?? '';
+  if (!providerId) {
+    return failure({
+      code: 'ai_default_unresolved',
+      message: 'Settings → AI names a custom AI service as the default but none is chosen — pick one in Settings → AI.',
+    });
+  }
+  const resolveProvider =
+    deps.resolveCustomProvider ??
+    ((id: string) => resolveProviderRequest(useAuthStore.getState().user?.id, 'chat', id));
+  const provider = await resolveProvider(providerId);
+  if (!provider) {
+    return failure({
+      code: 'ai_default_unresolved',
+      message:
+        `The default AI service '${providerId}' is not configured in this browser ` +
+        '(custom AI services are stored per browser) — open Settings → AI here and re-choose the default.',
+    });
+  }
+  // A request template or a non-OpenAI response path means the service is not speaking
+  // /chat/completions as-is: its body has no place for tools, so do not pretend it does.
+  if (provider.requestTemplate || (provider.responsePath ?? OPENAI_CHAT_RESPONSE_PATH) !== OPENAI_CHAT_RESPONSE_PATH) {
+    return failure({
+      code: TOOLS_UNSUPPORTED,
+      message: `The default AI service '${provider.name}' uses a custom request format, which cannot carry tool definitions.`,
+    });
+  }
+  // OpenAI's own API takes the output cap as max_completion_tokens (its current models
+  // refuse max_tokens); OpenAI-compatible servers (Ollama, LM Studio, custom) read max_tokens.
+  const outputCap = opts.maxOutputTokens === undefined
+    ? {}
+    : provider.kind === 'openai' ? { max_completion_tokens: opts.maxOutputTokens } : { max_tokens: opts.maxOutputTokens };
+  const body = {
+    ...(provider.model ? { model: provider.model } : {}),
+    messages: toOpenAiChatMessages(opts.messages),
+    ...(opts.tools.length ? { tools: toOpenAiTools(opts.tools) } : {}),
+    ...outputCap,
+  };
+  const doFetch = deps.fetchFn ?? fetch;
+  let res: Response;
+  try {
+    res = await doFetch(provider.url, { method: 'POST', headers: provider.headers, body: JSON.stringify(body), signal: opts.signal });
+  } catch (err) {
+    if (opts.signal?.aborted) throw err;
+    return failure({
+      code: 'transport',
+      message: `Default AI service '${provider.name}' is unreachable: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
+  if (!res.ok) {
+    const keyHint = provider.keyBlocked
+      ? ' The saved API key was not sent because the provider uses unencrypted HTTP on a non-loopback host.'
+      : '';
+    return failure({ code: 'request_failed', message: `Default AI service '${provider.name}' responded ${res.status}.${keyHint}`, status: res.status });
+  }
+  let payload: unknown;
+  try {
+    payload = await res.json();
+  } catch {
+    return failure({ code: 'request_failed', message: `Default AI service '${provider.name}' returned a non-JSON body.`, status: res.status });
+  }
+  const reply = fromOpenAiChatCompletion(payload);
+  if (!reply) {
+    return failure({ code: 'request_failed', message: `Default AI service '${provider.name}' returned no message.`, status: res.status });
+  }
+  return { ok: true, data: { source: 'custom', ...reply } };
+}
+
+/**
+ * One model round with caller-supplied tools, through the settings-chosen source — the
+ * same resolution and NO-SILENT-FALLBACK rule as resolveDefaultLlm:
+ *   'site'    → the backend, which maps to its OpenAI-compatible upstream;
+ *   'custom'  → the browser's AI service over OpenAI /chat/completions `tools`, when it
+ *               speaks that wire; a templated service answers tools-unsupported;
+ *   'desktop' → tools-unsupported: the sealed tunnel carries messages only, and the
+ *               desktop runs its own tool loop over FormLogic's tools, never a caller's.
+ * tools-unsupported is not a hop to another source: the caller keeps this source and
+ * asks again in text.
+ */
+export async function resolveDefaultLlmTools(
+  opts: ResolveDefaultLlmToolsOptions,
+  deps: ResolveDefaultLlmToolsDeps = {}
+): Promise<DefaultLlmToolsOutcome> {
+  const fetchPreferences = deps.fetchPreferences ?? (() => getAiPreferences());
+  let prefsRes: AiDefaultResult<AiPreferences>;
+  try {
+    prefsRes = await fetchPreferences();
+  } catch (err) {
+    if (opts.signal?.aborted) throw err;
+    logger.warn('[ai-default] preferences fetch threw:', err);
+    return failure({
+      code: 'ai_default_unresolved',
+      message: `Could not load your AI settings (${err instanceof Error ? err.message : String(err)}) — open Settings → AI and choose a default source.`,
+    });
+  }
+  if (!prefsRes.ok) {
+    return failure({
+      code: 'ai_default_unresolved',
+      message: `Could not load your AI settings (${prefsRes.error.message}) — open Settings → AI and choose a default source.`,
+      status: prefsRes.error.status,
+    });
+  }
+  const prefs = prefsRes.data;
+  switch (prefs.aiSource) {
+    case 'site': {
+      const siteChatTools = deps.siteChatTools ?? defaultSiteChatTools;
+      const request: EditorAiToolRequest = {
+        messages: opts.messages,
+        tools: opts.tools,
+        ...(opts.maxOutputTokens !== undefined ? { maxOutputTokens: opts.maxOutputTokens } : {}),
+      };
+      const res = await siteChatTools(request, opts.signal);
+      if (!res.ok) return failure(res.error);
+      return { ok: true, data: { source: 'site', ...res.data } };
+    }
+    case 'desktop':
+      return failure({ code: TOOLS_UNSUPPORTED, message: 'FormLogic Desktop answers in text; it does not take tools from the editor.' });
+    case 'custom':
+      return runCustomSourceTools(prefs, opts, deps);
   }
 }

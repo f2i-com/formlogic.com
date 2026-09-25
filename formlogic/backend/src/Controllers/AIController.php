@@ -506,6 +506,11 @@ class AIController
         if (!is_array($messages)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'messages is required'], 400);
         }
+        // Caller-supplied tools (the hosted Softn Studio's `aiTools` capability): a mode of its
+        // own, told apart by `aiTools`, and unrelated to `tools: true` below — nothing runs here.
+        if (array_key_exists('aiTools', $body)) {
+            return $this->chatWithClientTools($response, (string) $userId, $body);
+        }
         $stream = ($body['stream'] ?? false) === true;
         $tools = ($body['tools'] ?? false) === true;
 
@@ -576,6 +581,49 @@ class AIController
         }
         $this->recordChatTokens((string) $userId, $result['usage'] ?? []);
         return $this->jsonResponse($response, ['data' => ['content' => $result['content'], 'usage' => $result['usage']]]);
+    }
+
+    /**
+     * POST /api/ai/chat {aiTools: 1, messages, tools, maxOutputTokens?} — ONE upstream round
+     * with the CALLER's tools (the hosted Softn Studio editor's agent loop, which executes its
+     * own tools in the browser). The model's tool calls are returned, never executed: that is
+     * the difference from `tools: true`, the hosted loop over FormLogic's own tools. Same auth,
+     * refusals, allowance unit and token metering as a plain chat call; never streamed.
+     * Answers {data: {content, toolCalls: [{id, name, arguments}], stopReason, usage}} with
+     * `arguments` the upstream's raw JSON string.
+     */
+    private function chatWithClientTools(Response $response, string $userId, array $body): Response
+    {
+        if (($body['aiTools'] ?? null) !== AIService::CLIENT_TOOLS_VERSION) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'aiTools must be ' . AIService::CLIENT_TOOLS_VERSION], 400);
+        }
+        if (($body['stream'] ?? false) !== false) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'A tool round is answered whole; stream must be false'], 400);
+        }
+        try {
+            // Refuse a malformed request here, before the allowance is charged; the service validates again.
+            AIService::validateClientToolChat($body['messages'] ?? null, $body['tools'] ?? [], $body['maxOutputTokens'] ?? null);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
+        if (!$this->aiService->isEnabled() || !$this->aiService->isConfigured()) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'AI service is not configured. Set AI_BASE_URL (and AI_API_KEY if your provider requires one).'], 503);
+        }
+        if ($this->planService !== null) {
+            try {
+                $this->planService->checkAndIncrement($userId, 'ai_messages', 1);
+            } catch (\RuntimeException $e) {
+                return $this->allowanceRefusal($response, $e->getMessage());
+            }
+        }
+        try {
+            $result = $this->aiService->chatWithClientTools($body['messages'] ?? null, $body['tools'] ?? [], $body['maxOutputTokens'] ?? null);
+        } catch (\Throwable $e) {
+            $this->logger->error('AI chat (client tools) error', ['exception' => $e->getMessage()]);
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'The AI request failed'], 502);
+        }
+        $this->recordChatTokens($userId, $result['usage']);
+        return $this->jsonResponse($response, ['data' => $result]);
     }
 
     /**
