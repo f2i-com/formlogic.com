@@ -141,9 +141,9 @@ Options -Indexes
 # ============================================================================
 # Compression.
 #
-# The expression sandbox (assets/zipp_wasm_bg-*.wasm) is 8.2 MB uncompressed and
-# ~1.9 MB with Brotli — it is mostly a table-driven interpreter, which is exactly
-# what a compressor eats. Served without Content-Encoding it is an 8.2 MB download
+# The expression sandbox (assets/zipp_wasm_bg-*.wasm) is 7.46 MB uncompressed and
+# ~1.7 MB with Brotli — it is mostly a table-driven interpreter, which is exactly
+# what a compressor eats. Served without Content-Encoding it is a 7.46 MB download
 # for anyone who opens a form with a calculated field, a conditional rule or a
 # validation rule.
 #

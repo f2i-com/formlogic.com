@@ -9,7 +9,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
-import { checkDistEngines, zippLicensesText, engineIdentity } from './release-runtime.mjs';
+import { checkDistEngines, zippLicensesText, engineIdentity, checkNativeRuntime, relativeImports, nativeImportProblems, NATIVE_MODULES } from './release-runtime.mjs';
+import { createHash } from 'node:crypto';
 import { wasmModule, writeZippTree, zippEngineWasm, zippReleaseFixture } from '../formlogic/ui/scripts/zipp-release-fixture.mjs';
 
 const RELEASE = zippReleaseFixture();
@@ -137,4 +138,44 @@ test('checkDistEngines refuses the web variant under any other name or in any ot
   await assert.rejects(checkDistEngines(stranger, WITH_WEB.source, { web: WITH_WEB.variant }), /assets\/zipp_wasm_bg-other\.wasm is a ZIPP engine \([0-9a-f]{12}\) other than the installed ZIPP v0\.0\.18 \([0-9a-f]{12}\) or its web variant \([0-9a-f]{12}\)/);
   // No variant installed: the same build is a stale second engine, as it always was (the plan's round trip).
   await assert.rejects(checkDistEngines(await tree(t, webDist()), RELEASE.source), /assets\/zipp_wasm_bg-DJYZzo8n\.wasm is a ZIPP engine \([0-9a-f]{12}\) other than the installed ZIPP v0\.0\.18 \([0-9a-f]{12}\); rebuild the UI/);
+});
+
+// ── The native runtime can load ─────────────────────────────────────────────
+
+test('relativeImports reads static, dynamic and worker-URL specifiers, and nothing built at run time', () => {
+  const text = [
+    "import {Worker} from 'node:worker_threads';",
+    "import {a} from './a.mjs';",
+    'import{b}from"./b.mjs";',
+    "export {c} from '../c.mjs';",
+    "import './side-effect.mjs';",
+    "const d = await import('./d.mjs');",
+    "new Worker(new URL('./worker.mjs', import.meta.url));",
+    "const e = await import(pathToFileURL(join(root, 'operator/after-request.mjs')).href);",
+  ].join('\n');
+  assert.deepEqual(relativeImports(text), ['../c.mjs', './a.mjs', './b.mjs', './d.mjs', './side-effect.mjs', './worker.mjs']);
+  assert.deepEqual(nativeImportProblems(new Map([['m.mjs', "import {x} from './sql.mjs';\nimport {y} from '../out.mjs';"], ['wasm/g.mjs', "import './h.mjs';"]]), new Set(['m.mjs', 'wasm/g.mjs', 'wasm/h.mjs'])), [
+    'm.mjs imports ../out.mjs, outside the native runtime',
+    'm.mjs imports ./sql.mjs, which the native runtime does not ship',
+  ]);
+});
+
+test('checkNativeRuntime refuses a runtime whose modules import one it does not ship, and holds every module its provenance records to its digest', async (t) => {
+  const sha = (text) => createHash('sha256').update(text).digest('hex');
+  const modules = Object.fromEntries(NATIVE_MODULES.map((name) => [name, name === 'host-protocol.json' ? JSON.stringify({ nativeProtocol: 1, recordEvents: 1 }) : `// ${name}\n`]));
+  modules['migrations.mjs'] = "import {migrationAuthorizer} from './sql.mjs';\nexport const m = 1;\n";
+  const runtime = (extra = {}, recorded = {}) => {
+    const files = { ...modules, ...extra, 'wasm/zipp_wasm.mjs': RELEASE.glue, 'wasm/zipp_wasm_bg.wasm': RELEASE.wasm };
+    const digests = Object.fromEntries(Object.entries({ ...modules, ...recorded }).map(([name, text]) => [name, sha(text)]));
+    return { ...files, 'provenance.json': JSON.stringify({ nativeProtocol: 1, zipp: RELEASE.source, modules: digests }) };
+  };
+  const expected = { version: RELEASE.source.version, sha256: RELEASE.source.sha256 };
+  const sql = 'export function migrationAuthorizer() {}\n';
+  // As Softn v0.0.16 shipped it: migrations.mjs names ./sql.mjs, which is not there.
+  await assert.rejects(checkNativeRuntime(await tree(t, runtime()), expected), /^Error: The native app runtime cannot load: migrations\.mjs imports \.\/sql\.mjs, which the native runtime does not ship\.$/);
+  // Shipped and recorded: it loads, and the module is held to its recorded digest like the fixed ones.
+  await checkNativeRuntime(await tree(t, runtime({ 'sql.mjs': sql }, { 'sql.mjs': sql })), expected);
+  await assert.rejects(checkNativeRuntime(await tree(t, runtime({ 'sql.mjs': sql + '// edited\n' }, { 'sql.mjs': sql })), expected), /Native runtime module is missing or changed: sql\.mjs/);
+  await assert.rejects(checkNativeRuntime(await tree(t, runtime({}, { 'sql.mjs': sql })), expected), /Native runtime module is missing or changed: sql\.mjs/);
+  await assert.rejects(checkNativeRuntime(await tree(t, runtime({ 'sql.mjs': sql }, { '../sql.mjs': sql })), expected), /provenance records modules at paths it may not name: \.\.\/sql\.mjs/);
 });

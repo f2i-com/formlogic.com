@@ -26,7 +26,7 @@ import { createHash } from 'node:crypto';
 import { writeArchive, readArchive } from './lib/archive.mjs';
 import { fetchSoftnRelease, checkInstalled, resolveRelease, resolveOnly, recoverPromotion, loadFrozen, parseSidecar, verifyArchive, ReleaseError, SimulatedCrash, FROZEN_FORMAT } from './fetch-softn-release.mjs';
 import { assertNoInterruptedPromotion } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
-import { zippReleaseFixture, zippEngineWasm, wasmModule } from '../formlogic/ui/scripts/zipp-release-fixture.mjs';
+import { zippReleaseFixture, zippEngineWasm, zippTorchWasm, wasmModule } from '../formlogic/ui/scripts/zipp-release-fixture.mjs';
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 /** The ZIPP release the fixture Softn releases ship, unless a test names another. */
@@ -34,6 +34,8 @@ const ZIPP_RELEASE = zippReleaseFixture();
 const ZIPP_NEXT = zippReleaseFixture({ version: '0.0.19', revision: 'd'.repeat(40) });
 /** The same ZIPP release shipped with its JavaScript-only web build as a variant, in a top-level zipp-web/ tree. */
 const ZIPP_WITH_WEB = zippReleaseFixture({ webVariant: true });
+/** The same release as Softn v0.0.16 ships ZIPP v0.0.21: the web variant, and the torch package in zipp-torch/ and beside each runtime's core chunk. */
+const ZIPP_WITH_TORCH = zippReleaseFixture({ webVariant: true, torch: true });
 /** What Softn's hosted runtime advertises since it serves the variant: every engine, UNCONDITIONALLY (a shared constant, not a per-archive fact). */
 const EVERY_ENGINE = { engines: ['host-js', 'zipp-web', 'zipp-web-python'], features: ['python-logic/1'] };
 const PROTOCOLS = { nativeProtocol: 1, recordEvents: 1, editorBridge: 1, hostedEngines: 1, logicLanguages: 1 };
@@ -64,18 +66,21 @@ function archiveEntries({ tag = 'v0.0.13', commit = COMMIT, zippRelease = ZIPP_R
   // the ZIPP release, as Softn installed it, and its web variant as a top-level tree when the release carries one
   for (const [n, d] of Object.entries(zippRelease.files)) put(`zipp/${n}`, d);
   if (zippRelease.webFiles) for (const [n, d] of Object.entries(zippRelease.webFiles)) put(`zipp-web/${n}`, d);
+  if (zippRelease.torchFiles) for (const [n, d] of Object.entries(zippRelease.torchFiles)) put(`zipp-torch/${n}`, d);
+  // Each runtime and editor fetches the torch module from beside its core chunk, when the release carries one.
+  const torchCopy = zippRelease.torchWasm ? { 'assets/core-runtime/zipp_torch.wasm': zippRelease.torchWasm } : {};
   // hosted runtime
   // Two entry documents, as `protocols.hostedEngines` declares: host.html is index.html with the
   // one attribute that selects the host-JavaScript engine and its weaker policy.
   // Two entry documents, as `protocols.hostedEngines` declares, shaped like the real ones: the
   // same shell script, and one attribute on <html> that is the whole difference between them.
-  const hosted = { 'index.html': Buffer.from('<!doctype html><html><body><script src="./assets/app.js"></script></body></html>'), 'host.html': Buffer.from('<!doctype html><html data-softn-logic-engine="host-js"><body><script src="./assets/app.js"></script></body></html>'), 'assets/app.js': Buffer.from(hostedCode), 'assets/zipp_wasm_bg-hosted.wasm': wasm, 'assets/core-runtime/zipp_wasm_bg.wasm': wasm, 'README.txt': Buffer.from('fixture') };
+  const hosted = { 'index.html': Buffer.from('<!doctype html><html><body><script src="./assets/app.js"></script></body></html>'), 'host.html': Buffer.from('<!doctype html><html data-softn-logic-engine="host-js"><body><script src="./assets/app.js"></script></body></html>'), 'assets/app.js': Buffer.from(hostedCode), 'assets/zipp_wasm_bg-hosted.wasm': wasm, 'assets/core-runtime/zipp_wasm_bg.wasm': wasm, ...torchCopy, 'README.txt': Buffer.from('fixture') };
   for (const [n, d] of Object.entries(hosted)) put(`hosted-runtime/${n}`, d);
   put('hosted-runtime/runtime-manifest.json', runtimeManifest(hosted, zipp, advertised));
   // app editors
   const editors = {};
   for (const editor of ['builder', 'studio']) {
-    const files = { 'index.html': Buffer.from(`<script src="./assets/${editor}.js"></script>`), [`assets/${editor}.js`]: Buffer.from(`export const ${editor} = 1;`), 'assets/zipp_wasm_bg-abc.wasm': wasm, 'assets/core-runtime/zipp_wasm_bg.wasm': wasm };
+    const files = { 'index.html': Buffer.from(`<script src="./assets/${editor}.js"></script>`), [`assets/${editor}.js`]: Buffer.from(`export const ${editor} = 1;`), 'assets/zipp_wasm_bg-abc.wasm': wasm, 'assets/core-runtime/zipp_wasm_bg.wasm': wasm, ...torchCopy };
     for (const [n, d] of Object.entries(files)) editors[`${editor}/${n}`] = d;
     editors[`${editor}/runtime-manifest.json`] = runtimeManifest(files, zipp);
   }
@@ -1189,4 +1194,106 @@ test('verifyArchive returns the variant beside the expected identity, and only w
   const plain = await writeFixtureArchive(resolve(root, 'plain'));
   const plainVerified = await verifyArchive(await readFile(plain.path), { sidecarDigest: null, paths: { protocolFile: resolve(root, 'formlogic/ui/src/lib/softn/protocol.json') }, archiveName: basename(plain.path) });
   assert.equal(plainVerified.webVariant, null);
+});
+
+// ── The torch package (Softn v0.0.16, ZIPP v0.0.21) ─────────────────────────
+
+test('an archive carrying the torch package installs with it: the copies beside each core chunk are served, zipp-torch/ is proved and not installed, and --check holds them', async (t) => {
+  const root = await formlogicRoot(t);
+  const fixture = await writeFixtureArchive(root, { zippRelease: ZIPP_WITH_TORCH, advertised: EVERY_ENGINE });
+  const messages = [];
+  const record = await fetchSoftnRelease({ root, archivePath: fixture.path, log: (m) => messages.push(m) });
+  assert.deepEqual(record.zipp.packages, { torch: ZIPP_WITH_TORCH.torchRecord });
+  assert.ok(messages.some((m) => m.includes(`torch package ${ZIPP_WITH_TORCH.torchRecord.sha256.slice(0, 12)}`)), messages.join('\n'));
+  for (const where of ['hosted-runtime', 'app-editors/builder', 'app-editors/studio']) {
+    assert.ok((await readFile(resolve(root, 'formlogic/ui/public', where, 'assets/core-runtime/zipp_torch.wasm'))).equals(ZIPP_WITH_TORCH.torchWasm), where);
+  }
+  // No tree of its own: the runtimes serve their copies, so nothing else is installed beside the engine trees.
+  assert.deepEqual((await readdir(resolve(root, 'formlogic/ui/vendor'))).sort(), ['zipp-wasm', 'zipp-wasm-web']);
+  assert.deepEqual(JSON.parse(await readFile(engineFile(root, 'SOURCE.json'), 'utf8')).packages, { torch: ZIPP_WITH_TORCH.torchRecord });
+  await checkInstalled({ root, ...quiet });
+  // A release without the package installs over it as before.
+  const plain = await writeFixtureArchive(resolve(root, 'plain'), { tag: 'v0.0.14', commit: OTHER_COMMIT, zippRelease: ZIPP_WITH_WEB, advertised: EVERY_ENGINE });
+  await fetchSoftnRelease({ root, archivePath: plain.path, ...quiet });
+  assert.ok(!existsSync(resolve(root, 'formlogic/ui/public/hosted-runtime/assets/core-runtime/zipp_torch.wasm')));
+  await checkInstalled({ root, ...quiet });
+});
+
+test('every torch module is the recorded one at a path the runtime fetches it from, and the zipp-torch/ tree is held to the record at the door', async (t) => {
+  const root = await formlogicRoot(t);
+  const withTorch = { zippRelease: ZIPP_WITH_TORCH, advertised: EVERY_ENGINE };
+  const refusedWith = async (label, options, edit, pattern) => {
+    const archive = await writeFixtureArchive(resolve(root, label), options, null, edit);
+    await assert.rejects(fetchSoftnRelease({ root, archivePath: archive.path, ...quiet }), (e) => e instanceof ReleaseError && pattern.test(e.message), label);
+    assert.ok(!existsSync(resolve(root, 'formlogic/ui/public/hosted-runtime')), `${label}: nothing is installed`);
+  };
+  // Another torch module where the runtime fetches one, whatever the manifests say.
+  await refusedWith('other-torch', withTorch, (entries) => { entries['hosted-runtime/assets/core-runtime/zipp_torch.wasm'] = zippTorchWasm('another build'); },
+    /^hosted-runtime\/assets\/core-runtime\/zipp_torch\.wasm is a ZIPP torch package module \([0-9a-f]{12}\) other than the ZIPP v0\.0\.18 torch package \([0-9a-f]{12}\) softn-release\.json records\.$/);
+  // The recorded module under a name the runtime never fetches.
+  await refusedWith('stray-torch', withTorch, (entries) => { entries['app-editors/studio/assets/torch-abc.wasm'] = ZIPP_WITH_TORCH.torchWasm; },
+    /^app-editors\/studio\/assets\/torch-abc\.wasm is the ZIPP v0\.0\.18 torch package, at a path the runtime does not fetch it from/);
+  // A copy the runtime fetches, missing.
+  await refusedWith('no-editor-torch', withTorch, (entries) => { delete entries['app-editors/builder/assets/core-runtime/zipp_torch.wasm']; },
+    /records zipp\.packages\.torch but has no torch package module at app-editors\/builder\/assets\/core-runtime\/zipp_torch\.wasm/);
+  // No record: a zipp-torch/ tree, or a torch module anywhere, is something the release does not describe.
+  await refusedWith('unrecorded-tree', {}, (entries) => { for (const [n, d] of Object.entries(ZIPP_WITH_TORCH.torchFiles)) entries[`zipp-torch/${n}`] = d; },
+    /^Softn v0\.0\.13 ships a zipp-torch\/ tree but softn-release\.json records no zipp\.packages\.torch; FormLogic installs only what the release describes\.$/);
+  await refusedWith('unrecorded-copy', {}, (entries) => { entries['hosted-runtime/assets/core-runtime/zipp_torch.wasm'] = ZIPP_WITH_TORCH.torchWasm; },
+    /^hosted-runtime\/assets\/core-runtime\/zipp_torch\.wasm is a ZIPP torch package module \([0-9a-f]{12}\), but softn-release\.json records no zipp\.packages\.torch/);
+  // A record with no tree to prove it by.
+  await refusedWith('no-tree', withTorch, (entries) => { for (const name of Object.keys(entries)) if (name.startsWith('zipp-torch/')) delete entries[name]; },
+    /^Softn v0\.0\.13 records zipp\.packages\.torch but ships no zipp-torch\/ tree\.$/);
+  // The tree is the record's: a BUILD-INFO from another commit (its sums follow) is refused by name.
+  await refusedWith('other-commit', withTorch, (entries) => {
+    entries['zipp-torch/BUILD-INFO.txt'] = Buffer.from(ZIPP_WITH_TORCH.torchFiles['BUILD-INFO.txt'].toString().replace(/commit=\w+/, `commit=${'d'.repeat(40)}`));
+    entries['zipp-torch/SHA256SUMS'] = Buffer.from(ZIPP_WITH_TORCH.torchFiles.SHA256SUMS.toString().replace(sha256(ZIPP_WITH_TORCH.torchFiles['BUILD-INFO.txt']), sha256(entries['zipp-torch/BUILD-INFO.txt'])));
+  }, /zipp-torch\/ in Softn v0\.0\.13 is not the ZIPP v0\.0\.18 torch package softn-release\.json records: The ZIPP torch package tree's BUILD-INFO\.txt commit is "d{40}"; SOURCE\.json revision is "a{40}"/);
+  // ZIPP's loader is the recorded one.
+  await refusedWith('other-loader', withTorch, (entries) => { entries['zipp-torch/zipp_torch.js'] = Buffer.from('export async function addTorch() { /* edited */ }\n'); },
+    /zipp-torch\/ in Softn v0\.0\.13 is not the ZIPP v0\.0\.18 torch package .*zipp_torch\.js differs from ZIPP v0\.0\.18's torch bundle SHA256SUMS/);
+  // A record that pairs with another engine bundle is refused as a record, recorded consistently in both places.
+  await refusedWith('other-pair', withTorch, (entries, build) => {
+    build.zipp = { ...build.zipp, packages: { torch: { ...build.zipp.packages.torch, pairsWith: 'zipp-wasm-0.0.18-web' } } };
+    entries['zipp/SOURCE.json'] = Buffer.from(JSON.stringify({ ...ZIPP_WITH_TORCH.source, packages: build.zipp.packages }, null, 2) + '\n');
+  }, /^Softn v0\.0\.13 records a zipp\.packages\.torch FormLogic cannot serve \(The ZIPP torch package record is not ZIPP v0\.0\.18's torch package for this engine: it pairs with "zipp-wasm-0\.0\.18-web", not the engine bundle zipp-wasm-0\.0\.18-web-python\.zip\.\)$/);
+  // The good archive still installs after all of that.
+  const good = await writeFixtureArchive(resolve(root, 'good'), withTorch);
+  await fetchSoftnRelease({ root, archivePath: good.path, ...quiet });
+  await checkInstalled({ root, ...quiet });
+});
+
+test('verifyArchive returns the torch package record only when the release records one', async (t) => {
+  const root = await formlogicRoot(t);
+  const protocolFile = resolve(root, 'formlogic/ui/src/lib/softn/protocol.json');
+  const withTorch = await writeFixtureArchive(resolve(root, 'with-torch'), { zippRelease: ZIPP_WITH_TORCH });
+  assert.deepEqual((await verifyArchive(await readFile(withTorch.path), { sidecarDigest: null, paths: { protocolFile }, archiveName: basename(withTorch.path) })).torch, ZIPP_WITH_TORCH.torchRecord);
+  const plain = await writeFixtureArchive(resolve(root, 'plain'));
+  assert.equal((await verifyArchive(await readFile(plain.path), { sidecarDigest: null, paths: { protocolFile }, archiveName: basename(plain.path) })).torch, null);
+});
+
+// ── The native runtime can load (Softn v0.0.16 shipped one that cannot) ─────
+
+test('a native runtime whose modules import one the archive does not ship is refused at the door, naming the module; shipped and recorded, it installs', async (t) => {
+  const root = await formlogicRoot(t);
+  const sql = 'export function migrationAuthorizer() {}\n';
+  // What Softn v0.0.16 shipped: migrations.mjs importing ./sql.mjs, with no sql.mjs in native-runtime/.
+  const importing = (entries, withSql) => {
+    entries['native-runtime/migrations.mjs'] = Buffer.from("import {migrationAuthorizer} from './sql.mjs';\nexport const m = 1;\n");
+    if (withSql) entries['native-runtime/sql.mjs'] = Buffer.from(sql);
+    const provenance = JSON.parse(entries['native-runtime/provenance.json'].toString());
+    provenance.modules['migrations.mjs'] = sha256(entries['native-runtime/migrations.mjs']);
+    if (withSql) provenance.modules['sql.mjs'] = sha256(sql);
+    entries['native-runtime/provenance.json'] = Buffer.from(JSON.stringify(provenance, null, 2));
+  };
+  const missing = await writeFixtureArchive(resolve(root, 'missing'), {}, null, (entries) => importing(entries, false));
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: missing.path, ...quiet }), (e) => e instanceof ReleaseError && /^Softn v0\.0\.13's native runtime cannot load: native-runtime\/migrations\.mjs imports \.\/sql\.mjs, which the native runtime does not ship\. .*A Softn release that ships the module is needed/.test(e.message));
+  assert.ok(!existsSync(paths(root).nativeRuntime), 'nothing is installed');
+  const shipped = await writeFixtureArchive(resolve(root, 'shipped'), {}, null, (entries) => importing(entries, true));
+  await fetchSoftnRelease({ root, archivePath: shipped.path, ...quiet });
+  assert.equal(await readFile(resolve(paths(root).nativeRuntime, 'sql.mjs'), 'utf8'), sql);
+  await checkInstalled({ root, ...quiet });
+  // --check holds it too: the module removed after the install is named, as a release error.
+  await rm(resolve(paths(root).nativeRuntime, 'sql.mjs'));
+  await assert.rejects(checkInstalled({ root, ...quiet }), (e) => e instanceof ReleaseError && /native-runtime is not the generation .*missing: sql\.mjs/.test(e.message));
 });

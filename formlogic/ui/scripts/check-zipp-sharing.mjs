@@ -52,7 +52,7 @@ try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   browser = await chromium.launch();
-  for (const order of ['expression-first', 'app-first', 'concurrent', 'without-webcrypto', 'download-retry', 'stale-host', 'self-navigation', 'frame-policy', 'host-js-frame', 'python-app', 'web-variant-app']) {
+  for (const order of ['expression-first', 'app-first', 'concurrent', 'without-webcrypto', 'download-retry', 'stale-host', 'self-navigation', 'frame-policy', 'host-js-frame', 'python-app', 'torch-app', 'web-variant-app']) {
     // Fresh context + fixture without PWA registration avoids cached engines.
     // Playwright's serviceWorkers:block init script itself throws when reading
     // navigator.serviceWorker inside this deliberately opaque sandboxed iframe.
@@ -173,6 +173,40 @@ try {
       assert.equal(wasmRequests.length, 1, `Python needs the one ZIPP engine, once: ${wasmRequests.join(', ')}`);
       assert.deepEqual(errors, [], 'The browser must not report uncaught exceptions');
       console.log(`PASS ${order}: a .py bundle ran on index.html, state mirrored and a handler called`);
+      await context.close();
+      continue;
+    }
+    // A Python app that declares torch: the frame takes the engine from the parent as every app
+    // does, and fetches ZIPP's torch package itself, once, from the copy FormLogic serves beside
+    // the hosted runtime's core chunk — under the frame's own connect-src, which pins it to the
+    // runtime's assets. The bytes it received are the package the installed release records.
+    // Runs only when the installed Softn release ships the package; otherwise says so.
+    if (order === 'torch-app') {
+      const torch = primary.packages?.torch ?? null;
+      if (!torch) {
+        console.log(`skipped: installed Softn release has no torch package (${order})`);
+        await context.close();
+        continue;
+      }
+      const digests = new Map();
+      context.on('response', response => {
+        if (!/zipp[^/]*\.wasm(?:\?|$)/.test(response.url())) return;
+        digests.set(response.url(), response.body().then(body => createHash('sha256').update(body).digest('hex')));
+      });
+      await page.goto(`${origin}/e2e/fixtures/zipp-sharing.html?logic=torch`);
+      await page.getByRole('button', { name: 'Open app', exact: true }).click();
+      await expect(page.locator('iframe')).toHaveAttribute('src', '/hosted-runtime/index.html');
+      const frame = page.getByTestId('app-0').frameLocator('iframe');
+      await expect(frame.getByTestId('total')).toHaveText('6.5', { timeout: 60_000 });
+      const torchRequests = wasmRequests.filter(url => /zipp_torch[^/]*\.wasm/.test(url));
+      const engineRequests = wasmRequests.filter(url => !torchRequests.includes(url));
+      assert.equal(engineRequests.length, 1, `The app needs the one ZIPP engine, once: ${engineRequests.join(', ')}`);
+      assert(engineRequests.every(url => !url.includes('/hosted-runtime/')), 'Hosted apps must reuse parent bytes for the engine');
+      assert.deepEqual(torchRequests.map(url => new URL(url).pathname), ['/hosted-runtime/assets/core-runtime/zipp_torch.wasm'], `torch is fetched once, from beside the hosted runtime's core chunk: ${torchRequests.join(', ')}`);
+      assert.equal(await digests.get(torchRequests[0]), torch.sha256, `the frame received the torch package the release records (${torch.sha256.slice(0, 12)})`);
+      await expect(page.locator('iframe').first()).toHaveAttribute('sandbox', 'allow-scripts');
+      assert.deepEqual(errors, [], 'The browser must not report uncaught exceptions');
+      console.log(`PASS ${order}: a .py bundle declaring torch ran on index.html with the served torch package ${torch.sha256.slice(0, 12)}, fetched once from /hosted-runtime/`);
       await context.close();
       continue;
     }

@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolve, sep } from 'node:path';
 import { NATIVE_PROTOCOL, RECORD_EVENTS_PROTOCOL } from '../formlogic/ui/scripts/softn-protocol.mjs';
+import { relativeImports } from './release-runtime.mjs';
 const repository = process.env.SOFTN_REPO ? pathToFileURL(resolve(process.env.SOFTN_REPO) + sep) : new URL('../../softn.com/', import.meta.url);
 const source = new URL('apps/softn-host-php/runtime/', repository);
 const wasm = new URL('packages/@softn/core/wasm-zipp/', repository);
@@ -20,10 +21,18 @@ const hash = createHash('sha256').update(await readFile(new URL('zipp_wasm_bg.wa
 if (identity.version !== expected.version || identity.sha256 !== expected.sha256 || hash !== expected.sha256) throw new Error(`Native runtime must use the same verified ZIPP release as FormLogic's browser engine. ${syncHint}`);
 await mkdir(new URL('wasm/', target), { recursive: true });
 const hashes = {};
-for (const name of modules) {
+// The fixed modules, then every sibling module they import (sql.mjs since Softn v0.0.16), so a
+// module the runtime gained is prepared and recorded rather than left for the worker to miss.
+const pending = [...modules];
+while (pending.length) {
+  const name = pending.shift();
+  if (name in hashes) continue;
   const bytes = await readFile(new URL(name, source));
   await writeFile(new URL(name, target), bytes);
   hashes[name] = createHash('sha256').update(bytes).digest('hex');
+  if (name.endsWith('.mjs')) for (const specifier of relativeImports(bytes.toString('utf8'))) {
+    if (/^\.\/[A-Za-z0-9_-][A-Za-z0-9._-]*\.mjs$/.test(specifier)) pending.push(specifier.slice(2));
+  }
 }
 for (const [from, to] of [['zipp_wasm.js','wasm/zipp_wasm.mjs'],['zipp_wasm_bg.wasm','wasm/zipp_wasm_bg.wasm'],['SOURCE.json','wasm/SOURCE.json']]) {
   await copyFile(new URL(from, wasm), new URL(to, target));

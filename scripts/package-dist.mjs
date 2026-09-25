@@ -43,7 +43,7 @@ import { fileURLToPath } from 'node:url';
 import { loadReleaseSigner, signReleaseManifest } from './release-signing.mjs';
 import { checkReleaseRuntime, checkAppEditors, checkNativeRuntime, checkDistEngines, zippLicensesText, engineIdentity } from './release-runtime.mjs';
 import { checkSandbox } from './runtime-provenance.mjs';
-import { runtimeIdentity, checkZippTree, checkZippVariantTree } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
+import { runtimeIdentity, checkZippTree, checkZippVariantTree, checkTorchCopies } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 
 const isWindows = process.platform === 'win32';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -441,6 +441,17 @@ try {
 await checkReleaseRuntime(path.join(distDir, 'hosted-runtime'), expectedRuntime);
 await checkAppEditors(path.join(distDir, 'app-editors'), expectedRuntime);
 await checkNativeRuntime(path.join(backendDir, 'resources/softn-native'), expectedRuntime);
+// The torch package (ZIPP v0.0.21+, zipp.packages.torch), when the installed release records one:
+// every torch module the build carries is the recorded one, and the hosted runtime and both
+// editors each have theirs beside the core chunk they fetch it from. Without a record, none.
+try {
+  const torch = zippSource.packages?.torch ?? null;
+  const torchCopies = [
+    ...await checkTorchCopies(path.join(distDir, 'hosted-runtime'), torch, ['assets/core-runtime/zipp_torch.wasm']),
+    ...await checkTorchCopies(path.join(distDir, 'app-editors'), torch, ['builder/assets/core-runtime/zipp_torch.wasm', 'studio/assets/core-runtime/zipp_torch.wasm']),
+  ];
+  if (torchCopies.length) info(`${torchCopies.length} ZIPP torch package copies in formlogic/ui/dist, all ${zippSource.packages.torch.sha256.slice(0, 12)}`);
+} catch (error) { fail(`formlogic/ui/dist: ${error.message}`); }
 
 // [2] Stage the UI at the zip root ---------------------------------------------
 step('Staging the built UI at the zip root');
@@ -516,8 +527,9 @@ writeFileSync(path.join(staging, 'VERSION'), `${version}\n`);
 writeFileSync(path.join(apiDst, 'VERSION'), `${version}\n`);
 writeFileSync(path.join(staging, 'INSTALL.txt'), installTxt(version));
 writeFileSync(path.join(staging, 'UPGRADE.txt'), upgradeTxt(version));
-// The bundled engine's notices (RustPython and Unicode, then ZIPP's own
-// licence), from the installed release rather than a committed copy.
+// The bundled engine's notices (Softn's curated third-party notices — Unicode
+// since ZIPP v0.0.21, which has no RustPython code — then ZIPP's own licence),
+// from the installed release rather than a committed copy.
 try { writeFileSync(path.join(staging, 'zipp-licenses.txt'), await zippLicensesText(zippDir, zippSource)); }
 catch (error) { fail(error.message); }
 // Which engine this zip carries, and which Softn release it came from.

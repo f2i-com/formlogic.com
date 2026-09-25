@@ -1,7 +1,7 @@
 import { open, readFile, readdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { resolve, posix } from 'node:path';
 import { createHash } from 'node:crypto';
-import { checkRuntimeArtifact, isZippEngineWasm } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
+import { checkRuntimeArtifact, isZippEngineWasm, artifactFiles } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 
@@ -113,13 +113,63 @@ export async function checkReleaseRuntime(directory, expected) {
 export { checkAppEditors } from '../formlogic/ui/scripts/check-app-editors.mjs';
 import { NATIVE_PROTOCOL, RECORD_EVENTS_PROTOCOL } from '../formlogic/ui/scripts/softn-protocol.mjs';
 
+/** The modules every native runtime carries; a release's provenance may record more, which are held to their digests too. */
+export const NATIVE_MODULES = Object.freeze(['runner.mjs', 'request-worker.mjs', 'request-hook.mjs', 'wasm-host.mjs', 'migrations.mjs', 'crypto.mjs', 'time.mjs', 'host-protocol.json', 'record-events.mjs']);
+
+/**
+ * The relative module specifiers an ES module names: static imports and re-exports, bare
+ * `import './x'`, literal dynamic `import('./x')`, and `new URL('./x', import.meta.url)` (how
+ * runner.mjs names its worker). Specifiers built at run time are not seen, and node:/bare
+ * specifiers are not relative.
+ */
+export function relativeImports(text) {
+  const found = new Set();
+  for (const pattern of [
+    /\b(?:import|export)\b[^'"`;]*?\bfrom\s*['"](\.{1,2}\/[^'"]+)['"]/g,
+    /\bimport\s*['"](\.{1,2}\/[^'"]+)['"]/g,
+    /\bimport\s*\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g,
+    /\bnew\s+URL\s*\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*,\s*import\.meta\.url\s*\)/g,
+  ]) for (const match of text.matchAll(pattern)) found.add(match[1]);
+  return [...found].sort();
+}
+
+/**
+ * Whether a native runtime can load at all: every module it ships (`files`, path -> text for each
+ * .mjs, `present` every path the tree holds, both relative to the runtime's root with `/`) names
+ * only modules the tree holds. The runner starts request-worker.mjs in a Worker and exits 1 with
+ * no output when it fails, so a module the release forgot to ship is otherwise seen only as
+ * "Native runtime returned no response" on every request. Returns the problems, empty when none.
+ */
+export function nativeImportProblems(files, present) {
+  const problems = [];
+  for (const [name, text] of [...files].sort(([a], [b]) => a.localeCompare(b))) {
+    if (!name.endsWith('.mjs')) continue;
+    for (const specifier of relativeImports(text)) {
+      const target = posix.normalize(posix.join(posix.dirname(name), specifier));
+      if (target === '..' || target.startsWith('../')) problems.push(`${name} imports ${specifier}, outside the native runtime`);
+      else if (!present.has(target)) problems.push(`${name} imports ${specifier}, which the native runtime does not ship`);
+    }
+  }
+  return problems;
+}
+
 export async function checkNativeRuntime(directory, expected) {
   const provenance = JSON.parse(await readFile(resolve(directory, 'provenance.json'), 'utf8'));
   const protocol = JSON.parse(await readFile(resolve(directory, 'host-protocol.json'), 'utf8'));
   if (provenance.nativeProtocol !== NATIVE_PROTOCOL || protocol.nativeProtocol !== NATIVE_PROTOCOL || protocol.recordEvents !== RECORD_EVENTS_PROTOCOL || provenance.zipp?.sha256 !== expected.sha256 || provenance.zipp?.version !== expected.version) throw new Error('The native app runtime is incompatible. Run node scripts/prepare-native-runtime.mjs.');
-  for (const name of ['runner.mjs','request-worker.mjs','request-hook.mjs','wasm-host.mjs','migrations.mjs','crypto.mjs','time.mjs','host-protocol.json','record-events.mjs','wasm/zipp_wasm_bg.wasm']) {
-    const hash = createHash('sha256').update(await readFile(resolve(directory, name))).digest('hex');
+  // The fixed modules, and every other module the provenance records (a release that adds one
+  // records it there), each at its recorded digest.
+  const recorded = Object.keys(provenance.modules ?? {});
+  const unsafe = recorded.filter(name => !/^[A-Za-z0-9_-][A-Za-z0-9._-]*(\/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$/.test(name));
+  if (unsafe.length) throw new Error(`The native app runtime's provenance records modules at paths it may not name: ${unsafe.join(', ')}`);
+  for (const name of [...new Set([...NATIVE_MODULES, ...recorded]), 'wasm/zipp_wasm_bg.wasm']) {
+    const hash = createHash('sha256').update(await readFile(resolve(directory, name)).catch(() => Buffer.from(''))).digest('hex');
     if (hash !== (name.endsWith('.wasm') ? expected.sha256 : provenance.modules?.[name])) throw new Error(`Native runtime module is missing or changed: ${name}`);
   }
   await readFile(resolve(directory, 'wasm/zipp_wasm.mjs'));
+  const present = new Set(await artifactFiles(directory, { includeManifest: true }));
+  const texts = new Map();
+  for (const name of present) if (name.endsWith('.mjs')) texts.set(name, await readFile(resolve(directory, name), 'utf8'));
+  const problems = nativeImportProblems(texts, present);
+  if (problems.length) throw new Error(`The native app runtime cannot load: ${problems.join('; ')}.`);
 }

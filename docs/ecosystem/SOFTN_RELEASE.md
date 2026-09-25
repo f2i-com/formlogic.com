@@ -10,8 +10,10 @@ FormLogic adapter (`formlogic/ui/src/lib/softn/project.ts`). Since 15 September
 browser engine does too from Softn v0.0.15, and none of the four is in git.
 
 The engine follows releases, ZIPP to Softn to FormLogic: Softn takes it from a
-ZIPP release (its `web-python` bundle, checked against ZIPP's top-level and the
-bundle's own `SHA256SUMS`) and ships it in the archive as `zipp/`, with the ZIPP
+ZIPP release (its `web-python-base` bundle since Softn v0.0.16 and ZIPP v0.0.21 —
+JavaScript and Python without torch, 7.46 MB; `web-python` before — checked
+against ZIPP's top-level and the bundle's own `SHA256SUMS`) and ships it in the
+archive as `zipp/`, with the ZIPP
 release it came from recorded in `softn-release.json` `zipp`. FormLogic names no
 ZIPP release anywhere: a Softn release built with a new ZIPP installs with no
 FormLogic commit. The server sandbox follows the same record: it is built, by
@@ -38,11 +40,19 @@ and its `.sha256`, built once by Softn's release workflow and verified there.
    sound zip; every file's digest in the archive's own `softn-release.json`;
    the archive was built from the commit the tag points at; the engine (below);
    the release's protocol versions equal `formlogic/ui/src/lib/softn/protocol.json`;
-   the adapter the release ships is the one this tree has vendored.
+   the adapter the release ships is the one this tree has vendored; the native
+   runtime can load (every relative import in `native-runtime/*.mjs` names a
+   file the archive ships, since its runner starts the worker and exits with no
+   output when one is missing; `checkNativeRuntime` holds the installed tree to
+   the same rule, and to the digest of every module `provenance.json` records;
+   Softn v0.0.16, whose native runtime imports a `sql.mjs` it does not ship, is
+   refused here, and v0.0.17 ships it).
 4. Installs the trees as one generation (below): four, or five when the
    release ships ZIPP's JavaScript-only web build as a variant (`zipp-web/`,
    installed as `formlogic/ui/vendor/zipp-wasm-web/` and served to apps as the
-   `zipp-web` engine).
+   `zipp-web` engine). The torch package (`zipp-torch/`, below) is verified,
+   not installed as a tree of its own: the hosted runtime and the editors
+   carry the copy they serve.
 5. Records what it installed, with a complete file inventory, in
    `.runtime-source/softn-release/current.json`, which
    `scripts/ecosystem-manifest.mjs` reads.
@@ -163,6 +173,47 @@ variant up through a glob (`src/lib/formlogic/zipp-bytes.ts`) that emits
 nothing when the tree is absent, so a build works either way; the frame hands
 `zipp-web` the variant's bytes from a second byte broker, and falls back to
 `zipp-web-python` when the build holds none.
+
+### The torch package
+
+Since Softn v0.0.16 (ZIPP v0.0.21) a release also ships ZIPP's `web-torch`
+package: a Python package the runtime adds to the engine, once per page, only
+for an app that declares `"config": { "python": { "packages": ["torch"] } }`.
+`softn-release.json` `zipp` gains `packages.torch` (bundle, bundle digest,
+module and loader digests, variant `torch`, the engine bundle it `pairsWith`,
+commit, `engineAbi`), which `zipp/SOURCE.json` carries too. The archive holds
+it twice over: a top-level `zipp-torch/` tree (`zipp_torch.wasm`, ZIPP's
+`zipp_torch.js` loader, `BUILD-INFO.txt`, the torch bundle's `SHA256SUMS`,
+Softn's generated `zipp_torch.d.ts` and `SOURCE.json`), and a copy at
+`assets/core-runtime/zipp_torch.wasm` in `hosted-runtime/` and each editor,
+which is what the runtime fetches (from beside its core chunk, within the
+frame's `connect-src`). So FormLogic serves the package from the trees it
+already installs, and the fetcher:
+
+- holds `zipp-torch/` to `checkZippTorchTree`: the record built from the
+  release's own commit and pairing with exactly the engine bundle; every
+  shipped file the one the torch bundle's `SHA256SUMS` lists (Softn's
+  `SOURCE.json` and declarations exempt, the declarations at their recorded
+  digest); `SOURCE.json` carrying the record's every key, naming the engine it
+  pairs with, and the same release (version, tag, revision, release sums,
+  build, toolchain); `BUILD-INFO` agreeing; the torch bundle listed in the
+  primary tree's `RELEASE-SHA256SUMS`; the module the recorded digest and a
+  torch module by its exports (`zipp_package_ptr`, `zipp_package_len`,
+  `zipp_kernel`), and the loader the recorded digest;
+- scans every file by content for a torch module: each must carry the recorded
+  digest, at `zipp-torch/zipp_torch.wasm` or a runtime's
+  `assets/core-runtime/zipp_torch.wasm` and nowhere else, and all four are
+  required; a release without the record may carry neither a `zipp-torch/`
+  tree nor a torch module anywhere;
+- checks the same of the installed hosted runtime and editors at staging,
+  after promotion and at `--check`, and `scripts/package-dist.mjs` of the
+  built `dist/`. `npm run test:zipp-sharing` runs a Python app that declares
+  torch in the real frame and checks the bytes it fetched.
+
+Whether the package runs with this engine (`engineAbi`) is Softn's check: it
+adds the package to the engine at install and runs `import torch`. The
+workbox precache ignores `hosted-runtime/**`, so the package is never in the
+PWA's startup precache either.
 
 ## One release per run
 

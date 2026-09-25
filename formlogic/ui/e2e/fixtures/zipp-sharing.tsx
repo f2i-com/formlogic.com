@@ -44,6 +44,22 @@ def increment():
 `,
 };
 
+// A Python app that declares ZIPP's torch package (Softn v0.0.16+, ZIPP v0.0.21+): the runtime
+// fetches the package from beside its own core chunk — the copy FormLogic installs and serves under
+// /hosted-runtime/ — and adds it to the engine the parent handed over, once, before the app runs.
+const torchClient = {
+  'manifest.json': JSON.stringify({ main: 'ui/main.ui', files: { logic: ['logic/main.py'] }, config: { python: { packages: ['torch'] } } }),
+  'ui/main.ui': `<logic src="../logic/main.py" />
+  <div>
+    <h1>Torch app</h1>
+    <p data-testid="total">{total}</p>
+  </div>`,
+  'logic/main.py': `import torch
+
+total = float(torch.tensor([1.0, 2.0, 3.5]).sum())
+`,
+};
+
 // The engine the server would have decided, as a query parameter, so one fixture can be driven
 // onto either runtime document. `?engine=host-js` is what a verified owner's app gets: the frame
 // mounts host.html and no engine bytes are fetched at all. `?logic=python` swaps the bundle for
@@ -51,7 +67,7 @@ def increment():
 const parameters = new URLSearchParams(window.location.search);
 const decided = parameters.get('engine');
 const engine = decided ? { id: decided, revision: 'fixture' } : undefined;
-const initialClient = parameters.get('logic') === 'python' ? pythonClient : client;
+const initialClient = parameters.get('logic') === 'python' ? pythonClient : parameters.get('logic') === 'torch' ? torchClient : client;
 
 function Fixture() {
   const [apps, setApps] = useState<number[]>([]);

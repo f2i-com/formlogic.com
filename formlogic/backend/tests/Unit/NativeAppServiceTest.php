@@ -207,7 +207,8 @@ final class NativeAppServiceTest extends TestCase
         $runtime = dirname(__DIR__, 2) . '/resources/softn-native';
         $strict = $this->storage . '/strict-runtime';
         mkdir($strict . '/wasm', 0700, true);
-        foreach (['runner.mjs', 'request-worker.mjs', 'request-hook.mjs', 'wasm-host.mjs', 'migrations.mjs', 'crypto.mjs', 'time.mjs', 'record-events.mjs', 'wasm/zipp_wasm.mjs', 'wasm/zipp_wasm_bg.wasm'] as $file) copy($runtime . '/' . $file, $strict . '/' . $file);
+        // Every module the runtime ships (a release can add one, as Softn v0.0.16 added sql.mjs), and the engine.
+        foreach ([...array_map('basename', glob($runtime . '/*.mjs')), 'wasm/zipp_wasm.mjs', 'wasm/zipp_wasm_bg.wasm'] as $file) copy($runtime . '/' . $file, $strict . '/' . $file);
         file_put_contents($strict . '/host-protocol.json', json_encode(['nativeProtocol' => NativeAppService::NATIVE_PROTOCOL, 'recordEvents' => NativeAppService::RECORD_EVENTS_PROTOCOL, 'minimumNode' => '99.0.0']));
         $service = new NativeAppService($this->storage, $strict, getenv('FORMLOGIC_NODE_BIN'));
         try {

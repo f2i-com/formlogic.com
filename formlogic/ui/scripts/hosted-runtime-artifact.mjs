@@ -50,13 +50,31 @@ export function zippReleaseIdentity(source) {
 export const ZIPP_ENGINE_EXPORTS = Object.freeze(['zippProfile', 'zipp_start', 'engine_evalInContext']);
 
 /**
+ * Exports only ZIPP's torch package module has (probed on ZIPP v0.0.21's web-torch bundle): the
+ * packed Python package it hands the engine, and the kernel entry the engine calls back into.
+ */
+export const ZIPP_TORCH_EXPORTS = Object.freeze(['zipp_package_ptr', 'zipp_package_len', 'zipp_kernel']);
+
+/**
  * Whether bytes are a ZIPP engine module, by its exports rather than its file
  * name: the export section is read without compiling, so an engine copy under
  * any name (a hashed Vite asset, a renamed file) is found.
  */
 export function isZippEngineWasm(bytes) {
-  if (!bytes || bytes.length < 8 || bytes[0] !== 0x00 || bytes[1] !== 0x61 || bytes[2] !== 0x73 || bytes[3] !== 0x6d) return false;
-  if (bytes[4] !== 0x01 || bytes[5] !== 0x00 || bytes[6] !== 0x00 || bytes[7] !== 0x00) return false;
+  const names = wasmExportNames(bytes);
+  return Boolean(names) && ZIPP_ENGINE_EXPORTS.every(name => names.has(name));
+}
+
+/** Whether bytes are ZIPP's torch package module, by its exports as isZippEngineWasm reads them. */
+export function isZippTorchWasm(bytes) {
+  const names = wasmExportNames(bytes);
+  return Boolean(names) && ZIPP_TORCH_EXPORTS.every(name => names.has(name)) && !ZIPP_ENGINE_EXPORTS.some(name => names.has(name));
+}
+
+/** A wasm module's export names from its export section, read without compiling; null for bytes that are not one. */
+function wasmExportNames(bytes) {
+  if (!bytes || bytes.length < 8 || bytes[0] !== 0x00 || bytes[1] !== 0x61 || bytes[2] !== 0x73 || bytes[3] !== 0x6d) return null;
+  if (bytes[4] !== 0x01 || bytes[5] !== 0x00 || bytes[6] !== 0x00 || bytes[7] !== 0x00) return null;
   let offset = 8;
   const leb = () => {
     let value = 0;
@@ -72,23 +90,23 @@ export function isZippEngineWasm(bytes) {
     while (offset < bytes.length) {
       const id = bytes[offset++];
       const end = leb() + offset;
-      if (end > bytes.length) return false;
+      if (end > bytes.length) return null;
       if (id !== 7) { offset = end; continue; }
       const names = new Set();
       for (let count = leb(); count > 0; count--) {
         const length = leb();
-        if (offset + length > end) return false;
+        if (offset + length > end) return null;
         names.add(Buffer.from(bytes.buffer, bytes.byteOffset + offset, length).toString('utf8'));
         offset += length + 1; // the name, then the export kind
         leb(); // the index
       }
-      return ZIPP_ENGINE_EXPORTS.every(name => names.has(name));
+      return names;
     }
   } catch (error) {
-    if (error instanceof RangeError) return false;
+    if (error instanceof RangeError) return null;
     throw error;
   }
-  return false;
+  return new Set();
 }
 
 /**
@@ -308,6 +326,140 @@ export async function checkZippVariantTree(source, variant, primary, { releaseSu
   if (digest(wasm) !== variant.sha256) throw new Error('The ZIPP web variant tree\'s zipp_wasm_bg.wasm differs from the recorded variant sha256.');
   if (!isZippEngineWasm(wasm)) throw new Error('The ZIPP web variant tree\'s zipp_wasm_bg.wasm is not a ZIPP engine module: its exports are not the engine\'s.');
   return record;
+}
+
+/** The files Softn ships for the torch package (the archive's zipp-torch/): the module, ZIPP's loader, and the records. */
+export const ZIPP_TORCH_TREE_REQUIRED = Object.freeze(['zipp_torch.wasm', 'zipp_torch.js', 'BUILD-INFO.txt', 'SHA256SUMS', 'SOURCE.json']);
+/** The keys Softn records for the torch package, in softn-release.json `zipp.packages.torch` and in zipp/SOURCE.json. */
+export const ZIPP_TORCH_KEYS = Object.freeze(['bundle', 'bundleSha256', 'sha256', 'loaderSha256', 'variant', 'pairsWith', 'commit', 'engineAbi']);
+
+/**
+ * The torch package record a Softn release carries (softn-release.json `zipp.packages.torch`,
+ * since Softn v0.0.16 and ZIPP v0.0.21): ZIPP's web-torch build of the same release, a Python
+ * package the engine adds on demand for an app that declares torch. `primary` is the release's
+ * `zipp` record: the package must be built from its commit and pair with exactly its bundle.
+ * Returns a copy of the record.
+ */
+export function zippTorchIdentity(torch, primary) {
+  if (!torch || typeof torch !== 'object' || Array.isArray(torch)) throw new Error('The ZIPP torch package record is missing.');
+  const primaryRecord = zippReleaseIdentity(primary);
+  const problems = [];
+  if (typeof torch.bundle !== 'string' || !/^[^/\\]+$/.test(torch.bundle)) problems.push('no bundle file name');
+  for (const key of ['bundleSha256', 'sha256', 'loaderSha256']) if (!HEX64.test(torch[key] ?? '')) problems.push(`${key} is not a SHA-256`);
+  if (torch.variant !== 'torch') problems.push(`variant is ${canonical(torch.variant) ?? '(absent)'}, not "torch"`);
+  if (typeof torch.engineAbi !== 'string' || !torch.engineAbi) problems.push('no engineAbi');
+  if (!/^[0-9a-f]{40}$/.test(torch.commit ?? '')) problems.push('commit is not a 40-hex commit');
+  else if (torch.commit !== primaryRecord.revision) problems.push(`it was built from ${torch.commit.slice(0, 12)}, not the release's ${primaryRecord.revision.slice(0, 12)}`);
+  if (torch.pairsWith !== primaryRecord.bundle.replace(/\.zip$/, '')) problems.push(`it pairs with ${canonical(torch.pairsWith) ?? '(nothing)'}, not the engine bundle ${primaryRecord.bundle}`);
+  if (torch.sha256 === primaryRecord.sha256) problems.push('it names the engine\'s own digest');
+  if (problems.length) throw new Error(`The ZIPP torch package record is not ZIPP ${primaryRecord.release}'s torch package for this engine: ${problems.join('; ')}.`);
+  return JSON.parse(JSON.stringify(torch));
+}
+
+/**
+ * The torch package tree as Softn ships it (the archive's top-level zipp-torch/): `source` a
+ * directory or a Map of path to bytes, `torch` the release's `zipp.packages.torch`, `primary` the
+ * release's `zipp` record. FormLogic installs no copy of this tree — the hosted runtime and the
+ * editors each carry the module beside their core chunk and fetch it from there — but it is the
+ * one copy Softn ships with its provenance, so it is where the record is proved: exactly the files
+ * the web-torch bundle's own SHA256SUMS lists, plus Softn's SOURCE.json and generated
+ * declarations; SOURCE.json carries the record's every key and is the same release (version, tag,
+ * revision, release sums, build, toolchain) as the engine it names as its primary; BUILD-INFO says
+ * what SOURCE.json says; the module and ZIPP's loader are the recorded digests; and, given the
+ * primary tree's RELEASE-SHA256SUMS (`releaseSums`), the ZIPP release lists the torch bundle with
+ * the recorded digest. Whether the package runs with this engine (engineAbi) is Softn's install
+ * check, which adds it to the engine and runs `import torch`. Returns the tree's SOURCE.json.
+ */
+export async function checkZippTorchTree(source, torch, primary, { releaseSums = null } = {}) {
+  const files = new Map();
+  if (typeof source === 'string') {
+    for (const path of await artifactFiles(source, { includeManifest: true })) files.set(path, await readFile(resolve(source, path)));
+  } else {
+    for (const [path, value] of source) files.set(path, Buffer.isBuffer(value) ? value : value.data);
+  }
+  const missing = ZIPP_TORCH_TREE_REQUIRED.filter(name => !files.has(name));
+  if (missing.length) throw new Error(`The ZIPP torch package tree is missing ${missing.join(', ')}.`);
+  torch = zippTorchIdentity(torch, primary);
+  const primaryRecord = zippReleaseIdentity(primary);
+
+  const text = name => files.get(name).toString('utf8');
+  let record;
+  try { record = JSON.parse(text('SOURCE.json')); }
+  catch (error) { throw new Error(`The ZIPP torch package tree's SOURCE.json is not JSON: ${error.message}`); }
+  if (!record || typeof record !== 'object') throw new Error('The ZIPP torch package tree\'s SOURCE.json is not a record.');
+  for (const [key, value] of Object.entries(torch)) {
+    if (canonical(record[key]) !== canonical(value)) throw new Error(`The ZIPP torch package tree's SOURCE.json ${key} is ${canonical(record[key]) ?? '(absent)'}; the release records ${canonical(value)}.`);
+  }
+  const same = [['version', primaryRecord.version], ['release', primaryRecord.release], ['revision', primaryRecord.revision], ['sumsSha256', primaryRecord.sumsSha256], ['build', 'release'], ['artifact', 'zipp_torch.wasm'], ['loader', 'zipp_torch.js'], ...(primaryRecord.rustc !== undefined ? [['rustc', primaryRecord.rustc]] : [])];
+  for (const [key, value] of same) {
+    if (canonical(record[key]) !== canonical(value)) throw new Error(`The ZIPP torch package tree's SOURCE.json ${key} is ${canonical(record[key]) ?? '(absent)'}; the release's is ${canonical(value)}.`);
+  }
+  const named = record.primary;
+  if (!named || typeof named !== 'object' || named.bundle !== primaryRecord.bundle || named.sha256 !== primaryRecord.sha256 || named.glueSha256 !== primaryRecord.glueSha256) {
+    throw new Error(`The ZIPP torch package tree's SOURCE.json primary is ${canonical(named) ?? '(absent)'}; the release's engine is ${primaryRecord.bundle} (${primaryRecord.sha256.slice(0, 12)}, glue ${primaryRecord.glueSha256.slice(0, 12)}).`);
+  }
+
+  // Shipped file -> the torch bundle's sums; only Softn's own additions are exempt.
+  const inner = parseSums(text('SHA256SUMS'), 'zipp-torch/SHA256SUMS');
+  const exempt = new Set(['SOURCE.json', 'SHA256SUMS']);
+  const declarations = record.declarations;
+  if (declarations !== undefined) {
+    if (!declarations || typeof declarations.file !== 'string' || !/^[^/\\]+$/.test(declarations.file) || declarations.source !== 'softn-generated' || !HEX64.test(declarations.sha256 ?? '')) {
+      throw new Error('The ZIPP torch package tree\'s SOURCE.json declarations are not a softn-generated file with a SHA-256.');
+    }
+    if (ZIPP_TORCH_TREE_REQUIRED.includes(declarations.file) || inner.has(declarations.file)) throw new Error(`The ZIPP torch package tree's SOURCE.json names ${declarations.file} as Softn's declarations; that is a file of the torch bundle or of Softn's record.`);
+    if (!files.has(declarations.file) || digest(files.get(declarations.file)) !== declarations.sha256) throw new Error(`The ZIPP torch package tree's ${declarations.file} is missing or differs from SOURCE.json declarations.`);
+    exempt.add(declarations.file);
+  }
+  for (const [path, bytes] of files) {
+    if (exempt.has(path)) continue;
+    if (!inner.has(path)) throw new Error(`The ZIPP torch package tree ships ${path}, which ZIPP ${record.release}'s torch bundle SHA256SUMS does not list.`);
+    if (digest(bytes) !== inner.get(path)) throw new Error(`The ZIPP torch package tree's ${path} differs from ZIPP ${record.release}'s torch bundle SHA256SUMS.`);
+  }
+
+  const buildInfo = new Map(text('BUILD-INFO.txt').replace(/\r\n/g, '\n').split('\n').filter(line => line.includes('=')).map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
+  const built = [
+    ['commit', buildInfo.get('commit'), record.revision, 'revision'],
+    ['version', buildInfo.get('version'), record.version, 'version'],
+    ['variant', buildInfo.get('variant'), record.variant, 'variant'],
+    ['pairs-with', buildInfo.get('pairs-with'), record.pairsWith, 'pairsWith'],
+    ['rustc', buildInfo.get('rustc'), record.rustc, 'rustc'],
+  ];
+  for (const [key, actual, expected, field] of built) {
+    if (actual === undefined || canonical(actual) !== canonical(expected)) throw new Error(`The ZIPP torch package tree's BUILD-INFO.txt ${key} is ${canonical(actual) ?? '(absent)'}; SOURCE.json ${field} is ${canonical(expected) ?? '(absent)'}.`);
+  }
+
+  if (releaseSums) {
+    if (digest(releaseSums) !== primaryRecord.sumsSha256) throw new Error(`RELEASE-SHA256SUMS is not the ZIPP ${primaryRecord.release} SHA256SUMS the release records (${primaryRecord.sumsSha256.slice(0, 12)}).`);
+    if (parseSums(releaseSums.toString('utf8'), 'RELEASE-SHA256SUMS').get(torch.bundle) !== torch.bundleSha256) throw new Error(`ZIPP ${primaryRecord.release}'s SHA256SUMS does not list ${torch.bundle} with the digest the torch package record says.`);
+  }
+
+  const wasm = files.get('zipp_torch.wasm');
+  if (digest(wasm) !== torch.sha256) throw new Error('The ZIPP torch package tree\'s zipp_torch.wasm differs from the recorded torch sha256.');
+  if (!isZippTorchWasm(wasm)) throw new Error('The ZIPP torch package tree\'s zipp_torch.wasm is not ZIPP\'s torch module: its exports are not the package\'s.');
+  if (digest(files.get('zipp_torch.js')) !== torch.loaderSha256) throw new Error('The ZIPP torch package tree\'s zipp_torch.js differs from the recorded torch loaderSha256.');
+  return record;
+}
+
+/**
+ * Every torch package module in a built tree (a hosted runtime, the editors) is the one the
+ * release records, and each place the runtime fetches it from (`required`, tree-relative) holds
+ * one. With no record, a torch module anywhere is refused: the tree is serving a package its
+ * release does not describe. Returns the paths found.
+ */
+export async function checkTorchCopies(directory, torch, required = []) {
+  const found = [];
+  for (const path of await artifactFiles(directory, { includeManifest: true })) {
+    if (!path.endsWith('.wasm')) continue;
+    const bytes = await readFile(resolve(directory, path));
+    if (!isZippTorchWasm(bytes)) continue;
+    if (!torch) throw new Error(`${path} is a ZIPP torch package module, but the installed release records no zipp.packages.torch.`);
+    if (digest(bytes) !== torch.sha256) throw new Error(`${path} is a ZIPP torch package module (${digest(bytes).slice(0, 12)}) other than the one the release records (${torch.sha256.slice(0, 12)}).`);
+    found.push(path);
+  }
+  const absent = torch ? required.filter(path => !found.includes(path)) : [];
+  if (absent.length) throw new Error(`No ZIPP torch package module at ${absent.join(', ')} (found: ${found.join(', ') || 'none'}); the runtime fetches it from there for an app that declares torch.`);
+  return found;
 }
 
 /**
