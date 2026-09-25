@@ -88,8 +88,8 @@ async function builderEdit(page: Page, label: string) {
   const frame = page.frameLocator('iframe[title="App visual editor"]');
   await frame.getByRole('button', { name: 'Design', exact: true }).click();
   await frame.getByRole('treeitem', { name: 'Select Button component', exact: true }).click();
-  await frame.getByLabel('Text Content', { exact: true }).fill(label);
-  await frame.getByLabel('Text Content', { exact: true }).press('Tab');
+  await frame.getByLabel('Text', { exact: true }).fill(label);
+  await frame.getByLabel('Text', { exact: true }).press('Tab');
   await editor.getByRole('button', { name: 'Review changes', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Native app hosting', exact: true });
   await expect(dialog).toBeVisible({ timeout: 30000 });
@@ -130,10 +130,22 @@ test.describe('embedded editors: round trip and live conflict', () => {
 
       // 3. AI Studio opens on that draft: its export of the project carries the Builder edit.
       await page.route('**/api/ai/preferences', route => route.fulfill({ json: { data: { aiSource: 'site', chatToolMode: 'off' } } }));
+      // Studio's agent works in rounds over the bridge's native tool calls (aiTools): the
+      // first round reads the file and writes it (the agent only overwrites a file it has
+      // read), and the round that sees those results finishes.
+      const studioRequests: Array<{ aiTools: unknown; tools: number }> = [];
+      const studioToolErrors: string[] = [];
       await page.route('**/api/ai/chat', async route => {
+        const body = route.request().postDataJSON() as { aiTools?: unknown; tools?: unknown[]; messages: Array<{ role: string; content: string; isError?: boolean }> };
+        studioRequests.push({ aiTools: body.aiTools, tools: body.tools?.length ?? 0 });
+        if (body.messages.some(m => m.role === 'tool')) {
+          studioToolErrors.push(...body.messages.filter(m => m.role === 'tool' && m.isError).map(m => m.content));
+          await route.fulfill({ json: { data: { content: '', toolCalls: [{ id: 'call-finish', name: 'finish', arguments: { summary: 'Updated the heading.' } }], stopReason: 'tool_calls' } } });
+          return;
+        }
         const current = (await nativeProject(context, app!.id))!.files['ui/main.ui'].replace('Save example item', 'Save round-trip item');
         const source = current.replace('My app', 'Studio edited app');
-        await route.fulfill({ json: { data: { content: `Updated the heading.\n<softn-file path="ui/main.ui">${source}</softn-file>` } } });
+        await route.fulfill({ json: { data: { content: 'Changing the heading.', toolCalls: [{ id: 'call-read', name: 'read_file', arguments: { path: 'ui/main.ui' } }, { id: 'call-write', name: 'write_file', arguments: { path: 'ui/main.ui', content: source } }], stopReason: 'tool_calls' } } });
       });
       await page.getByRole('button', { name: 'Open AI Studio', exact: true }).click();
       const studio = page.getByRole('dialog', { name: 'AI Studio', exact: true });
@@ -149,6 +161,10 @@ test.describe('embedded editors: round trip and live conflict', () => {
       await studioFrame.getByRole('textbox', { name: 'Message to AI' }).fill('Update the heading to Studio edited app, preserving all other files.');
       await studioFrame.getByRole('button', { name: 'Send message', exact: true }).click();
       await expect(studioFrame.getByText('Updated the heading.', { exact: true })).toBeVisible({ timeout: 60000 });
+      // One round read and wrote the file and the next finished, as tool calls FormLogic relayed with its tools.
+      expect(studioRequests.map(r => r.aiTools)).toEqual([1, 1]);
+      expect(studioToolErrors).toEqual([]);
+      expect(studioRequests.every(r => r.tools > 0)).toBe(true);
       await studio.getByRole('button', { name: 'Review changes', exact: true }).click();
       await expect(dialog).toBeVisible({ timeout: 30000 });
 

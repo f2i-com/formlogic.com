@@ -25,9 +25,17 @@ test('Builder and Studio return an editable native app without losing its backen
   await page.route('**/api/ai/chat', async route => {
     aiRequests++;
     if (aiRequests === 1) await cancelledReply;
-    expect(route.request().postDataJSON().messages.some((m: { content: string }) => m.content.includes('Update the heading'))).toBe(true);
+    const body = route.request().postDataJSON() as { messages: Array<{ role: string; content: string; isError?: boolean }> };
+    expect(body.messages.some(m => m.content.includes('Update the heading'))).toBe(true);
+    // Studio's agent works in rounds: it reads and writes the file (it only overwrites a file it has
+    // read), then finishes once it has those results.
+    if (body.messages.some(m => m.role === 'tool')) {
+      expect(body.messages.filter(m => m.role === 'tool' && m.isError).map(m => m.content)).toEqual([]);
+      await route.fulfill({ json: { data: { content: '', toolCalls: [{ id: 'call-finish', name: 'finish', arguments: { summary: 'Updated the heading.' } }], stopReason: 'tool_calls' } } }).catch(() => {});
+      return;
+    }
     const source = project.files['ui/main.ui'].replace('My app', 'AI edited app').replace('Save example item', 'Save edited item');
-    await route.fulfill({ json: { data: { content: `Updated the heading.\n<softn-file path="ui/main.ui">${source}</softn-file>` } } }).catch(() => {});
+    await route.fulfill({ json: { data: { content: 'Changing the heading.', toolCalls: [{ id: 'call-read', name: 'read_file', arguments: { path: 'ui/main.ui' } }, { id: 'call-write', name: 'write_file', arguments: { path: 'ui/main.ui', content: source } }], stopReason: 'tool_calls' } } }).catch(() => {});
   });
   for (const kind of ['Visual Builder', 'AI Studio']) {
     await page.getByRole('button', { name: `Open ${kind}`, exact: true }).click();
@@ -39,21 +47,21 @@ test('Builder and Studio return an editable native app without losing its backen
       await expect(frame.getByRole('heading', { name: 'Your app data lives in FormLogic' })).toBeVisible();
       await frame.getByRole('button', { name: 'Design', exact: true }).click();
       await frame.getByRole('treeitem', { name: 'Select Button component', exact: true }).click();
-      await frame.getByLabel('Text Content', { exact: true }).fill('Save edited item');
-      await frame.getByLabel('Text Content', { exact: true }).press('Tab');
+      await frame.getByLabel('Text', { exact: true }).fill('Save edited item');
+      await frame.getByLabel('Text', { exact: true }).press('Tab');
     } else {
       await frame.getByRole('button', { name: 'AI', exact: true }).click();
       await frame.getByRole('textbox', { name: 'Message to AI' }).fill('Update the heading to AI edited app, preserving all other files.');
       await frame.getByRole('button', { name: 'Send message', exact: true }).click();
       await expect(editor.getByRole('button', { name: 'Review changes', exact: true })).toBeDisabled();
       await expect(editor.getByRole('status')).toContainText('AI is editing your draft');
-      await frame.getByRole('button', { name: 'Stop generating', exact: true }).click();
+      await frame.getByRole('button', { name: 'Stop the agent', exact: true }).click();
       await expect(editor.getByRole('button', { name: 'Review changes', exact: true })).toBeEnabled();
       releaseCancelled();
       await frame.getByRole('textbox', { name: 'Message to AI' }).fill('Update the heading to AI edited app, preserving all other files.');
       await frame.getByRole('button', { name: 'Send message', exact: true }).click();
       await expect(frame.getByText('Updated the heading.', { exact: true })).toBeVisible({ timeout: 30000 });
-      expect(aiRequests).toBe(2);
+      expect(aiRequests).toBe(3); // the stopped request, then the read and write, then the finish
       await page.setViewportSize({ width: 390, height: 844 });
       await expect(frame.getByRole('button', { name: 'AI Chat', exact: true })).toBeVisible();
       await frame.getByRole('button', { name: 'AI Chat', exact: true }).click();
