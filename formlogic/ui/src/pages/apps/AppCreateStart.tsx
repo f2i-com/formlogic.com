@@ -6,8 +6,8 @@
 // Deliberately minimal: attaching existing forms happens in the studio's Data
 // step, companion apps are created from an app's Forms manager.
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Boxes, Check, HardDrive, Package, RefreshCw, ShieldCheck } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { AppWindow, ArrowRight, Boxes, Check, ClipboardList, HardDrive, Package, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -22,6 +22,7 @@ import { toast } from '../../stores/toastStore';
 import { useVaultStore } from '../../stores/vaultStore';
 import { cn } from '../../lib/utils';
 import type { AppFormPrivacyDefault, AppKind } from '../../types/app';
+import { SoftnCreateForm } from './SoftnCreateForm';
 
 
 export function AppCreateStart() {
@@ -29,6 +30,11 @@ export function AppCreateStart() {
   const createApp = useAppStore((s) => s.createApp);
   const isDemo = useAuthStore((s) => !!s.user?.isDemo);
   const [aiReady, setAiReady] = useState(false);
+  const [aiChecked, setAiChecked] = useState(false);
+  // A forms app (the App Studio), or a hosted SoftN app: a website or web app with its own
+  // backend and database. /apps/new?type=softn opens on the second.
+  const [searchParams] = useSearchParams();
+  const [build, setBuild] = useState<'forms' | 'softn'>(searchParams.get('type') === 'softn' ? 'softn' : 'forms');
   const [rechecking, setRechecking] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -47,10 +53,11 @@ export function AppCreateStart() {
       (res) => {
         if (cancelled) return;
         setAiReady(res.ready);
+        setAiChecked(true);
 
       },
       () => {
-        if (!cancelled) setAiReady(false);
+        if (!cancelled) { setAiReady(false); setAiChecked(true); }
       }
     );
     return () => {
@@ -140,7 +147,9 @@ export function AppCreateStart() {
               Create a new app
             </h2>
             <p className="mt-2 max-w-xl text-sm leading-relaxed text-gray-500 dark:text-slate-400">
-              {aiReady
+              {build === 'softn'
+                ? 'A SoftN app is a website or web app with its own pages, backend and database, hosted here. Build it with AI, edit it visually, or upload one you have.'
+                : aiReady
                 ? 'Name it and step into the App Studio — plan it with AI, sketch it as a diagram, or build it by hand. Everything is editable later.'
                 : 'Name it and step into the App Studio — a guided, skippable builder for data, screens, automations and access. Everything is editable later.'}
             </p>
@@ -159,7 +168,19 @@ export function AppCreateStart() {
                   </p>
                 </div>
               )}
-              <div className="space-y-4">
+              <fieldset className="mb-5">
+                <legend className="mb-2 text-sm font-semibold text-gray-700 dark:text-slate-200">What kind of app?</legend>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {([['forms', 'Forms app', 'Collect and manage records with forms, screens, automations and roles.', ClipboardList], ['softn', 'SoftN app', 'A website or web app with its own pages, backend and database.', AppWindow]] as const).map(([value, label, hint, Icon]) => (
+                    <label key={value} className={cn('flex cursor-pointer gap-3 rounded-xl border p-3', build === value ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10' : 'border-gray-200 dark:border-slate-700')}>
+                      <input type="radio" name="app-build" value={value} checked={build === value} disabled={creating} onChange={() => setBuild(value)} className="sr-only" />
+                      <Icon className={cn('mt-0.5 h-5 w-5 shrink-0', build === value ? 'text-primary-600 dark:text-primary-300' : 'text-gray-400')} aria-hidden="true" />
+                      <span><span className="block text-sm font-semibold text-gray-900 dark:text-white">{label}</span><span className="mt-0.5 block text-xs leading-5 text-gray-500 dark:text-slate-400">{hint}</span></span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              {build === 'softn' ? <SoftnCreateForm aiReady={aiChecked ? aiReady : null} disabled={isDemo} /> : <div className="space-y-4">
                 <fieldset>
                   <legend className="mb-2 text-sm font-semibold text-gray-700 dark:text-slate-200">What are you building?</legend>
                   <div className="grid grid-cols-2 gap-2">
@@ -286,7 +307,8 @@ export function AppCreateStart() {
                     Create and open the studio
                   </Button>
                 </div>
-              </div>
+              </div>}
+              {build === 'softn' && isDemo && <p className="mt-3 text-xs text-gray-500 dark:text-slate-400">SoftN apps are hosted on the server, so they are available after sign-up.</p>}
             </section>
 
             {/* Starting from a ready-made app was invisible at the moment someone

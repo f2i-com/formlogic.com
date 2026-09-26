@@ -396,6 +396,7 @@ class ChatToolGrantTest extends TestCase
         // then + list_blueprints/get_blueprint (chat READ access to diagrams), then
         // + set_form_screen/set_app_home/update_app (screen-authoring centralisation —
         // chat is the AI surface for custom screens; update_app publishes, never archives).
+        // Then + create_softn_app (2026-09-26): a hosted SoftN app, built in AI Studio.
         $this->assertSame([
             'list_apps', 'list_forms', 'get_form', 'create_app', 'create_app_form',
             'create_form', 'update_form', 'add_form_to_app', 'create_flow', 'list_responses',
@@ -404,6 +405,7 @@ class ChatToolGrantTest extends TestCase
             'get_workspace_template', 'get_app_project', 'publish_app_project',
             'get_native_app_template', 'get_native_app_project', 'publish_native_app_project',
             'update_native_app_files', 'list_native_app_records',
+            'create_softn_app',
         ], $names);
         foreach ($body['tools'] as $tool) {
             $this->assertNotSame('', $tool['description'] ?? '');

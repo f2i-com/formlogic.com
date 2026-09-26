@@ -253,11 +253,24 @@ inputSchema}], maxOutputTokens?, stream?: false}`; messages are `{role: 'system'
 toolCallId, name, content, isError?}`. Answer: `{data: {content, toolCalls: [{id, name,
 arguments}], stopReason, usage}}`, `arguments` being the upstream's raw JSON string and
 `stopReason` its `finish_reason`. Same auth, allowance unit and metering as plain chat; never
-streamed; the output cap is clamped to the hosted chat's. Malformed shapes are `400` before
-anything is charged (`AIService::validateClientToolChat`: ≤ 64 tools with unique names and
-object schemas ≤ 16 KiB, ≤ 32 calls per message, a tool result must answer a call of the
-assistant message it follows, the plain chat's message and size bounds). Unrelated to
-`tools: true`, which runs FormLogic's own tools server-side.
+streamed. An editor's agent writes whole files in a reply and works in dozens of rounds, so
+this mode has bounds of its own: the output cap is `AI_EDITOR_MAX_OUTPUT_TOKENS` (1,024 to
+32,768, default 8,192; a larger `maxOutputTokens` is clamped, never raised), and a
+conversation may hold 240 messages, 96,000 characters a message and 480,000 in total. A round
+may take up to 600 seconds upstream (a long reply from a local model runs for minutes), and
+PHP is allowed to outlive it. An editor's plain request marked `editor: 1` (its agent's text
+protocol, for a provider that cannot take tools) has the same bounds and time. Malformed
+shapes are `400` before anything is charged (`AIService::validateClientToolChat`: ≤ 64 tools
+with unique names and object schemas ≤ 16 KiB, ≤ 32 calls per message, a tool result must answer
+a call of the assistant message it follows). Unrelated to `tools: true`, which runs FormLogic's
+own tools server-side.
+
+**Agent runs (hosted Softn Studio):** a Studio that announces `agentRuns: 1` in
+`formlogic-editor-ready` is connected with `agentRuns: 1`, may be opened with
+`brief: {prompt, kind: 'build'|'edit'}` beside the app, and reports its agent with
+`{kind: 'agent-status', state, step?, summary?, reason?}` messages; FormLogic shows them and holds
+the editor's "review" while the agent writes. A Studio from before `agentRuns` is never sent a
+brief; the request is shown for the owner to paste.
 
 ---
 

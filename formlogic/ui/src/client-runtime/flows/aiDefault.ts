@@ -183,7 +183,7 @@ async function contractFetch(method: 'GET' | 'POST', endpoint: string, body?: un
 /** lib/api response shapes this module can consume once the Site-AI scope lands them. */
 interface PrefsApiLike {
   getAiPreferences?: () => Promise<{ data?: unknown; error?: string; status?: number; code?: string }>;
-  aiChat?: (body: { messages: AiDefaultChatMessage[]; stream: false }) => Promise<{
+  aiChat?: (body: { messages: AiDefaultChatMessage[]; stream: false; editor?: 1 }) => Promise<{
     data?: unknown;
     error?: string;
     status?: number;
@@ -396,12 +396,17 @@ export interface ResolveDefaultLlmOptions {
   /** Streaming deltas (desktop source only — site/custom answer non-streaming in v1). */
   onDelta?: (delta: string, accumulated: string) => void;
   onState?: (state: DesktopTunnelState) => void;
+  /**
+   * An embedded app editor's request (its agent's text protocol): Site AI answers it with the
+   * editor's size and output bounds (`editor: 1`) rather than the chat's.
+   */
+  editor?: boolean;
 }
 
 /** Injectable seams (tests + runtimes with their own wiring); production uses the defaults. */
 export interface ResolveDefaultLlmDeps {
   fetchPreferences?: PrefsFetcher;
-  siteChat?: (messages: AiDefaultChatMessage[], signal?: AbortSignal) => Promise<AiDefaultResult<{ content: string; usage?: unknown }>>;
+  siteChat?: (messages: AiDefaultChatMessage[], signal?: AbortSignal, options?: { editor?: boolean }) => Promise<AiDefaultResult<{ content: string; usage?: unknown }>>;
   tunnelChat?: typeof chatViaTunnel;
   resolveCustomProvider?: (providerId: string) => Promise<ResolvedAiProvider | null>;
   fetchFn?: typeof fetch;
@@ -412,18 +417,20 @@ interface SiteChatBody {
   usage?: unknown;
 }
 
-/** Hosted Site AI: POST /api/ai/chat {messages, stream:false} → {data:{content, usage?}}. */
+/** Hosted Site AI: POST /api/ai/chat {messages, stream:false, editor?} → {data:{content, usage?}}. */
 async function defaultSiteChat(
   messages: AiDefaultChatMessage[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options: { editor?: boolean } = {}
 ): Promise<AiDefaultResult<SiteChatBody>> {
+  const body = { messages, stream: false as const, ...(options.editor ? { editor: 1 as const } : {}) };
   const apiMethod = apiLike().aiChat;
   let status: number | undefined;
   let code: string | undefined;
   let message: string | undefined;
   let data: unknown;
   if (typeof apiMethod === 'function') {
-    const res = await apiMethod.call(api, { messages, stream: false });
+    const res = await apiMethod.call(api, body);
     if (res.error !== undefined) {
       status = res.status;
       code = res.code;
@@ -432,7 +439,7 @@ async function defaultSiteChat(
       data = res.data;
     }
   } else {
-    const res = await contractFetch('POST', '/ai/chat', { messages, stream: false }, signal);
+    const res = await contractFetch('POST', '/ai/chat', body, signal);
     status = res.status || undefined;
     code = res.code;
     message = res.message;
@@ -568,7 +575,7 @@ export async function resolveDefaultLlm(
   switch (prefs.aiSource) {
     case 'site': {
       const siteChat = deps.siteChat ?? defaultSiteChat;
-      const res = await siteChat(opts.messages, opts.signal);
+      const res = opts.editor ? await siteChat(opts.messages, opts.signal, { editor: true }) : await siteChat(opts.messages, opts.signal);
       if (!res.ok) return failure(res.error); // ai_allowance_exceeded & friends pass through
       return { ok: true, data: { source: 'site', content: res.data.content, ...(res.data.usage !== undefined ? { usage: res.data.usage } : {}) } };
     }
@@ -655,10 +662,16 @@ async function defaultSiteChatTools(request: EditorAiToolRequest, signal?: Abort
   return readSiteToolsReply(res.data, status);
 }
 
-/** The backend's tools-mode `data` → the bridge reply. A server from before this mode answers without toolCalls: tools-unsupported. */
+/**
+ * The backend's tools-mode `data` → the bridge reply. A server from before this mode answers
+ * with a reply without toolCalls: tools-unsupported. An answer that is not a reply at all (a
+ * body that did not parse, such as a PHP error page) is a failed request, not a missing
+ * capability: reading it as tools-unsupported switched the editor's agent to text for good.
+ */
 export function readSiteToolsReply(data: unknown, status?: number): AiDefaultResult<EditorAiReply> {
   const rec = asRecord(data);
-  if (!rec || typeof rec.content !== 'string' || !Array.isArray(rec.toolCalls)) {
+  if (!rec) return failure({ code: 'request_failed', message: 'Site AI sent an answer that could not be read. Try again.', status });
+  if (typeof rec.content !== 'string' || !Array.isArray(rec.toolCalls)) {
     return failure({ code: TOOLS_UNSUPPORTED, message: 'This FormLogic server does not pass tools to Site AI.', status });
   }
   const toolCalls: EditorAiReply['toolCalls'] = [];

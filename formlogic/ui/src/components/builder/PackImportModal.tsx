@@ -42,6 +42,8 @@ import { InstallJobProgress } from './InstallJobProgress';
 import { PackDetailView } from './PackDetailView';
 import { PublishPackDialog } from './PublishPackDialog';
 import { formatDate } from '../../lib/utils';
+import { createSoftnApp, softnWorkspacePath } from '../../lib/softnApps';
+import { useNavigate } from 'react-router-dom';
 
 type Tab = 'marketplace' | 'installed' | 'mypacks' | 'upload';
 
@@ -72,6 +74,7 @@ interface V2PlanState {
 }
 
 export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModalProps) {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<Tab>(initialTab ?? 'marketplace');
 
   // Marketplace state
@@ -481,6 +484,25 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
 
     const lower = file.name.toLowerCase();
 
+    // A SoftN app (.softn): hosted as an app of its own, opened in its workspace.
+    if (lower.endsWith('.softn')) {
+      (async () => {
+        setUploading(true);
+        try {
+          const created = await createSoftnApp({ name: '', start: { kind: 'upload', file } });
+          if (created.error) toast.info('Your app was created', created.error);
+          else toast.success('SoftN app added', `${created.app.name} is ready to preview and publish.`);
+          onClose();
+          navigate(softnWorkspacePath(created.app.id));
+        } catch (reason) {
+          setUploadError(reason instanceof Error ? reason.message : 'Could not add that SoftN app.');
+        } finally {
+          setUploading(false);
+        }
+      })();
+      return;
+    }
+
     // Legacy marketplace .zip (manifest.json only) — parsed server-side for preview.
     if (lower.endsWith('.zip')) {
       (async () => {
@@ -529,7 +551,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
     }
 
     if (!lower.endsWith('.json')) {
-      setUploadError('Only .json, .zip and .formlogic files are accepted.');
+      setUploadError('Only .json, .zip, .formlogic and .softn files are accepted.');
       return;
     }
 
@@ -547,7 +569,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
       }
     };
     reader.readAsText(file);
-  }, [routeParsedJson, clearReview, loadPackageReview]);
+  }, [routeParsedJson, clearReview, loadPackageReview, navigate, onClose]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -1177,7 +1199,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".json,.zip,.formlogic,.formlogic-app"
+                  accept=".json,.zip,.formlogic,.formlogic-app,.softn"
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) parseFile(f); e.target.value = ''; }}
                   className="hidden"
                 />
@@ -1233,6 +1255,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                       <Badge variant="default" size="sm">.json</Badge>
                       <Badge variant="default" size="sm">.zip</Badge>
                       <Badge variant="default" size="sm">.formlogic</Badge>
+                      <Badge variant="default" size="sm">.softn</Badge>
                     </div>
                   </div>
                 )}

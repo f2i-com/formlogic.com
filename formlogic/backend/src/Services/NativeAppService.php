@@ -1023,6 +1023,78 @@ class NativeAppService
         if (!rmdir($resolved)) throw new RuntimeException('Could not remove app storage');
     }
 
+    /**
+     * The starter project (resources/native-app-starter.json) as a new SoftN app named $appName
+     * begins: an interface, a private backend and one migration that work as they are, named
+     * after the app and given a manifest id of its own. Open at the app's address (home), for
+     * members only until the owner says otherwise.
+     *
+     * @return array{home: bool, version: int, files: array<string, string>, assets: array<string, string>, access: string}
+     */
+    public static function starterProject(string $appName, string $appId): array
+    {
+        $starter = json_decode((string) file_get_contents(dirname(__DIR__, 2) . '/resources/native-app-starter.json'), true, 64, JSON_THROW_ON_ERROR);
+        $name = trim(preg_replace('/\s+/u', ' ', $appName) ?? '');
+        $name = $name === '' ? 'My app' : mb_substr($name, 0, 120);
+        $manifest = json_decode($starter['files']['manifest.json'], true, 64, JSON_THROW_ON_ERROR);
+        $manifest['name'] = $name;
+        $manifest['id'] = 'formlogic.app.' . preg_replace('/[^a-zA-Z0-9._-]/', '', $appId);
+        $starter['files']['manifest.json'] = json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        // The heading is markup text: characters the .ui language reads as markup or an
+        // expression are left out rather than escaped, so the name can never become code.
+        $heading = trim(str_replace(['<', '>', '{', '}', '&', '"', '`'], '', $name));
+        if ($heading !== '') $starter['files']['ui/main.ui'] = str_replace('<Text>My app</Text>', '<Text>' . $heading . '</Text>', $starter['files']['ui/main.ui']);
+        return ['home' => true, 'version' => 0, 'files' => $starter['files'], 'assets' => $starter['assets'] ?? [], 'access' => $starter['access'] ?? 'members'];
+    }
+
+    /**
+     * What an app's author can do about the startup stage its host stopped at, as the owner reads
+     * it where the version was refused. The stage is kept at the end for whoever supports them.
+     */
+    public static function startupFailure(string $stage): string
+    {
+        $message = match ($stage) {
+            'application_source' => "The app's backend could not start: its code (server/main.logic) has an error, or a route names a function it does not define. Fix it in the source editor, or ask AI Studio to.",
+            'route_configuration' => "A route in manifest.json is not one the app host serves: paths are under /api/ and matched exactly, methods are GET, POST, PUT or DELETE, and each route names a function in the backend.",
+            'database_migrations' => "A database migration could not run: check its SQL. Migrations may create and alter tables and indexes and insert rows; triggers, views and PRAGMAs are not supported.",
+            'application_capabilities' => "The backend asks for a capability this server does not offer. Remove it from manifest.json's server.requires.capabilities, or ask your administrator.",
+            'manifest_read', 'application_identity' => "manifest.json's server block could not be read: check its entry, requires, database and routes.",
+            '' => 'The app host did not start and gave no reason. Ask your administrator to check the native app runtime.',
+            default => 'The app host could not start this version. Ask your administrator to check the native app runtime.',
+        };
+        return $stage === '' ? $message : "{$message} ({$stage})";
+    }
+
+    /**
+     * The migrations the installed version ran on this app's database: each must stay listed and
+     * unchanged in an update, or the host refuses to start (its ledger holds their checksums).
+     * Said here, by name and with the way forward, instead of as the host's startup stage.
+     *
+     * @param array<string, string> $oldFiles
+     * @param array<string, string> $newFiles
+     */
+    private static function assertMigrationsKept(array $oldFiles, array $newFiles): void
+    {
+        $applied = json_decode($oldFiles['manifest.json'] ?? '{}', true)['server']['database']['migrations'] ?? [];
+        if (!is_array($applied) || $applied === []) return;
+        $listed = json_decode($newFiles['manifest.json'] ?? '{}', true)['server']['database']['migrations'] ?? [];
+        $listed = is_array($listed) ? $listed : [];
+        $highest = 0;
+        foreach (array_merge($applied, $listed) as $path) {
+            if (is_string($path) && preg_match('~(\d+)[^/]*\.sql$~', $path, $number)) $highest = max($highest, (int) $number[1]);
+        }
+        $next = 'server/migrations/' . str_pad((string) ($highest + 1), 3, '0', STR_PAD_LEFT) . '.sql';
+        foreach ($applied as $path) {
+            if (!is_string($path) || !isset($oldFiles[$path])) continue;
+            if (!isset($newFiles[$path]) || !in_array($path, $listed, true)) {
+                throw new InvalidArgumentException("{$path} has already run on this app's database, so the new version must keep it, listed in manifest.json. Put it back and add changes as a new migration, such as {$next}.");
+            }
+            if ($newFiles[$path] !== $oldFiles[$path]) {
+                throw new InvalidArgumentException("{$path} has already run on this app's database, so it cannot change. Put it back as it was and add the change as a new migration, such as {$next} (for a new column: ALTER TABLE … ADD COLUMN …).");
+            }
+        }
+    }
+
     public function install(string $appId, array $project, int $expectedVersion): array
     {
         if (!$this->available()) throw new RuntimeException('Prepare the native app runtime before importing this project');
@@ -1047,6 +1119,7 @@ class NativeAppService
             $old = $this->get($appId);
             if (($old['version'] ?? 0) !== $expectedVersion) throw new RuntimeException('The project changed. Reload before importing.', 409);
             if ($old && json_decode($old['files']['manifest.json'], true)['id'] !== $manifest['id']) throw new InvalidArgumentException('Import updates with the same app identity to preserve its database');
+            if ($old) self::assertMigrationsKept($old['files'], $files);
             $this->stageProject($staging, array_merge($files, $decoded));
             // The journal is the durable intent (FL-S03): written before anything active changes,
             // advanced before each phase, so a process that dies leaves a record of how far it got.
@@ -1099,7 +1172,7 @@ class NativeAppService
             $this->advance($root, $journal, 'source-activated');
             // This runs the native host's manifest and migration validation, using its real SQLite database.
             $health = $this->invoke($root, ['method' => 'GET', 'path' => '/api/meta', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false]);
-            if (($health['status'] ?? 500) !== 200) throw new RuntimeException('Native host validation failed: ' . ($health['body']['diagnostic'] ?? 'runtime unavailable'), 422);
+            if (($health['status'] ?? 500) !== 200) throw new RuntimeException(self::startupFailure((string) ($health['body']['diagnostic'] ?? '')), 422);
             $this->advance($root, $journal, 'migrated');
             $saved = ['home' => ($project['home'] ?? false) === true, 'version' => $expectedVersion + 1, 'updatedAt' => gmdate('c'), 'files' => $files, 'assets' => $assets, 'access' => ($project['access'] ?? '') === 'members' ? 'members' : 'application'];
             $this->writeExact($root . '/project.json', json_encode($saved, JSON_THROW_ON_ERROR), 0600);

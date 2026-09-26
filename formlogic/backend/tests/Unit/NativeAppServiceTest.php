@@ -421,10 +421,42 @@ final class NativeAppServiceTest extends TestCase
         $project['files']['server/migrations/002.sql'] = 'CREATE TABLE later(id INTEGER PRIMARY KEY);';
         $project['files']['server/main.logic'] = 'function createNote( {';
         try { $this->service->install('notes', $project, 1); $this->fail('Broken source was installed'); }
-        catch (\RuntimeException $error) { $this->assertSame(422, $error->getCode()); }
+        catch (\RuntimeException $error) {
+            $this->assertSame(422, $error->getCode());
+            $this->assertStringStartsWith("The app's backend could not start", $error->getMessage());
+        }
         $this->assertSame(1, $this->service->get('notes')['version']);
         $this->assertSame(['notes'], $this->service->records('notes')['tables']);
         $this->assertSame(201, $this->createNote('Still working')['status']);
+    }
+
+    public function testAnUpdateMustKeepEveryMigrationThatAlreadyRanAndIsToldHow(): void
+    {
+        $project = $this->project();
+        $this->service->install('notes', $project, 0);
+        $this->createNote('Keep this note');
+        // Rewriting the applied migration, the way an AI rebuilding the app from scratch does.
+        $changed = $project;
+        $changed['files']['server/migrations/001.sql'] = 'CREATE TABLE recipes(id INTEGER PRIMARY KEY, title TEXT);';
+        try { $this->service->install('notes', $changed, 1); $this->fail('A changed migration was installed'); }
+        catch (\InvalidArgumentException $error) {
+            $this->assertStringContainsString('server/migrations/001.sql has already run', $error->getMessage());
+            $this->assertStringContainsString('server/migrations/002.sql', $error->getMessage());
+        }
+        // Dropping it from the manifest is refused the same way.
+        $unlisted = $project;
+        $manifest = json_decode($project['files']['manifest.json'], true);
+        $manifest['server']['database']['migrations'] = [];
+        $unlisted['files']['manifest.json'] = json_encode($manifest);
+        try { $this->service->install('notes', $unlisted, 1); $this->fail('An unlisted migration was installed'); }
+        catch (\InvalidArgumentException $error) { $this->assertStringContainsString('must keep it, listed in manifest.json', $error->getMessage()); }
+        $this->assertSame(1, $this->service->get('notes')['version']);
+        // Kept as it was, with the change as the next migration, it installs and the record stays.
+        $manifest['server']['database']['migrations'] = ['server/migrations/001.sql', 'server/migrations/002.sql'];
+        $project['files']['manifest.json'] = json_encode($manifest);
+        $project['files']['server/migrations/002.sql'] = 'ALTER TABLE notes ADD COLUMN favourite INTEGER NOT NULL DEFAULT 0;';
+        $this->assertSame(2, $this->service->install('notes', $project, 1)['version']);
+        $this->assertSame(201, $this->createNote('Another note')['status']);
     }
 
     public function testStaleVersionAndFailedMigrationPreserveExistingRecords(): void

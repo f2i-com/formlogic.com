@@ -29,6 +29,14 @@ export interface ChatLaunch {
   images?: string[];
 }
 
+/** One-shot: open this SoftN app's workspace straight into an editor, with a request for AI Studio. */
+export interface SoftnOpen {
+  appId: string;
+  editor: 'studio' | 'builder';
+  /** Studio only: what its agent should build or change once the app is open. */
+  brief?: { prompt: string; kind: 'build' | 'edit' };
+}
+
 interface UIState {
   // Sidebar
   sidebarCollapsed: boolean;
@@ -86,6 +94,11 @@ interface UIState {
   setChatDocked: (docked: boolean) => void;
   setChatSeed: (chatSeed: string | null) => void;
   setChatLaunch: (chatLaunch: ChatLaunch | null) => void;
+  /** A SoftN app's workspace should open an editor as it loads — after creating the app, or
+   *  when the chat takes the person there — with the request for AI Studio's agent. Consumed
+   *  once by that app's workspace; never persisted. */
+  softnOpen: SoftnOpen | null;
+  setSoftnOpen: (softnOpen: SoftnOpen | null) => void;
   setChatOpen: (open: boolean) => void;
   setChatMinimized: (minimized: boolean) => void;
   setChatPosition: (position: ChatPanelPosition | null) => void;
@@ -144,12 +157,14 @@ export const useUIStore = create<UIState>()(
       chatPosition: null,
       chatSeed: null,
       chatLaunch: null,
+      softnOpen: null,
       chatFollowAi: false,
       setChatFollowAi: (chatFollowAi) => set({ chatFollowAi }),
       chatDocked: false,
       setChatDocked: (chatDocked) => set({ chatDocked }),
       setChatSeed: (chatSeed) => set({ chatSeed }),
       setChatLaunch: (chatLaunch) => set({ chatLaunch }),
+      setSoftnOpen: (softnOpen) => set({ softnOpen }),
       setChatOpen: (open) => set({ chatOpen: open }),
       setChatMinimized: (minimized) => set({ chatMinimized: minimized }),
       setChatPosition: (position) => set({ chatPosition: position }),

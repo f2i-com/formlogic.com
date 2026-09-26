@@ -17,8 +17,8 @@ export const EDITOR_AI_TOOLS_VERSION = 1;
 
 /** Bounds for a structured request. Mirrored (tighter where the backend's own chat bounds are) in AIService. */
 export const EDITOR_AI_LIMITS = {
-  /** Same as the text path's message count. */
-  maxMessages: 100,
+  /** An editor agent's run: two or three messages a step for up to 40 steps (AIService::EDITOR_MAX_MESSAGES). */
+  maxMessages: 240,
   /** Messages AND tools together, as JSON — the text path's 1,000,000 now covers the tool list too. */
   maxRequestChars: 1_000_000,
   maxTools: 64,

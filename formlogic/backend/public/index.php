@@ -2977,12 +2977,16 @@ $app->get('/api/admin/audit/verify', function ($request, $response) use ($contai
 
 // Hosted projects: authentication, CSRF (global), bounded requests and cloud write gate.
 $hostingLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'hosted_apps', true, true);
+// An owner reading their own app's project (the SoftN app workspace, the hosting panels and the
+// editors each read it as they open) has a bucket of its own, so reads never use up the
+// installs and publishes the write bucket above is there to bound.
+$hostingReadLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'hosted_apps_read', true, true);
 $app->post('/api/apps/{id}/compose', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\AppCompositionController::class)->compose($request, $response, $getArgs($request));
 })->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
 $app->get('/api/apps/{id}/hosting', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\HostedAppController::class)->manage($request, $response, $getArgs($request));
-})->add($hostingLimiter)->add($authRequired);
+})->add($hostingReadLimiter)->add($authRequired);
 $app->get('/api/apps/{id}/hosting/{download:database}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\HostedAppController::class)->manage($request, $response, $getArgs($request));
 })->add($hostingLimiter)->add($authRequired);
@@ -3005,8 +3009,12 @@ $app->post('/api/app/{slug}/actions/{action}', function ($request, $response) us
 // Native SoftN app administration and isolated application requests.
 $app->get('/api/apps/{id}/native', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
-})->add($hostingLimiter)->add($authRequired);
+})->add($hostingReadLimiter)->add($authRequired);
 $app->put('/api/apps/{id}/native', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+// A new SoftN app's first version: the starter project, installed only when nothing is.
+$app->post('/api/apps/{id}/native/{operation:starter}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
 })->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
 // Record maintenance has its own bounded budget; browsing must not consume deployment capacity.

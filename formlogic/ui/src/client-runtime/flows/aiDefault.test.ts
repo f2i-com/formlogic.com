@@ -78,6 +78,10 @@ describe('resolveDefaultLlm — resolution matrix', () => {
     expect(siteChat).toHaveBeenCalledWith(MESSAGES, undefined);
     expect(tunnelChat).not.toHaveBeenCalled();
     expect(resolveCustomProvider).not.toHaveBeenCalled();
+
+    // An embedded editor's request asks Site AI for the editor's bounds.
+    await resolveDefaultLlm({ messages: MESSAGES, editor: true }, deps);
+    expect(siteChat).toHaveBeenLastCalledWith(MESSAGES, undefined, { editor: true });
   });
 
   it("site source → 'ai_allowance_exceeded' passes through verbatim, never a source hop", async () => {

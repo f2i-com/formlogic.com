@@ -1,3 +1,4 @@
+import { useUIStore } from '../../stores/uiStore';
 // Pure view-model helpers for the floating Site Chat widget (plan Phase 6). Kept out of
 // SiteChatWidget.tsx so that file only exports a component (react-refresh rule) — the
 // same split the Desktop Connection popover uses (./desktopConnection.ts).
@@ -14,6 +15,9 @@ const APP_STUDIO_STEPS = new Set(['plan', 'data', 'screens', 'automations', 'acc
 
 export function chatToolLinkPath(link: NonNullable<ChatToolActivity['link']>): string | null {
   switch (link.kind) {
+    // A SoftN app lands in its workspace, where AI Studio opens on the request.
+    case 'softnApp':
+      return `/apps/${encodeURIComponent(link.id)}/softn`;
     case 'form':
       return `/builder/${encodeURIComponent(link.id)}`;
     // App links land in the APP STUDIO — the same guided wizard a human uses —
@@ -66,4 +70,21 @@ export function chatThreadTitle(text: string): string {
   const collapsed = text.replace(/\s+/g, ' ').trim();
   if (collapsed === '') return 'New chat';
   return collapsed.length > 48 ? `${collapsed.slice(0, 47)}…` : collapsed;
+}
+
+/** SoftN apps whose request has been handed to AI Studio in this session: opened again, they open plainly. */
+const softnHandedOff = new Set<string>();
+
+/**
+ * A SoftN app link opens the app's workspace straight into AI Studio with the person's request,
+ * the first time. Opening it again (the card's Open, later) must not build the app a second time.
+ */
+export function prepareSoftnHandOff(link: NonNullable<ChatToolActivity['link']>): void {
+  if (link.kind !== 'softnApp') return;
+  if (softnHandedOff.has(link.id) || !link.brief) {
+    useUIStore.getState().setSoftnOpen(null);
+    return;
+  }
+  softnHandedOff.add(link.id);
+  useUIStore.getState().setSoftnOpen({ appId: link.id, editor: 'studio', brief: { prompt: link.brief, kind: 'build' } });
 }

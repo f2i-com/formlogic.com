@@ -525,4 +525,60 @@ final class NativeAppControllerTest extends TestCase
         $this->assertSame('The native app host is unavailable. Check its runtime configuration.', self::body($response)['message']);
         $this->assertArrayNotHasKey('code', self::body($response));
     }
+
+    public function testTheStarterIsANewSoftnAppsFirstVersionNamedAfterIt(): void
+    {
+        $native = $this->createMock(NativeAppService::class);
+        $installed = null;
+        $native->expects($this->once())->method('install')->willReturnCallback(function (string $appId, array $project, int $expectedVersion) use (&$installed): array {
+            $this->assertSame('notes', $appId);
+            $this->assertSame(0, $expectedVersion);
+            $installed = $project;
+            return ['version' => 1] + $project;
+        });
+        [$controller] = $this->fixture('members', $native);
+        $response = $controller->manage($this->request('POST'), new Response(), ['id' => 'notes', 'operation' => 'starter']);
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertSame(1, self::body($response)['data']['project']['version'] ?? self::body($response)['project']['version'] ?? null);
+        $manifest = json_decode($installed['files']['manifest.json'], true);
+        $this->assertSame('Notes', $manifest['name']);
+        $this->assertSame('formlogic.app.notes', $manifest['id']);
+        $this->assertTrue($installed['home']);
+        $this->assertSame('members', $installed['access']);
+        $this->assertStringContainsString('<Text>Notes</Text>', $installed['files']['ui/main.ui']);
+    }
+
+    public function testTheSharedDemoCannotInstallAStarter(): void
+    {
+        $native = $this->createMock(NativeAppService::class);
+        $native->expects($this->never())->method('install');
+        [$controller] = $this->fixture('members', $native);
+        $response = $controller->manage($this->request('POST', true), new Response(), ['id' => 'notes', 'operation' => 'starter']);
+        $this->assertSame(403, $response->getStatusCode());
+    }
+
+    public function testTheStarterKeepsMarkupAndExpressionsOutOfTheHeadingAndAnIdOutOfTheManifest(): void
+    {
+        $project = NativeAppService::starterProject('  Recipes {secret()} <b>&amp;</b>  ', '0f0e-!!/..');
+        $manifest = json_decode($project['files']['manifest.json'], true);
+        $this->assertSame('Recipes {secret()} <b>&amp;</b>', $manifest['name']);
+        $this->assertSame('formlogic.app.0f0e-..', $manifest['id']);
+        $this->assertMatchesRegularExpression('/^[a-zA-Z0-9._-]{1,120}$/D', $manifest['id']);
+        $this->assertStringContainsString('<Text>Recipes secret() bamp;/b</Text>', $project['files']['ui/main.ui']);
+        // Every server file of the starter is kept, and nothing is published by default.
+        $this->assertArrayHasKey('server/main.logic', $project['files']);
+        $this->assertArrayHasKey('server/migrations/001.sql', $project['files']);
+        $this->assertSame(0, $project['version']);
+        $this->assertSame('My app', json_decode(NativeAppService::starterProject("\t ", 'a')['files']['manifest.json'], true)['name']);
+    }
+
+    public function testAHostThatStoppedSaysWhatTheAuthorCanDo(): void
+    {
+        $this->assertStringStartsWith("The app's backend could not start", NativeAppService::startupFailure('application_source'));
+        $this->assertStringEndsWith('(application_source)', NativeAppService::startupFailure('application_source'));
+        $this->assertStringContainsString('check its SQL', NativeAppService::startupFailure('database_migrations'));
+        $this->assertStringContainsString('matched exactly', NativeAppService::startupFailure('route_configuration'));
+        $this->assertStringContainsString('Ask your administrator', NativeAppService::startupFailure('wasm_initialization'));
+        $this->assertStringNotContainsString('()', NativeAppService::startupFailure(''));
+    }
 }

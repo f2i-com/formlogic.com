@@ -28,7 +28,7 @@ class AiChatClientToolsTest extends TestCase
 
     protected function setUp(): void
     {
-        foreach (['AI_BASE_URL', 'OPENAI_API_URL', 'AI_API_KEY', 'OPENAI_API_KEY', 'AI_MODEL', 'OPENAI_MODEL', 'AI_ENABLED'] as $key) {
+        foreach (['AI_BASE_URL', 'OPENAI_API_URL', 'AI_API_KEY', 'OPENAI_API_KEY', 'AI_MODEL', 'OPENAI_MODEL', 'AI_ENABLED', 'AI_EDITOR_MAX_OUTPUT_TOKENS'] as $key) {
             $this->envBackup[$key] = $_ENV[$key] ?? false;
             unset($_ENV[$key]);
         }
@@ -117,7 +117,7 @@ class AiChatClientToolsTest extends TestCase
 
         $payload = $ai->lastPayload;
         // The output cap is the operator's: a larger request is clamped, never raised.
-        $this->assertSame(AIService::CHAT_MAX_TOKENS, $payload['max_tokens']);
+        $this->assertSame(AIService::EDITOR_DEFAULT_OUTPUT_TOKENS, $payload['max_tokens']);
         $this->assertArrayNotHasKey('stream', $payload);
         $this->assertSame([
             ['role' => 'system', 'content' => 'You edit Softn apps.'],
@@ -188,7 +188,7 @@ class AiChatClientToolsTest extends TestCase
             'duplicate call id' => [['aiTools' => 1, 'messages' => [$user, ['role' => 'assistant', 'content' => '', 'toolCalls' => [$call, $call]]]], 'used twice'],
             'arguments a list' => [['aiTools' => 1, 'messages' => [$user, ['role' => 'assistant', 'content' => '', 'toolCalls' => [['id' => 'c', 'name' => 'x', 'arguments' => [1, 2]]]]]], 'must be an object'],
             'arguments a string' => [['aiTools' => 1, 'messages' => [$user, ['role' => 'assistant', 'content' => '', 'toolCalls' => [['id' => 'c', 'name' => 'x', 'arguments' => '{}']]]]], 'must be an object'],
-            'arguments too large' => [['aiTools' => 1, 'messages' => [$user, ['role' => 'assistant', 'content' => '', 'toolCalls' => [['id' => 'c', 'name' => 'x', 'arguments' => ['v' => str_repeat('x', 32001)]]]]]], 'exceeds'],
+            'arguments too large' => [['aiTools' => 1, 'messages' => [$user, ['role' => 'assistant', 'content' => '', 'toolCalls' => [['id' => 'c', 'name' => 'x', 'arguments' => ['v' => str_repeat('x', AIService::EDITOR_MAX_MESSAGE_CHARS + 1)]]]]]], 'exceeds'],
             'too many calls' => [['aiTools' => 1, 'messages' => [$user, ['role' => 'assistant', 'content' => '', 'toolCalls' => array_map(static fn (int $i) => ['id' => 'c' . $i, 'name' => 'x', 'arguments' => []], range(1, 33))]]], 'at most 32'],
             'empty assistant' => [['aiTools' => 1, 'messages' => [$user, ['role' => 'assistant', 'content' => '']]], 'content or toolCalls'],
             'orphan tool result' => [['aiTools' => 1, 'messages' => [$user, ['role' => 'tool', 'toolCallId' => 'call_1', 'name' => 'read_file', 'content' => 'x']]], 'does not answer'],
@@ -197,7 +197,7 @@ class AiChatClientToolsTest extends TestCase
             'result after a user turn' => [['aiTools' => 1, 'messages' => [$user, $withCall, $user, ['role' => 'tool', 'toolCallId' => 'call_1', 'name' => 'read_file', 'content' => 'x']]], 'does not answer'],
             'isError not boolean' => [['aiTools' => 1, 'messages' => [$user, $withCall, ['role' => 'tool', 'toolCallId' => 'call_1', 'name' => 'read_file', 'content' => 'x', 'isError' => 'yes']]], 'isError'],
             'maxOutputTokens zero' => [['aiTools' => 1, 'maxOutputTokens' => 0, 'messages' => [$user]], 'maxOutputTokens'],
-            'too many messages' => [['aiTools' => 1, 'messages' => array_fill(0, 51, $user)], '1..50'],
+            'too many messages' => [['aiTools' => 1, 'messages' => array_fill(0, AIService::EDITOR_MAX_MESSAGES + 1, $user)], '1..' . AIService::EDITOR_MAX_MESSAGES],
         ];
     }
 
@@ -212,6 +212,66 @@ class AiChatClientToolsTest extends TestCase
         $this->assertSame(400, $result['status']);
         $this->assertStringContainsString($message, (string) ($result['body']['message'] ?? ''));
         $this->assertSame([], $ai->lastPayload, 'nothing reached the upstream');
+    }
+
+    public function testTheEditorOutputBoundIsTheOperatorsAndClamped(): void
+    {
+        $this->assertSame(AIService::EDITOR_DEFAULT_OUTPUT_TOKENS, AIService::editorMaxOutputTokens());
+        $_ENV['AI_EDITOR_MAX_OUTPUT_TOKENS'] = '16000';
+        $this->assertSame(16000, AIService::editorMaxOutputTokens());
+        $_ENV['AI_EDITOR_MAX_OUTPUT_TOKENS'] = '999999';
+        $this->assertSame(AIService::EDITOR_MAX_OUTPUT_TOKENS_CEILING, AIService::editorMaxOutputTokens());
+        $_ENV['AI_EDITOR_MAX_OUTPUT_TOKENS'] = '10';
+        $this->assertSame(AIService::EDITOR_MIN_OUTPUT_TOKENS, AIService::editorMaxOutputTokens());
+        $_ENV['AI_EDITOR_MAX_OUTPUT_TOKENS'] = 'lots';
+        $this->assertSame(AIService::EDITOR_DEFAULT_OUTPUT_TOKENS, AIService::editorMaxOutputTokens());
+
+        // A request asks for less and gets it; asks for more and gets the bound.
+        $_ENV['AI_EDITOR_MAX_OUTPUT_TOKENS'] = '12000';
+        $this->assertSame(4000, AIService::validateClientToolChat([['role' => 'user', 'content' => 'x']], [], 4000)['maxTokens']);
+        $this->assertSame(12000, AIService::validateClientToolChat([['role' => 'user', 'content' => 'x']], [], 50000)['maxTokens']);
+        $this->assertSame(12000, AIService::validateClientToolChat([['role' => 'user', 'content' => 'x']], [], null)['maxTokens']);
+    }
+
+    public function testAnEditorsPlainRequestHasTheEditorBoundsAndAChatKeepsItsOwn(): void
+    {
+        // The text protocol an editor's agent falls back to carries the SoftN guide as text: past 32,000.
+        $messages = [['role' => 'system', 'content' => str_repeat('g', 40000)], ['role' => 'user', 'content' => 'Build it.']];
+        $this->assertCount(2, AIService::validateChatMessages($messages, true));
+        try {
+            AIService::validateChatMessages($messages);
+            $this->fail('A chat message past 32,000 characters was accepted.');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('exceeds ' . AIService::CHAT_MAX_MESSAGE_CHARS, $e->getMessage());
+        }
+        $this->assertCount(60, AIService::validateChatMessages(array_fill(0, 60, ['role' => 'user', 'content' => 'x']), true));
+    }
+
+    public function testAnEditorRunLongerAndLargerThanAChatIsAccepted(): void
+    {
+        // An agent's system prompt carries the SoftN guide, and a build takes dozens of rounds:
+        // past the chat's 50 messages and 32,000 characters a message, within the editor bounds.
+        $messages = [['role' => 'system', 'content' => str_repeat('g', 40000)], ['role' => 'user', 'content' => 'Build a recipe box.']];
+        for ($i = 1; $i <= 60; $i++) {
+            $messages[] = ['role' => 'assistant', 'content' => '', 'toolCalls' => [['id' => 'c' . $i, 'name' => 'read_file', 'arguments' => ['path' => 'ui/main.ui']]]];
+            $messages[] = ['role' => 'tool', 'toolCallId' => 'c' . $i, 'name' => 'read_file', 'content' => str_repeat('u', 3000)];
+        }
+        $this->assertCount(122, AIService::validateClientToolChat($messages, [], null)['messages']);
+
+        $tooMany = array_merge([['role' => 'user', 'content' => 'x']], array_fill(0, AIService::EDITOR_MAX_MESSAGES, ['role' => 'user', 'content' => 'y']));
+        try {
+            AIService::validateClientToolChat($tooMany, [], null);
+            $this->fail('A conversation past the editor bound was accepted.');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('1..' . AIService::EDITOR_MAX_MESSAGES, $e->getMessage());
+        }
+        $tooLarge = array_fill(0, 6, ['role' => 'user', 'content' => str_repeat('z', 90000)]);
+        try {
+            AIService::validateClientToolChat($tooLarge, [], null);
+            $this->fail('A conversation past the editor total was accepted.');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('in total', $e->getMessage());
+        }
     }
 
     public function testAnUnconfiguredServerRefusesBeforeCharging(): void

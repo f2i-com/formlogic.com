@@ -48,6 +48,11 @@ export interface AppSettings {
   /** Optional portal type ('admin console' / 'client portal' / …) — see AppKind. */
   appKind?: AppKind;
   /**
+   * A hosted SoftN app: its interface, backend and data are its SoftN project, not forms. Its
+   * owner manages it in the SoftN app workspace (/apps/:id/softn). Server-validated boolean.
+   */
+  softnApp?: boolean;
+  /**
    * Privacy used for data types created from this app's Studio. `private` is a
    * fail-closed preference: the Studio enables E2EE before attaching a new form.
    * Existing forms attached to an app are never changed.

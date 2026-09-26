@@ -28,12 +28,13 @@ test('Builder and Studio return an editable native app without losing its backen
   const save = await context.request.put(`/api/apps/${app.id}/native`, { headers, data: { project, expectedVersion: 0 } });
   expect(save.ok(), await save.text()).toBe(true);
   await page.setViewportSize({ width: 1440, height: 1000 });
+  // Site AI stands in for a connected AI before the hosting panel asks whether one is ready.
+  await page.route('**/api/ai/preferences', route => route.fulfill({ json: { data: { aiSource: 'site', chatToolMode: 'auto' } } }));
   await page.goto(`/apps/${app.id}/records`);
   await page.getByRole('button', { name: 'Native app hosting', exact: true }).click();
   let aiRequests = 0;
   let releaseCancelled: () => void = () => {};
   const cancelledReply = new Promise<void>(resolve => { releaseCancelled = resolve; });
-  await page.route('**/api/ai/preferences', route => route.fulfill({ json: { data: { aiSource: 'site', chatToolMode: 'off' } } }));
   await page.route('**/api/ai/chat', async route => {
     aiRequests++;
     if (aiRequests === 1) await cancelledReply;

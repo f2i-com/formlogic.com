@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Compass, RotateCcw, Sparkles } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { StudioTopBar } from '../../components/studio/StudioTopBar';
@@ -32,6 +32,7 @@ import { useKeyboardShortcuts, type KeyboardShortcut } from '../../hooks/useKeyb
 import { cn } from '../../lib/utils';
 import { useNativeTables } from '../../components/studio/useNativeTables';
 import { useAdminActing } from '../../components/admin/AdminActingContext';
+import { isSoftnApp, softnWorkspacePath } from '../../lib/softnApps';
 
 /** One suggestion per section, offered only when a default AI can actually run. */
 const STEP_PROMPTS: Record<StudioStepId, string> = {
@@ -366,6 +367,18 @@ export function AppStudio() {
           </section>
         )}
 
+        {/* A SoftN app's interface and data are its SoftN project: its own workspace is where
+            the owner sees it running, edits it and manages its database. */}
+        {isSoftnApp(data.app) && (
+          <section className="mb-4 flex flex-col gap-3 rounded-xl border border-indigo-200/80 bg-indigo-50/70 p-3 dark:border-indigo-500/20 dark:bg-indigo-500/[0.07] @xl/studio:flex-row @xl/studio:items-center">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-gray-900 dark:text-white">This is a SoftN app</p>
+              <p className="mt-0.5 text-xs text-gray-600 dark:text-slate-300">Preview it, change it with AI Studio or the Visual Builder, manage its data and publish it in its workspace. The studio here adds forms, automations and access.</p>
+            </div>
+            <Link to={softnWorkspacePath(data.app.id)} className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-lg bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-700">Open the app workspace</Link>
+          </section>
+        )}
+
         {activeStep === 'plan' && (
           <OverviewStep
             app={data.app}
@@ -440,6 +453,7 @@ export function AppStudio() {
             formCountKnown={!data.formsFailed}
             versionsKnown={!data.versionsFailed}
             changes={changes}
+            nativeTableCount={nativeDatabase.tables.length}
             onStepChange={setStep}
             onPublished={data.reload}
           />

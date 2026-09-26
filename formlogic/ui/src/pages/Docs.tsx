@@ -563,6 +563,15 @@ export function Docs() {
             <section className="mb-14">
               <H2 id="hosted-apps" icon={Code2}>Host an editable app</H2>
               <P>Softn powers portable interfaces made from <C>.ui</C> screens and <C>.logic</C> code. FormLogic can host the interface alongside private backend actions and a separate SQLite database. The interface stays editable and downloadable.</P>
+              <h3 className="text-lg font-semibold mt-6 mb-3">Host a SoftN app</h3>
+              <P>A SoftN app is a website or web app of its own: its pages, a private backend and its own database, hosted by FormLogic with no forms needed. Its owner sees it running, changes it and manages its data in one place: the app&apos;s workspace.</P>
+              <Steps items={[
+                <>Choose <C>Create app → SoftN app</C>. Describe it and AI Studio builds it while you watch, start from a working app in the Visual Builder (no AI needed), or upload a <C>.softn</C> file you already have. Dropping a <C>.softn</C> file on <C>Apps → Import</C> works too.</>,
+                <>In the workspace, <C>App</C> shows it running at desktop or phone width. Describe a change for AI Studio, edit it visually, upload a new version or download it. Until you publish, only you can open it, and each change you keep is installed at once.</>,
+                <><C>Data</C> lists every table the app keeps: add, edit and delete records, and the app sees the changes at once. To add a table or a column, ask AI Studio.</>,
+                <><C>Settings</C> chooses who can use it (only people you invite, or anyone with the link) and whether it opens at the app&apos;s address. Then <C>Publish</C>. Once it is live, changes wait as a draft until you choose <C>Publish changes</C>.</>,
+              ]} />
+              <Tip>Ask the chat to build one: &ldquo;Make me a recipe box with favourites and a shopping list.&rdquo; It creates the app and takes you to AI Studio, which builds it from your words.</Tip>
               <h3 className="text-lg font-semibold mt-6 mb-3">Use your existing forms and records</h3>
               <Steps items={[
                 <>Open your app&apos;s <C>App Studio → Screens</C> and choose <C>Create connected dashboard</C>.</>,

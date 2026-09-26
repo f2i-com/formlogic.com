@@ -110,6 +110,9 @@ test.describe('embedded editors: round trip and live conflict', () => {
       app = await createApp(context, headers, 'Round trip source');
       twin = await createApp(context, headers, 'Round trip reimport');
       await page.setViewportSize({ width: 1440, height: 1000 });
+      // Site AI stands in for a connected AI from the first page on: the hosting panel offers
+      // AI Studio only when the default AI is ready, and it asks as it opens.
+      await page.route('**/api/ai/preferences', route => route.fulfill({ json: { data: { aiSource: 'site', chatToolMode: 'auto' } } }));
       const dialog = await openHosting(page, app.id);
 
       // A client-only bundle (no server entry) is refused by the native import with its reason.
@@ -129,7 +132,6 @@ test.describe('embedded editors: round trip and live conflict', () => {
       expect((await nativeProject(context, app.id))!.files['ui/main.ui']).not.toContain('Save round-trip item'); // not published
 
       // 3. AI Studio opens on that draft: its export of the project carries the Builder edit.
-      await page.route('**/api/ai/preferences', route => route.fulfill({ json: { data: { aiSource: 'site', chatToolMode: 'off' } } }));
       // Studio's agent works in rounds over the bridge's native tool calls (aiTools): the
       // first round reads the file and writes it (the agent only overwrites a file it has
       // read), and the round that sees those results finishes.

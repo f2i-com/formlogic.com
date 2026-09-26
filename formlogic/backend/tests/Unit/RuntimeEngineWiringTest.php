@@ -104,6 +104,18 @@ class RuntimeEngineWiringTest extends TestCase
         );
     }
 
+    public function testOwnerProjectReadsHaveTheirOwnBucketAndWritesKeepTheHostingOne(): void
+    {
+        // Reads (the SoftN app workspace, the hosting panels, the editors) never use up the
+        // write bucket that bounds installs and publishes, and the starter is a write.
+        $this->assertMatchesRegularExpression("/\\\$hostingReadLimiter = new RateLimitMiddleware\\(\\\$rateLimiter, 120, 60, 'hosted_apps_read'/", self::$source);
+        foreach (['hosting' => 'HostedAppController', 'native' => 'NativeAppController'] as $path => $controller) {
+            $this->assertMatchesRegularExpression('/\$app->get\(\'\/api\/apps\/\{id\}\/' . $path . '\'.*?' . $controller . '::class\)->manage\(.*?\);\s*\}\)->add\(\$hostingReadLimiter\)->add\(\$authRequired\);/s', self::$source);
+            $this->assertMatchesRegularExpression('/\$app->put\(\'\/api\/apps\/\{id\}\/' . $path . '\'.*?' . $controller . '::class\)->manage\(.*?\);\s*\}\)->add\(\$cloudWriteGate\)->add\(\$hostingLimiter\)->add\(\$authRequired\);/s', self::$source);
+        }
+        $this->assertMatchesRegularExpression('/\$app->post\(\'\/api\/apps\/\{id\}\/native\/\{operation:starter\}\'.*?->manage\(.*?\);\s*\}\)->add\(\$cloudWriteGate\)->add\(\$hostingLimiter\)->add\(\$authRequired\);/s', self::$source);
+    }
+
     public function testAdminsActingAsAnOwnerCannotChangeAnAppsEngine(): void
     {
         // The engine is a transfer of trust the OWNER makes. The acting-as table is default-deny,

@@ -153,6 +153,16 @@ describe('studioSteps', () => {
       expect(checks.find((c) => c.id === 'screens')?.state).toBe('warning');
     });
 
+    it('lets an app that keeps its data in its own SoftN database publish without forms', () => {
+      const checks = buildPreflightChecks({ ...base, formCount: 0, formsWithoutFields: [], nativeTableCount: 2 });
+      expect(checks.find(c => c.id === 'forms')).toMatchObject({ state: 'complete', title: 'Its own database: 2 tables' });
+      expect(summarizePreflight(checks).blocking).toEqual([]);
+      // Forms still count as they did when the app has both.
+      expect(buildPreflightChecks({ ...base, nativeTableCount: 3 }).find(c => c.id === 'forms')?.title).toMatch(/data type/);
+      // No tables and no forms is still nothing to collect.
+      expect(buildPreflightChecks({ ...base, formCount: 0, nativeTableCount: 0 }).find(c => c.id === 'forms')).toMatchObject({ severity: 'blocking' });
+    });
+
     it('automations never block publishing', () => {
       const checks = buildPreflightChecks({ ...base, flowCount: 0, activeFlowCount: 0 });
       expect(checks.find((c) => c.id === 'automations')?.state).toBe('complete');

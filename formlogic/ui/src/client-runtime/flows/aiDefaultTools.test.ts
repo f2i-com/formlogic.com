@@ -145,6 +145,9 @@ describe('resolveDefaultLlmTools — Site AI', () => {
 
   it('reads an answer from a server without this mode (no toolCalls) as tools-unsupported', () => {
     expect(readSiteToolsReply({ content: 'plain text', usage: {} })).toMatchObject({ ok: false, error: { code: TOOLS_UNSUPPORTED } });
+    // An answer that is no reply at all (a PHP error page that did not parse) failed; it is not an old server.
+    expect(readSiteToolsReply(null, 200)).toMatchObject({ ok: false, error: { code: 'request_failed' } });
+    expect(readSiteToolsReply('<br /><b>Fatal error</b>', 200)).toMatchObject({ ok: false, error: { code: 'request_failed' } });
   });
 
   it('passes a typed refusal (allowance) through unchanged', async () => {

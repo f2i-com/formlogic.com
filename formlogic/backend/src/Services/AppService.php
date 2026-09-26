@@ -114,6 +114,11 @@ class AppService
         ) {
             unset($settings['defaultFormPrivacy']);
         }
+        // settings.softnApp: the app is a hosted SoftN app (its interface and data are its native
+        // project, not forms), so FormLogic opens it in the SoftN app workspace. A boolean or nothing.
+        if (array_key_exists('softnApp', $settings) && !is_bool($settings['softnApp'])) {
+            unset($settings['softnApp']);
+        }
         return $settings;
     }
 

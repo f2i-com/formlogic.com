@@ -12,14 +12,18 @@ export interface AppNavTarget {
   id: string;
   slug: string;
   canManage?: boolean;
+  /** A hosted SoftN app's owner manages it in its workspace rather than the App Studio. */
+  settings?: { softnApp?: boolean } | null;
 }
 
 export function appClickPath(app: AppNavTarget): string {
-  return app.canManage ? `/apps/${app.id}/studio` : `/app/${app.slug}`;
+  if (!app.canManage) return `/app/${app.slug}`;
+  return app.settings?.softnApp === true ? `/apps/${app.id}/softn` : `/apps/${app.id}/studio`;
 }
 
 /** Matching label, so the tooltip/aria never promises the wrong destination. */
 export function appClickLabel(app: AppNavTarget & { name?: string }): string {
   const name = app.name ?? 'app';
-  return app.canManage ? `Open ${name} in the App Studio` : `Open ${name}`;
+  if (!app.canManage) return `Open ${name}`;
+  return app.settings?.softnApp === true ? `Open ${name} in its workspace` : `Open ${name} in the App Studio`;
 }

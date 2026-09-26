@@ -63,7 +63,7 @@ import { getChatStore, type ChatMessage, type ChatThread } from './chatStore';
 import { demoChatDirector } from './demoChatDirector';
 import { CHAT_IMAGES_PER_MESSAGE, downscaleChatImage } from './chatImages';
 import { CODEX_PROVIDER_ID, CODEX_REASONING_EFFORTS } from '../../client-runtime/desktop/desktopTunnel';
-import { chatPrivacyBadge, chatThreadTitle, chatToolLinkPath } from './siteChatView';
+import { chatPrivacyBadge, chatThreadTitle, chatToolLinkPath, prepareSoftnHandOff } from './siteChatView';
 import { useCanDockChat } from './useChatDockOffset';
 
 const PAGE_SIZE = 30;
@@ -101,7 +101,7 @@ function activityIcon(status: string): React.ReactNode {
   return <Loader2 className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 animate-spin text-gray-400 dark:text-slate-500" aria-hidden="true" />;
 }
 
-function ToolActivityCard({ activity, onOpenLink }: { activity: ChatToolActivity; onOpenLink: (path: string) => void }) {
+function ToolActivityCard({ activity, onOpenLink }: { activity: ChatToolActivity; onOpenLink: (link: NonNullable<ChatToolActivity['link']>) => void }) {
   const path = activity.link ? chatToolLinkPath(activity.link) : null;
   return (
     <div
@@ -117,7 +117,7 @@ function ToolActivityCard({ activity, onOpenLink }: { activity: ChatToolActivity
       {path && (
         <button
           type="button"
-          onClick={() => onOpenLink(path)}
+          onClick={() => activity.link && onOpenLink(activity.link)}
           className="inline-flex flex-shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 font-medium text-primary-600 hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-500/10"
         >
           Open
@@ -218,7 +218,7 @@ function AccountChatWidget() {
   // §11B O5a: what the user is looking at rides each chat turn, so "this form" just
   // works — the builder's chat button counts on this.
   const location = useLocation();
-  const pageContextRef = useRef<{ kind: 'form' | 'app' | 'diagram' | 'formScreen' | 'appScreen' | 'appStudio'; id: string; step?: string } | null>(null);
+  const pageContextRef = useRef<{ kind: 'form' | 'app' | 'diagram' | 'formScreen' | 'appScreen' | 'appStudio' | 'softnApp'; id: string; step?: string } | null>(null);
   useEffect(() => {
     const form =
       matchPath('/builder/:formId', location.pathname) ?? matchPath('/preview/:formId', location.pathname);
@@ -231,6 +231,7 @@ function AccountChatWidget() {
     // which wizard step the user is on and can guide them through the sections.
     const appStudioStep = matchPath('/apps/:appId/studio/:step', location.pathname);
     const appStudioRoot = matchPath('/apps/:appId/studio', location.pathname);
+    const softnWorkspace = matchPath('/apps/:appId/softn', location.pathname);
     const app = matchPath('/apps/:appId/*', location.pathname);
     const diagram = matchPath('/diagrams/:diagramId', location.pathname);
     pageContextRef.current = form?.params.formId
@@ -245,6 +246,8 @@ function AccountChatWidget() {
               ? { kind: 'appStudio', id: appStudioRoot.params.appId }
               : diagram?.params.diagramId
               ? { kind: 'diagram', id: diagram.params.diagramId }
+              : softnWorkspace?.params.appId
+              ? { kind: 'softnApp', id: softnWorkspace.params.appId }
               : app?.params.appId
                 ? { kind: 'app', id: app.params.appId }
                 : null;
@@ -445,13 +448,23 @@ function AccountChatWidget() {
   const lastFollowedRef = useRef<string | null>(null);
   const followActivity = useCallback(
     (activity: ChatToolActivity) => {
-      if (!followAiRef.current || activity.status !== 'done' || !activity.link) return;
+      if (activity.status !== 'done' || !activity.link) return;
+      // A new SoftN app is followed whatever the setting: the person asked for it to be built,
+      // and AI Studio builds it in its workspace while they watch.
+      const handOff = activity.link.kind === 'softnApp';
+      if (!followAiRef.current && !handOff) return;
       const path = chatToolLinkPath(activity.link);
       if (!path || path === lastFollowedRef.current) return;
       lastFollowedRef.current = path;
+      if (handOff) {
+        prepareSoftnHandOff(activity.link);
+        if (isMobile) setChatMinimized(true);
+        navigate(path);
+        return;
+      }
       if (!isMobile) navigate(path);
     },
-    [isMobile, navigate]
+    [isMobile, navigate, setChatMinimized]
   );
 
 
@@ -696,7 +709,10 @@ function AccountChatWidget() {
   }, [prefs, savingToolMode]);
 
   const openLink = useCallback(
-    (path: string) => {
+    (link: NonNullable<ChatToolActivity['link']>) => {
+      const path = chatToolLinkPath(link);
+      if (!path) return;
+      prepareSoftnHandOff(link);
       if (isMobile) setChatMinimized(true);
       navigate(path);
     },

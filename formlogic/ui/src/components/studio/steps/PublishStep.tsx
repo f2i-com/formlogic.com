@@ -52,6 +52,7 @@ export function PublishStep({
   versionsKnown = true,
   formCountKnown = true,
   changes,
+  nativeTableCount = 0,
   onStepChange,
   onPublished,
 }: {
@@ -70,6 +71,8 @@ export function PublishStep({
   /** False when the form list failed to load — never block publish on an unread list. */
   formCountKnown?: boolean;
   changes: UnpublishedChanges;
+  /** Tables in the app's own SoftN database (0 when it has none, or they are not known). */
+  nativeTableCount?: number;
   onStepChange: (step: StudioStepId) => void;
   onPublished: () => Promise<void>;
 }) {
@@ -119,6 +122,7 @@ export function PublishStep({
       memberCount,
       memberCountKnown,
       formCountKnown,
+      nativeTableCount,
       landingPageMissing,
       signupWithoutDefaultRole: settings?.allowSelfRegistration === true && !settings?.defaultRoleId,
       // Identity, resolved the way AppTile resolves it: a curated icon, an uploaded
@@ -127,7 +131,7 @@ export function PublishStep({
       hasIcon: !!(app.settings?.icon || app.logoUrl || app.theme?.logoUrl),
     });
     return browserOnlyDemo ? preflight.filter((check) => check.id !== 'members') : preflight;
-  }, [app.settings, app.customScreen, app.logoUrl, app.theme?.logoUrl, appForms, formsById, flows, roles, domains, memberCount, memberCountKnown, formCountKnown, browserOnlyDemo]);
+  }, [app.settings, app.customScreen, app.logoUrl, app.theme?.logoUrl, appForms, formsById, flows, roles, domains, memberCount, memberCountKnown, formCountKnown, nativeTableCount, browserOnlyDemo]);
   const { blocking, optional, ready } = useMemo(() => summarizePreflight(checks), [checks]);
   const passedChecks = checks.filter(check => check.state === 'complete');
   const visibleChecks = checks.filter(check => showPassedChecks || check.state !== 'complete').sort((a, b) => {

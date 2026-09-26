@@ -8,7 +8,8 @@ import { NativeRecordEditor } from './NativeRecordEditor';
 const valueText = (value: unknown) => value === null || value === undefined ? '—' : String(value);
 
 /** `readOnly` (the shared demo): records and their details can be browsed; adding and editing are not offered. */
-export function NativeRecordsBrowser({ appId, version, initialTable = '', readOnly: readOnlyProp = false }: { appId: string; version: number; initialTable?: string; readOnly?: boolean }) {
+/** `openFirstTable`: with no table chosen, open the app's first table as soon as the list is known. */
+export function NativeRecordsBrowser({ appId, version, initialTable = '', readOnly: readOnlyProp = false, openFirstTable = false }: { appId: string; version: number; initialTable?: string; readOnly?: boolean; openFirstTable?: boolean }) {
   const [table, setTable] = useState(initialTable);
   const [offset, setOffset] = useState(0);
   const [records, setRecords] = useState<NativeRecords | null>(null);
@@ -29,10 +30,11 @@ export function NativeRecordsBrowser({ appId, version, initialTable = '', readOn
       if (cancelled) return;
       setLoading(false);
       if (result.error) { setError(result.error); return; }
+      if (openFirstTable && !table && result.data?.tables?.length) { setTable(result.data.tables[0]); return; }
       setRecords(result.data ?? null);
     }).catch(() => { if (!cancelled) { setLoading(false); setError('Could not load these records. Please try again.'); } });
     return () => { cancelled = true; };
-  }, [appId, version, table, offset, reload]);
+  }, [appId, version, table, offset, reload, openFirstTable]);
   useEffect(() => { if (selected !== null) detail.current?.focus(); }, [selected]);
   // The server says so too, for a caller that did not know.
   const readOnly = readOnlyProp || !!records?.readOnly;

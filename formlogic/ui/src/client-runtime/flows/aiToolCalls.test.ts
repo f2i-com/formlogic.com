@@ -49,7 +49,7 @@ describe('validateEditorAiToolRequest', () => {
     ['another aiTools version', { aiTools: 2 }, /aiTools must be 1/],
     ['aiTools as a string', { aiTools: '1' }, /aiTools must be 1/],
     ['no messages', { messages: [] }, /messages must hold/],
-    ['too many messages', { messages: Array(101).fill(user) }, /messages must hold/],
+    ['too many messages', { messages: Array(EDITOR_AI_LIMITS.maxMessages + 1).fill(user) }, /messages must hold/],
     ['unknown role', { messages: [{ role: 'developer', content: 'x' }] }, /role must be/],
     ['non-string content', { messages: [{ role: 'user', content: [{ type: 'text', text: 'x' }] }] }, /content must be a string/],
     ['tool calls on a user message', { messages: [{ ...user, toolCalls: [call] }] }, /only assistant/],

@@ -513,10 +513,13 @@ class AIController
         }
         $stream = ($body['stream'] ?? false) === true;
         $tools = ($body['tools'] ?? false) === true;
+        // An embedded app editor's plain request (`editor: 1`: its agent's text protocol, for a
+        // provider that cannot take tools) has the editor's bounds. Never streamed, never tools.
+        $editor = ($body['editor'] ?? null) === 1 && !$stream && !$tools;
 
         // Validate up front: after SSE headers go out, status codes are no longer possible.
         try {
-            $messages = AIService::validateChatMessages($messages);
+            $messages = AIService::validateChatMessages($messages, $editor);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }
@@ -573,8 +576,9 @@ class AIController
             $this->emitChatStream((string) $userId, $messages);
         }
 
+        if ($editor) @set_time_limit(AIService::EDITOR_REQUEST_TIMEOUT + 30);
         try {
-            $result = $this->aiService->chat($messages, false);
+            $result = $this->aiService->chat($messages, false, null, null, $editor);
         } catch (\Throwable $e) {
             $this->logger->error('AI chat error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, ['error' => true, 'message' => 'The AI request failed'], 502);
@@ -594,6 +598,9 @@ class AIController
      */
     private function chatWithClientTools(Response $response, string $userId, array $body): Response
     {
+        // An editor round may run minutes upstream (AIService::EDITOR_REQUEST_TIMEOUT); PHP must outlive it
+        // rather than end the request with a fatal error the editor cannot read.
+        @set_time_limit(AIService::EDITOR_REQUEST_TIMEOUT + 30);
         if (($body['aiTools'] ?? null) !== AIService::CLIENT_TOOLS_VERSION) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'aiTools must be ' . AIService::CLIENT_TOOLS_VERSION], 400);
         }

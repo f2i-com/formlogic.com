@@ -35,7 +35,7 @@ class ChatToolsService
         'list_apps' => 'apps:read', 'get_app' => 'apps:read', 'create_app' => 'apps:write',
         'get_app_project' => 'apps:read', 'get_workspace_template' => 'apps:read',
         'publish_app_project' => 'apps:write', 'compose_apps' => 'apps:write',
-        'get_native_app_template' => 'apps:read', 'get_native_app_project' => 'apps:read',
+        'get_native_app_template' => 'apps:read', 'get_native_app_project' => 'apps:read', 'create_softn_app' => 'apps:write',
         'publish_native_app_project' => 'apps:write', 'update_native_app_files' => 'apps:write',
         'list_native_app_records' => 'responses:read',
         'list_app_roles' => 'apps:read', 'create_app_role' => 'apps:write',
@@ -77,6 +77,8 @@ class ChatToolsService
         'set_form_screen', 'set_app_home', 'update_app',
         'get_workspace_template', 'get_app_project', 'publish_app_project',
         'get_native_app_template', 'get_native_app_project', 'publish_native_app_project', 'update_native_app_files', 'list_native_app_records',
+        // A hosted SoftN app in one step; the chat then takes the person to AI Studio to build it.
+        'create_softn_app',
     ];
 
     public function __construct(
@@ -351,6 +353,40 @@ class ChatToolsService
                     foreach ($data['forms'] ?? [] as $created) $ctx->recordCreated('forms', $created['id']);
                 }
                 $ctx->audit('install_aokie_starter', ['installationId' => $data['installationId'] ?? null]);
+                break;
+            }
+            case 'create_softn_app': {
+                if ($scopedApp !== null) {
+                    throw new \Exception('This token is scoped to one app and cannot create new apps');
+                }
+                $ctx->requireScope('screens:write');
+                $appName = trim((string) ($args['name'] ?? ''));
+                if ($appName === '' || mb_strlen($appName) > 120) throw new \InvalidArgumentException('Give the app a name of 1 to 120 characters');
+                $requestText = trim((string) ($args['request'] ?? ''));
+                if (mb_strlen($requestText) > 8000) throw new \InvalidArgumentException('Keep the request under 8,000 characters');
+                $description = isset($args['description']) && is_string($args['description']) ? mb_substr(trim($args['description']), 0, 500) : null;
+                $app = $this->appService->createApp(['name' => $appName, 'description' => $description ?: null, 'settings' => ['softnApp' => true]], $userId);
+                $appId = (string) ($app['id'] ?? '');
+                if ($creatorMode && $appId !== '') $ctx->recordCreated('apps', $appId);
+                $native = $this->native ??= new NativeAppService();
+                // The app exists either way; a server that cannot run native apps yet says so
+                // rather than leaving the caller to find an app with nothing in it.
+                $version = null; $installError = null;
+                try {
+                    $version = $native->install($appId, NativeAppService::starterProject($appName, $appId), 0)['version'];
+                } catch (\Throwable $e) {
+                    $installError = $e instanceof \InvalidArgumentException || $e instanceof \RuntimeException ? $e->getMessage() : 'The app runtime is not available on this server yet.';
+                }
+                $data = [
+                    'app' => ['id' => $appId, 'name' => $app['name'] ?? $appName, 'slug' => $app['slug'] ?? null],
+                    'version' => $version,
+                    'request' => $requestText,
+                    'workspaceUrl' => '/apps/' . $appId . '/softn',
+                    'next' => $installError === null
+                        ? 'Created with a working starter. FormLogic takes the person to AI Studio, which builds the app from the request while they watch; do not change its files yourself.'
+                        : 'Created, but its starter could not be installed: ' . $installError,
+                ];
+                $ctx->audit('create_softn_app', ['appId' => $appId, 'version' => $version]);
                 break;
             }
             case 'get_workspace_template':
@@ -1153,6 +1189,7 @@ class ChatToolsService
             ['name' => 'set_app_role_connector_grants', 'scope' => 'apps:write', 'description' => 'Replace only a role connector capabilities with the complete explicitly reviewed permissions list; also requires connector:command. Built-in permissions are preserved. Use specific connector commands rather than wildcards. The system Owner role is immutable.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'roleId' => ['type' => 'string'], 'permissions' => ['type' => 'array', 'items' => $obj(['permission' => ['type' => 'string'], 'formId' => ['type' => 'string']], ['permission'])]], ['appId', 'roleId', 'permissions'])],
             ['name' => 'install_aokie_starter', 'scope' => 'apps:write', 'description' => 'Install the bundled Aokie forms, screens and flows as a new app. Requires forms:write and screens:write; non-empty connector grants also require connector:command. Explicit approvedConnectorGrants is mandatory; unapproved grants stay withheld. Honors verified-package policy and form quotas. Then use compose_apps to integrate into an existing app. Native OAIY plugin installation and device pairing are separate steps.', 'inputSchema' => $obj(['approvedConnectorGrants' => ['type' => 'array', 'items' => ['type' => 'string']]], ['approvedConnectorGrants'])],
             ['name' => 'get_app', 'scope' => 'apps:read', 'description' => 'Read an owned app including its settings, custom logic, dashboard and attached form identities. Read before editing or composing.', 'inputSchema' => $obj(['appId' => ['type' => 'string']], ['appId'])],
+            ['name' => 'create_softn_app', 'scope' => 'apps:write', 'description' => 'Create a hosted SoftN app in one step: an app of its own with a working interface, private backend and SQLite database, open at the app’s address. Use it when the person wants a website, tool or web app built for them rather than forms. Put everything they asked for in request, in their words, with any detail they gave: FormLogic takes them to AI Studio, which builds the app from it while they watch. Requires apps and screen editing.', 'inputSchema' => $obj(['name' => ['type' => 'string', 'description' => 'The app name, 1 to 120 characters.'], 'request' => ['type' => 'string', 'description' => 'What to build, in the person’s words: pages, data, behaviour and style. Up to 8,000 characters.'], 'description' => ['type' => 'string', 'description' => 'One sentence shown with the app.']], ['name', 'request'])],
             ['name' => 'get_native_app_template', 'scope' => 'apps:read', 'description' => 'Start here to create a portable .softn app with an editable interface, private ZIPP .logic backend and SQLite. Returns a working notes project. Create an app container, customize this project, then publish_native_app_project. Membership is required by default; application access preserves an existing app sign-in.', 'inputSchema' => $obj([])],
             ['name' => 'get_native_app_project', 'scope' => 'apps:read', 'description' => 'Read a native .softn project and its current version. Optional file reads just one source file plus the file list. Backend files are private. Read before changing source; records and server credentials are not part of the project.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'file' => ['type' => 'string']], ['appId'])],
             ['name' => 'publish_native_app_project', 'scope' => 'apps:write', 'description' => 'Install or update a complete native app project: {files:{path:source},assets:{path:base64},access:members|application,home:boolean}. Requires apps and screen editing permission. Backend .logic runs in ZIPP; SQLite records survive updates. Read current version first; expectedVersion=0 only for first installation. This does not publish the parent app to visitors. The interface can then be edited with Visual Builder or AI Studio in FormLogic.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'expectedVersion' => ['type' => 'integer', 'minimum' => 0], 'project' => ['type' => 'object']], ['appId','expectedVersion','project'])],

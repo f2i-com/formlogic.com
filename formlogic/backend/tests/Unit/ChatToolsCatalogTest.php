@@ -26,6 +26,8 @@ class ChatToolsCatalogTest extends TestCase
         // Extended AGAIN 2026-07-23 (screen-authoring centralisation): set_form_screen /
         // set_app_home make chat the AI surface for custom screens on both forms and apps,
         // and update_app lets chat publish/rename the app it built (archiving refused).
+        // Extended 2026-09-26: create_softn_app makes a hosted SoftN app in one step, and the
+        // chat takes the person to AI Studio to watch it being built from their request.
         $catalog = ChatToolsService::chatCatalog();
         $this->assertSame([
             'list_apps', 'list_forms', 'get_form', 'create_app', 'create_app_form',
@@ -34,6 +36,7 @@ class ChatToolsCatalogTest extends TestCase
             'set_form_screen', 'set_app_home', 'update_app',
             'get_workspace_template', 'get_app_project', 'publish_app_project',
             'get_native_app_template', 'get_native_app_project', 'publish_native_app_project', 'update_native_app_files', 'list_native_app_records',
+            'create_softn_app',
         ], array_column($catalog, 'name'));
         foreach ($catalog as $tool) {
             $this->assertSame(['name', 'description', 'inputSchema'], array_keys($tool));

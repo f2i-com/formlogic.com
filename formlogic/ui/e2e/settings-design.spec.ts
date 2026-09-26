@@ -13,7 +13,7 @@ for (const width of [1440, 768, 390]) for (const theme of ['light', 'dark']) {
       if (!['GET', 'OPTIONS'].includes(req.method())) writes.push(`${req.method()} ${path}`);
       if (path === '/auth/me') return route.fulfill({ json: { user: { id: 'settings-review', name: 'Reviewer', email: 'review@example.test', timezone: 'Australia/Sydney' } } });
       if (path === '/auth/mfa') return route.fulfill({ json: { enabled: false, pendingSetup: false, recoveryCodesRemaining: 0, trustedBrowsers: [] } });
-      if (path === '/ai/preferences') return route.fulfill({ json: { aiSource: 'hosted', chatToolMode: 'ask' } });
+      if (path === '/ai/preferences') return route.fulfill({ json: { aiSource: 'hosted', chatToolMode: 'auto' } });
       return route.fulfill({ json: { keys: [], connections: [], items: [], nodes: [], assignments: [], forms: [], apps: [], notices: [], sources: [], providers: [], vault: null } });
     });
     await page.goto('/settings');

@@ -32,6 +32,12 @@ class NativeAppController
         $readOnly = $this->isDemoRequest($request);
         if ($request->getMethod() !== 'GET' && ($blocked = $this->blockIfDemo($request, $response, self::DEMO_READ_ONLY))) return $blocked;
         return $this->respond($response, function () use ($request, $app, $args, $readOnly) {
+            // A new SoftN app's first version: the starter project, named after the app. Only
+            // for an app with nothing installed (install() refuses expectedVersion 0 otherwise).
+            if (($args['operation'] ?? '') === 'starter') {
+                $installed = $this->native->install($app['id'], NativeAppService::starterProject((string) $app['name'], (string) $app['id']), 0);
+                return ['project' => $installed] + $this->engineAfterInstall($app['id'], RuntimeEngineService::languagesOf(NativeAppService::clientFiles($installed)));
+            }
             if (($args['operation'] ?? '') === 'records') {
                 if ($request->getMethod() === 'POST') {
                     $input = $request->getParsedBody();

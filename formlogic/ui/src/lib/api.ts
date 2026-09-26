@@ -1961,6 +1961,10 @@ class ApiClient {
   async saveNativeProject(id: string, project: import('./nativeHosting').NativeProject, expectedVersion: number): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/native`, { method: 'PUT', body: JSON.stringify({ project, expectedVersion }) });
   }
+  /** A new SoftN app's first version: the server's working starter, named after the app. Refused once anything is installed. */
+  async installNativeStarter(id: string): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/starter`, { method: 'POST', body: '{}' });
+  }
   async manageNativeRecord(id: string, input: { table: string; action: 'read' | 'create' | 'update' | 'delete'; key?: Record<string, string>; revision?: string; values?: Record<string, string | null> }): Promise<ApiResponse<{ saved?: boolean; record?: import('./nativeHosting').NativeRecordDetail }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/native/records`, { method: 'POST', body: JSON.stringify(input) });
   }

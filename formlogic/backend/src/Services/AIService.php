@@ -773,6 +773,22 @@ PROMPT;
     public const CHAT_MAX_IMAGES_PER_MESSAGE = 4;
     public const CHAT_MAX_IMAGES_TOTAL = 8;
     public const CHAT_MAX_TOKENS = 2048;
+    /**
+     * Output bound for one tool round of an embedded app editor (the aiTools mode). An editor's
+     * agent writes whole files in a reply, which the chat's 2048 cuts off mid-file, so this is
+     * its own bound: AI_EDITOR_MAX_OUTPUT_TOKENS, clamped to [EDITOR_MIN_OUTPUT_TOKENS,
+     * EDITOR_MAX_OUTPUT_TOKENS_CEILING]. Each round still costs one allowance unit.
+     */
+    public const EDITOR_DEFAULT_OUTPUT_TOKENS = 8192;
+    public const EDITOR_MIN_OUTPUT_TOKENS = 1024;
+    public const EDITOR_MAX_OUTPUT_TOKENS_CEILING = 32768;
+    /**
+     * Seconds an editor round may take upstream. A reply of thousands of tokens from a local
+     * model runs for minutes; the chat's 120 s cut it off. The controller lets PHP outlive it.
+     */
+    public const EDITOR_REQUEST_TIMEOUT = 600;
+    /** The upstream timeout of the request in flight, when it is an editor round; null otherwise. */
+    private ?int $requestTimeout = null;
     private const CHAT_STREAM_TIMEOUT = 180;
     private const CHAT_HEARTBEAT_SECONDS = 15;
     private const CHAT_MAX_STREAM_CHARS = 262144;
@@ -784,9 +800,9 @@ PROMPT;
      * With $stream=true the upstream SSE is parsed incrementally: $onDelta fires per content
      * delta, $onHeartbeat fires while the upstream goes quiet (keeps the client SSE alive).
      */
-    public function chat(array $messages, bool $stream = false, ?callable $onDelta = null, ?callable $onHeartbeat = null): array
+    public function chat(array $messages, bool $stream = false, ?callable $onDelta = null, ?callable $onHeartbeat = null, bool $editor = false): array
     {
-        $messages = self::validateChatMessages($messages);
+        $messages = self::validateChatMessages($messages, $editor);
         if (!$this->isEnabled()) {
             throw new \Exception('Operator-funded Site AI is disabled. Open Connect your AI to use OAIY or your own API provider.');
         }
@@ -798,14 +814,21 @@ PROMPT;
             'model' => $this->model,
             'messages' => $messages,
             'temperature' => 0.7,
-            'max_tokens' => self::CHAT_MAX_TOKENS,
+            // An embedded app editor's agent writes whole files as text when its provider
+            // cannot take tools; it gets the editor's output bound, as in the aiTools mode.
+            'max_tokens' => $editor ? self::editorMaxOutputTokens() : self::CHAT_MAX_TOKENS,
             'stream' => $stream,
         ];
         if ($stream) {
             // Ask for a final usage frame (OpenAI + llama-server honor it; absent → zeros).
             $payload['stream_options'] = ['include_usage' => true];
         }
-        return $this->chatCompletionsRequest($payload, $stream, $onDelta, $onHeartbeat);
+        $this->requestTimeout = $editor ? self::EDITOR_REQUEST_TIMEOUT : null;
+        try {
+            return $this->chatCompletionsRequest($payload, $stream, $onDelta, $onHeartbeat);
+        } finally {
+            $this->requestTimeout = null;
+        }
     }
 
     /**
@@ -814,10 +837,14 @@ PROMPT;
      *
      * @throws \InvalidArgumentException on malformed input.
      */
-    public static function validateChatMessages(array $messages): array
+    public static function validateChatMessages(array $messages, bool $editor = false): array
     {
-        if ($messages === [] || count($messages) > self::CHAT_MAX_MESSAGES) {
-            throw new \InvalidArgumentException('messages must contain 1..' . self::CHAT_MAX_MESSAGES . ' items');
+        // An embedded app editor's plain request (its agent's text protocol) has the editor bounds.
+        [$maxMessages, $maxChars, $maxTotal] = $editor
+            ? [self::EDITOR_MAX_MESSAGES, self::EDITOR_MAX_MESSAGE_CHARS, self::EDITOR_MAX_TOTAL_CHARS]
+            : [self::CHAT_MAX_MESSAGES, self::CHAT_MAX_MESSAGE_CHARS, self::CHAT_MAX_TOTAL_CHARS];
+        if ($messages === [] || count($messages) > $maxMessages) {
+            throw new \InvalidArgumentException('messages must contain 1..' . $maxMessages . ' items');
         }
         $total = 0;
         $imagesTotal = 0;
@@ -844,12 +871,12 @@ PROMPT;
             if (!is_string($content) || $content === '') {
                 throw new \InvalidArgumentException('message content must be a non-empty string');
             }
-            if (strlen($content) > self::CHAT_MAX_MESSAGE_CHARS) {
-                throw new \InvalidArgumentException('message content exceeds ' . self::CHAT_MAX_MESSAGE_CHARS . ' characters');
+            if (strlen($content) > $maxChars) {
+                throw new \InvalidArgumentException('message content exceeds ' . $maxChars . ' characters');
             }
             $total += strlen($content);
-            if ($total > self::CHAT_MAX_TOTAL_CHARS) {
-                throw new \InvalidArgumentException('messages exceed ' . self::CHAT_MAX_TOTAL_CHARS . ' characters in total');
+            if ($total > $maxTotal) {
+                throw new \InvalidArgumentException('messages exceed ' . $maxTotal . ' characters in total');
             }
             $clean[] = ['role' => $role, 'content' => $content];
         }
@@ -985,7 +1012,7 @@ PROMPT;
             CURLOPT_POST => true,
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_POSTFIELDS => json_encode($payload),
-            CURLOPT_TIMEOUT => $stream ? self::CHAT_STREAM_TIMEOUT : 120,
+            CURLOPT_TIMEOUT => $this->requestTimeout ?? ($stream ? self::CHAT_STREAM_TIMEOUT : 120),
             CURLOPT_CONNECTTIMEOUT => 10,
             CURLOPT_PROTOCOLS => CURLPROTO_HTTPS | CURLPROTO_HTTP,
             CURLOPT_SSL_VERIFYPEER => true,
@@ -1159,6 +1186,15 @@ PROMPT;
 
     /** The editor bridge's `aiTools` version this server takes on POST /api/ai/chat. */
     public const CLIENT_TOOLS_VERSION = 1;
+    /**
+     * Conversation bounds for the aiTools mode, which only an embedded app editor's agent uses. A
+     * run of that agent carries the SoftN guide in its system prompt (about 28,000 characters) and
+     * two or three messages per step for up to 40 steps, and compacts its own context at about
+     * 60,000 tokens; the chat's 32,000 / 50 / 128,000 would refuse it part way through a build.
+     */
+    public const EDITOR_MAX_MESSAGES = 240;
+    public const EDITOR_MAX_MESSAGE_CHARS = 96000;
+    public const EDITOR_MAX_TOTAL_CHARS = 480000;
     /** Bounds for caller-supplied tools (the hosted Softn Studio editor), on top of the chat bounds above. */
     public const CLIENT_TOOLS_MAX = 64;
     public const CLIENT_TOOL_DESCRIPTION_MAX_CHARS = 4096;
@@ -1170,9 +1206,23 @@ PROMPT;
     public const CLIENT_TOOL_CALL_ID_PATTERN = '/^[A-Za-z0-9_.:-]{1,128}$/';
 
     /**
+     * The output bound of one aiTools round: AI_EDITOR_MAX_OUTPUT_TOKENS when it is a whole
+     * number, clamped to [EDITOR_MIN_OUTPUT_TOKENS, EDITOR_MAX_OUTPUT_TOKENS_CEILING], else
+     * EDITOR_DEFAULT_OUTPUT_TOKENS.
+     */
+    public static function editorMaxOutputTokens(): int
+    {
+        $raw = trim((string) ($_ENV['AI_EDITOR_MAX_OUTPUT_TOKENS'] ?? ''));
+        if ($raw === '' || preg_match('/^\d{1,9}$/', $raw) !== 1) {
+            return self::EDITOR_DEFAULT_OUTPUT_TOKENS;
+        }
+        return max(self::EDITOR_MIN_OUTPUT_TOKENS, min(self::EDITOR_MAX_OUTPUT_TOKENS_CEILING, (int) $raw));
+    }
+
+    /**
      * Validate a caller-supplied-tools chat request (POST /api/ai/chat with aiTools: 1) and
-     * return it normalized. The ordinary chat bounds hold — 1..CHAT_MAX_MESSAGES messages,
-     * CHAT_MAX_MESSAGE_CHARS per content, CHAT_MAX_TOTAL_CHARS in total, with tool-call
+     * return it normalized. The editor bounds hold — 1..EDITOR_MAX_MESSAGES messages,
+     * EDITOR_MAX_MESSAGE_CHARS per content, EDITOR_MAX_TOTAL_CHARS in total, with tool-call
      * arguments counted as content — and on top of them:
      *  - roles system/user (non-empty string content), assistant (string content, empty only
      *    beside toolCalls; at most CLIENT_TOOL_CALLS_PER_MESSAGE calls, each {id, name,
@@ -1181,7 +1231,7 @@ PROMPT;
      *  - tools: at most CLIENT_TOOLS_MAX, unique names, description a string of at most
      *    CLIENT_TOOL_DESCRIPTION_MAX_CHARS, inputSchema an object schema (type "object") of
      *    at most CLIENT_TOOL_SCHEMA_MAX_CHARS as JSON, CLIENT_TOOLS_MAX_TOTAL_CHARS together;
-     *  - maxOutputTokens: absent/null or a positive integer, clamped to CHAT_MAX_TOKENS.
+     *  - maxOutputTokens: absent/null or a positive integer, clamped to editorMaxOutputTokens().
      * No content parts (images) in this mode.
      *
      * @return array{messages: array<int, array<string, mixed>>, tools: array<int, array{name: string, description: string, inputSchema: array<string, mixed>}>, maxTokens: int}
@@ -1192,7 +1242,8 @@ PROMPT;
         if ($maxOutputTokens !== null && (!is_int($maxOutputTokens) || $maxOutputTokens < 1)) {
             throw new \InvalidArgumentException('maxOutputTokens must be a positive integer');
         }
-        $maxTokens = $maxOutputTokens === null ? self::CHAT_MAX_TOKENS : min($maxOutputTokens, self::CHAT_MAX_TOKENS);
+        $ceiling = self::editorMaxOutputTokens();
+        $maxTokens = $maxOutputTokens === null ? $ceiling : min($maxOutputTokens, $ceiling);
 
         if (!is_array($tools) || !array_is_list($tools) || count($tools) > self::CLIENT_TOOLS_MAX) {
             throw new \InvalidArgumentException('tools must be a list of at most ' . self::CLIENT_TOOLS_MAX);
@@ -1231,17 +1282,17 @@ PROMPT;
             $cleanTools[] = ['name' => $name, 'description' => $description, 'inputSchema' => $schema];
         }
 
-        if (!is_array($messages) || !array_is_list($messages) || $messages === [] || count($messages) > self::CHAT_MAX_MESSAGES) {
-            throw new \InvalidArgumentException('messages must contain 1..' . self::CHAT_MAX_MESSAGES . ' items');
+        if (!is_array($messages) || !array_is_list($messages) || $messages === [] || count($messages) > self::EDITOR_MAX_MESSAGES) {
+            throw new \InvalidArgumentException('messages must contain 1..' . self::EDITOR_MAX_MESSAGES . ' items');
         }
         $total = 0;
         $count = static function (string $text) use (&$total): void {
-            if (strlen($text) > self::CHAT_MAX_MESSAGE_CHARS) {
-                throw new \InvalidArgumentException('message content exceeds ' . self::CHAT_MAX_MESSAGE_CHARS . ' characters');
+            if (strlen($text) > self::EDITOR_MAX_MESSAGE_CHARS) {
+                throw new \InvalidArgumentException('message content exceeds ' . self::EDITOR_MAX_MESSAGE_CHARS . ' characters');
             }
             $total += strlen($text);
-            if ($total > self::CHAT_MAX_TOTAL_CHARS) {
-                throw new \InvalidArgumentException('messages exceed ' . self::CHAT_MAX_TOTAL_CHARS . ' characters in total');
+            if ($total > self::EDITOR_MAX_TOTAL_CHARS) {
+                throw new \InvalidArgumentException('messages exceed ' . self::EDITOR_MAX_TOTAL_CHARS . ' characters in total');
             }
         };
         $clean = [];
@@ -1419,7 +1470,12 @@ PROMPT;
                 'function' => ['name' => $t['name'], 'description' => $t['description'], 'parameters' => self::schemaForJson($t['inputSchema'])],
             ], $request['tools']);
         }
-        $data = $this->chatCompletionsToolsRequest($payload);
+        $this->requestTimeout = self::EDITOR_REQUEST_TIMEOUT;
+        try {
+            $data = $this->chatCompletionsToolsRequest($payload);
+        } finally {
+            $this->requestTimeout = null;
+        }
         $choice = $data['choices'][0] ?? null;
         $message = is_array($choice) ? ($choice['message'] ?? null) : null;
         if (!is_array($message)) {
@@ -1468,7 +1524,7 @@ PROMPT;
             CURLOPT_POST => true,
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_POSTFIELDS => json_encode($payload),
-            CURLOPT_TIMEOUT => 120,
+            CURLOPT_TIMEOUT => $this->requestTimeout ?? 120,
             CURLOPT_CONNECTTIMEOUT => 10,
             CURLOPT_PROTOCOLS => CURLPROTO_HTTPS | CURLPROTO_HTTP,
             CURLOPT_SSL_VERIFYPEER => true,

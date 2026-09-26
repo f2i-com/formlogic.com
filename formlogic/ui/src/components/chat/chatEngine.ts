@@ -121,7 +121,11 @@ export interface ChatToolActivity {
   /** Deep-link target when the tool result names a created/updated record.
    *  App links may carry the App Studio step the action belongs to, so
    *  Follow-AI walks the user through the studio as the app takes shape. */
-  link?: { kind: 'form' | 'app' | 'flow' | 'response' | 'diagram' | 'formScreen' | 'appScreen'; id: string; step?: string };
+  /**
+   * `softnApp`: a hosted SoftN app's workspace; `brief` is the person's request, which AI Studio
+   * builds once the chat has taken them there.
+   */
+  link?: { kind: 'form' | 'app' | 'flow' | 'response' | 'diagram' | 'formScreen' | 'appScreen' | 'softnApp'; id: string; step?: string; brief?: string };
 }
 
 /** A confirm-mode tool proposal awaiting the user's decision (desktop source). */
@@ -152,7 +156,7 @@ export interface SendChatTurnOptions {
    *  resolves without asking. The TOOLS stay the authority on ownership.
    *  'appStudio' carries the six-step wizard's active step so the AI can guide
    *  the user through the studio and knows where its tool effects appear. */
-  pageContext?: { kind: 'form' | 'app' | 'diagram' | 'formScreen' | 'appScreen' | 'appStudio'; id: string; step?: string } | null;
+  pageContext?: { kind: 'form' | 'app' | 'diagram' | 'formScreen' | 'appScreen' | 'appStudio' | 'softnApp'; id: string; step?: string } | null;
   /** Demo account: chat works, tool actions are disabled (banner + tools:false). */
   isDemo?: boolean;
   /** Force a tools-off turn (e.g. the compaction summary — pure text, no actions). */
@@ -253,6 +257,13 @@ function appIdFromResult(result: unknown): string | undefined {
 
 /** Recursively (bounded) hunt a tool result for a deep-linkable record id. */
 function toolLinkFromResult(toolName: string, result: unknown): ChatToolActivity['link'] | null {
+  // A new SoftN app: its workspace, carrying the request AI Studio is to build.
+  if (toolName === 'create_softn_app') {
+    const rec = asRecord(result);
+    const id = firstString(asRecord(rec?.app)?.id);
+    const brief = firstString(rec?.request);
+    return id ? { kind: 'softnApp', id, ...(brief ? { brief: brief.slice(0, 8000) } : {}) } : null;
+  }
   // Screen tools deep-link to their STUDIO (live preview + take-over), not the builder /
   // app forms list — the result is the updated form/app, whose id is the studio route param.
   if (toolName === 'set_form_screen' || toolName === 'set_app_home') {
@@ -318,6 +329,7 @@ function toolLinkFromResult(toolName: string, result: unknown): ChatToolActivity
  * rather than nothing.
  */
 const TOOL_LABELS: Record<string, string> = {
+  create_softn_app: 'Create your SoftN app',
   get_native_app_template: 'Start an app with a backend and database',
   get_native_app_project: 'Read the app source',
   publish_native_app_project: 'Install the app project',
@@ -821,10 +833,12 @@ export async function sendChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDe
     const content =
       kind === 'formScreen'
         ? `Page context: the user is in the custom-screen Studio for form ${id} (a sandboxed frontend rendered instead of the form's default field UI). When they say "this screen" or ask for pages/changes without naming a target, they mean this form's customScreen: read the current one with get_form (formId ${id}), write it with set_form_screen — send the COMPLETE screen (all files) each time.`
+        : kind === 'softnApp'
+          ? `Page context: the user is in the workspace of SoftN app ${id}: a hosted app whose interface, private backend and database are its SoftN project, not forms. When they say "this app" or ask for changes without naming a target, they mean this one: read it with get_native_app_project (appId ${id}), change named files with update_native_app_files using the version you read, and read its data with list_native_app_records. Bigger changes are better made in AI Studio, which they can open from this page with "Describe a change".`
         : kind === 'appScreen'
           ? `Page context: the user is in the custom-screen Studio for the HOME screen of app ${id}. When they say "this screen" or ask for pages/changes without naming a target, they mean this app's customScreen: read the app's forms with list_forms/get_form, write the screen with set_app_home (appId ${id}) — send the COMPLETE screen (all files) each time.`
           : kind === 'appStudio'
-            ? `Page context: the user is in the APP STUDIO for app ${id}${studioStep ? ` on the "${studioStep}" step` : ''} — FormLogic's six-step app wizard (every step is prefilled from real state and skippable; changes save immediately). When they ask where to do something, point them at the right step; when they ask you to build or change something, use your tools with appId ${id} — the result appears in the matching step. The steps: 1) Plan — optionally sketch the app as a diagram (blueprint tools) or plan it in this chat. 2) Data & forms — forms and native SQLite tables. Use list_native_app_records for native records. Form data types each use a form (create_app_form to add one, update_form for fields; linked_record fields are the relationships). 3) Screens — native apps can be created with get_native_app_template and publish_native_app_project, read with get_native_app_project and edited with update_native_app_files. Use the current version for updates. Visual Builder and AI Studio open from Native app hosting. Preserve the existing hosting model when editing an installed app. The app home (set_app_home: a no-code widget dashboard or a custom code screen) plus the generated form/list/record views, menu visibility and the landing screen. 4) Automations — flows and their triggers (create_flow, then create_flow_binding e.g. on form.submitted). 5) Users & roles — roles, the per-form permission matrix, invites and member sign-up; there are no chat tools for these yet, so GUIDE the user through that step instead of attempting it. 6) Review & publish — preflight checks, the app link, and versioned publishing (update_app {status:'published'} publishes it; the step's Publish button also records a version with a release note).`
+            ? `Page context: the user is in the APP STUDIO for app ${id}${studioStep ? ` on the "${studioStep}" step` : ''} — FormLogic's six-step app wizard (every step is prefilled from real state and skippable; changes save immediately). When they ask where to do something, point them at the right step; when they ask you to build or change something, use your tools with appId ${id} — the result appears in the matching step. The steps: 1) Plan — optionally sketch the app as a diagram (blueprint tools) or plan it in this chat. 2) Data & forms — forms and native SQLite tables. Use list_native_app_records for native records. Form data types each use a form (create_app_form to add one, update_form for fields; linked_record fields are the relationships). 3) Screens — native apps can be created with get_native_app_template and publish_native_app_project, read with get_native_app_project and edited with update_native_app_files. Use the current version for updates. Visual Builder and AI Studio open from Native app hosting. Preserve the existing hosting model when editing an installed app. The app home (set_app_home: a no-code widget dashboard or a custom code screen) plus the generated form/list/record views, menu visibility and the landing screen. 4) Automations — flows and their triggers (create_flow builds the flow; there is no chat tool for its trigger yet, so tell the user to choose it in this step, e.g. on form.submitted). 5) Users & roles — roles, the per-form permission matrix, invites and member sign-up; there are no chat tools for these yet, so GUIDE the user through that step instead of attempting it. 6) Review & publish — preflight checks, the app link, and versioned publishing (update_app {status:'published'} publishes it; the step's Publish button also records a version with a release note).`
             : `Page context: the user is currently viewing ${kind} with id ${id}. When they say "this ${kind}" or ask for changes without naming a target, use this id with your tools.`;
     opts = {
       ...opts,

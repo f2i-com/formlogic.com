@@ -98,6 +98,7 @@ const AppsDashboard = lazyWithRetry(() => import('./pages/apps/AppsDashboard').t
 // App Studio: the app-first workspace — six prefilled, skippable steps per app.
 const AppStudio = lazyWithRetry(() => import('./pages/apps/AppStudio').then(m => ({ default: m.AppStudio })));
 const AppCreateStart = lazyWithRetry(() => import('./pages/apps/AppCreateStart').then(m => ({ default: m.AppCreateStart })));
+const SoftnAppWorkspace = lazyWithRetry(() => import('./pages/apps/SoftnAppWorkspace').then(m => ({ default: m.SoftnAppWorkspace })));
 const AppSettingsPage = lazyWithRetry(() => import('./pages/apps/AppSettings').then(m => ({ default: m.AppSettings })));
 const AppFormManager = lazyWithRetry(() => import('./pages/apps/AppFormManager').then(m => ({ default: m.AppFormManager })));
 const AppUserManager = lazyWithRetry(() => import('./pages/apps/AppUserManager').then(m => ({ default: m.AppUserManager })));
@@ -366,6 +367,7 @@ function AppRoutes() {
               creating AND editing). Companion apps are created from the app's
               Forms manager; existing forms attach in the studio's Data step. */}
           <Route path="/apps/new" element={<AppCreateStart />} />
+          <Route path="/apps/:appId/softn" element={<SoftnAppWorkspace />} />
           <Route path="/apps/:appId/studio" element={<AppStudio />} />
           <Route path="/apps/:appId/studio/:step" element={<AppStudio />} />
           <Route path="/apps/:appId/settings" element={<AppSettingsPage />} />
@@ -449,6 +451,7 @@ function AppRoutes() {
             Forms manager; existing forms attach in the studio's Data step. */}
         <Route path="/apps/new" element={<AppCreateStart />} />
         {/* App Studio — the app-first workspace (Plan/Data/Screens/Automations/Access/Publish) */}
+        <Route path="/apps/:appId/softn" element={<SoftnAppWorkspace />} />
         <Route path="/apps/:appId/studio" element={<AppStudio />} />
         <Route path="/apps/:appId/studio/:step" element={<AppStudio />} />
         <Route path="/apps/:appId/settings" element={<AppSettingsPage />} />

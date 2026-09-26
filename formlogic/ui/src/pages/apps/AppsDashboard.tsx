@@ -20,6 +20,7 @@ import { cn, formatRelativeTime } from '../../lib/utils';
 import { KIND_LABELS } from '../../types/app';
 import { statusLabel, statusTone } from '../../lib/appStatus';
 import type { App } from '../../types/app';
+import { isSoftnApp, softnWorkspacePath } from '../../lib/softnApps';
 
 const APPS_PAGE = 9;
 
@@ -198,7 +199,7 @@ export function AppsDashboard() {
                     canManage={canManageApp(app)}
                     // A member goes straight to the runtime; the studio would only
                     // bounce them there anyway.
-                    onClick={() => navigate(canManageApp(app) ? `/apps/${app.id}/studio` : `/app/${app.slug}`)}
+                    onClick={() => navigate(canManageApp(app) ? manageApp(app) : `/app/${app.slug}`)}
                     onManage={() => navigate(`/apps/${app.id}/settings`)}
                     onDelete={() => setDeleteTarget(app)}
                   />
@@ -214,7 +215,7 @@ export function AppsDashboard() {
                     app={app}
                     packName={appPackMap[app.id] ?? null}
                     canManage={canManageApp(app)}
-                    onManage={() => navigate(canManageApp(app) ? `/apps/${app.id}/studio` : `/app/${app.slug}`)}
+                    onManage={() => navigate(canManageApp(app) ? manageApp(app) : `/app/${app.slug}`)}
                     onSettings={() => navigate(`/apps/${app.id}/settings`)}
                     onDelete={() => setDeleteTarget(app)}
                   />
@@ -261,6 +262,9 @@ function canManageApp(app: App): boolean {
 }
 
 // Compact list-mode row: click opens the App Studio; explicit View app / Settings / Remove actions.
+/** Where the owner manages an app: a SoftN app's workspace, or the App Studio. */
+const manageApp = (app: App) => (isSoftnApp(app) ? softnWorkspacePath(app.id) : `/apps/${app.id}/studio`);
+
 function AppRow({ app, packName, canManage, onManage, onSettings, onDelete }: { app: App; packName: string | null; canManage: boolean; onManage: () => void; onSettings: () => void; onDelete: () => void }) {
   const formCount = app.formCount ?? app.navConfig?.length ?? 0;
   return (
@@ -348,7 +352,7 @@ function AppCard({ app, packName, canManage, onClick, onManage, onDelete }: { ap
   // on pack-provisioned apps — the "0 forms" bug).
   const formCount = app.formCount ?? app.navConfig?.length ?? 0;
   // Optional portal type (T29): unknown/absent values render nothing (server data is untrusted).
-  const kindLabel = app.settings?.appKind ? KIND_LABELS[app.settings.appKind] : undefined;
+  const kindLabel = isSoftnApp(app) ? 'SoftN app' : app.settings?.appKind ? KIND_LABELS[app.settings.appKind] : undefined;
   return (
     <div
       role="button"

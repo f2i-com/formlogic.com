@@ -5,12 +5,30 @@
 
 App Studio → Screens → **App hosting** hosts a text app bundle with private `.logic` actions and a separate SQLite database. The starter is a working team notes app. Edit the interface and actions, publish the project, then open Preview or `/app/<slug>/project`. Publishing a project does not change the parent app's publication status: members need an active membership and a published app. Owners can preview drafts.
 
+## SoftN apps
+
+A **SoftN app** is an app whose interface, private backend and database are its SoftN project,
+with no forms needed (`settings.softnApp: true`). Create one with **Create app → SoftN app**, by
+dropping a `.softn` file on **Apps → Import**, or by asking the chat (its `create_softn_app` tool
+creates the app and takes the person to AI Studio, which builds it from their request). Its first
+version is the working starter (`POST /api/apps/{id}/native/starter`, refused once anything is
+installed) or the uploaded file; both are for members only and open at the app's address until
+the owner changes that.
+
+The owner manages it at `/apps/<id>/softn`: **App** previews it at desktop or phone width and
+changes it with AI Studio, the Visual Builder, a new `.softn` file or the source editor; **Data**
+browses and edits the tables in its database; **Settings** chooses who can use it and whether it
+opens at the app's address. While the app is unpublished, a change returned from an editor is
+installed at once; once it is published, changes wait as a draft (kept in this browser) until
+**Publish changes**. Publishing a form-less app is allowed when its database has tables.
+
 ## Choose the right starting point
 
 | You want to… | Start here |
 |---|---|
 | Show an app's existing forms and records in an editable dashboard | **Screens → Create connected dashboard**; see [Connected apps](CONNECTED_APPS.md). |
 | Add Aokie's calls, appointments and logs to an existing app | Share its forms through **Add from another app**, then use the Front desk route or Aokie dashboard template. |
+| Host a website or web app with its own pages, backend and database | **Create app → SoftN app**; see [SoftN apps](#softn-apps). |
 | Build a custom interface with its own backend actions and database | **Screens → App hosting**; edit the starter or import a project. |
 | Let an AI author the project | Use `get_app_project` and `publish_app_project` through [MCP](MCP.md#portable-projects-and-aokie-via-mcp). |
 

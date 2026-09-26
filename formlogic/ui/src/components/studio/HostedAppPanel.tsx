@@ -27,6 +27,7 @@ import { AppEngineSelect } from "./AppEngineSelect";
 import { cn } from "../../lib/utils";
 import { zipSync, strToU8, strFromU8 } from "fflate";
 import { AppEditorDialog, type AppEditorKind } from "./AppEditorDialog";
+import { useAiReady } from "../../hooks/useAiReady";
 
 export function HostedAppPanel({
   app,
@@ -76,6 +77,7 @@ function HostingEditor({
 }) {
   const [pkg, setPkg] = useState<HostedPackage>(() => hostedStarter(app.name));
   const [editor, setEditor] = useState<{kind: AppEditorKind; bundle: Uint8Array} | null>(null);
+  const aiReady = useAiReady();
   const [deployment, setDeployment] = useState<HostedDeployment | null>(null);
   // The server's engine decision for this app, and what this site lets the owner choose between.
   const [engine, setEngine] = useState<AppEngine | undefined>(undefined);
@@ -521,7 +523,7 @@ function HostingEditor({
               </button>
             ))}
           </div>
-          <div className="flex flex-wrap gap-2">{(['builder', 'studio'] as const).map(kind => <Button key={kind} variant="secondary" disabled={!loaded || saving || importing} onClick={() => { try { setEditor({ kind, bundle: zipSync(Object.fromEntries(Object.entries(pkg.client).map(([path, source]) => [path, strToU8(source)]))) }); } catch { setError('Could not prepare this project for the editor.'); } }}>{kind === 'builder' ? 'Open Visual Builder' : 'Open AI Studio'}</Button>)}</div>
+          <div className="flex flex-wrap gap-2">{(['builder', 'studio'] as const).map(kind => <Button key={kind} variant="secondary" disabled={!loaded || saving || importing || (kind === 'studio' && aiReady === false)} title={kind === 'studio' && aiReady === false ? 'Connect an AI in Settings → AI to edit with AI Studio.' : undefined} onClick={() => { try { setEditor({ kind, bundle: zipSync(Object.fromEntries(Object.entries(pkg.client).map(([path, source]) => [path, strToU8(source)]))) }); } catch { setError('Could not prepare this project for the editor.'); } }}>{kind === 'builder' ? 'Open Visual Builder' : 'Open AI Studio'}</Button>)}{aiReady === false && <p className="basis-full text-xs text-slate-500 dark:text-slate-400">AI Studio needs an AI connection: choose one in Settings → AI. The Visual Builder works without one.</p>}</div>
           {tab === "interface" && (
             <div className="space-y-3">
               <p className="text-sm text-slate-500 dark:text-slate-400">

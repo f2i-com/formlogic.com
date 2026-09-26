@@ -183,6 +183,8 @@ export function buildPreflightChecks(input: {
   memberCountKnown?: boolean;
   /** False when the attachment list failed to load — the app's forms are unknown, not zero. */
   formCountKnown?: boolean;
+  /** Tables in the app's own SoftN database: an app that keeps its data there needs no form. */
+  nativeTableCount?: number;
 }): PreflightCheck[] {
   const checks: PreflightCheck[] = [];
   const facts: PreflightCheck[] = [];
@@ -200,7 +202,15 @@ export function buildPreflightChecks(input: {
     });
   } else {
   checks.push(
-    input.formCount > 0
+    input.formCount === 0 && (input.nativeTableCount ?? 0) > 0
+      ? {
+          id: 'forms',
+          state: 'complete',
+          title: `Its own database: ${input.nativeTableCount} ${input.nativeTableCount === 1 ? 'table' : 'tables'}`,
+          detail: 'The app keeps its data in its SoftN project, so it needs no forms',
+          step: 'data',
+        }
+      : input.formCount > 0
       ? {
           id: 'forms',
           state: input.formsWithoutFields.length === 0 ? 'complete' : 'warning',

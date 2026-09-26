@@ -450,6 +450,16 @@ describe('normalizeToolActivity', () => {
     ).toMatchObject({ link: { kind: 'app', id: 'a-1', step: 'publish' } });
   });
 
+  it('links a new SoftN app to its workspace, carrying the request AI Studio is to build', () => {
+    expect(
+      normalizeToolActivity({ type: 'tool_result', name: 'create_softn_app', status: 'done', result: { app: { id: 'a-7', name: 'Recipes', slug: 'recipes' }, version: 1, request: 'A recipe box with favourites.', workspaceUrl: '/apps/a-7/softn' } })
+    ).toMatchObject({ label: 'Create your SoftN app', link: { kind: 'softnApp', id: 'a-7', brief: 'A recipe box with favourites.' } });
+    // No request: the workspace still opens, without anything to build.
+    const bare = normalizeToolActivity({ type: 'tool_result', name: 'create_softn_app', status: 'done', result: { app: { id: 'a-8' }, request: '' } });
+    expect(bare?.link).toEqual({ kind: 'softnApp', id: 'a-8' });
+    expect(normalizeToolActivity({ type: 'tool_result', name: 'create_softn_app', status: 'done', result: { error: 'x' } })?.link).toBeUndefined();
+  });
+
   it('links the screen tools to their Studios, not the builder/app list', () => {
     // set_form_screen returns the updated FORM — the link must be the screen studio kind,
     // never the generic form/builder link the name-based fallback would produce.
