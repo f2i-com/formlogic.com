@@ -67,7 +67,8 @@ test('Builder and Studio return an editable native app without losing its backen
       await frame.getByRole('textbox', { name: 'Message to AI' }).fill('Update the heading to AI edited app, preserving all other files.');
       await frame.getByRole('button', { name: 'Send message', exact: true }).click();
       await expect(editor.getByRole('button', { name: 'Review changes', exact: true })).toBeDisabled();
-      await expect(editor.getByRole('status')).toContainText('AI is editing your draft');
+      // A Studio that reports its agent (agentRuns) says what it is doing; an older one, that the AI is editing.
+      await expect(editor.getByRole('status')).toContainText(/AI Studio is building your app|AI is editing your draft/);
       await frame.getByRole('button', { name: 'Stop the agent', exact: true }).click();
       await expect(editor.getByRole('button', { name: 'Review changes', exact: true })).toBeEnabled();
       releaseCancelled();
@@ -116,6 +117,8 @@ test('Existing hosted apps keep private actions when edited in Builder and Studi
   const saved = await context.request.put(`/api/apps/${app.id}/hosting`, { headers, data: { package: pkg, expectedVersion: 0 } });
   expect(saved.ok(), await saved.text()).toBe(true);
   let version = (await saved.json()).deployment.version as number;
+  // AI Studio is offered once the default AI is ready: this account's is Site AI.
+  await page.route('**/api/ai/preferences', route => route.fulfill({ json: { data: { aiSource: 'site', chatToolMode: 'auto' } } }));
   await page.goto(`/apps/${app.id}/studio/screens`);
   await page.getByText('Hosting & app tools', { exact: true }).click();
   await page.getByRole('button', { name: 'App hosting', exact: true }).click();
@@ -149,6 +152,8 @@ test('Coffee.Dating media and private backend survive both editor round trips', 
   const old = (await (await context.request.get(`/api/apps/${app.id}/native`)).json()).project;
   const saved = await context.request.put(`/api/apps/${app.id}/native`, { headers, data: { project: source, expectedVersion: old?.version ?? 0 } });
   expect(saved.ok(), await saved.text()).toBe(true);
+  // AI Studio is offered once the default AI is ready: this account's is Site AI.
+  await page.route('**/api/ai/preferences', route => route.fulfill({ json: { data: { aiSource: 'site', chatToolMode: 'auto' } } }));
   await page.goto(`/apps/${app.id}/records`);
   await page.getByRole('button', { name: 'Native app hosting', exact: true }).click();
   for (const kind of ['Visual Builder', 'AI Studio']) {
