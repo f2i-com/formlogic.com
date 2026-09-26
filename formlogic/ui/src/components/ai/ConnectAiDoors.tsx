@@ -6,16 +6,40 @@
 // own site chat.
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Cloud, Monitor, Plug } from 'lucide-react';
+import { ArrowRight, Cloud, Monitor, Plug, Sparkles } from 'lucide-react';
 import { ConnectAiModal } from '../mcp/ConnectAiModal';
+import { useSiteAiChoice } from '../../hooks/useSiteAiChoice';
 
-export function ConnectAiDoors() {
+/** `onConnected`: called once Site AI is chosen here, to check readiness again. */
+export function ConnectAiDoors({ onConnected }: { onConnected?: () => Promise<unknown> | void } = {}) {
   const navigate = useNavigate();
   const [showMcp, setShowMcp] = useState(false);
+  const siteAi = useSiteAiChoice(onConnected);
 
   return (
     <>
       <div className="space-y-4">
+        {/* Door 0: the operator's hosted Site AI, when it offers one: nothing to set up. */}
+        {siteAi.offered && <section className="rounded-2xl border border-gray-200/80 bg-white p-5 dark:border-slate-700/60 dark:bg-slate-900">
+          <h2 className="flex items-center gap-2 text-base font-semibold text-gray-900 dark:text-white">
+            <Sparkles className="h-5 w-5 text-primary-600 dark:text-primary-300" />
+            FormLogic Site AI
+            <span className="rounded bg-primary-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-primary-700 dark:bg-primary-500/20 dark:text-primary-300">No setup</span>
+          </h2>
+          <p className="mt-1.5 text-sm leading-relaxed text-gray-600 dark:text-slate-300">
+            Use the AI this FormLogic hosts, within your plan&rsquo;s monthly allowance. You can switch to your own AI any time in Settings.
+          </p>
+          <button
+            type="button"
+            disabled={siteAi.choosing}
+            aria-busy={siteAi.choosing}
+            onClick={() => void siteAi.choose()}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-700 disabled:opacity-60"
+          >
+            {siteAi.choosing ? 'Switching…' : 'Use Site AI'} <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        </section>}
+
         {/* Door 1: web provider */}
         <section className="rounded-2xl border border-gray-200/80 bg-white p-5 dark:border-slate-700/60 dark:bg-slate-900">
           <h2 className="flex items-center gap-2 text-base font-semibold text-gray-900 dark:text-white">

@@ -10,8 +10,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SoftnCreateForm } from './SoftnCreateForm';
 import { useUIStore } from '../../stores/uiStore';
 
-const mocks = vi.hoisted(() => ({ createSoftnApp: vi.fn() }));
+const mocks = vi.hoisted(() => ({ createSoftnApp: vi.fn(), chooseSiteAi: vi.fn(), siteAiEnabled: false, recheck: vi.fn() }));
 vi.mock('../../lib/softnApps', async (importOriginal) => ({ ...(await importOriginal<typeof import('../../lib/softnApps')>()), createSoftnApp: mocks.createSoftnApp }));
+vi.mock('../../lib/siteAi', () => ({ chooseSiteAi: mocks.chooseSiteAi }));
+vi.mock('../../hooks/usePublicConfig', () => ({ usePublicConfig: () => ({ plans: { siteAiEnabled: mocks.siteAiEnabled } }) }));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root;
@@ -23,6 +25,9 @@ const app = { id: 'app-1', name: 'Recipes', slug: 'recipes' };
 
 beforeEach(() => {
   mocks.createSoftnApp.mockReset();
+  mocks.chooseSiteAi.mockReset();
+  mocks.recheck.mockReset();
+  mocks.siteAiEnabled = false;
   mocks.createSoftnApp.mockResolvedValue({ app, project: { version: 1, files: {}, assets: {}, access: 'members' } });
   useUIStore.getState().setSoftnOpen(null);
   container = document.createElement('div');
@@ -30,15 +35,17 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
 
+const tree = (aiReady: boolean | null) =>
+  <MemoryRouter initialEntries={['/apps/new']}><PathProbe /><Routes>
+    <Route path="/apps/new" element={<SoftnCreateForm aiReady={aiReady} aiReason={aiReady === false ? 'No AI service is chosen.' : null} onAiRecheck={mocks.recheck} />} />
+    <Route path="/apps/:appId/softn" element={<p>workspace</p>} />
+  </Routes></MemoryRouter>;
 async function render(aiReady: boolean | null) {
   root = createRoot(container);
-  await act(async () => root.render(
-    <MemoryRouter initialEntries={['/apps/new']}><PathProbe /><Routes>
-      <Route path="/apps/new" element={<SoftnCreateForm aiReady={aiReady} />} />
-      <Route path="/apps/:appId/softn" element={<p>workspace</p>} />
-    </Routes></MemoryRouter>,
-  ));
+  await act(async () => root.render(tree(aiReady)));
 }
+/** The readiness check answering later, as it does on the page. */
+async function answer(aiReady: boolean) { await act(async () => root.render(tree(aiReady))); }
 const type = async (element: HTMLInputElement | HTMLTextAreaElement, value: string) => {
   const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value')!.set!;
   await act(async () => { setter.call(element, value); element.dispatchEvent(new Event('input', { bubbles: true })); });
@@ -62,7 +69,7 @@ describe('SoftnCreateForm', () => {
     await render(false);
     // With no AI connected, the visual start is chosen and the AI one says what it needs.
     expect((container.querySelector('input[value="builder"]') as HTMLInputElement).checked).toBe(true);
-    expect(container.textContent).toContain('Connect an AI first');
+    expect(container.textContent).toContain('Needs an AI connection first.');
     await type(container.querySelector('#softn-app-name') as HTMLInputElement, 'Team Directory');
     await act(async () => button(/Create and start editing/).click());
     expect(mocks.createSoftnApp).toHaveBeenCalledWith({ name: 'Team Directory', description: undefined, start: { kind: 'starter' } });
@@ -77,12 +84,42 @@ describe('SoftnCreateForm', () => {
     expect(mocks.createSoftnApp).not.toHaveBeenCalled();
   });
 
-  it('refuses to build with AI while no AI is connected', async () => {
+  it('refuses to build with AI while no AI is connected, and says why and how to connect one', async () => {
     await render(false);
     await choose('ai');
     await type(container.querySelector('#softn-app-name') as HTMLInputElement, 'Recipes');
     expect((container.querySelector('#softn-app-request') as HTMLTextAreaElement).disabled).toBe(true);
     expect(button(/Create and build with AI/).disabled).toBe(true);
+    expect(container.textContent).toContain('Building with AI needs an AI connection. No AI service is chosen.');
+    expect(container.querySelector('a[href="/settings#ai"]')?.textContent).toBe('Connect one');
+    // Site AI is offered only where the operator offers it.
+    expect(button(/Use FormLogic Site AI/)).toBeUndefined();
+    await act(async () => button(/Check again/).click());
+    expect(mocks.recheck).toHaveBeenCalledTimes(1);
+  });
+
+  it('moves off building with AI once the check says no AI can answer, unless the person chose it', async () => {
+    await render(null);
+    expect((container.querySelector('input[value="ai"]') as HTMLInputElement).checked).toBe(true);
+    await answer(false);
+    expect((container.querySelector('input[value="builder"]') as HTMLInputElement).checked).toBe(true);
+    await act(async () => root.unmount());
+    await render(null);
+    // Writing the description before the check answers is choosing to build with AI.
+    await type(container.querySelector('#softn-app-request') as HTMLTextAreaElement, 'A recipe box.');
+    await answer(false);
+    expect((container.querySelector('input[value="ai"]') as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('offers Site AI in one click where the operator offers it, then checks again', async () => {
+    mocks.siteAiEnabled = true;
+    mocks.chooseSiteAi.mockResolvedValue({ ok: true });
+    await render(false);
+    await choose('ai');
+    expect(container.querySelector('a[href="/settings#ai"]')?.textContent).toBe('Or connect your own');
+    await act(async () => button(/Use FormLogic Site AI/).click());
+    expect(mocks.chooseSiteAi).toHaveBeenCalledTimes(1);
+    expect(mocks.recheck).toHaveBeenCalledTimes(1);
   });
 
   it('uploads a .softn file as the first version, and shows why a file was refused', async () => {

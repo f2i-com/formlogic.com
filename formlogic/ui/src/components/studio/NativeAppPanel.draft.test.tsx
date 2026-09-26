@@ -13,6 +13,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useAuthStore } from '../../stores/authStore';
 
 const { getProject, saveProject, importProject } = vi.hoisted(() => ({ getProject: vi.fn(), saveProject: vi.fn(), importProject: vi.fn() }));
+vi.mock('../../hooks/usePublicConfig', () => ({ usePublicConfig: () => ({ plans: { siteAiEnabled: false } }) }));
 vi.mock('../../lib/api', () => ({ api: { getNativeProject: getProject, saveNativeProject: saveProject, getNativeRecords: vi.fn() } }));
 vi.mock('../../lib/nativeHosting', async importOriginal => ({ ...await importOriginal<typeof import('../../lib/nativeHosting')>(), importNativeProject: importProject }));
 vi.mock('./NativeSourceEditor', () => ({ NativeSourceEditor: ({ value, onChange, label }: { value: string; onChange(value: string): void; label: string }) => <textarea aria-label={label} value={value} onChange={event => onChange(event.target.value)} /> }));

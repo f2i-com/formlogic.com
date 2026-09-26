@@ -52,6 +52,8 @@ export interface AppSettings {
    * owner manages it in the SoftN app workspace (/apps/:id/softn). Server-validated boolean.
    */
   softnApp?: boolean;
+  /** false turns torch off for this app's hosted projects; absent = allowed (the site may still refuse it). */
+  torch?: boolean;
   /**
    * Privacy used for data types created from this app's Studio. `private` is a
    * fail-closed preference: the Studio enables E2EE before attaching a new form.

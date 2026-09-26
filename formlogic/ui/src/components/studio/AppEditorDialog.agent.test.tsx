@@ -64,7 +64,10 @@ describe('a Studio that announced agentRuns', () => {
   it('is connected with agentRuns and sent the request with the app', async () => {
     const { connect, open } = await mount({ brief: BRIEF, agentRuns: 1 });
     expect(connect()).toMatchObject({ kind: 'formlogic-editor-connect', protocol: 1, aiTools: 1, agentRuns: 1 });
-    expect((await open()).brief).toEqual(BRIEF);
+    const opened = await open();
+    expect(opened.brief).toEqual(BRIEF);
+    // The editor's own save button takes this dialog's name for it.
+    expect(opened.saveLabel).toBe('Save changes');
     expect(document.body.textContent).not.toContain('paste yours');
   });
 

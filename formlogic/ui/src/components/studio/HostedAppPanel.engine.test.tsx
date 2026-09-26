@@ -10,6 +10,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useAuthStore } from '../../stores/authStore';
 
 const { getHosting, publish, putEngine } = vi.hoisted(() => ({ getHosting: vi.fn(), publish: vi.fn(), putEngine: vi.fn() }));
+vi.mock('../../hooks/usePublicConfig', () => ({ usePublicConfig: () => ({ plans: { siteAiEnabled: false } }) }));
 vi.mock('../../lib/api', () => ({ api: { getAppHosting: getHosting, publishAppHosting: publish, putAppEngine: putEngine } }));
 vi.mock('./HostedAppFrame', () => ({ HostedAppFrame: ({ engine }: { engine?: { id: string } }) => <p data-testid="frame">{engine?.id ?? 'none'}</p> }));
 vi.mock('./AppEditorDialog', () => ({ AppEditorDialog: () => null }));

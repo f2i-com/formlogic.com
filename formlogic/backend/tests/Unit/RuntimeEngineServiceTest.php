@@ -31,9 +31,61 @@ class RuntimeEngineServiceTest extends TestCase
     public function testDefaultPolicyIsWebPythonOnly(): void
     {
         $this->assertSame(
-            ['revision' => 0, 'default' => 'zipp-web-python', 'allowed' => ['zipp-web-python'], 'hostJsRequireWorker' => false],
+            ['revision' => 0, 'default' => 'zipp-web-python', 'allowed' => ['zipp-web-python'], 'hostJsRequireWorker' => false, 'torch' => true],
             Engines::defaults()
         );
+    }
+
+    // ── torch ────────────────────────────────────────────────────────────────
+
+    public function testTorchIsAllowedByAPolicyStoredBeforeItAndMustBeABoolean(): void
+    {
+        $this->assertTrue(Engines::validatePolicy(['default' => 'zipp-web-python', 'allowed' => ['zipp-web-python']])['torch']);
+        $this->assertFalse(Engines::validatePolicy(['default' => 'zipp-web-python', 'allowed' => ['zipp-web-python'], 'torch' => false])['torch']);
+        $this->expectException(\InvalidArgumentException::class);
+        Engines::validatePolicy(['default' => 'zipp-web-python', 'allowed' => ['zipp-web-python'], 'torch' => 'no']);
+    }
+
+    public function testAnAppDeclaresTorchOnlyInItsManifestsPythonPackages(): void
+    {
+        $this->assertTrue(Engines::declaresTorch(['manifest.json' => '{"config":{"python":{"packages":[" Torch "]}}}']));
+        $this->assertFalse(Engines::declaresTorch(['manifest.json' => '{"config":{"python":{"packages":[]}}}']));
+        $this->assertFalse(Engines::declaresTorch(['manifest.json' => '{"name":"torch"}', 'logic/main.py' => 'import torch']));
+        $this->assertFalse(Engines::declaresTorch(['manifest.json' => 'not json']));
+        $this->assertFalse(Engines::declaresTorch([]));
+    }
+
+    /** A service whose stored policy is $policy (null: no row). */
+    private function engines(?array $policy): Engines
+    {
+        $statement = $this->createMock(\PDOStatement::class);
+        $statement->method('fetchColumn')->willReturn($policy === null ? false : json_encode($policy));
+        $pdo = $this->createMock(\PDO::class);
+        $pdo->method('prepare')->willReturn($statement);
+        $mysql = $this->createMock(\FormLogic\Database\MySQLConnection::class);
+        $mysql->method('getConnection')->willReturn($pdo);
+        return new Engines($mysql, '/nonexistent/provenance.json');
+    }
+
+    public function testTorchIsRefusedWhereTheSiteOrTheAppTurnsItOffAndNowhereElse(): void
+    {
+        $torch = ['manifest.json' => '{"config":{"python":{"packages":["torch"]}}}', 'logic/main.py' => 'import torch'];
+        $plain = ['manifest.json' => '{}'];
+        $site = ['default' => 'zipp-web-python', 'allowed' => ['zipp-web-python']];
+        $app = ['id' => 'a', 'settings' => []];
+
+        $this->assertNull($this->engines(null)->torchRefusal($app, $torch), 'a site with no stored policy allows it');
+        $this->assertNull($this->engines($site)->torchRefusal($app, $torch));
+        $this->assertStringContainsString('its settings turn off', (string) $this->engines($site)->torchRefusal(['settings' => ['torch' => false]] + $app, $torch));
+        $off = $this->engines($site + ['torch' => false]);
+        $this->assertStringContainsString('this site does not allow', (string) $off->torchRefusal($app, $torch));
+        $this->assertNull($off->torchRefusal($app, $plain), 'an app without torch is never refused');
+        try {
+            $off->assertTorchAllowed($app, $torch);
+            $this->fail('A torch app was served where the site turns it off.');
+        } catch (\RuntimeException $e) {
+            $this->assertSame(403, $e->getCode());
+        }
     }
 
     public function testAValidPolicyRoundTripsWithItsAllowedListInCanonicalOrder(): void

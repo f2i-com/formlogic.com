@@ -10,7 +10,9 @@ App Studio → Screens → **App hosting** hosts a text app bundle with private 
 A **SoftN app** is an app whose interface, private backend and database are its SoftN project,
 with no forms needed (`settings.softnApp: true`). Create one with **Create app → SoftN app**, by
 dropping a `.softn` file on **Apps → Import**, or by asking the chat (its `create_softn_app` tool
-creates the app and takes the person to AI Studio, which builds it from their request). Its first
+creates the app and takes the person to AI Studio, which builds it from their request; an MCP
+client is told to build it with the native project tools, or to send the person to the app's
+workspace). Its first
 version is the working starter (`POST /api/apps/{id}/native/starter`, refused once anything is
 installed) or the uploaded file; both are for members only and open at the app's address until
 the owner changes that.
@@ -20,7 +22,13 @@ changes it with AI Studio, the Visual Builder, a new `.softn` file or the source
 browses and edits the tables in its database; **Settings** chooses who can use it and whether it
 opens at the app's address. While the app is unpublished, a change returned from an editor is
 installed at once; once it is published, changes wait as a draft (kept in this browser) until
-**Publish changes**. Publishing a form-less app is allowed when its database has tables.
+**Publish changes**. App Studio's checklist counts a form-less app's database tables as its data, so it does not ask for a form first.
+
+Building with AI uses the person's default AI (Settings → AI). Where it cannot answer yet, the
+page says why and offers **Use FormLogic Site AI** in one click when the operator offers Site AI,
+beside connecting their own; the Visual Builder and uploads never need AI. The editor's own save
+button takes FormLogic's name for it (**Save changes**, or **Keep changes** once the app is live),
+so the two buttons agree.
 
 ## Choose the right starting point
 
@@ -92,6 +100,10 @@ The ids are `zipp-web-python` (this install's ZIPP engine, and the universal fal
 Administrators set the policy in **Admin → Platform → App engine**: the site default (which may only be a ZIPP engine, so a fallback always exists) and which engines owners may choose from (`zipp-web-python` can never be removed). Host JavaScript additionally needs the app OWNER's account to be verified, one account at a time in **Admin → Users**: that action needs the account's own two-factor auth to be on and the acting administrator's password, it is audited (including a self-verification), and switching that account's two-factor auth off revokes it again. Revoking clears the account's stored host-JavaScript app choices, so re-verifying later never switches it back on by itself.
 
 Owners pick the engine per app in App hosting and Native app hosting, within that policy. An administrator acting as the owner cannot: the endpoint is owner-only, and the choice lives in its own `apps.client_engine` column rather than in `apps.settings`, so packs, backups, the MCP merge and the acting-as mirror can neither replay nor import it. A stored choice the installed runtime cannot serve yet is kept and clamped at read time; the settings screen shows what actually runs and why.
+
+#### torch
+
+A Python app can use torch by declaring it in its manifest (`"config": { "python": { "packages": ["torch"] } }`). torch runs in each visitor's browser, on their device's CPU (ZIPP's torch, fetched once per page for an app that declares it); it never runs on this server, and a hosted app's backend is JavaScript only. **Admin → Platform → App engine → Allow torch in apps** turns it off for every app on the site (`torch: false` in the engine policy; a policy stored before the flag allows it), and an owner can turn it off for one app in its engine settings (`apps.settings.torch: false`). Where it is off, a version that declares torch is refused when it is saved or published, with the reason, and an app already installed with it is not served (`403`) until it is allowed again or the declaration is removed.
 
 #### Two runtime documents
 

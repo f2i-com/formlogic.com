@@ -31,6 +31,7 @@ export function AppCreateStart() {
   const isDemo = useAuthStore((s) => !!s.user?.isDemo);
   const [aiReady, setAiReady] = useState(false);
   const [aiChecked, setAiChecked] = useState(false);
+  const [aiReason, setAiReason] = useState<string | null>(null);
   // A forms app (the App Studio), or a hosted SoftN app: a website or web app with its own
   // backend and database. /apps/new?type=softn opens on the second.
   const [searchParams] = useSearchParams();
@@ -53,6 +54,7 @@ export function AppCreateStart() {
       (res) => {
         if (cancelled) return;
         setAiReady(res.ready);
+        setAiReason(res.ready ? null : res.reason ?? null);
         setAiChecked(true);
 
       },
@@ -65,12 +67,14 @@ export function AppCreateStart() {
     };
   }, []);
 
-  const recheck = async () => {
+  const recheck = async (quiet = false) => {
     if (rechecking) return;
     setRechecking(true);
     try {
       const res = await getAiReadiness({ fresh: true });
       setAiReady(res.ready);
+      setAiReason(res.ready ? null : res.reason ?? null);
+      if (quiet) return;
       if (res.ready) {
         toast.success('AI connected', 'Your default AI is ready — the studio can now plan and build with you.');
 
@@ -156,7 +160,7 @@ export function AppCreateStart() {
 
             {!aiReady && <details className="mt-5 rounded-xl border border-gray-200 dark:border-slate-700 p-4">
               <summary className="cursor-pointer text-sm font-medium text-gray-700 dark:text-slate-200">Optional: connect an AI copilot</summary>
-              <div className="mt-4"><ConnectAiDoors /></div>
+              <div className="mt-4"><ConnectAiDoors onConnected={() => recheck(true)} /></div>
               <Button className="mt-3" variant="secondary" onClick={() => void recheck()} isLoading={rechecking} leftIcon={<RefreshCw className="h-4 w-4" />}>Check connection</Button>
             </details>}
             <section className="mt-6 rounded-2xl border border-gray-200/80 bg-white p-5 shadow-sm dark:border-slate-700/60 dark:bg-slate-900 sm:p-6">
@@ -172,7 +176,7 @@ export function AppCreateStart() {
                 <legend className="mb-2 text-sm font-semibold text-gray-700 dark:text-slate-200">What kind of app?</legend>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {([['forms', 'Forms app', 'Collect and manage records with forms, screens, automations and roles.', ClipboardList], ['softn', 'SoftN app', 'A website or web app with its own pages, backend and database.', AppWindow]] as const).map(([value, label, hint, Icon]) => (
-                    <label key={value} className={cn('flex cursor-pointer gap-3 rounded-xl border p-3', build === value ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10' : 'border-gray-200 dark:border-slate-700')}>
+                    <label key={value} className={cn('flex cursor-pointer gap-3 rounded-xl border p-3 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-primary-500', build === value ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10' : 'border-gray-200 dark:border-slate-700')}>
                       <input type="radio" name="app-build" value={value} checked={build === value} disabled={creating} onChange={() => setBuild(value)} className="sr-only" />
                       <Icon className={cn('mt-0.5 h-5 w-5 shrink-0', build === value ? 'text-primary-600 dark:text-primary-300' : 'text-gray-400')} aria-hidden="true" />
                       <span><span className="block text-sm font-semibold text-gray-900 dark:text-white">{label}</span><span className="mt-0.5 block text-xs leading-5 text-gray-500 dark:text-slate-400">{hint}</span></span>
@@ -180,7 +184,7 @@ export function AppCreateStart() {
                   ))}
                 </div>
               </fieldset>
-              {build === 'softn' ? <SoftnCreateForm aiReady={aiChecked ? aiReady : null} disabled={isDemo} /> : <div className="space-y-4">
+              {build === 'softn' ? <SoftnCreateForm aiReady={aiChecked ? aiReady : null} aiReason={aiReason} onAiRecheck={() => recheck(true)} disabled={isDemo} /> : <div className="space-y-4">
                 <fieldset>
                   <legend className="mb-2 text-sm font-semibold text-gray-700 dark:text-slate-200">What are you building?</legend>
                   <div className="grid grid-cols-2 gap-2">
@@ -227,7 +231,7 @@ export function AppCreateStart() {
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label
                       className={cn(
-                        'relative flex cursor-pointer gap-3 rounded-xl border p-4 transition',
+                        'relative flex cursor-pointer gap-3 rounded-xl border p-4 transition has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-primary-500',
                         formPrivacy === 'plain'
                           ? 'border-primary-400 bg-primary-50/70 ring-2 ring-primary-500/10 dark:border-primary-500/60 dark:bg-primary-500/[0.08]'
                           : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50 dark:border-white/10 dark:hover:border-white/20 dark:hover:bg-white/[0.03]'
@@ -261,7 +265,7 @@ export function AppCreateStart() {
                     <label
                       aria-disabled={isDemo || creating}
                       className={cn(
-                        'relative flex gap-3 rounded-xl border p-4 transition',
+                        'relative flex gap-3 rounded-xl border p-4 transition has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-primary-500',
                         isDemo ? 'cursor-not-allowed border-gray-200 bg-gray-50/70 opacity-65 dark:border-white/10 dark:bg-white/[0.02]' : 'cursor-pointer',
                         !isDemo && formPrivacy === 'private'
                           ? 'border-emerald-400 bg-emerald-50/70 ring-2 ring-emerald-500/10 dark:border-emerald-500/60 dark:bg-emerald-500/[0.08]'

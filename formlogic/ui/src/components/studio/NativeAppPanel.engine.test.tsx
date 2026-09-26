@@ -10,6 +10,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useAuthStore } from '../../stores/authStore';
 
 const { getProject, saveProject, putEngine } = vi.hoisted(() => ({ getProject: vi.fn(), saveProject: vi.fn(), putEngine: vi.fn() }));
+vi.mock('../../hooks/usePublicConfig', () => ({ usePublicConfig: () => ({ plans: { siteAiEnabled: false } }) }));
 vi.mock('../../lib/api', () => ({ api: { getNativeProject: getProject, saveNativeProject: saveProject, putAppEngine: putEngine, getNativeRecords: vi.fn() } }));
 vi.mock('./NativeSourceEditor', () => ({ NativeSourceEditor: () => <textarea /> }));
 vi.mock('./NativeRecordsBrowser', () => ({ NativeRecordsBrowser: () => <p>records</p> }));

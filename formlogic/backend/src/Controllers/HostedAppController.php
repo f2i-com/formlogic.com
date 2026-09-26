@@ -64,6 +64,9 @@ class HostedAppController
             }
             // The engine block again, from the bundle JUST published: a `.py` added or removed changes
             // the server's decision, and the owner's panel mounts its preview on this answer.
+            // A bundle that uses torch where it is off is refused before it is published, and says why.
+            $torch = $this->engines->torchRefusal($app, is_array($body['package']['client'] ?? null) ? $body['package']['client'] : []);
+            if ($torch !== null) throw new \InvalidArgumentException($torch);
             $published = ['deployment' => $this->hosting->publish($app['id'], $body['package'], $body['expectedVersion'])];
             return $published + $this->engineAfterPublish($app['id']);
         });
@@ -107,6 +110,8 @@ class HostedAppController
                 // know the rule or the app is not served at all.
                 $languages = RuntimeEngineService::languagesOf($deployment['client'] ?? []);
                 $this->engines->assertInstalledRuns($languages);
+                // torch, where the site or the app turns it off: the app is not served.
+                $this->engines->assertTorchAllowed($app, $deployment['client'] ?? []);
                 return ['deployment' => $deployment, 'name' => $app['name']] + $this->engineForRuntime($app['id'], $languages);
             }
             $input = $request->getParsedBody();

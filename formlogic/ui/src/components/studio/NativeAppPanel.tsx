@@ -1,8 +1,10 @@
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AppEngineSelect } from './AppEngineSelect';
+import { AppTorchSwitch } from './AppTorchSwitch';
 import { importNativeProject, exportNativeProject, type NativeProject } from '../../lib/nativeHosting';
 import { useAiReady } from '../../hooks/useAiReady';
+import { AiConnectNotice } from '../ai/AiConnectNotice';
 import { DRAFT_KEEPING, useNativeProjectDraft } from './useNativeProjectDraft';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
@@ -24,7 +26,8 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
   const [tab, setTab] = useState<'project'|'screens'|'backend'|'records'>(initialTab);
   const [sourceFile, setSourceFile] = useState('');
   const [screenFile, setScreenFile] = useState('');
-  const aiReady = useAiReady();
+  const ai = useAiReady({ withRecheck: true });
+  const aiReady = ai.ready;
   const input = useRef<HTMLInputElement>(null);
   const control = 'min-h-11 w-full min-w-0 rounded-xl border border-slate-300 bg-white p-3 text-base text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
   // The editor is mounted anew for each chosen entry tab.
@@ -78,7 +81,7 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
         <div className="mt-3 flex flex-wrap gap-2"><Button className="min-h-11" disabled={busy} onClick={recoverDraft}>Recover draft</Button><Button className="min-h-11" variant="secondary" disabled={busy} onClick={discardDraft}>Discard draft</Button></div>
       </div>}
       {/* The editors only return a draft to publish. */}
-      {project && !readOnly && <div className="flex flex-wrap gap-2">{(['builder', 'studio'] as const).map(kind => <Button key={kind} variant="secondary" disabled={busy || (kind === 'studio' && aiReady === false)} title={kind === 'studio' && aiReady === false ? 'Connect an AI in Settings → AI to edit with AI Studio.' : undefined} onClick={() => { try { setEditor({ kind, bundle: exportNativeProject(project) }); } catch { draft.setError('Could not prepare this project for the editor.'); } }}>{kind === 'builder' ? 'Open Visual Builder' : 'Open AI Studio'}</Button>)}{aiReady === false && <p className="basis-full text-xs text-slate-500 dark:text-slate-400">AI Studio needs an AI connection: choose one in Settings → AI. The Visual Builder works without one.</p>}</div>}
+      {project && !readOnly && <div className="flex flex-wrap gap-2">{(['builder', 'studio'] as const).map(kind => <Button key={kind} variant="secondary" disabled={busy || (kind === 'studio' && aiReady === false)} title={kind === 'studio' && aiReady === false ? 'Connect an AI in Settings → AI to edit with AI Studio.' : undefined} onClick={() => { try { setEditor({ kind, bundle: exportNativeProject(project) }); } catch { draft.setError('Could not prepare this project for the editor.'); } }}>{kind === 'builder' ? 'Open Visual Builder' : 'Open AI Studio'}</Button>)}{aiReady === false && <AiConnectNotice className="basis-full text-xs leading-5 text-slate-500 dark:text-slate-400" lead="AI Studio needs an AI connection; the Visual Builder works without one" reason={ai.reason} onConnected={ai.recheck} />}</div>}
       <div role="tablist" aria-label="Native app sections" className="grid grid-cols-2 gap-1 sm:grid-cols-4 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">{(['project','screens','backend','records'] as const).map(value => <button type="button" role="tab" aria-selected={tab === value} key={value} className={`min-h-11 rounded-lg text-sm font-medium capitalize ${tab === value ? 'bg-white text-indigo-700 shadow-sm dark:bg-slate-700 dark:text-indigo-200' : 'text-slate-600 dark:text-slate-300'}`} onClick={() => { setTab(value); }}>{value}</button>)}</div>
       {tab === 'project' && <div className="space-y-4">
         {!readOnly && <><input ref={input} type="file" accept=".softn,.zip" className="hidden" aria-label="Import native app" onChange={event => { void importFile(event.target.files?.[0]); event.target.value = ''; }} />
@@ -89,6 +92,7 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
           <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">The app’s own sign-in keeps its account system intact. FormLogic membership adds a gate for apps without sign-in; configure registration and invitations in Users &amp; roles.</p>
         </>}
         {engine && enginePolicy && <AppEngineSelect appId={app.id} engine={engine} policy={enginePolicy} disabled={busy || readOnly} onChanged={() => void draft.refreshEngine()} />}
+      {enginePolicy && !readOnly && <AppTorchSwitch appId={app.id} policy={enginePolicy} disabled={busy} />}
         {project && <Button variant="secondary" onClick={() => {
           try {
             const bytes = exportNativeProject(project);

@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { resolveDefaultLlm, resolveDefaultLlmTools, TOOLS_UNSUPPORTED } from '../../client-runtime/flows/aiDefault';
-import { EDITOR_AI_TOOLS_VERSION, validateEditorAiToolRequest } from '../../client-runtime/flows/aiToolCalls';
+import { EDITOR_AI_LIMITS, EDITOR_AI_TOOLS_VERSION, validateEditorAiToolRequest } from '../../client-runtime/flows/aiToolCalls';
 import { EDITOR_BRIDGE_PROTOCOL } from '../../lib/softn/protocol';
 import { ArrowLeft, Check, Copy, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '../ui/Button';
@@ -44,6 +44,7 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, a
   const [agent, setAgent] = useState<EditorAgentStatus | null>(null);
   // A brief this editor cannot take (it is older than agentRuns): shown for the owner to paste in.
   const [briefToPaste, setBriefToPaste] = useState<string | null>(null);
+  const [showRequest, setShowRequest] = useState(false);
   const [copied, setCopied] = useState(false);
   const agentWorking = agent?.state === 'running';
   const [error, setError] = useState('');
@@ -107,7 +108,7 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, a
           let ask: (signal: AbortSignal) => Promise<void>;
           if (!structured) {
             // The text request every editor version sends: unchanged.
-            if (kind !== 'studio' || aiRequests.size || !Array.isArray(data.messages) || data.messages.length > 100 || !data.messages.every((m: { role?: unknown; content?: unknown }) => ['system', 'user', 'assistant'].includes(String(m?.role)) && typeof m?.content === 'string') || JSON.stringify(data.messages).length > 1000000) {
+            if (kind !== 'studio' || aiRequests.size || !Array.isArray(data.messages) || data.messages.length > EDITOR_AI_LIMITS.maxMessages || !data.messages.every((m: { role?: unknown; content?: unknown }) => ['system', 'user', 'assistant'].includes(String(m?.role)) && typeof m?.content === 'string') || JSON.stringify(data.messages).length > 1000000) {
               reply(false, 'AI is busy or the request is too large.'); return;
             }
             ask = signal => resolveDefaultLlm({ messages: data.messages, signal, editor: true }).then(result => {
@@ -142,7 +143,7 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, a
       frame.current!.contentWindow!.postMessage({ kind: 'formlogic-editor-connect', protocol: EDITOR_BRIDGE_PROTOCOL, ...(aiTools ? { aiTools: EDITOR_AI_TOOLS_VERSION } : {}), ...(agentRuns ? { agentRuns: EDITOR_AGENT_RUNS_VERSION } : {}) }, location.origin, [channel.port2]);
       const sendBrief = !!brief && agentRuns;
       if (brief && kind === 'studio' && !agentRuns) setBriefToPaste(brief.prompt);
-      void Promise.resolve().then(() => request('open', { bytes: editorBundle(bundle), name, theme: document.documentElement.classList.contains("dark") ? "dark" : "light", ...(sendBrief ? { brief } : {}) })).then(() => { if (!disposed) setReady(true); }).catch(reason => { if (!disposed) setError(reason.message); });
+      void Promise.resolve().then(() => request('open', { bytes: editorBundle(bundle), name, theme: document.documentElement.classList.contains("dark") ? "dark" : "light", saveLabel: applyLabel, ...(sendBrief ? { brief } : {}) })).then(() => { if (!disposed) setReady(true); }).catch(reason => { if (!disposed) setError(reason.message); });
     };
     window.addEventListener('message', receive);
     const timer = setTimeout(() => { if (!port.current && !disposed) setError('The editor could not load. Check that the editor assets are installed on this server.'); }, 25000);
@@ -160,13 +161,18 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, a
   }, []);
   return createPortal(<div role="dialog" aria-modal="true" aria-label={kind === 'builder' ? 'Visual Builder' : 'AI Studio'} className="fixed inset-0 z-[1000] flex h-dvh flex-col bg-white text-slate-900 dark:bg-slate-950 dark:text-white">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-3 dark:border-slate-700 sm:px-5">
-      <div className="flex min-w-0 items-center gap-3"><Button variant="ghost" disabled={busy} onClick={() => { if (!ready || window.confirm(agentWorking ? 'The AI is still building your app. Leave now and the work it has done so far is lost.' : `Return without applying editor changes? Use “${applyLabel}” to keep your work.`)) onClose(); }} leftIcon={<ArrowLeft className="h-4 w-4" />}>Back</Button><div className="min-w-0"><h2 className="truncate text-sm font-semibold">{kind === 'builder' ? 'Visual Builder' : 'AI Studio'} · {name}</h2><p className="text-xs text-slate-500 dark:text-slate-400">Edit and preview here. Review, publish, then test the backend in your app.</p></div></div>
+      <div className="flex min-w-0 items-center gap-3"><Button variant="ghost" disabled={busy} onClick={() => { if (!ready || window.confirm(agentWorking ? 'The AI is still building your app. Leave now and the work it has done so far is lost.' : `Return without applying editor changes? Use “${applyLabel}” to keep your work.`)) onClose(); }} leftIcon={<ArrowLeft className="h-4 w-4" />}>Back</Button><div className="min-w-0"><h2 className="truncate text-sm font-semibold">{kind === 'builder' ? 'Visual Builder' : 'AI Studio'} · {name}</h2><p className="text-xs text-slate-500 dark:text-slate-400">Edit and preview here, then choose “{applyLabel}”. The editor’s preview does not run your app’s backend; your app does.</p></div></div>
       <Button disabled={!ready || busy || aiPending || agentWorking} isLoading={busy} onClick={() => void apply()} leftIcon={<Check className="h-4 w-4" />}>{applyLabel}</Button>
     </header>
     {agent ? <AgentStatusBar status={agent} applyLabel={applyLabel} /> : aiPending && <p role="status" className="border-b border-slate-200 px-4 py-2 text-sm dark:border-slate-700">AI is editing your draft. Wait for it to finish, or choose Stop generating in Studio.</p>}
     {briefToPaste && <div role="note" className="flex flex-wrap items-center gap-3 border-b border-indigo-200 bg-indigo-50 px-4 py-2 text-sm text-indigo-900 dark:border-indigo-500/30 dark:bg-indigo-950/40 dark:text-indigo-100">
       <span className="min-w-0 flex-1">This version of AI Studio does not start from a request yet: paste yours into its AI chat. <span className="text-indigo-700 dark:text-indigo-300">“{briefToPaste.length > 140 ? `${briefToPaste.slice(0, 140)}…` : briefToPaste}”</span></span>
-      <Button size="sm" variant="secondary" leftIcon={<Copy className="h-4 w-4" />} onClick={() => { void navigator.clipboard?.writeText(briefToPaste).then(() => setCopied(true), () => setCopied(false)); }}>{copied ? 'Copied' : 'Copy request'}</Button>
+      <Button size="sm" variant="secondary" leftIcon={<Copy className="h-4 w-4" />} onClick={() => {
+        // No clipboard (a plain-http address) or a refusal: the whole request is shown to copy by hand.
+        if (!navigator.clipboard) { setCopied(false); setShowRequest(true); return; }
+        void navigator.clipboard.writeText(briefToPaste).then(() => setCopied(true), () => { setCopied(false); setShowRequest(true); });
+      }}>{copied ? 'Copied' : 'Copy request'}</Button>
+      {showRequest && <textarea readOnly aria-label="Your request" value={briefToPaste} rows={3} onFocus={event => event.currentTarget.select()} className="basis-full rounded-lg border border-indigo-200 bg-white p-2 text-sm text-slate-800 dark:border-indigo-500/30 dark:bg-slate-900 dark:text-slate-100" />}
       <Button size="sm" variant="ghost" onClick={() => setBriefToPaste(null)}>Dismiss</Button>
     </div>}
     {error && <p role="alert" className="border-b border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-200">{error}</p>}

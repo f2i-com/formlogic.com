@@ -82,6 +82,7 @@ class McpController
         private ?\FormLogic\Services\AppCompositionService $composition = null,
         private ?\FormLogic\Services\PackService $packs = null,
         private ?\FormLogic\Services\AppUserService $appUsers = null,
+        private ?\FormLogic\Services\RuntimeEngineService $engines = null,
     ) {}
 
     // ── Token management (authenticated app owner) ──
@@ -474,6 +475,7 @@ class McpController
             $this->composition,
             $this->packs,
             $this->appUsers,
+            engines: $this->engines,
         );
     }
 

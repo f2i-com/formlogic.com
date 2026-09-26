@@ -58,7 +58,7 @@ it('saves the edited allow-list and adopts the revision the server returns', asy
   await act(async () => toggle('Allow None (host JavaScript, verified accounts)')!.click());
   expect(container.textContent).toContain('unsaved');
   await act(async () => button('Save')!.click());
-  expect(mocks.put).toHaveBeenCalledWith({ default: 'zipp-web-python', allowed: ['zipp-web-python', 'host-js'], hostJsRequireWorker: false });
+  expect(mocks.put).toHaveBeenCalledWith({ default: 'zipp-web-python', allowed: ['zipp-web-python', 'host-js'], hostJsRequireWorker: false, torch: true });
   expect(container.textContent).toContain('revision 4');
   expect(container.textContent).not.toContain('unsaved');
 });
@@ -114,4 +114,15 @@ it('offers a retry rather than an empty policy when the load fails', async () =>
   expect(container.querySelector('#engine-default')).toBeNull();
   await act(async () => button('Try again')!.click());
   expect(container.querySelector('#engine-default')).not.toBeNull();
+});
+
+it('turns torch off for every app, and reads a policy without the flag as allowing it', async () => {
+  mocks.put.mockResolvedValue({ data: { policy: policy({ revision: 4, torch: false }), installed: ['zipp-web-python'], engines: ENGINES } });
+  await mount();
+  const torch = () => [...container.querySelectorAll<HTMLButtonElement>('button[role="switch"]')].find(el => document.getElementById(el.getAttribute('aria-labelledby') ?? '')?.textContent === 'Allow torch in apps')!;
+  expect(torch().getAttribute('aria-checked')).toBe('true');
+  await act(async () => torch().click());
+  await act(async () => button('Save')!.click());
+  expect(mocks.put).toHaveBeenCalledWith(expect.objectContaining({ torch: false }));
+  expect(torch().getAttribute('aria-checked')).toBe('false');
 });

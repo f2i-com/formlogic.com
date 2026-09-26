@@ -35,6 +35,8 @@ class NativeAppController
             // A new SoftN app's first version: the starter project, named after the app. Only
             // for an app with nothing installed (install() refuses expectedVersion 0 otherwise).
             if (($args['operation'] ?? '') === 'starter') {
+                // A forms app hosts a project from App Studio; the starter would take over its address.
+                if (empty($app['settings']['softnApp'])) throw new \InvalidArgumentException('The starter is only for a SoftN app. Add a project to this app from its App Studio instead.');
                 $installed = $this->native->install($app['id'], NativeAppService::starterProject((string) $app['name'], (string) $app['id']), 0);
                 return ['project' => $installed] + $this->engineAfterInstall($app['id'], RuntimeEngineService::languagesOf(NativeAppService::clientFiles($installed)));
             }
@@ -81,6 +83,9 @@ class NativeAppController
             if (!is_array($body) || !is_array($body['project'] ?? null) || !is_int($body['expectedVersion'] ?? null) || $body['expectedVersion'] < 0) throw new \InvalidArgumentException('Provide a project and expectedVersion');
             // The engine block again, from the project JUST installed: a `.py` added or removed
             // changes the server's decision, and the owner's panel shows this answer.
+            // A version that uses torch where it is off is refused before it is installed, and says why.
+            $torch = $this->engines->torchRefusal($app, NativeAppService::clientFiles($body['project']));
+            if ($torch !== null) throw new \InvalidArgumentException($torch);
             $installed = $this->native->install($app['id'], $body['project'], $body['expectedVersion']);
             return ['project' => $installed] + $this->engineAfterInstall($app['id'], RuntimeEngineService::languagesOf(NativeAppService::clientFiles($installed)));
         }, !$readOnly);
@@ -147,6 +152,8 @@ class NativeAppController
                 // install must already know the rule or the app is not served at all.
                 $languages = RuntimeEngineService::languagesOf($client);
                 $this->engines->assertInstalledRuns($languages);
+                // torch, where the site or the app turns it off: the app is not served.
+                $this->engines->assertTorchAllowed($app, $client);
                 $manifest = json_decode($client['manifest.json'], true);
                 $origins = $manifest['config']['server']['allowedOrigins'] ?? [];
                 unset($manifest['server'], $manifest['config']['server']);

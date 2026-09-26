@@ -97,6 +97,7 @@ class RuntimeEngineService
             'default' => self::ZIPP_WEB_PYTHON,
             'allowed' => [self::ZIPP_WEB_PYTHON],
             'hostJsRequireWorker' => false,
+            'torch' => true,
         ];
     }
 
@@ -209,12 +210,20 @@ class RuntimeEngineService
         if (!is_bool($requireWorker)) {
             throw new \InvalidArgumentException('hostJsRequireWorker must be a boolean.');
         }
+        // Whether apps on this site may use Python's torch package. It runs in the visitor's browser
+        // (ZIPP's torch, on their CPU), never on this server; an admin may still keep it off.
+        // Absent in a policy stored before it existed: allowed, as it was.
+        $torch = $data['torch'] ?? true;
+        if (!is_bool($torch)) {
+            throw new \InvalidArgumentException('torch must be a boolean.');
+        }
         return [
             'revision' => $revision,
             'default' => $default,
             // Sorted by the canonical id order so the stored JSON (and the revision) is stable.
             'allowed' => array_values(array_filter(self::ENGINES, static fn (string $e) => isset($clean[$e]))),
             'hostJsRequireWorker' => $requireWorker,
+            'torch' => $torch,
         ];
     }
 
@@ -297,6 +306,65 @@ class RuntimeEngineService
     public static function featuresRun(array $features, array $languages): bool
     {
         return !in_array(self::PYTHON, $languages, true) || in_array(self::PYTHON_LOGIC_FEATURE, $features, true);
+    }
+
+    /** The one Python package a Softn app can declare; it runs in the visitor's browser. */
+    public const TORCH_PACKAGE = 'torch';
+
+    /**
+     * Whether a client bundle declares torch: manifest.json's config.python.packages, which Softn's
+     * runtime reads to load it (an `import torch` it does not declare is refused there).
+     *
+     * @param array<string, mixed> $clientFiles path => source
+     */
+    public static function declaresTorch(array $clientFiles): bool
+    {
+        $manifest = json_decode(is_string($clientFiles['manifest.json'] ?? null) ? $clientFiles['manifest.json'] : '', true);
+        $packages = is_array($manifest) ? ($manifest['config']['python']['packages'] ?? null) : null;
+        if (!is_array($packages)) {
+            return false;
+        }
+        foreach ($packages as $package) {
+            if (is_string($package) && strtolower(trim($package)) === self::TORCH_PACKAGE) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Why this app may not use torch, or null when it may (or does not declare it): the site's
+     * policy, then the app's own setting (settings.torch false turns it off for that app).
+     *
+     * @param array<string, mixed> $app the app row, with its settings
+     * @param array<string, mixed> $clientFiles path => source
+     */
+    public function torchRefusal(array $app, array $clientFiles): ?string
+    {
+        if (!self::declaresTorch($clientFiles)) {
+            return null;
+        }
+        $remove = 'remove "torch" from config.python.packages in manifest.json';
+        if (!$this->readPolicy()['torch']) {
+            return 'This app uses torch, which this site does not allow. To run it here, ' . $remove . ', or ask the site administrator.';
+        }
+        if (($app['settings']['torch'] ?? true) === false) {
+            return "This app uses torch, which its settings turn off. Allow torch in the app's settings, or " . $remove . '.';
+        }
+        return null;
+    }
+
+    /**
+     * {@see torchRefusal} for an app about to be served: it is not served at all.
+     *
+     * @throws \RuntimeException (403)
+     */
+    public function assertTorchAllowed(array $app, array $clientFiles): void
+    {
+        $refusal = $this->torchRefusal($app, $clientFiles);
+        if ($refusal !== null) {
+            throw new \RuntimeException($refusal, 403);
+        }
     }
 
     /**
@@ -606,7 +674,7 @@ class RuntimeEngineService
     public function ownerPolicy(): array
     {
         $policy = $this->readPolicy();
-        return ['default' => $policy['default'], 'allowed' => $policy['allowed'], 'installed' => $this->installedEngines()];
+        return ['default' => $policy['default'], 'allowed' => $policy['allowed'], 'installed' => $this->installedEngines(), 'torch' => $policy['torch']];
     }
 
     /**

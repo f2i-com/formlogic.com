@@ -691,7 +691,8 @@ $container->set(\FormLogic\Controllers\McpController::class, function (Container
         $c->get(\FormLogic\Services\HostedAppService::class),
         $c->get(\FormLogic\Services\AppCompositionService::class),
         $c->get(\FormLogic\Services\PackService::class),
-        $c->get(\FormLogic\Services\AppUserService::class)
+        $c->get(\FormLogic\Services\AppUserService::class),
+        $c->get(\FormLogic\Services\RuntimeEngineService::class)
     );
 });
 // MCP OAuth 2.1: discovery metadata + client registration (DCR/CIMD) + code/refresh grants, so
@@ -968,7 +969,8 @@ $container->set(\FormLogic\Services\ChatToolsService::class, function (Container
         $c->get(\FormLogic\Services\HostedAppService::class),
         $c->get(\FormLogic\Services\AppCompositionService::class),
         $c->get(\FormLogic\Services\PackService::class),
-        $c->get(\FormLogic\Services\AppUserService::class)
+        $c->get(\FormLogic\Services\AppUserService::class),
+        engines: $c->get(\FormLogic\Services\RuntimeEngineService::class)
     );
 });
 // Chat tool grants (plan Phase 6 section 6): per-turn hashed tokens bound to user + desktop

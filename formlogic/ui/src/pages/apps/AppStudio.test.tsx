@@ -45,6 +45,7 @@ const h = vi.hoisted(() => {
   return { app, form };
 });
 
+vi.mock('../../hooks/usePublicConfig', () => ({ usePublicConfig: () => ({ plans: { siteAiEnabled: false } }) }));
 vi.mock('../../lib/api', () => ({
   api: {
     getNativeRecords: vi.fn(async () => ({ data: { installed: false, tables: [] } })),

@@ -27,7 +27,7 @@ export function AdminEnginePolicyCard() {
   const [policy, setPolicy] = useState<EnginePolicy | null>(null);
   const [installed, setInstalled] = useState<ClientEngineId[]>([]);
   const [engines, setEngines] = useState<ClientEngineId[]>([]);
-  const [draft, setDraft] = useState<{ default: ClientEngineId; allowed: ClientEngineId[]; hostJsRequireWorker: boolean } | null>(null);
+  const [draft, setDraft] = useState<{ default: ClientEngineId; allowed: ClientEngineId[]; hostJsRequireWorker: boolean; torch: boolean } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
@@ -36,7 +36,8 @@ export function AdminEnginePolicyCard() {
     setPolicy(next);
     // Coerced, not trusted: the draft is what a save sends back, and the server refuses a
     // non-boolean outright, so an answer missing the flag must not turn into a 400 on save.
-    setDraft({ default: next.default, allowed: [...next.allowed], hostJsRequireWorker: next.hostJsRequireWorker === true });
+    // torch absent (a server from before it) reads as allowed, as that server treats it.
+    setDraft({ default: next.default, allowed: [...next.allowed], hostJsRequireWorker: next.hostJsRequireWorker === true, torch: next.torch !== false });
   }, []);
 
   useEffect(() => {
@@ -88,6 +89,7 @@ export function AdminEnginePolicyCard() {
   const dirty = !!policy && !!draft && (
     policy.default !== draft.default
     || policy.hostJsRequireWorker !== draft.hostJsRequireWorker
+    || (policy.torch !== false) !== draft.torch
     || policy.allowed.join(',') !== draft.allowed.join(',')
   );
 
@@ -163,6 +165,16 @@ export function AdminEnginePolicyCard() {
                 those one at a time in <strong>Users</strong>.
               </p>
             )}
+
+            <div className="rounded-lg border border-gray-200 dark:border-slate-700 px-3 py-2">
+              <Switch
+                checked={draft.torch}
+                disabled={saving}
+                onChange={(on) => setDraft({ ...draft, torch: on })}
+                label="Allow torch in apps"
+                description="Python apps may use torch for machine learning. It runs in each visitor's browser, on their device, never on this server. Off: no app on this site can use it; one that does is not served, and a version that adds it is refused. Owners can also turn it off for their own app."
+              />
+            </div>
 
             <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" onClick={() => void save()} disabled={!dirty || saving} isLoading={saving}>Save</Button>

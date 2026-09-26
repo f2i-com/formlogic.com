@@ -19,6 +19,7 @@ vi.mock('../../client-runtime/flows/aiDefault', () => ({
   getAiReadiness: mocks.readiness,
 }));
 
+vi.mock('../../hooks/usePublicConfig', () => ({ usePublicConfig: () => ({ plans: { siteAiEnabled: false } }) }));
 vi.mock('../../lib/api', () => ({
   api: {
     createApp: mocks.createApp,

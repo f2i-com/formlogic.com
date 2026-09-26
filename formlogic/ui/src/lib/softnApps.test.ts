@@ -5,8 +5,9 @@ const mocks = vi.hoisted(() => ({
   installNativeStarter: vi.fn(),
   saveNativeProject: vi.fn(),
   importNativeProject: vi.fn(),
+  demo: false,
 }));
-vi.mock('./api', () => ({ api: { installNativeStarter: mocks.installNativeStarter, saveNativeProject: mocks.saveNativeProject } }));
+vi.mock('./api', () => ({ api: { installNativeStarter: mocks.installNativeStarter, saveNativeProject: mocks.saveNativeProject, isDemoMode: () => mocks.demo } }));
 vi.mock('./nativeHosting', () => ({ importNativeProject: mocks.importNativeProject }));
 vi.mock('../stores/appStore', () => ({ useAppStore: { getState: () => ({ createApp: mocks.createApp, error: null }) } }));
 
@@ -16,7 +17,8 @@ const app = { id: 'app-1', name: 'Recipes', slug: 'recipes', settings: { softnAp
 const project = { version: 1, files: { 'manifest.json': '{}' }, assets: {}, access: 'members', home: true };
 
 beforeEach(() => {
-  for (const mock of Object.values(mocks)) mock.mockReset();
+  for (const mock of [mocks.createApp, mocks.installNativeStarter, mocks.saveNativeProject, mocks.importNativeProject]) mock.mockReset();
+  mocks.demo = false;
   mocks.createApp.mockResolvedValue(app);
 });
 
@@ -41,6 +43,13 @@ describe('createSoftnApp', () => {
     mocks.importNativeProject.mockRejectedValue(new Error('This app has no native server entry.'));
     await expect(createSoftnApp({ name: 'Coffee', start: { kind: 'upload', file: new File([], 'x.softn') } })).rejects.toThrow('no native server entry');
     expect(mocks.createApp).not.toHaveBeenCalled();
+  });
+
+  it('creates nothing in the shared demo, whose apps stay in the browser', async () => {
+    mocks.demo = true;
+    await expect(createSoftnApp({ name: 'Coffee', start: { kind: 'upload', file: new File([], 'x.softn') } })).rejects.toThrow('available after sign-up');
+    expect(mocks.createApp).not.toHaveBeenCalled();
+    expect(mocks.importNativeProject).not.toHaveBeenCalled();
   });
 
   it('keeps the app and says why when its first version could not be installed', async () => {

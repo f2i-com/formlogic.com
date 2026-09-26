@@ -98,6 +98,9 @@ class ChatToolsService
         private ?PackService $packs = null,
         private ?AppUserService $appUsers = null,
         private ?NativeAppService $native = null,
+        // The site's and the app's torch rules, checked before a native project is installed
+        // (the runtime refuses to serve one either way). Null only in older tests.
+        private ?RuntimeEngineService $engines = null,
     ) {}
 
     // ── Chat-surface entry (subset-restricted) ──────────────────────────────────────────
@@ -382,9 +385,13 @@ class ChatToolsService
                     'version' => $version,
                     'request' => $requestText,
                     'workspaceUrl' => '/apps/' . $appId . '/softn',
-                    'next' => $installError === null
-                        ? 'Created with a working starter. FormLogic takes the person to AI Studio, which builds the app from the request while they watch; do not change its files yourself.'
-                        : 'Created, but its starter could not be installed: ' . $installError,
+                    // Only FormLogic's own chat takes the person to AI Studio with the request; an MCP
+                    // client builds it itself, or sends the person to the workspace to have Studio do it.
+                    'next' => $installError !== null
+                        ? 'Created, but its starter could not be installed: ' . $installError
+                        : ($ctx->source === 'mcp'
+                            ? 'Created with a working starter. Build what was asked: read it with get_native_app_project, then change it with update_native_app_files (a schema change is a new numbered migration listed in manifest.json). Or send the person to ' . '/apps/' . $appId . '/softn' . ', where AI Studio can build it with them.'
+                            : 'Created with a working starter. FormLogic takes the person to AI Studio, which builds the app from the request while they watch; do not change its files yourself.'),
                 ];
                 $ctx->audit('create_softn_app', ['appId' => $appId, 'version' => $version]);
                 break;
@@ -404,7 +411,7 @@ class ChatToolsService
             case 'list_native_app_records': {
                 $id = (string) ($args['appId'] ?? $scopedApp ?? '');
                 $this->assertAppScope($ctx, $id);
-                $this->ownApp($id, $userId);
+                $owned = $this->ownApp($id, $userId);
                 $native = $this->native ??= new NativeAppService();
                 if ($name === 'list_native_app_records') {
                     $ctx->requireScope('apps:read');
@@ -425,6 +432,8 @@ class ChatToolsService
                         $project['files'] = array_merge($project['files'], $args['files']);
                     }
                     if (!is_array($project)) throw new \InvalidArgumentException('Provide the complete native app project');
+                    $torch = $this->engines?->torchRefusal($owned, NativeAppService::clientFiles($project));
+                    if ($torch !== null) throw new \InvalidArgumentException($torch);
                     $saved = $native->install($id, $project, $args['expectedVersion']);
                     $data = ['appId' => $id, 'version' => $saved['version'], 'files' => array_keys($saved['files']), 'access' => $saved['access'], 'home' => $saved['home'] ?? false, 'editorUrl' => '/apps/' . $id . '/studio/screens'];
                     $ctx->audit($name, ['appId' => $id, 'version' => $saved['version']]);
@@ -1189,7 +1198,7 @@ class ChatToolsService
             ['name' => 'set_app_role_connector_grants', 'scope' => 'apps:write', 'description' => 'Replace only a role connector capabilities with the complete explicitly reviewed permissions list; also requires connector:command. Built-in permissions are preserved. Use specific connector commands rather than wildcards. The system Owner role is immutable.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'roleId' => ['type' => 'string'], 'permissions' => ['type' => 'array', 'items' => $obj(['permission' => ['type' => 'string'], 'formId' => ['type' => 'string']], ['permission'])]], ['appId', 'roleId', 'permissions'])],
             ['name' => 'install_aokie_starter', 'scope' => 'apps:write', 'description' => 'Install the bundled Aokie forms, screens and flows as a new app. Requires forms:write and screens:write; non-empty connector grants also require connector:command. Explicit approvedConnectorGrants is mandatory; unapproved grants stay withheld. Honors verified-package policy and form quotas. Then use compose_apps to integrate into an existing app. Native OAIY plugin installation and device pairing are separate steps.', 'inputSchema' => $obj(['approvedConnectorGrants' => ['type' => 'array', 'items' => ['type' => 'string']]], ['approvedConnectorGrants'])],
             ['name' => 'get_app', 'scope' => 'apps:read', 'description' => 'Read an owned app including its settings, custom logic, dashboard and attached form identities. Read before editing or composing.', 'inputSchema' => $obj(['appId' => ['type' => 'string']], ['appId'])],
-            ['name' => 'create_softn_app', 'scope' => 'apps:write', 'description' => 'Create a hosted SoftN app in one step: an app of its own with a working interface, private backend and SQLite database, open at the app’s address. Use it when the person wants a website, tool or web app built for them rather than forms. Put everything they asked for in request, in their words, with any detail they gave: FormLogic takes them to AI Studio, which builds the app from it while they watch. Requires apps and screen editing.', 'inputSchema' => $obj(['name' => ['type' => 'string', 'description' => 'The app name, 1 to 120 characters.'], 'request' => ['type' => 'string', 'description' => 'What to build, in the person’s words: pages, data, behaviour and style. Up to 8,000 characters.'], 'description' => ['type' => 'string', 'description' => 'One sentence shown with the app.']], ['name', 'request'])],
+            ['name' => 'create_softn_app', 'scope' => 'apps:write', 'description' => 'Create a hosted SoftN app in one step: an app of its own with a working interface, private backend and SQLite database, open at the app’s address. Use it when the person wants a website, tool or web app built for them rather than forms. Put everything they asked for in request, in their words, with any detail they gave. In FormLogic’s chat the person is then taken to AI Studio, which builds the app from it while they watch; over MCP, build it with get_native_app_project and update_native_app_files, or send the person to the returned workspaceUrl. Requires apps and screen editing.', 'inputSchema' => $obj(['name' => ['type' => 'string', 'description' => 'The app name, 1 to 120 characters.'], 'request' => ['type' => 'string', 'description' => 'What to build, in the person’s words: pages, data, behaviour and style. Up to 8,000 characters.'], 'description' => ['type' => 'string', 'description' => 'One sentence shown with the app.']], ['name', 'request'])],
             ['name' => 'get_native_app_template', 'scope' => 'apps:read', 'description' => 'Start here to create a portable .softn app with an editable interface, private ZIPP .logic backend and SQLite. Returns a working notes project. Create an app container, customize this project, then publish_native_app_project. Membership is required by default; application access preserves an existing app sign-in.', 'inputSchema' => $obj([])],
             ['name' => 'get_native_app_project', 'scope' => 'apps:read', 'description' => 'Read a native .softn project and its current version. Optional file reads just one source file plus the file list. Backend files are private. Read before changing source; records and server credentials are not part of the project.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'file' => ['type' => 'string']], ['appId'])],
             ['name' => 'publish_native_app_project', 'scope' => 'apps:write', 'description' => 'Install or update a complete native app project: {files:{path:source},assets:{path:base64},access:members|application,home:boolean}. Requires apps and screen editing permission. Backend .logic runs in ZIPP; SQLite records survive updates. Read current version first; expectedVersion=0 only for first installation. This does not publish the parent app to visitors. The interface can then be edited with Visual Builder or AI Studio in FormLogic.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'expectedVersion' => ['type' => 'integer', 'minimum' => 0], 'project' => ['type' => 'object']], ['appId','expectedVersion','project'])],

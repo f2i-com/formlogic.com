@@ -119,6 +119,10 @@ class AppService
         if (array_key_exists('softnApp', $settings) && !is_bool($settings['softnApp'])) {
             unset($settings['softnApp']);
         }
+        // settings.torch: false turns torch off for this app's hosted projects (RuntimeEngineService::torchRefusal).
+        if (array_key_exists('torch', $settings) && !is_bool($settings['torch'])) {
+            unset($settings['torch']);
+        }
         return $settings;
     }
 

@@ -37,11 +37,11 @@ final class NativeAppControllerTest extends TestCase
         return $engines;
     }
 
-    private function fixture(string $access, ?NativeAppService $service = null): array
+    private function fixture(string $access, ?NativeAppService $service = null, array $settings = ['softnApp' => true], ?RuntimeEngineService $engines = null): array
     {
         $apps = $this->createMock(AppService::class);
-        $apps->method('getAppBySlug')->willReturn(['id' => 'notes', 'ownerId' => 'owner', 'name' => 'Notes', 'status' => 'published']);
-        $apps->method('getApp')->willReturn(['id' => 'notes', 'ownerId' => 'owner', 'name' => 'Notes', 'status' => 'published']);
+        $apps->method('getAppBySlug')->willReturn(['id' => 'notes', 'ownerId' => 'owner', 'name' => 'Notes', 'status' => 'published', 'settings' => $settings]);
+        $apps->method('getApp')->willReturn(['id' => 'notes', 'ownerId' => 'owner', 'name' => 'Notes', 'status' => 'published', 'settings' => $settings]);
         $apps->method('isRuntimeVisible')->willReturn(true);
         $users = $this->createMock(AppUserService::class);
         $native = $service ?? $this->createMock(NativeAppService::class);
@@ -53,7 +53,7 @@ final class NativeAppControllerTest extends TestCase
             $native->method('get')->willReturn($project);
             $native->method('project')->willReturn($project);
         }
-        return [new NativeAppController($apps, $users, $native, $this->createMock(PlanService::class), $this->createMock(FlowService::class), $this->engines()), $users, $native];
+        return [new NativeAppController($apps, $users, $native, $this->createMock(PlanService::class), $this->createMock(FlowService::class), $engines ?? $this->engines()), $users, $native];
     }
 
     private function request(string $method, bool $demo = false, string $user = 'owner'): ServerRequestInterface
@@ -347,6 +347,21 @@ final class NativeAppControllerTest extends TestCase
         $this->assertSame(404, $controller->manage($this->request('GET', true, 'someone-else'), new Response(), ['id' => 'notes'])->getStatusCode());
     }
 
+    public function testAVersionUsingTorchWhereItIsOffIsRefusedBeforeItIsInstalledAndTheAppIsNotServed(): void
+    {
+        $engines = $this->engines();
+        $engines->method('torchRefusal')->willReturn('This app uses torch, which this site does not allow.');
+        $engines->method('assertTorchAllowed')->willThrowException(new \RuntimeException('This app uses torch, which this site does not allow.', 403));
+        [$controller, , $native] = $this->fixture('application', null, ['softnApp' => true], $engines);
+        $native->expects($this->never())->method('install');
+        $response = $controller->manage($this->request('PUT')->withParsedBody(['project' => ['files' => []], 'expectedVersion' => 1]), new Response(), ['id' => 'notes']);
+        $this->assertSame(400, $response->getStatusCode());
+        $this->assertStringContainsString('torch', self::body($response)['message']);
+        $served = $controller->runtime($this->request('GET'), new Response(), ['slug' => 'notes']);
+        $this->assertSame(403, $served->getStatusCode());
+        $this->assertStringContainsString('torch', self::body($served)['message']);
+    }
+
     public function testTheOwnerIsToldOperatorRecoveryIsRequiredAndVisitorsAreNot(): void
     {
         $recovery = 'The app needs operator recovery: An update could not be rolled back (the previous update was interrupted at phase migrated). Unfinished: the project metadata backup is missing. Inputs are kept under the installation\'s private/ folder and its staging/previous directories; see private/install.json.';
@@ -546,6 +561,16 @@ final class NativeAppControllerTest extends TestCase
         $this->assertTrue($installed['home']);
         $this->assertSame('members', $installed['access']);
         $this->assertStringContainsString('<Text>Notes</Text>', $installed['files']['ui/main.ui']);
+    }
+
+    public function testTheStarterIsOnlyForASoftnApp(): void
+    {
+        $native = $this->createMock(NativeAppService::class);
+        $native->expects($this->never())->method('install');
+        [$controller] = $this->fixture('members', $native, []);
+        $response = $controller->manage($this->request('POST'), new Response(), ['id' => 'notes', 'operation' => 'starter']);
+        $this->assertSame(400, $response->getStatusCode());
+        $this->assertStringContainsString('SoftN app', self::body($response)['message']);
     }
 
     public function testTheSharedDemoCannotInstallAStarter(): void

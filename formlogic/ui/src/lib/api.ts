@@ -4495,7 +4495,7 @@ class ApiClient {
     return this.request('/admin/engine-policy');
   }
 
-  async adminPutEnginePolicy(policy: { default: ClientEngineId; allowed: ClientEngineId[]; hostJsRequireWorker: boolean }): Promise<ApiResponse<{ policy: EnginePolicy; installed: ClientEngineId[]; engines: ClientEngineId[] }>> {
+  async adminPutEnginePolicy(policy: { default: ClientEngineId; allowed: ClientEngineId[]; hostJsRequireWorker: boolean; torch: boolean }): Promise<ApiResponse<{ policy: EnginePolicy; installed: ClientEngineId[]; engines: ClientEngineId[] }>> {
     return this.request('/admin/engine-policy', { method: 'PUT', body: JSON.stringify(policy) });
   }
 
@@ -4707,6 +4707,8 @@ export interface EnginePolicy {
   default: ClientEngineId;
   allowed: ClientEngineId[];
   hostJsRequireWorker: boolean;
+  /** Whether apps may use Python's torch package (in the visitor's browser). Absent = allowed. */
+  torch?: boolean;
 }
 
 /** What one app runs on, as the server decides it. `stored` is the owner's choice (null = default). */
@@ -4724,6 +4726,8 @@ export interface OwnerEnginePolicy {
   default: ClientEngineId;
   allowed: ClientEngineId[];
   installed: ClientEngineId[];
+  /** false: this site does not allow torch in any app. */
+  torch?: boolean;
 }
 
 export interface AdminUser {

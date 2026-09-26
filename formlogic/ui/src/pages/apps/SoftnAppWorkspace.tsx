@@ -2,8 +2,8 @@
 // running, changes it — with AI Studio, the Visual Builder or a new .softn file — manages the
 // data in its database, and publishes it. One page for what used to take the App Studio's
 // Screens step, a collapsed "Hosting & app tools" section and the native hosting dialog.
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { Check, Code2, Copy, Database, Download, ExternalLink, Globe, Lock, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wand2 } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
@@ -13,13 +13,15 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { AppEditorDialog, type AppEditorKind } from '../../components/studio/AppEditorDialog';
 import type { EditorBrief } from '../../components/studio/editorAgent';
 import { AppEngineSelect } from '../../components/studio/AppEngineSelect';
+import { AppTorchSwitch } from '../../components/studio/AppTorchSwitch';
 import { NativeEditor } from '../../components/studio/NativeAppPanel';
 import { NativeRecordsBrowser } from '../../components/studio/NativeRecordsBrowser';
 import { DRAFT_KEEPING, useNativeProjectDraft } from '../../components/studio/useNativeProjectDraft';
 import { useAiReady } from '../../hooks/useAiReady';
+import { AiConnectNotice } from '../../components/ai/AiConnectNotice';
 import { api } from '../../lib/api';
 import { exportNativeProject, importNativeProject, type NativeProject } from '../../lib/nativeHosting';
-import { projectFromUpload } from '../../lib/softnApps';
+import { isSoftnApp, projectFromUpload } from '../../lib/softnApps';
 import { cn } from '../../lib/utils';
 import { useAppStore } from '../../stores/appStore';
 import { toast } from '../../stores/toastStore';
@@ -27,6 +29,7 @@ import { useUIStore, type SoftnOpen } from '../../stores/uiStore';
 import type { App } from '../../types/app';
 
 type Tab = 'app' | 'data' | 'settings';
+const TABS = [['app', 'App', Globe], ['data', 'Data', Database], ['settings', 'Settings', SettingsIcon]] as const;
 type Opened = { kind: AppEditorKind; bundle: Uint8Array; brief?: EditorBrief };
 
 export function SoftnAppWorkspace() {
@@ -34,11 +37,13 @@ export function SoftnAppWorkspace() {
   const navigate = useNavigate();
   const app = useAppStore(s => s.apps.find(candidate => candidate.id === appId));
   const fetchApps = useAppStore(s => s.fetchApps);
-  const [looked, setLooked] = useState(false);
+  // Which app was looked for on the server: moving to another app's workspace looks again.
+  const [lookedFor, setLookedFor] = useState<string | null>(null);
+  const looked = lookedFor === appId;
   useEffect(() => {
     if (app || looked) return;
-    void fetchApps().finally(() => setLooked(true));
-  }, [app, looked, fetchApps]);
+    void fetchApps().finally(() => setLookedFor(appId));
+  }, [app, looked, appId, fetchApps]);
   if (!app) {
     return <div className="min-h-screen">
       <Header title="SoftN app" back={{ onClick: () => navigate('/apps'), label: 'Back to apps' }} />
@@ -47,6 +52,8 @@ export function SoftnAppWorkspace() {
       </main>
     </div>;
   }
+  // A forms app is managed in its App Studio; this page would install a SoftN starter over it.
+  if (!isSoftnApp(app)) return <Navigate to={`/apps/${app.id}/studio`} replace />;
   return <Workspace key={app.id} app={app} />;
 }
 
@@ -99,7 +106,8 @@ function Workspace({ app }: { app: App }) {
     const next: NativeProject = { ...returned, version, home: project.home, access: project.access };
     draft.edit(next);
     if (!published) {
-      await draft.save({ project: next, confirmConflict: false, notice: 'Saved. The preview shows your changes.' });
+      // A change that did not install is refused to the editor, which stays open and says why.
+      await draft.save({ project: next, confirmConflict: false, notice: 'Saved. The preview shows your changes.', raise: true });
     } else {
       draft.setNotice('Your changes are ready. Publish them to update the live app.');
     }
@@ -150,6 +158,18 @@ function Workspace({ app }: { app: App }) {
     void navigator.clipboard?.writeText(liveUrl).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }, () => undefined);
   };
 
+  // The tabs take the arrow keys, Home and End, as a tab list does.
+  const moveTab = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const order = TABS.map(([value]) => value);
+    const at = order.indexOf(tab);
+    const next = event.key === 'ArrowRight' ? order[(at + 1) % order.length] : event.key === 'ArrowLeft' ? order[(at + order.length - 1) % order.length]
+      : event.key === 'Home' ? order[0] : event.key === 'End' ? order[order.length - 1] : null;
+    if (!next) return;
+    event.preventDefault();
+    setTab(next);
+    document.getElementById(`softn-tab-${next}`)?.focus();
+  };
+
   const leave = (to: string) => { if (!dirty || window.confirm(draft.leaveMessage('Leave without publishing?'))) navigate(to); };
 
   if (editor) {
@@ -178,20 +198,20 @@ function Workspace({ app }: { app: App }) {
       <Messages draft={draft} />
 
       {!ready && !draft.error && <p role="status" className="mt-8 text-sm text-slate-500">Loading your app…</p>}
-      {ready && !project && !readOnly && <Setup app={app} aiReady={ai.ready} initialRequest={softnOpen?.appId === app.id ? softnOpen.brief?.prompt ?? '' : ''}
+      {ready && !project && !readOnly && <Setup app={app} aiReady={ai.ready} aiReason={ai.reason} onAiRecheck={ai.recheck} initialRequest={softnOpen?.appId === app.id ? softnOpen.brief?.prompt ?? '' : ''}
         onInstalled={open => { setSoftnOpen(open); setReloadKey(key => key + 1); }} />}
       {ready && !project && readOnly && <p className="mt-8 text-sm text-slate-500">This app has nothing installed yet.</p>}
 
       {project && <>
-        <div role="tablist" aria-label="App sections" className="mt-5 inline-flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
-          {([['app', 'App', Globe], ['data', 'Data', Database], ['settings', 'Settings', SettingsIcon]] as const).map(([value, label, Icon]) =>
-            <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => setTab(value)}
+        <div role="tablist" aria-label="App sections" onKeyDown={moveTab} className="mt-5 inline-flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
+          {TABS.map(([value, label, Icon]) =>
+            <button key={value} id={`softn-tab-${value}`} type="button" role="tab" aria-selected={tab === value} aria-controls={`softn-panel-${value}`} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)}
               className={cn('inline-flex min-h-10 items-center gap-2 rounded-lg px-4 text-sm font-medium', tab === value ? 'bg-white text-indigo-700 shadow-sm dark:bg-slate-700 dark:text-indigo-200' : 'text-slate-600 dark:text-slate-300')}>
               <Icon className="h-4 w-4" aria-hidden="true" />{label}
             </button>)}
         </div>
 
-        {tab === 'app' && <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        {tab === 'app' && <div role="tabpanel" id="softn-panel-app" aria-labelledby="softn-tab-app" className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
           <section aria-label="Preview" className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2 dark:border-slate-700">
               <span className="truncate text-xs font-medium text-slate-500 dark:text-slate-400">{published ? 'Live app' : 'Preview — only you can see it until you publish'}</span>
@@ -217,7 +237,7 @@ function Workspace({ app }: { app: App }) {
                   onClick={() => { openEditor('studio', { prompt: change.trim(), kind: 'edit' }); setChange(''); }}>Make this change</Button>
                 <Button size="sm" variant="secondary" disabled={ai.ready !== true || busy} onClick={() => openEditor('studio')}>Open AI Studio</Button>
               </div>
-              {ai.ready === false && <AiNotConnected reason={ai.reason} onRecheck={() => void ai.recheck()} />}
+              {ai.ready === false && <AiConnectNotice lead="AI Studio needs an AI connection" reason={ai.reason} onConnected={ai.recheck} />}
               <div className="mt-4 border-t border-slate-100 pt-4 dark:border-white/5">
                 <Button variant="secondary" className="w-full justify-start" disabled={busy} leftIcon={<PencilRuler className="h-4 w-4" />} onClick={() => openEditor('builder')}>Edit visually</Button>
                 <p className="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">Drag in components and change text and styles in the Visual Builder. No AI needed.</p>
@@ -235,12 +255,12 @@ function Workspace({ app }: { app: App }) {
           </aside>}
         </div>}
 
-        {tab === 'data' && <section aria-label="Data" className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:p-5">
+        {tab === 'data' && <section role="tabpanel" id="softn-panel-data" aria-labelledby="softn-tab-data" className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:p-5">
           <p className="mb-4 text-sm leading-6 text-slate-600 dark:text-slate-400">Everything your app stores, table by table. Add, edit and delete records here; your app sees the changes at once. To add a table or a column, ask AI Studio.</p>
           <NativeRecordsBrowser key={`${app.id}:${version}`} appId={app.id} version={version} readOnly={readOnly} openFirstTable />
         </section>}
 
-        {tab === 'settings' && <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        {tab === 'settings' && <div role="tabpanel" id="softn-panel-settings" aria-labelledby="softn-tab-settings" className="mt-4 grid gap-4 lg:grid-cols-2">
           <Panel title="Who can use it" icon={<Users className="h-4 w-4" />}>
             <fieldset disabled={busy || readOnly} className="space-y-2">
               <legend className="sr-only">Who can use it</legend>
@@ -261,6 +281,7 @@ function Workspace({ app }: { app: App }) {
           </Panel>
           {draft.engine && draft.enginePolicy && <Panel title="Engine" icon={<SettingsIcon className="h-4 w-4" />}>
             <AppEngineSelect appId={app.id} engine={draft.engine} policy={draft.enginePolicy} disabled={busy || readOnly} onChanged={() => void draft.refreshEngine()} />
+            <div className="mt-4"><AppTorchSwitch appId={app.id} policy={draft.enginePolicy} disabled={busy || readOnly} /></div>
           </Panel>}
           <Panel title="More tools" icon={<Code2 className="h-4 w-4" />}>
             <div className="flex flex-col items-start gap-1">
@@ -277,7 +298,7 @@ function Workspace({ app }: { app: App }) {
 }
 
 /** An app with nothing installed: the three ways to start, as on "Create app". */
-function Setup({ app, aiReady, initialRequest, onInstalled }: { app: App; aiReady: boolean | null; initialRequest: string; onInstalled: (open: import('../../stores/uiStore').SoftnOpen | null) => void }) {
+function Setup({ app, aiReady, aiReason, onAiRecheck, initialRequest, onInstalled }: { app: App; aiReady: boolean | null; aiReason: string | null; onAiRecheck: () => Promise<unknown>; initialRequest: string; onInstalled: (open: import('../../stores/uiStore').SoftnOpen | null) => void }) {
   const [request, setRequest] = useState(initialRequest);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');
@@ -309,7 +330,7 @@ function Setup({ app, aiReady, initialRequest, onInstalled }: { app: App; aiRead
         <p className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white"><Sparkles className="h-4 w-4 text-indigo-500" />Build it with AI</p>
         <Textarea aria-label="What should the app do?" rows={3} value={request} onChange={event => setRequest(event.target.value)} disabled={aiReady !== true || working} className="mt-2 min-h-20 resize-none" placeholder="Describe the app: its pages, what it stores, how it looks." />
         <Button size="sm" className="mt-2" disabled={aiReady !== true || working || !request.trim()} isLoading={working} onClick={() => void start({ appId: app.id, editor: 'studio', brief: { prompt: request.trim(), kind: 'build' } })}>Build it</Button>
-        {aiReady === false && <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Needs an AI connection (Settings → AI).</p>}
+        {aiReady === false && <AiConnectNotice lead="Building with AI needs an AI connection" reason={aiReason} onConnected={onAiRecheck} />}
       </div>
       <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
         <p className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white"><PencilRuler className="h-4 w-4 text-indigo-500" />Start from a working app</p>
@@ -347,12 +368,6 @@ function Messages({ draft }: { draft: ReturnType<typeof useNativeProjectDraft> }
       <div className="mt-3 flex flex-wrap gap-2"><Button size="sm" disabled={busy} onClick={() => draft.recoverDraft()}>Recover them</Button><Button size="sm" variant="secondary" disabled={busy} onClick={draft.discardDraft}>Discard them</Button></div>
     </div>}
   </div>;
-}
-
-function AiNotConnected({ reason, onRecheck }: { reason: string | null; onRecheck: () => void }) {
-  return <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
-    AI Studio needs an AI connection{reason ? ` (${reason})` : ''}. <Link className="font-medium text-indigo-600 dark:text-indigo-300" to="/settings#ai">Connect one</Link>, then <button type="button" className="font-medium text-indigo-600 dark:text-indigo-300" onClick={onRecheck}>check again</button>.
-  </p>;
 }
 
 function StatusPill({ live }: { live: boolean }) {

@@ -7,6 +7,7 @@ import { ArrowRight, FileUp, PencilRuler, Sparkles } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Textarea } from '../../components/ui/Textarea';
+import { AiConnectNotice } from '../../components/ai/AiConnectNotice';
 import { createSoftnApp, softnWorkspacePath, type SoftnStart } from '../../lib/softnApps';
 import { cn } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
@@ -14,11 +15,25 @@ import { useUIStore } from '../../stores/uiStore';
 
 type Method = 'ai' | 'builder' | 'upload';
 
-export function SoftnCreateForm({ aiReady, disabled = false }: { aiReady: boolean | null; disabled?: boolean }) {
+export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disabled = false }: {
+  aiReady: boolean | null;
+  aiReason?: string | null;
+  /** Check the default AI again (fresh), after the person connects one. */
+  onAiRecheck: () => Promise<unknown> | void;
+  disabled?: boolean;
+}) {
   const navigate = useNavigate();
   const setSoftnOpen = useUIStore(s => s.setSoftnOpen);
   const [name, setName] = useState('');
   const [method, setMethod] = useState<Method>(aiReady === false ? 'builder' : 'ai');
+  // Until the person chooses, the start follows what their AI can do: once the check says it
+  // cannot answer, the form moves off building with AI to a start that works.
+  const [chosen, setChosen] = useState(false);
+  const [seenReady, setSeenReady] = useState(aiReady);
+  if (aiReady !== seenReady) {
+    setSeenReady(aiReady);
+    if (!chosen && aiReady === false && method === 'ai') setMethod('builder');
+  }
   const [request, setRequest] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [creating, setCreating] = useState(false);
@@ -50,8 +65,8 @@ export function SoftnCreateForm({ aiReady, disabled = false }: { aiReady: boolea
   };
 
   const option = (value: Method, icon: React.ReactNode, title: string, hint: string, extra?: string) =>
-    <label className={cn('flex cursor-pointer gap-3 rounded-xl border p-4 transition', method === value ? 'border-primary-400 bg-primary-50/70 ring-2 ring-primary-500/10 dark:border-primary-500/60 dark:bg-primary-500/[0.08]' : 'border-gray-200 hover:border-gray-300 dark:border-white/10 dark:hover:border-white/20')}>
-      <input type="radio" name="softn-start" value={value} checked={method === value} disabled={creating} onChange={() => setMethod(value)} className="sr-only" />
+    <label className={cn('flex cursor-pointer gap-3 rounded-xl border p-4 transition has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-primary-500', method === value ? 'border-primary-400 bg-primary-50/70 ring-2 ring-primary-500/10 dark:border-primary-500/60 dark:bg-primary-500/[0.08]' : 'border-gray-200 hover:border-gray-300 dark:border-white/10 dark:hover:border-white/20')}>
+      <input type="radio" name="softn-start" value={value} checked={method === value} disabled={creating} onChange={() => { setChosen(true); setMethod(value); }} className="sr-only" />
       <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-primary-600 shadow-sm ring-1 ring-gray-200 dark:bg-slate-800 dark:text-primary-300 dark:ring-white/10">{icon}</span>
       <span className="min-w-0">
         <span className="block text-sm font-semibold text-gray-900 dark:text-white">{title}</span>
@@ -68,15 +83,16 @@ export function SoftnCreateForm({ aiReady, disabled = false }: { aiReady: boolea
     <fieldset>
       <legend className="mb-2 block text-xs font-semibold text-gray-600 dark:text-slate-300">How do you want to start?</legend>
       <div className="grid gap-3">
-        {option('ai', <Sparkles className="h-4 w-4" />, 'Describe it, and AI builds it', 'AI Studio builds your app from your description while you watch: its pages, its database and how it looks.', aiReady === false ? 'Connect an AI first (below), or choose another way to start.' : undefined)}
+        {option('ai', <Sparkles className="h-4 w-4" />, 'Describe it, and AI builds it', 'AI Studio builds your app from your description while you watch: its pages, its database and how it looks.', aiReady === false ? 'Needs an AI connection first.' : undefined)}
         {option('builder', <PencilRuler className="h-4 w-4" />, 'Start from a working app and edit it visually', 'A small app with a page, a backend and a database table, opened in the Visual Builder. No AI needed.')}
         {option('upload', <FileUp className="h-4 w-4" />, 'Upload a .softn file', 'An app you already have. Its interface, backend and migrations become the first version.')}
       </div>
     </fieldset>
     {method === 'ai' && <div>
       <label htmlFor="softn-app-request" className="mb-1.5 block text-xs font-semibold text-gray-600 dark:text-slate-300">What should it do?</label>
-      <Textarea id="softn-app-request" value={request} onChange={event => setRequest(event.target.value)} rows={5} maxLength={8000} disabled={creating || disabled || aiBlocked} className="min-h-32 resize-y"
+      <Textarea id="softn-app-request" value={request} onChange={event => { setChosen(true); setRequest(event.target.value); }} rows={5} maxLength={8000} disabled={creating || disabled || aiBlocked} className="min-h-32 resize-y"
         placeholder="e.g. A recipe box: add recipes with ingredients and steps, mark favourites, search by ingredient, and a shopping list. Warm, friendly style." />
+      {aiReady === false && <AiConnectNotice lead="Building with AI needs an AI connection" reason={aiReason} onConnected={onAiRecheck} />}
     </div>}
     {method === 'upload' && <div>
       <input ref={input} type="file" accept=".softn,.zip" className="hidden" aria-label="Choose a .softn file" onChange={event => { setFile(event.target.files?.[0] ?? null); event.target.value = ''; }} />

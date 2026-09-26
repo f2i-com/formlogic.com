@@ -57,9 +57,10 @@ export interface NativeProjectDraft {
   importFile(file: File | undefined, notice?: string): Promise<NativeProject | null>;
   /**
    * Install the draft (or `project`, a draft just made with edit()) as the next version;
-   * returns the installed project, or null (the error is set).
+   * returns the installed project, or null (the error is set). With `raise`, a save that did
+   * not happen throws its reason instead, for a caller that reports it itself (an editor).
    */
-  save(options?: { confirmConflict?: boolean; project?: NativeProject; notice?: string }): Promise<NativeProject | null>;
+  save(options?: { confirmConflict?: boolean; project?: NativeProject; notice?: string; raise?: boolean }): Promise<NativeProject | null>;
   /** Drop the open draft and its checkpoint, back to the installed version. */
   revert(): void;
   /** Re-read the engine block after the owner changed their choice. */
@@ -113,6 +114,10 @@ export function useNativeProjectDraft(app: { id: string; slug: string; name: str
   const onInstalled = useRef(options.onInstalled);
   useLayoutEffect(() => { onInstalled.current = options.onInstalled; });
 
+  // Read by a reload (after the source editor installed a version): an open draft is kept, and
+  // compared with what is installed now, rather than replaced by it.
+  const dirtyNow = useRef(false);
+  useLayoutEffect(() => { dirtyNow.current = dirty; }, [dirty]);
   useEffect(() => {
     let cancelled = false; alive.current = true;
     void api.getNativeProject(app.id).then(result => {
@@ -121,9 +126,10 @@ export function useNativeProjectDraft(app: { id: string; slug: string; name: str
       if (typeof result.data?.readOnly === 'boolean') setServerReadOnly(result.data.readOnly);
       setEngine(result.data?.engine); setEnginePolicy(result.data?.enginePolicy);
       if (result.error) setError(result.error);
-      if (result.data?.project) { setProject(result.data.project); setVersion(result.data.project.version); installed.current = result.data.project; }
-      // A read-only editor has no draft to offer back.
-      if (!result.error && !(result.data?.readOnly ?? isDemo)) setRecoverable(drafts.read());
+      const keepDraft = dirtyNow.current;
+      if (result.data?.project) { if (!keepDraft) setProject(result.data.project); setVersion(result.data.project.version); installed.current = result.data.project; }
+      // A read-only editor has no draft to offer back; an open draft's checkpoint is its own.
+      if (!result.error && !keepDraft && !(result.data?.readOnly ?? isDemo)) setRecoverable(drafts.read());
     });
     return () => { cancelled = true; alive.current = false; };
   }, [app.id, drafts, isDemo, options.reloadKey]);
@@ -219,15 +225,22 @@ export function useNativeProjectDraft(app: { id: string; slug: string; name: str
       return null;
     } finally { lock.current = false; if (alive.current) setBusy(false); }
   }
-  async function save({ confirmConflict = true, project: given, notice: message = 'Installed. The app uses its private SQLite database and ZIPP backend. Existing records were preserved.' }: { confirmConflict?: boolean; project?: NativeProject; notice?: string } = {}): Promise<NativeProject | null> {
+  async function save({ confirmConflict = true, project: given, notice: message = 'Installed. The app uses its private SQLite database and ZIPP backend. Existing records were preserved.', raise = false }: { confirmConflict?: boolean; project?: NativeProject; notice?: string; raise?: boolean } = {}): Promise<NativeProject | null> {
     const project = given ?? current.current;
-    if (!project || lock.current || !ready || readOnly) return null;
+    if (!project || lock.current || !ready || readOnly) {
+      if (raise) throw new Error(readOnly ? 'This app is read-only.' : 'The app is busy. Try again in a moment.');
+      return null;
+    }
     if (confirmConflict && conflict && !window.confirm(`Publish this draft? It is based on version ${base}, so publishing replaces version ${version}, which was published after it.`)) return null;
     lock.current = true; setBusy(true); setError(''); setNotice('');
     try {
       const result = await api.saveNativeProject(app.id, project, version);
       if (!alive.current) return null;
-      if (result.error || !result.data) { setError(result.error || 'Installation failed. Your draft is still here.'); return null; }
+      if (result.error || !result.data) {
+        const reason = result.error || 'Installation failed. Your draft is still here.';
+        if (raise) throw new Error(reason);
+        setError(reason); return null;
+      }
       // The published draft's checkpoint is spent; an earlier one still awaiting Recover or Discard is not it, and stays.
       clearTimeout(timer.current); pending.current = null; lastWrite.current = null;
       if (!recoverable) drafts.clear();

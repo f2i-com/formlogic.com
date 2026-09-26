@@ -47,7 +47,12 @@ export function uploadName(project: NativeProject, file: File): string {
  * Create a SoftN app and install its first version. A .softn file is read before the app is
  * created, so a file that is not a SoftN project with a backend creates nothing.
  */
+/** Why the shared demo cannot add a SoftN app. */
+export const SOFTN_NEEDS_ACCOUNT = 'SoftN apps are hosted on the server, so they are available after sign-up.';
+
 export async function createSoftnApp(input: { name: string; description?: string; start: SoftnStart }): Promise<CreatedSoftnApp> {
+  // The demo keeps its apps in this browser; a SoftN app runs on the server, so nothing is created.
+  if (api.isDemoMode()) throw new Error(SOFTN_NEEDS_ACCOUNT);
   const uploaded = input.start.kind === 'upload' ? await projectFromUpload(input.start.file) : null;
   // An upload with no name given is named after the app it carries.
   const name = input.name.trim() || (uploaded && input.start.kind === 'upload' ? uploadName(uploaded, input.start.file) : '');

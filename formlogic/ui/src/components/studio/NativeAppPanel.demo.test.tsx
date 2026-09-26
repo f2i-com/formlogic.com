@@ -10,6 +10,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useAuthStore } from '../../stores/authStore';
 
 const { getProject, saveProject } = vi.hoisted(() => ({ getProject: vi.fn(), saveProject: vi.fn() }));
+vi.mock('../../hooks/usePublicConfig', () => ({ usePublicConfig: () => ({ plans: { siteAiEnabled: false } }) }));
 vi.mock('../../lib/api', () => ({ api: { getNativeProject: getProject, saveNativeProject: saveProject, getNativeRecords: vi.fn() } }));
 vi.mock('./NativeSourceEditor', () => ({ NativeSourceEditor: ({ value, onChange, label, readOnly }: { value: string; onChange(value: string): void; label: string; readOnly?: boolean }) => <textarea aria-label={label} value={value} readOnly={readOnly} onChange={event => onChange(event.target.value)} /> }));
 vi.mock('./NativeRecordsBrowser', () => ({ NativeRecordsBrowser: ({ readOnly }: { readOnly?: boolean }) => <p data-testid="records">{readOnly ? 'read-only records' : 'editable records'}</p> }));
