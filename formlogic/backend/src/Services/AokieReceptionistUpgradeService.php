@@ -76,15 +76,22 @@ final class AokieReceptionistUpgradeService
     private const OPTION_FIELD_TYPES = ['dropdown', 'multiple_choice', 'checkboxes', 'radio'];
 
     /**
-     * Full canonical-screen digests from legacy, publisher-signed Aokie packs.
-     * The sole value below is anchored by repository releases 8ec5f400 and
-     * bd3cb1e5 under publisher fl-packs-2026a. It covers the exact historical
-     * screen, not merely its executable files or structural shape.
+     * Full canonical-screen digests of the code screens in legacy,
+     * publisher-signed Aokie packs, per component. The values are anchored by
+     * repository releases 8ec5f400 (1.0.1) and bd3cb1e5 (1.0.0), which ship
+     * the same three screens, under publisher fl-packs-2026a. Each covers the
+     * exact historical screen, not merely its executable files or structural
+     * shape. An install retrofitted by hand carries these at trust 'owner'
+     * with an empty provenance: an operator who passes one of these digests
+     * accepts them, and each installed screen is still checked against its
+     * own component's digest.
      *
-     * @var string[]
+     * @var array<string,string>
      */
     private const KNOWN_LEGACY_SCREEN_SHA256 = [
-        'a41e8600774bf22277d42299a604da5e5e08ccfa6c1dec5ada732eacc4898af7',
+        'form:receptionist-settings' => 'a41e8600774bf22277d42299a604da5e5e08ccfa6c1dec5ada732eacc4898af7',
+        'form:calls' => '1cef8d084b1cced956a7e1da4769771c12bf39ffba1600ce1d07db7f0b9c32bf',
+        'form:hardware-events' => '1d61d988032094c04891450de4179b9ce0bf626e5cfc011e7fc299aeb425556a',
     ];
 
     private PDO $mysql;
@@ -143,6 +150,7 @@ final class AokieReceptionistUpgradeService
 
         $formPlans = [];
         $legacyScreenAccepted = false;
+        $ownerScreens = false;
         foreach ($source['forms'] as $packFormId => $packForm) {
             if (!isset($installed['formMap'][$packFormId])) {
                 continue;
@@ -157,8 +165,15 @@ final class AokieReceptionistUpgradeService
             );
             if ($plan !== null) {
                 $legacyScreenAccepted = $legacyScreenAccepted || $plan['legacyAccepted'];
+                $ownerScreens = $ownerScreens || $plan['ownerScreen'];
                 $formPlans[$packFormId] = $plan;
             }
+        }
+        // An explicit operator assertion that matches none of the screens it
+        // could apply to is a wrong invocation, not something missing: refuse
+        // it. (Once the screens are the pack's, re-running with it is fine.)
+        if ($acceptedLegacyScreenSha256 !== null && $ownerScreens && !$legacyScreenAccepted) {
+            throw new \RuntimeException('Installed custom screen is not the accepted known legacy Aokie screen');
         }
         $appPlan = $this->planApp($appId, $source, $installed);
         $rolePlans = $this->planRoles($appId, $source, $installed);
@@ -409,6 +424,7 @@ final class AokieReceptionistUpgradeService
             'screen' => null,
             'screenTrust' => null,
             'legacyAccepted' => false,
+            'ownerScreen' => false,
             'hasChanges' => false,
         ];
 
@@ -448,9 +464,10 @@ final class AokieReceptionistUpgradeService
                 'form:' . $packFormId,
                 $installed['installationCatalogId'],
                 $desired,
-                $packFormId === self::SETTINGS_FORM_ID ? $acceptedLegacyScreenSha256 : null
+                $acceptedLegacyScreenSha256 !== null
             );
             if ($ownership === 'owner') {
+                $plan['ownerScreen'] = true;
                 $this->skip("form:{$packFormId} screen", 'owner-authored or not pack-owned; left as it is');
             } elseif ($ownership !== 'same') {
                 $trust = $this->signedTrust($source['pack'], 'form:' . $packFormId, $packForm['customScreen']);
@@ -658,8 +675,9 @@ final class AokieReceptionistUpgradeService
 
     /**
      * Whose screen is installed: 'same' (already the pack's), 'pack' (the
-     * pack installed it, or there is none), 'legacy' (the operator-accepted
-     * historical settings screen) or 'owner' (someone else's; left alone).
+     * pack installed it, or there is none), 'legacy' (an operator-accepted
+     * historical pack screen, exactly as that release shipped it) or 'owner'
+     * (someone else's; left alone).
      *
      * @param array<string,mixed> $screen the installed screen with its _trust/_provenance
      * @param array<string,mixed> $desired
@@ -669,7 +687,7 @@ final class AokieReceptionistUpgradeService
         string $componentKey,
         ?string $installationCatalogId,
         array $desired,
-        ?string $acceptedLegacyScreenSha256
+        bool $acceptLegacy
     ): string {
         $current = $this->screenWithoutMetadata($screen);
         if ($this->sameValue($current, $desired)) {
@@ -687,19 +705,15 @@ final class AokieReceptionistUpgradeService
         if ($vendorOwned || $catalogOwned) {
             return 'pack';
         }
-        if ($acceptedLegacyScreenSha256 !== null) {
-            if ($this->acceptsKnownLegacyScreen(
-                $acceptedLegacyScreenSha256,
-                $this->screenDigest($current),
-                $screen['_trust'] ?? null,
-                $provenance,
-                array_key_exists('_provenance', $screen) && is_array($screen['_provenance'])
-            )) {
-                return 'legacy';
-            }
-            // An explicit operator assertion that does not hold is a wrong
-            // invocation, not something missing: refuse it.
-            throw new \RuntimeException('Installed custom screen is not the accepted known legacy Aokie screen');
+        $pin = self::KNOWN_LEGACY_SCREEN_SHA256[$componentKey] ?? null;
+        if ($acceptLegacy && $pin !== null && $this->acceptsKnownLegacyScreen(
+            $pin,
+            $this->screenDigest($current),
+            $screen['_trust'] ?? null,
+            $provenance,
+            array_key_exists('_provenance', $screen) && is_array($screen['_provenance'])
+        )) {
+            return 'legacy';
         }
         return 'owner';
     }
@@ -868,7 +882,7 @@ final class AokieReceptionistUpgradeService
                 'app:' . self::PACK_APP_ID,
                 $installed['installationCatalogId'],
                 $desired,
-                null
+                false
             );
             if ($ownership === 'owner') {
                 $this->skip('app screen', 'owner-authored or not pack-owned; left as it is');

@@ -371,6 +371,49 @@ final class AokieReceptionistUpgradeTest extends TestCase
         );
     }
 
+    /**
+     * An install retrofitted by hand carries the 1.0.x code screens at trust 'owner'
+     * with an empty provenance: not provably the pack's, so they are skipped - until
+     * the operator accepts the known legacy fingerprint, when each is replaced if it
+     * is byte-for-byte that release's screen for its own component.
+     */
+    public function testAcceptedLegacyScreensOfAHandRetrofittedInstallAreReplaced(): void
+    {
+        $record = $this->bundledRecord();
+        $owner = $this->newUser();
+        $appId = $this->install($this->oldRecord('1.0.1')['pack'], $owner);
+        $formMap = $this->formMap($appId);
+        $codeScreens = ['calls', 'hardware-events', 'receptionist-settings'];
+        foreach ($codeScreens as $packFormId) {
+            self::$pdo->prepare("UPDATE forms SET custom_screen_trust = 'owner', custom_screen_provenance = '{}' WHERE id = ?")
+                ->execute([$formMap[$packFormId]]);
+        }
+
+        $without = self::$upgrade->run($appId, $record, true);
+        $skipped = array_column($without['skipped'], 'item');
+        foreach ($codeScreens as $packFormId) {
+            $this->assertContains("form:{$packFormId} screen", $skipped);
+            $this->assertSame('owner', self::$forms->getForm($formMap[$packFormId])['customScreen']['_trust']);
+        }
+        $this->assertFalse($without['legacyScreenAccepted']);
+
+        $known = 'a41e8600774bf22277d42299a604da5e5e08ccfa6c1dec5ada732eacc4898af7';
+        $with = self::$upgrade->run($appId, $record, true, $known);
+        $this->assertTrue($with['legacyScreenAccepted']);
+        $this->assertSame([], $with['skipped']);
+        foreach ($codeScreens as $packFormId) {
+            $this->assertTrue($with['changes']['forms'][$packFormId]['screen'], $packFormId);
+            $screen = self::$forms->getForm($formMap[$packFormId])['customScreen'];
+            $this->assertSame('verified', $screen['_trust'], $packFormId);
+            $this->assertSame("form:{$packFormId}", $screen['_provenance']['component'] ?? null);
+        }
+
+        // Re-running the same command line is harmless once they are the pack's.
+        $again = self::$upgrade->run($appId, $record, true, $known);
+        $this->assertFalse($again['applied']);
+        $this->assertFalse($again['legacyScreenAccepted']);
+    }
+
     public function testKnownLegacyScreenAcceptancePolicyIsPinnedAndExact(): void
     {
         $known = 'a41e8600774bf22277d42299a604da5e5e08ccfa6c1dec5ada732eacc4898af7';

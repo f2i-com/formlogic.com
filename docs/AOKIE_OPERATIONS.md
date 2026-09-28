@@ -85,6 +85,8 @@ The upgrade brings the app to what a fresh install of the bundled pack (1.2.0) h
 
 Anything the upgrade cannot safely touch is left as it is and listed under `skipped` with the reason: a screen or a flow you wrote under the pack's slug, a form that is no longer in the app, a field whose type you changed. Running it again changes nothing. It refuses only when it cannot tell what to change: the app is not exactly one Aokie installation, or two forms claim the same pack form.
 
+An install whose 1.0.x screens were put in place by hand shows them at owner trust with no provenance, so the upgrade skips them. If they are exactly as that release shipped them, accept them with `--accept-known-legacy-screen-sha256=a41e8600774bf22277d42299a604da5e5e08ccfa6c1dec5ada732eacc4898af7`: the Receptionist Settings, Live Call and Device Setup screens are each replaced only when they match their own pinned 1.0.x digest.
+
 A saved route never moves by itself:
 
 - If Aokie already sends calls to OAIY, Receptionist Settings shows the route as OAIY, marked as an unsaved change. Press **Save** to record it. The follow-ups read the saved route, so they keep calling back missed calls themselves until it is saved.

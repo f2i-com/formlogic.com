@@ -13,7 +13,10 @@ declare(strict_types=1);
  *   php bin/upgrade-aokie-receptionist.php --app=<uuid> --dry-run
  *   php bin/upgrade-aokie-receptionist.php --app=<uuid> --apply
  *   Add --accept-known-legacy-screen-sha256=<sha256> only for a compiled-in,
- *   publisher-anchored legacy pack screen fingerprint.
+ *   publisher-anchored legacy pack screen fingerprint. It accepts the 1.0.x
+ *   Receptionist Settings, Live Call and Device Setup screens of an install
+ *   retrofitted by hand (trust owner, empty provenance), each only when it is
+ *   byte-for-byte that release's screen.
  */
 
 require __DIR__ . '/../vendor/autoload.php';
