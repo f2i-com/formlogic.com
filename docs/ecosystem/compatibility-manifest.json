@@ -1,11 +1,11 @@
 {
   "kind": "formlogic.ecosystemCompatibilityManifest",
   "formatVersion": 1,
-  "generatedAt": "2026-09-26T03:25:18.883Z",
+  "generatedAt": "2026-09-28T19:21:24.745Z",
   "note": "Source revisions and digests of files present in the tree at generation time. Release workflows must recompute digests of the artifacts they actually ship; provenance is not verification of downloaded bytes.",
   "components": {
     "formlogic": {
-      "revision": "3cb883006a0b0d5db9720cf6137797d85c7fba76",
+      "revision": "9fe24120a45fbfe7d9dc2bf977441ca3e5adc196",
       "backupFormat": {
         "current": 2,
         "importable": [
@@ -85,7 +85,7 @@
     "aokie": {
       "path": "docs/contracts/aokie-connector-contract.v1.json",
       "contractVersion": 1,
-      "sha256": "a8b9d4b2b21fa29271c5840c97eaa821a321dc9230fa78809a77ee180bcfe417"
+      "sha256": "07d2589987e19b28da7de1757f5fa4429769cf797d92c07600642ceab739f8a2"
     }
   },
   "nativeRuntime": {

@@ -21,10 +21,10 @@ export function PersonalityCard() {
       />
       {toOaiy ? (
         <p class="hint" data-brief-hint>
-          {"Sent with every call. OAIY gives it to its Front desk agent as the receptionist brief, and the Front desk's own brief (OAIY > Agent > Front desk: /brief.md) and call instructions (OAIY > Agent > Phone) take precedence. Blank = no brief: the Front desk's own is enough."}
+          {"Sent with every call. OAIY gives it to its Front desk agent as the receptionist brief, and the Front desk's own brief (OAIY > Agent > Front desk: /brief.md) and call instructions (OAIY > Agent > Phone) take precedence. Blank = a short built-in note: bookings are requests the team confirms, and what the team needs for a call back."}
         </p>
       ) : (
-        <p class="hint">{"Blank uses Aokie's built-in receptionist persona. Plain English works - treat it like briefing a new hire."}</p>
+        <p class="hint">{"Blank uses a short built-in note about the business. Plain English works - treat it like briefing a new hire."}</p>
       )}
       <h3>Business info the AI may share</h3>
       <textarea

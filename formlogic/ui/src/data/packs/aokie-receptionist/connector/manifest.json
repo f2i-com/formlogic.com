@@ -30,6 +30,7 @@
     "settings.set"
   ],
   "journalledCommands": [
+    "dongle.reset",
     "phone.startPairing",
     "phone.stopPairing",
     "phone.removePaired",

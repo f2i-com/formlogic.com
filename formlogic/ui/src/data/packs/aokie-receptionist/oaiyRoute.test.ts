@@ -121,13 +121,12 @@ describe('Configure Receptionist on the OAIY route', () => {
     }
   });
 
-  it('a blank brief stays blank: no built-in Aokie persona on the Front desk', () => {
+  it('a blank brief sends the default persona: business context written for the Front desk', () => {
     const r = runConfigure({ call_route: 'oaiy' });
-    expect(r.settingsPayload.persona).toBe('');
+    expect(r.settingsPayload.persona).toBe(DEFAULT_PERSONA);
     expect(r.settingsPayload.greeting).toBe('Thanks for calling! How can I help you today?');
     const withInfo = runConfigure({ call_route: 'oaiy', business_info: 'Open 9-5.' });
-    expect(withInfo.settingsPayload.persona.startsWith('BUSINESS INFO - the ONLY facts')).toBe(true);
-    expect(withInfo.settingsPayload.persona).not.toContain('You are Aokie');
+    expect(withInfo.settingsPayload.persona.startsWith(DEFAULT_PERSONA + '\n\nBUSINESS INFO')).toBe(true);
   });
 
   it('records without a route keep the legacy payload and never touch the realtime keys', () => {
@@ -179,10 +178,9 @@ describe('Personalize Caller on the OAIY route', () => {
       },
     });
 
-  it('sends the brief without the built-in persona and names the lookup tool, not the marker', () => {
+  it('sends the brief and names the lookup tool, not the marker', () => {
     const r = run({ call_route: 'oaiy', business_name: 'Pirate Cuts' }, { name: 'Lance Baker', phone: '0491570156' });
-    expect(r.persona.startsWith('You are the phone receptionist for Pirate Cuts.')).toBe(true);
-    expect(r.persona).not.toContain('You are Aokie');
+    expect(r.persona.startsWith('You are the phone receptionist for Pirate Cuts.\n' + DEFAULT_PERSONA)).toBe(true);
     expect(r.persona).toContain('lookup_business_data');
     expect(r.persona).not.toContain('[[LOOKUP');
     expect(r.persona).toContain('request_appointment');
@@ -289,10 +287,41 @@ describe('missed-call callbacks: OAIY takes priority on its route', () => {
   });
 });
 
+describe('OAIY failing mid-call (aokie.hardware.error realtime_failed)', () => {
+  const script = pack.apps[0].customLogic!.scripts.find((s) => s.id === 'aokie-hardware-error')!;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const run = (event: Record<string, unknown>): any => new Function('ctx', `${script.source}; return run(ctx);`)({ event, storage: {} });
+
+  it('logs a readable event and a system note in the call\'s own transcript', () => {
+    const at = '2026-09-29T01:02:03.000Z';
+    const out = run({
+      name: 'aokie.hardware.error', correlationId: 'call_abc12345', idempotencyKey: 'aokie:call_abc12345:hardware.error:v1', occurredAt: at,
+      data: { code: 'realtime_failed', callId: 'call_abc12345', route: 'oaiy', apologized: true, at },
+    });
+    const event = out.effects.find((e: { formKey?: string }) => e.formKey === 'hardware-events');
+    expect(event.answers.event_name).toBe('realtime_failed');
+    expect(event.answers.message).toContain('OAIY stopped answering during the call');
+    expect(event.answers.message).toContain('technical trouble');
+    const note = out.effects.find((e: { formKey?: string }) => e.formKey === 'transcript-turns');
+    expect(note.answers).toMatchObject({ call_id: 'call_abc12345', speaker: 'system', turn_key: 'call_abc12345:realtime_failed', timestamp: at });
+    expect(out.effects.find((e: { type: string }) => e.type === 'ui.toast').message).toContain('OAIY stopped answering a call');
+  });
+
+  it('says when no apology could be spoken, and leaves radio incidents as they were', () => {
+    const silent = run({ name: 'aokie.hardware.error', correlationId: 'call_x', data: { code: 'realtime_failed', callId: 'call_x', apologized: false } });
+    expect(silent.effects[0].answers.message).toContain('no voice to apologise');
+    const radio = run({ name: 'aokie.hardware.error', correlationId: 'radio', data: { message: 'USB read stalled' } });
+    expect(radio.effects.some((e: { formKey?: string }) => e.formKey === 'transcript-turns')).toBe(false);
+    expect(radio.effects[0].answers.message).toBe('USB read stalled');
+  });
+});
+
 describe('dongle.reset', () => {
   const app = pack.apps[0];
   it('is a declared connector command with a Device Admin grant', () => {
     expect((manifest as { commands: string[] }).commands).toContain('dongle.reset');
+    // A physical mutation: journalled, as in the Aokie contract.
+    expect((manifest as { journalledCommands: string[] }).journalledCommands).toContain('dongle.reset');
     expect(app.customLogic!.permissions).toContain('connector.aokie.dongle.reset');
     const admin = app.roles!.find((r) => r.name === 'Device Admin')!;
     expect(admin.permissions).toContainEqual({ packFormId: null, permission: 'connector.aokie.dongle.reset' });

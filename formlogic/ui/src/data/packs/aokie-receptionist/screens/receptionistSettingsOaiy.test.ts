@@ -5,6 +5,7 @@
 // OAIY", and a push that does not land (OAIY away, consent, restart) says so.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AOKIE_RECEPTIONIST_SETTINGS_SCREEN } from './receptionistSettingsScreen';
+import { DEFAULT_PERSONA } from '../persona';
 import {
   flushScreen as flush,
   runScreen,
@@ -113,7 +114,7 @@ describe('Receptionist Settings on the OAIY route', () => {
     expect(calls.submit[0].call_route).toBe('oaiy');
     expect(calls.set).toHaveLength(1);
     expect(calls.set[0]).toEqual({
-      persona: '',
+      persona: DEFAULT_PERSONA,
       greeting: 'Thanks for calling! How can I help you today?',
       aiReceptionist: true,
       realtimeVoiceMode: 'desktop_realtime',

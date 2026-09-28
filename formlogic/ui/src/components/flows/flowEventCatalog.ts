@@ -123,6 +123,7 @@ export const AOKIE_CONNECTOR_COMMANDS = [
   'dongle.restoreDriver',
   'dongle.removeCerts',
   'dongle.diagnostics',
+  'dongle.reset',
   'phone.status',
   'phone.startPairing',
   'phone.stopPairing',

@@ -199,10 +199,10 @@ export function composeAgentPayload(
   const route = String(d.call_route || '').trim();
   const toOaiy = route === 'oaiy';
   // On the OAIY route the persona is the RECEPTIONIST BRIEF: OAIY gives it to
-  // its Front desk agent, whose own brief and call instructions come first. A
-  // blank brief stays blank (Aokie's built-in phone persona would contradict
-  // the Front desk's own identity and call rules).
-  let persona = d.instructions.trim() || (toOaiy ? '' : defaultPersona);
+  // its Front desk agent, whose own brief and call instructions come first.
+  // The default persona is business context written for exactly that (no
+  // name, no sentence rules), so it is the blank-brief fallback on every route.
+  let persona = d.instructions.trim() || defaultPersona;
   const business = d.business_name.trim();
   if (business) persona = 'You are the phone receptionist for ' + business + '.' + (persona ? '\n' + persona : '');
   // BUSINESS INFO grounding - SAME composition as the pack flows

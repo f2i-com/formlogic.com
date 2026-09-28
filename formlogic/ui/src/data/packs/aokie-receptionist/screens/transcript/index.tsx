@@ -53,12 +53,14 @@ function toTurn(r: { id: string; fields: Record<string, unknown>; submittedAt?: 
   };
 }
 
-/** Caller sits right and neutral; the receptionist's own voice (Aokie, or the operator
- *  standing in for it) sits left in the app accent. */
-function speakerMeta(speaker: string): { label: string; side: 'caller' | 'agent'; initial: string } {
+/** Caller sits right and neutral; the receptionist (OAIY's Front desk agent or
+ *  Aokie, or the operator standing in for it) sits left in the app accent; a
+ *  system note (OAIY stopped answering, say) sits centred across the thread. */
+function speakerMeta(speaker: string): { label: string; side: 'caller' | 'agent' | 'system'; initial: string } {
   if (speaker === 'caller') return { label: 'Caller', side: 'caller', initial: 'C' };
   if (speaker === 'operator') return { label: 'You', side: 'agent', initial: 'Y' };
-  return { label: 'Aokie', side: 'agent', initial: 'A' };
+  if (speaker === 'system') return { label: 'Note', side: 'system', initial: '!' };
+  return { label: 'Receptionist', side: 'agent', initial: 'R' };
 }
 
 /** Several forms link to Calls through a field named call_link (follow-up tasks do too),
@@ -74,6 +76,13 @@ function looksLikeTurns(g: RelatedGroup): boolean {
 
 function Bubble({ turn }: { turn: Turn }) {
   const who = speakerMeta(turn.speaker);
+  if (who.side === 'system') {
+    return (
+      <div class="turn system" role="note">
+        <p class="text">{turn.text}</p>
+      </div>
+    );
+  }
   return (
     <div class={`turn ${who.side}`}>
       <span class="avatar" aria-hidden="true">{who.initial}</span>

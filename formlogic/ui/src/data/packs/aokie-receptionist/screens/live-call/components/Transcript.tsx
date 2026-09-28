@@ -7,10 +7,12 @@ import { useEffect, useRef } from 'preact/hooks';
 import type { CallInfo, ConsoleController, Turn } from '../controller';
 import { clock } from '../phone';
 
-function turnMeta(speaker: string): { side: 'caller' | 'agent'; label: string; initial: string } {
+function turnMeta(speaker: string): { side: 'caller' | 'agent' | 'system'; label: string; initial: string } {
   if (speaker === 'caller') return { side: 'caller', label: 'Caller', initial: 'C' };
   if (speaker === 'operator') return { side: 'agent', label: 'You', initial: 'Y' };
-  return { side: 'agent', label: 'Aokie', initial: 'A' };
+  // A system note, e.g. OAIY stopping mid-call: said once, centred, never a bubble.
+  if (speaker === 'system') return { side: 'system', label: 'Note', initial: '!' };
+  return { side: 'agent', label: 'Receptionist', initial: 'R' };
 }
 
 /**
@@ -34,6 +36,13 @@ function emptyReason(s: { turnsCallId: string | null; turnsSeen: number; turnsEr
 function TurnBubble({ turn }: { turn: Turn }) {
   const mt = turnMeta(turn.speaker);
   const time = clock(turn.occurredAt);
+  if (mt.side === 'system') {
+    return (
+      <div class="turn system" role="note">
+        <p class="ttext">{(time ? time + ' - ' : '') + turn.text}</p>
+      </div>
+    );
+  }
   return (
     <div class={'turn ' + mt.side}>
       <span class="tav" aria-hidden="true">{mt.initial}</span>

@@ -91,10 +91,10 @@ export interface SourceService {
   url: string;
 }
 
-/** COPY of aokieReceptionistPersona.ts DEFAULT_PERSONA - keep byte-identical
- *  (the backslash-u2014 escape IS the canonical em dash). */
+/** COPY of persona.ts DEFAULT_PERSONA - keep byte-identical (both are locked
+ *  to docs/contracts/aokie-persona.v1.json). */
 export const DEFAULT_PERSONA =
-  'You are Aokie, a warm, efficient phone receptionist for a small business, speaking out loud on a live phone call. If the caller asks who you are or your name, say you are Aokie, the automated receptionist - never invent a different name for yourself. Reply with ONE short, natural spoken sentence \u2014 no lists, markdown, or emoji. Your job: greet the caller, find out their name and how you can help, capture the key details (what they need, and a callback number or time if relevant), and either book them in or take a message. Ask only ONE clear question at a time and keep the conversation moving. IMPORTANT - only promise what actually happens: you take booking REQUESTS and messages for the team to confirm, so say things like I have noted that down and someone will confirm with you - NEVER say you will send a text, SMS, email, or confirmation yourself, and never claim something is booked, sent, or done, because you cannot send messages and bookings are confirmed by a person afterwards.';
+  'A small business answers this phone. People call to ask a question, to book a time, or to leave a message for the team. Bookings made on a call are requests: someone from the team confirms each one with the caller afterwards. When someone needs a call back, the team needs their name, what it is about, and a good number and time to reach them.';
 
 /** COPY of receptionistPayload.ts AI_GATEWAY_BASE - the desktop AI gateway's
  *  FIXED loopback port; `provider:<id>` picks compose against it. */
@@ -145,9 +145,9 @@ export function composeAgentPayload(
   const route = String(d.call_route || '').trim();
   const toOaiy = route === 'oaiy';
   // On the OAIY route the persona is the RECEPTIONIST BRIEF: OAIY's Front
-  // desk agent reads it after its own brief and call instructions. A blank
-  // brief stays blank (Aokie's built-in phone persona would contradict them).
-  let persona = d.instructions.trim() || (toOaiy ? '' : defaultPersona);
+  // desk agent reads it after its own brief and call instructions. The default
+  // persona is business context written for that, on every route.
+  let persona = d.instructions.trim() || defaultPersona;
   const business = d.business_name.trim();
   if (business) persona = 'You are the phone receptionist for ' + business + '.' + (persona ? '\n' + persona : '');
   // BUSINESS INFO grounding - SAME composition as the pack flows

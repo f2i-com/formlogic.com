@@ -238,21 +238,44 @@ const LOGIC_HARDWARE_ERROR = `function run(ctx) {
   if (ctx.storage && ctx.storage[key]) return {};
   var severity = String(d.severity || 'error');
   if (['info', 'warning', 'error'].indexOf(severity) < 0) severity = 'error';
-  return {
-    effects: [
-      { type: 'formlogic.submitResponse', formKey: 'hardware-events', answers: {
-        event_id: String(ev.idempotencyKey || ''),
-        event_name: String(d.event || ev.name || ''),
-        severity: severity,
-        message: String(d.message || ''),
-        dongle_id: String(d.dongleId || ''),
-        occurred_at: String(ev.occurredAt || ''),
-        payload_json: JSON.stringify(d)
-      } },
-      { type: 'storage.set', key: key, value: 1 },
-      { type: 'ui.toast', level: 'error', message: 'Aokie hardware issue: ' + String(d.message || 'see Device Setup') }
-    ]
-  };
+  var code = String(d.code || '');
+  var message = String(d.message || '');
+  // OAIY's voice failed during a call Aokie had given it (the OAIY route):
+  // Aokie said one honest line when it had a voice to say it in, and hung up.
+  // Say so on the event log AND in the call's own transcript, so the call
+  // does not read as an ordinary short call.
+  var failedCall = code === 'realtime_failed' ? String(d.callId || ev.correlationId || '') : '';
+  if (code === 'realtime_failed') {
+    message = 'OAIY stopped answering during the call and Aokie hung up. '
+      + (d.apologized === true
+        ? 'The caller heard: sorry, technical trouble, please call back shortly.'
+        : 'Aokie had no voice to apologise in, so the caller heard the line drop.');
+  }
+  var effects = [
+    { type: 'formlogic.submitResponse', formKey: 'hardware-events', answers: {
+      event_id: String(ev.idempotencyKey || ''),
+      event_name: String(d.event || code || ev.name || ''),
+      severity: severity,
+      message: message,
+      dongle_id: String(d.dongleId || ''),
+      occurred_at: String(ev.occurredAt || ''),
+      payload_json: JSON.stringify(d)
+    } }
+  ];
+  if (failedCall) {
+    effects.push({ type: 'formlogic.submitResponse', formKey: 'transcript-turns', answers: {
+      call_id: failedCall,
+      turn_key: failedCall + ':realtime_failed',
+      speaker: 'system',
+      text: message,
+      timestamp: String(d.at || ev.occurredAt || '')
+    } });
+  }
+  effects.push({ type: 'storage.set', key: key, value: 1 });
+  effects.push({ type: 'ui.toast', level: 'error', message: failedCall
+    ? 'OAIY stopped answering a call: see its transcript and Device Setup.'
+    : 'Aokie hardware issue: ' + String(message || 'see Device Setup') });
+  return { effects: effects };
 }`;
 
 // ── Flow logic blocks (sandboxed JS expressions; completion value = node output) ───────
@@ -1315,8 +1338,8 @@ ${BUSINESS_INFO_BLOCK_JS}
 // OAIY route (call_route 'oaiy', the default for new records): OAIY on this computer
 // answers. Its voice gateway hears and speaks, the model is the one chosen in OAIY's
 // Engines, and its Front desk agent does the talking, so the push carries ONLY the
-// greeting, the persona as the receptionist brief (no built-in persona fallback: the
-// Front desk has its own) and the four route keys Aokie needs together. The lanes,
+// greeting, the persona as the receptionist brief (the default persona is business
+// context written for that) and the four route keys Aokie needs together. The lanes,
 // the voice and the model are never pushed on this route. 'aokie' = Aokie's own
 // lanes, taken back from any realtime route (realtimeVoiceMode 'legacy'); '' (a
 // record saved before routes existed) leaves the realtime keys alone, as before.
@@ -1332,7 +1355,7 @@ const FLOW_AGENT_CONFIG = `(function () {
   }
   var route = String(cfg.call_route || '').trim();
   var toOaiy = route === 'oaiy';
-  var persona = String(cfg.instructions || '').trim() || (toOaiy ? '' : ${JSON.stringify(DEFAULT_PERSONA)});
+  var persona = String(cfg.instructions || '').trim() || ${JSON.stringify(DEFAULT_PERSONA)};
   var business = String(cfg.business_name || '').trim();
   if (business) persona = 'You are the phone receptionist for ' + business + '.' + (persona ? '\\n' + persona : '');
 ${BUSINESS_INFO_BLOCK_JS}
@@ -2241,11 +2264,10 @@ const FLOW_PERSONALIZE_CALLER = `(function () {
   var rejectReason = blockedCustomer ? 'blocked_customer' : (reject ? 'not_whitelisted' : '');
   // OAIY route: the overlay is the receptionist brief OAIY's Front desk agent
   // reads for THIS caller (Aokie sends it when the call connects, and it wins
-  // over the brief from Configure Receptionist). Same rule as that flow: no
-  // built-in persona fallback, and lookups are the agent's
-  // lookup_business_data tool, never Aokie's spoken [[LOOKUP]] marker.
+  // over the brief from Configure Receptionist). Lookups there are the
+  // agent's lookup_business_data tool, never Aokie's [[LOOKUP]] marker.
   var toOaiy = String(cfg.call_route || '').trim() === 'oaiy';
-  var persona = String(cfg.instructions || '').trim() || (toOaiy ? '' : ${JSON.stringify(DEFAULT_PERSONA)});
+  var persona = String(cfg.instructions || '').trim() || ${JSON.stringify(DEFAULT_PERSONA)};
   var business = String(cfg.business_name || '').trim();
   if (business) persona = 'You are the phone receptionist for ' + business + '.' + (persona ? '\\n' + persona : '');
 ${BUSINESS_INFO_BLOCK_JS}
