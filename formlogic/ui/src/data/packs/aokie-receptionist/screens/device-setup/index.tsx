@@ -23,7 +23,7 @@
 import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { cmd, svc } from './bridge';
-import { asRecord } from './format';
+import { asRecord, resetOutcome, type ResetNote } from './format';
 import type { CompanionDevice, CompanionState, DesktopRow, DongleRow, PhoneRow } from './types';
 import { RuntimeCard } from './components/RuntimeCard';
 import { DonglesCard } from './components/DonglesCard';
@@ -51,6 +51,9 @@ function App() {
   const [events, setEvents] = useState<FlScreenRecord[] | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [busyDriver, setBusyDriver] = useState<string | null>(null);
+  const [resetAccess, setResetAccess] = useState<boolean | null>(null);
+  const [resetting, setResetting] = useState(false);
+  const [resetNote, setResetNote] = useState<ResetNote | null>(null);
   const [busyPhone, setBusyPhone] = useState<string | null>(null);
   const [busyCompanion, setBusyCompanion] = useState<string | null>(null);
   const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null);
@@ -91,6 +94,7 @@ function App() {
   const loadDongles = async () => {
     const allowed = await FormLogic.can('connector.aokie.dongle.list');
     setDongleAccess(allowed);
+    setResetAccess(await FormLogic.can('connector.aokie.dongle.reset'));
     if (!allowed) return;
     try {
       const res = await cmd('dongle.list');
@@ -205,6 +209,7 @@ function App() {
     setCompanion(null);
     setEvents(null);
     setFreshNote('');
+    setResetNote(null);
     setFreshGen((g) => g + 1);
     let isDemo = demoRef.current;
     try {
@@ -250,6 +255,23 @@ function App() {
       setBanner(errText(err));
     }
     setBusyDriver(null);
+  };
+
+  // Software reset of the Bluetooth dongle. The outcome is read, not thrown:
+  // an older plugin's unknown-command answer and the during-a-call refusal
+  // each get their own plain sentence (resetOutcome).
+  const resetDongle = async () => {
+    setResetting(true);
+    setResetNote(null);
+    let note: ResetNote;
+    try {
+      note = resetOutcome(await FormLogic.connector('aokie', 'dongle.reset', {}));
+    } catch (err) {
+      note = { tone: 'bad', text: 'The dongle was not reset: ' + errText(err) };
+    }
+    setResetNote(note);
+    setResetting(false);
+    if (note.tone !== 'bad' && !note.needsUpdate) await Promise.all([loadDongles(), loadPhones()]);
   };
 
   const setPreferred = async (d: DongleRow) => {
@@ -408,6 +430,10 @@ function App() {
         busyDriver={busyDriver}
         onInstallDriver={(d) => { void installDriver(d); }}
         onSetPreferred={(d) => { void setPreferred(d); }}
+        resetAccess={resetAccess}
+        resetting={resetting}
+        resetNote={resetNote}
+        onReset={() => { void resetDongle(); }}
       />
       <PhonesCard
         access={phoneAccess}

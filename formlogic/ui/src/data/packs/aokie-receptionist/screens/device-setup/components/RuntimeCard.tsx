@@ -1,7 +1,8 @@
 /** @jsxImportSource preact */
-// OAIY Desktop presence card: local / remote / not-connected states, the
-// 'Connect OAIY Desktop' host ceremony trigger, and the owner's linked
-// desktop registry (owner-only; a member's refusal simply hides the list).
+// OAIY presence card: local / remote / not-connected states, the 'Connect
+// OAIY' host ceremony trigger, the owner's linked desktops, and - when a
+// linked OAIY has gone quiet - when it was last seen and what it keeps doing
+// while it is away (it answers calls on its own and syncs when it is back).
 import { agoLabel } from '../format';
 import type { DesktopRow } from '../types';
 
@@ -13,27 +14,41 @@ interface Props {
   onConnectDesktop: () => void;
 }
 
+/** The linked desktop seen most recently (the registry's order is not). */
+function newest(desktops: DesktopRow[] | null): DesktopRow | null {
+  let best: DesktopRow | null = null;
+  let bestAt = -1;
+  for (const d of desktops || []) {
+    const at = d.lastSeenAt ? Date.parse(d.lastSeenAt.length === 19 ? d.lastSeenAt.replace(' ', 'T') + 'Z' : d.lastSeenAt) : NaN;
+    const t = isNaN(at) ? 0 : at;
+    if (best === null || t > bestAt) { best = d; bestAt = t; }
+  }
+  return best;
+}
+
 export function RuntimeCard({ demo, presence, desktops, connecting, onConnectDesktop }: Props) {
   if (demo) {
     return (
       <section class="card" id="runtime">
         <h2>Demo bridge</h2>
-        <p class="muted">This is the shared demo, so the hardware below is simulated - OAIY Desktop and real phones are never used here. Use "Simulate incoming call" on the Calls screen to see the receptionist in action.</p>
+        <p class="muted">This is the shared demo, so the hardware below is simulated - OAIY and real phones are never used here. Use "Simulate incoming call" on the Calls screen to see the receptionist in action.</p>
       </section>
     );
   }
   const p = presence;
   const ago = p && p.kind === 'remote' ? agoLabel(p.lastSeenAt) : null;
+  const away = p && p.kind === 'none' ? newest(desktops) : null;
+  const awayAgo = away ? agoLabel(away.lastSeenAt) : null;
   return (
     <section class="card" id="runtime">
       <div class="sectionrow">
-        <h2>OAIY Desktop</h2>
+        <h2>OAIY</h2>
         {p && p.kind === 'local' && <span class="pill ok">Connected on this computer</span>}
         {p && p.kind === 'remote' && <span class="pill accent">{'Running on ' + (p.deviceName || 'another machine')}</span>}
-        {p && p.kind === 'none' && <span class="pill warn">Not connected</span>}
+        {p && p.kind === 'none' && <span class="pill warn">{away ? 'Offline' : 'Not connected'}</span>}
       </div>
       {p === null && (
-        <div class="loadwrap" role="status" aria-label="Checking for OAIY Desktop">
+        <div class="loadwrap" role="status" aria-label="Checking for OAIY">
           <span class="skeleton" />
           <span class="skeleton short" />
         </div>
@@ -46,14 +61,24 @@ export function RuntimeCard({ demo, presence, desktops, connecting, onConnectDes
         </p>
       )}
       {p && p.kind === 'local' && (
-        <p class="muted">Device plugins and hardware connectors are served by the OAIY Desktop on this computer.</p>
+        <p class="muted">OAIY on this computer runs Aokie, the phone bridge: the dongle and phone below are its.</p>
+      )}
+      {away && (
+        <div class="notice warn" role="status" data-offline>
+          <strong>{"OAIY can't be reached." + ' ' + (away.deviceName || 'Your OAIY') + (awayAgo ? ' was last seen ' + awayAgo + '.' : ' has not been seen yet.')}</strong>
+          <span>
+            While it is away it keeps answering calls, lookups and appointment requests on that computer, and syncs its records here when it reconnects. The dongle and phone below can't be read until then.
+          </span>
+        </div>
       )}
       {p && p.kind === 'none' && (
         <div>
-          <p class="muted">OAIY Desktop hosts the phone bridge and hardware connectors. Start it on this computer, then connect it - approving the request on the desktop issues a token bound to this site.</p>
+          {away ? null : (
+            <p class="muted">OAIY runs Aokie, the phone bridge, on the computer the dongle is plugged into. Start OAIY there, then connect it - approving the request in OAIY issues a token bound to this site.</p>
+          )}
           <p class="cta">
             <button type="button" class="btn primary" disabled={connecting} onClick={onConnectDesktop}>
-              {connecting ? 'Waiting for approval on the desktop...' : 'Connect OAIY Desktop'}
+              {connecting ? 'Waiting for approval in OAIY...' : 'Connect OAIY'}
             </button>
           </p>
         </div>

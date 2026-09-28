@@ -16,7 +16,7 @@ import { render } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { ConsoleController } from './controller';
 import { createConsole, rec } from './controller';
-import { hhmm } from './phone';
+import { ago, hhmm } from './phone';
 import { CallStage, LiveCaptions } from './components/CallStage';
 import { Transcript } from './components/Transcript';
 import { RecentCalls } from './components/RecentCalls';
@@ -35,13 +35,16 @@ function PresencePill({ c }: { c: ConsoleController }) {
     );
   }
   let cls = 'pill warn';
-  let label = 'No desktop connected';
+  let label = 'OAIY not connected';
   if (p.kind === 'local') {
     cls = 'pill ok';
-    label = 'Listening - direct bridge';
+    label = 'Listening - OAIY on this computer';
   } else if (p.kind === 'remote') {
     cls = 'pill accent';
     label = 'Listening on ' + (p.deviceName || 'another machine') + ' - relay';
+  } else if (c.offline()) {
+    const seen = ago(c.state.linkedDesktop ? c.state.linkedDesktop.lastSeenAt : null);
+    label = 'OAIY offline' + (seen ? ' - last seen ' + seen : '');
   } else if (c.isDemo()) {
     cls = 'pill';
     label = 'Demo bridge - simulated';
@@ -97,6 +100,20 @@ function Standby({ c }: { c: ConsoleController }) {
           <p class="note">
             {'The receptionist runs on ' + (s.presence.deviceName || 'another machine')
               + '. This console mirrors its calls and relays your controls.'}
+          </p>
+        </div>
+      ) : c.offline() ? (
+        // A real OAIY is linked but away: say when it was last seen and what it
+        // keeps doing - never offer the scripted demo call over a real line.
+        <div class="card callout warn" data-offline>
+          <p class="note lead">
+            <strong>
+              {"OAIY can't be reached. " + (s.linkedDesktop ? s.linkedDesktop.deviceName : 'Your OAIY')
+                + (ago(s.linkedDesktop ? s.linkedDesktop.lastSeenAt : null) ? ' was last seen ' + ago(s.linkedDesktop ? s.linkedDesktop.lastSeenAt : null) + '.' : ' has not been seen yet.')}
+            </strong>
+          </p>
+          <p class="note">
+            While it is away it keeps answering calls, lookups and appointment requests on that computer, and its call records reach this app when it reconnects. This console picks it up again by itself.
           </p>
         </div>
       ) : s.presence.kind !== 'local' ? (

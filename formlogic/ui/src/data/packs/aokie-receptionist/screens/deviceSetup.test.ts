@@ -119,7 +119,7 @@ describe('device setup section screen (TSX)', () => {
     // The desktop card holds its skeleton probe instead of an empty box.
     expect(root.querySelector('#runtime .skeleton')).not.toBeNull();
     // Headings are already up, so the operator sees the card structure.
-    expect(root.querySelector('#dongles h2')?.textContent).toBe('Bluetooth dongles');
+    expect(root.querySelector('#dongles h2')?.textContent).toBe('Bluetooth dongle');
     expect(root.querySelector('#fresh h2')?.textContent).toBe('Start fresh');
   });
 
@@ -295,8 +295,8 @@ describe('device setup section screen (TSX)', () => {
     }));
     await flush();
     expect(unavailable.root.querySelector('#banner')?.textContent)
-      .toContain('FormLogic Desktop is not reachable right now - connect it above, then press Refresh.');
-    expect(unavailable.root.querySelector('#dongles')?.textContent).toContain('No supported dongles detected');
+      .toContain('OAIY is not reachable right now - connect it above, then press Refresh.');
+    expect(unavailable.root.querySelector('#dongles')?.textContent).toContain('No dongle found');
     // The companion admission refusal hides the section honestly.
     expect(unavailable.root.querySelector('#companion')?.textContent)
       .toContain('Your role does not include Companion administration.');

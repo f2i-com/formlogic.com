@@ -1,8 +1,12 @@
 /** @jsxImportSource preact */
 // Bluetooth dongle inventory: live USB scan rows with driver install + the
-// preferred-dongle pick. Gated on the connector.aokie.dongle.list grant
-// (advisory can() - the native bridge and the server stay the trust boundary).
+// preferred-dongle pick, and "Reset the dongle" (dongle.reset: a software
+// reset, no unplugging; refused during a call; an older plugin answers
+// unknown-command and the card says to update it). Gated on the
+// connector.aokie.dongle.list / .reset grants (advisory can() - the native
+// bridge and the server stay the trust boundary).
 import { Loading } from './Loading';
+import type { ResetNote } from '../format';
 import type { DongleRow } from '../types';
 
 interface Props {
@@ -12,9 +16,15 @@ interface Props {
   busyDriver: string | null;
   onInstallDriver: (row: DongleRow) => void;
   onSetPreferred: (row: DongleRow) => void;
+  /** The dongle.reset grant: null = still checking. */
+  resetAccess: boolean | null;
+  resetting: boolean;
+  resetNote: ResetNote | null;
+  onReset: () => void;
 }
 
-export function DonglesCard({ access, rows, enumNote, busyDriver, onInstallDriver, onSetPreferred }: Props) {
+export function DonglesCard(props: Props) {
+  const { access, rows, enumNote, busyDriver, onInstallDriver, onSetPreferred, resetAccess, resetting, resetNote, onReset } = props;
   let body;
   if (access === false) {
     body = <p class="faint">This app has not been granted dongle access.</p>;
@@ -22,11 +32,14 @@ export function DonglesCard({ access, rows, enumNote, busyDriver, onInstallDrive
     body = <Loading />;
   } else if (rows.length === 0) {
     body = (
-      <p class="faint">
-        {enumNote
-          ? 'Live USB scan unavailable: ' + enumNote
-          : 'No supported dongles detected. Plug in the certified USB dongle (or one with the WinUSB driver bound).'}
-      </p>
+      <div class="empty">
+        <p class="empty-title">No dongle found</p>
+        <p class="faint">
+          {enumNote
+            ? 'Live USB scan unavailable: ' + enumNote
+            : 'Plug the supported USB Bluetooth dongle into the computer running OAIY (or one with the WinUSB driver bound), then press Refresh.'}
+        </p>
+      </div>
     );
   } else {
     body = (
@@ -68,8 +81,29 @@ export function DonglesCard({ access, rows, enumNote, busyDriver, onInstallDrive
   }
   return (
     <section class="card" id="dongles">
-      <h2>Bluetooth dongles</h2>
+      <div class="sectionrow">
+        <h2>Bluetooth dongle</h2>
+        {resetAccess ? (
+          <button type="button" class="btn" data-act="reset-dongle" disabled={resetting} onClick={onReset}>
+            {resetting ? 'Resetting...' : 'Reset the dongle'}
+          </button>
+        ) : null}
+      </div>
       {body}
+      {resetAccess ? (
+        <p class="faint footnote">
+          Reset the dongle if calls or the phone link stop working: Aokie restarts it in software, no unplugging, and the phone reconnects by itself. It waits until no call is in progress.
+        </p>
+      ) : resetAccess === false ? (
+        <p class="faint footnote" data-reset-unavailable>
+          This app cannot reset the dongle from here (it has no dongle reset permission). Unplug the dongle and plug it back in instead.
+        </p>
+      ) : null}
+      {resetNote ? (
+        <div class={'notice ' + resetNote.tone} role={resetNote.tone === 'ok' ? 'status' : 'alert'} data-reset-note={resetNote.needsUpdate ? 'update' : resetNote.tone}>
+          {resetNote.text}
+        </div>
+      ) : null}
     </section>
   );
 }

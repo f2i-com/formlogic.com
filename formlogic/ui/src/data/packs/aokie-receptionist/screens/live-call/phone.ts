@@ -62,3 +62,14 @@ export function dur(msSpan: number): string {
   const sec = s % 60;
   return h > 0 ? h + ':' + pad(m) + ':' + pad(sec) : pad(m) + ':' + pad(sec);
 }
+
+/** Coarse age for a stored timestamp ('just now', '12 min ago', '3 h ago'), or null. */
+export function ago(s: string | null | undefined, now: number = Date.now()): string | null {
+  const t = ms(s);
+  if (t === null) return null;
+  const sec = Math.max(0, Math.round((now - t) / 1000));
+  if (sec < 90) return 'just now';
+  if (sec < 3600) return Math.round(sec / 60) + ' min ago';
+  if (sec < 172800) return Math.round(sec / 3600) + ' h ago';
+  return Math.round(sec / 86400) + ' days ago';
+}

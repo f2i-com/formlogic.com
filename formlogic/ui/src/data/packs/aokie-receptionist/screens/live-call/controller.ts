@@ -101,12 +101,18 @@ export interface ConsoleState {
   startedAtMs: number | null;
   /** events.subscribe attached (local bridge); else the stored-turns poll drives the transcript. */
   liveEvents: boolean;
+  /** The owner's linked OAIY seen most recently (desktop.connections.list), for
+   *  'last seen' while it is away. null = none linked, or a member (owner-only). */
+  linkedDesktop: { deviceName: string; lastSeenAt: string | null } | null;
 }
 
 export interface ConsoleController {
   state: ConsoleState;
   isDemo(): boolean;
   remoteMode(): boolean;
+  /** A linked OAIY exists but cannot be reached: the console says when it was
+   *  last seen instead of offering the scripted demo call. */
+  offline(): boolean;
   /** False only during the brief boot window while desktop presence is still
    *  resolving — the standby surface shows a loading spinner until this is true. */
   presenceSettled(): boolean;
@@ -144,6 +150,7 @@ export function createConsole(repaint: () => void): ConsoleController {
     simulating: false,
     startedAtMs: null,
     liveEvents: false,
+    linkedDesktop: null,
   };
   const caps: {
     unsubEvents: (() => Promise<unknown>) | null;
@@ -157,6 +164,7 @@ export function createConsole(repaint: () => void): ConsoleController {
   let currentMisses = 0;
 
   const isDemo = () => state.presence.kind === 'none' && state.demo === true;
+  const offline = () => state.presence.kind === 'none' && !state.demo && state.linkedDesktop !== null;
   const remoteMode = () => state.presence.kind === 'remote';
   // Settled once a real runtime is present, the demo account is confirmed, or the boot
   // grace has elapsed for a genuinely absent desktop. While unsettled the standby shows
@@ -556,6 +564,30 @@ export function createConsole(repaint: () => void): ConsoleController {
     if (id) void FormLogic.host.openRecord('calls', id).catch(() => undefined);
   }
 
+  // The owner's linked desktops, for 'last seen' while OAIY is away. Owner-only:
+  // a member's refusal (or a host without the service lane) leaves it null.
+  // Read at boot and when presence drops to 'none' - never on every tick.
+  function refreshLinkedDesktop(): Promise<void> {
+    const sdk = FormLogic as unknown as { service?: (op: string, input?: Record<string, unknown>) => Promise<FlServiceOutcome> };
+    if (typeof sdk.service !== 'function') return Promise.resolve();
+    return sdk.service('desktop.connections.list', {}).then((out) => {
+      if (!out || out.status !== 'done') return;
+      const list = rec(out.result).connections;
+      let best: { deviceName: string; lastSeenAt: string | null } | null = null;
+      let bestAt = -1;
+      for (const row of Array.isArray(list) ? list : []) {
+        const r = rec(row);
+        const at = typeof r.lastSeenAt === 'string' ? r.lastSeenAt : '';
+        const t = ms(at) || 0;
+        if (best === null || t > bestAt) {
+          best = { deviceName: typeof r.deviceName === 'string' && r.deviceName.trim() ? r.deviceName : 'OAIY', lastSeenAt: at || null };
+          bestAt = t;
+        }
+      }
+      state.linkedDesktop = best;
+    }).catch(() => undefined);
+  }
+
   // ---- grants + boot -------------------------------------------------------
 
   const GRANTS = ['call.current', 'call.answer', 'call.reject', 'call.hangup', 'call.operatorSpeak'];
@@ -578,6 +610,7 @@ export function createConsole(repaint: () => void): ConsoleController {
         state.connectionError = null;
         const prev = state.presence.kind;
         state.presence = p || { kind: 'none' };
+        if (state.presence.kind === 'none' && prev !== 'none') void refreshLinkedDesktop().then(() => repaint());
         if (state.presence.kind === 'local' && prev !== 'local') return attachLiveLanes();
         if (prev === 'local' && state.presence.kind !== 'local') detachLiveLanes();
         return undefined;
@@ -610,7 +643,7 @@ export function createConsole(repaint: () => void): ConsoleController {
       .then((u) => { state.demo = !!(u && u.email === 'demo@formlogic.local'); })
       .catch(() => undefined)
       .then(() => loadGrants())
-      .then(() => Promise.all([refreshCall(), refreshRecent(), refreshCustomers()]))
+      .then(() => Promise.all([refreshCall(), refreshRecent(), refreshCustomers(), refreshLinkedDesktop()]))
       .then(() => attachLiveLanes())
       .then(() => (state.liveEvents ? Promise.resolve() : refreshStoredTurns()))
       .then(() => {
@@ -645,6 +678,7 @@ export function createConsole(repaint: () => void): ConsoleController {
   return {
     state,
     isDemo,
+    offline,
     remoteMode,
     presenceSettled,
     activeCall,

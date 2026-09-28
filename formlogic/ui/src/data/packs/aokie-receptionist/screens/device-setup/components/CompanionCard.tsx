@@ -132,7 +132,7 @@ export function CompanionCard({
               })}
             </ul>
           )}
-          <p class="faint footnote">Routing groups and the session history live in FormLogic Desktop's Companion admin.</p>
+          <p class="faint footnote">Routing groups and the session history live in OAIY's Companion admin.</p>
         </div>
       )}
     </section>

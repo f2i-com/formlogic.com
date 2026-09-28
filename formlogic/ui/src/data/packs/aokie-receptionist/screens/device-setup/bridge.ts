@@ -32,7 +32,7 @@ export function cmd(name: string, payload?: Record<string, unknown>): Promise<Re
     const err = out.error as unknown;
     let m = errorMessage(err) || out.status;
     if (errorCode(err) === 'connector_unavailable') {
-      m = 'FormLogic Desktop is not reachable right now - connect it above, then press Refresh.';
+      m = 'OAIY is not reachable right now - connect it above, then press Refresh.';
     }
     throw new Error(m);
   });
