@@ -35,6 +35,7 @@ describe('custom-screen SDK trust boundary', () => {
     expect(SCREEN_CSP).toContain("connect-src 'none'");
     expect(SCREEN_CSP).toContain("frame-src 'none'");
     expect(SCREEN_CSP).toContain("form-action 'none'");
-    expect(SCREEN_CSP).toContain("navigate-to 'none'");
+    // No directive browsers do not know (each load would log an error for it).
+    expect(SCREEN_CSP).not.toContain('navigate-to');
   });
 });

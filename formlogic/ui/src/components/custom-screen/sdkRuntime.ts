@@ -2,7 +2,8 @@
 
 // CSP applied inside the opaque-origin iframe. It remains useful defense in
 // depth, but self-navigation is deliberately not a security invariant because
-// supported browsers do not consistently implement a navigation directive.
+// supported browsers do not implement a navigation directive: `navigate-to` is
+// left out, as browsers report it as an unknown directive on every load.
 // Sensitive SDK methods are instead denied by server-derived provenance for
 // every unverified imported screen.
 //
@@ -14,7 +15,7 @@ export const SCREEN_CSP =
   "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
   + "img-src data: blob:; font-src data:; media-src data: blob:; "
   + "connect-src 'none'; base-uri 'none'; form-action 'none'; "
-  + "navigate-to 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'";
+  + "frame-src 'none'; object-src 'none'; worker-src 'none'";
 
 export type ScreenTrust = 'owner' | 'verified' | 'untrusted' | undefined;
 
