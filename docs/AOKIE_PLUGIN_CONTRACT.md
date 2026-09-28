@@ -28,7 +28,7 @@ settings.get           settings.set
 
 Post-MVP (declared in the manifest only when implemented): `phone.syncContacts`, `call.takeOver`, `call.resumeBot`, `call.getTranscript`, `call.getRecordingInfo`, `sms.approveDraft`, `sms.rejectDraft`, `retention.get/set`.
 
-Payload/response shapes follow the legacy Tauri commands they wrap (e.g. `sms.send {to, body}` → `{messageId, status:"queued"}`); each command handler validates its payload and rejects unknown fields.
+Payload/response shapes follow the legacy Tauri commands they wrap (e.g. `sms.send {to, body, messageId?}` → `{messageId, status:"queued"}`; see §3 for the `aokie.sms.*` acknowledgements, including a refused send's); each command handler validates its payload and rejects unknown fields.
 
 **Truthful health + safety gates (audit INT-006/PRIV-001):**
 
@@ -124,6 +124,32 @@ Conventions:
   call and ring back with a hold apology). OUTBOUND calls (`direction: "outbound"`, Phase 2) add
   `no_answer` (remote alerted, never picked up) and `failed` (never even alerted); `from` is the
   DIALED number. `durationSeconds`/`durationMs` count from ANSWER.
+- `aokie.sms.sent` data: `{messageId, to, at}` — the phone accepted the text into its outbox (the MAP
+  PushMessage was acknowledged; it is not proof the text left the phone). `aokie.sms.failed` data:
+  `{messageId, to, reason, at}` — the radio gave up on a text it had accepted (the MAP PUT failed or
+  aged out). The correlation id is the `messageId`: the caller's own when `sms.send` carried one (the
+  pack saves the Messages row as `queued` under a pre-minted `message_id` and sends it), else
+  Aokie's `sms_<uuid>`.
+  **A refused `sms.send` is acknowledged too** (2026-09-29). When the command fails before the text
+  reaches the radio — an invalid number or body, an unknown payload field, consent missing, no radio
+  in real mode, the radio thread gone — and it carried a usable `messageId` (1–128 characters from
+  `A–Z a–z 0–9 - _ : .`), the plugin emits `aokie.sms.failed {messageId, to, reason, at, refused:
+  true}` through the same essential outbox, then returns the command error as before. `to` is the
+  value the caller gave (at most 64 characters; `""` when absent), `reason` is the command error's
+  message, and `refused` is the only field added to the radio failure's shape. With no `messageId`,
+  or one that cannot be an id, nothing is emitted: there is no caller row to acknowledge. Refusals by
+  the command journal before the command runs (a missing or reused `requestId`, the journal
+  unavailable, a request whose earlier outcome is unknown) are not acknowledged; in the last case the
+  text may have been sent.
+  One send gets one outcome: a refused text never reaches the radio, so no radio `sms.sent` or
+  `sms.failed` follows it; a text the radio accepted is answered only by the radio's events; and the
+  dev simulator's `sms.sent`, once it is in the outbox, is never followed by a failed. Keys: the
+  radio's events use `aokie:<messageId>:sms.sent:v1` and `aokie:<messageId>:sms.failed:v1`; a refusal
+  uses `aokie:<messageId>:sms.failed.<occurrence>:v1`, one per refused attempt, so a retry under the
+  same `messageId` (refused again, or accepted and then failed by the radio) never collides with it.
+  Consumers match on `data.messageId`: the pack's `sms-delivery-status` flow updates the one `queued`
+  row with that `message_id`, and a later acknowledgement for a row that is no longer queued changes
+  nothing.
 - `aokie.hardware.error` data: `{message, code?, …}` — without a `code` it is a radio incident (a dongle or link error, a failed SMS send; correlation `radio`). Codes: `control_failed` / `speak_failed` (+ `action`, `operationId`) when an accepted call control failed on the radio; `realtime_failed` (+ `callId`, `route: "oaiy"`, `apologized`, `apologizedWith` when it did — `"oaiy"` or `"aokie"` —, `at`; correlation = the call id) when OAIY's voice failed during a call the plugin had given it — the plugin said one honest line if a voice was left (`apologized: true`) and hung up. Consumers must accept codes they do not know.
 - `aokie.call.waiting` data: `{callId, from, at}` (Phase 4, observe-only slice): a SECOND caller
   rang while `callId` was active. `callId` is the ACTIVE call the knock happened during — the
@@ -166,7 +192,7 @@ With `FORMLOGIC_DEV_MODE=1` (or command `settings.set {mockCalls:true}`), the pl
 
 The plugin maintains its own SQLite outbox (table `aokie_outbox`: `id, event_name, correlation_id, idempotency_key UNIQUE, target, payload_json, status pending|sent|failed|dead, attempts, last_error, created_at, updated_at`).
 
-- Every **essential raw record** event (`call.incoming`, `call.answered`, `call.turn.final`, `call.ended`, `sms.received`, `sms.sent`, `hardware.error`) is written to the outbox before emission.
+- Every **essential raw record** event (`call.incoming`, `call.answered`, `call.turn.final`, `call.ended`, `sms.received`, `sms.sent`, `sms.failed`, `hardware.error`) is written to the outbox before emission.
 - **Ack-capable hosts** (Desktop advertising `features: ["eventAck"]` at `plugin.init` — audit INT-003): a written event stays `pending` until the host's `event.ack` notification confirms it was DURABLY journaled; a replay thread re-emits unacknowledged rows on exponential backoff (same `idempotencyKey`, host dedupes), dead-letters after max attempts, prunes acknowledged rows after 7 days (bounded PII retention), and on startup re-delivers anything a crash stranded. Legacy hosts keep the old write-marks-`sent` behaviour.
 - The outbox runs in WAL mode with a busy timeout — the RPC, radio and replay threads each hold their own connection to the same file.
 - Post-MVP, the outbox gains a second target: direct FormLogic API submission (so raw call records survive even with no browser open). The plugin never submits complex business decisions directly — those go through flows.
