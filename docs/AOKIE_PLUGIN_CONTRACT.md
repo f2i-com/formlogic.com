@@ -147,9 +147,12 @@ Conventions:
   radio's events use `aokie:<messageId>:sms.sent:v1` and `aokie:<messageId>:sms.failed:v1`; a refusal
   uses `aokie:<messageId>:sms.failed.<occurrence>:v1`, one per refused attempt, so a retry under the
   same `messageId` (refused again, or accepted and then failed by the radio) never collides with it.
-  Consumers match on `data.messageId`: the pack's `sms-delivery-status` flow updates the one `queued`
-  row with that `message_id`, and a later acknowledgement for a row that is no longer queued changes
-  nothing.
+  Consumers match on `data.messageId`: the pack's `sms-delivery-status` flow updates the one row
+  with that `message_id`. `sent` replaces `queued`, `unconfirmed` and `failed` (a retry under the
+  same `messageId` may go through after a refusal); `failed` replaces `queued` and `unconfirmed`; a
+  second `failed` for the same row changes nothing. A row the phone never acknowledges (a refusal
+  the command journal made before the handler ran, or a plugin that was not running) is marked
+  `unconfirmed` by the pack's `sms-ack-sweep` fifteen minutes after it went to the phone.
 - `aokie.hardware.error` data: `{message, code?, …}` — without a `code` it is a radio incident (a dongle or link error, a failed SMS send; correlation `radio`). Codes: `control_failed` / `speak_failed` (+ `action`, `operationId`) when an accepted call control failed on the radio; `realtime_failed` (+ `callId`, `route: "oaiy"`, `apologized`, `apologizedWith` when it did — `"oaiy"` or `"aokie"` —, `at`; correlation = the call id) when OAIY's voice failed during a call the plugin had given it — the plugin said one honest line if a voice was left (`apologized: true`) and hung up. Consumers must accept codes they do not know.
 - `aokie.call.waiting` data: `{callId, from, at}` (Phase 4, observe-only slice): a SECOND caller
   rang while `callId` was active. `callId` is the ACTIVE call the knock happened during — the
