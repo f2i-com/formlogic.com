@@ -1223,7 +1223,7 @@
     "id": "bundled-aokie-receptionist",
     "slug": "aokie-receptionist",
     "name": "Aokie Receptionist",
-    "description": "An AI phone receptionist powered by FormLogic Desktop and the Aokie Bluetooth phone bridge: live call console with answer/hang-up/speak controls, automatic call, transcript and SMS records, caller lookup, call summaries, SMS reply drafts and follow-up tasks via starter FormLogic Flows. Includes 10 forms and 1 app.",
+    "description": "An AI phone receptionist run by OAIY and the Aokie Bluetooth phone bridge: OAIY answers the calls, and FormLogic keeps the front desk, with a live call console and answer/hang-up/speak controls, automatic call, transcript and SMS records, caller lookup, booking requests, call summaries, SMS reply drafts and follow-up tasks via starter FormLogic Flows. Includes 10 forms and 1 app.",
     "icon": "PhoneCall",
     "tags": [
       "receptionist",
@@ -1243,7 +1243,7 @@
     "featured": true,
     "publisherId": "",
     "publisherName": "FormLogic",
-    "latestVersion": "1.0.2",
+    "latestVersion": "1.1.0",
     "formatVersion": 1,
     "formCount": 10,
     "appCount": 1,
