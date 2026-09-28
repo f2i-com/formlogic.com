@@ -123,6 +123,17 @@ describe('device setup section screen (TSX)', () => {
     expect(root.querySelector('#fresh h2')?.textContent).toBe('Start fresh');
   });
 
+  it('a browser paired directly with OAIY here says so - commands go straight to it, not through a relay', async () => {
+    const { root } = await runScreen(AOKIE_DEVICE_SETUP_SCREEN, mockFormLogic(newCalls(), {
+      presence: () => Promise.resolve({ kind: 'local', runtime: 'oaiy', address: '127.0.0.1:17972' }),
+    }));
+    await flush();
+    const card = root.querySelector('#runtime');
+    expect(card?.querySelector('.pill.ok')?.textContent).toBe('Connected on this computer');
+    expect(card?.textContent).toContain('This browser is paired with OAIY at 127.0.0.1:17972, so phone commands go straight to it, not through a relay.');
+    expect(card?.textContent).not.toContain('relayed to that machine');
+  });
+
   it('renders desktop connections, dongles, phones, policy and endpoints from the mocked reads', async () => {
     const calls = newCalls();
     const { root } = await runScreen(AOKIE_DEVICE_SETUP_SCREEN, mockFormLogic(calls));

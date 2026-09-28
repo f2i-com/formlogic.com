@@ -61,7 +61,12 @@ export function RuntimeCard({ demo, presence, desktops, connecting, onConnectDes
         </p>
       )}
       {p && p.kind === 'local' && (
-        <p class="muted">OAIY on this computer runs Aokie, the phone bridge: the dongle and phone below are its.</p>
+        <p class="muted">
+          {'OAIY on this computer runs Aokie, the phone bridge: the dongle and phone below are its.'
+            + (p.runtime === 'oaiy'
+              ? ' This browser is paired with OAIY' + (p.address ? ' at ' + p.address : '') + ', so phone commands go straight to it, not through a relay.'
+              : '')}
+        </p>
       )}
       {away && (
         <div class="notice warn" role="status" data-offline>

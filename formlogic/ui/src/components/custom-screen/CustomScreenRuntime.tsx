@@ -107,7 +107,9 @@ const SDK_SHIM = `
      *  an unknown/forbidden form. */
     queryRecords: function(formTarget, opts){ return call('queryRecords', { formTarget: String(formTarget == null ? '' : formTarget), opts: opts || {} }); },
     /** Where the app's connector hardware runtime is right now:
-     *  { kind: 'local'|'remote'|'none', deviceName?, lastSeenAt? }. */
+     *  { kind: 'local'|'remote'|'none', runtime?, address?, deviceName?, lastSeenAt? }.
+     *  local = on this computer, commands go to it directly (runtime 'oaiy' when this
+     *  browser is paired with OAIY here); remote = reached through the command relay. */
     presence: function(){ return call('presence'); },
     /** The paired local desktop's AI-sources listing (managed services +
      *  configured providers, capability-tagged) for lane pickers. Resolves an

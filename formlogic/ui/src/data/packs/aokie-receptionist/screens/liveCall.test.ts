@@ -88,6 +88,18 @@ describe('live-call section screen (TSX)', () => {
     expect(root.textContent).toContain('Updates every 10s');
   });
 
+  // Paired straight to OAIY on this computer (Connect your AI): commands go to it
+  // directly, so the console must not claim a relay or offer the demo call.
+  it("a direct OAIY pairing reads as this computer, never as a relay", async () => {
+    const { root } = await runScreen(AOKIE_LIVE_CALL_SCREEN, baseFL({
+      presence: () => Promise.resolve({ kind: 'local', runtime: 'oaiy', address: '127.0.0.1:17972' }),
+    }));
+    await flush();
+    expect(root.querySelector('#presence')?.textContent).toContain('Listening - OAIY on this computer');
+    expect(root.textContent).not.toContain('relay');
+    expect(root.querySelector('[data-act="simulate"]')).toBeNull();
+  });
+
   it('shows a loading spinner (not the Simulate card) while presence is still resolving', async () => {
     // Desktop detection is demand-driven and warms after mount, so the first presence
     // reads 'none' transiently. With a real grace window active, the standby must show a

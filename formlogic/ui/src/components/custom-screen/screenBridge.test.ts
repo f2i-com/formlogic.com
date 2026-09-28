@@ -508,3 +508,43 @@ describe('resolveScreenTarget — host.openScreen resolution', () => {
     expect(resolveScreenTarget('calls')).toBeNull();
   });
 });
+
+// A browser paired straight to OAIY on this computer (Connect your AI) sends every
+// command to it directly. Presence used to ignore that pairing and fall through to
+// the registry, where OAIY's own account-link heartbeat made the same computer read
+// as a relay (or, with no account link, as not connected at all).
+describe('resolveScreenPresence — which bridge this screen is on', () => {
+  const probes = (over: Partial<import('./screenBridge').ScreenPresenceProbes> = {}) => ({
+    demo: () => false,
+    legacyLocal: () => false,
+    oaiyDirect: async () => null,
+    remote: async () => ({ deviceName: 'LANCE-PC', lastSeenAt: '2026-09-29 05:00:00' }),
+    ...over,
+  });
+
+  it('a direct OAIY pairing is local, even while OAIY heartbeats the registry', async () => {
+    const { resolveScreenPresence } = await import('./screenBridge');
+    const remote = vi.fn(async () => ({ deviceName: 'LANCE-PC', lastSeenAt: '2026-09-29 05:00:00' }));
+    const p = await resolveScreenPresence('app-1', probes({ oaiyDirect: async () => '127.0.0.1:17972', remote }));
+    expect(p).toEqual({ kind: 'local', runtime: 'oaiy', address: '127.0.0.1:17972' });
+    expect(remote).not.toHaveBeenCalled();
+  });
+
+  it('without a direct pairing the relay is still reported as remote', async () => {
+    const { resolveScreenPresence } = await import('./screenBridge');
+    expect(await resolveScreenPresence('app-1', probes())).toEqual({ kind: 'remote', deviceName: 'LANCE-PC', lastSeenAt: '2026-09-29 05:00:00' });
+    expect(await resolveScreenPresence('app-1', probes({ remote: async () => null }))).toEqual({ kind: 'none' });
+  });
+
+  it('the legacy desktop bridge wins, and the demo never reads a real bridge', async () => {
+    const { resolveScreenPresence } = await import('./screenBridge');
+    expect(await resolveScreenPresence('app-1', probes({ legacyLocal: () => true, oaiyDirect: async () => '127.0.0.1:17972' }))).toEqual({ kind: 'local' });
+    expect(await resolveScreenPresence('app-1', probes({ demo: () => true, oaiyDirect: async () => '127.0.0.1:17972' }))).toEqual({ kind: 'none' });
+  });
+
+  it('a failing OAIY probe degrades to the relay check instead of throwing', async () => {
+    const { resolveScreenPresence } = await import('./screenBridge');
+    const p = await resolveScreenPresence('app-1', probes({ oaiyDirect: async () => { throw new Error('probe failed'); } }));
+    expect(p.kind).toBe('remote');
+  });
+});

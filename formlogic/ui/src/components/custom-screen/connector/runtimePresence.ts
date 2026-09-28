@@ -35,8 +35,14 @@ export interface RemoteRuntimeInfo {
   lastSeenAt: string | null;
 }
 
+/**
+ * 'local' is a bridge on THIS computer that commands go to directly: FormLogic
+ * Desktop paired to this browser, or (`runtime: 'oaiy'`) OAIY on this computer
+ * paired to this browser through Connect your AI, at `address` (host:port).
+ * 'remote' is a runtime reached only through FormLogic's command relay.
+ */
 export type ConnectorPresence =
-  | { kind: 'local' }
+  | { kind: 'local'; runtime?: 'oaiy'; address?: string }
   | { kind: 'remote'; deviceName: string; lastSeenAt: string | null }
   | { kind: 'none' };
 
@@ -110,12 +116,18 @@ export function pickFreshDesktopRun(runs: FlowRunLog[] | null | undefined, now: 
   return best ? best.info : null;
 }
 
-/** Three-state resolution: local bridge wins, then registry, then the run-recency fallback. */
+/**
+ * Three-state resolution: a local bridge wins (FormLogic Desktop's, then OAIY paired
+ * directly to this browser), then the registry, then the run-recency fallback. A direct
+ * OAIY pairing beats the registry because OAIY's own account-link heartbeat is in the
+ * registry too: the same computer must not read as a relay.
+ */
 export function resolvePresence(
-  input: { localBridge: boolean; connections: unknown | null; runs: FlowRunLog[] | null },
+  input: { localBridge: boolean; oaiyDirect?: string | null; connections: unknown | null; runs: FlowRunLog[] | null },
   now: number = Date.now()
 ): ConnectorPresence {
   if (input.localBridge) return { kind: 'local' };
+  if (input.oaiyDirect) return { kind: 'local', runtime: 'oaiy', address: input.oaiyDirect };
   const remote = pickFreshConnection(input.connections, now) ?? pickFreshDesktopRun(input.runs, now);
   return remote ? { kind: 'remote', ...remote } : { kind: 'none' };
 }

@@ -31,7 +31,13 @@ interface FlServiceOutcome {
 }
 
 interface FlPresence {
+  /** local = a bridge on this computer that commands go to directly; remote = a
+   *  runtime reached through FormLogic's command relay; none = neither. */
   kind: 'local' | 'remote' | 'none';
+  /** local only: 'oaiy' when this browser is paired directly with OAIY here. */
+  runtime?: 'oaiy';
+  /** local only: the paired runtime's host:port, e.g. 127.0.0.1:17972. */
+  address?: string;
   deviceName?: string;
   lastSeenAt?: string;
 }

@@ -4,12 +4,13 @@
 // — the host runs its own flow with its own consent surface, and resolves an
 // honest outcome. Two ceremonies exist today:
 //
-//  - 'connect-desktop': the desktop pairing flow (requestPairing → the DESKTOP
-//    shows its native approval prompt → origin-bound token). The trust
-//    decision lives on the desktop, exactly like DesktopStatusPanel's
-//    "Connect FormLogic Desktop" button — the pack never mints or sees a
-//    token (§8.3 rejects pack-initiated pairing-token minting; this is the
-//    sanctioned request-the-host shape).
+//  - 'connect-desktop': the desktop pairing flow. With OAIY on this computer it
+//    is OAIY's pairing, exactly like Connect your AI (OAIY shows a code, the
+//    user approves it there); only a machine still running the retired
+//    FormLogic Desktop gets that host's requestPairing → native prompt. The
+//    trust decision lives on the desktop either way — the pack never mints or
+//    sees a token (§8.3 rejects pack-initiated pairing-token minting; this is
+//    the sanctioned request-the-host shape).
 //  - 'start-fresh': the whole-app record reset (a HOST-owned owner ceremony
 //    per §8.3 — the bridge deliberately has no cross-form or clear-all
 //    delete). The HOST confirms with its own dialog before touching
@@ -40,6 +41,8 @@ import {
 } from '../../client-runtime/desktop/desktopPairing';
 import { desktopClient } from '../../client-runtime/desktop/desktopClient';
 import { runConnectorCeremony } from '../../client-runtime/connectors/packConnectorDriver';
+import { isOaiyPaired, probeOaiy } from '../../client-runtime/oaiy/oaiyRuntime';
+import { pairWithOaiy } from '../../client-runtime/oaiy/oaiyPairing';
 
 /** What FormLogic.host.ceremony() resolves. 'denied' = the user (or the
  *  desktop) declined; 'unavailable' = this context can't run it (demo, no
@@ -57,14 +60,47 @@ function isConfigSingleton(form: { settings?: unknown }): boolean {
   return (form.settings as { singleRecord?: boolean } | undefined)?.singleRecord === true;
 }
 
-async function runConnectDesktop(): Promise<CeremonyOutcome> {
+/**
+ * Pair this browser with OAIY on this computer - the same pairing as Connect your AI
+ * (LocalRuntimePanel): OAIY shows a short code and the user approves it there. OAIY
+ * does not serve FormLogic Desktop's pairing-requests route, so Device Setup's
+ * "Connect OAIY" used to fail against it with "Could not reach FormLogic Desktop".
+ */
+async function runConnectOaiy(): Promise<CeremonyOutcome> {
+  if (isOaiyPaired()) {
+    return { status: 'done', message: 'OAIY on this computer is already connected.' };
+  }
+  try {
+    const res = await pairWithOaiy('formlogic', window.location.origin, {
+      onPending: (handle) => toast.info(
+        'Approve the request in OAIY',
+        `OAIY on this computer is asking to connect this browser. Approve it there if it shows ${handle.code}.`
+      ),
+    });
+    if (res.state === 'approved') {
+      // pairWithOaiy stored the token: connector commands now go straight to OAIY.
+      toast.success('OAIY connected', 'This browser now sends phone commands straight to OAIY on this computer.');
+      return { status: 'done' };
+    }
+    return res.state === 'denied'
+      ? { status: 'denied', message: 'The pairing request was declined in OAIY.' }
+      : { status: 'failed', message: 'Pairing did not complete - approve the request in OAIY, then try again.' };
+  } catch {
+    return { status: 'failed', message: 'Could not reach OAIY on this computer. Make sure it is running, then try again.' };
+  }
+}
+
+export async function runConnectDesktop(): Promise<CeremonyOutcome> {
   if (api.isDemoMode()) {
     return { status: 'unavailable', message: 'The shared demo never connects to a real desktop.' };
   }
+  // OAIY is the runtime on this computer whenever it answers; FormLogic Desktop's
+  // own pairing below is only for a machine still running that retired host.
+  if ((await probeOaiy(true)).available) return runConnectOaiy();
   if (!getDesktopInfo().available) {
     return {
       status: 'unavailable',
-      message: 'FormLogic Desktop is not running on this computer. Start it, then try again.',
+      message: 'OAIY is not running on this computer. Start it, then try again.',
     };
   }
   if (isDesktopPaired()) {

@@ -32,7 +32,8 @@ import { isPermissionGranted } from '../../client-runtime/logic/appLogicPermissi
 import { getDesktopInfo } from '../../client-runtime/desktop/desktopDetection';
 import { isDesktopPaired } from '../../client-runtime/desktop/desktopPairing';
 import { runRelayCommand, type RelayApi, type RunRelayOptions } from './connector/commandRelay';
-import { resolveRemoteRuntime, type ConnectorPresence } from './connector/runtimePresence';
+import { resolveRemoteRuntime, type ConnectorPresence, type RemoteRuntimeInfo } from './connector/runtimePresence';
+import { isOaiyPaired, oaiyRouteAvailable, probeOaiy } from '../../client-runtime/oaiy/oaiyRuntime';
 import { listAiSources, listDesktopServices, type AiSourceListing } from '../../client-runtime/flows/desktopService';
 
 /** What FormLogic.connector() resolves inside the sandbox. Mirrors the relay's
@@ -376,16 +377,58 @@ export function createScreenBridge(deps: ScreenBridgeDeps): ScreenBridge {
   };
 }
 
+/** What resolveScreenPresence asks, injectable so its order is unit-testable. */
+export interface ScreenPresenceProbes {
+  demo: () => boolean;
+  /** FormLogic Desktop's legacy bridge: detected + paired. */
+  legacyLocal: () => boolean;
+  /** OAIY on this computer, paired to THIS browser: its host:port, else null. */
+  oaiyDirect: () => Promise<string | null>;
+  remote: (appId?: string) => Promise<RemoteRuntimeInfo | null>;
+}
+
 /**
- * One-shot presence snapshot with useConnectorPresence's exact semantics: the
- * shared Demo account is always 'none' (a paired desktop on the same machine
- * must never read as the demo's runtime), a paired local bridge wins, else the
- * remote probe (desktop-connections freshness + recent desktop flow runs).
+ * OAIY on this computer, when this browser is paired with it directly (Connect
+ * your AI). The connector layer already sends commands straight to it on that
+ * route (oaiyRouteAvailable), so presence must say so. probeOaiy() caches its
+ * answer for a few seconds, so the screens' presence poll stays one cheap
+ * health read at most, and only while a token is held.
  */
-export async function resolveScreenPresence(appId?: string): Promise<ConnectorPresence> {
-  if (api.isDemoMode()) return { kind: 'none' };
-  if (getDesktopInfo().available && isDesktopPaired()) return { kind: 'local' };
-  const remote = await resolveRemoteRuntime(appId);
+async function oaiyDirectAddress(): Promise<string | null> {
+  if (!isOaiyPaired()) return null;
+  const info = await probeOaiy();
+  if (!info.available || !oaiyRouteAvailable()) return null;
+  return info.baseUrl.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+}
+
+const defaultScreenPresenceProbes: ScreenPresenceProbes = {
+  demo: () => api.isDemoMode(),
+  legacyLocal: () => getDesktopInfo().available && isDesktopPaired(),
+  oaiyDirect: oaiyDirectAddress,
+  remote: (appId) => resolveRemoteRuntime(appId),
+};
+
+/**
+ * One-shot presence snapshot for a code screen: the shared Demo account is
+ * always 'none' (a paired desktop on the same machine must never read as the
+ * demo's runtime); a paired local bridge wins - FormLogic Desktop's, or OAIY on
+ * this computer paired straight to this browser (`runtime: 'oaiy'`); else the
+ * remote probe (desktop-connections freshness + recent desktop flow runs).
+ *
+ * The OAIY case used to fall through to the remote probe: a browser paired
+ * directly with OAIY here read OAIY's own account-link heartbeat and said
+ * "relay", while every command went straight to OAIY - and with no account link
+ * it said OAIY was not connected at all.
+ */
+export async function resolveScreenPresence(
+  appId?: string,
+  probes: ScreenPresenceProbes = defaultScreenPresenceProbes
+): Promise<ConnectorPresence> {
+  if (probes.demo()) return { kind: 'none' };
+  if (probes.legacyLocal()) return { kind: 'local' };
+  const oaiy = await probes.oaiyDirect().catch(() => null);
+  if (oaiy) return { kind: 'local', runtime: 'oaiy', address: oaiy };
+  const remote = await probes.remote(appId);
   return remote ? { kind: 'remote', ...remote } : { kind: 'none' };
 }
 

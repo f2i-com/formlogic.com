@@ -145,6 +145,11 @@ describe('resolvePresence (three-state banner)', () => {
     expect(p).toEqual({ kind: 'local' });
   });
 
+  it('OAIY paired directly to this browser is local, even with its own heartbeat in the registry', () => {
+    const p = resolvePresence({ localBridge: false, oaiyDirect: '127.0.0.1:17972', connections: [connection()], runs: [run()] }, NOW);
+    expect(p).toEqual({ kind: 'local', runtime: 'oaiy', address: '127.0.0.1:17972' });
+  });
+
   it('fresh registry row → remote', () => {
     const p = resolvePresence({ localBridge: false, connections: [connection()], runs: null }, NOW);
     expect(p).toEqual({ kind: 'remote', deviceName: 'Home Office PC', lastSeenAt: mysqlTs(NOW - 30_000) });
