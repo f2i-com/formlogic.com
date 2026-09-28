@@ -4,16 +4,43 @@ declare(strict_types=1);
 
 namespace FormLogic\Services;
 
+use FormLogic\Constants\AppPermissions;
 use FormLogic\Database\MySQLConnection;
 use PDO;
 
 /**
- * Narrow in-place upgrade for an already-installed Aokie Receptionist pack.
+ * In-place upgrade of an installed Aokie Receptionist app to the bundled pack.
  *
- * This deliberately is not a second pack import: the installed app/form ids and
- * every response stay in place. The pack's stable app_forms.settings.packFormId
- * aliases are the only accepted source of form identity. Any missing or
- * ambiguous installation, alias, flow, or binding fails closed before writes.
+ * This is deliberately not a second pack import: the installed app, form and
+ * flow ids and every record stay where they are. What the pack owns is brought
+ * to what a fresh install of the bundled version would have:
+ *
+ *  - every form's pack fields: missing ones are added, changed ones take the
+ *    pack's definition (keeping any choices an owner added to a dropdown, so
+ *    stored answers stay valid), and they are laid out in the pack's order
+ *    (a field an owner added stays after the one it followed); missing form
+ *    settings are added and set ones are left alone; the form's screen is
+ *    replaced when it is the pack's own (vendor-signed, catalog-installed, or
+ *    the accepted legacy settings screen) and re-stamped with its signed trust;
+ *  - the app's logic (scripts, grants, connector manifest and demo driver),
+ *    its missing settings and included services, its home screen, its reports
+ *    when it has none, and its description while it is still a former pack one;
+ *  - the pack's roles and their grants (a missing grant is added, a missing
+ *    role is created; nothing an owner added is taken away);
+ *  - every pack flow and binding: updated in place, created when missing,
+ *    each keeping whether it is enabled;
+ *  - the installation's recorded version.
+ *
+ * Operator data is kept: records, owner-added fields, dropdown choices,
+ * scripts, grants, roles, flows and bindings, display names, form titles,
+ * settings an owner changed, and what is switched on or off.
+ *
+ * It is idempotent (a second run changes nothing) and skips rather than
+ * refuses: a form, flow or screen it cannot safely touch is left as it is and
+ * listed under `skipped` with the reason. It refuses only when it cannot tell
+ * what to change - the app is not exactly one Aokie installation, an alias is
+ * ambiguous or outside the installation, or the bundled pack is not the
+ * signed Aokie pack.
  */
 final class AokieReceptionistUpgradeService
 {
@@ -21,63 +48,32 @@ final class AokieReceptionistUpgradeService
     public const PACK_APP_ID = 'aokie-receptionist';
     public const SETTINGS_FORM_ID = 'receptionist-settings';
 
-    /** @var string[] */
-    public const FLOW_SLUGS = [
-        'configure-receptionist',
-        'call-summary-follow-up',
-        'sms-auto-reply-draft',
-        'sms-followup-conversation',
-        'after-call-actions',
-        'appointment-request-apply',
-        'personalize-caller',
-        'missed-call-follow-up',
-        'callback-drain',
-    ];
-
-    /** @var string[] */
-    private const ADDITIVE_FLOW_SLUGS = [
-        'appointment-request-apply',
+    /**
+     * Bindings whose event the pack has moved: the summary and after-call
+     * flows ran on aokie.call.ended before the transcript-settled event
+     * existed. Such a binding is updated (event included), not duplicated.
+     *
+     * @var array<string,string[]>
+     */
+    private const MOVED_BINDING_EVENTS = [
+        'call-summary-follow-up' => ['aokie.call.ended'],
+        'after-call-actions' => ['aokie.call.ended'],
     ];
 
     /**
-     * Flows the OAIY route changes (the brief OAIY reads for a known caller,
-     * and missed-call callbacks left to OAIY). Updated in place when the
-     * install has them; an install from before one existed has no binding
-     * for it either, so it is left without it rather than refused.
+     * sha256 of every app description a previous release of the pack shipped
+     * (only one differs from today's: "AI phone receptionist over FormLogic
+     * Desktop ..."). An app still carrying one was never edited, so it takes
+     * the pack's current description; any other text is the owner's.
      *
      * @var string[]
      */
-    private const OPTIONAL_FLOW_SLUGS = [
-        'personalize-caller',
-        'missed-call-follow-up',
-        'callback-drain',
+    private const FORMER_APP_DESCRIPTION_SHA256 = [
+        '10dbc761c6f117b79ea36ba7f8ebcedeb2dbe46e0750ea0eb82f8bbd566b6615',
     ];
 
-    /** @var string[] */
-    private const SETTLED_BINDING_FLOWS = [
-        'call-summary-follow-up',
-        'after-call-actions',
-    ];
-
-    /**
-     * Receptionist Settings fields appended at the tail, in pack order: the
-     * Background AI pair, then call_route (where calls go: 'oaiy' sends them
-     * to OAIY; blank keeps the route set in Aokie, so adding the field moves
-     * no existing route).
-     *
-     * @var string[]
-     */
-    private const SETTINGS_FIELD_IDS = [
-        'background_ai_source',
-        'background_ai_model',
-        'call_route',
-    ];
-
-    /** @var array<string,string[]> */
-    private const ADDITIVE_FORM_FIELD_IDS = [
-        'appointments' => ['request_id'],
-        'follow-up-tasks' => ['request_id'],
-    ];
+    /** Field types whose `options` an owner may have added choices to. */
+    private const OPTION_FIELD_TYPES = ['dropdown', 'multiple_choice', 'checkboxes', 'radio'];
 
     /**
      * Full canonical-screen digests from legacy, publisher-signed Aokie packs.
@@ -92,19 +88,28 @@ final class AokieReceptionistUpgradeService
     ];
 
     private PDO $mysql;
+    private AppService $apps;
+    private AppUserService $appUsers;
+
+    /** @var list<array{item:string,reason:string}> */
+    private array $skipped = [];
 
     public function __construct(
         MySQLConnection $mysql,
         private FormService $forms,
         private FormVersionService $versions,
         private FlowService $flows,
-        private PackService $packs
+        private PackService $packs,
+        ?AppService $apps = null,
+        ?AppUserService $appUsers = null
     ) {
         $this->mysql = $mysql->getConnection();
+        $this->apps = $apps ?? new AppService($mysql, $forms);
+        $this->appUsers = $appUsers ?? new AppUserService($mysql);
     }
 
     /**
-     * Inspect or apply the migration.
+     * Inspect (dry run) or apply the upgrade.
      *
      * @return array<string,mixed> bounded, content-free operator summary
      */
@@ -113,8 +118,7 @@ final class AokieReceptionistUpgradeService
         array $marketplaceRecord,
         bool $apply,
         ?string $acceptedLegacyScreenSha256 = null
-    ): array
-    {
+    ): array {
         if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', $appId)) {
             throw new \InvalidArgumentException('A canonical app UUID is required');
         }
@@ -127,233 +131,88 @@ final class AokieReceptionistUpgradeService
                 throw new \InvalidArgumentException('Accepted screen SHA-256 is not a known legacy Aokie screen');
             }
         }
+        $this->skipped = [];
 
         $source = $this->validateSourcePack($marketplaceRecord);
         $installed = $this->resolveInstalledApp($appId, $source['packFormIds']);
-        $desiredFlows = $this->prepareDesiredFlows($source['flows'], $installed['formMap']);
-        $installedFlows = $this->resolveInstalledFlows($appId, $installed['ownerId']);
-        foreach (self::ADDITIVE_FLOW_SLUGS as $slug) {
-            if ($installedFlows[$slug] !== null
-                && !$this->flowMatches($installedFlows[$slug], $desiredFlows[$slug])) {
-                throw new \RuntimeException("Installed additive flow '{$slug}' collides with an owner-authored flow");
-            }
-        }
-        $desiredAppointmentBinding = $this->prepareAppointmentBinding(
-            $source['appointmentBinding'],
-            $installed['formMap']
-        );
-        $bindings = $this->resolveBindings(
-            $appId,
-            $installedFlows,
-            $desiredAppointmentBinding
-        );
-
-        $settingsForm = $this->forms->getForm($installed['formMap'][self::SETTINGS_FORM_ID]);
-        if ($settingsForm === null) {
-            throw new \RuntimeException('Receptionist Settings form is missing');
-        }
-        $legacyScreenAccepted = $this->assertPackOwnedScreen(
-            $settingsForm,
-            $installed['installationCatalogId'],
-            $source['settingsScreen'],
-            $acceptedLegacyScreenSha256
-        );
-
-        $fieldIds = [];
-        foreach ($settingsForm['fields'] as $field) {
-            if (is_array($field) && is_string($field['id'] ?? null)) {
-                if (isset($fieldIds[$field['id']])) {
-                    throw new \RuntimeException('Receptionist Settings contains duplicate field IDs');
-                }
-                $fieldIds[$field['id']] = true;
-            }
-        }
-        $missingFields = [];
-        foreach (self::SETTINGS_FIELD_IDS as $fieldId) {
-            if (!isset($fieldIds[$fieldId])) {
-                $missingFields[] = $fieldId;
+        foreach ($source['packFormIds'] as $packFormId) {
+            if (!isset($installed['formMap'][$packFormId])) {
+                $this->skip("form:{$packFormId}", 'the installed app has no such form; everything that needs it is left out');
             }
         }
 
-        $recordForms = [];
-        $missingRecordFields = [];
-        foreach (self::ADDITIVE_FORM_FIELD_IDS as $packFormId => $wantedFieldIds) {
-            $recordForm = $this->forms->getForm($installed['formMap'][$packFormId]);
-            if ($recordForm === null) {
-                throw new \RuntimeException("Installed pack form '{$packFormId}' is missing");
-            }
-            $recordForms[$packFormId] = $recordForm;
-            $byId = [];
-            foreach ($recordForm['fields'] as $field) {
-                $fieldId = is_array($field) ? ($field['id'] ?? null) : null;
-                if (!is_string($fieldId)) {
-                    continue;
-                }
-                if (isset($byId[$fieldId])) {
-                    throw new \RuntimeException("Installed pack form '{$packFormId}' contains duplicate field IDs");
-                }
-                $byId[$fieldId] = $field;
-            }
-            foreach ($wantedFieldIds as $fieldId) {
-                $desiredField = $source['additiveFields'][$packFormId][$fieldId];
-                if (!isset($byId[$fieldId])) {
-                    $missingRecordFields[$packFormId][] = $fieldId;
-                    continue;
-                }
-                if (!$this->packFieldMatches($byId[$fieldId], $desiredField)) {
-                    throw new \RuntimeException(
-                        "Installed pack field '{$packFormId}.{$fieldId}' is owner-authored or incompatible"
-                    );
-                }
-            }
-        }
-
-        $currentScreen = $this->screenWithoutMetadata($settingsForm['customScreen'] ?? []);
-        $screenChanges = !$this->sameValue($currentScreen, $source['settingsScreen']);
-
-        $flowChanges = [];
-        foreach (self::FLOW_SLUGS as $slug) {
-            if ($installedFlows[$slug] === null && in_array($slug, self::OPTIONAL_FLOW_SLUGS, true)) {
+        $formPlans = [];
+        $legacyScreenAccepted = false;
+        foreach ($source['forms'] as $packFormId => $packForm) {
+            if (!isset($installed['formMap'][$packFormId])) {
                 continue;
             }
-            if ($installedFlows[$slug] === null
-                || !$this->flowMatches($installedFlows[$slug], $desiredFlows[$slug])) {
-                $flowChanges[] = $slug;
+            $plan = $this->planForm(
+                $packFormId,
+                $packForm,
+                $installed['formMap'][$packFormId],
+                $installed,
+                $source,
+                $acceptedLegacyScreenSha256
+            );
+            if ($plan !== null) {
+                $legacyScreenAccepted = $legacyScreenAccepted || $plan['legacyAccepted'];
+                $formPlans[$packFormId] = $plan;
             }
         }
-        $bindingChanges = [];
-        foreach (self::SETTLED_BINDING_FLOWS as $slug) {
-            if ($bindings[$slug]['event'] !== 'aokie.call.transcript.settled') {
-                $bindingChanges[] = $slug;
-            }
-        }
-        if ($bindings['appointment-request-apply'] === null) {
-            $bindingChanges[] = 'appointment-request-apply';
-        }
+        $appPlan = $this->planApp($appId, $source, $installed);
+        $rolePlans = $this->planRoles($appId, $source, $installed);
+        [$flowPlans, $bindingPlans] = $this->planFlows($appId, $source, $installed);
+        $versionChanges = ($installed['installation']['pack_version'] ?? null) !== $source['packVersion']
+            || ($installed['installation']['pack_name'] ?? null) !== $source['packName']
+            || ($installed['installation']['pack_description'] ?? null) !== $source['packDescription'];
 
+        $changes = $this->describeChanges($formPlans, $appPlan, $rolePlans, $flowPlans, $bindingPlans, $versionChanges);
         $summary = [
             'mode' => $apply ? 'apply' : 'dry-run',
             'packId' => self::PACK_ID,
             'packVersion' => $source['packVersion'],
+            'installedVersion' => (string) ($installed['installation']['pack_version'] ?? ''),
             'appId' => $appId,
             'legacyScreenAccepted' => $legacyScreenAccepted,
-            'changes' => [
-                'settingsFields' => $missingFields,
-                'recordFields' => $missingRecordFields,
-                'customScreen' => $screenChanges,
-                'flows' => $flowChanges,
-                'bindingEvents' => $bindingChanges,
-            ],
-            'snapshot' => null,
-            'fieldSnapshots' => [],
+            'changes' => $changes,
+            'skipped' => $this->skipped,
+            'snapshots' => [],
             'applied' => false,
         ];
-
-        if (!$apply) {
+        if (!$apply || !$this->hasChanges($changes)) {
+            $summary['skipped'] = $this->skipped;
             return $summary;
         }
 
-        if ($missingFields !== [] || $screenChanges) {
-            // Re-read immediately before the snapshot/write so a concurrent
-            // owner edit cannot ride on the earlier ownership decision.
-            $freshSettingsForm = $this->forms->getForm($settingsForm['id']);
-            if ($freshSettingsForm === null
-                || !$this->sameValue($settingsForm['fields'], $freshSettingsForm['fields'])
-                || !$this->sameValue(
-                    $currentScreen,
-                    $this->screenWithoutMetadata($freshSettingsForm['customScreen'] ?? [])
-                )) {
-                throw new \RuntimeException('Receptionist Settings changed during upgrade; retry from dry-run');
+        // Forms first (each is its own SQLite + MySQL save, snapshotted), then
+        // everything that lives in MySQL alone in one transaction.
+        foreach ($formPlans as $packFormId => $plan) {
+            if (!$plan['hasChanges']) {
+                continue;
             }
-            if ($screenChanges) {
-                $freshLegacyAccepted = $this->assertPackOwnedScreen(
-                    $freshSettingsForm,
-                    $installed['installationCatalogId'],
-                    $source['settingsScreen'],
-                    $acceptedLegacyScreenSha256
-                );
-                if ($freshLegacyAccepted !== $legacyScreenAccepted) {
-                    throw new \RuntimeException('Receptionist Settings screen ownership changed during upgrade');
-                }
+            $version = $this->applyForm($packFormId, $plan, $installed['ownerId'], $source['packVersion']);
+            if ($version === null) {
+                unset($changes['forms'][$packFormId]);
+                continue;
             }
-            $version = $this->versions->createVersion(
-                $settingsForm['id'],
-                $installed['ownerId'],
-                'Before Aokie Receptionist settings pack upgrade'
-            );
-            $summary['snapshot'] = ['version' => $version['version']];
-
-            $update = [];
-            if ($missingFields !== []) {
-                $fields = $settingsForm['fields'];
-                foreach ($missingFields as $fieldId) {
-                    $fields[] = $source['backgroundFields'][$fieldId];
-                }
-                $update['fields'] = $fields;
-            }
-            if ($screenChanges) {
-                $update['customScreen'] = $source['settingsScreen'];
-            }
-            $updated = $this->forms->updateForm($settingsForm['id'], $update);
-            if ($updated === null) {
-                throw new \RuntimeException('Receptionist Settings update failed');
-            }
-            if ($screenChanges) {
-                $this->forms->setCustomScreenTrust(
-                    $settingsForm['id'],
-                    $source['screenTrust']['trust'],
-                    $source['screenTrust']['provenance']
-                );
-            }
+            $summary['snapshots'][$packFormId] = ['version' => $version];
         }
+        $this->applyMysqlChanges($appId, $installed, $source, $appPlan, $rolePlans, $flowPlans, $bindingPlans, $versionChanges);
 
-        foreach ($missingRecordFields as $packFormId => $fieldIdsToAdd) {
-            $original = $recordForms[$packFormId];
-            $fresh = $this->forms->getForm($original['id']);
-            if ($fresh === null || !$this->sameValue($original['fields'], $fresh['fields'])) {
-                throw new \RuntimeException("Installed pack form '{$packFormId}' changed during upgrade; retry from dry-run");
-            }
-            $version = $this->versions->createVersion(
-                $original['id'],
-                $installed['ownerId'],
-                "Before Aokie Receptionist {$packFormId} request-id upgrade"
-            );
-            $summary['fieldSnapshots'][$packFormId] = ['version' => $version['version']];
-            $fields = $fresh['fields'];
-            foreach ($fieldIdsToAdd as $fieldId) {
-                $fields[] = $source['additiveFields'][$packFormId][$fieldId];
-            }
-            if ($this->forms->updateForm($original['id'], ['fields' => $fields]) === null) {
-                throw new \RuntimeException("Installed pack form '{$packFormId}' update failed");
-            }
-        }
-
-        [$updatedFlows, $updatedBindings] = $this->applyFlowChanges(
-            $appId,
-            $installed['ownerId'],
-            $desiredFlows,
-            $installedFlows,
-            $bindings,
-            $desiredAppointmentBinding
-        );
-        $summary['changes']['flows'] = $updatedFlows;
-        $summary['changes']['bindingEvents'] = $updatedBindings;
-        $summary['applied'] = $missingFields !== [] || $missingRecordFields !== [] || $screenChanges
-            || $updatedFlows !== [] || $updatedBindings !== [];
-
+        $summary['changes'] = $changes;
+        $summary['skipped'] = $this->skipped;
+        $summary['applied'] = $this->hasChanges($changes);
         return $summary;
     }
 
+    // ── The bundled pack ────────────────────────────────────────────────────
+
     /**
      * @return array{
-     *   packVersion:string,
-     *   packFormIds:string[],
-     *   backgroundFields:array<string,array<string,mixed>>,
-     *   additiveFields:array<string,array<string,array<string,mixed>>>,
-     *   settingsScreen:array<string,mixed>,
-     *   screenTrust:array{trust:string,provenance:array<string,mixed>},
-     *   flows:array<string,array<string,mixed>>,
-     *   appointmentBinding:array<string,mixed>
+     *   pack:array<string,mixed>, packVersion:string, packName:string, packDescription:?string,
+     *   packFormIds:string[], forms:array<string,array<string,mixed>>, app:array<string,mixed>,
+     *   flows:array<string,array<string,mixed>>, bindings:list<array<string,mixed>>
      * }
      */
     private function validateSourcePack(array $record): array
@@ -370,6 +229,8 @@ final class AokieReceptionistUpgradeService
         if ($packVersion === '' || strlen($packVersion) > 50) {
             throw new \RuntimeException('Embedded pack version is invalid');
         }
+        // The same structural validation an import runs.
+        PackService::validateDefinition($pack);
 
         $apps = array_values(array_filter(
             is_array($pack['apps'] ?? null) ? $pack['apps'] : [],
@@ -379,135 +240,59 @@ final class AokieReceptionistUpgradeService
             throw new \RuntimeException('Pack must contain exactly one Aokie Receptionist app');
         }
 
-        $formsById = [];
+        $forms = [];
         foreach (is_array($pack['forms'] ?? null) ? $pack['forms'] : [] as $form) {
             if (!is_array($form) || !is_string($form['packFormId'] ?? null) || $form['packFormId'] === '') {
                 throw new \RuntimeException('Pack contains an invalid form alias');
             }
-            $key = $form['packFormId'];
-            if (isset($formsById[$key])) {
-                throw new \RuntimeException("Pack form alias '{$key}' is ambiguous");
+            if (isset($forms[$form['packFormId']])) {
+                throw new \RuntimeException("Pack form alias '{$form['packFormId']}' is ambiguous");
             }
-            $formsById[$key] = $form;
+            $forms[$form['packFormId']] = $form;
         }
-        $settings = $formsById[self::SETTINGS_FORM_ID] ?? null;
-        if (!is_array($settings)) {
+        if (!isset($forms[self::SETTINGS_FORM_ID])) {
             throw new \RuntimeException('Pack is missing Receptionist Settings');
-        }
-        $settingsScreen = $this->screenWithoutMetadata($settings['customScreen'] ?? []);
-        if ($settingsScreen === []) {
-            throw new \RuntimeException('Pack is missing the Receptionist Settings custom screen');
-        }
-
-        $backgroundFields = [];
-        foreach (is_array($settings['fields'] ?? null) ? $settings['fields'] : [] as $field) {
-            $fieldId = is_array($field) ? ($field['id'] ?? null) : null;
-            if (!is_string($fieldId) || !in_array($fieldId, self::SETTINGS_FIELD_IDS, true)) {
-                continue;
-            }
-            if (isset($backgroundFields[$fieldId])) {
-                throw new \RuntimeException("Pack field '{$fieldId}' is ambiguous");
-            }
-            if (FormService::fieldIdError($fieldId) !== null
-                || !is_string($field['type'] ?? null) || $field['type'] === '') {
-                throw new \RuntimeException("Pack field '{$fieldId}' is invalid");
-            }
-            $backgroundFields[$fieldId] = $field;
-        }
-        foreach (self::SETTINGS_FIELD_IDS as $fieldId) {
-            if (!isset($backgroundFields[$fieldId])) {
-                throw new \RuntimeException("Pack is missing field '{$fieldId}'");
-            }
-        }
-
-        $additiveFields = [];
-        foreach (self::ADDITIVE_FORM_FIELD_IDS as $packFormId => $fieldIds) {
-            $packForm = $formsById[$packFormId] ?? null;
-            if (!is_array($packForm)) {
-                throw new \RuntimeException("Pack is missing form '{$packFormId}'");
-            }
-            $fields = [];
-            foreach (is_array($packForm['fields'] ?? null) ? $packForm['fields'] : [] as $field) {
-                $fieldId = is_array($field) ? ($field['id'] ?? null) : null;
-                if (!is_string($fieldId) || !in_array($fieldId, $fieldIds, true)) {
-                    continue;
-                }
-                if (isset($fields[$fieldId])) {
-                    throw new \RuntimeException("Pack field '{$packFormId}.{$fieldId}' is ambiguous");
-                }
-                if (FormService::fieldIdError($fieldId) !== null
-                    || ($field['type'] ?? null) !== 'short_text'
-                    || ($field['required'] ?? null) !== false) {
-                    throw new \RuntimeException("Pack field '{$packFormId}.{$fieldId}' is invalid");
-                }
-                $fields[$fieldId] = $field;
-            }
-            foreach ($fieldIds as $fieldId) {
-                if (!isset($fields[$fieldId])) {
-                    throw new \RuntimeException("Pack is missing field '{$packFormId}.{$fieldId}'");
-                }
-            }
-            $additiveFields[$packFormId] = $fields;
         }
 
         $flows = [];
         foreach (is_array($pack['flows'] ?? null) ? $pack['flows'] : [] as $flow) {
-            $slug = is_array($flow) ? ($flow['slug'] ?? null) : null;
-            if (!is_string($slug) || !in_array($slug, self::FLOW_SLUGS, true)) {
-                continue;
-            }
-            if (isset($flows[$slug])) {
-                throw new \RuntimeException("Pack flow '{$slug}' is ambiguous");
+            $slug = is_array($flow) ? FlowService::sanitizeSlug($flow['slug'] ?? null) : null;
+            if ($slug === null || isset($flows[$slug])) {
+                throw new \RuntimeException('Pack flow slugs must be present and unique');
             }
             $flows[$slug] = $flow;
         }
-        foreach (self::FLOW_SLUGS as $slug) {
-            if (!isset($flows[$slug])) {
-                throw new \RuntimeException("Pack is missing flow '{$slug}'");
+        $bindings = [];
+        foreach (is_array($pack['flowBindings'] ?? null) ? $pack['flowBindings'] : [] as $binding) {
+            if (!is_array($binding) || !isset($flows[$binding['flow'] ?? ''])) {
+                throw new \RuntimeException('Pack binding references an unknown flow');
             }
+            $bindings[] = $binding;
         }
-
-        foreach (self::SETTLED_BINDING_FLOWS as $slug) {
-            $matches = array_values(array_filter(
-                is_array($pack['flowBindings'] ?? null) ? $pack['flowBindings'] : [],
-                static fn ($binding): bool => is_array($binding)
-                    && ($binding['flow'] ?? null) === $slug
-                    && ($binding['connectorId'] ?? null) === 'aokie'
-            ));
-            if (count($matches) !== 1 || ($matches[0]['event'] ?? null) !== 'aokie.call.transcript.settled') {
-                throw new \RuntimeException("Pack binding for '{$slug}' is missing or ambiguous");
-            }
-        }
-        $appointmentBindings = array_values(array_filter(
-            is_array($pack['flowBindings'] ?? null) ? $pack['flowBindings'] : [],
-            static fn ($binding): bool => is_array($binding)
-                && ($binding['flow'] ?? null) === 'appointment-request-apply'
-                && ($binding['connectorId'] ?? null) === 'aokie'
-                && ($binding['event'] ?? null) === 'aokie.appointment.requested'
-        ));
-        if (count($appointmentBindings) !== 1) {
-            throw new \RuntimeException('Pack appointment-request binding is missing or ambiguous');
+        // Screens are only ever installed with the trust their signature gives
+        // them, so an unsigned or untrusted bundle is not an upgrade source.
+        if (!is_array($pack['signing'] ?? null)) {
+            throw new \RuntimeException('Pack vendor signature is missing or untrusted');
         }
 
         return [
+            'pack' => $pack,
             'packVersion' => $packVersion,
-            'packFormIds' => array_keys($formsById),
-            'backgroundFields' => $backgroundFields,
-            'additiveFields' => $additiveFields,
-            'settingsScreen' => $settingsScreen,
-            'screenTrust' => $this->packs->verifyVendorSignedScreenComponent(
-                $pack,
-                'form:' . self::SETTINGS_FORM_ID,
-                $settingsScreen
-            ),
+            'packName' => (string) ($meta['name'] ?? 'Aokie Receptionist'),
+            'packDescription' => isset($meta['description']) && is_string($meta['description']) ? $meta['description'] : null,
+            'packFormIds' => array_keys($forms),
+            'forms' => $forms,
+            'app' => $apps[0],
             'flows' => $flows,
-            'appointmentBinding' => $appointmentBindings[0],
+            'bindings' => $bindings,
         ];
     }
 
+    // ── The installed app ───────────────────────────────────────────────────
+
     /**
      * @param string[] $packFormIds
-     * @return array{ownerId:string,installationCatalogId:?string,formMap:array<string,string>}
+     * @return array{ownerId:string,installation:array<string,mixed>,installationCatalogId:?string,formMap:array<string,string>}
      */
     private function resolveInstalledApp(string $appId, array $packFormIds): array
     {
@@ -519,7 +304,7 @@ final class AokieReceptionistUpgradeService
         }
 
         $installStmt = $this->mysql->prepare(
-            'SELECT id, catalog_id, form_ids, app_ids
+            'SELECT id, catalog_id, pack_name, pack_version, pack_description, form_ids, app_ids
                FROM pack_installations
               WHERE user_id = :owner AND pack_id = :pack'
         );
@@ -564,17 +349,13 @@ final class AokieReceptionistUpgradeService
             }
             $map[$alias] = (string) $row['form_id'];
         }
-        foreach ($packFormIds as $alias) {
-            if (!isset($map[$alias])) {
-                throw new \RuntimeException("Installed pack form alias '{$alias}' is missing");
-            }
-        }
         if (count(array_unique(array_values($map))) !== count($map)) {
             throw new \RuntimeException('Installed pack form aliases do not map one-to-one');
         }
 
         return [
             'ownerId' => $ownerId,
+            'installation' => $installation,
             'installationCatalogId' => is_string($installation['catalog_id'] ?? null)
                 && $installation['catalog_id'] !== '' ? $installation['catalog_id'] : null,
             'formMap' => $map,
@@ -598,220 +379,313 @@ final class AokieReceptionistUpgradeService
         return array_keys($out);
     }
 
-    /**
-     * @param array<string,array<string,mixed>> $packFlows
-     * @param array<string,string> $formMap
-     * @return array<string,array<string,mixed>>
-     */
-    private function prepareDesiredFlows(array $packFlows, array $formMap): array
-    {
-        $desired = [];
-        foreach (self::FLOW_SLUGS as $slug) {
-            $packFlow = $packFlows[$slug];
-            FlowService::sanitizeSlug($slug);
-            $name = trim((string) ($packFlow['name'] ?? ''));
-            if ($name === '' || strlen($name) > 255) {
-                throw new \RuntimeException("Pack flow '{$slug}' has an invalid name");
-            }
-            $flowJson = FlowService::sanitizeFlowJson($packFlow['flowJson'] ?? null);
-            $flowJson = $this->packs->resolveFlowJsonFormRefs($flowJson, $formMap, $slug);
-            $inputSchema = $this->validateFlowSchema($packFlow, 'inputSchema', $slug);
-            $outputSchema = $this->validateFlowSchema($packFlow, 'outputSchema', $slug);
-            $nodeCapabilities = $this->validateNodeCapabilities($packFlow, $slug);
-            $desired[$slug] = [
-                'name' => $name,
-                'description' => isset($packFlow['description']) && is_string($packFlow['description'])
-                    ? substr($packFlow['description'], 0, 2000) : null,
-                'flowJson' => $flowJson,
-                'inputSchema' => $inputSchema,
-                'outputSchema' => $outputSchema,
-                'nodeCapabilities' => $nodeCapabilities,
-            ];
-        }
-        return $desired;
-    }
-
-    /** @return array<string,mixed> */
-    private function prepareAppointmentBinding(array $packBinding, array $formMap): array
-    {
-        $clean = FlowService::sanitizeBinding($packBinding);
-        if ($clean['flow'] !== 'appointment-request-apply'
-            || $clean['event'] !== 'aokie.appointment.requested'
-            || ($packBinding['connectorId'] ?? null) !== 'aokie') {
-            throw new \RuntimeException('Pack appointment-request binding is invalid');
-        }
-        $actions = $clean['outputActions'];
-        if (!is_array($actions) || $actions === []) {
-            throw new \RuntimeException('Pack appointment-request binding has no output actions');
-        }
-        foreach ($actions as &$action) {
-            $ref = $action['form'] ?? null;
-            if (is_string($ref) && str_starts_with($ref, '@pack:')) {
-                $packFormId = substr($ref, 6);
-                $action['form'] = $formMap[$packFormId]
-                    ?? throw new \RuntimeException(
-                        "Pack appointment-request binding references unknown pack form '{$packFormId}'"
-                    );
-            } elseif ($ref !== null) {
-                throw new \RuntimeException('Pack appointment-request binding contains a raw form reference');
-            }
-        }
-        unset($action);
-        $clean['outputActions'] = $actions;
-        $clean['connectorId'] = 'aokie';
-        $clean['formId'] = null;
-        $clean['sortOrder'] = (int) ($packBinding['sortOrder'] ?? 0);
-        return $clean;
-    }
-
-    /** @return array<string,mixed>|null */
-    private function validateFlowSchema(array $packFlow, string $key, string $slug): ?array
-    {
-        if (!array_key_exists($key, $packFlow) || $packFlow[$key] === null) {
-            return null;
-        }
-        if (!is_array($packFlow[$key])) {
-            throw new \RuntimeException("Pack flow '{$slug}' has an invalid {$key}");
-        }
-        $json = json_encode($packFlow[$key]);
-        if ($json === false || strlen($json) > FlowService::MAX_BINDING_JSON_BYTES) {
-            throw new \RuntimeException("Pack flow '{$slug}' {$key} exceeds the limit");
-        }
-        return $packFlow[$key];
-    }
-
-    /** @return string[]|null */
-    private function validateNodeCapabilities(array $packFlow, string $slug): ?array
-    {
-        if (!array_key_exists('nodeCapabilities', $packFlow) || $packFlow['nodeCapabilities'] === null) {
-            return null;
-        }
-        $caps = $packFlow['nodeCapabilities'];
-        if (!is_array($caps) || !array_is_list($caps) || count($caps) > 64) {
-            throw new \RuntimeException("Pack flow '{$slug}' has invalid nodeCapabilities");
-        }
-        foreach ($caps as $cap) {
-            if (!is_string($cap) || $cap === '' || strlen($cap) > 128) {
-                throw new \RuntimeException("Pack flow '{$slug}' has invalid nodeCapabilities");
-            }
-        }
-        return $caps === [] ? null : array_values($caps);
-    }
-
-    /** @return array<string,array<string,mixed>|null> */
-    private function resolveInstalledFlows(string $appId, string $ownerId): array
-    {
-        $resolved = [];
-        foreach ($this->flows->listFlows($appId) as $flow) {
-            $slug = $flow['slug'] ?? null;
-            if (!is_string($slug) || !in_array($slug, self::FLOW_SLUGS, true)) {
-                continue;
-            }
-            if (isset($resolved[$slug])) {
-                throw new \RuntimeException("Installed flow '{$slug}' is ambiguous");
-            }
-            if (($flow['ownerUserId'] ?? null) !== $ownerId || ($flow['engine'] ?? null) !== 'f2i') {
-                throw new \RuntimeException("Installed flow '{$slug}' is not owned by this pack app");
-            }
-            $resolved[$slug] = $flow;
-        }
-        foreach (self::FLOW_SLUGS as $slug) {
-            if (!isset($resolved[$slug])) {
-                if (in_array($slug, self::ADDITIVE_FLOW_SLUGS, true)
-                    || in_array($slug, self::OPTIONAL_FLOW_SLUGS, true)) {
-                    $resolved[$slug] = null;
-                    continue;
-                }
-                throw new \RuntimeException("Installed flow '{$slug}' is missing");
-            }
-        }
-        return $resolved;
-    }
+    // ── Forms ───────────────────────────────────────────────────────────────
 
     /**
-     * @param array<string,array<string,mixed>> $installedFlows
-     * @return array<string,array<string,mixed>>
+     * @return array<string,mixed>|null
      */
-    private function resolveBindings(
-        string $appId,
-        array $installedFlows,
-        array $desiredAppointmentBinding
-    ): array
-    {
-        $candidates = array_fill_keys(self::SETTLED_BINDING_FLOWS, []);
-        $allBindings = $this->flows->listBindings($appId);
-        foreach ($allBindings as $binding) {
-            $slug = $binding['flow'] ?? null;
-            if (!is_string($slug) || !isset($candidates[$slug])) {
-                continue;
-            }
-            if (($binding['flowDefinitionId'] ?? null) !== $installedFlows[$slug]['id']
-                || ($binding['connectorId'] ?? null) !== 'aokie'
-                || !in_array($binding['event'] ?? null, ['aokie.call.ended', 'aokie.call.transcript.settled'], true)) {
-                continue;
-            }
-            $candidates[$slug][] = $binding;
-        }
-        $resolved = [];
-        foreach (self::SETTLED_BINDING_FLOWS as $slug) {
-            if (count($candidates[$slug]) !== 1) {
-                throw new \RuntimeException("Installed binding for '{$slug}' is missing or ambiguous");
-            }
-            $resolved[$slug] = $candidates[$slug][0];
-        }
-        $appointmentFlow = $installedFlows['appointment-request-apply'];
-        $appointmentCandidates = [];
-        if (is_array($appointmentFlow)) {
-            foreach ($allBindings as $binding) {
-                if (($binding['flowDefinitionId'] ?? null) === $appointmentFlow['id']) {
-                    $appointmentCandidates[] = $binding;
-                }
-            }
-        }
-        if (count($appointmentCandidates) > 1) {
-            throw new \RuntimeException("Installed binding for 'appointment-request-apply' is ambiguous");
-        }
-        if ($appointmentCandidates === []) {
-            $resolved['appointment-request-apply'] = null;
-        } else {
-            $candidate = $appointmentCandidates[0];
-            if (!$this->bindingMatches($candidate, $desiredAppointmentBinding)) {
-                throw new \RuntimeException(
-                    "Installed binding for 'appointment-request-apply' is owner-authored or incompatible"
-                );
-            }
-            $resolved['appointment-request-apply'] = $candidate;
-        }
-        return $resolved;
-    }
-
-    /**
-     * Refuse to overwrite an owner-authored or otherwise unrelated screen. A
-     * byte-identical target is already safe/idempotent and needs no provenance
-     * decision.
-     *
-     * @param array<string,mixed> $form
-     * @param array<string,mixed> $desiredScreen
-     */
-    private function assertPackOwnedScreen(
-        array $form,
-        ?string $installationCatalogId,
-        array $desiredScreen,
+    private function planForm(
+        string $packFormId,
+        array $packForm,
+        string $formId,
+        array $installed,
+        array $source,
         ?string $acceptedLegacyScreenSha256
-    ): bool {
-        $current = $this->screenWithoutMetadata($form['customScreen'] ?? []);
-        if ($this->sameValue($current, $desiredScreen)) {
+    ): ?array {
+        $form = $this->forms->getForm($formId);
+        if ($form === null) {
+            $this->skip("form:{$packFormId}", 'the form could not be read');
+            return null;
+        }
+        $plan = [
+            'formId' => $formId,
+            'before' => $form,
+            'fields' => null,
+            'fieldsAdded' => [],
+            'fieldsUpdated' => [],
+            'fieldsReordered' => false,
+            'settings' => null,
+            'settingsAdded' => [],
+            'screen' => null,
+            'screenTrust' => null,
+            'legacyAccepted' => false,
+            'hasChanges' => false,
+        ];
+
+        // Fields.
+        $fieldPlan = $this->planFields($packFormId, $packForm, $form, $installed['formMap']);
+        if ($fieldPlan !== null && ($fieldPlan['added'] !== [] || $fieldPlan['updated'] !== [] || $fieldPlan['reordered'])) {
+            $plan['fields'] = $fieldPlan['fields'];
+            $plan['fieldsAdded'] = $fieldPlan['added'];
+            $plan['fieldsUpdated'] = $fieldPlan['updated'];
+            $plan['fieldsReordered'] = $fieldPlan['reordered'];
+        }
+
+        // Settings: add what the pack sets and the form lacks; never change a set one.
+        $current = is_array($form['settings'] ?? null) ? $form['settings'] : [];
+        $packSettings = is_array($packForm['settings'] ?? null) ? $packForm['settings'] : [];
+        unset($packSettings['notifications']);
+        $added = [];
+        foreach ($packSettings as $key => $value) {
+            if (!array_key_exists($key, $current)) {
+                $current[$key] = $value;
+                $added[] = (string) $key;
+            }
+        }
+        if ($added !== []) {
+            $plan['settings'] = $current;
+            $plan['settingsAdded'] = $added;
+        }
+
+        // Screen.
+        $desired = $this->packs->resolveCustomScreen(
+            is_array($packForm['customScreen'] ?? null) ? $packForm['customScreen'] : null,
+            $installed['formMap']
+        );
+        if (is_array($desired) && $desired !== []) {
+            $ownership = $this->screenOwnership(
+                is_array($form['customScreen'] ?? null) ? $form['customScreen'] : [],
+                'form:' . $packFormId,
+                $installed['installationCatalogId'],
+                $desired,
+                $packFormId === self::SETTINGS_FORM_ID ? $acceptedLegacyScreenSha256 : null
+            );
+            if ($ownership === 'owner') {
+                $this->skip("form:{$packFormId} screen", 'owner-authored or not pack-owned; left as it is');
+            } elseif ($ownership !== 'same') {
+                $trust = $this->signedTrust($source['pack'], 'form:' . $packFormId, $packForm['customScreen']);
+                if ($trust !== null) {
+                    $plan['screen'] = $desired;
+                    $plan['screenTrust'] = $trust;
+                    $plan['legacyAccepted'] = $ownership === 'legacy';
+                }
+            }
+        }
+
+        $plan['hasChanges'] = $plan['fields'] !== null || $plan['settings'] !== null || $plan['screen'] !== null;
+        return $plan;
+    }
+
+    /**
+     * The form's fields with the pack's brought in: missing ones at their pack
+     * position, differing ones replaced by the pack's definition (keeping an
+     * owner's extra dropdown choices), owner-added ones untouched.
+     *
+     * @param array<string,string> $formMap
+     * @return array{fields:list<array<string,mixed>>,added:string[],updated:string[]}|null
+     */
+    private function planFields(string $packFormId, array $packForm, array $form, array $formMap): ?array
+    {
+        $installedFields = [];
+        foreach (is_array($form['fields'] ?? null) ? $form['fields'] : [] as $field) {
+            $id = is_array($field) ? ($field['id'] ?? null) : null;
+            if (!is_string($id)) {
+                continue;
+            }
+            if (isset($installedFields[$id])) {
+                $this->skip("form:{$packFormId} fields", 'the form has duplicate field ids; left as it is');
+                return null;
+            }
+            $installedFields[$id] = $field;
+        }
+
+        $desired = [];
+        foreach (is_array($packForm['fields'] ?? null) ? $packForm['fields'] : [] as $packField) {
+            $id = is_array($packField) ? ($packField['id'] ?? null) : null;
+            if (!is_string($id) || FormService::fieldIdError($id) !== null) {
+                continue;
+            }
+            try {
+                $desired[$id] = $this->packs->remapFieldReferences([$packField], $formMap)[0];
+            } catch (\RuntimeException) {
+                $this->skip("form:{$packFormId} field {$id}", 'it links to a form the installed app does not have');
+            }
+        }
+
+        $added = [];
+        $updated = [];
+        $merged = [];
+        foreach ($installedFields as $id => $field) {
+            if (!isset($desired[$id])) {
+                $merged[$id] = $field;
+                continue;
+            }
+            $want = $desired[$id];
+            if (FormService::normalizeFieldType((string) ($want['type'] ?? '')) !== ($field['type'] ?? null)) {
+                $this->skip("form:{$packFormId} field {$id}", 'its type differs from the pack\'s; a stored answer could not be kept');
+                $merged[$id] = $field;
+                continue;
+            }
+            $want = $this->keepOwnerOptions($want, $field);
+            if ($this->packFieldMatches($field, $want)) {
+                $merged[$id] = $field;
+                continue;
+            }
+            $merged[$id] = $want;
+            $updated[] = $id;
+        }
+
+        // Pack fields in the pack's order, as a fresh install lays them out (a
+        // later release may have moved one); a field the owner added stays
+        // right after the pack field it followed.
+        $ownAfter = [];
+        $anchor = '';
+        foreach (array_keys($merged) as $id) {
+            if (isset($desired[$id])) {
+                $anchor = $id;
+                continue;
+            }
+            $ownAfter[$anchor][] = $id;
+        }
+        $fields = [];
+        foreach ($ownAfter[''] ?? [] as $id) {
+            $fields[] = $merged[$id];
+        }
+        foreach (array_keys($desired) as $id) {
+            if (isset($merged[$id])) {
+                $fields[] = $merged[$id];
+            } else {
+                $fields[] = $desired[$id];
+                $added[] = $id;
+            }
+            foreach ($ownAfter[$id] ?? [] as $ownId) {
+                $fields[] = $merged[$ownId];
+            }
+        }
+        $keptOrder = array_values(array_filter(
+            array_column($fields, 'id'),
+            static fn ($id): bool => isset($installedFields[$id])
+        ));
+        $reordered = $keptOrder !== array_keys($installedFields);
+        foreach ($fields as $index => &$field) {
+            $field['order'] = $index;
+        }
+        unset($field);
+
+        return ['fields' => $fields, 'added' => $added, 'updated' => $updated, 'reordered' => $reordered];
+    }
+
+    /** An owner's extra choices stay on a pack dropdown, after the pack's. */
+    private function keepOwnerOptions(array $want, array $current): array
+    {
+        if (!in_array($want['type'] ?? null, self::OPTION_FIELD_TYPES, true)) {
+            return $want;
+        }
+        $packOptions = $want['properties']['options'] ?? null;
+        $ownOptions = $current['properties']['options'] ?? null;
+        if (!is_array($packOptions) || !is_array($ownOptions)) {
+            return $want;
+        }
+        $values = [];
+        foreach ($packOptions as $option) {
+            if (is_array($option) && array_key_exists('value', $option)) {
+                $values[(string) $option['value']] = true;
+            }
+        }
+        foreach ($ownOptions as $option) {
+            if (is_array($option) && array_key_exists('value', $option) && !isset($values[(string) $option['value']])) {
+                $packOptions[] = $option;
+            }
+        }
+        $want['properties']['options'] = $packOptions;
+        return $want;
+    }
+
+    /**
+     * FormService expands stored fields with order/default metadata. Compare
+     * the pack-owned semantic shape while allowing only those normal defaults.
+     */
+    private function packFieldMatches(array $current, array $desired): bool
+    {
+        if (($current['type'] ?? null) !== FormService::normalizeFieldType((string) ($desired['type'] ?? ''))) {
             return false;
         }
-        $screen = is_array($form['customScreen'] ?? null) ? $form['customScreen'] : [];
+        foreach (['id', 'label', 'properties'] as $key) {
+            if (!$this->sameValue($current[$key] ?? null, $desired[$key] ?? null)) {
+                return false;
+            }
+        }
+        return (bool) ($current['required'] ?? false) === (bool) ($desired['required'] ?? false)
+            && ($current['description'] ?? null) === ($desired['description'] ?? null)
+            && ($current['placeholder'] ?? null) === ($desired['placeholder'] ?? null)
+            && $this->sameValue($current['validation'] ?? [], $desired['validation'] ?? [])
+            && $this->sameValue($current['conditionalLogic'] ?? null, $desired['conditionalLogic'] ?? null);
+    }
+
+    /** @return int|null the snapshot version, or null when the form moved on under us */
+    private function applyForm(string $packFormId, array $plan, string $ownerId, string $packVersion): ?int
+    {
+        // Re-read immediately before the snapshot and write, so a concurrent
+        // owner edit is never overwritten on the strength of an earlier read.
+        $fresh = $this->forms->getForm($plan['formId']);
+        $before = $plan['before'];
+        if ($fresh === null
+            || !$this->sameValue($before['fields'] ?? [], $fresh['fields'] ?? [])
+            || !$this->sameValue($before['settings'] ?? [], $fresh['settings'] ?? [])
+            || !$this->sameValue($before['customScreen'] ?? [], $fresh['customScreen'] ?? [])) {
+            $this->skip("form:{$packFormId}", 'it changed while the upgrade ran; run the upgrade again');
+            return null;
+        }
+        $version = $this->versions->createVersion(
+            $plan['formId'],
+            $ownerId,
+            "Before Aokie Receptionist {$packVersion} upgrade"
+        );
+        $update = [];
+        if ($plan['fields'] !== null) {
+            $update['fields'] = $plan['fields'];
+        }
+        if ($plan['settings'] !== null) {
+            $update['settings'] = $plan['settings'];
+        }
+        if ($plan['screen'] !== null) {
+            $update['customScreen'] = $plan['screen'];
+        }
+        if ($this->forms->updateForm($plan['formId'], $update) === null) {
+            throw new \RuntimeException("Installed pack form '{$packFormId}' update failed");
+        }
+        if ($plan['screen'] !== null) {
+            $this->forms->setCustomScreenTrust(
+                $plan['formId'],
+                $plan['screenTrust']['trust'],
+                $plan['screenTrust']['provenance']
+            );
+        }
+        return (int) $version['version'];
+    }
+
+    // ── Screens ─────────────────────────────────────────────────────────────
+
+    /**
+     * Whose screen is installed: 'same' (already the pack's), 'pack' (the
+     * pack installed it, or there is none), 'legacy' (the operator-accepted
+     * historical settings screen) or 'owner' (someone else's; left alone).
+     *
+     * @param array<string,mixed> $screen the installed screen with its _trust/_provenance
+     * @param array<string,mixed> $desired
+     */
+    private function screenOwnership(
+        array $screen,
+        string $componentKey,
+        ?string $installationCatalogId,
+        array $desired,
+        ?string $acceptedLegacyScreenSha256
+    ): string {
+        $current = $this->screenWithoutMetadata($screen);
+        if ($this->sameValue($current, $desired)) {
+            return 'same';
+        }
+        if ($current === []) {
+            return 'pack';
+        }
         $provenance = is_array($screen['_provenance'] ?? null) ? $screen['_provenance'] : [];
         $vendorOwned = ($provenance['source'] ?? null) === 'vendor-signed'
-            && ($provenance['component'] ?? null) === 'form:' . self::SETTINGS_FORM_ID;
+            && ($provenance['component'] ?? null) === $componentKey;
         $catalogOwned = $installationCatalogId !== null
             && ($provenance['source'] ?? null) === 'catalog'
             && ($provenance['catalogId'] ?? null) === $installationCatalogId;
         if ($vendorOwned || $catalogOwned) {
-            return false;
+            return 'pack';
         }
         if ($acceptedLegacyScreenSha256 !== null) {
             if ($this->acceptsKnownLegacyScreen(
@@ -821,11 +695,13 @@ final class AokieReceptionistUpgradeService
                 $provenance,
                 array_key_exists('_provenance', $screen) && is_array($screen['_provenance'])
             )) {
-                return true;
+                return 'legacy';
             }
+            // An explicit operator assertion that does not hold is a wrong
+            // invocation, not something missing: refuse it.
             throw new \RuntimeException('Installed custom screen is not the accepted known legacy Aokie screen');
         }
-        throw new \RuntimeException('Receptionist Settings custom screen is owner-authored or not pack-owned');
+        return 'owner';
     }
 
     /** @param array<string,mixed> $provenance */
@@ -844,9 +720,442 @@ final class AokieReceptionistUpgradeService
     }
 
     /**
-     * @param array<string,mixed> $current
-     * @param array<string,mixed> $desired
+     * The trust a fresh import would stamp on this screen: verified, from the
+     * pack's pinned vendor signature over this component's exact bytes.
+     *
+     * @return array{trust:string,provenance:array<string,mixed>}|null
      */
+    private function signedTrust(array $pack, string $componentKey, mixed $packScreen): ?array
+    {
+        try {
+            return $this->packs->verifyVendorSignedScreenComponent(
+                $pack,
+                $componentKey,
+                is_array($packScreen) ? $packScreen : []
+            );
+        } catch (\RuntimeException | \InvalidArgumentException) {
+            $this->skip("{$componentKey} screen", 'the bundled screen does not match its signed digest');
+            return null;
+        }
+    }
+
+    // ── The app ─────────────────────────────────────────────────────────────
+
+    /** @return array<string,mixed> */
+    private function planApp(string $appId, array $source, array $installed): array
+    {
+        $app = $this->apps->getApp($appId);
+        if ($app === null) {
+            throw new \RuntimeException('Target app was not found');
+        }
+        $packApp = $source['app'];
+        $plan = [
+            'logic' => null, 'scriptsAdded' => [], 'scriptsUpdated' => [], 'permissionsAdded' => [], 'connector' => false,
+            'settings' => null, 'settingsAdded' => [],
+            'screen' => null, 'screenTrust' => null,
+            'reports' => null, 'reportsAdded' => [],
+            'description' => null,
+        ];
+
+        // Description: a former pack description (never edited) becomes today's.
+        $packDescription = is_string($packApp['description'] ?? null) ? $packApp['description'] : null;
+        $description = is_string($app['description'] ?? null) ? $app['description'] : '';
+        if ($packDescription !== null && $description !== $packDescription) {
+            if (in_array(hash('sha256', $description), self::FORMER_APP_DESCRIPTION_SHA256, true)) {
+                $plan['description'] = $packDescription;
+            } else {
+                $this->skip('app description', 'edited by the owner; left as it is');
+            }
+        }
+
+        // App logic: the pack's scripts, grants and connector; the owner's own kept.
+        $packLogic = is_array($packApp['customLogic'] ?? null) ? $packApp['customLogic'] : null;
+        if ($packLogic !== null) {
+            $current = is_array($app['customLogic'] ?? null) ? $app['customLogic'] : [];
+            $merged = $current;
+            foreach ($packLogic as $key => $value) {
+                if ($key !== 'scripts' && $key !== 'permissions') {
+                    $merged[$key] = $value;
+                }
+            }
+            $currentScripts = [];
+            foreach (is_array($current['scripts'] ?? null) ? $current['scripts'] : [] as $script) {
+                if (is_array($script) && is_string($script['id'] ?? null)) {
+                    $currentScripts[$script['id']] = $script;
+                }
+            }
+            $scripts = [];
+            $packScriptIds = [];
+            foreach (is_array($packLogic['scripts'] ?? null) ? $packLogic['scripts'] : [] as $script) {
+                $id = is_array($script) ? ($script['id'] ?? null) : null;
+                if (!is_string($id)) {
+                    continue;
+                }
+                $packScriptIds[$id] = true;
+                $scripts[] = $script;
+                if (!isset($currentScripts[$id])) {
+                    $plan['scriptsAdded'][] = $id;
+                } elseif (!$this->sameValue($currentScripts[$id], $script)) {
+                    $plan['scriptsUpdated'][] = $id;
+                }
+            }
+            foreach (is_array($current['scripts'] ?? null) ? $current['scripts'] : [] as $script) {
+                if (!is_array($script) || !isset($packScriptIds[$script['id'] ?? ''])) {
+                    $scripts[] = $script;
+                }
+            }
+            $merged['scripts'] = $scripts;
+            $currentPermissions = is_array($current['permissions'] ?? null) ? $current['permissions'] : [];
+            $permissions = is_array($packLogic['permissions'] ?? null) ? array_values($packLogic['permissions']) : [];
+            foreach ($permissions as $permission) {
+                if (!in_array($permission, $currentPermissions, true)) {
+                    $plan['permissionsAdded'][] = (string) $permission;
+                }
+            }
+            foreach ($currentPermissions as $permission) {
+                if (!in_array($permission, $permissions, true)) {
+                    $permissions[] = $permission;
+                }
+            }
+            $merged['permissions'] = $permissions;
+            $plan['connector'] = !$this->sameValue($current['connector'] ?? null, $packLogic['connector'] ?? null);
+            if (!$this->sameValue($current, $merged)) {
+                $plan['logic'] = $merged;
+            }
+        }
+
+        // Settings: keys the pack sets and the app lacks, and missing included services.
+        $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+        $packSettings = is_array($packApp['settings'] ?? null) ? $packApp['settings'] : [];
+        unset($packSettings['notifications'], $packSettings['services'], $packSettings['defaultRoleName'],
+            $packSettings['defaultRoleId'], $packSettings['landingPage']);
+        if (!isset($packApp['hostedProject'])) {
+            unset($packSettings['hostedDashboard']);
+        }
+        foreach ($packSettings as $key => $value) {
+            if (!array_key_exists($key, $settings)) {
+                $settings[$key] = $value;
+                $plan['settingsAdded'][] = (string) $key;
+            }
+        }
+        $declared = is_array($packApp['features'] ?? null) ? $packApp['features']
+            : (is_array($packApp['services'] ?? null) ? $packApp['services'] : []);
+        foreach ($declared as $service) {
+            $id = is_array($service) ? (string) ($service['id'] ?? '') : '';
+            if ($id === '' || isset($settings['services'][$id])) {
+                continue;
+            }
+            $settings['services'] = is_array($settings['services'] ?? null) ? $settings['services'] : [];
+            $settings['services'][$id] = [
+                'enabled' => ($service['defaultEnabled'] ?? true) !== false,
+                'title' => (string) ($service['title'] ?? $id),
+                'description' => (string) ($service['description'] ?? ''),
+            ];
+            $plan['settingsAdded'][] = 'services.' . $id;
+        }
+        if ($plan['settingsAdded'] !== []) {
+            $plan['settings'] = $settings;
+        }
+
+        // Home screen.
+        $desired = $this->packs->resolveCustomScreen(
+            is_array($packApp['customScreen'] ?? null) ? $packApp['customScreen'] : null,
+            $installed['formMap']
+        );
+        if (is_array($desired) && $desired !== []) {
+            $ownership = $this->screenOwnership(
+                is_array($app['customScreen'] ?? null) ? $app['customScreen'] : [],
+                'app:' . self::PACK_APP_ID,
+                $installed['installationCatalogId'],
+                $desired,
+                null
+            );
+            if ($ownership === 'owner') {
+                $this->skip('app screen', 'owner-authored or not pack-owned; left as it is');
+            } elseif ($ownership !== 'same') {
+                $trust = $this->signedTrust($source['pack'], 'app:' . self::PACK_APP_ID, $packApp['customScreen']);
+                if ($trust !== null) {
+                    $plan['screen'] = $desired;
+                    $plan['screenTrust'] = $trust;
+                }
+            }
+        }
+
+        // Reports: the pack's set is installed when the app has none. An app
+        // with reports keeps them (they carry no pack identity to match on).
+        $packReports = is_array($packApp['reports'] ?? null) ? $packApp['reports'] : [];
+        $currentReports = is_array($app['reports'] ?? null) ? $app['reports'] : [];
+        if ($packReports !== []) {
+            if ($currentReports === []) {
+                $plan['reports'] = $this->packs->resolvePackReports($packReports, $installed['formMap']);
+                foreach ($plan['reports'] as $report) {
+                    $plan['reportsAdded'][] = (string) ($report['name'] ?? '');
+                }
+            } else {
+                $names = array_map(static fn ($r): string => is_array($r) ? (string) ($r['name'] ?? '') : '', $currentReports);
+                foreach ($packReports as $report) {
+                    if (!in_array((string) ($report['name'] ?? ''), $names, true)) {
+                        $this->skip('report ' . (string) ($report['name'] ?? ''), 'the app has its own reports; left as they are');
+                    }
+                }
+            }
+        }
+        return $plan;
+    }
+
+    // ── Roles ───────────────────────────────────────────────────────────────
+
+    /** @return array<string,array{roleId:?string,permissions:list<array{formId:?string,permission:string}>,added:string[]}> */
+    private function planRoles(string $appId, array $source, array $installed): array
+    {
+        $roles = [];
+        foreach ($this->appUsers->getRoles($appId) as $role) {
+            $roles[(string) ($role['name'] ?? '')][] = $role;
+        }
+        $plans = [];
+        foreach (is_array($source['app']['roles'] ?? null) ? $source['app']['roles'] : [] as $packRole) {
+            $name = (string) ($packRole['name'] ?? '');
+            if ($name === '' || $name === 'Owner') {
+                continue;
+            }
+            $wanted = [];
+            foreach (is_array($packRole['permissions'] ?? null) ? $packRole['permissions'] : [] as $perm) {
+                $permission = (string) ($perm['permission'] ?? '');
+                // Only what a role can hold: a built-in permission or a connector
+                // grant. Anything else the importer drops too (flow.*.run is app
+                // logic's grant, not a role's), so asking for it would never settle.
+                if (!in_array($permission, AppPermissions::ALL, true) && !AppPermissions::isConnectorGrant($permission)) {
+                    continue;
+                }
+                $packFormId = $perm['packFormId'] ?? null;
+                $formId = null;
+                if ($packFormId !== null) {
+                    $formId = $installed['formMap'][$packFormId] ?? null;
+                    if ($formId === null) {
+                        continue;
+                    }
+                }
+                $wanted[] = ['formId' => $formId, 'permission' => $permission];
+            }
+            // The importer grants execute_flows to every role that gets any
+            // permission (packs predate that permission); so does the upgrade.
+            if ($wanted !== [] && !in_array(AppPermissions::EXECUTE_FLOWS, array_column($wanted, 'permission'), true)) {
+                $wanted[] = ['formId' => null, 'permission' => AppPermissions::EXECUTE_FLOWS];
+            }
+
+            $matches = $roles[$name] ?? [];
+            $matches = array_values(array_filter(
+                $matches,
+                static fn (array $r): bool => !empty($packRole['system']) === !empty($r['isSystem'])
+            ));
+            if (count($matches) > 1) {
+                $this->skip("role {$name}", 'more than one role has that name; left as they are');
+                continue;
+            }
+            if ($matches === []) {
+                if (!empty($packRole['system'])) {
+                    $this->skip("role {$name}", 'the built-in role is missing');
+                    continue;
+                }
+                $plans[$name] = [
+                    'roleId' => null,
+                    'description' => $packRole['description'] ?? null,
+                    'permissions' => $wanted,
+                    'added' => array_values(array_unique(array_column($wanted, 'permission'))),
+                ];
+                continue;
+            }
+            $role = $matches[0];
+            $have = [];
+            $permissions = [];
+            foreach ($role['permissions'] ?? [] as $perm) {
+                $key = ($perm['formId'] ?? '') . '|' . $perm['permission'];
+                $have[$key] = true;
+                $permissions[] = ['formId' => $perm['formId'] ?? null, 'permission' => (string) $perm['permission']];
+            }
+            $added = [];
+            foreach ($wanted as $perm) {
+                $key = ($perm['formId'] ?? '') . '|' . $perm['permission'];
+                if (!isset($have[$key])) {
+                    $have[$key] = true;
+                    $permissions[] = $perm;
+                    $added[] = $perm['permission'];
+                }
+            }
+            if ($added !== []) {
+                $plans[$name] = ['roleId' => (string) $role['id'], 'description' => null, 'permissions' => $permissions, 'added' => $added];
+            }
+        }
+        return $plans;
+    }
+
+    // ── Flows and bindings ──────────────────────────────────────────────────
+
+    /**
+     * @return array{0:array<string,array<string,mixed>>,1:list<array<string,mixed>>}
+     */
+    private function planFlows(string $appId, array $source, array $installed): array
+    {
+        $installedFlows = [];
+        $duplicates = [];
+        foreach ($this->flows->listFlows($appId) as $flow) {
+            $slug = (string) ($flow['slug'] ?? '');
+            if (isset($installedFlows[$slug])) {
+                $duplicates[$slug] = true;
+            }
+            $installedFlows[$slug] = $flow;
+        }
+
+        $flowPlans = [];
+        foreach ($source['flows'] as $slug => $packFlow) {
+            if (isset($duplicates[$slug])) {
+                $this->skip("flow {$slug}", 'more than one flow has that slug; left as they are');
+                continue;
+            }
+            try {
+                $desired = $this->prepareFlow($slug, $packFlow, $installed['formMap']);
+            } catch (\RuntimeException | \InvalidArgumentException) {
+                $this->skip("flow {$slug}", 'it reads a form the installed app does not have');
+                continue;
+            }
+            $current = $installedFlows[$slug] ?? null;
+            if ($current === null) {
+                $flowPlans[$slug] = ['action' => 'create', 'flow' => null, 'desired' => $desired];
+                continue;
+            }
+            if (($current['ownerUserId'] ?? null) !== $installed['ownerId'] || ($current['engine'] ?? null) !== 'f2i'
+                || ($current['name'] ?? null) !== $desired['name']) {
+                // No pack flow has ever been renamed: another name under the
+                // pack's slug is someone else's flow.
+                $this->skip("flow {$slug}", 'a flow with that slug is owner-authored; left as it is, with its bindings');
+                continue;
+            }
+            $flowPlans[$slug] = [
+                'action' => $this->flowMatches($current, $desired) ? 'keep' : 'update',
+                'flow' => $current,
+                'desired' => $desired,
+            ];
+        }
+
+        $installedBindings = $this->flows->listBindings($appId);
+        $claimed = [];
+        $bindingPlans = [];
+        foreach ($source['bindings'] as $packBinding) {
+            $slug = (string) $packBinding['flow'];
+            if (!isset($flowPlans[$slug])) {
+                continue;
+            }
+            try {
+                $desired = $this->prepareBinding($packBinding, $installed['formMap']);
+            } catch (\RuntimeException | \InvalidArgumentException) {
+                $this->skip("binding {$slug} on " . (string) ($packBinding['event'] ?? ''), 'it writes to a form the installed app does not have');
+                continue;
+            }
+            $label = $slug . ' on ' . $desired['event'];
+            $flow = $flowPlans[$slug]['flow'];
+            if ($flow === null) {
+                $bindingPlans[] = ['action' => 'create', 'label' => $label, 'binding' => null, 'desired' => $desired];
+                continue;
+            }
+            $mine = array_values(array_filter(
+                $installedBindings,
+                static fn (array $b): bool => ($b['flowDefinitionId'] ?? null) === $flow['id'] && !isset($claimed[$b['id']])
+            ));
+            $sameEvent = array_values(array_filter($mine, static fn (array $b): bool => $b['event'] === $desired['event']));
+            if (count($sameEvent) > 1) {
+                $this->skip("binding {$label}", 'more than one binding matches; left as they are');
+                continue;
+            }
+            $match = $sameEvent[0] ?? null;
+            if ($match === null) {
+                $moved = array_values(array_filter(
+                    $mine,
+                    static fn (array $b): bool => in_array($b['event'], self::MOVED_BINDING_EVENTS[$slug] ?? [], true)
+                ));
+                $match = count($moved) === 1 ? $moved[0] : null;
+            }
+            if ($match === null) {
+                $bindingPlans[] = ['action' => 'create', 'label' => $label, 'binding' => null, 'desired' => $desired];
+                continue;
+            }
+            $claimed[$match['id']] = true;
+            if (!$this->bindingMatches($match, $desired)) {
+                $bindingPlans[] = ['action' => 'update', 'label' => $label, 'binding' => $match, 'desired' => $desired];
+            }
+        }
+        return [$flowPlans, $bindingPlans];
+    }
+
+    /** @return array<string,mixed> */
+    private function prepareFlow(string $slug, array $packFlow, array $formMap): array
+    {
+        $name = trim((string) ($packFlow['name'] ?? ''));
+        if ($name === '' || strlen($name) > 255) {
+            throw new \RuntimeException("Pack flow '{$slug}' has an invalid name");
+        }
+        $flowJson = FlowService::sanitizeFlowJson($packFlow['flowJson'] ?? null);
+        $flowJson = $this->packs->resolveFlowJsonFormRefs($flowJson, $formMap, $slug);
+        $caps = null;
+        if (is_array($packFlow['nodeCapabilities'] ?? null)) {
+            $caps = array_values(array_filter(
+                $packFlow['nodeCapabilities'],
+                static fn ($c): bool => is_string($c) && $c !== '' && strlen($c) <= 128
+            ));
+            $caps = $caps !== [] ? array_slice($caps, 0, 64) : null;
+        }
+        return [
+            'name' => $name,
+            'description' => isset($packFlow['description']) && is_string($packFlow['description'])
+                ? substr($packFlow['description'], 0, 2000) : null,
+            'flowJson' => $flowJson,
+            'inputSchema' => is_array($packFlow['inputSchema'] ?? null) ? $packFlow['inputSchema'] : null,
+            'outputSchema' => is_array($packFlow['outputSchema'] ?? null) ? $packFlow['outputSchema'] : null,
+            'nodeCapabilities' => $caps,
+            'enabled' => array_key_exists('enabled', $packFlow) ? (bool) $packFlow['enabled'] : true,
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    private function prepareBinding(array $packBinding, array $formMap): array
+    {
+        $clean = FlowService::sanitizeBinding($packBinding);
+        $actions = $clean['outputActions'];
+        if ($actions !== null) {
+            foreach ($actions as &$action) {
+                $ref = $action['form'] ?? null;
+                if (is_string($ref) && str_starts_with($ref, '@pack:')) {
+                    $action['form'] = $formMap[substr($ref, 6)]
+                        ?? throw new \RuntimeException('Pack binding writes to an unknown form');
+                } elseif ($ref !== null) {
+                    unset($action['form']);
+                }
+            }
+            unset($action);
+        }
+        $formId = null;
+        $formRef = $packBinding['formId'] ?? null;
+        if (is_string($formRef) && str_starts_with($formRef, '@pack:')) {
+            $formId = $formMap[substr($formRef, 6)] ?? throw new \RuntimeException('Pack binding targets an unknown form');
+        }
+        $connectorId = is_string($packBinding['connectorId'] ?? null) && $packBinding['connectorId'] !== ''
+            ? substr($packBinding['connectorId'], 0, 64) : null;
+        return [
+            'flow' => $clean['flow'],
+            'event' => $clean['event'],
+            'mode' => $clean['mode'],
+            'condition' => $clean['condition'],
+            'inputMap' => $clean['inputMap'],
+            'outputActions' => $actions,
+            'timeoutMs' => $clean['timeoutMs'],
+            'retryPolicy' => $clean['retryPolicy'],
+            'fallbackPolicy' => $clean['fallbackPolicy'],
+            'enabled' => $clean['enabled'],
+            'formId' => $formId,
+            'connectorId' => $connectorId,
+            'sortOrder' => (int) ($packBinding['sortOrder'] ?? 0),
+        ];
+    }
+
     private function flowMatches(array $current, array $desired): bool
     {
         foreach (['name', 'description', 'flowJson', 'inputSchema', 'outputSchema', 'nodeCapabilities'] as $key) {
@@ -857,40 +1166,12 @@ final class AokieReceptionistUpgradeService
         return true;
     }
 
-    /**
-     * FormService expands stored fields with order/default metadata. Compare
-     * the pack-owned semantic shape while allowing only those normal defaults.
-     */
-    private function packFieldMatches(array $current, array $desired): bool
-    {
-        foreach (['id', 'type', 'label', 'required', 'properties'] as $key) {
-            if (!$this->sameValue($current[$key] ?? null, $desired[$key] ?? null)) {
-                return false;
-            }
-        }
-        return ($current['description'] ?? null) === ($desired['description'] ?? null)
-            && ($current['placeholder'] ?? null) === ($desired['placeholder'] ?? null)
-            && $this->sameValue($current['validation'] ?? [], $desired['validation'] ?? [])
-            && $this->sameValue($current['conditionalLogic'] ?? null, $desired['conditionalLogic'] ?? null);
-    }
-
-    /** @param array<string,mixed> $current @param array<string,mixed> $desired */
+    /** Everything but `enabled`, which stays the operator's. */
     private function bindingMatches(array $current, array $desired): bool
     {
         foreach ([
-            'formId',
-            'connectorId',
-            'flow',
-            'event',
-            'mode',
-            'condition',
-            'inputMap',
-            'outputActions',
-            'timeoutMs',
-            'retryPolicy',
-            'fallbackPolicy',
-            'enabled',
-            'sortOrder',
+            'formId', 'connectorId', 'flow', 'event', 'mode', 'condition', 'inputMap',
+            'outputActions', 'timeoutMs', 'retryPolicy', 'fallbackPolicy', 'sortOrder',
         ] as $key) {
             if (!$this->sameValue($current[$key] ?? null, $desired[$key] ?? null)) {
                 return false;
@@ -899,145 +1180,103 @@ final class AokieReceptionistUpgradeService
         return true;
     }
 
-    /**
-     * @param array<string,array<string,mixed>> $desiredFlows
-     * @param array<string,array<string,mixed>|null> $installedFlows
-     * @param array<string,array<string,mixed>|null> $bindings
-     * @return array{0:string[],1:string[]}
-     */
-    private function applyFlowChanges(
-        string $appId,
-        string $ownerId,
-        array $desiredFlows,
-        array $installedFlows,
-        array $bindings,
-        array $desiredAppointmentBinding
-    ): array {
-        $needsFlowTransaction = false;
-        foreach (self::FLOW_SLUGS as $slug) {
-            if ($installedFlows[$slug] === null && in_array($slug, self::OPTIONAL_FLOW_SLUGS, true)) {
-                continue;
-            }
-            $needsFlowTransaction = $needsFlowTransaction
-                || $installedFlows[$slug] === null
-                || !$this->flowMatches($installedFlows[$slug], $desiredFlows[$slug]);
-        }
-        foreach (self::SETTLED_BINDING_FLOWS as $slug) {
-            $needsFlowTransaction = $needsFlowTransaction
-                || $bindings[$slug]['event'] !== 'aokie.call.transcript.settled';
-        }
-        $needsFlowTransaction = $needsFlowTransaction
-            || $bindings['appointment-request-apply'] === null;
-        if (!$needsFlowTransaction) {
-            return [[], []];
-        }
-        if ($this->mysql->inTransaction()) {
-            throw new \RuntimeException('Aokie flow upgrade requires its own database transaction');
-        }
+    // ── Applying the MySQL side ─────────────────────────────────────────────
 
-        $updatedFlows = [];
-        $updatedBindings = [];
+    private function applyMysqlChanges(
+        string $appId,
+        array $installed,
+        array $source,
+        array $appPlan,
+        array $rolePlans,
+        array $flowPlans,
+        array $bindingPlans,
+        bool $versionChanges
+    ): void {
+        if ($this->mysql->inTransaction()) {
+            throw new \RuntimeException('The Aokie upgrade requires its own database transaction');
+        }
         $this->mysql->beginTransaction();
         try {
-            $appLock = $this->mysql->prepare('SELECT owner_id FROM apps WHERE id = :id FOR UPDATE');
-            $appLock->execute(['id' => $appId]);
-            if ($appLock->fetchColumn() !== $ownerId) {
+            $lock = $this->mysql->prepare('SELECT owner_id FROM apps WHERE id = :id FOR UPDATE');
+            $lock->execute(['id' => $appId]);
+            if ($lock->fetchColumn() !== $installed['ownerId']) {
                 throw new \RuntimeException('Target app ownership changed during upgrade');
             }
 
-            $flowLock = $this->mysql->prepare(
-                'SELECT id, owner_user_id, engine FROM flow_definitions
-                  WHERE id = :id AND app_id = :app AND slug = :slug FOR UPDATE'
-            );
-            foreach (self::FLOW_SLUGS as $slug) {
-                if ($installedFlows[$slug] === null && in_array($slug, self::OPTIONAL_FLOW_SLUGS, true)) {
-                    continue;
+            $appUpdate = [];
+            if ($appPlan['description'] !== null) {
+                $appUpdate['description'] = $appPlan['description'];
+            }
+            if ($appPlan['logic'] !== null) {
+                $appUpdate['customLogic'] = $appPlan['logic'];
+            }
+            if ($appPlan['settings'] !== null) {
+                $appUpdate['settings'] = $appPlan['settings'];
+            }
+            if ($appPlan['screen'] !== null) {
+                $appUpdate['customScreen'] = $appPlan['screen'];
+            }
+            if ($appPlan['reports'] !== null) {
+                $appUpdate['reports'] = $appPlan['reports'];
+            }
+            if ($appUpdate !== [] && $this->apps->updateApp($appId, $appUpdate) === null) {
+                throw new \RuntimeException('The app could not be updated');
+            }
+            if ($appPlan['screen'] !== null) {
+                $this->apps->setCustomScreenTrust($appId, $appPlan['screenTrust']['trust'], $appPlan['screenTrust']['provenance']);
+            }
+
+            foreach ($rolePlans as $name => $plan) {
+                $roleId = $plan['roleId'];
+                if ($roleId === null) {
+                    $role = $this->appUsers->createRole($appId, ['name' => $name, 'description' => $plan['description']]);
+                    $roleId = (string) $role['id'];
                 }
-                if ($installedFlows[$slug] === null) {
-                    if (!in_array($slug, self::ADDITIVE_FLOW_SLUGS, true)) {
-                        throw new \RuntimeException("Installed flow '{$slug}' disappeared during upgrade");
-                    }
-                    $collisionLock = $this->mysql->prepare(
-                        'SELECT id FROM flow_definitions WHERE app_id = :app AND slug = :slug FOR UPDATE'
-                    );
-                    $collisionLock->execute(['app' => $appId, 'slug' => $slug]);
-                    if ($collisionLock->fetchColumn() !== false) {
-                        throw new \RuntimeException("Installed additive flow '{$slug}' appeared during upgrade");
-                    }
-                    $create = $desiredFlows[$slug];
+                $this->appUsers->setRolePermissions($roleId, $plan['permissions'], true);
+                $this->appUsers->setConnectorGrants($roleId, $plan['permissions'], true);
+            }
+
+            $flowIds = [];
+            foreach ($flowPlans as $slug => $plan) {
+                if ($plan['action'] === 'create') {
+                    $create = $plan['desired'];
                     $create['slug'] = $slug;
-                    $installedFlows[$slug] = $this->flows->createFlow($appId, $ownerId, $create);
-                    $updatedFlows[] = $slug;
+                    $flowIds[$slug] = (string) $this->flows->createFlow($appId, $installed['ownerId'], $create)['id'];
                     continue;
                 }
-                $flowLock->execute([
-                    'id' => $installedFlows[$slug]['id'],
-                    'app' => $appId,
-                    'slug' => $slug,
-                ]);
-                $locked = $flowLock->fetch();
-                if (!$locked || $locked['owner_user_id'] !== $ownerId || $locked['engine'] !== 'f2i') {
-                    throw new \RuntimeException("Installed flow '{$slug}' changed during upgrade");
-                }
-                $current = $this->flows->getFlow($appId, $installedFlows[$slug]['id']);
-                if ($current === null) {
-                    throw new \RuntimeException("Installed flow '{$slug}' disappeared during upgrade");
-                }
-                if (!$this->flowMatches($current, $desiredFlows[$slug])) {
-                    if (in_array($slug, self::ADDITIVE_FLOW_SLUGS, true)) {
-                        throw new \RuntimeException("Installed additive flow '{$slug}' changed during upgrade");
-                    }
-                    if ($this->flows->updateFlow($appId, $current['id'], $desiredFlows[$slug]) === null) {
+                $flowIds[$slug] = (string) $plan['flow']['id'];
+                if ($plan['action'] === 'update') {
+                    $update = $plan['desired'];
+                    unset($update['enabled']);
+                    if ($this->flows->updateFlow($appId, $plan['flow']['id'], $update) === null) {
                         throw new \RuntimeException("Installed flow '{$slug}' could not be updated");
                     }
-                    $updatedFlows[] = $slug;
+                }
+            }
+            foreach ($bindingPlans as $plan) {
+                if ($plan['action'] === 'create') {
+                    $this->flows->createBinding($appId, $plan['desired']);
+                    continue;
+                }
+                $update = $plan['desired'];
+                $update['enabled'] = (bool) $plan['binding']['enabled'];
+                if ($this->flows->updateBinding($appId, $plan['binding']['id'], $update) === null) {
+                    throw new \RuntimeException("Installed binding '{$plan['label']}' could not be updated");
                 }
             }
 
-            $bindingLock = $this->mysql->prepare(
-                'SELECT b.id, b.connector_id, b.event_name, f.slug
-                   FROM app_flow_bindings b
-                   JOIN flow_definitions f ON f.id = b.flow_definition_id
-                  WHERE b.id = :id AND b.app_id = :app AND b.flow_definition_id = :flow FOR UPDATE'
-            );
-            $bindingUpdate = $this->mysql->prepare(
-                'UPDATE app_flow_bindings
-                    SET event_name = :event
-                  WHERE id = :id AND app_id = :app AND event_name = :old_event'
-            );
-            foreach (self::SETTLED_BINDING_FLOWS as $slug) {
-                $bindingLock->execute([
-                    'id' => $bindings[$slug]['id'],
-                    'app' => $appId,
-                    'flow' => $installedFlows[$slug]['id'],
+            if ($versionChanges) {
+                $this->mysql->prepare(
+                    'UPDATE pack_installations
+                        SET pack_version = :version, pack_name = :name, pack_description = :description
+                      WHERE id = :id'
+                )->execute([
+                    'version' => $source['packVersion'],
+                    'name' => $source['packName'],
+                    'description' => $source['packDescription'],
+                    'id' => $installed['installation']['id'],
                 ]);
-                $locked = $bindingLock->fetch();
-                if (!$locked || $locked['slug'] !== $slug || $locked['connector_id'] !== 'aokie'
-                    || !in_array($locked['event_name'], ['aokie.call.ended', 'aokie.call.transcript.settled'], true)) {
-                    throw new \RuntimeException("Installed binding for '{$slug}' changed during upgrade");
-                }
-                if ($locked['event_name'] === 'aokie.call.ended') {
-                    $bindingUpdate->execute([
-                        'event' => 'aokie.call.transcript.settled',
-                        'id' => $locked['id'],
-                        'app' => $appId,
-                        'old_event' => 'aokie.call.ended',
-                    ]);
-                    if ($bindingUpdate->rowCount() !== 1) {
-                        throw new \RuntimeException("Installed binding for '{$slug}' could not be updated");
-                    }
-                    $updatedBindings[] = $slug;
-                }
             }
-
-            if ($bindings['appointment-request-apply'] === null) {
-                $newBinding = $this->flows->createBinding($appId, $desiredAppointmentBinding);
-                if (!$this->bindingMatches($newBinding, $desiredAppointmentBinding)) {
-                    throw new \RuntimeException("Installed binding for 'appointment-request-apply' could not be created");
-                }
-                $updatedBindings[] = 'appointment-request-apply';
-            }
-
             $this->mysql->commit();
         } catch (\Throwable $e) {
             if ($this->mysql->inTransaction()) {
@@ -1045,8 +1284,93 @@ final class AokieReceptionistUpgradeService
             }
             throw $e;
         }
-        return [$updatedFlows, $updatedBindings];
     }
+
+    // ── The summary ─────────────────────────────────────────────────────────
+
+    /** @return array<string,mixed> */
+    private function describeChanges(
+        array $formPlans,
+        array $appPlan,
+        array $rolePlans,
+        array $flowPlans,
+        array $bindingPlans,
+        bool $versionChanges
+    ): array {
+        $forms = [];
+        foreach ($formPlans as $packFormId => $plan) {
+            if (!$plan['hasChanges']) {
+                continue;
+            }
+            $forms[$packFormId] = [
+                'fieldsAdded' => $plan['fieldsAdded'],
+                'fieldsUpdated' => $plan['fieldsUpdated'],
+                'fieldsReordered' => $plan['fieldsReordered'],
+                'settingsAdded' => $plan['settingsAdded'],
+                'screen' => $plan['screen'] !== null,
+            ];
+        }
+        $roles = [];
+        foreach ($rolePlans as $name => $plan) {
+            $roles[$name] = ['created' => $plan['roleId'] === null, 'permissionsAdded' => $plan['added']];
+        }
+        $flows = ['created' => [], 'updated' => []];
+        foreach ($flowPlans as $slug => $plan) {
+            if ($plan['action'] === 'create') {
+                $flows['created'][] = $slug;
+            } elseif ($plan['action'] === 'update') {
+                $flows['updated'][] = $slug;
+            }
+        }
+        $bindings = ['created' => [], 'updated' => []];
+        foreach ($bindingPlans as $plan) {
+            $bindings[$plan['action'] === 'create' ? 'created' : 'updated'][] = $plan['label'];
+        }
+        return [
+            'forms' => $forms,
+            'appLogic' => [
+                'scriptsAdded' => $appPlan['scriptsAdded'],
+                'scriptsUpdated' => $appPlan['scriptsUpdated'],
+                'permissionsAdded' => $appPlan['permissionsAdded'],
+                'connector' => $appPlan['connector'],
+                'changed' => $appPlan['logic'] !== null,
+            ],
+            'appSettings' => $appPlan['settingsAdded'],
+            'appDescription' => $appPlan['description'] !== null,
+            'appScreen' => $appPlan['screen'] !== null,
+            'reports' => $appPlan['reportsAdded'],
+            'roles' => $roles,
+            'flows' => $flows,
+            'bindings' => $bindings,
+            'installationVersion' => $versionChanges,
+        ];
+    }
+
+    private function hasChanges(array $changes): bool
+    {
+        return $changes['forms'] !== []
+            || $changes['appLogic']['changed']
+            || $changes['appSettings'] !== []
+            || $changes['appDescription']
+            || $changes['appScreen']
+            || $changes['reports'] !== []
+            || $changes['roles'] !== []
+            || $changes['flows']['created'] !== [] || $changes['flows']['updated'] !== []
+            || $changes['bindings']['created'] !== [] || $changes['bindings']['updated'] !== []
+            || $changes['installationVersion'];
+    }
+
+    private function skip(string $item, string $reason): void
+    {
+        foreach ($this->skipped as $entry) {
+            if ($entry['item'] === $item) {
+                return;
+            }
+        }
+        $this->skipped[] = ['item' => $item, 'reason' => $reason];
+    }
+
+    // ── Value helpers ───────────────────────────────────────────────────────
 
     /** @return array<string,mixed> */
     private function screenWithoutMetadata(mixed $screen): array

@@ -3,7 +3,11 @@
 declare(strict_types=1);
 
 /**
- * Safely upgrade one existing Aokie Receptionist app in place.
+ * Safely upgrade one existing Aokie Receptionist app in place, to what a fresh
+ * install of the bundled pack would have (forms' pack fields and screens, the
+ * app logic and connector, roles' grants, every flow and binding, the recorded
+ * version), keeping its records and everything an owner added or switched.
+ * Idempotent; anything it cannot safely touch is skipped and listed.
  *
  * Usage (from backend/):
  *   php bin/upgrade-aokie-receptionist.php --app=<uuid> --dry-run
@@ -70,13 +74,16 @@ try {
     $sqlite = new SQLiteConnection($config['settings']['sqlite']['storage_path']);
     $forms = new FormService($mysql, $sqlite);
     $apps = new AppService($mysql, $forms);
-    $packs = new PackService($mysql, $forms, $apps, new AppUserService($mysql));
+    $appUsers = new AppUserService($mysql);
+    $packs = new PackService($mysql, $forms, $apps, $appUsers);
     $service = new AokieReceptionistUpgradeService(
         $mysql,
         $forms,
         new FormVersionService($mysql, $forms),
         new FlowService($mysql),
-        $packs
+        $packs,
+        $apps,
+        $appUsers
     );
     $result = $service->run($appId, $record, $apply, $acceptedLegacyScreenSha256);
     fwrite(STDOUT, json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");

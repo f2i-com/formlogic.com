@@ -14,7 +14,7 @@ Aokie is the phone bridge, and OAIY runs it. On the **OAIY route**, the default 
 | Phone | Phone setup and Overview | Pairing has progressed to a phone connection; audio still needs a test. |
 | Call route | FormLogic Receptionist Settings → OAIY card | **Calls go to: OAIY**. The OAIY card also shows whether OAIY is reachable, the model and voice it reports, and who calls back missed calls. |
 | AI and speech | OAIY Engines and OAIY Voice (OAIY route); OAIY Services/providers, then Aokie Settings (Aokie's own speech) | On the OAIY route, OAIY Voice is running and Engines has a model loaded. On Aokie's own route, the selected LLM, STT and TTS endpoints are available. Model loading and GPU execution are separate from process startup. |
-| Browser pairing | FormLogic Connect your AI; OAIY Connections | This browser may use the approved local host. |
+| Browser pairing | FormLogic Connect your AI (or **Connect OAIY** in Device Setup); OAIY Connections | This browser may use the approved local host. Device Setup and Live Call then show OAIY on this computer, and phone commands go straight to it rather than through the relay. |
 | Linked account | OAIY Connections → Linked account | OAIY has scoped FormLogic access for records and background work. |
 | App routing | FormLogic App Studio, receptionist settings and flow bindings | Events target the intended app/forms. Sharing Aokie forms into another app does not rewrite every automation. |
 
@@ -67,14 +67,23 @@ Aokie applies a route change when the receptionist next starts, so restart it in
 
 ### Existing installs
 
-The server copy of the pack carries the route. An existing installation gets it through the in-place upgrade, run from `formlogic/backend`. Check the dry run first:
+The server copy of the pack carries the route, and everything else a newer release changed. An existing installation gets it through the in-place upgrade, run from `formlogic/backend`. Check the dry run first:
 
 ```powershell
 php bin/upgrade-aokie-receptionist.php --app=<app-uuid> --dry-run
 php bin/upgrade-aokie-receptionist.php --app=<app-uuid> --apply
 ```
 
-The upgrade appends the blank `call_route` field, refreshes the settings screen, and updates the Configure Receptionist, Personalize Caller, Missed Call Follow-up and Callback Drain flows in place, keeping records and bindings.
+The upgrade brings the app to what a fresh install of the bundled pack (1.2.0) has, in place, keeping the app, form and flow ids and every record:
+
+- **Forms**: missing pack fields are added (the blank `call_route` among them), changed ones take the pack's definition, and the pack's fields are laid out in the pack's order. A field you added stays after the field it followed, and a choice you added to a pack dropdown is kept. Missing form settings are added; ones you set are left alone. Each changed form's previous definition is kept as a form version.
+- **Screens**: the Receptionist Settings, Device Setup, Live Call and call transcript screens and the dashboards are replaced when they are the pack's own, and stamped with the trust their signature gives them. A screen you wrote yourself is left as it is.
+- **App**: the app logic (including the note on a call OAIY stopped answering), its grants and the Aokie connector manifest; missing settings and included services; the home screen.
+- **Roles**: missing grants are added, such as `connector.aokie.dongle.reset` for Device Admin. A grant you added is kept.
+- **Flows and bindings**: every pack flow and binding is updated in place or created when missing, each keeping whether it is switched on. This includes the SMS Acknowledgement Sweep.
+- The installation records the new version.
+
+Anything the upgrade cannot safely touch is left as it is and listed under `skipped` with the reason: a screen or a flow you wrote under the pack's slug, a form that is no longer in the app, a field whose type you changed. Running it again changes nothing. It refuses only when it cannot tell what to change: the app is not exactly one Aokie installation, or two forms claim the same pack form.
 
 A saved route never moves by itself:
 
@@ -114,6 +123,22 @@ The pack does not assume OAIY is reachable. When it is not, Receptionist Setting
 - While it is away, OAIY keeps answering calls, lookups and appointment requests from its own calendar. It syncs the Appointments form when it reconnects, so the desktop's own records are the source for that gap.
 - A saved setting that the Configure Receptionist flow applies (the route, greeting, brief and Aokie's own lanes) waits: the flow applies it on the first call after OAIY is back. The page says it was saved but not applied yet.
 - A setting that exists only in Aokie is not queued. This covers screening, call waiting, audio and the speech engine. The page says it was not applied, and that nothing changed on the phone.
+
+### Events that arrive late
+
+OAIY keeps Aokie's events in a durable outbox while FormLogic cannot be reached and delivers them when it can, possibly hours later. The pack's flows judge each event by its own time (the envelope's `occurredAt`), not by when it arrives, so nothing texts or rings a caller with something that is no longer true:
+
+- An apology (a caller lost on hold, a callback that did not reach them), a missed-call callback, and an automatic reply in the SMS follow-up loop go out only within an hour of the event. Later, the follow-up task says what happened and that nothing was sent, for a person to decide. A STOP is still recorded.
+- A booking confirmation text only names bookings that have not started. If none is left, no text goes out and the task says to call them. A follow-up text for a call that agreed no day goes out only within the hour.
+- "Tomorrow" on a call or in a text means the day after it was said.
+
+Texts a person approved in Messages are sent whatever the age of the event that wakes the sweep.
+
+### Texts the phone never confirms
+
+Every text the pack sends is saved in Messages as **Queued** before it goes to Aokie, and moves to **Sent** or **Failed** when the phone acknowledges it (`aokie.sms.sent` or `aokie.sms.failed`; Aokie also sends a failure when it refuses a text outright, for example an invalid number or no radio). When no acknowledgement comes, because Aokie was not running, the desktop could not reach it, or its command journal refused the request, the SMS Acknowledgement Sweep marks the text **Not confirmed by the phone** 15 minutes after it went out, with the delivery note "The phone never confirmed this text: check it was sent." A missed-call apology task waiting on it moves to *Apology text not confirmed by the phone*, and a notice says how many texts to check.
+
+The sweep has no timer: it runs when a call rings or ends, or a text arrives. A late acknowledgement still wins: **Sent** replaces Queued, Not confirmed and Failed; **Failed** replaces Queued and Not confirmed. A repeated failure for the same text changes nothing and raises no second notice. The reason for a failure is in the message's delivery note.
 
 ## Set up and verify the app
 

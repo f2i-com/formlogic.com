@@ -5,6 +5,8 @@
 *.wasm  binary
 *.cwasm binary
 *.exe   binary
+# Compressed test fixtures (e.g. the old Aokie Receptionist releases the in-place upgrade test installs).
+*.gz    binary
 
 # Documents whose exact BYTES are a contract with another program, pinned to LF so a Windows
 # checkout and a Linux CI runner serve and hash the same thing.

@@ -2117,9 +2117,11 @@ class PackService
     }
 
     /**
-     * Remap @pack: prefixed targetFormId references in linked_record fields
+     * Remap @pack: prefixed targetFormId references in linked_record fields.
+     * Public for in-place pack upgrades, which install a pack's fields into
+     * forms that already exist (an unknown ref throws, as on import).
      */
-    private function remapFieldReferences(array $fields, array $formIdMap): array
+    public function remapFieldReferences(array $fields, array $formIdMap): array
     {
         foreach ($fields as &$field) {
             if (($field['type'] ?? '') === 'linked_record') {
@@ -2391,8 +2393,9 @@ class PackService
         return ['version' => 1, 'cols' => (int) ($dashboard['cols'] ?? 12), 'widgets' => array_values($widgets)];
     }
 
-    /** Resolve @pack: refs in a customScreen (only widget dashboards carry them). */
-    private function resolveCustomScreen(?array $cs, array $formIdMap): ?array
+    /** Resolve @pack: refs in a customScreen (only widget dashboards carry them). Public for
+     *  in-place pack upgrades, which install the same screen the importer would. */
+    public function resolveCustomScreen(?array $cs, array $formIdMap): ?array
     {
         if (empty($cs)) { return null; }
         if (($cs['kind'] ?? '') === 'dashboard' && is_array($cs['dashboard'] ?? null)) {
