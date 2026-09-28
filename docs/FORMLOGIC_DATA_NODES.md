@@ -149,6 +149,21 @@ Backend: `DATA_NODES` (bool env, default false) → `settings['cloud']['dataNode
 `data_nodes_disabled` when off (same pattern as `PRIVATE_FORMS`). Desktop N1 is local-only
 and always available in the workspace, labelled beta.
 
+**Switched off, as a desktop sees it.** Every `/api/v1/data-node/*` route — enrolment
+(`register`, `self`, `signing-key`, `eligible-forms`) as well as the data plane — answers
+
+```
+403 {"error": true, "message": "Encrypted data nodes are not enabled", "code": "data_nodes_disabled"}
+```
+
+and the owner routes (`/api/data-nodes`, `/api/forms/{id}/data-placement`) answer the same.
+The switch is checked before the key's scope, so a key without `data:snapshot` hears the same
+thing rather than `insufficient_scope`. A client branches on `code`: `data_nodes_disabled`
+means *this FormLogic does not offer data nodes*, not a refusal of the key, so it stops
+enrolling and says so instead of retrying or showing an error (`/api/health` `dataNodes`
+answers the same question ahead of time). The message stays as it is for clients that read
+it (OAIY's link status matches its "not enabled"); `DataNodeAuthorityTest` pins the whole body.
+
 ## 8. Error codes added in N0/N1
 
 `data_key_store_unavailable`, `encrypted_store_unavailable`, `rollback_detected`,
@@ -185,9 +200,9 @@ Frozen pins:
   channel (`data/node/cloud-signer.json`) and REFUSE a changed key. Until N3 placement
   binds the fingerprint under the owner's vault signature, provenance is
   `cloud_signed_tofu` ("Cloud-signed · owner chain pending") — never "authenticated".
-- **API** (`/api/v1/data-node/*`, desktop flk_ key): signing-key, eligible-forms,
-  snapshots (create/file?path=/delete), account-backups. All 403 `data_nodes_disabled`
-  while the flag is off. Two authority tiers (review FL-001):
+- **API** (`/api/v1/data-node/*`, desktop flk_ key): register, self, signing-key,
+  eligible-forms, snapshots (create/file?path=/delete), account-backups. All 403
+  `data_nodes_disabled` while the flag is off (body in §7). Two authority tiers (review FL-001):
   - *Enrolment tier* (register/self/signing-key/eligible-forms): scope `data:snapshot`
     (`connector:relay` grandfathered during migration only).
   - *Data-plane tier* (snapshot build/download/delete, whole-account backup): the key

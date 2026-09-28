@@ -160,9 +160,9 @@ final class DataNodeAuthorityTest extends E2eeTestCase
     }
 
     /** Every data-plane call for the given identity; keyed for failure messages. */
-    private function dataPlaneResponses(string $userId, string $apiKeyId, array $scopes): array
+    private function dataPlaneResponses(string $userId, string $apiKeyId, array $scopes, ?DataNodeController $controller = null): array
     {
-        $c = self::$controller;
+        $c = $controller ?? self::$controller;
         return [
             'createSnapshot' => $c->createSnapshot($this->request($userId, $apiKeyId, $scopes, ['formId' => 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa']), $this->response()),
             'snapshotFile' => $c->snapshotFile($this->request($userId, $apiKeyId, $scopes), $this->response(), ['id' => str_repeat('a', 32)]),
@@ -174,6 +174,44 @@ final class DataNodeAuthorityTest extends E2eeTestCase
     }
 
     // ── tests ────────────────────────────────────────────────────────────────
+
+    /**
+     * A FormLogic with DATA_NODES off answers every desktop data-node call, enrolment first,
+     * with one typed refusal, so a linked desktop can tell "not offered here" from a refusal
+     * of its key. The body is pinned whole: clients branch on `code`, and older ones read the
+     * message ("not enabled"), so neither may drift. The switch is checked before the scope,
+     * so a key without the data scope hears the same thing, not insufficient_scope.
+     */
+    public function testSwitchedOffEveryCallIsOneTypedRefusal(): void
+    {
+        $off = new DataNodeController(self::$snapshots, self::$signer, self::$accountBackups, self::$nodes, false);
+        $conn = $this->makeConnection();
+        $pair = sodium_crypto_sign_keypair();
+        $refusal = ['error' => true, 'message' => 'Encrypted data nodes are not enabled', 'code' => 'data_nodes_disabled'];
+
+        foreach ([['data:snapshot'], ['connector:relay'], ['flows:read']] as $scopes) {
+            $calls = [
+                'register' => $off->register($this->request($this->userId, $conn['apiKeyId'], $scopes, [
+                    'signingPublicKey' => base64_encode(sodium_crypto_sign_publickey($pair)),
+                ]), $this->response()),
+                'self' => $off->self($this->request($this->userId, $conn['apiKeyId'], $scopes), $this->response()),
+                'signingKey' => $off->signingKey($this->request($this->userId, $conn['apiKeyId'], $scopes), $this->response()),
+                'eligibleForms' => $off->eligibleForms($this->request($this->userId, $conn['apiKeyId'], $scopes), $this->response()),
+            ] + $this->dataPlaneResponses($this->userId, $conn['apiKeyId'], $scopes, $off);
+
+            foreach ($calls as $op => $res) {
+                $label = $op . ' with ' . implode(',', $scopes);
+                self::assertSame(403, $res->getStatusCode(), $label);
+                self::assertSame($refusal, $this->decode($res), $label);
+            }
+        }
+
+        $enrolled = self::$pdo->prepare('SELECT COUNT(*) FROM data_nodes WHERE owner_user_id = ?');
+        $enrolled->execute([$this->userId]);
+        self::assertSame(0, (int) $enrolled->fetchColumn(), 'nothing is enrolled while switched off');
+
+        $this->cleanupNodes();
+    }
 
     public function testDataPlaneRefusesUniformlyWithoutApprovedNode(): void
     {
