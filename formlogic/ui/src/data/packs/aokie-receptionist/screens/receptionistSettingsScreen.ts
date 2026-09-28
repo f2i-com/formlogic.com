@@ -43,6 +43,7 @@ import settingsStoreTs from './receptionist-settings/store.ts?raw';
 import settingsHelpersTs from './receptionist-settings/helpers.ts?raw';
 import settingsAgentPayloadTs from './receptionist-settings/agentPayload.ts?raw';
 import settingsCss from './receptionist-settings/styles.css?raw';
+import aokieCss from './shared/aokie.css?raw';
 import oaiyCardTsx from './receptionist-settings/components/OaiyCard.tsx?raw';
 import runningCardTsx from './receptionist-settings/components/RunningCard.tsx?raw';
 import routeCardTsx from './receptionist-settings/components/RouteCard.tsx?raw';
@@ -88,6 +89,7 @@ export const AOKIE_RECEPTIONIST_SETTINGS_SCREEN = {
     { path: 'components/ScreeningCard.tsx', content: screeningCardTsx },
     { path: 'components/AdvancedCard.tsx', content: advancedCardTsx },
     { path: 'components/SaveBar.tsx', content: saveBarTsx },
+    { path: 'aokie.css', content: aokieCss },
     { path: 'styles.css', content: settingsCss },
   ],
 };

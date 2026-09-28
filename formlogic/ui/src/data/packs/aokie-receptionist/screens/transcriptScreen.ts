@@ -14,6 +14,7 @@
 import transcriptIndexTsx from './transcript/index.tsx?raw';
 import transcriptSortTs from './transcript/sort.ts?raw';
 import transcriptCss from './transcript/styles.css?raw';
+import aokieCss from './shared/aokie.css?raw';
 
 // The ordering rule is shared source: the shipped file IS the tested module.
 export { compareTurns } from './transcript/sort';
@@ -32,6 +33,7 @@ export const AOKIE_CALL_TRANSCRIPT_SCREEN = {
   files: [
     { path: 'index.tsx', content: transcriptIndexTsx },
     { path: 'sort.ts', content: transcriptSortTs },
+    { path: 'aokie.css', content: aokieCss },
     { path: 'styles.css', content: transcriptCss },
   ],
 };

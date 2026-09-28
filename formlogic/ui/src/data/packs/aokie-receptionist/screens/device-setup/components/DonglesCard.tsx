@@ -10,6 +10,8 @@ import type { ResetNote } from '../format';
 import type { DongleRow } from '../types';
 
 interface Props {
+  /** A linked OAIY is offline: nothing here can be read until it is back. */
+  offline: boolean;
   access: boolean | null;
   rows: DongleRow[] | null;
   enumNote: string | null;
@@ -24,9 +26,12 @@ interface Props {
 }
 
 export function DonglesCard(props: Props) {
-  const { access, rows, enumNote, busyDriver, onInstallDriver, onSetPreferred, resetAccess, resetting, resetNote, onReset } = props;
+  const { offline, access, rows, enumNote, busyDriver, onInstallDriver, onSetPreferred, resetting, resetNote, onReset } = props;
+  const resetAccess = offline ? null : props.resetAccess;
   let body;
-  if (access === false) {
+  if (offline) {
+    body = <p class="faint" data-dongle-offline>The dongle can't be read while OAIY is offline. It shows here again when OAIY reconnects.</p>;
+  } else if (access === false) {
     body = <p class="faint">This app has not been granted dongle access.</p>;
   } else if (rows === null) {
     body = <Loading />;

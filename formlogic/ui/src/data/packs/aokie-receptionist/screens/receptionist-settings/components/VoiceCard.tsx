@@ -32,7 +32,7 @@ export function VoiceCard() {
   const liveEngine = normalizeEngine(eng.savedEngine) === 'sherpa' ? 'Sherpa' : 'Pocket-TTS';
   return (
     <div class="card">
-      <h2>{'Voice & replies'}</h2>
+      <h2>{"Aokie's voice & replies"}</h2>
       <p class="hint" style="margin-top:0">The voice pick is saved with this record and applies per call. The speech engine and voice model folder are live plugin settings.</p>
       <div class="row2">
         {state.canSet ? (
@@ -106,7 +106,7 @@ export function VoiceCard() {
       </div>
       {state.canSet ? (
         <div class="savebtnrow">
-          <button type="button" class="btn dark sm" data-act="save-engine" disabled={!!state.busy.engine || !eng.loaded} onClick={saveEngine}>
+          <button type="button" class="btn sm" data-act="save-engine" disabled={!!state.busy.engine || !eng.loaded} onClick={saveEngine}>
             {state.busy.engine ? 'Saving...' : 'Save speech engine'}
           </button>
         </div>
@@ -115,7 +115,7 @@ export function VoiceCard() {
         <label class="f">
           <span class="lbl">Who answers the caller</span>
           <select data-d="reply_mode" value={d().reply_mode} onChange={(e) => draftInput('reply_mode', e.currentTarget.value)}>
-            <option value="agent">Built-in AI agent (recommended - fast, on-device)</option>
+            <option value="agent">Aokie's AI agent (fast, on this computer)</option>
             <option value="flow">Custom flow (edit the Live Reply flow yourself)</option>
           </select>
           <span class="hint">Reply mode only takes effect the next time Aokie reconnects - the plugin reads it once at startup, not per call.</span>

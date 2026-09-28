@@ -306,7 +306,7 @@ describe('aokieReceptionistPack â€” pack-owned Calls transcript record scre
     expect(rs?.screenId).toBeUndefined();
     expect(rs?.js).toBeUndefined();
     expect(rs?.entry).toBe('index.tsx');
-    expect((rs?.files ?? []).map((f) => f.path)).toEqual(['index.tsx', 'sort.ts', 'styles.css']);
+    expect((rs?.files ?? []).map((f) => f.path)).toEqual(['index.tsx', 'sort.ts', 'aokie.css', 'styles.css']);
     expect(rs?.files).toEqual(AOKIE_CALL_TRANSCRIPT_SCREEN.files);
     // The generic related panel keeps hiding the group this widget renders itself â€”
     // packFormId-qualified because follow-up-tasks also link via a call_link field.

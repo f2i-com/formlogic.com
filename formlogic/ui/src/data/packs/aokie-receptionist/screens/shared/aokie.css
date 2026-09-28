@@ -1,0 +1,148 @@
+/* Aokie Receptionist - the one stylesheet every pack screen shares (shipped as
+   aokie.css ahead of each screen's own styles.css). Token-only (--fl-* from
+   the host palette, so it follows the app accent and flips light/dark) and
+   sized like FormLogic's screen kit (formlogic/kit): 14px cards, 11px
+   uppercase card titles, 13px buttons and 9px control radii. Each screen's
+   root carries the .ak class; its own stylesheet adds layout only. */
+
+.ak { color: var(--fl-text); font-size: 13.5px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+.ak *, .ak *::before, .ak *::after { box-sizing: border-box; }
+.ak p { margin: 0; overflow-wrap: break-word; }
+.ak p + p { margin-top: 8px; }
+
+/* -- type ---------------------------------------------------------------- */
+.ak .page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 6px 12px; padding: 2px 2px 0; }
+.ak h1 { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -0.015em; line-height: 1.25; }
+.ak .page-head .sub { margin: 2px 0 0; flex-basis: 100%; font-size: 12.5px; color: var(--fl-muted); }
+.ak h2 { margin: 0 0 10px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fl-muted); }
+.ak h3 { margin: 16px 0 6px; font-size: 12.5px; font-weight: 600; color: var(--fl-text); }
+.ak .muted { color: var(--fl-muted); font-size: 12.5px; }
+.ak .faint { color: var(--fl-faint); font-size: 12px; }
+.ak .hint { display: block; margin: 5px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--fl-faint); }
+.ak .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.ak strong { font-weight: 600; }
+
+/* -- cards --------------------------------------------------------------- */
+.ak .card { background: var(--fl-surface); border: 1px solid var(--fl-border); border-radius: 14px; padding: 16px 18px; box-shadow: var(--fl-shadow); min-width: 0; }
+.ak .card > .muted:first-of-type { margin-bottom: 4px; }
+.ak .hdr, .ak .sectionrow { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin-bottom: 10px; }
+.ak .hdr h2, .ak .sectionrow h2 { margin: 0; }
+.ak .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+.ak .divided { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--fl-border); }
+.ak .footnote { margin-top: 12px; }
+
+/* -- buttons ------------------------------------------------------------- */
+.ak .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 7px 14px; border-radius: 9px;
+  border: 1px solid var(--fl-border); background: var(--fl-surface); color: var(--fl-text); font: inherit; font-size: 13px; font-weight: 600;
+  line-height: 1.2; cursor: pointer; white-space: nowrap; text-decoration: none;
+  transition: background 0.15s ease, border-color 0.15s ease, filter 0.15s ease, opacity 0.15s ease; }
+.ak .btn:hover:not(:disabled) { background: var(--fl-surface-2); border-color: color-mix(in srgb, var(--fl-accent) 45%, var(--fl-border)); }
+.ak .btn:focus-visible { outline: 2px solid var(--fl-accent); outline-offset: 2px; }
+.ak .btn:disabled, .ak .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+.ak .btn.sm { min-height: 28px; padding: 4px 11px; font-size: 12px; border-radius: 8px; }
+.ak .btn.primary { background: var(--fl-accent); border-color: var(--fl-accent); color: var(--fl-accent-contrast); }
+.ak .btn.primary:hover:not(:disabled) { background: var(--fl-accent); border-color: var(--fl-accent); filter: brightness(1.07); }
+.ak .btn.danger { color: var(--fl-bad); border-color: color-mix(in srgb, var(--fl-bad) 55%, var(--fl-border)); }
+.ak .btn.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--fl-bad) 8%, transparent); border-color: var(--fl-bad); }
+.ak .btn.danger.solid { background: var(--fl-bad); border-color: var(--fl-bad); color: var(--fl-accent-contrast); }
+
+/* -- pills and dots ------------------------------------------------------ */
+.ak .pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 2px 10px; font-size: 11px; font-weight: 600;
+  line-height: 1.6; white-space: nowrap; color: var(--fl-muted); background: var(--fl-surface-2); border: 1px solid var(--fl-border); }
+.ak .pill.ok { color: var(--fl-good); border-color: color-mix(in srgb, var(--fl-good) 40%, transparent); background: color-mix(in srgb, var(--fl-good) 10%, transparent); }
+.ak .pill.warn { color: var(--fl-warn); border-color: color-mix(in srgb, var(--fl-warn) 40%, transparent); background: color-mix(in srgb, var(--fl-warn) 10%, transparent); }
+.ak .pill.bad { color: var(--fl-bad); border-color: color-mix(in srgb, var(--fl-bad) 40%, transparent); background: color-mix(in srgb, var(--fl-bad) 10%, transparent); }
+.ak .pill.accent { color: var(--fl-accent); border-color: color-mix(in srgb, var(--fl-accent) 40%, transparent); background: color-mix(in srgb, var(--fl-accent) 10%, transparent); }
+.ak .dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 999px; background: var(--fl-faint); }
+.ak .dot.ok { background: var(--fl-good); }
+.ak .dot.warn { background: var(--fl-warn); }
+.ak .dot.bad { background: var(--fl-bad); }
+.ak .dot.live { animation: ak-pulse 1.4s ease-in-out infinite; }
+
+/* -- notices: what needs attention, and what to do next ------------------ */
+.ak .notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 12px; padding: 11px 14px; border-radius: 10px;
+  border: 1px solid var(--fl-border); border-left: 3px solid var(--fl-accent); background: color-mix(in srgb, var(--fl-accent) 6%, var(--fl-surface));
+  font-size: 12.5px; line-height: 1.5; color: var(--fl-text); }
+.ak .notice > span, .ak .notice > strong { flex: 1 1 260px; min-width: 0; }
+.ak .notice strong { display: block; flex-basis: 100%; }
+.ak .notice .btn { flex: none; }
+.ak .notice.ok { border-left-color: var(--fl-good); background: color-mix(in srgb, var(--fl-good) 7%, var(--fl-surface)); }
+.ak .notice.warn { border-left-color: var(--fl-warn); background: color-mix(in srgb, var(--fl-warn) 8%, var(--fl-surface)); }
+.ak .notice.bad { border-left-color: var(--fl-bad); background: color-mix(in srgb, var(--fl-bad) 7%, var(--fl-surface)); }
+.ak .banner { border: 1px solid color-mix(in srgb, var(--fl-bad) 45%, var(--fl-border)); border-left: 3px solid var(--fl-bad); border-radius: 10px; padding: 10px 14px;
+  font-size: 13px; color: var(--fl-bad); background: color-mix(in srgb, var(--fl-bad) 6%, var(--fl-surface)); overflow-wrap: break-word; }
+
+/* -- facts: label / value rows ------------------------------------------ */
+.ak dl.facts { margin: 4px 0 0; }
+.ak dl.facts > div { display: grid; grid-template-columns: minmax(118px, 32%) minmax(0, 1fr); gap: 3px 14px; align-items: baseline;
+  padding: 8px 0; border-top: 1px solid var(--fl-border); }
+.ak dl.facts > div:first-child { border-top: 0; padding-top: 2px; }
+.ak dl.facts dt { font-size: 12px; color: var(--fl-muted); }
+.ak dl.facts dd { margin: 0; display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  .ak dl.facts > div { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* -- form controls ------------------------------------------------------- */
+.ak label.f { display: block; margin: 14px 0 0; }
+.ak label.f:first-child, .ak h2 + label.f { margin-top: 0; }
+.ak .lbl { display: block; margin-bottom: 5px; font-size: 12px; font-weight: 600; color: var(--fl-text); }
+.ak input[type="text"], .ak input[type="password"], .ak textarea, .ak select {
+  width: 100%; max-width: 100%; font: inherit; font-size: 13.5px; color: var(--fl-text); background: var(--fl-bg);
+  border: 1px solid var(--fl-border); border-radius: 9px; padding: 8px 12px; min-height: 36px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+.ak input[type="text"]:focus, .ak input[type="password"]:focus, .ak textarea:focus, .ak select:focus {
+  outline: none; border-color: var(--fl-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--fl-accent) 18%, transparent); }
+.ak input::placeholder, .ak textarea::placeholder { color: var(--fl-faint); }
+.ak textarea { resize: vertical; min-height: 84px; line-height: 1.5; }
+.ak select { cursor: pointer; }
+.ak select option { background: var(--fl-bg); color: var(--fl-text); }
+.ak input[type="checkbox"], .ak input[type="radio"] { accent-color: var(--fl-accent); }
+.ak .chk { display: flex; align-items: flex-start; gap: 10px; margin: 12px 0 0; font-size: 13px; font-weight: 500; cursor: pointer; }
+.ak .chk input { margin-top: 2px; width: 16px; height: 16px; flex: none; }
+.ak .chk .sub { display: block; margin-top: 2px; font-size: 11.5px; font-weight: 400; color: var(--fl-faint); line-height: 1.5; }
+.ak .chk.off { opacity: 0.55; cursor: not-allowed; }
+
+/* -- choice cards (radio) ------------------------------------------------ */
+.ak .choice { display: flex; align-items: flex-start; gap: 12px; margin-top: 8px; padding: 12px 14px; border: 1px solid var(--fl-border);
+  border-radius: 12px; background: var(--fl-surface); cursor: pointer; transition: border-color 0.15s ease, background 0.15s ease; }
+.ak .choice:hover { border-color: color-mix(in srgb, var(--fl-accent) 45%, var(--fl-border)); }
+.ak .choice.on { border-color: var(--fl-accent); background: color-mix(in srgb, var(--fl-accent) 6%, var(--fl-surface)); }
+.ak .choice input { margin-top: 3px; width: 16px; height: 16px; flex: none; }
+.ak .choice-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ak .choice-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; }
+.ak .choice-sub { font-size: 12px; line-height: 1.5; color: var(--fl-muted); }
+
+/* -- disclosures --------------------------------------------------------- */
+.ak details > summary { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; list-style: none; font-size: 12.5px; font-weight: 600; color: var(--fl-muted); }
+.ak details > summary::-webkit-details-marker { display: none; }
+.ak details > summary::before { content: ''; width: 6px; height: 6px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg); transition: transform 0.15s ease; }
+.ak details[open] > summary::before { transform: rotate(45deg); }
+.ak details > summary:focus-visible { outline: 2px solid var(--fl-accent); outline-offset: 2px; border-radius: 6px; }
+.ak details > summary:hover { color: var(--fl-text); }
+
+/* -- tables and lists ---------------------------------------------------- */
+.ak .tscroll { overflow-x: auto; }
+.ak table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ak th { text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fl-faint); padding: 0 12px 8px 0; }
+.ak td { padding: 10px 12px 10px 0; border-top: 1px solid var(--fl-border); vertical-align: middle; }
+.ak th:last-child, .ak td:last-child { padding-right: 0; }
+
+/* -- empty and loading states -------------------------------------------- */
+.ak .empty { padding: 14px 0 4px; }
+.ak .empty-title { margin: 0 0 3px; font-size: 13.5px; font-weight: 600; color: var(--fl-muted); }
+.ak .skeleton { display: block; height: 12px; width: 62%; border-radius: 999px; background: var(--fl-track); animation: ak-pulse 1.4s ease-in-out infinite; }
+.ak .skeleton + .skeleton { margin-top: 9px; }
+.ak .skeleton.short { width: 38%; }
+.ak .spinner { width: 18px; height: 18px; flex: none; border-radius: 999px; border: 2px solid var(--fl-track); border-top-color: var(--fl-accent); animation: ak-spin 0.7s linear infinite; }
+.ak .spinner.sm { width: 11px; height: 11px; }
+@keyframes ak-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@keyframes ak-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .ak .skeleton, .ak .spinner, .ak .dot.live { animation: none; }
+}
+
+/* -- the OAIY mark ------------------------------------------------------- */
+.ak .mark { width: 34px; height: 34px; flex: none; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 700; color: var(--fl-accent-contrast); background: var(--fl-accent); }

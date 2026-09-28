@@ -25,6 +25,11 @@ function errorCode(e: unknown): string | null {
   return null;
 }
 
+/** The banner for a connector with no desktop behind it. While a linked OAIY
+ *  is known to be offline the OAIY card already says so, so the screen does
+ *  not repeat it. */
+export const UNREACHABLE_MESSAGE = 'OAIY is not reachable right now - connect it above, then press Refresh.';
+
 /** Connector command -> result object, or throw with a readable message. */
 export function cmd(name: string, payload?: Record<string, unknown>): Promise<Record<string, unknown>> {
   return FormLogic.connector('aokie', name, payload || {}).then((out) => {
@@ -32,7 +37,7 @@ export function cmd(name: string, payload?: Record<string, unknown>): Promise<Re
     const err = out.error as unknown;
     let m = errorMessage(err) || out.status;
     if (errorCode(err) === 'connector_unavailable') {
-      m = 'OAIY is not reachable right now - connect it above, then press Refresh.';
+      m = UNREACHABLE_MESSAGE;
     }
     throw new Error(m);
   });

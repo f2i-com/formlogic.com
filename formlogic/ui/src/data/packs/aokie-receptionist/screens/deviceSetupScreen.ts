@@ -35,6 +35,7 @@ import deviceCompanionCardTsx from './device-setup/components/CompanionCard.tsx?
 import deviceEventsCardTsx from './device-setup/components/EventsCard.tsx?raw';
 import deviceFreshCardTsx from './device-setup/components/FreshCard.tsx?raw';
 import deviceStylesCss from './device-setup/styles.css?raw';
+import aokieCss from './shared/aokie.css?raw';
 
 /**
  * The customScreen payload for the Hardware Events form section (kind 'code').
@@ -59,6 +60,7 @@ export const AOKIE_DEVICE_SETUP_SCREEN = {
     { path: 'components/CompanionCard.tsx', content: deviceCompanionCardTsx },
     { path: 'components/EventsCard.tsx', content: deviceEventsCardTsx },
     { path: 'components/FreshCard.tsx', content: deviceFreshCardTsx },
+    { path: 'aokie.css', content: aokieCss },
     { path: 'styles.css', content: deviceStylesCss },
   ],
 };

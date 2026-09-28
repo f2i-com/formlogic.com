@@ -27,6 +27,9 @@ function mock(opts: {
     presence: () => Promise.resolve(opts.presence ?? { kind: 'local' }),
     connector: (_id: string, command: string) => {
       sent.push(command);
+      if (opts.presence && opts.presence.kind === 'none') {
+        return Promise.resolve({ status: 'failed', error: { code: 'connector_unavailable', message: 'no desktop' } });
+      }
       if (command === 'dongle.reset') return Promise.resolve(opts.reset ?? { status: 'done', result: { accepted: true, via: 'software', phoneReconnected: true } });
       if (command === 'dongle.list') {
         return Promise.resolve({ status: 'done', result: { connected: [{ vid: 2578, pid: 33, vidHex: '0a12', pidHex: '0021', description: 'CSR dongle', driverBound: true, matchesCatalog: true }] } });
@@ -116,5 +119,11 @@ describe('OAIY offline on Device Setup', () => {
     const note = root.querySelector('#runtime [data-offline]')?.textContent ?? '';
     expect(note).toContain('FRONT-DESK was last seen 20 min ago');
     expect(note).toContain('keeps answering calls, lookups and appointment requests');
+    // Said once: the hardware cards say they can't be read, the reset waits,
+    // and the transport banner is not repeated over the OAIY card.
+    expect(root.querySelector('[data-dongle-offline]')).not.toBeNull();
+    expect(root.querySelector('[data-phone-offline]')).not.toBeNull();
+    expect(root.querySelector('[data-act="reset-dongle"]')).toBeNull();
+    expect(root.querySelector('#banner')).toBeNull();
   });
 });

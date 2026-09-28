@@ -690,7 +690,7 @@ function friendlyRunningError(error: unknown): string {
       return 'OAIY is connected, but Aokie is not available. Start or restart Aokie in OAIY > Plugins, then press Refresh.';
     }
     if (state.presence.kind === 'none') {
-      return unreachableText() + ' The receptionist on that computer keeps answering calls; press Refresh once it is back.';
+      return 'OAIY is offline, so what Aokie is running cannot be read. Press Refresh once it is back.';
     }
     return 'The linked OAIY cannot reach Aokie right now. Check OAIY, then press Refresh.';
   }

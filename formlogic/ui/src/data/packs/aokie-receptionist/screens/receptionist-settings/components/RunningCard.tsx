@@ -27,10 +27,9 @@ export function RunningCard() {
           <dl class="facts running-facts" aria-label="Live receptionist configuration">
             <div data-running-mode><dt>Calls go to</dt><dd>{r.voiceModeLabel}</dd></div>
             <div data-running-provider><dt>Who talks</dt><dd>{r.providerLabel}</dd></div>
-            <div data-running-model><dt>Model</dt><dd>{r.model}</dd></div>
-            {toOaiy ? (
-              <div data-running-voice><dt>Voice</dt><dd>{r.voice}</dd></div>
-            ) : r.voiceMode === 'desktop_realtime' ? (
+            {/* On OAIY's route the model and voice are OAIY's: the OAIY card above shows them. */}
+            {toOaiy ? null : <div data-running-model><dt>Model</dt><dd>{r.model}</dd></div>}
+            {toOaiy ? null : r.voiceMode === 'desktop_realtime' ? (
               <div data-running-voice><dt>Realtime voice</dt><dd>{r.realtimeVoice + ' - ' + r.realtimeTurnDetection}</dd></div>
             ) : (
               <div data-running-voice><dt>Voice</dt><dd>{r.voice || 'Default'}</dd></div>

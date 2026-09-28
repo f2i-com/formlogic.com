@@ -1,7 +1,7 @@
 /** @jsxImportSource preact */
 // Phone connection & call waiting: the three live plugin toggles. The queue
 // toggle needs call-waiting detection on (unchecking the latter clears it).
-import { saveWaiting, state, waitChange, type WaitKey } from '../store';
+import { onOaiy, saveWaiting, state, waitChange, type WaitKey } from '../store';
 
 function WaitChk(props: { k: WaitKey; on: boolean; disabled: boolean; title: string; sub: string }) {
   return (
@@ -49,8 +49,13 @@ export function WaitingCard() {
         title={'Automatically hold & queue callers'}
         sub={'The receptionist tells the current caller another call came in, answers the new caller with "please hold - you\'re next in the queue", parks them, and returns to the first. Needs "Detect a second caller" on.'}
       />
+      {onOaiy() ? (
+        <p class="hint" data-oaiy-hold-note>
+          {"On OAIY's route the hold lines are spoken in Aokie's own voice, so the automatic hold queue runs only when that voice is installed. Without it the second caller keeps hearing call waiting, and a caller who gives up is an ordinary missed call."}
+        </p>
+      ) : null}
       <div class="savebtnrow">
-        <button type="button" class="btn dark sm" data-act="save-waiting" disabled={!!state.busy.waiting || !w.loaded} onClick={saveWaiting}>
+        <button type="button" class="btn sm" data-act="save-waiting" disabled={!!state.busy.waiting || !w.loaded} onClick={saveWaiting}>
           {state.busy.waiting ? 'Saving...' : 'Save call waiting'}
         </button>
         {w.loaded ? null : <span class="faint">Loading current values...</span>}

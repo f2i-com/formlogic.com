@@ -22,7 +22,7 @@
 //    endpoints (revoke/approve) + the remote-access policy.
 import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { cmd, svc } from './bridge';
+import { cmd, svc, UNREACHABLE_MESSAGE } from './bridge';
 import { asRecord, resetOutcome, type ResetNote } from './format';
 import type { CompanionDevice, CompanionState, DesktopRow, DongleRow, PhoneRow } from './types';
 import { RuntimeCard } from './components/RuntimeCard';
@@ -396,8 +396,13 @@ function App() {
 
   // ---- layout ------------------------------------------------------------
 
+  // A linked OAIY that cannot be reached: the OAIY card says when it was last
+  // seen; the hardware cards say they cannot be read, not that nothing is there.
+  const offline = !demo && presence !== null && presence.kind === 'none' && !!desktops && desktops.length > 0;
+  const shownBanner = offline && banner === UNREACHABLE_MESSAGE ? '' : banner;
+
   if (setupError) return (
-    <div id="ds" aria-label="Device setup">
+    <div id="ds" class="ak" aria-label="Device setup">
       <div class="head"><h1>Device Setup</h1>
         <button type="button" class="btn" onClick={() => { void loadAll(); }}>Refresh</button>
       </div>
@@ -410,12 +415,12 @@ function App() {
   );
 
   return (
-    <div id="ds" aria-label="Device setup">
+    <div id="ds" class="ak" aria-label="Device setup">
       <div class="head">
         <h1>Device Setup</h1>
         <button type="button" id="refresh" class="btn" onClick={() => { void loadAll(); }}>Refresh</button>
       </div>
-      {banner !== '' && <div id="banner" class="banner" role="alert">{banner}</div>}
+      {shownBanner !== '' && <div id="banner" class="banner" role="alert">{shownBanner}</div>}
       <RuntimeCard
         demo={demo}
         presence={presence}
@@ -430,12 +435,14 @@ function App() {
         busyDriver={busyDriver}
         onInstallDriver={(d) => { void installDriver(d); }}
         onSetPreferred={(d) => { void setPreferred(d); }}
+        offline={offline}
         resetAccess={resetAccess}
         resetting={resetting}
         resetNote={resetNote}
         onReset={() => { void resetDongle(); }}
       />
       <PhonesCard
+        offline={offline}
         access={phoneAccess}
         rows={phones}
         busyPhone={busyPhone}

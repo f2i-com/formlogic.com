@@ -49,7 +49,7 @@ export function RecentCalls({ c }: { c: ConsoleController }) {
                 }}>
                 <div class="cwho">
                   <span class="cwho-name">{String(a.caller_name || phone || 'Unknown caller')}</span>
-                  {phone ? <span class="mono faint">{phone}</span> : null}
+                  {phone && String(a.caller_name || '').trim() ? <span class="mono faint">{phone}</span> : null}
                 </div>
                 <span class={statusClass(status)}>{status || 'unknown'}</span>
               </li>

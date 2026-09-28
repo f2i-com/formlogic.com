@@ -21,7 +21,7 @@ export function CallStage({ c, call }: { c: ConsoleController; call: CallInfo })
   const foot = c.remoteMode()
     ? 'Commands run on ' + (s.presence.deviceName || 'the hosting desktop')
     : s.presence.kind === 'local'
-      ? 'Direct bridge - FormLogic Desktop'
+      ? 'OAIY on this computer - direct bridge'
       : 'Simulated call - demo bridge';
 
   return (

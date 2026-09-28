@@ -21,6 +21,9 @@ body { margin: 0; padding: 14px 18px 10px; box-sizing: border-box; }
 
 #root .turn { display: flex; align-items: flex-start; gap: 8px; max-width: 86%; }
 #root .turn.caller { flex-direction: row-reverse; align-self: flex-end; }
+/* A system note (OAIY stopped answering, say): centred across the thread. */
+#root .turn.system { align-self: center; max-width: 92%; padding: 8px 14px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--fl-warn) 45%, var(--fl-border)); background: color-mix(in srgb, var(--fl-warn) 8%, var(--fl-surface)); }
+#root .turn.system .text { margin: 0; font-size: 12.5px; text-align: center; }
 
 #root .avatar {
   flex: none; width: 26px; height: 26px; margin-top: 2px; border-radius: 999px;

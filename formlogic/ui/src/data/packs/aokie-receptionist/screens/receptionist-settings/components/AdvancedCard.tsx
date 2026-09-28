@@ -7,7 +7,7 @@ import { d, draftInput, state, toggleAdvanced } from '../store';
 export function AdvancedCard() {
   return (
     <details class="card adv" open={state.showAdvanced} onToggle={(e) => toggleAdvanced(e.currentTarget.open)}>
-      <summary data-act="toggle-adv">{'Advanced - endpoint URLs'}</summary>
+      <summary data-act="toggle-adv">{"Advanced - Aokie's endpoint URLs"}</summary>
       <div style="margin-top:10px">
         <p class="hint" style="margin-top:0">The raw AI plumbing. Custom URL fields are used when a lane is set to Custom URL (or left on Built-in with a URL entered).</p>
         <label class="f">

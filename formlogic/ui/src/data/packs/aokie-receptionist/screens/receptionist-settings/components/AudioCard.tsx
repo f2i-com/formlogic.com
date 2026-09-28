@@ -71,7 +71,7 @@ export function AudioCard() {
         </div>
       ) : null}
       <div class="savebtnrow">
-        <button type="button" class="btn dark sm" data-act="save-audio" disabled={!!state.busy.audio || !a.loaded} onClick={saveAudio}>
+        <button type="button" class="btn sm" data-act="save-audio" disabled={!!state.busy.audio || !a.loaded} onClick={saveAudio}>
           {state.busy.audio ? 'Saving...' : 'Save audio settings'}
         </button>
         {a.loaded ? null : <span class="faint">Loading current values...</span>}

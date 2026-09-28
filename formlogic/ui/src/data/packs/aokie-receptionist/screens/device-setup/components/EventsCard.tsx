@@ -62,7 +62,7 @@ export function EventsCard({ demo, rows, confirmClear, clearing, onClearAsk, onC
         {rows && rows.length > 0 && !demo && (
           confirmClear ? (
             <span>
-              <button type="button" class="btn danger-btn" disabled={clearing} onClick={onClear}>
+              <button type="button" class="btn danger solid" disabled={clearing} onClick={onClear}>
                 {clearing ? 'Clearing...' : 'Confirm clear'}
               </button>
               {' '}

@@ -118,7 +118,7 @@ export function CompanionCard({
                       </button>
                     ) : confirmRevoke === d.id ? (
                       <span>
-                        <button type="button" class="btn danger-btn" disabled={busy} onClick={() => onRevoke(d)}>
+                        <button type="button" class="btn danger solid" disabled={busy} onClick={() => onRevoke(d)}>
                           {busy ? 'Revoking...' : 'Confirm revoke'}
                         </button>
                         {' '}

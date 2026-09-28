@@ -2997,8 +2997,8 @@ export const aokieReceptionistPack: PackData = {
     id: 'aokie-receptionist',
     name: 'Aokie Receptionist',
     description:
-      'An AI phone receptionist over FormLogic Desktop: raw call and SMS records land automatically from the Aokie Bluetooth phone bridge, starter FormLogic Flows look up callers, summarise calls and draft SMS replies, and a Live Call screen gives the operator answer / hang-up / speak controls. Runs headless in FormLogic Desktop; open this app anywhere to monitor it.',
-    version: '1.0.2',
+      'An AI phone receptionist run by OAIY on your computer: OAIY\'s Front desk agent answers the calls through the Aokie Bluetooth phone bridge, call and SMS records land automatically, starter FormLogic Flows look up callers, record booking requests, summarise calls and draft SMS replies, and a Live Call screen gives the operator answer / hang-up / speak controls. Open this app anywhere to monitor it.',
+    version: '1.1.0',
     author: 'FormLogic',
     tags: ['receptionist', 'phone', 'aokie', 'desktop', 'flows'],
   },
@@ -3950,7 +3950,7 @@ export const aokieReceptionistPack: PackData = {
       packAppId: 'aokie-receptionist',
       name: 'Aokie Receptionist',
       description:
-        'AI phone receptionist over FormLogic Desktop: live call console, automatic call/SMS records, caller lookup, call summaries, SMS reply drafts and follow-up tasks — with the Aokie Bluetooth phone bridge doing the hardware work. Runs headless in FormLogic Desktop; open this app anywhere to monitor it.',
+        'AI phone receptionist run by OAIY: its Front desk agent answers the calls through the Aokie Bluetooth phone bridge, and this app keeps the live call console, call/SMS records, caller lookup, booking requests, call summaries, SMS reply drafts and follow-up tasks. Open it anywhere to monitor the front desk.',
       settings: { icon: 'PhoneCall', appKind: 'staff', aokieWorkspace: true },
       // Included services (pack services wave 1): the owner can turn each of these
       // off in App Settings -> Included services; the backend gates the matching

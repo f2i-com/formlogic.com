@@ -35,7 +35,7 @@ The OAIY route is the recommended way to run the receptionist. It is the first c
 
 ### What FormLogic still does
 
-- **Sends the greeting and the brief.** Receptionist Settings sends the greeting and the persona text to Aokie, which passes the persona to OAIY as *the receptionist brief*. The Front desk's own brief and call instructions take precedence over it. When the brief is blank, FormLogic sends no persona of its own. For a caller whose number is known, Personalize Caller sends a call-scoped brief with their bookings and the calendar's taken times.
+- **Sends the greeting and the brief.** Receptionist Settings sends the greeting and the persona text to Aokie, which passes the persona to OAIY as *the receptionist brief*. The Front desk's own brief and call instructions take precedence over it. When the brief is blank, FormLogic sends the default persona: short business context (bookings made on a call are requests the team confirms, and what the team needs for a call back), written to be read as a brief. For a caller whose number is known, Personalize Caller sends a call-scoped brief with their bookings and the calendar's taken times.
 - **Answers the call tools.** Aokie still offers the `request_appointment`, `lookup_business_data` and `finish_call` tools. The pack's flows answer them: an appointment request becomes a *requested* Appointment and a confirmation task, and a lookup reads the business's records.
 - **Screens callers** (below), keeps every call, transcript, message and follow-up record, and runs the after-call and SMS flows. Those flows use the separate **Background AI** provider.
 
@@ -96,6 +96,12 @@ On the other routes, the follow-ups call back as before. Switch callbacks on in 
 ### Screening
 
 Call screening is Aokie's own setting. The Screening card in Receptionist Settings and **OAIY → Agent → Phone → Who is answered** edit the same blocked numbers, accept filter and private-number setting, so whichever was saved last is what Aokie uses. Record-driven screening (blocked customers and whitelist mode) runs in the Personalize Caller flow on every route.
+
+On the OAIY route, a screened caller never reaches OAIY. The screen and blocked messages are spoken only in Aokie's own voice, which is normally not installed there; without it, a screened call is refused silently. The same holds for the automatic hold queue's lines: without Aokie's own voice, a second caller keeps hearing call waiting, and one who gives up is an ordinary missed call. The PIN-gated manager line is not offered on the OAIY route: manager numbers are answered by OAIY like any caller. The settings page says so on the cards that set these. See section 9 of the [plugin contract](AOKIE_PLUGIN_CONTRACT.md).
+
+### When OAIY fails during a call
+
+If OAIY's voice fails during a call, Aokie says one line ("I'm sorry, I'm having technical trouble…") in its own voice when it has one, then hangs up. It emits `aokie.hardware.error` with `code: realtime_failed`. The pack records that as a readable hardware event, and adds a note to that call's transcript saying that OAIY stopped answering and whether the caller heard an apology. The Calls transcript and the Live Call console show the note across the conversation. A call OAIY dials whose session cannot start is ended before the other person answers.
 
 ### Resetting the dongle
 

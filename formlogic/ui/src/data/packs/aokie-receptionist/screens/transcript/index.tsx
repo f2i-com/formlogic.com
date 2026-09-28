@@ -152,4 +152,7 @@ function Transcript() {
   );
 }
 
-render(<Transcript />, document.getElementById('root')!);
+// .ak: the shared Aokie stylesheet (aokie.css) scopes its tokens to it.
+const rootEl = document.getElementById('root')!;
+rootEl.classList.add('ak');
+render(<Transcript />, rootEl);

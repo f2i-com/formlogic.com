@@ -6,6 +6,8 @@ import { Loading } from './Loading';
 import type { PhoneRow } from '../types';
 
 interface Props {
+  /** A linked OAIY is offline: the paired phone can't be read until it is back. */
+  offline: boolean;
   access: boolean | null;
   rows: PhoneRow[] | null;
   busyPhone: string | null;
@@ -13,9 +15,11 @@ interface Props {
   onDisconnect: (row: PhoneRow) => void;
 }
 
-export function PhonesCard({ access, rows, busyPhone, onConnect, onDisconnect }: Props) {
+export function PhonesCard({ offline, access, rows, busyPhone, onConnect, onDisconnect }: Props) {
   let body;
-  if (access === false) {
+  if (offline) {
+    body = <p class="faint" data-phone-offline>The paired phone can't be read while OAIY is offline.</p>;
+  } else if (access === false) {
     body = <p class="faint">This app has not been granted phone status access.</p>;
   } else if (rows === null) {
     body = <Loading />;

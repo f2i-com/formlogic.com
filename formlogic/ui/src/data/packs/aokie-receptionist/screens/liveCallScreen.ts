@@ -45,6 +45,7 @@ import liveCallStageTsx from './live-call/components/CallStage.tsx?raw';
 import liveCallTranscriptTsx from './live-call/components/Transcript.tsx?raw';
 import liveCallRecentTsx from './live-call/components/RecentCalls.tsx?raw';
 import liveCallCss from './live-call/styles.css?raw';
+import aokieCss from './shared/aokie.css?raw';
 
 /**
  * The customScreen SECTION payload for the Calls form (kind 'code', files-based). The
@@ -64,6 +65,7 @@ export const AOKIE_LIVE_CALL_SCREEN = {
     { path: 'components/CallStage.tsx', content: liveCallStageTsx },
     { path: 'components/Transcript.tsx', content: liveCallTranscriptTsx },
     { path: 'components/RecentCalls.tsx', content: liveCallRecentTsx },
+    { path: 'aokie.css', content: aokieCss },
     { path: 'styles.css', content: liveCallCss },
   ],
 };

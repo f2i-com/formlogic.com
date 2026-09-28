@@ -137,7 +137,7 @@ function App() {
   useEffect(() => c.wire(), [c]);
   const call = c.activeCall();
   return (
-    <div id="lc" aria-label="Live call console">
+    <div id="lc" class="ak" aria-label="Live call console">
       <div class="console">
         <div class="chead">
           <div class="ident">

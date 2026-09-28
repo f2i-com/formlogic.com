@@ -11,7 +11,7 @@
 //  - clearing requires the explicit "Remove PIN" affordance;
 //  - the set/unset tag renders from managerPinSet alone.
 import { splitList } from '../helpers';
-import { removePin, saveScreening, screeningInput, screeningToggle, state, unblock } from '../store';
+import { onOaiy, removePin, saveScreening, screeningInput, screeningToggle, state, unblock } from '../store';
 
 export function ScreeningCard() {
   if (!state.canSet) return null;
@@ -21,6 +21,11 @@ export function ScreeningCard() {
     <div class="card">
       <h2>Call screening</h2>
       <p class="muted">Who gets through. Screened callers hear a short message (or nothing) and the call ends - no greeting, no AI. Changes apply on the next incoming call.</p>
+      {onOaiy() ? (
+        <p class="hint" data-oaiy-screening-note>
+          {"On OAIY's route screened callers never reach OAIY. The messages below are spoken only when Aokie's own voice is installed; otherwise a screened call is refused silently. The PIN-gated manager line is not offered there: manager numbers are answered by OAIY like any caller."}
+        </p>
+      ) : null}
       <p class="hint" data-screening-shared>
         {"These are Aokie's own screening settings. OAIY > Agent > Phone > Who is answered edits the same blocked numbers, accept filter and private-number setting, so whichever is saved last is what Aokie uses."}
       </p>
@@ -180,7 +185,7 @@ export function ScreeningCard() {
         />
       </label>
       <div class="savebtnrow">
-        <button type="button" class="btn dark sm" data-act="save-screening" disabled={!!state.busy.screening || !sc.loaded} onClick={saveScreening}>
+        <button type="button" class="btn sm" data-act="save-screening" disabled={!!state.busy.screening || !sc.loaded} onClick={saveScreening}>
           {state.busy.screening ? 'Saving...' : 'Save screening'}
         </button>
         {sc.loaded ? null : <span class="faint">Loading current values...</span>}

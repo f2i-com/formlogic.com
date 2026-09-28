@@ -40,7 +40,7 @@ export function FreshCard({ demo, busy, note, onStartFresh }: Props) {
           />
           <button
             type="button"
-            class="btn danger-btn"
+            class="btn danger solid"
             id="fresh-go"
             disabled={!armed || busy}
             onClick={() => { if (armed && !busy) onStartFresh(); }}

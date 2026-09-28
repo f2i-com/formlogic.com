@@ -1,108 +1,56 @@
-/* Token-only styling (--fl-* variables from the host palette) so the console
-   follows the app accent and flips with the viewer's light/dark theme.
-   Card pattern: var(--fl-surface) on a 1px var(--fl-border), 14px radius,
-   11px uppercase eyebrow titles in var(--fl-muted). */
+/* Receptionist Settings - layout on top of the shared aokie.css (cards,
+   buttons, controls, notices and facts live there). Token-only. */
 html, body { background: transparent; }
-body { color: var(--fl-text); }
-#rs { max-width: 780px; margin: 0 auto; padding: 8px 8px 88px; display: flex; flex-direction: column; }
+body { margin: 0; color: var(--fl-text); }
+#rs { max-width: 800px; margin: 0 auto; padding: 14px 16px 96px; display: flex; flex-direction: column; gap: 14px; }
 #rs #cards { display: flex; flex-direction: column; gap: 14px; }
+#rs .row2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 14px; }
+#rs .row2 > label.f { margin-top: 14px; }
+#rs label.f.inline { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--fl-border); }
 
-#rs .card { border: 1px solid var(--fl-border); border-radius: 14px; padding: 14px 16px; background: var(--fl-surface); box-shadow: var(--fl-shadow); transition: border-color 0.15s ease; }
-#rs .card.danger { border-color: var(--fl-bad); }
-#rs h2 { margin: 0 0 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fl-muted); }
-#rs h3 { margin: 12px 0 4px; font-size: 12.5px; font-weight: 600; }
-#rs .hdr { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-#rs .hdr h2 { margin: 0; }
+/* The OAIY card leads the page: a titled status card with its next step. */
+#rs .card.oaiy { border-color: color-mix(in srgb, var(--fl-accent) 30%, var(--fl-border)); }
+#rs .card.oaiy .hdr { align-items: flex-start; margin-bottom: 12px; }
+#rs .titlewrap { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1 1 280px; }
+#rs .titlewrap .title { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: -0.01em; text-transform: none; color: var(--fl-text); }
+#rs .titlewrap .sub { margin: 1px 0 0; font-size: 12.5px; color: var(--fl-muted); }
+#rs .card.oaiy .actions { margin-top: 12px; }
 
-#rs label.f { display: block; margin: 10px 0 0; }
-#rs label.f:first-child { margin-top: 0; }
-#rs .lbl { display: block; margin-bottom: 4px; font-size: 11.5px; font-weight: 500; color: var(--fl-muted); }
-#rs .hint { margin: 4px 0 0; font-size: 11px; line-height: 1.45; color: var(--fl-faint); }
-#rs .muted { color: var(--fl-muted); font-size: 12.5px; }
-#rs .faint { color: var(--fl-faint); font-size: 11px; }
-#rs .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+/* Running now. */
+#rs .running .greet { font-size: 14px; margin-bottom: 8px; }
+#rs .running .persona { margin-top: 10px; font-size: 12px; color: var(--fl-muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+#rs .running-refresh { margin: 8px 0 0; color: var(--fl-muted); font-size: 12px; }
 
-#rs input[type="text"], #rs input[type="password"], #rs textarea, #rs select {
-  width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; color: var(--fl-text);
-  background: var(--fl-surface); border: 1px solid var(--fl-border); border-radius: 10px; padding: 8px 11px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-#rs input[type="text"]:focus, #rs input[type="password"]:focus, #rs textarea:focus, #rs select:focus {
-  outline: none; border-color: var(--fl-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--fl-accent) 16%, transparent);
-}
-#rs textarea { resize: vertical; min-height: 64px; line-height: 1.5; }
-#rs select { cursor: pointer; }
-/* The option POPUP is native chrome: the host palette pins color-scheme to the
-   app theme, and these solid token colors keep the list legible on browsers
-   that honor option styling (dark mode used to render white-on-white). */
-#rs select option { background: var(--fl-bg); color: var(--fl-text); }
-#rs .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-@media (max-width: 520px) { #rs .row2 { grid-template-columns: 1fr; } }
-@media (max-width: 380px) { #rs { padding: 6px 4px 88px; } #rs .card { padding: 12px 12px; } }
+/* Where calls go. */
+#rs .others { margin-top: 12px; }
+#rs .others[open] > summary { margin-bottom: 2px; }
+#rs .pointers dd { font-weight: 400; color: var(--fl-muted); }
 
-#rs .chk { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 0; font-size: 12.5px; cursor: pointer; }
-#rs .chk input { margin-top: 2px; width: 15px; height: 15px; flex: none; }
-#rs .chk .sub { display: block; margin-top: 2px; font-size: 11px; color: var(--fl-faint); font-weight: 400; }
-#rs .chk.off { opacity: .55; }
-
-#rs .btn { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 500;
-  border-radius: 10px; padding: 7px 13px; border: 1px solid var(--fl-border); color: var(--fl-text); background: var(--fl-surface);
-  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease; }
-#rs .btn:hover { background: var(--fl-surface-2); }
-#rs .btn:focus-visible { outline: 2px solid var(--fl-accent); outline-offset: 1px; }
-#rs .btn[disabled] { opacity: .45; cursor: not-allowed; }
-#rs .btn.dark { background: var(--fl-text); color: var(--fl-surface); border-color: var(--fl-text); }
-/* The dark save buttons stay a dark button with white text in BOTH themes. In dark mode
-   var(--fl-text) is near-white and var(--fl-surface) near-transparent, which would flip
-   these to a light background with unreadable light text — so pin them to the dark page
-   colour with white text instead of letting the palette invert them. */
-html.fl-dark #rs .btn.dark { background: var(--fl-bg); color: #fff; border-color: var(--fl-border); }
-html.fl-dark #rs .btn.dark:hover { background: var(--fl-surface-2); }
-#rs .btn.primary { background: var(--fl-accent); border-color: var(--fl-accent); color: var(--fl-accent-contrast); }
-#rs .btn.sm { font-size: 11.5px; padding: 5px 10px; }
-#rs .savebtnrow { margin-top: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-
-#rs .pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 8px; font-size: 10px; font-weight: 600; line-height: 1.5; border: 1px solid var(--fl-border); color: var(--fl-muted); }
-#rs .pill.ok { color: var(--fl-good); border-color: var(--fl-good); }
-#rs .pill.accent { color: var(--fl-accent); border-color: var(--fl-accent); }
-
+/* Screening chips. */
 #rs .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-#rs .chip { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; background: var(--fl-surface-2); padding: 3px 5px 3px 10px; font-size: 11px; }
-#rs .chip button { cursor: pointer; border: 0; background: transparent; color: var(--fl-faint); font-size: 14px; line-height: 1; padding: 0 2px; transition: color 0.15s ease; }
+#rs .chip { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; background: var(--fl-surface-2); border: 1px solid var(--fl-border); padding: 2px 5px 2px 10px; font-size: 12px; }
+#rs .chip button { cursor: pointer; border: 0; background: transparent; color: var(--fl-faint); font-size: 14px; line-height: 1; padding: 0 3px; border-radius: 6px; transition: color 0.15s ease; }
 #rs .chip button:hover { color: var(--fl-bad); }
-#rs .chip button:focus-visible { outline: 2px solid var(--fl-accent); outline-offset: 1px; border-radius: 6px; }
+#rs .chip button:focus-visible { outline: 2px solid var(--fl-accent); outline-offset: 1px; }
 
-#rs #banner:empty { display: none; }
-#rs #err { border: 1px solid var(--fl-bad); border-radius: 12px; padding: 10px 14px; font-size: 13px; color: var(--fl-bad);
-  background: color-mix(in srgb, var(--fl-bad) 6%, transparent); overflow-wrap: break-word; }
+/* A card's own save button row. */
+#rs .savebtnrow { margin-top: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#rs #err { border: 1px solid color-mix(in srgb, var(--fl-bad) 45%, var(--fl-border)); border-left: 3px solid var(--fl-bad); border-radius: 10px;
+  padding: 11px 14px; font-size: 13px; color: var(--fl-bad); background: color-mix(in srgb, var(--fl-bad) 6%, var(--fl-surface)); overflow-wrap: break-word; }
+#rs .dirty { font-size: 12px; font-weight: 600; color: var(--fl-warn); }
+#rs .clean { font-size: 12px; color: var(--fl-faint); }
 
-#rs .running .greet { font-size: 13.5px; }
-#rs .running .meta { margin-top: 3px; font-size: 11.5px; color: var(--fl-muted); }
-#rs .running-facts { display: flex; flex-direction: column; margin-top: 8px; border: 1px solid var(--fl-border); border-radius: 10px; overflow: hidden; }
-#rs .running-facts > div { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; padding: 7px 10px; }
-#rs .running-facts > div + div { border-top: 1px solid var(--fl-border); }
-#rs .running-facts span { flex: none; color: var(--fl-faint); font-size: 10.5px; }
-#rs .running-facts strong { min-width: 0; color: var(--fl-text); font-size: 11.5px; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
-#rs .running-refresh { margin: 7px 0 0; color: var(--fl-muted); font-size: 11px; }
-#rs .running .persona { margin-top: 3px; font-size: 11px; color: var(--fl-faint); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* Advanced endpoint URLs. */
+#rs .adv > summary { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 
-@media (max-width: 460px) {
-  #rs .running-facts > div { align-items: flex-start; flex-direction: column; gap: 2px; }
-  #rs .running-facts strong { text-align: left; }
-}
-
-/* Sticky save bar. #rs reserves 88px of bottom padding (more than the bar's
-   height) so the last card's footnote always clears it at full scroll, and the
-   bar's background is layered over var(--fl-bg) so it stays fully OPAQUE in
-   both themes (the dark surface token is translucent on its own) - scrolling
-   content can never read through it. Frosted variant where backdrop-filter is
-   supported. */
-#rs .savebar { position: sticky; bottom: 8px; margin-top: 14px; z-index: 5; }
+/* Sticky save bar: opaque over var(--fl-bg) in both themes (the dark surface
+   token is translucent on its own), frosted where supported. #rs reserves
+   96px of bottom padding so the last card clears it. */
+#rs .savebar { position: sticky; bottom: 10px; margin-top: 2px; z-index: 5; }
 #rs .savebar .inner { border: 1px solid var(--fl-border); border-radius: 14px; padding: 10px 12px;
   background: linear-gradient(var(--fl-surface), var(--fl-surface)), var(--fl-bg);
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  box-shadow: 0 -4px 16px -12px rgba(0,0,0,.28), 0 8px 30px -18px rgba(0,0,0,.4); }
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  box-shadow: 0 -4px 16px -12px rgba(0, 0, 0, 0.28), 0 8px 30px -18px rgba(0, 0, 0, 0.4); }
 @supports ((backdrop-filter: blur(10px)) or (-webkit-backdrop-filter: blur(10px))) {
   #rs .savebar .inner {
     background: linear-gradient(var(--fl-surface), var(--fl-surface)), color-mix(in srgb, var(--fl-bg) 72%, transparent);
@@ -110,13 +58,14 @@ html.fl-dark #rs .btn.dark:hover { background: var(--fl-surface-2); }
   }
 }
 #rs .savebar .right { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
-#rs .dirty { font-size: 11.5px; font-weight: 600; color: var(--fl-warn); }
-#rs .clean { font-size: 11.5px; color: var(--fl-faint); }
 
-#rs .adv summary { cursor: pointer; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fl-muted); list-style: none; display: flex; align-items: center; gap: 6px; }
-#rs .adv summary::-webkit-details-marker { display: none; }
-#rs .adv summary:focus-visible { outline: 2px solid var(--fl-accent); outline-offset: 2px; border-radius: 6px; }
-/* Disclosure triangle driven by the native [open] state so it can never go
-   stale (the open flag is only mirrored into the store for re-renders). */
-#rs .adv summary::before { content: '>'; color: var(--fl-faint); font-family: ui-monospace, monospace; }
-#rs .adv[open] summary::before { content: 'v'; }
+@media (max-width: 560px) {
+  #rs .row2 { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 420px) {
+  #rs { padding: 10px 10px 110px; gap: 12px; }
+  #rs #cards { gap: 12px; }
+  #rs .card { padding: 14px; }
+  #rs .savebar .right { margin-left: 0; width: 100%; }
+  #rs .savebar .right .btn { flex: 1 1 auto; }
+}

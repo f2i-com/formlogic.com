@@ -139,7 +139,9 @@ describe('Receptionist Settings on the OAIY route', () => {
     expect(root.querySelector('.savebar .dirty')?.textContent).toBe('Unsaved changes');
     expect(root.querySelector('[data-running-mode]')?.textContent).toContain('OAIY (this computer)');
     expect(root.querySelector('[data-running-provider]')?.textContent).toContain('OAIY Front desk agent');
-    expect(root.querySelector('[data-running-model]')?.textContent).toContain('Chosen in OAIY > Engines');
+    // The model and voice are OAIY's: the OAIY card shows them, not the running card.
+    expect(root.querySelector('[data-running-model]')).toBeNull();
+    expect(root.querySelector('[data-oaiy-model]')?.textContent).toContain('Chosen in OAIY > Engines');
     expect(root.querySelector('[data-use-oaiy-offer]')).toBeNull();
     expect(calls.set).toHaveLength(0);
 
@@ -206,7 +208,7 @@ describe('Receptionist Settings on the OAIY route', () => {
     const offline = root.querySelector('[data-oaiy-offline]')?.textContent ?? '';
     expect(offline).toContain('FRONT-DESK was last seen 12 min ago');
     expect(offline).toContain('keeps answering calls, lookups and appointment requests');
-    expect(root.querySelector('.running [data-running-empty]')?.textContent).toContain('FRONT-DESK was last seen');
+    expect(root.querySelector('.running [data-running-empty]')?.textContent).toContain('OAIY is offline');
 
     click(root, '[data-act="save-apply"]');
     await flush(80);
