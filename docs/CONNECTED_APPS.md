@@ -56,8 +56,18 @@ The two connections have different jobs:
 | Linked FormLogic account | Gives OAIY scoped access for account-backed events, records and remote flow commands | OAIY **Connections → Linked account** |
 
 Install and start the native Aokie plugin in OAIY separately from installing its
-FormLogic starter. Follow Aokie's phone and speech setup, then confirm it reports
-ready. Installing a pack does not install native software or pair a phone.
+FormLogic starter. Follow Aokie's phone setup, then confirm it reports ready.
+Installing a pack does not install native software or pair a phone.
+
+By default, OAIY answers the calls: under **Receptionist Settings → Where calls
+go**, **OAIY (this computer)** is the first and recommended route. OAIY Voice hears
+and speaks, and the Front desk agent in OAIY's Agent app talks, using the model in
+OAIY's Engines. FormLogic sends the greeting and the receptionist brief, screens
+callers, answers bookings and lookups through the pack's flows, and keeps the
+records. Missed-call callbacks are switched on in **OAIY → Agent → Phone**. The
+settings page shows whether OAIY is reachable and where Aokie sends calls. It has
+a **Use OAIY** action for a receptionist still on another route. See
+[Aokie operations](AOKIE_OPERATIONS.md#the-oaiy-route) for what lives where.
 
 After sharing or moving, open the destination app's **Front desk** and confirm it
 shows the intended forms. Perform an authorised test interaction and inspect

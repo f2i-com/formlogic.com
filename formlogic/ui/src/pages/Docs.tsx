@@ -641,10 +641,10 @@ function _init() {
               <Steps items={[
                 <>Find <strong>Aokie Receptionist</strong> in <Link to="/packs" className="underline">Starter apps</Link>, review its forms and capabilities, then install it in your account.</>,
                 <>Install Aokie in OAIY, connect a supported Bluetooth dongle and pair your phone. Follow <Link to="/aokie" className="underline">the Aokie setup guide</Link> for the hardware steps.</>,
-                <>Configure and test speech recognition, your language model and text-to-speech in OAIY. Link FormLogic and select the destination app in Device Setup.</>,
+                <>In OAIY, load a model in <strong>Engines</strong> and start OAIY Voice: on the OAIY route, the default, OAIY&apos;s Front desk agent answers the calls. In the app&apos;s <strong>Receptionist Settings</strong>, keep <C>Where calls go → OAIY (this computer)</C>, write the greeting and the receptionist brief, then choose <strong>Save &amp; apply now</strong>. Link FormLogic and select the destination app in Device Setup.</>,
                 <>Make a controlled test call. Check the call record and transcript in the app, then verify an appointment request reaches the Appointments view. Review it before treating it as confirmed.</>,
               ]} />
-              <P>Use <strong>Open call controls</strong>, <strong>Manage appointments</strong> and <strong>Manage messages</strong> to reach the relevant tools. Outbound calls, interruption handling, SMS and missed-call callbacks depend on the configured phone, runtime and flows. Auto-answer is off by default.</P>
+              <P>Use <strong>Open call controls</strong>, <strong>Manage appointments</strong> and <strong>Manage messages</strong> to reach the relevant tools. Outbound calls, interruption handling, SMS and missed-call callbacks depend on the configured phone, runtime and flows. On the OAIY route, OAIY calls back missed calls when that is switched on in <C>OAIY → Agent → Phone</C>, and the app&apos;s follow-ups then leave callbacks to it. Auto-answer is off by default.</P>
               <h3 className="text-lg font-semibold mt-6 mb-3">Add Aokie to an app you already use</h3>
               <Steps items={[
                 <>Open the destination app&apos;s <C>App Studio → Screens → Add from another app</C> and select Aokie.</>,

@@ -40,8 +40,17 @@ links to the official CLI installation guide if the CLI is missing.
 For a local model, configure and start its server under **Services**, download
 its model under **Models**, then select it in FormLogic. GPU acceleration is
 configured by the model server; selecting a local provider alone does not
-enable GPU execution. Aokie's speech pipeline can use separately configured
-STT, LLM and TTS services.
+enable GPU execution.
+
+For the Aokie phone receptionist, OAIY is the AI on the call. On the OAIY route,
+the default, the Front desk agent answers with the model chosen in OAIY's
+**Engines**, and OAIY Voice hears (Parakeet) and speaks (Qwen3-TTS, with the
+voice chosen in OAIY). FormLogic's Receptionist Settings then send only the
+greeting, the receptionist brief and the route. Aokie's own speech route, under
+**Other routes**, still uses separately configured STT, LLM and TTS services. On
+every route, the receptionist's after-call summaries, booking extraction and SMS
+drafts use the **Background AI** provider chosen in Receptionist Settings. See
+[Aokie operations](AOKIE_OPERATIONS.md#the-oaiy-route).
 
 ### What uses the selected AI
 
