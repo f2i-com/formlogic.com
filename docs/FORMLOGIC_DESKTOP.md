@@ -229,3 +229,25 @@ FormLogic Desktop is the **headless runtime for flows + the Aokie receptionist**
 - Plugin processes get no inherited secrets; secrets live in the OS keyring or Desktop config, resolved server-side (desktop-side), never sent to the browser.
 - Logs redact phone numbers/message bodies by default (plugins are responsible pre-emit; Desktop additionally truncates oversized events > 64 KiB).
 - Event consumers must dedupe on `idempotencyKey`; producers must generate stable keys (`<source>:<correlationId>:<step>:v1`).
+
+## 9. Working offline, and syncing when FormLogic can be reached
+
+The desktop (OAIY) does everything on its own machine first — calls, texts, the model, the calendar, its own triggers — and treats FormLogic as a place to keep in step with, not a place to wait on. When FormLogic cannot be reached (no internet, the server down, a key to link again) nothing local stops; what changed meanwhile goes both ways when it is back.
+
+**What the desktop keeps while FormLogic is away.**
+
+- **Plugin events** (Aokie's calls and texts). Handled locally at once (local triggers, the calendar), then kept on disk in the desktop's outbox before Aokie is acked, and sent to the account oldest first: flow runs reserved under `flow:<binding>:<event key>`, app-logic record writes under `idempotencyKey` = `applogic:<event key>:<script>:<effect index>` (hashed past 128 characters). What waiting can mend (connection, 5xx, 408/409/429, 401/403) is retried from 5 s doubling to 5 min, and at once when the heartbeat gets through; a refusal goes to the desktop's dead letters, whose redrive sends it again. An event kept for one link is never sent over another.
+  - Consequence for flows: an event can reach FormLogic hours after it happened. A flow that texts the caller should check the event's age (`occurredAt` in the envelope) before sending something that is only true at the time, such as "we got your request for 10 am today".
+- **The calendar** (the receptionist pack's `appointments` form). Every change is made on the desktop and synced every minute (sooner after a change), backing off from one to ten minutes while FormLogic is away.
+
+**How the calendar keeps in step** (`platform/desktop/src-tauri/src/calendar/sync.rs` in OAIY):
+
+- A record is paired with a desktop appointment by its id, or by `request_id`: a call's request id (FormLogic's own flow records a call's request too), or `oaiy:<desktop id>` for one made on the desktop. New desktop appointments are looked up by `?answers.request_id=` before they are created (a create whose answer was lost is found, not made twice), and created with `idempotencyKey` = `oaiy:appt:<desktop id>:<hash of the answers>`. When the desktop and FormLogic's flow both recorded one call, the desktop deletes its own copy and keeps FormLogic's (its texts refer to it).
+- Changes are merged field by field against the version both last agreed on; a field changed on both sides goes to a final status (cancelled, completed), else the later change. A deletion on either side wins over an edit on the other, and a record deleted on the desktop is deleted in FormLogic (and not brought back by a late copy of the same call).
+- One record FormLogic refuses (a 4xx) is set aside with the reason until it changes on the desktop; the rest still sync.
+
+**The API it uses** (`/api/v1`, additive; clients that send none of it see no change):
+
+- `GET /api/v1/forms/{formId}/responses?updatedSince=<UTC Y-m-d H:i:s or ISO 8601>&limit=` lists the records changed at or after that time, oldest change first. Page with `&updatedSince=<last updatedAt>&afterId=<last id>` (keyset, so a record changed while paging is not skipped). The reply adds `deleted: [{id, deletedAt}]` (records deleted since then), `deletedSince` (the time from which that list is whole: tombstones are kept 180 days, and a form's database records them from schema v5 on), `deletedComplete` (false when cut short), and `serverTime` (the time to ask from next; taken before the read). A client whose last sync is older than `deletedSince` compares its whole copy instead.
+- Every record from `/api/v1` carries `etag` (a hash of its answers, status and `updatedAt`). `PUT /api/v1/forms/{formId}/responses/{id}` with `If-Match: "<etag>"` writes only over that version, checked in the UPDATE itself; if the record changed meanwhile it answers **412** `{code: "version_conflict", response: <the record as it is now>}` and writes nothing. Without `If-Match` a PUT is written as before.
+- Tombstones live in each form's SQLite database (`response_tombstones`, written by triggers on every delete path, cleared if the same id is put back).
