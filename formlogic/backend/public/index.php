@@ -2628,7 +2628,11 @@ $app->post('/api/billing/webhook/paypal', function ($request, $response) use ($c
     return $container->get(\FormLogic\Controllers\BillingController::class)->webhook($request, $response);
 })->add(new RateLimitMiddleware($rateLimiter, 120, 60, 'paypal_webhook'));
 
-// External API v1 routes (API key auth)
+// External API v1 routes (API key auth). Two groups under one prefix, each with its own
+// budgets: this one is the data API (forms, records, flows, app logic), 120/min per address
+// before auth and 120/min per key after it; the group after it holds a linked desktop's
+// waiting polls, claims and heartbeat, which have budgets of their own so that neither
+// side's burst uses up the other's allowance.
 $apiRateLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'api_v1');
 $apiKeyService = $container->get(ApiKeyService::class);
 
@@ -2727,10 +2731,6 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
         return $container->get(\FormLogic\Controllers\FlowController::class)->listOwnerRuns($request, $response);
     })->add($flowsReadAuth);
 
-    $group->get('/flow-runs/queued', function ($request, $response) use ($container) {
-        return $container->get(\FormLogic\Controllers\FlowController::class)->listOwnerQueuedRuns($request, $response);
-    })->add($flowsReadAuth);
-
     // Run lineage children (extensible-flows plan §14.4): paginated direct children of one
     // run + call-node association — the run-tree UI's fetch-on-expand source.
     $group->get('/flow-runs/{runId}/children', function ($request, $response) use ($container, $getArgs) {
@@ -2775,17 +2775,6 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
         return $container->get(\FormLogic\Controllers\FlowController::class)->putConnectorAssignment($request, $response);
     })->add($cloudWriteGate)->add($flowsWriteAuth);
 
-    // NOT cloud-gated (audit FL-003 policy): claim/complete/PATCH only FINALIZE work that was
-    // already reserved through a gated path — blocking them on lapse would strand in-flight
-    // runs/commands mid-execution without preventing any new content.
-    $group->post('/flow-runs/{runId}/claim', function ($request, $response) use ($container, $getArgs) {
-        return $container->get(\FormLogic\Controllers\FlowController::class)->claimOwnerRun($request, $response, $getArgs($request));
-    })->add($flowsWriteAuth);
-
-    $group->patch('/flow-runs/{runId}', function ($request, $response) use ($container, $getArgs) {
-        return $container->get(\FormLogic\Controllers\FlowController::class)->completeOwnerRun($request, $response, $getArgs($request));
-    })->add($flowsWriteAuth);
-
     $group->get('/flow-kv', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\FlowKvController::class)->ownerGet($request, $response);
     })->add($flowsReadAuth);
@@ -2798,10 +2787,8 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
         return $container->get(\FormLogic\Controllers\FlowKvController::class)->ownerDelete($request, $response);
     })->add($flowsWriteAuth);
 
-    // Remote command relay (connector:relay) — the desktop runtime long-polls for pending connector
-    // commands its members enqueued, claims one (pending→claimed exactly-once) and completes it.
-    $connectorRelayAuth = new ApiKeyMiddleware($apiKeyService, ['connector:relay'], $rateLimiter);
-    // The controller requires aokie:realtime and emits a relink diagnostic when
+    // The Aokie plugin's bootstrap and activity (the desktop's waiting lanes are in the link
+    // group below). The controller requires aokie:realtime and emits a relink diagnostic when
     // an older key only has connector:relay. Authentication is still strict.
     $aokieRealtimeAuth = new ApiKeyMiddleware($apiKeyService, [], $rateLimiter);
 
@@ -2823,41 +2810,6 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
         return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
             ->pluginQueueOffer($request, $response, $getArgs($request));
     })->add($aokieRealtimeAuth);
-
-    $group->get('/connector-commands/pending', function ($request, $response) use ($container) {
-        return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->pending($request, $response);
-    })->add($connectorRelayAuth);
-
-    $group->post('/connector-commands/{id}/claim', function ($request, $response) use ($container, $getArgs) {
-        return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->claim($request, $response, $getArgs($request));
-    })->add($connectorRelayAuth);
-
-    $group->post('/connector-commands/{id}/complete', function ($request, $response) use ($container, $getArgs) {
-        return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->complete($request, $response, $getArgs($request));
-    })->add($connectorRelayAuth);
-
-    // Desktop self-unlink (flows:write — always present on desktop keys). The desktop holds only its
-    // scoped flk_ key, so it can't reach the session-auth DELETE /api/desktop-connections/{id}; this
-    // lets "Unlink" cut the install off server-side. The calling key identifies the install, so it
-    // removes only its OWN connection row + self-revokes that key (least-privilege by construction).
-    $group->delete('/desktop-connections/self', function ($request, $response) use ($container) {
-        return $container->get(\FormLogic\Controllers\FlowController::class)->deleteOwnDesktopConnection($request, $response);
-    })->add($flowsWriteAuth);
-
-    // Desktop heartbeat (ROUTE-001): the linked runtime registers/refreshes its connection row
-    // (stable instance id + device name) every 45s over its flk_ key, BOUND to that key. This is
-    // the presence signal command targeting resolves against — the desktop's old heartbeat went
-    // to the session-auth POST /api/desktop-connections and silently 404'd on /api/v1.
-    $group->post('/desktop-connections', function ($request, $response) use ($container) {
-        return $container->get(\FormLogic\Controllers\FlowController::class)->upsertDesktopConnectionV1($request, $response);
-    })->add($connectorRelayAuth);
-
-    // E2E AI relay (plan Phase 1): the desktop publishes its X25519 pubkey, long-polls the
-    // AI lane, claims single-flight, streams sealed frames back, and completes (purging all
-    // sealed content). Scope: ai:relay, with legacy connector:relay keys grandfathered
-    // (plan section 7) -- the controller checks scopes itself, so the middleware
-    // authenticates without a required-scope list.
-    $desktopAiRelayAuth = new ApiKeyMiddleware($apiKeyService, [], $rateLimiter);
 
     // Encrypted data nodes — N2 Cloud snapshots (docs/FORMLOGIC_DATA_NODES.md §9).
     // Scope: data:snapshot (legacy connector:relay grandfathered for the ENROLMENT
@@ -2897,6 +2849,87 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
         return $container->get(\FormLogic\Controllers\DataNodeController::class)->deleteAccountBackup($request, $response, $getArgs($request));
     })->add($dataNodeAuth);
 
+    // AI preferences (plan Phase 2 + section 5.6): the desktop flow runner reads the ACCOUNT
+    // OWNER's AI source settings. The controller accepts ai:relay or the grandfathered
+    // connector:relay itself, as on the AI relay lane, so the middleware takes no scope list.
+    $aiPreferencesAuth = new ApiKeyMiddleware($apiKeyService, [], $rateLimiter);
+    $group->get('/ai/preferences', function ($request, $response) use ($container) {
+        return $container->get(AIController::class)->preferencesV1($request, $response);
+    })->add($aiPreferencesAuth);
+})->add($apiRateLimiter);
+
+// A linked desktop's lanes (docs/FORMLOGIC_DESKTOP.md §8): the long polls it keeps open for
+// relayed commands, sealed flow runs and the AI tunnel, the queued-run poll, the claims,
+// frames and completions that follow them, and its heartbeat. Every lane runs at once. With
+// polls held ~25 s an idle desktop sends a few a minute; where they are cut short
+// (LongPollBudget under `php -S`) one idle desktop was measured at 113-119 a minute. Counted
+// against the data API's budgets the two starved each other: a burst of record writes after
+// an offline gap 429'd the relay and flow runs, and a busy call day did the reverse. So these
+// routes have budgets of their own, still bounded: 600/min per key after auth
+// (`apikey:desktop_link:<id>`) and 1200/min per address before it (two desktops at their full
+// budget; it is also the bound on bad-key noise, which is refused before any per-key count).
+$desktopLinkRateLimiter = new RateLimitMiddleware($rateLimiter, 1200, 60, 'desktop_link');
+
+$app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $getArgs, $apiKeyService, $rateLimiter) {
+    $desktopLinkAuth = fn (array $scopes): ApiKeyMiddleware => new ApiKeyMiddleware($apiKeyService, $scopes, $rateLimiter, 600, 60, 'desktop_link');
+    $linkFlowsReadAuth = $desktopLinkAuth(['flows:read']);
+    $linkFlowsWriteAuth = $desktopLinkAuth(['flows:write']);
+
+    // Queued runs for runtime='desktop', which the desktop polls (every 20 s) and claims.
+    $group->get('/flow-runs/queued', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->listOwnerQueuedRuns($request, $response);
+    })->add($linkFlowsReadAuth);
+
+    // NOT cloud-gated (audit FL-003 policy): claim/complete/PATCH only FINALIZE work that was
+    // already reserved through a gated path — blocking them on lapse would strand in-flight
+    // runs/commands mid-execution without preventing any new content.
+    $group->post('/flow-runs/{runId}/claim', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->claimOwnerRun($request, $response, $getArgs($request));
+    })->add($linkFlowsWriteAuth);
+
+    $group->patch('/flow-runs/{runId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->completeOwnerRun($request, $response, $getArgs($request));
+    })->add($linkFlowsWriteAuth);
+
+    // Remote command relay (connector:relay) — the desktop runtime long-polls for pending connector
+    // commands its members enqueued, claims one (pending→claimed exactly-once) and completes it.
+    $connectorRelayAuth = $desktopLinkAuth(['connector:relay']);
+
+    $group->get('/connector-commands/pending', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->pending($request, $response);
+    })->add($connectorRelayAuth);
+
+    $group->post('/connector-commands/{id}/claim', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->claim($request, $response, $getArgs($request));
+    })->add($connectorRelayAuth);
+
+    $group->post('/connector-commands/{id}/complete', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->complete($request, $response, $getArgs($request));
+    })->add($connectorRelayAuth);
+
+    // Desktop self-unlink (flows:write — always present on desktop keys). The desktop holds only its
+    // scoped flk_ key, so it can't reach the session-auth DELETE /api/desktop-connections/{id}; this
+    // lets "Unlink" cut the install off server-side. The calling key identifies the install, so it
+    // removes only its OWN connection row + self-revokes that key (least-privilege by construction).
+    $group->delete('/desktop-connections/self', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->deleteOwnDesktopConnection($request, $response);
+    })->add($linkFlowsWriteAuth);
+
+    // Desktop heartbeat (ROUTE-001): the linked runtime registers/refreshes its connection row
+    // (stable instance id + device name) every 45s over its flk_ key, BOUND to that key. This is
+    // the presence signal command targeting resolves against — the desktop's old heartbeat went
+    // to the session-auth POST /api/desktop-connections and silently 404'd on /api/v1.
+    $group->post('/desktop-connections', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->upsertDesktopConnectionV1($request, $response);
+    })->add($connectorRelayAuth);
+
+    // E2E AI relay (plan Phase 1): the desktop publishes its X25519 pubkey, long-polls the
+    // AI lane, claims single-flight, streams sealed frames back, and completes (purging all
+    // sealed content). Scope: ai:relay, with legacy connector:relay keys grandfathered
+    // (plan section 7) -- the controller checks scopes itself, so the middleware
+    // authenticates without a required-scope list.
+    $desktopAiRelayAuth = $desktopLinkAuth([]);
+
     $group->post('/desktop-ai/pubkey', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->publishPubkeyV1($request, $response);
     })->add($desktopAiRelayAuth);
@@ -2926,7 +2959,7 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     // read-once sealed result). Scope: flows:relay, with legacy connector:relay keys
     // grandfathered (plan section 7) — the controller checks scopes itself, so the
     // middleware authenticates without a required-scope list.
-    $desktopFlowRelayAuth = new ApiKeyMiddleware($apiKeyService, [], $rateLimiter);
+    $desktopFlowRelayAuth = $desktopLinkAuth([]);
 
     $group->get('/desktop-flows/pending', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\DesktopFlowRelayController::class)->pendingV1($request, $response);
@@ -2943,14 +2976,7 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     $group->post('/desktop-flows/{id}/complete', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\DesktopFlowRelayController::class)->completeV1($request, $response, $getArgs($request));
     })->add($desktopFlowRelayAuth);
-
-    // AI preferences (plan Phase 2 + section 5.6): the desktop flow runner reads the ACCOUNT
-    // OWNER's AI source settings. Same either-scope middleware as the AI relay — the
-    // controller accepts ai:relay or the grandfathered connector:relay itself.
-    $group->get('/ai/preferences', function ($request, $response) use ($container) {
-        return $container->get(AIController::class)->preferencesV1($request, $response);
-    })->add($desktopAiRelayAuth);
-})->add($apiRateLimiter);
+})->add($desktopLinkRateLimiter);
 
 // Audit verification route (admin, protected — restricted to platform owner)
 $app->get('/api/admin/audit/verify', function ($request, $response) use ($container) {

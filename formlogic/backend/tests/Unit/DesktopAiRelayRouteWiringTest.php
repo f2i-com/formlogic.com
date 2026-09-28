@@ -55,9 +55,9 @@ class DesktopAiRelayRouteWiringTest extends TestCase
         $this->assertIsString($source);
 
         $this->assertMatchesRegularExpression(
-            '/\$desktopAiRelayAuth\s*=\s*new ApiKeyMiddleware\(\$apiKeyService,\s*\[\],\s*\$rateLimiter\);/',
+            '/\$desktopAiRelayAuth\s*=\s*\$desktopLinkAuth\(\[\]\);/',
             $source,
-            'the desktop AI relay authenticates the flk_ key without an AND-ed scope list (either-scope check lives in the controller)'
+            'the desktop AI relay authenticates the flk_ key without an AND-ed scope list (either-scope check lives in the controller), on the desktop link budget'
         );
         foreach (['pubkey', 'pending', '{id}/claim', '{id}/frames', '{id}/input', '{id}/complete'] as $path) {
             $quoted = preg_quote($path, '/');

@@ -36,7 +36,10 @@ Authorization: Bearer flk_xxxxxxxxxxxxxxxxxxxx
 - A key only ever reaches **its owner's own forms**. Restricting a key to specific form IDs narrows
   it further.
 - Missing/invalid key → `401`. Valid key without the required scope → `403`.
-- Requests are rate-limited per key; exceeding the limit returns `429`.
+- Requests are rate-limited per key (120 a minute) and per address (120 a minute); exceeding
+  either returns `429` with `Retry-After` (seconds). A linked desktop's lanes (its long polls,
+  claims and heartbeat) count against budgets of their own instead: see
+  `docs/FORMLOGIC_DESKTOP.md` §8, *Rate budgets*.
 - Use HTTPS in production — the key is a credential.
 
 ## Scopes

@@ -20,19 +20,29 @@ class ApiKeyMiddleware implements MiddlewareInterface
     private ?RateLimiter $rateLimiter;
     private int $perKeyLimit;
     private int $perKeyWindowSeconds;
+    private string $perKeyBucket;
 
+    /**
+     * @param string $perKeyBucket Which per-key budget this route draws from. '' is the data
+     *                             API's (counted as `apikey:<id>`, as it always was); any other
+     *                             name is a budget of its own (`apikey:<bucket>:<id>`), so a
+     *                             linked desktop's waiting polls and its record writes cannot
+     *                             use up each other's allowance.
+     */
     public function __construct(
         ApiKeyService $apiKeyService,
         array $requiredScopes = [],
         ?RateLimiter $rateLimiter = null,
         int $perKeyLimit = 120,
-        int $perKeyWindowSeconds = 60
+        int $perKeyWindowSeconds = 60,
+        string $perKeyBucket = ''
     ) {
         $this->apiKeyService = $apiKeyService;
         $this->requiredScopes = $requiredScopes;
         $this->rateLimiter = $rateLimiter;
         $this->perKeyLimit = $perKeyLimit;
         $this->perKeyWindowSeconds = $perKeyWindowSeconds;
+        $this->perKeyBucket = $perKeyBucket;
     }
 
     public function process(Request $request, RequestHandler $handler): Response
@@ -61,10 +71,26 @@ class ApiKeyMiddleware implements MiddlewareInterface
         // one tenant's traffic — or failed-auth noise on a shared egress IP — can't
         // starve another's valid key. Atomic via hit() (0 on storage error = fail open).
         if ($this->rateLimiter !== null) {
-            $count = $this->rateLimiter->hit('apikey:' . $keyData['id'], $this->perKeyWindowSeconds);
+            $counter = $this->perKeyBucket === ''
+                ? 'apikey:' . $keyData['id']
+                : 'apikey:' . $this->perKeyBucket . ':' . $keyData['id'];
+            $count = $this->rateLimiter->hit($counter, $this->perKeyWindowSeconds);
             if ($count > $this->perKeyLimit) {
                 $retryAfter = $this->rateLimiter->secondsUntilReset($this->perKeyWindowSeconds);
-                return $this->errorResponse(429, 'API key rate limit exceeded. Try again in ' . $retryAfter . 's.');
+                $response = new SlimResponse();
+                $response->getBody()->write(json_encode([
+                    'error' => true,
+                    'message' => 'API key rate limit exceeded. Try again in ' . $retryAfter . 's.',
+                    'code' => 'rate_limited',
+                    'retryAfter' => $retryAfter,
+                ]));
+                return $response
+                    ->withStatus(429)
+                    ->withHeader('Content-Type', 'application/json')
+                    ->withHeader('Retry-After', (string) $retryAfter)
+                    ->withHeader('X-RateLimit-Limit', (string) $this->perKeyLimit)
+                    ->withHeader('X-RateLimit-Remaining', '0')
+                    ->withHeader('X-RateLimit-Reset', (string) (time() + $retryAfter));
             }
         }
 

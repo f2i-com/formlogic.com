@@ -63,6 +63,12 @@ php -S localhost:8080 -t public
 
 The API will be available at `http://localhost:8080/api`
 
+The built-in server has one worker, so a linked desktop's long polls are cut to one second
+there (`LongPollBudget`) rather than holding it for 25. With more workers they may wait
+longer, one second per worker: `PHP_CLI_SERVER_WORKERS=8 php -S …` forks eight on Linux and
+macOS (PHP cannot fork on Windows), and `FORMLOGIC_DEV_SERVER_WORKERS=8` declares eight
+`php -S` processes behind one proxy, on any OS.
+
 ## API Endpoints
 
 ### Health Check

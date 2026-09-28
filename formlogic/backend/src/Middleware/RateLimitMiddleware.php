@@ -111,6 +111,13 @@ class RateLimitMiddleware implements MiddlewareInterface
 
         $response = $handler->handle($request);
 
+        // A limiter further in (an API key's own budget) refused the request: its headers say
+        // which budget ran out and when it resets, so stamping this budget's over them would
+        // tell the client it had requests left while it was being refused.
+        if ($response->getStatusCode() === 429 && $response->hasHeader('Retry-After')) {
+            return $response;
+        }
+
         return $response
             ->withHeader('X-RateLimit-Limit', (string)$this->maxRequests)
             ->withHeader('X-RateLimit-Remaining', (string)$remaining)
