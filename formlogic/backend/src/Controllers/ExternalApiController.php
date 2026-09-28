@@ -302,7 +302,13 @@ class ExternalApiController
             $this->audit($request, 'response.create', $result['id'] ?? '', ['formId' => $args['formId']]);
 
             $createdId = is_string($result['id'] ?? null) ? $result['id'] : null;
-            return $this->jsonResponse($response, ['response' => $result], 201);
+            // As GET gives it: no submitter IP or user agent, and the etag a client
+            // sends back as If-Match (a {store:false} result has no version to send).
+            $created = $this->sanitizeResponseData($result);
+            if (($result['stored'] ?? true) === false) {
+                unset($created['etag']);
+            }
+            return $this->jsonResponse($response, ['response' => $created], 201);
         } catch (\FormLogic\Services\EncryptionEnablingException $e) {
             // Enable-race gate: mid-enable submissions fail closed with 409.
             return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\EncryptionEnablingException::ERROR_CODE);
@@ -580,6 +586,11 @@ class ExternalApiController
             // before validating so a partial update like {status, ended_at} isn't rejected for
             // omitting an unrelated required field. Mirrors AppPublicController::updateResponseById.
             $existing = $this->responseService->getResponse($args['formId'], $args['id']);
+            // Not there (deleted): say so, rather than validating a merge over nothing
+            // ("Validation failed" for fields the client never meant to send).
+            if (!$existing) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
+            }
             $existingAnswers = is_array($existing['answers'] ?? null) ? $existing['answers'] : [];
             $data['answers'] = array_merge($existingAnswers, $data['answers']);
             // Drop calculated/unknown-field answers before validating/persisting.

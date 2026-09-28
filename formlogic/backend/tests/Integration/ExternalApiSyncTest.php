@@ -273,6 +273,30 @@ class ExternalApiSyncTest extends TestCase
         $this->assertNotSame($now, $ok['body']['response']['etag']);
     }
 
+    public function testAPartialUpdateOfADeletedRecordIsNotFound(): void
+    {
+        $owner = $this->makeUser();
+        $form = $this->makeAppointmentsForm($owner);
+        $id = $this->record($form, 'Cut');
+        self::$responses->deleteResponse($form, $id);
+        // Only the field that changed, as a sync client sends it: 404, not "Validation failed".
+        $r = $this->invoke('updateResponse', $this->request($owner, [], ['answers' => ['status' => 'cancelled']]), ['formId' => $form, 'id' => $id]);
+        $this->assertSame(404, $r['status'], json_encode($r['body']));
+    }
+
+    public function testACreatedRecordComesBackAsGetGivesIt(): void
+    {
+        $owner = $this->makeUser();
+        $form = $this->makeAppointmentsForm($owner);
+        $made = $this->invoke('submitResponse', $this->request($owner, [], ['answers' => ['service' => 'Cut', 'date' => '2026-10-02', 'status' => 'requested']]), ['formId' => $form]);
+        $this->assertSame(201, $made['status'], json_encode($made['body']));
+        $created = $made['body']['response'];
+        $this->assertArrayNotHasKey('ipAddress', $created['metadata'] ?? []);
+        $this->assertArrayNotHasKey('userAgent', $created['metadata'] ?? []);
+        $read = $this->invoke('getResponse', $this->request($owner), ['formId' => $form, 'id' => $created['id']]);
+        $this->assertSame($read['body']['response']['etag'], $created['etag'], 'the etag a client can send straight back as If-Match');
+    }
+
     public function testAPutWithoutIfMatchIsWrittenAsBefore(): void
     {
         $owner = $this->makeUser();
