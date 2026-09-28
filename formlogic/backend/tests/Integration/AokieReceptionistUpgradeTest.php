@@ -139,7 +139,7 @@ final class AokieReceptionistUpgradeTest extends TestCase
             $settings['fields'],
             static fn (array $field): bool => !in_array(
                 $field['id'] ?? null,
-                ['background_ai_source', 'background_ai_model'],
+                ['background_ai_source', 'background_ai_model', 'call_route'],
                 true
             )
         ));
@@ -200,7 +200,10 @@ final class AokieReceptionistUpgradeTest extends TestCase
         $dryRun = self::$upgrade->run($appId, $record, false);
         $this->assertSame('dry-run', $dryRun['mode']);
         $this->assertFalse($dryRun['legacyScreenAccepted']);
-        $this->assertSame(['background_ai_source', 'background_ai_model'], $dryRun['changes']['settingsFields']);
+        $this->assertSame(
+            ['background_ai_source', 'background_ai_model', 'call_route'],
+            $dryRun['changes']['settingsFields']
+        );
         $this->assertSame([
             'appointments' => ['request_id'],
             'follow-up-tasks' => ['request_id'],
@@ -231,9 +234,12 @@ final class AokieReceptionistUpgradeTest extends TestCase
 
         $upgradedSettings = self::$forms->getForm($settingsId);
         $upgradedFieldIds = array_column($upgradedSettings['fields'], 'id');
-        $this->assertCount(count($legacyFields) + 2, $upgradedFieldIds);
+        $this->assertCount(count($legacyFields) + 3, $upgradedFieldIds);
         $this->assertContains('background_ai_source', $upgradedFieldIds);
         $this->assertContains('background_ai_model', $upgradedFieldIds);
+        // call_route lands LAST (field-order safety) and the existing record
+        // gains no value for it: blank = the route set in Aokie stays put.
+        $this->assertSame('call_route', $upgradedFieldIds[count($upgradedFieldIds) - 1]);
         $this->assertSame('verified', $upgradedSettings['customScreen']['_trust']);
         $this->assertSame(
             $desiredSettings['customScreen'],
@@ -242,6 +248,7 @@ final class AokieReceptionistUpgradeTest extends TestCase
 
         $retained = self::$responses->getResponse($settingsId, $response['id']);
         $this->assertSame('RETAIN-ME', $retained['answers']['business_name']);
+        $this->assertSame('', (string) ($retained['answers']['call_route'] ?? ''));
 
         foreach (['appointments', 'follow-up-tasks'] as $packFormId) {
             $upgraded = self::$forms->getForm($formMap[$packFormId]);
@@ -382,6 +389,49 @@ final class AokieReceptionistUpgradeTest extends TestCase
             [],
             true
         ));
+    }
+
+    public function testUpdatesTheOaiyRouteFlowsInPlaceAndSkipsOnesAnOlderInstallNeverHad(): void
+    {
+        $record = $this->aokieRecord();
+        $import = self::$packs->importPack($record['pack'], $this->userId);
+        $appId = (string) $import['apps'][0]['id'];
+        $legacyGraph = json_encode([
+            'nodes' => [['id' => 'legacy', 'type' => 'logic_block', 'data' => ['expr' => 'return {};']]],
+            'edges' => [],
+        ]);
+        // An older missed-call flow (it still dials on every route) and an
+        // install from before the callback drain existed.
+        self::$pdo->prepare('UPDATE flow_definitions SET flow_json = ? WHERE app_id = ? AND slug = ?')
+            ->execute([$legacyGraph, $appId, 'missed-call-follow-up']);
+        $missedBefore = $this->flowRow($appId, 'missed-call-follow-up');
+        self::$pdo->prepare(
+            'DELETE b FROM app_flow_bindings b
+              JOIN flow_definitions f ON f.id = b.flow_definition_id
+             WHERE b.app_id = ? AND f.slug = ?'
+        )->execute([$appId, 'callback-drain']);
+        self::$pdo->prepare('DELETE FROM flow_definitions WHERE app_id = ? AND slug = ?')
+            ->execute([$appId, 'callback-drain']);
+
+        $dryRun = self::$upgrade->run($appId, $record, false);
+        $this->assertSame(['missed-call-follow-up'], $dryRun['changes']['flows']);
+
+        $applied = self::$upgrade->run($appId, $record, true);
+        $this->assertSame(['missed-call-follow-up'], $applied['changes']['flows']);
+        $missedAfter = $this->flowRow($appId, 'missed-call-follow-up');
+        // In place: the same row (its binding keeps pointing at it), one version on.
+        $this->assertSame($missedBefore['id'], $missedAfter['id']);
+        $this->assertSame((int) $missedBefore['version'] + 1, (int) $missedAfter['version']);
+        $this->assertStringContainsString('oaiyCallsBack', (string) $missedAfter['flow_json']);
+        $binding = $this->bindingRow($appId, 'missed-call-follow-up');
+        $this->assertSame($missedAfter['id'], $binding['flow_definition_id']);
+        // Never created: an install without the drain has no binding for it.
+        $stmt = self::$pdo->prepare('SELECT COUNT(*) FROM flow_definitions WHERE app_id = ? AND slug = ?');
+        $stmt->execute([$appId, 'callback-drain']);
+        $this->assertSame(0, (int) $stmt->fetchColumn());
+
+        $second = self::$upgrade->run($appId, $record, true);
+        $this->assertFalse($second['applied']);
     }
 
     public function testRefusesOwnerAuthoredAdditiveFlowCollision(): void

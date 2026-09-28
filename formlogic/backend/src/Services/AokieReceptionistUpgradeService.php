@@ -29,11 +29,28 @@ final class AokieReceptionistUpgradeService
         'sms-followup-conversation',
         'after-call-actions',
         'appointment-request-apply',
+        'personalize-caller',
+        'missed-call-follow-up',
+        'callback-drain',
     ];
 
     /** @var string[] */
     private const ADDITIVE_FLOW_SLUGS = [
         'appointment-request-apply',
+    ];
+
+    /**
+     * Flows the OAIY route changes (the brief OAIY reads for a known caller,
+     * and missed-call callbacks left to OAIY). Updated in place when the
+     * install has them; an install from before one existed has no binding
+     * for it either, so it is left without it rather than refused.
+     *
+     * @var string[]
+     */
+    private const OPTIONAL_FLOW_SLUGS = [
+        'personalize-caller',
+        'missed-call-follow-up',
+        'callback-drain',
     ];
 
     /** @var string[] */
@@ -42,10 +59,18 @@ final class AokieReceptionistUpgradeService
         'after-call-actions',
     ];
 
-    /** @var string[] */
-    private const BACKGROUND_FIELD_IDS = [
+    /**
+     * Receptionist Settings fields appended at the tail, in pack order: the
+     * Background AI pair, then call_route (where calls go: 'oaiy' sends them
+     * to OAIY; blank keeps the route set in Aokie, so adding the field moves
+     * no existing route).
+     *
+     * @var string[]
+     */
+    private const SETTINGS_FIELD_IDS = [
         'background_ai_source',
         'background_ai_model',
+        'call_route',
     ];
 
     /** @var array<string,string[]> */
@@ -144,7 +169,7 @@ final class AokieReceptionistUpgradeService
             }
         }
         $missingFields = [];
-        foreach (self::BACKGROUND_FIELD_IDS as $fieldId) {
+        foreach (self::SETTINGS_FIELD_IDS as $fieldId) {
             if (!isset($fieldIds[$fieldId])) {
                 $missingFields[] = $fieldId;
             }
@@ -188,6 +213,9 @@ final class AokieReceptionistUpgradeService
 
         $flowChanges = [];
         foreach (self::FLOW_SLUGS as $slug) {
+            if ($installedFlows[$slug] === null && in_array($slug, self::OPTIONAL_FLOW_SLUGS, true)) {
+                continue;
+            }
             if ($installedFlows[$slug] === null
                 || !$this->flowMatches($installedFlows[$slug], $desiredFlows[$slug])) {
                 $flowChanges[] = $slug;
@@ -251,7 +279,7 @@ final class AokieReceptionistUpgradeService
             $version = $this->versions->createVersion(
                 $settingsForm['id'],
                 $installed['ownerId'],
-                'Before Aokie Receptionist background-AI pack upgrade'
+                'Before Aokie Receptionist settings pack upgrade'
             );
             $summary['snapshot'] = ['version' => $version['version']];
 
@@ -374,7 +402,7 @@ final class AokieReceptionistUpgradeService
         $backgroundFields = [];
         foreach (is_array($settings['fields'] ?? null) ? $settings['fields'] : [] as $field) {
             $fieldId = is_array($field) ? ($field['id'] ?? null) : null;
-            if (!is_string($fieldId) || !in_array($fieldId, self::BACKGROUND_FIELD_IDS, true)) {
+            if (!is_string($fieldId) || !in_array($fieldId, self::SETTINGS_FIELD_IDS, true)) {
                 continue;
             }
             if (isset($backgroundFields[$fieldId])) {
@@ -386,7 +414,7 @@ final class AokieReceptionistUpgradeService
             }
             $backgroundFields[$fieldId] = $field;
         }
-        foreach (self::BACKGROUND_FIELD_IDS as $fieldId) {
+        foreach (self::SETTINGS_FIELD_IDS as $fieldId) {
             if (!isset($backgroundFields[$fieldId])) {
                 throw new \RuntimeException("Pack is missing field '{$fieldId}'");
             }
@@ -689,7 +717,8 @@ final class AokieReceptionistUpgradeService
         }
         foreach (self::FLOW_SLUGS as $slug) {
             if (!isset($resolved[$slug])) {
-                if (in_array($slug, self::ADDITIVE_FLOW_SLUGS, true)) {
+                if (in_array($slug, self::ADDITIVE_FLOW_SLUGS, true)
+                    || in_array($slug, self::OPTIONAL_FLOW_SLUGS, true)) {
                     $resolved[$slug] = null;
                     continue;
                 }
@@ -886,6 +915,9 @@ final class AokieReceptionistUpgradeService
     ): array {
         $needsFlowTransaction = false;
         foreach (self::FLOW_SLUGS as $slug) {
+            if ($installedFlows[$slug] === null && in_array($slug, self::OPTIONAL_FLOW_SLUGS, true)) {
+                continue;
+            }
             $needsFlowTransaction = $needsFlowTransaction
                 || $installedFlows[$slug] === null
                 || !$this->flowMatches($installedFlows[$slug], $desiredFlows[$slug]);
@@ -918,6 +950,9 @@ final class AokieReceptionistUpgradeService
                   WHERE id = :id AND app_id = :app AND slug = :slug FOR UPDATE'
             );
             foreach (self::FLOW_SLUGS as $slug) {
+                if ($installedFlows[$slug] === null && in_array($slug, self::OPTIONAL_FLOW_SLUGS, true)) {
+                    continue;
+                }
                 if ($installedFlows[$slug] === null) {
                     if (!in_array($slug, self::ADDITIVE_FLOW_SLUGS, true)) {
                         throw new \RuntimeException("Installed flow '{$slug}' disappeared during upgrade");
