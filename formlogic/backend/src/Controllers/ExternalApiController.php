@@ -10,6 +10,7 @@ use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Services\FormService;
 use FormLogic\Services\PrivateFormEncryptedException;
 use FormLogic\Services\ResponseService;
+use FormLogic\Services\ResponseVersionConflict;
 use FormLogic\Services\WebhookService;
 use FormLogic\Services\ScriptRejection;
 use FormLogic\Services\EmailService;
@@ -498,16 +499,26 @@ class ExternalApiController
                 $answersEq[substr((string) $k, 8)] = $v;
             }
         }
+        // ?updatedSince= (and ?afterId= to page): what changed since a client's
+        // last sync, oldest change first, with the records deleted since then.
+        $since = self::sinceParam($params['updatedSince'] ?? null);
+        if ($since === false) {
+            return $this->jsonError($response, 'updatedSince is a UTC time: YYYY-MM-DD HH:MM:SS or ISO 8601 with a zone', 400, 'bad_updated_since');
+        }
         $options = [
             'status' => $params['status'] ?? null,
             'from' => $params['from'] ?? null,
             'to' => $params['to'] ?? null,
             'answersEq' => $answersEq,
             'answersPhoneEq' => $answersPhoneEq,
+            'updatedSince' => $since,
+            'afterId' => is_string($params['afterId'] ?? null) ? $params['afterId'] : null,
             'limit' => max(1, min((int)($params['limit'] ?? 50), 1000)),
             'offset' => max(0, (int)($params['offset'] ?? 0)),
         ];
 
+        // Taken before the read, so a change made while it runs is in the next one.
+        $serverTime = gmdate('Y-m-d H:i:s');
         try {
             $responses = $this->responseService->getFormResponses($args['formId'], $options);
         } catch (PrivateFormEncryptedException $e) {
@@ -515,7 +526,19 @@ class ExternalApiController
             return $this->jsonError($response, $e->getMessage(), 400, PrivateFormEncryptedException::ERROR_CODE);
         }
         $responses = array_map([$this, 'sanitizeResponseData'], $responses);
-        return $this->jsonResponse($response, ['responses' => $responses]);
+        if ($since === null) {
+            return $this->jsonResponse($response, ['responses' => $responses]);
+        }
+        $gone = $this->responseService->getResponseTombstones($args['formId'], $since);
+        return $this->jsonResponse($response, [
+            'responses' => $responses,
+            'deleted' => $gone['deleted'],
+            // The list of deletions is whole from this time; a client whose
+            // last sync is older compares its whole copy instead.
+            'deletedSince' => $gone['since'],
+            'deletedComplete' => $gone['complete'],
+            'serverTime' => $serverTime,
+        ]);
     }
 
     /**
@@ -584,22 +607,31 @@ class ExternalApiController
             }
         }
 
+        // Only echo the full record (response contents / PII) when the key ALSO holds
+        // responses:read. A responses:manage-only key gets just an acknowledgement, so the update
+        // endpoint can't be used to read content that would otherwise require responses:read.
+        $scopes = $request->getAttribute('apiKeyScopes');
+        $canRead = is_array($scopes) && in_array('responses:read', $scopes, true);
+
         try {
-            $formResponse = $this->responseService->updateResponse($args['formId'], $args['id'], $data);
+            // If-Match: <etag> writes only over the version the client read.
+            $formResponse = $this->responseService->updateResponse($args['formId'], $args['id'], $data, self::ifMatch($request));
             if (!$formResponse) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
             }
             if (isset($data['answers']) && is_array($data['answers'])) {
                 $this->responseService->syncResponseLinks($args['formId'], $args['id'], $form['fields'] ?? [], $data['answers']);
             }
-            // Only echo the full record (response contents / PII) when the key ALSO holds
-            // responses:read. A responses:manage-only key gets just an acknowledgement, so the update
-            // endpoint can't be used to read content that would otherwise require responses:read.
-            $scopes = $request->getAttribute('apiKeyScopes');
-            $canRead = is_array($scopes) && in_array('responses:read', $scopes, true);
             return $this->jsonResponse($response, $canRead
                 ? ['response' => $this->sanitizeResponseData($formResponse)]
                 : ['success' => true, 'id' => $args['id']]);
+        } catch (ResponseVersionConflict $e) {
+            $body = ['error' => true, 'code' => ResponseVersionConflict::ERROR_CODE,
+                'message' => 'The record has changed since it was read; nothing was written.'];
+            if ($canRead) {
+                $body['response'] = $this->sanitizeResponseData($e->current());
+            }
+            return $this->jsonResponse($response, $body, 412);
         } catch (PrivateFormEncryptedException $e) {
             // §9.2: PATCH-merge over ciphertext is impossible — typed refusal.
             return $this->jsonError($response, $e->getMessage(), 400, PrivateFormEncryptedException::ERROR_CODE);
@@ -874,7 +906,43 @@ class ExternalApiController
             unset($resp['metadata']['ipAddress']);
             unset($resp['metadata']['userAgent']);
         }
+        // The version a client sends back as If-Match to update only what it read.
+        $resp['etag'] = ResponseService::etagOf($resp);
         return $resp;
+    }
+
+    /**
+     * `updatedSince` as FormLogic stores times (UTC `Y-m-d H:i:s`): taken as that
+     * or as an ISO 8601 time with a zone. Null when absent, false when unreadable.
+     */
+    private static function sinceParam(mixed $raw): string|false|null
+    {
+        if (!is_string($raw) || trim($raw) === '') {
+            return null;
+        }
+        $raw = trim($raw);
+        if (preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $raw)) {
+            return $raw;
+        }
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/', $raw)) {
+            return false;
+        }
+        try {
+            return (new \DateTimeImmutable($raw))->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+        } catch (\Exception) {
+            return false;
+        }
+    }
+
+    /** The etag an `If-Match` header names, or null when there is none (`*` is none). */
+    private static function ifMatch(Request $request): ?string
+    {
+        $raw = trim($request->getHeaderLine('If-Match'));
+        if ($raw === '' || $raw === '*') {
+            return null;
+        }
+        $raw = preg_replace('/^W\//', '', $raw) ?? $raw;
+        return trim($raw, "\" \t");
     }
 
     private function isBlockedWebhookHost(string $url): bool

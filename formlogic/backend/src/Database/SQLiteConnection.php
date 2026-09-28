@@ -14,8 +14,10 @@ class SQLiteConnection
      * v1 = base tables (form_data, fields, responses, field_groups)
      * v2 = computed, tags, script_logs tables
      * v3 = compound indexes for common query patterns
+     * v4 = expression index for the per-submitter scope
+     * v5 = response tombstones and an updated_at index, for clients that sync
      */
-    private const SCHEMA_VERSION = 4;
+    private const SCHEMA_VERSION = 5;
 
     private string $storagePath;
     private array $connections = [];
@@ -277,8 +279,53 @@ class SQLiteConnection
         // lives in the metadata JSON, so without this the list+count full-scan every row.
         $pdo->exec("CREATE INDEX IF NOT EXISTS idx_responses_submitted_by ON responses(json_extract(metadata, '$.submittedByUserId'))");
 
+        // A new form's deletions are all recorded, from its first record on.
+        $this->createSyncSchema($pdo, '1970-01-01 00:00:00');
+
         // Record schema version
         $this->setSchemaVersion($pdo, self::SCHEMA_VERSION);
+    }
+
+    /**
+     * What a client that keeps its own copy of a form's records needs to stay in
+     * step (GET /api/v1/forms/{id}/responses?updatedSince=): an index to find
+     * what changed since a time, and a tombstone for each record deleted, so a
+     * deletion reaches the copy instead of the record coming back from it.
+     *
+     * The tombstones are written by triggers rather than by deleteResponse, so
+     * every path that deletes a row (one record, a bulk clear, the retention
+     * purge, a failed create's compensation) leaves one. A tombstone holds the
+     * id and the time only. A record put back under the same id (a restore)
+     * takes its tombstone away. `tombstones_since` records when this began
+     * (`$since`, or now for a form that had records before it), as deletions
+     * before it were never recorded.
+     */
+    private function createSyncSchema(PDO $pdo, ?string $since = null): void
+    {
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_responses_updated_at ON responses(updated_at, id)");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS response_tombstones (
+                id TEXT PRIMARY KEY,
+                deleted_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        ");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_response_tombstones_deleted_at ON response_tombstones(deleted_at, id)");
+        $pdo->exec("
+            CREATE TRIGGER IF NOT EXISTS responses_tombstone_on_delete AFTER DELETE ON responses
+            BEGIN
+                INSERT OR REPLACE INTO response_tombstones (id, deleted_at) VALUES (OLD.id, datetime('now'));
+            END
+        ");
+        $pdo->exec("
+            CREATE TRIGGER IF NOT EXISTS responses_tombstone_clear_on_insert AFTER INSERT ON responses
+            BEGIN
+                DELETE FROM response_tombstones WHERE id = NEW.id;
+            END
+        ");
+        $pdo->prepare(
+            "INSERT OR IGNORE INTO form_data (key, value, updated_at) "
+            . "VALUES ('tombstones_since', COALESCE(:since, datetime('now')), datetime('now'))"
+        )->execute(['since' => $since]);
     }
 
     /**
@@ -390,6 +437,11 @@ class SQLiteConnection
         // v3→v4: expression index for the "own responses" (per-submitter) scope
         if ($fromVersion < 4) {
             $pdo->exec("CREATE INDEX IF NOT EXISTS idx_responses_submitted_by ON responses(json_extract(metadata, '$.submittedByUserId'))");
+        }
+
+        // v4→v5: tombstones and an updated_at index, for clients that sync
+        if ($fromVersion < 5) {
+            $this->createSyncSchema($pdo);
         }
 
         $this->setSchemaVersion($pdo, self::SCHEMA_VERSION);

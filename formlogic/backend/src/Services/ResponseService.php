@@ -1227,6 +1227,23 @@ class ResponseService
             $params['to'] = $options['to'];
         }
 
+        // What changed since a time, for a client keeping its own copy. Paged by
+        // (updated_at, id) rather than by offset: a record changed while the
+        // client pages moves to the end instead of shifting one it has not read
+        // onto a page it already has.
+        $changedSince = is_string($options['updatedSince'] ?? null) && $options['updatedSince'] !== '';
+        if ($changedSince) {
+            if (is_string($options['afterId'] ?? null) && $options['afterId'] !== '') {
+                $conditions[] = "(updated_at > :updated_since OR (updated_at = :updated_since_same AND id > :after_id))";
+                $params['updated_since'] = $options['updatedSince'];
+                $params['updated_since_same'] = $options['updatedSince'];
+                $params['after_id'] = $options['afterId'];
+            } else {
+                $conditions[] = "updated_at >= :updated_since";
+                $params['updated_since'] = $options['updatedSince'];
+            }
+        }
+
         // Indexed answer-equality lookups (audit AOK-FLOW-001).
         $this->applyAnswersEq($options, $conditions, $params);
         // Phone-normalized lookups (flow filter op `phone_eq`): a coarse
@@ -1240,7 +1257,7 @@ class ResponseService
             $sql .= " WHERE " . implode(' AND ', $conditions);
         }
 
-        $sql .= self::buildResponsesOrderBy($options);
+        $sql .= $changedSince ? " ORDER BY updated_at ASC, id ASC" : self::buildResponsesOrderBy($options);
 
         // Pagination (clamp to safe ranges)
         $limit = max(1, min((int)($options['limit'] ?? 100), 1000));
@@ -1276,6 +1293,67 @@ class ResponseService
             $rows = array_values(array_filter($rows, static fn (array $row): bool => self::matchesAnswersRange($row, $options)));
         }
         return $this->formatResponses($db, $rows);
+    }
+
+    /** How long a deleted record's tombstone is kept. */
+    public const TOMBSTONE_DAYS = 180;
+
+    /**
+     * The records of a form deleted at or after `$since` (UTC `Y-m-d H:i:s`),
+     * oldest first: `{deleted: [{id, deletedAt}], complete, since}`.
+     *
+     * `since` is the time from which the list is whole: tombstones are kept for
+     * TOMBSTONE_DAYS and were not written before the form's database had them,
+     * so a client whose last sync is older than `since` must compare its whole
+     * copy instead. `complete` is false when the list was cut at `$limit`.
+     *
+     * @return array{deleted: list<array{id: string, deletedAt: string}>, complete: bool, since: string}
+     */
+    public function getResponseTombstones(string $formId, string $since, int $limit = 5000): array
+    {
+        $now = gmdate('Y-m-d H:i:s');
+        if (!$this->sqlite->formDatabaseExists($formId)) {
+            // Never had a record, so nothing was ever deleted.
+            return ['deleted' => [], 'complete' => true, 'since' => $now];
+        }
+        $db = $this->sqlite->getFormDatabase($formId);
+        $cutoff = gmdate('Y-m-d H:i:s', time() - self::TOMBSTONE_DAYS * 86400);
+        try {
+            $db->prepare('DELETE FROM response_tombstones WHERE deleted_at < :cutoff')->execute(['cutoff' => $cutoff]);
+        } catch (\Throwable $e) {
+            // Pruning is housekeeping; the read below is what matters.
+            $this->logger->warning('Tombstone prune failed', ['formId' => $formId, 'error' => $e->getMessage()]);
+        }
+        $began = $db->query("SELECT value FROM form_data WHERE key = 'tombstones_since'")->fetchColumn();
+        $horizon = max(is_string($began) && $began !== '' ? $began : $now, $cutoff);
+
+        $stmt = $db->prepare(
+            'SELECT id, deleted_at FROM response_tombstones WHERE deleted_at >= :since ORDER BY deleted_at ASC, id ASC LIMIT :limit'
+        );
+        $stmt->bindValue('since', $since);
+        $stmt->bindValue('limit', $limit + 1, PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll();
+        $complete = count($rows) <= $limit;
+        $deleted = array_map(
+            static fn (array $r): array => ['id' => (string) $r['id'], 'deletedAt' => (string) $r['deleted_at']],
+            array_slice($rows, 0, $limit)
+        );
+        return ['deleted' => $deleted, 'complete' => $complete, 'since' => $horizon];
+    }
+
+    /**
+     * A record's version as a client sees it: changes whenever its answers, its
+     * status or its updatedAt do. Sent as `etag` by the external API, and
+     * matched against `If-Match` before an update is written.
+     */
+    public static function etagOf(array $response): string
+    {
+        $basis = json_encode(
+            [$response['answers'] ?? null, $response['status'] ?? null, $response['updatedAt'] ?? null],
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION
+        );
+        return substr(hash('sha256', (string) $basis), 0, 32);
     }
 
     /**
@@ -2467,7 +2545,13 @@ class ResponseService
     /**
      * Update a response
      */
-    public function updateResponse(string $formId, string $responseId, array $data): ?array
+    /**
+     * Update a response. With `$ifMatch` (an etag from etagOf) the update is
+     * written only if the record is still that version, checked in the UPDATE
+     * itself so a write that lands in between cannot be overwritten; otherwise
+     * ResponseVersionConflict carries the record as it is now.
+     */
+    public function updateResponse(string $formId, string $responseId, array $data, ?string $ifMatch = null): ?array
     {
         // §9.2 gate: private-form updates are envelope CAS writes only
         // (updateEncryptedResponse) — the PATCH-merge plaintext path is refused.
@@ -2478,6 +2562,20 @@ class ResponseService
         }
 
         $db = $this->sqlite->getFormDatabase($formId);
+
+        $expected = null;
+        if ($ifMatch !== null) {
+            $cur = $db->prepare("SELECT * FROM responses WHERE id = :id");
+            $cur->execute(['id' => $responseId]);
+            $expected = $cur->fetch(PDO::FETCH_ASSOC) ?: null;
+            if ($expected === null) {
+                return null;
+            }
+            $current = $this->formatResponse($db, $expected);
+            if (!hash_equals(self::etagOf($current), $ifMatch)) {
+                throw new ResponseVersionConflict($current);
+            }
+        }
 
         // If the answers are being replaced and uploads are in play, snapshot the
         // existing answers BEFORE the UPDATE so we can delete any files this update
@@ -2520,8 +2618,22 @@ class ResponseService
         $params['updated_at'] = date('Y-m-d H:i:s');
 
         $sql = "UPDATE responses SET " . implode(', ', $updates) . " WHERE id = :id";
+        if ($expected !== null) {
+            // Compare-and-set on what the etag was made from.
+            $sql .= " AND answers IS :cas_answers AND status IS :cas_status AND updated_at IS :cas_updated_at";
+            $params['cas_answers'] = $expected['answers'];
+            $params['cas_status'] = $expected['status'];
+            $params['cas_updated_at'] = $expected['updated_at'];
+        }
         $stmt = $db->prepare($sql);
         $stmt->execute($params);
+        if ($expected !== null && $stmt->rowCount() === 0) {
+            $now = $this->getResponse($formId, $responseId);
+            if ($now === null) {
+                return null;
+            }
+            throw new ResponseVersionConflict($now);
+        }
 
         // Handle files removed/replaced by this update (best-effort; the authoritative
         // row is already updated). FILE-PRIV-001: dropped files are NOT deleted inline —
