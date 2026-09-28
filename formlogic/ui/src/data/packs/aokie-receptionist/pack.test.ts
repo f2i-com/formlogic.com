@@ -379,6 +379,7 @@ describe('aokieReceptionistPack â€” flows & bindings', () => {
       'missed-call-follow-up',
       'outbound-callback-result',
       'personalize-caller',
+      'sms-ack-sweep',
       'sms-approved-drain',
       'sms-auto-reply-draft',
       'sms-delivery-status',
@@ -409,7 +410,7 @@ describe('aokieReceptionistPack â€” flows & bindings', () => {
   });
 
   it('bindings reference declared flows, contract events, and declared forms', () => {
-    expect(pack.flowBindings?.length).toBe(19);
+    expect(pack.flowBindings?.length).toBe(22);
     for (const binding of pack.flowBindings ?? []) {
       expect(FLOW_SLUGS.has(binding.flow), `binding â†’ flow '${binding.flow}'`).toBe(true);
       expect(AOKIE_EVENTS.has(binding.event), `binding event '${binding.event}'`).toBe(true);
@@ -1417,7 +1418,7 @@ describe('aokieReceptionistPack â€” SMS follow-up loop (logic blocks)', () 
       });
       expect(r.hasUpdate).toBe(true);
       expect(r.responseId).toBe('msg-1');
-      expect(r.update).toEqual({ status: 'sent' });
+      expect(r.update).toEqual({ status: 'sent', delivery_note: '' });
     });
 
     it('marks failed on the failure ack â€” inbound and already-sent rows are never touched', () => {
@@ -1428,7 +1429,7 @@ describe('aokieReceptionistPack â€” SMS follow-up loop (logic blocks)', () 
           { direction: 'outbound', status: 'queued', message_id: 'sms-failed' },
         ]).nodes,
       });
-      expect(r.update).toEqual({ status: 'failed' });
+      expect(r.update).toEqual({ status: 'failed', delivery_note: 'The phone could not send this text.' });
     });
 
     it('no queued outbound row â†’ no write (a stray ack never corrupts history)', () => {
@@ -2694,7 +2695,7 @@ describe('aokieReceptionistPack â€” Phase 0.5 record-driven screening & SMS
       expect(calls.fields.some((f) => f.id === 'direction')).toBe(true);
       const tasks = pack.forms.find((f) => f.packFormId === 'follow-up-tasks')!;
       const cb = tasks.fields.find((f) => f.id === 'callback_state')!;
-      expect((cb.properties as { options: Array<{ value: string }> }).options.map((o) => o.value)).toEqual(['queued', 'reached', 'sms_queued', 'sms_sent', 'needs_human']);
+      expect((cb.properties as { options: Array<{ value: string }> }).options.map((o) => o.value)).toEqual(['queued', 'reached', 'sms_queued', 'sms_unconfirmed', 'sms_sent', 'needs_human']);
     });
   });
 

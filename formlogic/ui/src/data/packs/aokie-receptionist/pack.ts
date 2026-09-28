@@ -307,6 +307,39 @@ const SMS_ENABLED_JS = `
     return true;
   })();`;
 
+/**
+ * How old the triggering event is, as a snippet every time-sensitive flow
+ * splices in.
+ *
+ * OAIY works offline: it keeps Aokie's events in a durable outbox and delivers
+ * them when FormLogic can be reached again, possibly hours late. A flow that
+ * texts or rings a caller from such an event would say something no longer
+ * true ("sorry, we just missed your call" three hours on, a confirmation for
+ * an appointment that has already started). So the flows judge the EVENT's
+ * time, the envelope's occurredAt, not the time they happen to run.
+ *
+ * The binding maps `$event.occurredAt` into the inputs; OAIY also hands the
+ * whole envelope over as `inputs.event`, which covers a binding saved before
+ * the mapping existed. An event with no readable time, or one stamped ahead of
+ * this clock, counts as fresh: a skewed clock must never silence the pack.
+ *
+ * Declares `eventAgeMs`, `eventLate` (older than LATE_EVENT_MINUTES) and
+ * `eventAgeLabel` ("3 hours").
+ */
+const LATE_EVENT_MINUTES = 60;
+const EVENT_AGE_JS = `
+  var eventAt = String(inputs.occurredAt || (inputs.event && inputs.event.occurredAt) || '');
+  var eventMs = eventAt ? Date.parse(eventAt) : NaN;
+  var eventAgeMs = isFinite(eventMs) && Date.now() > eventMs ? Date.now() - eventMs : 0;
+  var eventLate = eventAgeMs > ${LATE_EVENT_MINUTES} * 60 * 1000;
+  var eventAgeLabel = (function (ms) {
+    var mins = Math.round(ms / 60000);
+    if (mins < 90) return mins + ' minute' + (mins === 1 ? '' : 's');
+    var hours = Math.round(ms / 3600000);
+    if (hours < 48) return hours + ' hours';
+    return Math.round(ms / 86400000) + ' days';
+  })(eventAgeMs);`;
+
 const FLOW_MATCH_CUSTOMER = `(function () {
   var phone = String(inputs.callerPhone || inputs.from || '');
   // The customers node pre-filters with the phone_eq op (digits-only last-9
@@ -438,7 +471,8 @@ ${SMS_ENABLED_JS}
     // No recipient or no text is not something to retry forever, but it is also
     // not ours to delete — skip it and leave it visible.
     if (to === '' || body === '') continue;
-    ready.push({ id: String(r.id || ''), to: to, body: body, at: String(r.submitted_at || a.at || '') });
+    // Rows arrive as {id, answers, submittedAt} (older fixtures spelt it submitted_at).
+    ready.push({ id: String(r.id || ''), to: to, body: body, at: String(r.submittedAt || r.submitted_at || a.at || '') });
   }
   // Oldest first, so a queue drains in the order a human worked it.
   ready.sort(function (x, y) { return x.at < y.at ? -1 : x.at > y.at ? 1 : 0; });
@@ -450,6 +484,7 @@ ${SMS_ENABLED_JS}
     return out;
   }
   var slots = ready.length < 3 ? ready.length : 3;
+  var queuedAt = new Date().toISOString();
   for (var s = 0; s < slots; s++) {
     var n = s + 1;
     var m = ready[s];
@@ -458,7 +493,11 @@ ${SMS_ENABLED_JS}
     var mid = ('smsappr_' + m.id).slice(0, 128);
     out['hasSend' + n] = true;
     out['sendId' + n] = m.id;
-    out['sendUpdate' + n] = { status: 'queued', message_id: mid };
+    // timestamp = when it went to the phone. A draft carries none (or the time
+    // it was written), and the acknowledgement sweep ages a queued text by it:
+    // a draft approved hours after it was drafted must not read as a text the
+    // phone has ignored for hours.
+    out['sendUpdate' + n] = { status: 'queued', message_id: mid, timestamp: queuedAt };
     out['send' + n] = { to: m.to, body: m.body, messageId: mid };
   }
   var woke = String(inputs.sweepReason || 'an event');
@@ -539,9 +578,14 @@ const FLOW_MISSED_TASK = `(function () {
   // not ring twice. The task is still raised (the audit trail, and the human
   // backstop when OAIY's callbacks are off) with a note saying who owns it.
   var oaiyCallsBack = String(cfg.call_route || '').trim() === 'oaiy';
+${EVENT_AGE_JS}
+  // A missed call that reaches FormLogic late (OAIY was offline and delivered
+  // it from its outbox) is never rung back by machine: "sorry, we just missed
+  // your call" hours on is not true. The task still lands, and says why.
+  var missedLate = eventLate && realPhone && !blocked;
   // Callback only for numbers that CALLED US (by construction here), are
   // real (never withheld ids) and are not blocked customers.
-  var wantsCallback = realPhone && !blocked && !pending && !oaiyCallsBack;
+  var wantsCallback = realPhone && !blocked && !pending && !oaiyCallsBack && !eventLate;
   // Phase 4 hold queue: a caller who gave up waiting in the queue is rung
   // back like a missed call, but the FIRST words own the hold - being left
   // on hold then rung back with a chirpy "we missed your call" reads tone-deaf.
@@ -591,6 +635,8 @@ const FLOW_MISSED_TASK = `(function () {
   if (wantsCallback) ownerNote = ' - calling back automatically';
   else if (oaiyCallsBack && realPhone && !blocked) {
     ownerNote = ' - FormLogic did not ring them: OAIY calls back missed calls when that is on in OAIY > Agent > Phone. Check there before you ring them.';
+  } else if (missedLate) {
+    ownerNote = ', ' + eventAgeLabel + ' ago - it reached FormLogic late, so FormLogic did not ring them back. Call back if it is still useful.';
   }
   var task = {
     summary: (heldQueue ? 'Caller gave up on hold' : 'Missed call') + (phone ? ' from ' + (name ? name + ' (' + phone + ')' : phone) : '')
@@ -611,6 +657,7 @@ const FLOW_MISSED_TASK = `(function () {
   if (hit) task.customer_link = hit.id;
   return {
     wantsCallback: wantsCallback,
+    late: eventLate,
     callbacksBy: oaiyCallsBack ? 'oaiy' : 'formlogic',
     dial: { number: dialNumber, openingLine: opening, purpose: purpose },
     task: task
@@ -648,6 +695,17 @@ const FLOW_CALLBACK_RESULT = `(function () {
     out.taskId = task.id;
     out.taskUpdate = { status: 'done', callback_state: 'reached', summary: (oldSummary + ' [called back - reached them]').slice(0, 500) };
     out.summaryLine = 'Callback reached the caller - task closed.';
+    return out;
+  }
+  // No apology text for a callback whose end reached FormLogic late (OAIY was
+  // offline): "we could not reach you back just now" is not true hours on.
+  // A human rings them instead.
+${EVENT_AGE_JS}
+  if (eventLate) {
+    out.hasTaskUpdate = true;
+    out.taskId = task.id;
+    out.taskUpdate = { callback_state: 'needs_human', priority: 'urgent', summary: (oldSummary + ' [callback not answered; that reached FormLogic ' + eventAgeLabel + ' late, so no apology text was sent - please ring them]').slice(0, 500) };
+    out.summaryLine = 'Callback not answered (reported ' + eventAgeLabel + ' late) - no apology text; flagged for a human.';
     return out;
   }
   // no_answer / failed / anything else un-reached: apologise by text when the
@@ -727,6 +785,24 @@ ${SMS_ENABLED_JS}
   var business = String(cfg.business_name || '').trim();
   if (blocked || !realPhone) {
     out.summaryLine = blocked ? 'Caller lost on hold is blocked - no follow-up.' : 'Caller lost on hold had no usable number - no follow-up.';
+    return out;
+  }
+${EVENT_AGE_JS}
+  // "We had you on hold and lost you" is an apology for just now. When the
+  // call's end reached FormLogic late (OAIY was offline), no text goes out:
+  // a person decides whether a call is still worth it.
+  if (eventLate) {
+    out.hasTask = true;
+    out.task = {
+      summary: ('Caller ' + (name ? name + ' (' + phone + ')' : phone) + ' gave up while ON HOLD ' + eventAgeLabel + ' ago. It reached FormLogic late, so no apology text was sent - ring them if it is still useful.').slice(0, 500),
+      status: 'open',
+      priority: 'high',
+      phone: phone,
+      call_id: String(inputs.callId || ''),
+      callback_state: ''
+    };
+    if (hit) out.task.customer_link = hit.id;
+    out.summaryLine = 'Caller lost on hold, reported ' + eventAgeLabel + ' late - no apology text; task raised for a human.';
     return out;
   }
   if (smsCapable) {
@@ -884,7 +960,11 @@ const FLOW_AFTER_CALL_CTX = `(function () {
   turns.sort(function (x, y) { return x.i - y.i; });
   var lines = [];
   for (var k = 0; k < turns.length; k++) lines.push(turns[k].line);
-  var now = new Date();
+${EVENT_AGE_JS}
+  // "Tomorrow" on the call means the day after the CALL. A call that reaches
+  // FormLogic late (OAIY was offline) may have happened on an earlier day, so
+  // the model is told the call's own date rather than today's.
+  var now = eventAgeMs > 0 ? new Date(eventMs) : new Date();
   // LOCAL date for the ISO hint - toISOString() is UTC and reports yesterday
   // during the morning in UTC+ timezones, making 'tomorrow' resolve off by one.
   var isoLocal = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
@@ -1207,7 +1287,39 @@ ${SMS_ENABLED_JS}
     if (!dupL) loopBookings.push({ service: exl.service || 'an appointment', date: exl.date, time: exl.time });
   }
   loopBookings.sort(function (x, y) { var xa = x.date + ' ' + x.time, yb = y.date + ' ' + y.time; return xa < yb ? -1 : xa > yb ? 1 : 0; });
+  // A confirmation text only names a booking that has not started yet. This
+  // matters when the call reached FormLogic late (OAIY delivers from its
+  // outbox after an offline gap): "reply YES to confirm 10 AM today" at 3 PM
+  // is not something to send. A booking with no time counts until its day ends.
+  function stillAhead(b) {
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(b.date)) return false;
+    var sp = b.date.split('-');
+    var st = /^\\d{2}:\\d{2}$/.test(b.time)
+      ? new Date(Number(sp[0]), Number(sp[1]) - 1, Number(sp[2]), Number(b.time.slice(0, 2)), Number(b.time.slice(3, 5)))
+      : new Date(Number(sp[0]), Number(sp[1]) - 1, Number(sp[2]), 23, 59, 59);
+    return st.getTime() > Date.now();
+  }
+  var hadBookings = loopBookings.length > 0;
+  var aheadBookings = [];
+  for (var ab = 0; ab < loopBookings.length; ab++) {
+    if (stillAhead(loopBookings[ab])) aheadBookings.push(loopBookings[ab]);
+  }
+  loopBookings = aheadBookings;
   if (loopBookings.length > 4) loopBookings = loopBookings.slice(0, 4);
+${EVENT_AGE_JS}
+  // Nothing true left to text: every booking has started, or (with no day
+  // pinned down) the call itself is too old for "following up on your call".
+  var textStale = wantsSms && (hadBookings ? loopBookings.length === 0 : eventLate);
+  if (textStale) {
+    wantsSms = false;
+    hasPriorTaskClose = false;
+    priorTaskUpdate = null;
+    delete task.sms_state;
+    delete task.sms_exchanges;
+    task.summary = (String(task.summary).slice(0, 360) + (hadBookings
+      ? ' [no confirmation text: the booking time had passed' + (eventLate ? ' when this call reached FormLogic, ' + eventAgeLabel + ' late' : '') + ' - call them]'
+      : ' [no follow-up text: this call reached FormLogic ' + eventAgeLabel + ' late - call them to arrange a time]')).slice(0, 500);
+  }
   var bookingLabels = [];
   for (var bl = 0; bl < loopBookings.length; bl++) {
     bookingLabels.push(loopBookings[bl].service + ' on ' + humanWhen(loopBookings[bl].date, loopBookings[bl].time));
@@ -1220,7 +1332,7 @@ ${SMS_ENABLED_JS}
   // of bMessage encoding surprises. 440 chars ≈ 3 segments.
   kickBody = kickBody.replace(/[^\\x20-\\x7E]/g, '').slice(0, 440);
   return {
-    summaryLine: (hasAppointment ? (created.length > 1 ? created.length + ' appointments requested. ' : 'Appointment requested. ') : '') + (skippedExisting > 0 ? skippedExisting + ' already on record (not duplicated). ' : '') + (hasOrder ? 'Order taken. ' : '') + (hasCustomerCreate ? 'New customer added. ' : '') + (needTask ? 'Follow-up created. ' : '') + (hasPriorTaskClose ? 'Earlier SMS loop folded in. ' : '') + (wantsSms ? 'Confirmation SMS queued. ' : '') + (smsSuppressed ? (custBlocked ? 'SMS skipped (customer is blocked). ' : 'SMS skipped (customer cannot receive SMS) - call to confirm. ') : '') + summary,
+    summaryLine: (hasAppointment ? (created.length > 1 ? created.length + ' appointments requested. ' : 'Appointment requested. ') : '') + (skippedExisting > 0 ? skippedExisting + ' already on record (not duplicated). ' : '') + (hasOrder ? 'Order taken. ' : '') + (hasCustomerCreate ? 'New customer added. ' : '') + (needTask ? 'Follow-up created. ' : '') + (hasPriorTaskClose ? 'Earlier SMS loop folded in. ' : '') + (wantsSms ? 'Confirmation SMS queued. ' : '') + (textStale ? 'SMS skipped (' + (hadBookings ? 'the booking time had passed' : 'the call reached FormLogic ' + eventAgeLabel + ' late') + ') - call to confirm. ' : '') + (smsSuppressed ? (custBlocked ? 'SMS skipped (customer is blocked). ' : 'SMS skipped (customer cannot receive SMS) - call to confirm. ') : '') + summary,
     hasCall: !!callResponseId,
     callResponseId: callResponseId,
     callUpdate: { intent: displayIntent, sentiment: sentiment, follow_up_required: needTask ? ['yes'] : [] },
@@ -2173,7 +2285,18 @@ ${SMS_ENABLED_JS}
     return label;
   }
   var newRequest = ok && !appointmentExists && !taskExists;
-  var wantsSms = newRequest && phone !== '' && !custBlocked && !smsCapableNo;
+  // The confirmation text goes out only while the appointment is still ahead.
+  // The request can reach FormLogic hours after the call (OAIY delivers from
+  // its outbox after an offline gap), and "reply YES to confirm 10 AM today"
+  // at 3 PM is not true any more: the task says so, and a person calls instead.
+${EVENT_AGE_JS}
+  var startsAt = ok ? new Date(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)), Number(time.slice(0, 2)), Number(time.slice(3, 5))).getTime() : 0;
+  var apptPassed = ok && startsAt <= Date.now();
+  var wantsSms = newRequest && phone !== '' && !custBlocked && !smsCapableNo && !apptPassed;
+  if (newRequest && apptPassed) {
+    task.summary = (task.summary.slice(0, 360) + ' [no confirmation text: the appointment time had passed'
+      + (eventLate ? ' when this request reached FormLogic, ' + eventAgeLabel + ' late' : '') + ' - call them]').slice(0, 500);
+  }
   var firstName = callerName.split(' ')[0] || 'there';
   var kickBody = 'Hi ' + firstName + "! It's " + (business || 'us') + ' - thanks for your call. '
     + 'We have your booking request: ' + service + ' on ' + humanWhen(date, time)
@@ -2232,6 +2355,7 @@ ${SMS_ENABLED_JS}
       ? (appointmentExists ? 'Appointment request already recorded; ' : 'Appointment request recorded; ')
         + (taskExists ? 'confirmation task already present.' : 'confirmation task created.')
         + (wantsSms ? ' Confirmation SMS queued.' : '')
+        + (newRequest && apptPassed ? ' No confirmation text: the appointment time had passed.' : '')
       : 'Appointment request refused: ' + reason + '.'
   };
 })()`;
@@ -2498,17 +2622,31 @@ ${SMS_ENABLED_JS}
   var lower = body.toLowerCase().replace(/[\\s.!,]+$/, '');
   var stop = lower === 'stop' || lower === 'unsubscribe' || lower === 'opt out' || lower === 'optout';
   var yes = /^(yes|yep|yeah|y|confirm|confirmed|ok|okay|sounds good|perfect|great)$/.test(lower);
-  var verdict = stop ? 'stop' : (noSms ? 'no_sms' : (exchanges >= 6 ? 'cap' : ((yes && appt) ? 'yes' : 'llm')));
+${EVENT_AGE_JS}
+  // A text that reaches FormLogic late (OAIY delivers from its outbox after an
+  // offline gap) is not answered by machine: the customer has waited hours
+  // already and the booking may have moved on, so a person picks it up. STOP
+  // still wins - an opt-out is always recorded.
+  var verdict = stop ? 'stop' : (eventLate ? 'late' : (noSms ? 'no_sms' : (exchanges >= 6 ? 'cap' : ((yes && appt) ? 'yes' : 'llm'))));
   // Thread history, oldest → newest, capped at the last 12 messages. The inbound
   // row for THIS text is already stored (app logic runs before bindings), so the
   // prompt marks the newest message explicitly instead of appending it again.
+  // A business text the phone did not send (failed) or never confirmed
+  // (unconfirmed) is marked, so the model never assumes the customer saw it.
   var mRows = (nodes.messages && nodes.messages.responses) || [];
   var hist = [];
   for (var m = 0; m < mRows.length; m++) {
     var ma = (mRows[m] && mRows[m].answers) || {};
+    var outbound = String(ma.direction || '') === 'outbound';
+    var mst = String(ma.status || '');
+    // Drafts nobody sent are not part of the conversation.
+    if (outbound && (mst === 'draft')) continue;
     hist.push({
       at: String(ma.timestamp || (mRows[m] && mRows[m].submittedAt) || ''),
-      who: String(ma.direction || '') === 'outbound' ? 'Business' : 'Customer',
+      who: !outbound ? 'Customer'
+        : mst === 'failed' ? 'Business (this text was NOT sent)'
+        : mst === 'unconfirmed' ? 'Business (the phone never confirmed sending this text)'
+        : 'Business',
       text: String(ma.body || '')
     });
   }
@@ -2517,7 +2655,8 @@ ${SMS_ENABLED_JS}
   for (var h = (hist.length > 12 ? hist.length - 12 : 0); h < hist.length; h++) {
     lines.push(hist[h].who + ': ' + hist[h].text);
   }
-  var now = new Date();
+  // "Tomorrow" in the text means the day after it was SENT.
+  var now = eventAgeMs > 0 ? new Date(eventMs) : new Date();
   var isoLocal = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
   var apptLines = [];
   for (var al = 0; al < loopAppts.length; al++) {
@@ -2533,6 +2672,8 @@ ${SMS_ENABLED_JS}
     + '\\n\\nThe customer\\'s NEW message (respond to this): "' + body + '"';
   return {
     verdict: verdict,
+    lateBy: eventLate ? eventAgeLabel : '',
+    taskSummary: String(ta2.summary || ''),
     hasTask: true,
     taskId: task.id,
     taskCallId: callId,
@@ -2613,6 +2754,22 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
     out.taskId = taskId;
     out.taskUpdate = { sms_state: 'handoff', priority: 'high' };
     out.summaryLine = 'SMS exchange limit reached - task handed to a human.';
+    return out;
+  }
+  if (verdict === 'late') {
+    // The customer's text reached FormLogic hours after they sent it (OAIY
+    // was offline). No automatic reply, and no booking change on its word
+    // alone: a person reads it in Messages and answers.
+    var said = String(inputs.body || '').replace(/[^\\x20-\\x7E]/g, '').slice(0, 120).trim();
+    var lateBy = c.lateBy ? String(c.lateBy) + ' late' : 'late';
+    out.hasTaskUpdate = true;
+    out.taskId = taskId;
+    out.taskUpdate = {
+      sms_state: 'handoff',
+      priority: 'high',
+      summary: (String(c.taskSummary || '').slice(0, 300) + ' [their text "' + said + '" reached FormLogic ' + lateBy + ' - not answered automatically; reply by hand]').slice(0, 500)
+    };
+    out.summaryLine = 'Customer text reached FormLogic ' + lateBy + ' - not answered automatically; task handed to a human.';
     return out;
   }
   if (verdict === 'no_sms') {
@@ -2952,40 +3109,153 @@ const FLOW_SMS_CONVO_PLAN = `(function () {
   return out;
 })()`;
 
-// Delivery-status annotation (feature 2026-07-13): the phone acks every
-// outbound SMS asynchronously (aokie.sms.sent when the PUT is accepted,
-// aokie.sms.failed when the radio abandons a send). The ack payload's
-// messageId is minted by the plugin and never matches our Messages rows,
-// so the newest QUEUED outbound row for the recipient is the correlation
-// — sends to one number are serialized through the per-task conversation
-// loop, so newest-queued-first is reliable in practice.
+// Delivery acknowledgement (2026-07-13; idempotent 2026-09-29). The phone acks
+// every outbound text asynchronously: aokie.sms.sent when it takes the text into
+// its outbox, aokie.sms.failed when the radio gives up on it - or when Aokie
+// refuses the send outright (refused: true: an invalid number, no radio, no
+// consent). The Messages row is found by its pre-minted messageId, which the
+// pack sends with sms.send and the acknowledgement echoes back.
+//
+// Precedence, so a replayed, repeated or late acknowledgement is always safe:
+//  - sent wins over queued, unconfirmed (the acknowledgement sweep stopped
+//    waiting) and failed (a retry under the same messageId went through);
+//  - failed wins over queued and unconfirmed, never over sent;
+//  - an acknowledgement that changes nothing - a second refusal of one text,
+//    each with its own event key - writes nothing and raises no second notice
+//    (`notify` gates the binding's toast).
 const FLOW_SMS_DELIVERY = `(function () {
   var outcome = String(inputs.outcome || '');
   var messageId = String(inputs.messageId || '');
-  var out = { hasUpdate: false, hasTaskUpdate: false, summaryLine: '' };
+  var out = { hasUpdate: false, hasTaskUpdate: false, notify: false, summaryLine: '' };
   if (!messageId || (outcome !== 'sent' && outcome !== 'failed')) {
     out.summaryLine = 'SMS acknowledgement needs a messageId and a known outcome.';
     return out;
   }
+  var reason = String(inputs.reason || '').replace(/[\\x00-\\x1F\\x7F]+/g, ' ').trim().slice(0, 300);
+  var refused = inputs.refused === true || String(inputs.refused || '') === 'true';
+  var replaces = outcome === 'sent' ? { queued: true, unconfirmed: true, failed: true } : { queued: true, unconfirmed: true };
   var rows = (nodes.messages && nodes.messages.responses) || [];
   for (var i = 0; i < rows.length; i++) {
     var a = (rows[i] && rows[i].answers) || {};
-    if (String(a.direction || '') === 'outbound' && String(a.status || '') === 'queued' && String(a.message_id || '') === messageId) {
-      out.hasUpdate = true; out.responseId = rows[i].id; out.update = { status: outcome };
-      break;
+    var was = String(a.status || '');
+    if (String(a.direction || '') !== 'outbound' || String(a.message_id || '') !== messageId || !replaces[was]) continue;
+    var note = '';
+    if (outcome === 'failed') {
+      note = (refused ? 'Aokie refused to send this text' : 'The phone could not send this text') + (reason ? ': ' + reason : '') + '.';
+    } else if (was === 'unconfirmed') {
+      note = 'The phone confirmed this text late, after it had been marked unconfirmed.';
+    } else if (was === 'failed') {
+      note = 'Sent on a later try, after an earlier attempt failed.';
     }
+    out.hasUpdate = true;
+    out.responseId = rows[i].id;
+    out.update = { status: outcome, delivery_note: note.slice(0, 500) };
+    break;
   }
   var tasks = (nodes.tasks && nodes.tasks.responses) || [];
   for (var t = 0; t < tasks.length; t++) {
     var task = tasks[t]; var ta = task.answers || {};
-    if ((ta.status === 'open' || ta.status === 'in_progress') && ta.callback_state === 'sms_queued' && ta.callback_sms_id === messageId) {
+    var cbs = String(ta.callback_state || '');
+    if ((ta.status === 'open' || ta.status === 'in_progress') && (cbs === 'sms_queued' || cbs === 'sms_unconfirmed') && ta.callback_sms_id === messageId) {
       out.hasTaskUpdate = true; out.taskId = task.id;
       out.taskUpdate = { callback_state: outcome === 'sent' ? 'sms_sent' : 'needs_human', priority: outcome === 'sent' ? 'high' : 'urgent',
-        summary: (String(ta.summary || '').slice(0, 350) + (outcome === 'sent' ? ' [phone accepted apology text]' : ' [apology text failed - follow up manually]')).slice(0, 500) };
+        summary: (String(ta.summary || '').slice(0, 350) + (outcome === 'sent'
+          ? (cbs === 'sms_unconfirmed' ? ' [phone accepted the apology text late]' : ' [phone accepted apology text]')
+          : ' [apology text failed - follow up manually]')).slice(0, 500) };
       break;
     }
   }
-  out.summaryLine = (out.hasUpdate || out.hasTaskUpdate) ? 'Phone reported SMS ' + outcome + '.' : 'No pending record matched this SMS acknowledgement.';
+  // Only a change is news: the toast fires once per failed text, however many
+  // failure events one messageId gets.
+  out.notify = outcome === 'failed' && (out.hasUpdate || out.hasTaskUpdate);
+  out.summaryLine = (out.hasUpdate || out.hasTaskUpdate)
+    ? 'Phone reported SMS ' + outcome + (outcome === 'failed' && reason ? ' (' + reason + ')' : '') + '.'
+    : 'No pending record matched this SMS acknowledgement (already recorded, or not ours).';
+  return out;
+})()`;
+
+/**
+ * The acknowledgement sweep: a queued text the phone never acknowledged becomes
+ * `unconfirmed` instead of sitting at "queued" forever.
+ *
+ * Every text the pack sends is written to Messages as `queued` with a
+ * pre-minted message_id before sms.send goes out, and only aokie.sms.sent or
+ * aokie.sms.failed moves it on. Aokie emits one or the other for every send it
+ * handles - including a send it refuses outright - but some never produce an
+ * event at all: the plugin was not running, the desktop could not reach it, or
+ * Aokie's command journal refused the request before the handler ran. Without
+ * this the row would claim "queued" indefinitely and nobody would look.
+ *
+ * Like the approved-drafts drain this is a SWEEP, not a timer: the host has no
+ * scheduler, so it rides events that happen anyway (a call ringing, a call
+ * ending, a text arriving). A text waits at least UNCONFIRMED_AFTER_MINUTES,
+ * measured from its timestamp (when it went to the phone), before the sweep
+ * gives up on it. The row says why in delivery_note, and a missed-call apology
+ * task that was waiting on it moves to `sms_unconfirmed` so a person checks.
+ * A later acknowledgement still wins: the delivery-status flow moves an
+ * unconfirmed row to sent or failed.
+ *
+ * Three rows per sweep, like the drain (output actions are a static list); the
+ * summary says how many are still waiting.
+ */
+const UNCONFIRMED_AFTER_MINUTES = 15;
+const UNCONFIRMED_NOTE = 'The phone never confirmed this text: check it was sent.';
+const FLOW_SMS_ACK_SWEEP = `(function () {
+  var out = { hasStale: false, hasStale1: false, hasStale2: false, hasStale3: false, hasTask1: false, hasTask2: false, hasTask3: false, stale: 0, summaryLine: '' };
+  var waitMs = ${UNCONFIRMED_AFTER_MINUTES} * 60 * 1000;
+  function whenOf(v) {
+    var s = String(v || '');
+    if (!s) return NaN;
+    // Server stamps are zone-less UTC 'YYYY-MM-DD HH:MM:SS'.
+    if (/^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}(:\\d{2})?$/.test(s)) s = s.replace(' ', 'T') + 'Z';
+    return Date.parse(s);
+  }
+  var rows = (nodes.queued && nodes.queued.responses) || [];
+  var stale = [];
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i] || {};
+    var a = r.answers || {};
+    // Re-check the gates the listing filters on: a filter this connector could
+    // not apply returns the listing unfiltered.
+    if (String(a.direction || '') !== 'outbound' || String(a.status || '') !== 'queued') continue;
+    var at = whenOf(a.timestamp);
+    if (!isFinite(at)) at = whenOf(r.submittedAt || r.submitted_at);
+    // No time at all: nothing to measure the wait by, so leave it alone.
+    if (!isFinite(at) || Date.now() - at < waitMs) continue;
+    stale.push({ id: String(r.id || ''), at: at, messageId: String(a.message_id || '') });
+  }
+  stale.sort(function (x, y) { return x.at - y.at; });
+  var tasks = (nodes.tasks && nodes.tasks.responses) || [];
+  var slots = stale.length < 3 ? stale.length : 3;
+  for (var s = 0; s < slots; s++) {
+    var n = s + 1;
+    out['hasStale' + n] = true;
+    out['staleId' + n] = stale[s].id;
+    out['staleUpdate' + n] = { status: 'unconfirmed', delivery_note: ${JSON.stringify(UNCONFIRMED_NOTE)} };
+    // A missed-call apology whose task waits on this very text.
+    for (var t = 0; t < tasks.length; t++) {
+      var ta = (tasks[t] && tasks[t].answers) || {};
+      var tst = String(ta.status || '');
+      if ((tst === 'open' || tst === 'in_progress') && String(ta.callback_state || '') === 'sms_queued'
+        && stale[s].messageId && String(ta.callback_sms_id || '') === stale[s].messageId) {
+        out['hasTask' + n] = true;
+        out['taskId' + n] = tasks[t].id;
+        out['taskUpdate' + n] = {
+          callback_state: 'sms_unconfirmed',
+          priority: 'urgent',
+          summary: (String(ta.summary || '').slice(0, 380) + ' [the phone never confirmed the apology text - check it was sent, or ring them]').slice(0, 500)
+        };
+        break;
+      }
+    }
+  }
+  out.hasStale = slots > 0;
+  out.stale = stale.length;
+  var woke = String(inputs.sweepReason || 'an event');
+  out.summaryLine = slots === 0
+    ? 'Every queued text is recent or acknowledged (swept after ' + woke + ').'
+    : (slots + ' text' + (slots === 1 ? ' was' : 's were') + ' never confirmed by the phone - check ' + (slots === 1 ? 'it was' : 'they were') + ' sent (Messages, status Unconfirmed)'
+       + (stale.length > slots ? '; ' + (stale.length - slots) + ' more on the next sweep' : '') + '.');
   return out;
 })()`;
 
@@ -3333,7 +3603,7 @@ export const aokieReceptionistPack: PackData = {
         { id: 'message_id', type: 'short_text', label: 'Message ID', required: false, properties: {} },
         // matchField: messages are written by app logic that never knows the thread's row id, so
         // the relationship joins on the shared phone key (read-side; see RelatedRecords helper).
-        { id: 'thread_link', type: 'linked_record', label: 'Thread', required: false, properties: { targetFormId: '@pack:sms-threads', matchField: 'phone', targetMatchField: 'phone', relatedPageSize: 10, relatedAllowAdd: false, relatedColumnFieldIds: ['body', 'direction', 'status'] } },
+        { id: 'thread_link', type: 'linked_record', label: 'Thread', required: false, properties: { targetFormId: '@pack:sms-threads', matchField: 'phone', targetMatchField: 'phone', relatedPageSize: 10, relatedAllowAdd: false, relatedColumnFieldIds: ['body', 'direction', 'status', 'delivery_note'] } },
         { id: 'phone', type: 'phone', label: 'Phone Number', required: true, properties: { placeholder: '+61 400 000 000' } },
         {
           id: 'direction',
@@ -3361,6 +3631,10 @@ export const aokieReceptionistPack: PackData = {
               { id: 'queued', label: 'Queued', value: 'queued' },
               { id: 'sent', label: 'Sent', value: 'sent' },
               { id: 'failed', label: 'Failed', value: 'failed' },
+              // Queued, and the phone never acknowledged it within 15 minutes
+              // (the SMS acknowledgement sweep). A late acknowledgement still
+              // moves it to Sent or Failed.
+              { id: 'unconfirmed', label: 'Not confirmed by the phone', value: 'unconfirmed' },
             ],
           },
         },
@@ -3385,6 +3659,11 @@ export const aokieReceptionistPack: PackData = {
             ],
           },
         },
+        // Why an outbound text is where it is: the phone's failure reason, or
+        // "the phone never confirmed this text: check it was sent". Written by
+        // the delivery-status flow and the acknowledgement sweep. APPENDED AT
+        // THE TAIL (live pack-upgrade field order).
+        { id: 'delivery_note', type: 'short_text', label: 'Delivery note', required: false, properties: {} },
       ],
       customScreen: {
         enabled: true,
@@ -3400,7 +3679,7 @@ export const aokieReceptionistPack: PackData = {
             { id: 'k4', title: 'AI drafts', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:sms-messages', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'is_ai_reply', op: 'has', value: 'yes' }] } },
             { id: 'c1', title: 'By status', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:sms-messages', viz: 'bar', groupBy: { field: 'status', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 6 } },
             { id: 'c2', title: 'Messages over time', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:sms-messages', viz: 'area', groupBy: { field: '__submitted_at', bucket: 'day' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 14 } },
-            { id: 'l1', title: 'Latest messages', layout: { x: 0, y: 4, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:sms-messages', titleField: 'body', subtitleField: 'phone', limit: 6 } },
+            { id: 'l1', title: 'Latest messages', layout: { x: 0, y: 4, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:sms-messages', titleField: 'body', subtitleField: 'phone', metaField: 'status', limit: 6 } },
           ],
         },
       },
@@ -3618,6 +3897,9 @@ export const aokieReceptionistPack: PackData = {
               { id: 'queued', label: 'Calling back automatically', value: 'queued' },
               { id: 'reached', label: 'Reached by callback', value: 'reached' },
               { id: 'sms_queued', label: 'Apology text awaiting phone acknowledgement', value: 'sms_queued' },
+              // The acknowledgement sweep gave up waiting: the phone never
+              // confirmed the apology text. A late acknowledgement still moves it on.
+              { id: 'sms_unconfirmed', label: 'Apology text not confirmed by the phone - check it was sent', value: 'sms_unconfirmed' },
               { id: 'sms_sent', label: "Couldn't reach — apology text sent", value: 'sms_sent' },
               { id: 'needs_human', label: "Couldn't reach — please ring them", value: 'needs_human' },
             ],
@@ -4447,13 +4729,14 @@ export const aokieReceptionistPack: PackData = {
       name: 'Hold Lost Apology',
       slug: 'hold-lost-apology',
       description:
-        "Async on aokie.call.ended outcome 'abandoned_on_hold' — a caller who was parked MID-CONVERSATION hung up before the receptionist got back to them. They chose to leave, so ringing them back would be rude: apologise by SMS instead ('so sorry - we had you on hold and lost you; call back whenever suits') and leave the choice with them. Replies ride the human-approval draft path, never the booking loop. Customers who cannot receive SMS (sms_capable No) raise a high-priority human task instead; blocked customers and withheld numbers are a clean no-op. (Callers who gave up waiting IN THE QUEUE — outcome abandoned_in_queue — are handled by missed-call-follow-up with a hold apology in the callback's opening line.)",
+        "Async on aokie.call.ended outcome 'abandoned_on_hold' — a caller who was parked MID-CONVERSATION hung up before the receptionist got back to them. They chose to leave, so ringing them back would be rude: apologise by SMS instead ('so sorry - we had you on hold and lost you; call back whenever suits') and leave the choice with them. Replies ride the human-approval draft path, never the booking loop. Customers who cannot receive SMS (sms_capable No) raise a high-priority human task instead; blocked customers and withheld numbers are a clean no-op. (Callers who gave up waiting IN THE QUEUE — outcome abandoned_in_queue — are handled by missed-call-follow-up with a hold apology in the callback's opening line.) The apology goes out only for a call that ended within the last hour: one that reaches FormLogic later (OAIY delivering from its outbox after an offline gap) raises a task for a person instead.",
       nodeCapabilities: ['formlogic.responses.read'],
       flowJson: {
         nodes: [
           { id: 'phone', type: 'logic_block', data: { expr: "(function(){ var phone = String(inputs.callerPhone || inputs.from || '').trim(); return {phone:phone, usable:/^\\+?[0-9][0-9 ()-]{4,}$/.test(phone)}; })()" } },
           { id: 'hasPhone', type: 'condition', data: { expr: 'nodes.phone.usable === true' } },
-          { id: 'in', type: 'input', data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'callerPhone', example: '+61400000000' }, { name: 'from', example: '+61400000000' }] } },
+          // occurredAt = the call's end, from the event envelope: an apology is only sent for just now.
+          { id: 'in', type: 'input', data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'callerPhone', example: '+61400000000' }, { name: 'from', example: '+61400000000' }, { name: 'occurredAt', example: '2026-07-20T03:30:00.000Z' }] } },
           {
             id: 'customers',
             type: 'formlogic_list_responses',
@@ -4735,14 +5018,16 @@ export const aokieReceptionistPack: PackData = {
       name: 'SMS Follow-up Conversation',
       slug: 'sms-followup-conversation',
       description:
-        "The autonomous half of the SMS follow-up loop: async on aokie.sms.received, match the sender to their open SMS-managed follow-up task (phone_eq, sms_state 'active') and to the appointment that task is about (shared call_id). STOP always opts the customer out, a plain YES confirms without a model call, and a hard cap of 6 outbound texts per task hands off to a human. Everything else goes to the independently selected Background AI provider, which decides confirm / reschedule / cancel / ask / handoff — the binding's guarded output actions then update the Appointment, update + close the task ('done'), send the reply (sms.send) and log it in Messages. Confirm/reschedule/cancel replies are composed from the records, never model prose. Senders with no active task are untouched — the SMS Auto Reply Draft flow keeps its human-approval path for them.",
+        "The autonomous half of the SMS follow-up loop: async on aokie.sms.received, match the sender to their open SMS-managed follow-up task (phone_eq, sms_state 'active') and to the appointment that task is about (shared call_id). STOP always opts the customer out, a plain YES confirms without a model call, and a hard cap of 6 outbound texts per task hands off to a human. Everything else goes to the independently selected Background AI provider, which decides confirm / reschedule / cancel / ask / handoff — the binding's guarded output actions then update the Appointment, update + close the task ('done'), send the reply (sms.send) and log it in Messages. Confirm/reschedule/cancel replies are composed from the records, never model prose. Senders with no active task are untouched — the SMS Auto Reply Draft flow keeps its human-approval path for them. A text that reaches FormLogic more than an hour after it was sent (OAIY delivering from its outbox after an offline gap) is not answered automatically: the task is handed to a person, and a STOP is still recorded.",
       nodeCapabilities: ['model.llm.local', 'formlogic.responses.read'],
       flowJson: {
         nodes: [
           {
             id: 'in',
             type: 'input',
-            data: { inputs: [{ name: 'from', example: '+61400000000' }, { name: 'body', example: 'YES' }, { name: 'messageId', example: 'sms_123' }] },
+            // occurredAt = when the customer sent the text, from the event envelope:
+            // a text that reaches FormLogic late is handed to a person, not answered.
+            data: { inputs: [{ name: 'from', example: '+61400000000' }, { name: 'body', example: 'YES' }, { name: 'messageId', example: 'sms_123' }, { name: 'occurredAt', example: '2026-07-20T03:30:00.000Z' }] },
           },
           // All three lookups are phone_eq on the sender's number, pushed down to
           // the database — the loop works at any table size.
@@ -4838,14 +5123,14 @@ export const aokieReceptionistPack: PackData = {
       name: 'SMS Delivery Status',
       slug: 'sms-delivery-status',
       description:
-        "Async on aokie.sms.sent / aokie.sms.failed (the phone's asynchronous ack of an outbound text): update the one queued Messages row whose immutable messageId exactly matches the acknowledgement. The row is persisted before dispatch and the same pre-minted ID is sent to Aokie, so concurrent texts to one recipient cannot update each other's delivery state.",
+        "Async on aokie.sms.sent / aokie.sms.failed (the phone's asynchronous ack of an outbound text, or Aokie refusing a send outright): update the one Messages row whose immutable messageId exactly matches the acknowledgement. The row is persisted before dispatch and the same pre-minted ID is sent to Aokie, so concurrent texts to one recipient cannot update each other's delivery state. Sent wins over queued, unconfirmed and failed; failed wins over queued and unconfirmed; an acknowledgement that changes nothing (a second refusal of the same text) writes nothing and raises no second notice. The failure reason lands in the row's Delivery note.",
       nodeCapabilities: ['formlogic.responses.read'],
       flowJson: {
         nodes: [
           {
             id: 'in',
             type: 'input',
-            data: { inputs: [{ name: 'messageId', example: 'sms_123' }, { name: 'to', example: '+61400000000' }, { name: 'outcome', example: 'sent' }, { name: 'reason', example: '' }] },
+            data: { inputs: [{ name: 'messageId', example: 'sms_123' }, { name: 'to', example: '+61400000000' }, { name: 'outcome', example: 'sent' }, { name: 'reason', example: '' }, { name: 'refused', example: false }] },
           },
           {
             id: 'messages',
@@ -4863,6 +5148,7 @@ export const aokieReceptionistPack: PackData = {
                 hasUpdate: '$nodes.mark.hasUpdate',
                 responseId: '$nodes.mark.responseId',
                 update: '$nodes.mark.update',
+                notify: '$nodes.mark.notify',
                 summaryLine: '$nodes.mark.summaryLine',
               },
             },
@@ -4877,10 +5163,73 @@ export const aokieReceptionistPack: PackData = {
       },
     },
     {
+      name: 'SMS Acknowledgement Sweep',
+      slug: 'sms-ack-sweep',
+      description:
+        `A sweep, not a timer: rides events that happen anyway (a call ringing, a call ending, a text arriving) and looks for outbound texts still 'queued' ${UNCONFIRMED_AFTER_MINUTES} minutes or more after they went to the phone with no aokie.sms.sent or aokie.sms.failed. Aokie acknowledges every send it handles, including one it refuses, but none comes when the plugin was not running, the desktop could not reach it, or Aokie's command journal refused the request. Up to three such rows per sweep become 'unconfirmed' with the Delivery note "${UNCONFIRMED_NOTE}", a missed-call apology task waiting on one of them moves to 'Apology text not confirmed by the phone', and the toast says how many to check. A later acknowledgement still wins: SMS Delivery Status moves an unconfirmed row to sent or failed. Writes records only; it never sends anything.`,
+      nodeCapabilities: ['formlogic.responses.read'],
+      flowJson: {
+        nodes: [
+          // Which event woke the sweep, for the summary (the drain's idiom).
+          { id: 'in', type: 'input', data: { inputs: [{ name: 'sweepReason', example: 'an incoming call' }] } },
+          {
+            id: 'queued',
+            type: 'formlogic_list_responses',
+            data: {
+              form: '@pack:sms-messages',
+              return: 'all',
+              limit: 50,
+              filters: [
+                { field: 'status', op: 'eq', value: 'queued' },
+                { field: 'direction', op: 'eq', value: 'outbound' },
+              ],
+            },
+          },
+          { id: 'tasks', type: 'formlogic_list_responses', data: { form: '@pack:follow-up-tasks', return: 'all', limit: 20, filters: [{ field: 'callback_state', op: 'eq', value: 'sms_queued' }] } },
+          { id: 'plan', type: 'logic_block', data: { expr: FLOW_SMS_ACK_SWEEP } },
+          {
+            id: 'out',
+            type: 'output',
+            data: {
+              value: {
+                hasStale: '$nodes.plan.hasStale',
+                hasStale1: '$nodes.plan.hasStale1',
+                staleId1: '$nodes.plan.staleId1',
+                staleUpdate1: '$nodes.plan.staleUpdate1',
+                hasTask1: '$nodes.plan.hasTask1',
+                taskId1: '$nodes.plan.taskId1',
+                taskUpdate1: '$nodes.plan.taskUpdate1',
+                hasStale2: '$nodes.plan.hasStale2',
+                staleId2: '$nodes.plan.staleId2',
+                staleUpdate2: '$nodes.plan.staleUpdate2',
+                hasTask2: '$nodes.plan.hasTask2',
+                taskId2: '$nodes.plan.taskId2',
+                taskUpdate2: '$nodes.plan.taskUpdate2',
+                hasStale3: '$nodes.plan.hasStale3',
+                staleId3: '$nodes.plan.staleId3',
+                staleUpdate3: '$nodes.plan.staleUpdate3',
+                hasTask3: '$nodes.plan.hasTask3',
+                taskId3: '$nodes.plan.taskId3',
+                taskUpdate3: '$nodes.plan.taskUpdate3',
+                stale: '$nodes.plan.stale',
+                summaryLine: '$nodes.plan.summaryLine',
+              },
+            },
+          },
+        ],
+        edges: [
+          { source: 'in', target: 'queued' },
+          { source: 'queued', target: 'tasks' },
+          { source: 'tasks', target: 'plan' },
+          { source: 'plan', target: 'out' },
+        ],
+      },
+    },
+    {
       name: 'Send Approved SMS Drafts',
       slug: 'sms-approved-drain',
       description:
-        "A sweep, not a trigger: approving a draft is a record UPDATE and this host has no update or schedule event to bind to, so this runs on events that happen anyway (an incoming call, an inbound text) and sends whatever a human has approved since the last sweep. Picks up to three outbound Messages rows with approval_status 'approved' and status 'draft', mints a message_id derived from the row id so the delivery ack can correlate, flips each row to 'queued' BEFORE dispatch, and fires sms.send. Honours the Send text messages switch — with it off the drafts are held, not dropped, and the summary says how many. Deliberately not bound to aokie.sms.sent, which its own sends produce.",
+        "A sweep, not a trigger: approving a draft is a record UPDATE and this host has no update or schedule event to bind to, so this runs on events that happen anyway (an incoming call, an inbound text) and sends whatever a human has approved since the last sweep. Picks up to three outbound Messages rows with approval_status 'approved' and status 'draft', mints a message_id derived from the row id so the delivery ack can correlate, flips each row to 'queued' BEFORE dispatch (stamping the time it went to the phone, which the acknowledgement sweep measures from), and fires sms.send. Honours the Send text messages switch — with it off the drafts are held, not dropped, and the summary says how many. A person approved each text, so a sweep woken by a late event still sends it: nothing in a draft depends on that event. Deliberately not bound to aokie.sms.sent, which its own sends produce.",
       nodeCapabilities: ['formlogic.responses.read'],
       flowJson: {
         nodes: [
@@ -4987,7 +5336,7 @@ export const aokieReceptionistPack: PackData = {
       name: 'Apply Realtime Appointment Request',
       slug: 'appointment-request-apply',
       description:
-        'Durable no-LLM write path for a Realtime receptionist booking request. Validates the plugin-fenced event, deduplicates by request ID and call ID, creates the Appointment as requested (never confirmed), then raises the human confirmation task.',
+        'Durable no-LLM write path for a Realtime receptionist booking request. Validates the plugin-fenced event, deduplicates by request ID and call ID, creates the Appointment as requested (never confirmed), then raises the human confirmation task. The confirmation text goes out only while the appointment is still ahead: a request that reaches FormLogic after its time (OAIY was offline) leaves the task saying to call instead.',
       nodeCapabilities: ['formlogic.responses.read'],
       flowJson: {
         nodes: [
@@ -5005,6 +5354,8 @@ export const aokieReceptionistPack: PackData = {
                 { name: 'time', example: '10:00' },
                 { name: 'agreementTurn', example: 6 },
                 { name: 'at', example: '2026-07-20T03:30:00.000Z' },
+                // The envelope's time: how late the request reached FormLogic.
+                { name: 'occurredAt', example: '2026-07-20T03:30:00.000Z' },
               ],
             },
           },
@@ -5069,14 +5420,17 @@ export const aokieReceptionistPack: PackData = {
       name: 'After-Call Actions (Auto-Book)',
       slug: 'after-call-actions',
       description:
-        'The automation that makes it a real receptionist: async after aokie.call.transcript.settled, read this call\'s final transcript (including any detached audio correction), have the independently selected Background AI provider extract structured intent (who called, what they want, and the agreed date/time), then — via the binding\'s guarded output actions — add the caller to Customers if new, create a requested Appointment when a slot was agreed, log an Order when they ordered, and raise a Follow-up Task when a human needs to confirm (unclear time, message taken, or callback asked). Booking-intent tasks with a real caller number also kick off the SMS follow-up loop: a confirmation text goes out immediately (sms.send) and the SMS Follow-up Conversation flow drives the replies until the task closes. Malformed model output degrades to a follow-up task, never a bad record.',
+        'The automation that makes it a real receptionist: async after aokie.call.transcript.settled, read this call\'s final transcript (including any detached audio correction), have the independently selected Background AI provider extract structured intent (who called, what they want, and the agreed date/time), then — via the binding\'s guarded output actions — add the caller to Customers if new, create a requested Appointment when a slot was agreed, log an Order when they ordered, and raise a Follow-up Task when a human needs to confirm (unclear time, message taken, or callback asked). Booking-intent tasks with a real caller number also kick off the SMS follow-up loop: a confirmation text goes out immediately (sms.send) and the SMS Follow-up Conversation flow drives the replies until the task closes. Malformed model output degrades to a follow-up task, never a bad record. Dates on the call are resolved against the day of the call (the event time), and the confirmation text names only bookings that have not started yet: with none left - or, when no day was agreed, a call that reached FormLogic more than an hour late - no text goes out and the task says to call them.',
       nodeCapabilities: ['model.llm.local', 'formlogic.responses.read'],
       flowJson: {
         nodes: [
           {
             id: 'in',
             type: 'input',
-            data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }, { name: 'callerPhone', example: '+61400000000' }] },
+            // occurredAt = when the transcript settled (just after the call), from the
+            // event envelope: dates on the call are relative to that day, and a
+            // follow-up text is only sent while it is still true.
+            data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }, { name: 'callerPhone', example: '+61400000000' }, { name: 'occurredAt', example: '2026-07-20T03:30:00.000Z' }] },
           },
           {
             id: 'customers',
@@ -5177,13 +5531,14 @@ export const aokieReceptionistPack: PackData = {
       name: 'Missed Call Follow-up',
       slug: 'missed-call-follow-up',
       description:
-        "Async after a missed aokie.call.ended (binding condition gates on the missed outcome): raise a high-priority call-back task — and, Phase 2, CALL THEM BACK. When the caller is dialable (real number, not a blocked customer, no callback already pending) the task is created with callback_state 'queued' and the binding fires call.dial with a records-composed opening line ('sorry, we just missed your call'). The plugin's guardrails (outboundEnabled kill switch — default OFF, quiet hours, daily cap) refuse the dial typed, in which case the task simply stays queued for a human. The callback call's own call.ended (direction outbound) then transitions the task via the outbound-callback-result flow. On the OAIY route (Receptionist Settings call_route 'oaiy') OAIY calls missed calls back itself (OAIY > Agent > Phone), so this flow raises the task with a note saying so and never dials: the same missed call is never rung twice.",
+        "Async after a missed aokie.call.ended (binding condition gates on the missed outcome): raise a high-priority call-back task — and, Phase 2, CALL THEM BACK. When the caller is dialable (real number, not a blocked customer, no callback already pending) the task is created with callback_state 'queued' and the binding fires call.dial with a records-composed opening line ('sorry, we just missed your call'). The plugin's guardrails (outboundEnabled kill switch — default OFF, quiet hours, daily cap) refuse the dial typed, in which case the task simply stays queued for a human. The callback call's own call.ended (direction outbound) then transitions the task via the outbound-callback-result flow. On the OAIY route (Receptionist Settings call_route 'oaiy') OAIY calls missed calls back itself (OAIY > Agent > Phone), so this flow raises the task with a note saying so and never dials: the same missed call is never rung twice. A missed call that reaches FormLogic more than an hour after it happened (OAIY delivering from its outbox after an offline gap) is never rung back automatically either: the task says so.",
       nodeCapabilities: ['formlogic.responses.read'],
       flowJson: {
         nodes: [
           { id: 'phone', type: 'logic_block', data: { expr: "(function(){ var phone = String(inputs.callerPhone || inputs.from || '').trim(); return {phone:phone, usable:/^\\+?[0-9][0-9 ()-]{4,}$/.test(phone)}; })()" } },
           { id: 'hasPhone', type: 'condition', data: { expr: 'nodes.phone.usable === true' } },
-          { id: 'in', type: 'input', data: { inputs: [{ name: 'callerPhone', example: '+61400000000' }, { name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }, { name: 'outcome', example: 'missed' }] } },
+          // occurredAt = when the call was missed, from the event envelope: no machine callback for one that reached FormLogic late.
+          { id: 'in', type: 'input', data: { inputs: [{ name: 'callerPhone', example: '+61400000000' }, { name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }, { name: 'outcome', example: 'missed' }, { name: 'occurredAt', example: '2026-07-20T03:30:00.000Z' }] } },
           {
             id: 'customers',
             type: 'formlogic_list_responses',
@@ -5226,7 +5581,7 @@ export const aokieReceptionistPack: PackData = {
       name: 'Outbound Callback Result',
       slug: 'outbound-callback-result',
       description:
-        "Async on aokie.call.ended for OUTBOUND calls (direction 'outbound'): transition the pending missed-call callback task by what actually happened. Reached (outcome completed) → task done. Not reached (no_answer/failed) → sms_capable customers get a records-composed apology text (replies ride the existing human-approval draft path — deliberately NOT the booking confirmation loop) and the task stays open as 'sms_sent'; landline/blocked customers go straight to 'needs_human' at urgent priority. An outbound call with no queued callback task (e.g. a manual test dial) is a clean no-op.",
+        "Async on aokie.call.ended for OUTBOUND calls (direction 'outbound'): transition the pending missed-call callback task by what actually happened. Reached (outcome completed) → task done. Not reached (no_answer/failed) → sms_capable customers get a records-composed apology text (replies ride the existing human-approval draft path — deliberately NOT the booking confirmation loop) and the task stays open as 'sms_sent'; landline/blocked customers go straight to 'needs_human' at urgent priority. An outbound call with no queued callback task (e.g. a manual test dial) is a clean no-op. No apology text for a callback whose end reached FormLogic more than an hour late (OAIY was offline): the task goes to a person at urgent priority instead.",
       nodeCapabilities: ['formlogic.responses.read'],
       flowJson: {
         nodes: [
@@ -5235,7 +5590,9 @@ export const aokieReceptionistPack: PackData = {
           {
             id: 'in',
             type: 'input',
-            data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'to', example: '+61400000000' }, { name: 'outcome', example: 'no_answer' }] },
+            // occurredAt = when the callback ended, from the event envelope: the
+            // apology text is only sent for a callback that just failed.
+            data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'to', example: '+61400000000' }, { name: 'outcome', example: 'no_answer' }, { name: 'occurredAt', example: '2026-07-20T03:30:00.000Z' }] },
           },
           {
             id: 'tasks',
@@ -5409,6 +5766,8 @@ export const aokieReceptionistPack: PackData = {
         time: '$event.data.time',
         agreementTurn: '$event.data.agreementTurn',
         at: '$event.data.at',
+        // The envelope's own time: the confirmation text is judged by it.
+        occurredAt: '$event.occurredAt',
       },
       // Records before notification. Appointment is deliberately first so a
       // later task/toast/SMS failure never loses the caller's actual request.
@@ -5455,7 +5814,7 @@ export const aokieReceptionistPack: PackData = {
         type: 'expression',
         expr: "event && event.data ? (Number(event.data.durationSeconds || 0) > 5 && String(event.data.outcome || '') !== 'missed' && String(event.data.status || '') !== 'missed' && String(event.data.outcome || '') !== 'terminated_abuse' && String(event.data.outcome || '') !== 'abandoned_on_hold' && String(event.data.outcome || '') !== 'abandoned_in_queue' && String(event.data.direction || '') !== 'outbound' && event.data.manager !== true) : false",
       },
-      inputMap: { callId: '$event.data.callId', from: '$event.data.from', callerPhone: '$event.data.callerPhone' },
+      inputMap: { callId: '$event.data.callId', from: '$event.data.from', callerPhone: '$event.data.callerPhone', occurredAt: '$event.occurredAt' },
       outputActions: [
         { type: 'formlogic.updateResponse', form: '@pack:calls', when: '$result.hasCall', responseId: '$result.callResponseId', answers: '$result.callUpdate' },
         { type: 'formlogic.submitResponse', form: '@pack:customers', when: '$result.hasCustomerCreate', answers: '$result.customer' },
@@ -5491,7 +5850,7 @@ export const aokieReceptionistPack: PackData = {
       // blocks the event queue. The inbound Messages row is already stored by the
       // app logic before bindings run, so the flow sees the full thread history.
       timeoutMs: 60000,
-      inputMap: { from: '$event.data.from', body: '$event.data.body', messageId: '$event.data.messageId' },
+      inputMap: { from: '$event.data.from', body: '$event.data.body', messageId: '$event.data.messageId', occurredAt: '$event.occurredAt' },
       outputActions: [
         // Up to three appointment writes: a YES confirms EVERY booking the
         // loop covers (multi-booking, 2026-07-13).
@@ -5582,15 +5941,79 @@ export const aokieReceptionistPack: PackData = {
       connectorId: 'aokie',
       mode: 'async',
       timeoutMs: 15000,
-      inputMap: { messageId: '$event.data.messageId', to: '$event.data.to', outcome: 'failed', reason: '$event.data.reason' },
+      // refused: Aokie turned the send down before the radio (an invalid number,
+      // no radio, consent). One text can be refused more than once, each with its
+      // own event key; the flow writes and notifies only the first time.
+      inputMap: { messageId: '$event.data.messageId', to: '$event.data.to', outcome: 'failed', reason: '$event.data.reason', refused: '$event.data.refused' },
       outputActions: [
         { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasTaskUpdate', responseId: '$result.taskId', answers: '$result.taskUpdate' },
         { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasUpdate', responseId: '$result.responseId', answers: '$result.update' },
-        // A failed send is a customer who was promised a text — shout about it.
-        { type: 'formlogic.toast', message: 'SMS to {{event.data.to}} FAILED: {{event.data.reason}}' },
+        // A failed send is a customer who was promised a text — shout about it,
+        // once: a repeated failure for the same text changes nothing and stays quiet.
+        { type: 'formlogic.toast', when: '$result.notify', message: 'SMS to {{event.data.to}} FAILED: {{event.data.reason}}' },
       ],
       fallbackPolicy: { onError: 'log_and_continue' },
       sortOrder: 11,
+    },
+    {
+      // The acknowledgement sweep rides the events that happen anyway, like the
+      // approved-drafts drain: there is no scheduler. It only writes records
+      // (it never sends), so re-running it is harmless and it needs no retry.
+      flow: 'sms-ack-sweep',
+      event: 'aokie.call.incoming',
+      connectorId: 'aokie',
+      mode: 'async',
+      timeoutMs: 15000,
+      inputMap: { sweepReason: 'an incoming call' },
+      outputActions: [
+        { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasStale1', responseId: '$result.staleId1', answers: '$result.staleUpdate1' },
+        { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasTask1', responseId: '$result.taskId1', answers: '$result.taskUpdate1' },
+        { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasStale2', responseId: '$result.staleId2', answers: '$result.staleUpdate2' },
+        { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasTask2', responseId: '$result.taskId2', answers: '$result.taskUpdate2' },
+        { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasStale3', responseId: '$result.staleId3', answers: '$result.staleUpdate3' },
+        { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasTask3', responseId: '$result.taskId3', answers: '$result.taskUpdate3' },
+        { type: 'formlogic.toast', when: '$result.hasStale', message: 'Texts to check: {{result.summaryLine}}' },
+      ],
+      fallbackPolicy: { onError: 'log_and_continue' },
+      sortOrder: 22,
+    },
+    {
+      flow: 'sms-ack-sweep',
+      event: 'aokie.call.ended',
+      connectorId: 'aokie',
+      mode: 'async',
+      timeoutMs: 15000,
+      inputMap: { sweepReason: 'a call ending' },
+      outputActions: [
+        { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasStale1', responseId: '$result.staleId1', answers: '$result.staleUpdate1' },
+        { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasTask1', responseId: '$result.taskId1', answers: '$result.taskUpdate1' },
+        { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasStale2', responseId: '$result.staleId2', answers: '$result.staleUpdate2' },
+        { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasTask2', responseId: '$result.taskId2', answers: '$result.taskUpdate2' },
+        { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasStale3', responseId: '$result.staleId3', answers: '$result.staleUpdate3' },
+        { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasTask3', responseId: '$result.taskId3', answers: '$result.taskUpdate3' },
+        { type: 'formlogic.toast', when: '$result.hasStale', message: 'Texts to check: {{result.summaryLine}}' },
+      ],
+      fallbackPolicy: { onError: 'log_and_continue' },
+      sortOrder: 23,
+    },
+    {
+      flow: 'sms-ack-sweep',
+      event: 'aokie.sms.received',
+      connectorId: 'aokie',
+      mode: 'async',
+      timeoutMs: 15000,
+      inputMap: { sweepReason: 'an inbound text' },
+      outputActions: [
+        { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasStale1', responseId: '$result.staleId1', answers: '$result.staleUpdate1' },
+        { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasTask1', responseId: '$result.taskId1', answers: '$result.taskUpdate1' },
+        { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasStale2', responseId: '$result.staleId2', answers: '$result.staleUpdate2' },
+        { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasTask2', responseId: '$result.taskId2', answers: '$result.taskUpdate2' },
+        { type: 'formlogic.updateResponse', form: '@pack:sms-messages', when: '$result.hasStale3', responseId: '$result.staleId3', answers: '$result.staleUpdate3' },
+        { type: 'formlogic.updateResponse', form: '@pack:follow-up-tasks', when: '$result.hasTask3', responseId: '$result.taskId3', answers: '$result.taskUpdate3' },
+        { type: 'formlogic.toast', when: '$result.hasStale', message: 'Texts to check: {{result.summaryLine}}' },
+      ],
+      fallbackPolicy: { onError: 'log_and_continue' },
+      sortOrder: 24,
     },
     {
       flow: 'missed-call-follow-up',
@@ -5605,7 +6028,7 @@ export const aokieReceptionistPack: PackData = {
         type: 'expression',
         expr: "event && event.data ? ((String(event.data.outcome || '') === 'missed' || String(event.data.status || '') === 'missed' || String(event.data.outcome || '') === 'abandoned_in_queue') && String(event.data.direction || '') !== 'outbound') : false",
       },
-      inputMap: { callId: '$event.data.callId', callerPhone: '$event.data.callerPhone', from: '$event.data.from', outcome: '$event.data.outcome' },
+      inputMap: { callId: '$event.data.callId', callerPhone: '$event.data.callerPhone', from: '$event.data.from', outcome: '$event.data.outcome', occurredAt: '$event.occurredAt' },
       // Task row FIRST (always — the audit trail), then the dial. A refused
       // dial (kill switch off, quiet hours, daily cap) lands in
       // outputActionErrors and the task stays visibly 'queued' for a human.
@@ -5627,7 +6050,7 @@ export const aokieReceptionistPack: PackData = {
         type: 'expression',
         expr: "event && event.data ? String(event.data.direction || '') === 'outbound' : false",
       },
-      inputMap: { callId: '$event.data.callId', to: '$event.data.from', outcome: '$event.data.outcome' },
+      inputMap: { callId: '$event.data.callId', to: '$event.data.from', outcome: '$event.data.outcome', occurredAt: '$event.occurredAt' },
       // Task transition BEFORE the apology text (same records-before-send
       // rule as the SMS loop), then the Messages row for the thread history.
       outputActions: [
@@ -5649,7 +6072,7 @@ export const aokieReceptionistPack: PackData = {
         type: 'expression',
         expr: "event && event.data ? (String(event.data.outcome || '') === 'abandoned_on_hold' && String(event.data.direction || '') !== 'outbound') : false",
       },
-      inputMap: { callId: '$event.data.callId', callerPhone: '$event.data.callerPhone', from: '$event.data.from' },
+      inputMap: { callId: '$event.data.callId', callerPhone: '$event.data.callerPhone', from: '$event.data.from', occurredAt: '$event.occurredAt' },
       // Record writes BEFORE the send (standing rule), and the Messages row
       // right after the send for the thread history.
       outputActions: [

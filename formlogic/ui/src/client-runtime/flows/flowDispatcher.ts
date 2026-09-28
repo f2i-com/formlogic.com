@@ -1414,17 +1414,24 @@ export async function runFlowBySlug(flowSlug: string, options: RunFlowOptions = 
 //     while it is open (poll GET /flow-runs/queued, workspace runs only).
 // ---------------------------------------------------------------------------
 
-/** Extract the stored trigger event from a queued run's input_snapshot ({event:{name,data}}). */
+/**
+ * Extract the stored trigger event from a queued run's input_snapshot ({event:{name,data}}).
+ *
+ * The envelope's occurredAt rides along when the snapshot has it (a Desktop stores the
+ * whole envelope): a run claimed hours after its event must still read `$event.occurredAt`
+ * as the event's own time, which is what a flow that texts a caller judges lateness by.
+ */
 function snapshotEvent(run: FlowRunLog): FlowTriggerEvent | undefined {
   const raw = (run.inputSnapshot as { event?: unknown } | null)?.event;
   if (!raw || typeof raw !== 'object') return undefined;
-  const e = raw as { name?: unknown; data?: unknown };
+  const e = raw as { name?: unknown; data?: unknown; occurredAt?: unknown };
   if (typeof e.name !== 'string' || e.name === '') return undefined;
   return {
     name: e.name,
     data: e.data,
     correlationId: run.correlationId,
     idempotencyKey: run.idempotencyKey,
+    ...(typeof e.occurredAt === 'string' && e.occurredAt !== '' ? { occurredAt: e.occurredAt } : {}),
   };
 }
 

@@ -136,6 +136,23 @@ describe('claimQueuedAppRuns', () => {
     expect(harness.completeCalls[0].payload.result).toEqual({ value: '+614' });
   });
 
+  // A run a Desktop queued while its engine was down is claimed here, possibly
+  // hours later: $event.occurredAt must still be the event's own time.
+  it('a claimed run reads the stored envelope time as $event.occurredAt', async () => {
+    const occurredAt = '2026-09-29T02:00:00.000Z';
+    const harness = installDeps({
+      listQueuedRuns: async () => [queuedRun({
+        inputSnapshot: { event: { name: 'form.submitted', occurredAt, data: { answers: { phone: '+614' } } } },
+      })],
+    });
+    const timed = { ...binding(), inputMap: { phone: '$event.occurredAt' } };
+    __setRuntimeFlowsForTests({ flows: [echoFlow()], bindings: [timed] }, 'my-app');
+
+    await claimQueuedAppRuns();
+
+    expect(harness.completeCalls[0].payload.result).toEqual({ value: occurredAt });
+  });
+
   it('a 409 (already claimed) skips execution — no complete', async () => {
     const harness = installDeps({
       listQueuedRuns: async () => [queuedRun()],
