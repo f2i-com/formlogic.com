@@ -1220,7 +1220,7 @@ ${SMS_ENABLED_JS}
   // of bMessage encoding surprises. 440 chars ≈ 3 segments.
   kickBody = kickBody.replace(/[^\\x20-\\x7E]/g, '').slice(0, 440);
   return {
-    summaryLine: (hasAppointment ? (created.length > 1 ? created.length + ' appointments requested. ' : 'Appointment requested. ') : '') + (skippedExisting > 0 ? skippedExisting + ' already on record (not duplicated). ' : '') + (hasOrder ? 'Order taken. ' : '') + (hasCustomerCreate ? 'New customer added. ' : '') + (needTask ? 'Follow-up created. ' : '') + (hasPriorTaskClose ? 'Earlier SMS loop folded in. ' : '') + (wantsSms ? 'Confirmation SMS sent. ' : '') + (smsSuppressed ? (custBlocked ? 'SMS skipped (customer is blocked). ' : 'SMS skipped (customer cannot receive SMS) - call to confirm. ') : '') + summary,
+    summaryLine: (hasAppointment ? (created.length > 1 ? created.length + ' appointments requested. ' : 'Appointment requested. ') : '') + (skippedExisting > 0 ? skippedExisting + ' already on record (not duplicated). ' : '') + (hasOrder ? 'Order taken. ' : '') + (hasCustomerCreate ? 'New customer added. ' : '') + (needTask ? 'Follow-up created. ' : '') + (hasPriorTaskClose ? 'Earlier SMS loop folded in. ' : '') + (wantsSms ? 'Confirmation SMS queued. ' : '') + (smsSuppressed ? (custBlocked ? 'SMS skipped (customer is blocked). ' : 'SMS skipped (customer cannot receive SMS) - call to confirm. ') : '') + summary,
     hasCall: !!callResponseId,
     callResponseId: callResponseId,
     callUpdate: { intent: displayIntent, sentiment: sentiment, follow_up_required: needTask ? ['yes'] : [] },
@@ -2231,7 +2231,7 @@ ${SMS_ENABLED_JS}
     summaryLine: ok
       ? (appointmentExists ? 'Appointment request already recorded; ' : 'Appointment request recorded; ')
         + (taskExists ? 'confirmation task already present.' : 'confirmation task created.')
-        + (wantsSms ? ' Confirmation SMS sent.' : '')
+        + (wantsSms ? ' Confirmation SMS queued.' : '')
       : 'Appointment request refused: ' + reason + '.'
   };
 })()`;

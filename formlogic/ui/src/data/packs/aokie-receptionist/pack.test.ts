@@ -1031,7 +1031,7 @@ describe('aokieReceptionistPack â€” SMS follow-up loop (logic blocks)', () 
       expect(r.kickoffMessage.direction).toBe('outbound');
       expect(r.kickoffMessage.status).toBe('queued');
       expect(r.kickoffMessage.message_id).toBe('smskick_call_1');
-      expect(r.summaryLine).toContain('Confirmation SMS sent.');
+      expect(r.summaryLine).toContain('Confirmation SMS queued.');
     });
 
     it('unclear-date booking still kicks off (asks for a day/time instead of confirming one)', () => {
