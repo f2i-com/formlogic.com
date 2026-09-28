@@ -265,7 +265,11 @@ class PackFlowImportTest extends TestCase
         $this->assertCount(1, $result['apps']);
         $appId = $result['apps'][0]['id'];
 
-        // 19 flows / 19 bindings: sms-approved-drain (2026-07-xx, "Send the SMS
+        // 20 flows / 22 bindings: sms-ack-sweep (2026-09-29, a queued text the
+        // phone never acknowledged becomes unconfirmed after 15 minutes) binds
+        // THREE times - aokie.call.incoming, aokie.call.ended and
+        // aokie.sms.received - the events that happen anyway, since there is no
+        // scheduler. Before it, sms-approved-drain (2026-07-xx, "Send the SMS
         // drafts a human approved") binds TWICE — aokie.call.incoming AND
         // aokie.sms.received — because either event is a chance to notice that a
         // draft has been approved and send it. It joined deterministic Realtime
@@ -286,9 +290,9 @@ class PackFlowImportTest extends TestCase
         // eight. The live-reply binding ships DISABLED (the in-plugin
         // receptionist owns replies) but still imports as a row.
         $flows = self::$flows->listFlows($appId);
-        $this->assertCount(19, $flows);
+        $this->assertCount(20, $flows);
         $bindings = self::$flows->listBindings($appId);
-        $this->assertCount(19, $bindings);
+        $this->assertCount(22, $bindings);
         // Counts alone drift silently — this assertion sat one flow behind for a
         // while and only said "18 != 19", which does not tell you what changed.
         // Name them, so adding or losing a flow reports ITSELF.
@@ -310,6 +314,7 @@ class PackFlowImportTest extends TestCase
             'missed-call-follow-up',
             'outbound-callback-result',
             'personalize-caller',
+            'sms-ack-sweep',
             'sms-approved-drain',
             'sms-auto-reply-draft',
             'sms-delivery-status',

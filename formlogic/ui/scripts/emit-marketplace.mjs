@@ -11,6 +11,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 // Vite-style `?raw` imports (pack modules import screen .tsx/.css sources as strings) for the
 // node-side esbuild bundle of the pack TS. Mirrors check-pack-screens.mjs.
+//
+// Line endings are normalized to LF: a Windows checkout (core.autocrlf) holds these sources
+// with CRLF, and the raw text used to carry the CRs into every emitted screen, so the same
+// source emitted different JSON - and different signed digests - on Windows and on Linux.
+// (TypeScript template literals are already LF: the language normalizes their line breaks.)
+const readRawSource = (file) => readFileSync(file, 'utf8').replace(/\r\n?/g, '\n');
 const rawPlugin = {
   name: 'vite-raw',
   setup(b) {
@@ -19,7 +25,7 @@ const rawPlugin = {
       namespace: 'raw-text',
     }));
     b.onLoad({ filter: /.*/, namespace: 'raw-text' }, (args) => ({
-      contents: `export default ${JSON.stringify(readFileSync(args.path, 'utf8'))};`,
+      contents: `export default ${JSON.stringify(readRawSource(args.path))};`,
       loader: 'js',
     }));
   },
@@ -40,6 +46,59 @@ const code = bundled.outputFiles[0].text;
 // splitting, so loadAllPacks() resolves everything from the single bundled module.
 const { loadAllPacks } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
 const packCatalog = await loadAllPacks();
+
+// The marketplace record for one catalog entry: the listing plus the installable pack,
+// with `signing` INSIDE the pack so it survives every install path (catalog download,
+// direct JSON import, backup round trip). No key = an unsigned pack.
+function marketplaceRecord(entry, vendorKey) {
+  const signing = buildPackSigning(entry.pack, vendorKey);
+  return {
+    id: entry.id,
+    name: entry.name,
+    description: entry.description,
+    tags: entry.tags,
+    icon: entry.icon,
+    pack: signing ? { ...entry.pack, signing } : entry.pack,
+  };
+}
+
+const sameJson = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const withoutSigning = (pack) => {
+  const { signing: _signing, ...rest } = pack || {};
+  return rest;
+};
+
+// Refresh ONE folder pack wholesale from its TypeScript source: install.json and the
+// legacy marketplace record become exactly what the source emits, signed. For a pack whose
+// forms, flows or app logic changed (not only its screens). The folder's install.json is an
+// independently editable source, so this refuses when it no longer matches the marketplace
+// record it was emitted beside (someone edited it by hand): nothing is overwritten then.
+// pack.json's version must already be the source's (bump both together).
+const folderPackIndex = process.argv.indexOf('--folder-pack');
+if (folderPackIndex !== -1) {
+  const id = process.argv[folderPackIndex + 1];
+  const entry = packCatalog.find(pack => pack.id === id);
+  if (!entry || !/^[a-z0-9][a-z0-9-]*$/.test(id)) throw new Error('Provide a known pack ID after --folder-pack');
+  const vendorKey = loadVendorKey();
+  if (!vendorKey) throw new Error('A vendor signing key is required to refresh a folder pack. No files changed.');
+  const folder = join(here, '..', '..', 'backend', 'resources', 'packs', id);
+  const target = join(folder, 'install.json');
+  const legacyTarget = join(here, '..', '..', 'backend', 'resources', 'marketplace-packs', id + '.json');
+  const installed = JSON.parse(readFileSync(target, 'utf8'));
+  const legacy = JSON.parse(readFileSync(legacyTarget, 'utf8'));
+  const metadata = JSON.parse(readFileSync(join(folder, 'pack.json'), 'utf8'));
+  if (!sameJson(withoutSigning(installed), withoutSigning(legacy.pack))) {
+    throw new Error(`${id}: install.json has edits the marketplace record does not; refusing to overwrite them. No files changed.`);
+  }
+  if (metadata.id !== id || metadata.version !== entry.pack.packMeta?.version || entry.version !== metadata.version) {
+    throw new Error(`${id}: pack.json version '${metadata.version}' must equal the source's '${entry.pack.packMeta?.version}' (and manifest.json's). No files changed.`);
+  }
+  const record = marketplaceRecord(entry, vendorKey);
+  writeFileSync(target, JSON.stringify(record.pack, null, 2) + '\n');
+  writeFileSync(legacyTarget, JSON.stringify(record, null, 2));
+  console.log(`Refreshed ${id} ${metadata.version} from its source and signed it; install.json and the marketplace record match.`);
+  process.exit(0);
+}
 
 // Folder catalogues are independently editable sources. Refresh their screens
 // only when explicitly requested; never replace an operator's app/database/flows
@@ -100,17 +159,7 @@ for (const entry of packCatalog) {
   }
   // Store the full catalog entry (id, name, description, tags, icon) alongside the pack payload,
   // so the provisioner has the marketplace metadata plus the installable pack in one file.
-  const signing = buildPackSigning(entry.pack, vendorKey);
-  const record = {
-    id: entry.id,
-    name: entry.name,
-    description: entry.description,
-    tags: entry.tags,
-    icon: entry.icon,
-    // `signing` travels INSIDE the pack so it survives every install path
-    // (catalog download, direct JSON import, backup round trip).
-    pack: signing ? { ...entry.pack, signing } : entry.pack,
-  };
+  const record = marketplaceRecord(entry, vendorKey);
   writeFileSync(join(outDir, entry.id + '.json'), JSON.stringify(record, null, 2));
   const apps = entry.pack.apps || [];
   const withScreen = apps.filter((a) => a.customScreen && a.customScreen.enabled).length;

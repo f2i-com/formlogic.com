@@ -30,7 +30,7 @@ let apps = 0;
 let forms = 0;
 
 // Vite-style `?raw` imports (pack modules import screen .tsx/.css sources as strings) for the
-// node-side esbuild bundle of the pack TS.
+// node-side esbuild bundle of the pack TS. LF line endings, as emit-marketplace.mjs reads them.
 const rawPlugin = {
   name: 'vite-raw',
   setup(b) {
@@ -39,7 +39,7 @@ const rawPlugin = {
       namespace: 'raw-text',
     }));
     b.onLoad({ filter: /.*/, namespace: 'raw-text' }, (args) => ({
-      contents: `export default ${JSON.stringify(fs.readFileSync(args.path, 'utf8'))};`,
+      contents: `export default ${JSON.stringify(fs.readFileSync(args.path, 'utf8').replace(/\r\n?/g, '\n'))};`,
       loader: 'js',
     }));
   },

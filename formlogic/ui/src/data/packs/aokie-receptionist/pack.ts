@@ -3268,7 +3268,7 @@ export const aokieReceptionistPack: PackData = {
     name: 'Aokie Receptionist',
     description:
       'An AI phone receptionist run by OAIY on your computer: OAIY\'s Front desk agent answers the calls through the Aokie Bluetooth phone bridge, call and SMS records land automatically, starter FormLogic Flows look up callers, record booking requests, summarise calls and draft SMS replies, and a Live Call screen gives the operator answer / hang-up / speak controls. Open this app anywhere to monitor it.',
-    version: '1.1.0',
+    version: '1.2.0',
     author: 'FormLogic',
     tags: ['receptionist', 'phone', 'aokie', 'desktop', 'flows'],
   },
