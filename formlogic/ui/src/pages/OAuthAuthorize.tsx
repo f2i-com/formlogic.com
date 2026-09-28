@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { useAppStore } from '../stores/appStore';
 import { api } from '../lib/api';
@@ -38,6 +38,7 @@ const SCOPE_LABELS: Record<string, string> = {
  */
 export function OAuthAuthorize() {
   const [searchParams] = useSearchParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const apps = useAppStore((s) => s.apps);
@@ -58,10 +59,14 @@ export function OAuthAuthorize() {
 
   // Signed-out: send to the login flow with a return-to back to THIS full URL (the same
   // same-origin ?redirect= mechanism AcceptInvite uses; Login validates + navigates to it).
+  // The address comes from the router's location, never window.location: in development
+  // React runs this effect twice, and by the second run the first navigate has already moved
+  // window.location to /login, so the return-to became /login?redirect=/oauth/authorize… and
+  // signing in led back to /login instead of here (a blank page).
   useEffect(() => {
     if (user || missingClientId) return;
-    navigate(`/login?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`, { replace: true });
-  }, [user, missingClientId, navigate]);
+    navigate(`/login?redirect=${encodeURIComponent(location.pathname + location.search)}`, { replace: true });
+  }, [user, missingClientId, navigate, location.pathname, location.search]);
 
   // Signed-in: validate the request server-side (once).
   useEffect(() => {

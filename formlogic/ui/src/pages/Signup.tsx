@@ -8,6 +8,7 @@ import { Logo, LogoWhite } from '../components/ui/Logo';
 import { Mail, Lock, User, AlertCircle, Check, Sparkles } from 'lucide-react';
 import { useBetaMode } from '../hooks/useBetaMode';
 import { passwordError as getPasswordError } from '../lib/passwordPolicy';
+import { signInDestination } from '../lib/authRedirect';
 
 export function Signup() {
   const [email, setEmail] = useState('');
@@ -21,15 +22,14 @@ export function Signup() {
   const { register, isLoading, error, clearError, user, logout } = useAuthStore();
   const beta = useBetaMode();
 
-  // Reject protocol-relative (//host) / backslash forms to avoid open-redirects.
-  const redirectParam = searchParams.get('redirect');
-  const dest = redirectParam && /^\/(?![/\\])/.test(redirectParam) ? redirectParam : '/';
+  // Same rule as Login: a same-origin path that is not itself a sign-in page, else home.
+  const dest = signInDestination(searchParams.get('redirect'));
 
   useEffect(() => {
     if (!user) return;
     // A demo visitor signing up wants a REAL account — leave the demo first, then show the form.
     if (user.isDemo) { logout(); return; }
-    navigate(dest);
+    navigate(dest, { replace: true });
   }, [user, navigate, dest, logout]);
 
   useEffect(() => {
@@ -61,7 +61,7 @@ export function Signup() {
 
     const result = await register(email, password, name || undefined);
     if (result.success) {
-      navigate(dest);
+      navigate(dest, { replace: true });
     }
   };
 

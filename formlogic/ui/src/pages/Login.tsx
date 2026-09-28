@@ -7,6 +7,7 @@ import { PasswordInput } from '../components/ui/PasswordInput';
 import { Logo, LogoWhite } from '../components/ui/Logo';
 import { Mail, Lock, AlertCircle, ShieldCheck, ArrowLeft } from 'lucide-react';
 import { usePublicConfig } from '../hooks/usePublicConfig';
+import { signInDestination } from '../lib/authRedirect';
 
 export function Login() {
   const [email, setEmail] = useState('');
@@ -24,18 +25,17 @@ export function Login() {
   const [searchParams] = useSearchParams();
   const { login, verifyMfa, isLoading, error, clearError, user, logout } = useAuthStore();
 
-  // Honor a same-origin redirect target (e.g. accepting an app invitation).
-  // Reject protocol-relative (//host) and backslash (/\host) forms, which would
-  // otherwise be open-redirects to another origin.
-  const redirectParam = searchParams.get('redirect');
-  const dest = redirectParam && /^\/(?![/\\])/.test(redirectParam) ? redirectParam : '/';
+  // Honor a same-origin redirect target (e.g. accepting an app invitation, an OAuth consent).
+  // signInDestination refuses other origins and sign-in pages. Signing in replaces this page
+  // in history: once signed in, /login only sends you on (SignedInRedirect, to the same place).
+  const dest = signInDestination(searchParams.get('redirect'));
 
   useEffect(() => {
     if (!user) return;
     // A demo visitor who lands here wants to sign into a REAL account — leave the demo (clears the
     // shared session) and show the form, instead of bouncing back to the demo landing.
     if (user.isDemo) { logout(); return; }
-    navigate(dest);
+    navigate(dest, { replace: true });
   }, [user, navigate, dest, logout]);
 
   useEffect(() => {
@@ -61,7 +61,7 @@ export function Login() {
       return;
     }
     if (result.success) {
-      navigate(dest);
+      navigate(dest, { replace: true });
     }
   };
 
@@ -76,7 +76,7 @@ export function Login() {
     }
     const result = await verifyMfa(mfaToken, mfaCode.trim(), rememberBrowser);
     if (result.success) {
-      navigate(dest);
+      navigate(dest, { replace: true });
     } else if ((result.error || '').includes('expired')) {
       // The 5-minute pending token lapsed — back to the password step.
       setMfaToken(null);

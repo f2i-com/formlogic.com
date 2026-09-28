@@ -14,6 +14,7 @@ import { LegalPage } from './pages/LegalPage';
 import { AcceptInvite } from './pages/AcceptInvite';
 import { ForgotPassword } from './pages/ForgotPassword';
 import { ResetPassword } from './pages/ResetPassword';
+import { SignedInRedirect } from './components/auth/SignedInRedirect';
 import { useAuthStore } from './stores/authStore';
 import { useFormStore } from './stores/formStore';
 import { useUIStore } from './stores/uiStore';
@@ -463,9 +464,10 @@ function AppRoutes() {
         <Route path="/apps/:appId/deploy" element={<AppDeploySettings />} />
       </Route>
 
-      {/* Redirect authenticated users from auth pages */}
-      <Route path="/login" element={<Navigate to="/" replace />} />
-      <Route path="/signup" element={<Navigate to="/" replace />} />
+      {/* Redirect authenticated users from auth pages: on to the page that sent them there
+          (?redirect=, e.g. an OAuth consent), where Login is navigating too, else home */}
+      <Route path="/login" element={<SignedInRedirect />} />
+      <Route path="/signup" element={<SignedInRedirect />} />
       {/* App invitation acceptance (logged-in users) */}
       <Route path="/accept-invite" element={<AcceptInvite />} />
       {/* OAuth consent for external AI connectors (full screen, no shell) */}
