@@ -364,7 +364,7 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
     expect(sttValues).toContain('provider:openai-transcribe');
     expect(sttValues).not.toContain('provider:openai-codex-agent');
     expect(Array.from(tts.options).map((option) => option.value)).not.toContain('provider:openai-transcribe');
-    expect(stt.parentElement?.textContent).toContain('models and API credentials are configured once');
+    expect(stt.parentElement?.textContent).toContain('Provider models and API keys are set once in OAIY');
 
     stt.value = 'provider:openai-transcribe';
     stt.dispatchEvent(new res.dom.window.Event('change', { bubbles: true }));
@@ -567,7 +567,7 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
     const { root } = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
     await flush(60);
     expect(root.querySelector('.running .greet')?.textContent).toBe('Greeting: "Gday mate!"');
-    expect(root.querySelector('[data-running-mode]')?.textContent).toContain('Standard STT -> LLM -> TTS');
+    expect(root.querySelector('[data-running-mode]')?.textContent).toContain("Aokie's own speech (STT -> LLM -> TTS)");
     expect(root.querySelector('[data-running-provider]')?.textContent).toContain('Automatic / built-in');
     expect(root.querySelector('[data-running-model]')?.textContent).toContain('gemma-4');
     expect(root.querySelector('[data-running-voice]')?.textContent).toContain('amy');
@@ -607,7 +607,7 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
     await flush(60);
 
     expect(res.root.querySelector('.running .muted')?.textContent).toContain(
-      'Aokie is stopped or restarting in FormLogic Desktop',
+      'Aokie is stopped or restarting in OAIY',
     );
     const refresh = res.root.querySelector('[data-act="refresh-running"]') as HTMLButtonElement;
     expect(refresh.disabled).toBe(false);
@@ -616,7 +616,7 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
 
     expect(calls.get).toBe(2);
     expect(res.root.querySelector('[data-running-mode]')?.textContent).toContain(
-      'OpenAI Realtime via FormLogic Desktop',
+      'Realtime provider via OAIY',
     );
     expect(res.root.querySelector('[data-running-provider]')?.textContent).toContain(
       'OpenAI GPT-Realtime-2.1 mini',
@@ -663,7 +663,7 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
 
     (res.root.querySelector('[data-act="refresh-running"]') as HTMLButtonElement).click();
     await flush(80);
-    expect(res.root.textContent).toContain('Aokie rejected the live settings read');
+    expect(res.root.textContent).toContain('Aokie refused the live settings read');
     expect(res.root.textContent).not.toContain('secret-token');
     expect(res.root.textContent).not.toContain('private.example.test');
   });
@@ -763,6 +763,12 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
     const res = await runScreen(AOKIE_RECEPTIONIST_SETTINGS_SCREEN, fl);
     await flush(60);
     const root = res.root;
+    // A new record starts on OAIY, where the audio card gives way to OAIY's
+    // own settings: pick Aokie's own speech so both card saves exist.
+    const aokie = root.querySelector('input[data-route="aokie"]') as HTMLInputElement;
+    aokie.checked = true;
+    aokie.dispatchEvent(new res.dom.window.Event('change', { bubbles: true }));
+    await flush(30);
 
     (root.querySelector('[data-act="save-audio"]') as HTMLButtonElement).click();
     (root.querySelector('[data-act="save-screening"]') as HTMLButtonElement).click();
@@ -775,10 +781,11 @@ describe('receptionist settings screen (TSX, compiled artifact)', () => {
       'business_name', 'instructions', 'business_info', 'greeting', 'model',
       'llm_endpoint', 'stt_endpoint', 'tts_endpoint', 'llm_source', 'stt_source', 'tts_source',
       'correction_source', 'correction_endpoint', 'background_ai_source', 'background_ai_model',
-      'voice', 'reply_mode', 'active',
+      'voice', 'reply_mode', 'active', 'call_route',
     ]) {
       expect(k in created, `create payload missing draft key ${k}`).toBe(true);
     }
+    expect(created.call_route).toBe('aokie');
     // The second saver waited for the shared create then updated the SAME record.
     expect(calls.update.length).toBe(1);
     expect(calls.update[0].id).toBe('rec-new-1');

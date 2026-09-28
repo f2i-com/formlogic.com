@@ -22,7 +22,9 @@ import {
   AI_GATEWAY_BASE,
   composeAgentPayload,
   DEFAULT_PERSONA,
+  liveRoute,
   type Draft,
+  type LiveRoute,
   type SourceService,
 } from './agentPayload';
 import {
@@ -61,7 +63,10 @@ export interface RunningInfo {
   voice: string;
   model: string;
   aiReceptionist: boolean;
-  voiceMode: 'flow' | 'standard' | 'desktop_realtime';
+  /** Where the SAVED Aokie settings send calls (the plugin applies a route
+   *  change when it next starts). */
+  route: LiveRoute;
+  voiceMode: 'flow' | 'standard' | 'desktop_realtime' | 'oaiy';
   voiceModeLabel: string;
   providerLabel: string;
   realtimeVoice: string;
@@ -126,6 +131,28 @@ export interface BusyFlags {
   apply?: boolean;
 }
 
+/** The linked desktop, as the owner's registry last saw it (null = unknown:
+ *  a member cannot read the registry, or there is no linked desktop). */
+export interface DesktopSeen {
+  deviceName: string;
+  lastSeenAt: string | null;
+}
+
+/** What OAIY reports about itself through its AI gateway's source list
+ *  (FormLogic.aiSources): its call voice service and its provider's model.
+ *  Empty strings = not reported (an older OAIY, or no listing here). */
+export interface OaiyReport {
+  voiceStatus: string;
+  model: string;
+}
+
+/** The outcome of the last push to Aokie that the operator should see:
+ *  ok, a step still to take (restart, consent), or not applied at all. */
+export interface ApplyNote {
+  tone: 'ok' | 'warn' | 'bad';
+  text: string;
+}
+
 export interface ScreenState {
   presence: { kind: string };
   demo: boolean;
@@ -147,6 +174,15 @@ export interface ScreenState {
   screening: ScreeningState;
   showAdvanced: boolean;
   busy: BusyFlags;
+  /** The raw live settings bag from the last good settings.get (null = none). */
+  live: Record<string, unknown> | null;
+  /** The record had no route and Aokie already sends calls to OAIY: the draft
+   *  now says so, pending a save that records it for the follow-ups. */
+  routeAdopted: boolean;
+  /** The other-routes disclosure in the route card. */
+  showOtherRoutes: boolean;
+  desktop: DesktopSeen | null;
+  applyNote: ApplyNote | null;
 }
 
 export const EMPTY: Draft = {
@@ -168,6 +204,9 @@ export const EMPTY: Draft = {
   voice: '',
   reply_mode: 'agent',
   active: 'yes',
+  // A NEW record starts on OAIY, the recommended route. A saved record
+  // without the field loads as '' (loadRecord), so no existing route moves.
+  call_route: 'oaiy',
 };
 
 export const state: ScreenState = {
@@ -209,6 +248,11 @@ export const state: ScreenState = {
   },
   showAdvanced: false,
   busy: {},
+  live: null,
+  routeAdopted: false,
+  showOtherRoutes: false,
+  desktop: null,
+  applyNote: null,
 };
 
 // -- re-render notification (replaces the original's whole-tree repaints).
@@ -257,6 +301,68 @@ export function services(): SourceService[] | undefined {
 
 export function dirty(): boolean {
   return JSON.stringify(state.draft) !== JSON.stringify(state.saved);
+}
+
+/** The route the draft names ('oaiy' | 'aokie' | ''). */
+export function route(): string {
+  return String(d().call_route || '').trim();
+}
+
+/** The draft sends calls to OAIY: the lanes, voice and model are OAIY's. */
+export function onOaiy(): boolean {
+  return route() === 'oaiy';
+}
+
+/** Where the saved Aokie settings send calls, as last read ('unknown' before
+ *  a read, or when it failed). */
+export function liveCallRoute(): LiveRoute {
+  return liveRoute(state.live);
+}
+
+/** OAIY's own report through its gateway's source list: the OAIY Voice
+ *  service's run state and the model its provider answers with. */
+export function oaiyReport(): OaiyReport {
+  const out: OaiyReport = { voiceStatus: '', model: '' };
+  const all = state.aiSources || [];
+  for (let i = 0; i < all.length; i++) {
+    const s = all[i];
+    if (s.kind === 'service' && s.refId === 'oaiy-voice') out.voiceStatus = str(s.status);
+    if (s.kind === 'provider' && s.refId === 'oaiy' && str(s.model).trim()) out.model = str(s.model).trim();
+  }
+  return out;
+}
+
+/** "12 min ago" for a server timestamp ('' when unknown). Zone-less MySQL
+ *  stamps are UTC. */
+export function agoText(at: string | null | undefined, now: number = Date.now()): string {
+  if (!at) return '';
+  const iso = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(at) ? at.replace(' ', 'T') + 'Z' : at;
+  const ms = Date.parse(iso);
+  if (isNaN(ms)) return '';
+  const s = Math.max(0, Math.round((now - ms) / 1000));
+  if (s < 60) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return m + ' min ago';
+  const h = Math.round(m / 60);
+  if (h < 48) return h + (h === 1 ? ' hour ago' : ' hours ago');
+  return Math.round(h / 24) + ' days ago';
+}
+
+/** Is OAIY reachable from this page right now? 'yes' when a desktop answers
+ *  (this computer, or a linked one through the relay), 'no' when none does,
+ *  'unknown' before the first presence read. */
+export function reachable(): 'yes' | 'no' | 'unknown' {
+  if (state.presence.kind === 'local' || state.presence.kind === 'remote') return 'yes';
+  return state.presence.kind === 'none' ? 'no' : 'unknown';
+}
+
+/** One plain sentence for "OAIY can't be reached", with when and where it
+ *  was last seen when the owner's registry says. */
+export function unreachableText(): string {
+  const seen = state.desktop;
+  const ago = seen ? agoText(seen.lastSeenAt) : '';
+  if (seen && ago) return "OAIY can't be reached. " + seen.deviceName + ' was last seen ' + ago + '.';
+  return "OAIY can't be reached from this page.";
 }
 
 /** The engine on screen is not the one the plugin is running - the operator
@@ -317,11 +423,32 @@ function settingsGet(): Promise<Record<string, unknown>> {
 function settingsSet(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   return FormLogic.connector('aokie', 'settings.set', payload).then((o) => {
     if (o.status === 'done') return rec(o.result);
-    const errObj = o.error as unknown as { message?: string } | undefined;
-    const m = errObj && errObj.message ? errObj.message : o.status;
-    throw new Error(m);
+    throw connectorFailure(o);
   });
 }
+
+/** Why a push to Aokie did not land, in words, and never a raw transport
+ *  error: OAIY away (with when it was last seen), the relay giving up, a
+ *  lost reply, or Aokie's own refusal message. */
+function notAppliedReason(e: unknown): string {
+  const failure = e as ConnectorFailure | null;
+  const code = failure && typeof failure.code === 'string' ? failure.code : '';
+  const status = failure && typeof failure.status === 'string' ? failure.status : '';
+  if (code === 'connector_unavailable' || code === 'connector_missing') {
+    if (state.presence.kind === 'none') return unreachableText();
+    return 'Aokie is not running in OAIY.';
+  }
+  if (status === 'expired') return 'OAIY did not pick it up within a minute (it may be offline or asleep).';
+  if (status === 'uncertain') return 'OAIY took it but has not confirmed it: press Refresh to see what Aokie is running.';
+  return messageOf(e, 'Aokie refused it.');
+}
+
+/** A card's own push to Aokie failed: nothing changed on the phone. */
+function notApplied(what: string, e: unknown): string {
+  return what + ' not applied: ' + notAppliedReason(e) + ' Nothing changed on the phone; save again once OAIY is back.';
+}
+
+const ROUTE_KEYS = ['realtimeVoiceMode', 'realtimeVoiceEndpoint', 'realtimeVoiceDestination'];
 
 // -- lane picker option list (port of laneOptionsFor) --
 
@@ -388,6 +515,9 @@ function enforceCodexTextOnly(): void {
 function currentAgentPayload(): Record<string, unknown> {
   enforceCodexTextOnly();
   const payload = composeAgentPayload(d(), services(), DEFAULT_PERSONA, AI_GATEWAY_BASE);
+  // OAIY owns the model, speech and voice: the composed payload is already
+  // just the greeting, the brief and the route.
+  if (onOaiy()) return payload;
   // Defense in depth for both newly selected and previously saved Codex
   // sources: Save & apply can never carry a stale direct-audio setting into
   // this chat-only provider. The Desktop/provider boundary enforces the same
@@ -551,24 +681,27 @@ function friendlyRunningError(error: unknown): string {
 
   if (code === 'connector_unavailable') {
     if (lower.indexOf('crash') >= 0) {
-      return 'Aokie has crashed in FormLogic Desktop. Restart it, then press Refresh.';
+      return 'Aokie has crashed in OAIY. Restart it in OAIY > Plugins, then press Refresh.';
     }
     if (lower.indexOf('stopped') >= 0 || lower.indexOf('not running') >= 0 || lower.indexOf('start it') >= 0) {
-      return 'Aokie is stopped or restarting in FormLogic Desktop. Start it, then press Refresh.';
+      return 'Aokie is stopped or restarting in OAIY. Start it in OAIY > Plugins, then press Refresh.';
     }
     if (state.presence.kind === 'local') {
-      return 'FormLogic Desktop is connected, but Aokie is not available. Start or restart Aokie, then press Refresh.';
+      return 'OAIY is connected, but Aokie is not available. Start or restart Aokie in OAIY > Plugins, then press Refresh.';
     }
-    return 'No connected FormLogic Desktop can reach Aokie. Reconnect Desktop, then press Refresh.';
+    if (state.presence.kind === 'none') {
+      return unreachableText() + ' The receptionist on that computer keeps answering calls; press Refresh once it is back.';
+    }
+    return 'The linked OAIY cannot reach Aokie right now. Check OAIY, then press Refresh.';
   }
   if (status === 'expired') {
-    return 'The Desktop relay timed out before Aokie replied. Check Desktop is online, then press Refresh.';
+    return 'OAIY did not answer the relay within a minute. Check that it is online, then press Refresh.';
   }
   if (status === 'uncertain') {
-    return 'Desktop accepted the read but its reply was lost. Press Refresh to reconcile the live settings.';
+    return 'OAIY took the read but its reply was lost. Press Refresh to try again.';
   }
-  if (raw) return 'Aokie rejected the live settings read. Check it in FormLogic Desktop, then press Refresh.';
-  return 'The live settings could not be read. Check FormLogic Desktop and Aokie, then press Refresh.';
+  if (raw) return 'Aokie refused the live settings read. Check it in OAIY > Plugins > Aokie, then press Refresh.';
+  return 'The live settings could not be read. Check OAIY and Aokie, then press Refresh.';
 }
 
 function seedFromSettings(res: Record<string, unknown>): void {
@@ -626,32 +759,59 @@ function seedFromSettings(res: Record<string, unknown>): void {
     state.engine.savedEngine = str(s.ttsEngine);
   }
   state.catalog = parseCatalog(res.ttsVoiceCatalog);
+  state.live = s;
+  const where = liveRoute(s);
   const realtime = str(s.realtimeVoiceMode) === 'desktop_realtime';
+  const toOaiy = where === 'oaiy';
   const aiReceptionist = boolish(s.aiReceptionist);
   const provider = runningProvider(s, realtime);
+  const report = oaiyReport();
   state.running = {
     greeting: str(s.greeting),
     persona: str(s.persona),
-    voice: realtime ? realtimeVoiceLabel(s.realtimeVoice) : str(s.ttsVoice),
-    model: realtime ? (provider.model || 'Managed by Desktop provider') : (str(s.aiModel) || provider.model || 'Automatic'),
+    voice: toOaiy
+      ? (report.voiceStatus ? 'OAIY Voice (' + report.voiceStatus + ') - the voice chosen in OAIY' : 'The voice chosen in OAIY')
+      : realtime ? realtimeVoiceLabel(s.realtimeVoice) : str(s.ttsVoice),
+    model: toOaiy
+      ? (report.model || 'Chosen in OAIY > Engines')
+      : realtime ? (provider.model || 'Managed by the desktop provider') : (str(s.aiModel) || provider.model || 'Automatic'),
     aiReceptionist,
-    voiceMode: !aiReceptionist ? 'flow' : realtime ? 'desktop_realtime' : 'standard',
-    voiceModeLabel: !aiReceptionist
-      ? 'Flow-driven replies'
-      : realtime
-        ? 'OpenAI Realtime via FormLogic Desktop'
-        : 'Standard STT -> LLM -> TTS',
-    providerLabel: !aiReceptionist ? 'Not used for live replies' : provider.provider,
+    route: where,
+    voiceMode: toOaiy ? 'oaiy' : !aiReceptionist ? 'flow' : realtime ? 'desktop_realtime' : 'standard',
+    voiceModeLabel: toOaiy
+      ? 'OAIY (this computer)'
+      : !aiReceptionist
+        ? 'Flow-driven replies'
+        : realtime
+          ? 'Realtime provider via OAIY'
+          : "Aokie's own speech (STT -> LLM -> TTS)",
+    providerLabel: toOaiy
+      ? 'OAIY Front desk agent'
+      : !aiReceptionist ? 'Not used for live replies' : provider.provider,
     realtimeVoice: realtimeVoiceLabel(s.realtimeVoice),
     realtimeTurnDetection: realtimeTurnLabel(s.realtimeTurnDetection),
     appointmentToolsLabel: !aiReceptionist
       ? 'Handled by FormLogic flows'
-      : realtime
-        ? 'Realtime lookup + booking requests via FormLogic'
-        : 'Lookup + booking requests via FormLogic flows',
+      : toOaiy
+        ? 'Booking requests + lookups answered by FormLogic flows'
+        : realtime
+          ? 'Realtime lookup + booking requests via FormLogic'
+          : 'Lookup + booking requests via FormLogic flows',
     agentHangup: boolish(s.agentHangup),
     configVersion: typeof res.configVersion === 'number' ? res.configVersion : undefined,
   };
+  // Existing installs: a record saved before routes existed has none. When
+  // Aokie already sends calls to OAIY, the console says so and the draft
+  // follows (pending, so it is visibly unsaved until the operator saves - the
+  // follow-ups read the SAVED route to leave callbacks to OAIY). Any other
+  // live route is left alone: the route card offers "Use OAIY" instead.
+  if (
+    toOaiy && state.draft && state.saved && state.recordId
+    && String(state.saved.call_route || '').trim() === '' && route() === ''
+  ) {
+    setDraft({ call_route: 'oaiy' });
+    state.routeAdopted = true;
+  }
 }
 
 let runningReadGeneration = 0;
@@ -676,6 +836,7 @@ export function refreshRunning(): Promise<void> {
     .catch((e: unknown) => {
       if (generation !== runningReadGeneration) return;
       state.running = null;
+      state.live = null;
       state.runningError = friendlyRunningError(e);
     })
     .then(() => {
@@ -694,6 +855,9 @@ function loadRecord(): Promise<void> {
       for (const k of Object.keys(EMPTY) as Array<keyof Draft>) nd[k] = typeof a[k] === 'string' ? (a[k] as string) : EMPTY[k];
       nd.reply_mode = nd.reply_mode || 'agent';
       nd.active = nd.active || 'yes';
+      // Only a NEW record starts on OAIY. A saved record without a route (it
+      // predates the field) keeps '' = the route set in Aokie, never moved.
+      if (newest && typeof a.call_route !== 'string') nd.call_route = '';
       state.draft = nd;
       state.saved = JSON.parse(JSON.stringify(nd)) as Draft;
       // A record may have been written before this UI learned the Codex
@@ -779,7 +943,7 @@ export function saveEngine(): void {
       void toastApi().success('Speech engine updated');
     })
     .catch((e: unknown) => {
-      void toastApi().error(messageOf(e, 'Could not save the speech engine'));
+      void toastApi().error(notApplied('Speech engine', e));
     })
     .then(() => {
       state.busy.engine = false;
@@ -801,8 +965,12 @@ export function saveAudio(): void {
   };
   const p = composeAgentPayload(d(), services(), DEFAULT_PERSONA, AI_GATEWAY_BASE);
   if ('audioTranscriptEndpoint' in p) payload.audioTranscriptEndpoint = p.audioTranscriptEndpoint;
+  let pushed = false;
   settingsSet(payload)
-    .then(() => writeRecord({ correction_source: d().correction_source.trim(), correction_endpoint: d().correction_endpoint.trim() }))
+    .then(() => {
+      pushed = true;
+      return writeRecord({ correction_source: d().correction_source.trim(), correction_endpoint: d().correction_endpoint.trim() });
+    })
     .then(() => {
       // Reflect ONLY what this save persisted into the dirty baseline: on a
       // create the whole draft went in; on an update only the two correction
@@ -825,7 +993,7 @@ export function saveAudio(): void {
       void toastApi().success('Audio settings saved', 'Applies when the receptionist next reconnects.');
     })
     .catch((e: unknown) => {
-      state.err = messageOf(e, 'save failed');
+      state.err = pushed ? messageOf(e, 'save failed') : notApplied('Audio settings', e);
     })
     .then(() => {
       state.busy.audio = false;
@@ -850,7 +1018,7 @@ export function saveWaiting(): void {
       void toastApi().success('Call waiting saved', 'Applies when the receptionist next reconnects.');
     })
     .catch((e: unknown) => {
-      state.err = messageOf(e, 'save failed');
+      state.err = notApplied('Call waiting', e);
     })
     .then(() => {
       state.busy.waiting = false;
@@ -877,7 +1045,9 @@ export function saveScreening(): void {
     managerNumbers: sc.managerNumbers.trim(),
   };
   if (newPin) payload.managerPin = newPin;
+  let pushed = false;
   settingsSet(payload)
+    .then(() => (pushed = true))
     .then(() => writeRecord({
       whitelist_only: sc.whitelistOnly ? 'yes' : 'no',
       default_country_code: sc.defaultCountryCode.trim(),
@@ -907,7 +1077,7 @@ export function saveScreening(): void {
       void toastApi().success('Call screening saved', 'Applies on the next incoming call.');
     })
     .catch((e: unknown) => {
-      state.err = messageOf(e, 'save failed');
+      state.err = pushed ? messageOf(e, 'save failed') : notApplied('Call screening', e);
     })
     .then(() => {
       state.busy.screening = false;
@@ -926,7 +1096,7 @@ export function removePin(): void {
       void toastApi().success('Manager PIN removed', 'The manager line is read-only until a new PIN is set.');
     })
     .catch((e: unknown) => {
-      state.err = messageOf(e, 'save failed');
+      state.err = notApplied('Removing the PIN', e);
     })
     .then(() => {
       state.busy.screening = false;
@@ -951,31 +1121,130 @@ export function doSave(): void {
     });
 }
 
+/** What an applied payload means for the line: a route change waits for
+ *  Aokie's next start, and a destination the consent grant does not cover
+ *  pauses the receptionist until Consent is reviewed. */
+function applyOutcome(payload: Record<string, unknown>, result: Record<string, unknown>, before: LiveRoute): ApplyNote {
+  const blocked = typeof result.blocked === 'string' ? result.blocked.trim() : '';
+  const toOaiy = payload.realtimeVoiceMode === 'desktop_realtime';
+  if (blocked) {
+    return {
+      tone: 'bad',
+      text: toOaiy
+        ? "Saved, but Aokie paused the receptionist: its consent does not cover OAIY on this computer yet. In OAIY open Plugins > Aokie > Consent and accept OAIY as the destination; calls resume after that."
+        : 'Saved, but Aokie paused the receptionist until its consent covers the new destination. Review it in OAIY > Plugins > Aokie > Consent.',
+    };
+  }
+  const pending = Array.isArray(result.appliesAtReconnect) ? (result.appliesAtReconnect as unknown[]).map(String) : [];
+  const routeMoves = pending.some((k) => ROUTE_KEYS.indexOf(k) >= 0)
+    && (toOaiy ? before !== 'oaiy' : payload.realtimeVoiceMode === 'legacy' && (before === 'oaiy' || before === 'realtime'));
+  if (routeMoves) {
+    return {
+      tone: 'warn',
+      text: (toOaiy ? 'Saved. Calls move to OAIY' : "Saved. Calls move back to Aokie's own speech")
+        + ' when the receptionist restarts: restart it in OAIY > Plugins > Aokie (between calls).',
+    };
+  }
+  return { tone: 'ok', text: 'Applied. The very next call uses this configuration.' };
+}
+
 export function doSaveApply(): void {
   state.busy.apply = true;
   state.err = null;
+  state.applyNote = null;
   touch();
+  let saved = false;
+  const before = liveCallRoute();
   persistDraft()
     .then(() => {
+      saved = true;
       if (d().active === 'no') {
         void toastApi().info('Saved (marked inactive)', 'This record is inactive, so it was not pushed to the receptionist.');
         return;
       }
       // The composed payload NEVER carries a PIN: composeAgentPayload reads
-      // only the draft fields (persona/greeting/voice/model/endpoints).
-      return settingsSet(currentAgentPayload())
-        .then(refreshRunning)
+      // only the draft fields (persona/greeting/voice/model/endpoints/route).
+      const payload = currentAgentPayload();
+      return settingsSet(payload)
+        .then((result) => {
+          state.applyNote = applyOutcome(payload, result, before);
+          state.routeAdopted = false;
+          return refreshRunning();
+        })
         .then(() => {
-          void toastApi().success('Applied to the receptionist', 'The very next call uses this configuration.');
+          if (state.applyNote && state.applyNote.tone === 'ok') {
+            void toastApi().success('Applied to the receptionist', 'The very next call uses this configuration.');
+          }
         });
     })
     .catch((e: unknown) => {
-      state.err = messageOf(e, 'apply failed');
+      if (saved) {
+        // The record is saved; only the push missed. The Configure
+        // Receptionist flow re-applies the saved record on every incoming
+        // call, so it lands on its own once OAIY is back.
+        state.applyNote = {
+          tone: 'warn',
+          text: 'Saved in FormLogic, not applied yet: ' + notAppliedReason(e)
+            + ' It applies on the next incoming call once OAIY is back (the Configure Receptionist flow re-applies it).',
+        };
+      } else {
+        state.err = messageOf(e, 'apply failed');
+      }
     })
     .then(() => {
       state.busy.apply = false;
       touch();
     });
+}
+
+/** "Use OAIY": the explicit, one-click move of this receptionist to OAIY.
+ *  Sets the route and saves + applies it (a saved non-OAIY route is never
+ *  moved any other way). Without the settings.set grant it only saves: the
+ *  Configure Receptionist flow applies it on the next call. */
+export function useOaiy(): void {
+  setDraft({ call_route: 'oaiy' });
+  state.showOtherRoutes = false;
+  if (state.canSet) doSaveApply();
+  else doSave();
+}
+
+export function routeChange(value: string): void {
+  setDraft({ call_route: value === 'oaiy' || value === 'aokie' ? value : '' });
+  state.routeAdopted = false;
+  touch();
+}
+
+export function toggleOtherRoutes(open: boolean): void {
+  state.showOtherRoutes = open;
+  touch();
+}
+
+/** The owner's linked desktops, for "last seen" when OAIY is away. Owner-only
+ *  (a member's refusal, or an older host without the service lane, leaves
+ *  it unknown). Never throws. */
+function loadDesktop(): Promise<void> {
+  const sdk = FormLogic as unknown as { service?: (op: string, input?: Record<string, unknown>) => Promise<FlServiceOutcome> };
+  if (typeof sdk.service !== 'function') return Promise.resolve();
+  return sdk.service('desktop.connections.list', {})
+    .then((out) => {
+      if (!out || out.status !== 'done') return;
+      const list = rec(out.result).connections;
+      let best: DesktopSeen | null = null;
+      let bestAt = -1;
+      for (const row of Array.isArray(list) ? list : []) {
+        const r = rec(row);
+        const at = str(r.lastSeenAt);
+        const iso = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(at) ? at.replace(' ', 'T') + 'Z' : at;
+        const ms = at ? Date.parse(iso) : NaN;
+        const t = isNaN(ms) ? 0 : ms;
+        if (best === null || t > bestAt) {
+          best = { deviceName: str(r.deviceName).trim() || 'OAIY', lastSeenAt: at || null };
+          bestAt = t;
+        }
+      }
+      state.desktop = best;
+    })
+    .catch(() => undefined);
 }
 
 // -- edit actions (the original's delegated input/change/click handlers) --
@@ -1094,6 +1363,7 @@ export function unblock(num: string): void {
 
 export function discard(): void {
   state.draft = JSON.parse(JSON.stringify(state.saved)) as Draft | null;
+  state.routeAdopted = false;
   enforceCodexTextOnly();
   touch();
 }
@@ -1134,6 +1404,7 @@ export function loadAll(): Promise<void> {
           .catch(() => {
             state.aiSources = null;
           }),
+        loadDesktop(),
       ]),
     )
     .then(() => FormLogic.currentUser())

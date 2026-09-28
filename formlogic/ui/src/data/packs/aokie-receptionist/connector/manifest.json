@@ -8,6 +8,7 @@
     "dongle.setPreferred",
     "dongle.installDriver",
     "dongle.diagnostics",
+    "dongle.reset",
     "phone.status",
     "phone.startPairing",
     "phone.stopPairing",

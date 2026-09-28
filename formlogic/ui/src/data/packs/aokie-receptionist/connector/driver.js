@@ -187,6 +187,15 @@ function handleRequest(ctx, state) {
     return { result: { dongles: mockDongles() }, state: state };
   }
 
+  // Software reset of the Bluetooth dongle (no unplugging). Refused during a
+  // call exactly like the real plugin, which would drop the caller.
+  if (command === 'dongle.reset') {
+    if (state.currentCall && state.currentCall.state !== 'ended') {
+      return refuse(state, 'command_failed', 'a call is in progress: reset the dongle after it ends');
+    }
+    return { result: { accepted: true, via: 'software', phoneReconnected: true }, state: state };
+  }
+
   if (command === 'phone.status') {
     // Canonical shape (audit C-02): the device is NESTED under `device` exactly
     // like the real plugin's radio response - never a root-level deviceName the

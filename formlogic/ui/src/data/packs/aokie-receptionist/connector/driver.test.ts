@@ -398,6 +398,30 @@ describe('demo contract parity', () => {
     expect('deviceName' in res).toBe(false);
   });
 
+  it('dongle.reset answers like the real plugin: a software reset, refused during a call', async () => {
+    setFetch(vi.fn(() => Promise.reject(new Error('offline'))));
+    const names: string[] = [];
+    const unsub = subscribeDesktopEvents((e) => names.push(e.name));
+    enableSimulator('aokie');
+    const res = (await aokie.request('dongle.reset', {})) as Record<string, unknown>;
+    expect(res).toMatchObject({ accepted: true, via: 'software', phoneReconnected: true });
+
+    // Mid-call: refused typed, with the plugin's own words.
+    const releases: Array<() => void> = [];
+    const sleep = () => new Promise<void>((resolve) => { releases.push(resolve); });
+    const scriptDone = runConnectorCeremony('simulate-call', { sleep });
+    await waitUntil(() => names.includes('aokie.call.incoming'));
+    await expect(aokie.request('dongle.reset', {})).rejects.toMatchObject({
+      code: 'command_failed',
+      message: expect.stringContaining('a call is in progress: reset the dongle after it ends'),
+    });
+    const current = (await aokie.request('call.current')) as { call: { callId: string } };
+    await aokie.request('call.hangup', { callId: current.call.callId });
+    releases.splice(0).forEach((release) => release());
+    await scriptDone;
+    unsub();
+  });
+
   it('settings.get whole-object carries the ttsVoiceCatalog side key; settings.set round-trips', async () => {
     enableSimulator('aokie');
     const res = (await aokie.request('settings.get')) as {

@@ -511,9 +511,14 @@ const FLOW_MISSED_TASK = `(function () {
   if (!/^\\+\\d{1,3}$/.test(cc)) cc = '';
   var digits = phone.replace(/[\\s()-]/g, '');
   var dialNumber = (cc && /^0\\d{5,14}$/.test(digits)) ? cc + digits.slice(1) : phone;
+  // OAIY route: OAIY rings missed calls back itself (OAIY > Agent > Phone >
+  // Missed calls), so FormLogic never dials here - the same missed call must
+  // not ring twice. The task is still raised (the audit trail, and the human
+  // backstop when OAIY's callbacks are off) with a note saying who owns it.
+  var oaiyCallsBack = String(cfg.call_route || '').trim() === 'oaiy';
   // Callback only for numbers that CALLED US (by construction here), are
   // real (never withheld ids) and are not blocked customers.
-  var wantsCallback = realPhone && !blocked && !pending;
+  var wantsCallback = realPhone && !blocked && !pending && !oaiyCallsBack;
   // Phase 4 hold queue: a caller who gave up waiting in the queue is rung
   // back like a missed call, but the FIRST words own the hold - being left
   // on hold then rung back with a chirpy "we missed your call" reads tone-deaf.
@@ -559,9 +564,14 @@ const FLOW_MISSED_TASK = `(function () {
     purpose += ' They have NO upcoming bookings on record.';
   }
   purpose = purpose.replace(/[^\\x20-\\x7E]/g, '').slice(0, 990);
+  var ownerNote = ' - call back';
+  if (wantsCallback) ownerNote = ' - calling back automatically';
+  else if (oaiyCallsBack && realPhone && !blocked) {
+    ownerNote = ' - FormLogic did not ring them: OAIY calls back missed calls when that is on in OAIY > Agent > Phone. Check there before you ring them.';
+  }
   var task = {
     summary: (heldQueue ? 'Caller gave up on hold' : 'Missed call') + (phone ? ' from ' + (name ? name + ' (' + phone + ')' : phone) : '')
-      + (wantsCallback ? ' - calling back automatically' : ' - call back'),
+      + ownerNote,
     status: 'open',
     priority: 'high',
     phone: realPhone ? phone : '',
@@ -578,6 +588,7 @@ const FLOW_MISSED_TASK = `(function () {
   if (hit) task.customer_link = hit.id;
   return {
     wantsCallback: wantsCallback,
+    callbacksBy: oaiyCallsBack ? 'oaiy' : 'formlogic',
     dial: { number: dialNumber, openingLine: opening, purpose: purpose },
     task: task
   };
@@ -741,6 +752,17 @@ ${SMS_ENABLED_JS}
 // outbound-callback-result exactly as before.
 const FLOW_CALLBACK_DRAIN = `(function () {
   var out = { hasDial: false, hasTaskUpdate: false, summaryLine: '' };
+  // OAIY route: OAIY rings missed calls back itself, so the drain never
+  // dials (a callback queued before the switch stays queued, visible for a
+  // human). A caller who reaches us still closes their queued task.
+  var sNode = nodes.settings;
+  var sRows = sNode && sNode.responses ? sNode.responses : (Array.isArray(sNode) ? sNode : []);
+  var cfg = {};
+  for (var si = 0; si < sRows.length; si++) {
+    var sa = (sRows[si] && sRows[si].answers) || {};
+    if (String(sa.active || 'yes') !== 'no') { cfg = sa; break; }
+  }
+  var oaiyCallsBack = String(cfg.call_route || '').trim() === 'oaiy';
   var endedDigits = String(inputs.from || '').replace(/[^0-9]/g, '');
   var endedSuffix = endedDigits.length >= 6 ? endedDigits.slice(-9) : '';
   var isOutbound = String(inputs.direction || '') === 'outbound';
@@ -790,6 +812,12 @@ const FLOW_CALLBACK_DRAIN = `(function () {
     out.summaryLine = out.hasTaskUpdate
       ? 'Caller reached us - queued callback closed; nothing else to dial.'
       : 'No queued callbacks to dial.';
+    return out;
+  }
+  if (oaiyCallsBack) {
+    out.summaryLine = (out.hasTaskUpdate ? 'Queued callback closed (caller reached us); ' : '')
+      + 'Not dialing ' + String((best.answers || {}).phone || (best.answers || {}).callback_number || 'the queued callback')
+      + ': OAIY calls back missed calls on this route (OAIY > Agent > Phone), so a callback queued before the switch is left for a human.';
     return out;
   }
   var ba = best.answers || {};
@@ -1228,7 +1256,7 @@ export { DEFAULT_PERSONA };
 const BUSINESS_INFO_BLOCK_JS = `
   var info = String(cfg.business_info || '').trim().slice(0, 4000);
   if (info) {
-    persona += '\\n\\nBUSINESS INFO - the ONLY facts about the business you may share:\\n' + info
+    persona += (persona ? '\\n\\n' : '') + 'BUSINESS INFO - the ONLY facts about the business you may share:\\n' + info
       + '\\nAnswer questions about services, menu, prices, opening hours or policies ONLY from this info, quoting details exactly. If something is not covered here, say you will have the team confirm it - NEVER invent business details.';
   }`;
 
@@ -1283,6 +1311,15 @@ ${BUSINESS_INFO_BLOCK_JS}
 // Default-safe: 'agent' or absent/blank (incl. records saved before this field existed)
 // → true, matching the deployed settings.json (aiReceptionist: true) today; only the
 // exact value 'flow' turns it off.
+//
+// OAIY route (call_route 'oaiy', the default for new records): OAIY on this computer
+// answers. Its voice gateway hears and speaks, the model is the one chosen in OAIY's
+// Engines, and its Front desk agent does the talking, so the push carries ONLY the
+// greeting, the persona as the receptionist brief (no built-in persona fallback: the
+// Front desk has its own) and the four route keys Aokie needs together. The lanes,
+// the voice and the model are never pushed on this route. 'aokie' = Aokie's own
+// lanes, taken back from any realtime route (realtimeVoiceMode 'legacy'); '' (a
+// record saved before routes existed) leaves the realtime keys alone, as before.
 const FLOW_AGENT_CONFIG = `(function () {
   // formlogic_list_responses returns the array directly on the desktop f2i runner
   // (nodes.settings) but {responses:[...]} in the TS executor — handle both.
@@ -1293,15 +1330,33 @@ const FLOW_AGENT_CONFIG = `(function () {
     var a = (rows[i] && rows[i].answers) || {};
     if (String(a.active || 'yes') !== 'no') { cfg = a; break; }
   }
-  var persona = String(cfg.instructions || '').trim() || ${JSON.stringify(DEFAULT_PERSONA)};
+  var route = String(cfg.call_route || '').trim();
+  var toOaiy = route === 'oaiy';
+  var persona = String(cfg.instructions || '').trim() || (toOaiy ? '' : ${JSON.stringify(DEFAULT_PERSONA)});
   var business = String(cfg.business_name || '').trim();
-  if (business) persona = 'You are the phone receptionist for ' + business + '.\\n' + persona;
+  if (business) persona = 'You are the phone receptionist for ' + business + '.' + (persona ? '\\n' + persona : '');
 ${BUSINESS_INFO_BLOCK_JS}
   var greeting = String(cfg.greeting || '').trim();
   if (!greeting) {
     greeting = business
       ? 'Thank you for calling ' + business + '! How can I help you today?'
       : 'Thanks for calling! How can I help you today?';
+  }
+  if (toOaiy) {
+    return {
+      callRoute: 'oaiy',
+      persona: persona,
+      greeting: greeting,
+      aiReceptionist: true,
+      settingsPayload: {
+        persona: persona,
+        greeting: greeting,
+        aiReceptionist: true,
+        realtimeVoiceMode: 'desktop_realtime',
+        realtimeVoiceEndpoint: 'ws://127.0.0.1:17872/api/ai/providers/oaiy/v1/realtime/stream',
+        realtimeVoiceDestination: 'https://oaiy.localhost'
+      }
+    };
   }
   var replyMode = String(cfg.reply_mode || '').trim();
   // Source picks (CON-302 / SRC-203): resolve per call, against the LIVE
@@ -1369,7 +1424,9 @@ ${BUSINESS_INFO_BLOCK_JS}
   };
   if (applyAiEndpoint) settingsPayload.aiEndpoint = aiEndpoint;
   if (applyAiModel) settingsPayload.aiModel = model;
+  if (route === 'aokie') settingsPayload.realtimeVoiceMode = 'legacy';
   return {
+    callRoute: route,
     persona: persona,
     greeting: greeting,
     voice: voice,
@@ -2182,9 +2239,15 @@ const FLOW_PERSONALIZE_CALLER = `(function () {
   var whitelistOnly = String(cfg.whitelist_only || '') === 'yes';
   var reject = blockedCustomer || (whitelistOnly && !hit);
   var rejectReason = blockedCustomer ? 'blocked_customer' : (reject ? 'not_whitelisted' : '');
-  var persona = String(cfg.instructions || '').trim() || ${JSON.stringify(DEFAULT_PERSONA)};
+  // OAIY route: the overlay is the receptionist brief OAIY's Front desk agent
+  // reads for THIS caller (Aokie sends it when the call connects, and it wins
+  // over the brief from Configure Receptionist). Same rule as that flow: no
+  // built-in persona fallback, and lookups are the agent's
+  // lookup_business_data tool, never Aokie's spoken [[LOOKUP]] marker.
+  var toOaiy = String(cfg.call_route || '').trim() === 'oaiy';
+  var persona = String(cfg.instructions || '').trim() || (toOaiy ? '' : ${JSON.stringify(DEFAULT_PERSONA)});
   var business = String(cfg.business_name || '').trim();
-  if (business) persona = 'You are the phone receptionist for ' + business + '.\\n' + persona;
+  if (business) persona = 'You are the phone receptionist for ' + business + '.' + (persona ? '\\n' + persona : '');
 ${BUSINESS_INFO_BLOCK_JS}
   var greeting = String(cfg.greeting || '').trim();
   if (!greeting) {
@@ -2238,13 +2301,17 @@ ${BUSINESS_INFO_BLOCK_JS}
     calBlock = '\\n\\nBOOKINGS ON RECORD for this caller (today is ' + todayIso + '):\\n' + calLines.join('\\n')
       + '\\nAnswer questions about their bookings ONLY from this list - never invent or guess dates. requested = awaiting confirmation, confirmed = locked in.'
       + '\\nThis list is the ONLY source of booking dates. Anything about bookings or dates in the customer notes is OLD HISTORY, never a current booking.'
-      + '\\nIf they want to change or cancel one, or book another, note the details clearly; the booking is updated after the call and confirmed by text.';
+      + (toOaiy
+        ? '\\nA new booking is a request_appointment call. If they want to change or cancel one of these, note the details clearly; the booking is updated after the call and confirmed by text.'
+        : '\\nIf they want to change or cancel one, or book another, note the details clearly; the booking is updated after the call and confirmed by text.');
   } else {
     // No upcoming rows: say so explicitly - an empty block left the model
     // free to dredge old dates out of the customer notes (live report
     // 2026-07-14: a long-past 'Sunday July 12th' resurfaced as a booking).
     calBlock = '\\n\\nBOOKINGS ON RECORD for this caller (today is ' + todayIso + '): none upcoming.'
-      + '\\nIf they ask about a booking, say you do not see one coming up and offer to take a new request. Never treat dates from the customer notes as bookings.';
+      + '\\nIf they ask about a booking, say you do not see one coming up and offer to take a new request'
+      + (toOaiy ? ' (request_appointment)' : '')
+      + '. Never treat dates from the customer notes as bookings.';
   }
   // CALENDAR OCCUPANCY (2026-07-14 live business data): the WHOLE calendar's
   // next 7 days, times only - the agent can say whether a slot is taken
@@ -2278,7 +2345,9 @@ ${BUSINESS_INFO_BLOCK_JS}
   }
   var occBlock = '\\n\\nCALENDAR OCCUPANCY (next 7 days, ALL customers; these times are already TAKEN):\\n'
     + (occLines.length ? occLines.join('\\n') : '- no bookings in the next 7 days')
-    + '\\nDays not listed IN THIS 7-DAY WINDOW have no bookings yet. This list covers ONLY the next 7 days: for ANY date beyond it, run a live lookup ([[LOOKUP: ...]]) instead of guessing or deferring to the team. NEVER mention or hint at other customers. All new bookings are requests the team confirms.';
+    + '\\nDays not listed IN THIS 7-DAY WINDOW have no bookings yet. This list covers ONLY the next 7 days: for ANY date beyond it, '
+    + (toOaiy ? 'look it up with lookup_business_data' : 'run a live lookup ([[LOOKUP: ...]])')
+    + ' instead of guessing or deferring to the team. NEVER mention or hint at other customers. All new bookings are requests the team confirms.';
   // Calls-row backfill (2026-07-17): caller_name had been write-orphaned since
   // the 'Unknown caller' literal was removed - the plugin never emits a name
   // and no flow wrote one, so lists and record headers showed only the raw
@@ -3817,6 +3886,24 @@ export const aokieReceptionistPack: PackData = {
           required: false,
           properties: { placeholder: 'e.g. gpt-5-mini' },
         },
+        // Where calls go - APPENDED AT THE TAIL (live pack-upgrade field
+        // order). 'oaiy' = OAIY on this computer answers (the console's
+        // default for a new record): the Configure Receptionist flow pushes
+        // the realtime route to OAIY's voice gateway plus the greeting and
+        // the brief, and the follow-ups leave missed-call callbacks to OAIY.
+        // 'aokie' = Aokie's own speech lanes. Blank = a record saved before
+        // this field existed: the route set in Aokie is left alone. Free
+        // text rather than a dropdown so a later route never trips
+        // server-side option validation on an older install.
+        {
+          id: 'call_route',
+          type: 'short_text',
+          label: 'Where calls go (oaiy, aokie, or blank = as set in Aokie)',
+          required: false,
+          description:
+            'oaiy = OAIY on this computer answers calls: its Front desk agent talks, it hears and speaks, and it calls back missed calls when that is on in OAIY > Agent > Phone. aokie = Aokie\'s own speech lanes chosen here. Blank = keep the route set in Aokie\'s own settings. Applies when the receptionist next starts.',
+          properties: { placeholder: 'oaiy' },
+        },
       ],
       // The section IS the settings console: grouped cards, a live "what the
       // receptionist is running now" readout (settings.get) and Save & apply now
@@ -3932,6 +4019,9 @@ export const aokieReceptionistPack: PackData = {
           'connector.aokie.dongle.setPreferred',
           'connector.aokie.dongle.installDriver',
           'connector.aokie.dongle.diagnostics',
+          // Software reset of the Bluetooth dongle (no unplugging); the plugin
+          // refuses it during a call. Older plugins answer unknown-command.
+          'connector.aokie.dongle.reset',
           'connector.aokie.phone.status',
           'connector.aokie.phone.startPairing',
           'connector.aokie.phone.stopPairing',
@@ -4043,6 +4133,7 @@ export const aokieReceptionistPack: PackData = {
             { packFormId: null, permission: 'connector.aokie.dongle.setPreferred' },
             { packFormId: null, permission: 'connector.aokie.dongle.installDriver' },
             { packFormId: null, permission: 'connector.aokie.dongle.diagnostics' },
+            { packFormId: null, permission: 'connector.aokie.dongle.reset' },
             { packFormId: null, permission: 'connector.aokie.phone.status' },
             { packFormId: null, permission: 'connector.aokie.phone.startPairing' },
             { packFormId: null, permission: 'connector.aokie.phone.stopPairing' },
@@ -4161,7 +4252,7 @@ export const aokieReceptionistPack: PackData = {
       name: 'Configure Receptionist',
       slug: 'configure-receptionist',
       description:
-        "On each incoming call, read the newest Receptionist Settings record and push its persona, greeting, voice, model and reply mode to the Aokie plugin (settings.set). persona/greeting/voice/model live-reconfigure the in-plugin AI receptionist immediately, so the next call uses the new config, no flow-graph or code changes. Reply mode (aiReceptionist — built-in agent vs. this app's own Live Reply flow) is different: the plugin only reads it once when its radio starts, so this push persists the choice but only takes effect on the NEXT Aokie reconnect, not the current or next call. Safe + idempotent (settings.set just updates config), so it never double-answers the caller.",
+        "On each incoming call, read the newest Receptionist Settings record and push it to the Aokie plugin (settings.set). On the OAIY route (call_route 'oaiy', the default for new records) that is the greeting, the persona as OAIY's receptionist brief and the realtime route to OAIY's voice gateway, nothing else: OAIY owns the model, speech and voice. Otherwise it pushes the persona, greeting, voice, model, speech lanes and reply mode. persona/greeting/voice/model live-reconfigure the in-plugin AI receptionist immediately, so the next call uses the new config, no flow-graph or code changes. Reply mode (aiReceptionist — built-in agent vs. this app's own Live Reply flow) is different: the plugin only reads it once when its radio starts, so this push persists the choice but only takes effect on the NEXT Aokie reconnect, not the current or next call. Safe + idempotent (settings.set just updates config), so it never double-answers the caller.",
       nodeCapabilities: ['formlogic.responses.read', 'connector.aokie.settings.set'],
       flowJson: {
         nodes: [
@@ -4365,7 +4456,7 @@ export const aokieReceptionistPack: PackData = {
       name: 'Callback Drain',
       slug: 'callback-drain',
       description:
-        "Async on EVERY aokie.call.ended: dial the OLDEST queued callback task (open/in_progress, callback_state 'queued', stored callback_number, <12h old). Inbound endeds start the chain (the missed-call flow's own dial is typically refused while the line is busy); a finished CALLBACK chains to the NEXT queued number — several missed callers are rung back one after the other — but never redials the number it just served (outbound-callback-result owns that task's transition, so no dial loops). A caller with a queued callback who rings back and REACHES us themselves gets their task closed instead of a redundant machine ring-back. The plugin's radio guard still refuses typed if a call is up (the task stays queued for the next attempt).",
+        "Async on EVERY aokie.call.ended: dial the OLDEST queued callback task (open/in_progress, callback_state 'queued', stored callback_number, <12h old). Inbound endeds start the chain (the missed-call flow's own dial is typically refused while the line is busy); a finished CALLBACK chains to the NEXT queued number — several missed callers are rung back one after the other — but never redials the number it just served (outbound-callback-result owns that task's transition, so no dial loops). A caller with a queued callback who rings back and REACHES us themselves gets their task closed instead of a redundant machine ring-back. The plugin's radio guard still refuses typed if a call is up (the task stays queued for the next attempt). On the OAIY route (Receptionist Settings call_route 'oaiy') OAIY rings missed calls back itself, so the drain never dials: a callback queued before the switch is left for a human.",
       nodeCapabilities: ['formlogic.responses.read'],
       flowJson: {
         nodes: [
@@ -4375,12 +4466,15 @@ export const aokieReceptionistPack: PackData = {
             type: 'formlogic_list_responses',
             data: { form: '@pack:follow-up-tasks', return: 'all', limit: 20, filters: [{ field: 'callback_state', op: 'eq', value: 'queued' }] },
           },
+          // The route decides who calls back: on OAIY's the drain never dials.
+          { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
           { id: 'plan', type: 'logic_block', data: { expr: FLOW_CALLBACK_DRAIN } },
           { id: 'out', type: 'output', data: { value: { hasDial: '$nodes.plan.hasDial', dial: '$nodes.plan.dial', hasTaskUpdate: '$nodes.plan.hasTaskUpdate', taskId: '$nodes.plan.taskId', taskUpdate: '$nodes.plan.taskUpdate', summaryLine: '$nodes.plan.summaryLine' } } },
         ],
         edges: [
           { source: 'in', target: 'tasks' },
-          { source: 'tasks', target: 'plan' },
+          { source: 'tasks', target: 'settings' },
+          { source: 'settings', target: 'plan' },
           { source: 'plan', target: 'out' },
         ],
       },
@@ -5061,7 +5155,7 @@ export const aokieReceptionistPack: PackData = {
       name: 'Missed Call Follow-up',
       slug: 'missed-call-follow-up',
       description:
-        "Async after a missed aokie.call.ended (binding condition gates on the missed outcome): raise a high-priority call-back task — and, Phase 2, CALL THEM BACK. When the caller is dialable (real number, not a blocked customer, no callback already pending) the task is created with callback_state 'queued' and the binding fires call.dial with a records-composed opening line ('sorry, we just missed your call'). The plugin's guardrails (outboundEnabled kill switch — default OFF, quiet hours, daily cap) refuse the dial typed, in which case the task simply stays queued for a human. The callback call's own call.ended (direction outbound) then transitions the task via the outbound-callback-result flow.",
+        "Async after a missed aokie.call.ended (binding condition gates on the missed outcome): raise a high-priority call-back task — and, Phase 2, CALL THEM BACK. When the caller is dialable (real number, not a blocked customer, no callback already pending) the task is created with callback_state 'queued' and the binding fires call.dial with a records-composed opening line ('sorry, we just missed your call'). The plugin's guardrails (outboundEnabled kill switch — default OFF, quiet hours, daily cap) refuse the dial typed, in which case the task simply stays queued for a human. The callback call's own call.ended (direction outbound) then transitions the task via the outbound-callback-result flow. On the OAIY route (Receptionist Settings call_route 'oaiy') OAIY calls missed calls back itself (OAIY > Agent > Phone), so this flow raises the task with a note saying so and never dials: the same missed call is never rung twice.",
       nodeCapabilities: ['formlogic.responses.read'],
       flowJson: {
         nodes: [

@@ -32,7 +32,23 @@ export interface Draft {
   voice: string;
   reply_mode: string;
   active: string;
+  /** Where calls go (see CALL_ROUTES): 'oaiy' = OAIY on this computer (its
+   *  Front desk agent talks, OAIY hears and speaks); 'aokie' = Aokie's own
+   *  speech lanes picked below; '' = leave the route set in Aokie alone (a
+   *  record saved before this field existed). */
+  call_route: string;
 }
+
+/** The call routes a record can name. */
+export const CALL_ROUTES = ['oaiy', 'aokie', ''] as const;
+
+/** OAIY's realtime route, exactly as Aokie's own receptionist screen writes
+ *  it: Desktop realtime mode, the provider "oaiy" on the voice gateway's
+ *  fixed port, and OAIY on this computer as the processor the consent grant
+ *  names. OAIY ignores the provider segment but Aokie requires the shape. */
+export const OAIY_PROVIDER_ID = 'oaiy';
+export const OAIY_REALTIME_ENDPOINT = 'ws://127.0.0.1:17872/api/ai/providers/oaiy/v1/realtime/stream';
+export const OAIY_DESTINATION = 'https://oaiy.localhost';
 
 export const EMPTY_DRAFT: Draft = {
   business_name: '',
@@ -53,6 +69,10 @@ export const EMPTY_DRAFT: Draft = {
   voice: '',
   reply_mode: 'agent',
   active: 'yes',
+  // '' = what a record saved before the field existed composes to: the
+  // payload leaves Aokie's route alone. The console starts a NEW record on
+  // 'oaiy' (its own EMPTY), never an existing one.
+  call_route: '',
 };
 
 /** The lane shape buildAgentPayload resolves `service:<id>` picks against —
@@ -176,15 +196,21 @@ export function composeAgentPayload(
     }
     return url;
   }
-  let persona = d.instructions.trim() || defaultPersona;
+  const route = String(d.call_route || '').trim();
+  const toOaiy = route === 'oaiy';
+  // On the OAIY route the persona is the RECEPTIONIST BRIEF: OAIY gives it to
+  // its Front desk agent, whose own brief and call instructions come first. A
+  // blank brief stays blank (Aokie's built-in phone persona would contradict
+  // the Front desk's own identity and call rules).
+  let persona = d.instructions.trim() || (toOaiy ? '' : defaultPersona);
   const business = d.business_name.trim();
-  if (business) persona = 'You are the phone receptionist for ' + business + '.\n' + persona;
+  if (business) persona = 'You are the phone receptionist for ' + business + '.' + (persona ? '\n' + persona : '');
   // BUSINESS INFO grounding - SAME composition as the pack flows
   // (BUSINESS_INFO_BLOCK_JS in aokieReceptionistPack.ts); keep in lock-step.
   const info = d.business_info.trim().slice(0, 4000);
   if (info) {
     persona +=
-      '\n\nBUSINESS INFO - the ONLY facts about the business you may share:\n' + info +
+      (persona ? '\n\n' : '') + 'BUSINESS INFO - the ONLY facts about the business you may share:\n' + info +
       '\nAnswer questions about services, menu, prices, opening hours or policies ONLY from this info, quoting details exactly. If something is not covered here, say you will have the team confirm it - NEVER invent business details.';
   }
   let greeting = d.greeting.trim();
@@ -192,6 +218,23 @@ export function composeAgentPayload(
     greeting = business
       ? 'Thank you for calling ' + business + '! How can I help you today?'
       : 'Thanks for calling! How can I help you today?';
+  }
+  if (toOaiy) {
+    // OAIY answers: its voice gateway hears and speaks, the model is the one
+    // chosen in OAIY's Engines and the Front desk agent does the talking. The
+    // lanes, the voice and the model are OAIY's, so none of them is pushed
+    // (Aokie ignores them on this route, and a pushed lane would only fight
+    // what OAIY chose). Aokie refuses Desktop realtime without the AI
+    // receptionist on, the endpoint and the destination, so all four go
+    // together. The route keys apply when the receptionist next starts.
+    return {
+      persona,
+      greeting,
+      aiReceptionist: true,
+      realtimeVoiceMode: 'desktop_realtime',
+      realtimeVoiceEndpoint: gatewayBase.replace(/^http/, 'ws') + 'oaiy/v1/realtime/stream',
+      realtimeVoiceDestination: 'https://oaiy.localhost',
+    };
   }
   const ownsAiEndpoint = d.llm_source.trim() !== '' || d.llm_endpoint.trim() !== '';
   const ownsAiModel = ownsAiEndpoint || d.model.trim() !== '';
@@ -220,12 +263,50 @@ export function composeAgentPayload(
     audioTranscriptEndpoint: lane(d.correction_source, d.correction_endpoint, '/v1/chat/completions', true, false),
     aiReceptionist: d.reply_mode !== 'flow',
   };
+  // An explicit choice of Aokie's own speech lanes takes calls back from a
+  // realtime route (OAIY's or another provider's). A record with no route
+  // ('' - saved before routes existed) leaves the realtime keys alone.
+  if (route === 'aokie') payload.realtimeVoiceMode = 'legacy';
   // An unresolvable service pick (no Desktop list here - remote console)
   // omits its key: the per-call Configure flow resolves it on the desktop.
   for (const k of ['aiModel', 'aiEndpoint', 'sttEndpoint', 'ttsEndpoint', 'audioTranscriptEndpoint']) {
     if (payload[k] === undefined) delete payload[k];
   }
   return payload;
+}
+
+/** Where saved Aokie settings send calls, the same reading Aokie's own
+ *  receptionist screen makes (tabs/settings.js callRoute):
+ *  'oaiy'     - Desktop realtime to the provider "oaiy" (OAIY answers);
+ *  'realtime' - Desktop realtime to another provider;
+ *  'local'    - Aokie's own speech lanes with its AI receptionist;
+ *  'flows'    - no AI receptionist: flows or the operator speak;
+ *  'unknown'  - nothing to read. */
+export type LiveRoute = 'oaiy' | 'realtime' | 'local' | 'flows' | 'unknown';
+
+/** The provider id in a Desktop realtime route URL, '' for anything else. */
+export function realtimeProviderId(endpoint: unknown): string {
+  try {
+    const seg = new URL(String(endpoint || '').trim()).pathname.split('/');
+    if (
+      seg.length === 8 && seg[1] === 'api' && seg[2] === 'ai' && seg[3] === 'providers'
+      && seg[5] === 'v1' && seg[6] === 'realtime' && seg[7] === 'stream'
+    ) return decodeURIComponent(seg[4]);
+  } catch {
+    /* not a URL */
+  }
+  return '';
+}
+
+export function liveRoute(settings: Record<string, unknown> | null | undefined): LiveRoute {
+  if (!settings || typeof settings !== 'object') return 'unknown';
+  if (settings.realtimeVoiceMode === 'desktop_realtime') {
+    return realtimeProviderId(settings.realtimeVoiceEndpoint) === OAIY_PROVIDER_ID ? 'oaiy' : 'realtime';
+  }
+  const on = settings.aiReceptionist;
+  if (on === true || on === 'true') return 'local';
+  if (on === false || on === 'false') return 'flows';
+  return 'unknown';
 }
 
 /**

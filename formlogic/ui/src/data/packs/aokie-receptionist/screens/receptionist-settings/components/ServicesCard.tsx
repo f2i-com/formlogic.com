@@ -4,14 +4,11 @@
 // FormLogic.aiSources(); null listing = no local desktop (saved picks still
 // resolve per call on the desktop).
 import {
-  backgroundAiChange,
-  backgroundAiOptions,
   codexLiveCallModel,
   codexLiveCallReasoning,
   d,
   draftInput,
   isCodexFastSource,
-  isCodexLiveCallSource,
   isCodexLunaSource,
   laneChange,
   laneOptions,
@@ -65,16 +62,12 @@ export function ServicesCard() {
   const codexModel = codexLiveCallModel(d().llm_source);
   const luna = isCodexLunaSource(d().llm_source);
   const fast = isCodexFastSource(d().llm_source);
-  const backgroundOptions = backgroundAiOptions();
-  const backgroundMissing = d().background_ai_source !== ''
-    && !backgroundOptions.some((o) => o.value === d().background_ai_source);
-  const backgroundCodex = isCodexLiveCallSource(d().background_ai_source);
   return (
-    <div class="card">
-      <h2>Connected services</h2>
+    <section class="card" data-lanes>
+      <h2>{"Aokie's speech & model"}</h2>
       <p class="hint" style="margin-top:0">
-        {"Which engine answers, hears and speaks. Picks resolve to the service's live address on every call. AI providers route through the desktop's AI gateway."
-          + (state.aiSources === null ? ' Connect FormLogic Desktop on this machine to pick services by name - saved picks still resolve per call on the desktop.' : '')}
+        {"Which model answers, and what hears and speaks, when Aokie's own speech takes the call. Picks resolve to the service's live address on every call; AI providers route through OAIY's AI gateway."
+          + (state.aiSources === null ? ' Connect OAIY on this computer to pick services by name - saved picks still resolve per call on the desktop.' : '')}
       </p>
       <LaneField
         lane="llm"
@@ -117,7 +110,7 @@ export function ServicesCard() {
         source={d().stt_source}
         endpoint={d().stt_endpoint}
         placeholder="e.g. http://127.0.0.1:17921/v1/audio/transcriptions"
-        hint="Provider models and API credentials are configured once in FormLogic Desktop Services. Desktop injects the selected profile's model and credential; built-in, local-service and custom-URL fallbacks remain available."
+        hint="Provider models and API keys are set once in OAIY, which adds the selected profile's model and key; built-in, local-service and custom-URL fallbacks remain available."
       />
       <LaneField
         lane="tts"
@@ -127,46 +120,6 @@ export function ServicesCard() {
         placeholder="e.g. http://127.0.0.1:17922/v1/audio/speech"
         hint=""
       />
-      <div class="subsection" data-background-ai>
-        <h3>Background AI</h3>
-        <p class="hint">
-          Used after or between calls for SMS drafts, follow-up decisions, booking extraction and call summaries. It never answers the caller, so ChatGPT via Codex can be selected here without adding delay to live conversations. API keys stay in Desktop Services.
-        </p>
-        <label class="f">
-          <span class="lbl">Background AI provider</span>
-          <select
-            data-d="background_ai_source"
-            value={d().background_ai_source}
-            onChange={(e) => backgroundAiChange(e.currentTarget.value)}
-          >
-            {backgroundMissing ? (
-              <option value={d().background_ai_source}>
-                {'AI provider: ' + d().background_ai_source.replace('provider:', '')
-                  + (state.aiSources === null ? ' (saved)' : ' (not found)')}
-              </option>
-            ) : null}
-            {backgroundOptions.map((o) => <option value={o.value}>{o.label}</option>)}
-          </select>
-          <span class="hint">Configure or reuse the provider credential in FormLogic Desktop - Services. This record saves only its provider reference.</span>
-        </label>
-        {!backgroundCodex ? (
-          <label class="f">
-            <span class="lbl">Background model override</span>
-            <input
-              type="text"
-              data-d="background_ai_model"
-              value={d().background_ai_model}
-              placeholder="blank = provider profile default"
-              onInput={(e) => draftInput('background_ai_model', e.currentTarget.value)}
-            />
-            <span class="hint">Optional. Leave blank to reuse the model configured on the selected provider.</span>
-          </label>
-        ) : (
-          <p class="hint" data-background-codex-note>
-            This delegated ChatGPT/Codex route chooses its supported model and reasoning mode automatically. It is used only for background text work here.
-          </p>
-        )}
-      </div>
-    </div>
+    </section>
   );
 }

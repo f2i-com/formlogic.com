@@ -21,6 +21,9 @@ export function ScreeningCard() {
     <div class="card">
       <h2>Call screening</h2>
       <p class="muted">Who gets through. Screened callers hear a short message (or nothing) and the call ends - no greeting, no AI. Changes apply on the next incoming call.</p>
+      <p class="hint" data-screening-shared>
+        {"These are Aokie's own screening settings. OAIY > Agent > Phone > Who is answered edits the same blocked numbers, accept filter and private-number setting, so whichever is saved last is what Aokie uses."}
+      </p>
       {/* First, and not buried: this is the one control that stops every
           outbound text at once. Outbound DIALLING has had a kill switch since
           Phase 2; this is its counterpart for SMS. */}

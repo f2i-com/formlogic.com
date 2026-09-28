@@ -2725,9 +2725,19 @@ describe('aokieReceptionistPack â€” Phase 0.5 record-driven screening & SMS
     it('Receptionist Settings appends an independent background provider reference and optional model override', () => {
       const settings = pack.forms.find((f) => f.packFormId === 'receptionist-settings')!;
       const ids = settings.fields.map((field) => field.id);
-      expect(ids.slice(-2)).toEqual(['background_ai_source', 'background_ai_model']);
+      expect(ids.slice(-3, -1)).toEqual(['background_ai_source', 'background_ai_model']);
       expect(settings.fields.find((field) => field.id === 'background_ai_source')?.type).toBe('short_text');
       expect(settings.fields.find((field) => field.id === 'background_ai_model')?.type).toBe('short_text');
+    });
+
+    it('Receptionist Settings appends call_route LAST, as free text (no option validation on older installs)', () => {
+      const settings = pack.forms.find((f) => f.packFormId === 'receptionist-settings')!;
+      const ids = settings.fields.map((field) => field.id);
+      expect(ids[ids.length - 1]).toBe('call_route');
+      const field = settings.fields.find((f) => f.id === 'call_route')!;
+      expect(field.type).toBe('short_text');
+      expect(field.required).toBe(false);
+      expect(field.description ?? '').toMatch(/OAIY > Agent > Phone/);
     });
   });
 });

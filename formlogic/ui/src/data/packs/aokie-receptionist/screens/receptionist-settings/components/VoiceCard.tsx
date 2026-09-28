@@ -111,15 +111,8 @@ export function VoiceCard() {
           </button>
         </div>
       ) : null}
-      <div class="row2" style="margin-top:12px;border-top:1px solid var(--fl-border);padding-top:12px">
+      <div class="divided">
         <label class="f">
-          <span class="lbl">Active</span>
-          <select data-d="active" value={d().active} onChange={(e) => draftInput('active', e.currentTarget.value)}>
-            <option value="yes">Yes - use these settings</option>
-            <option value="no">No - fall back to defaults</option>
-          </select>
-        </label>
-        <label class="f" style="grid-column:1/-1">
           <span class="lbl">Who answers the caller</span>
           <select data-d="reply_mode" value={d().reply_mode} onChange={(e) => draftInput('reply_mode', e.currentTarget.value)}>
             <option value="agent">Built-in AI agent (recommended - fast, on-device)</option>

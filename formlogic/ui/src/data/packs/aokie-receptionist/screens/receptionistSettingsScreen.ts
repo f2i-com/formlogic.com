@@ -43,11 +43,15 @@ import settingsStoreTs from './receptionist-settings/store.ts?raw';
 import settingsHelpersTs from './receptionist-settings/helpers.ts?raw';
 import settingsAgentPayloadTs from './receptionist-settings/agentPayload.ts?raw';
 import settingsCss from './receptionist-settings/styles.css?raw';
+import oaiyCardTsx from './receptionist-settings/components/OaiyCard.tsx?raw';
 import runningCardTsx from './receptionist-settings/components/RunningCard.tsx?raw';
+import routeCardTsx from './receptionist-settings/components/RouteCard.tsx?raw';
 import businessCardTsx from './receptionist-settings/components/BusinessCard.tsx?raw';
 import personalityCardTsx from './receptionist-settings/components/PersonalityCard.tsx?raw';
+import setInOaiyCardTsx from './receptionist-settings/components/SetInOaiyCard.tsx?raw';
 import voiceCardTsx from './receptionist-settings/components/VoiceCard.tsx?raw';
 import servicesCardTsx from './receptionist-settings/components/ServicesCard.tsx?raw';
+import backgroundAiCardTsx from './receptionist-settings/components/BackgroundAiCard.tsx?raw';
 import audioCardTsx from './receptionist-settings/components/AudioCard.tsx?raw';
 import waitingCardTsx from './receptionist-settings/components/WaitingCard.tsx?raw';
 import screeningCardTsx from './receptionist-settings/components/ScreeningCard.tsx?raw';
@@ -70,11 +74,15 @@ export const AOKIE_RECEPTIONIST_SETTINGS_SCREEN = {
     { path: 'store.ts', content: settingsStoreTs },
     { path: 'helpers.ts', content: settingsHelpersTs },
     { path: 'agentPayload.ts', content: settingsAgentPayloadTs },
+    { path: 'components/OaiyCard.tsx', content: oaiyCardTsx },
     { path: 'components/RunningCard.tsx', content: runningCardTsx },
+    { path: 'components/RouteCard.tsx', content: routeCardTsx },
     { path: 'components/BusinessCard.tsx', content: businessCardTsx },
     { path: 'components/PersonalityCard.tsx', content: personalityCardTsx },
+    { path: 'components/SetInOaiyCard.tsx', content: setInOaiyCardTsx },
     { path: 'components/VoiceCard.tsx', content: voiceCardTsx },
     { path: 'components/ServicesCard.tsx', content: servicesCardTsx },
+    { path: 'components/BackgroundAiCard.tsx', content: backgroundAiCardTsx },
     { path: 'components/AudioCard.tsx', content: audioCardTsx },
     { path: 'components/WaitingCard.tsx', content: waitingCardTsx },
     { path: 'components/ScreeningCard.tsx', content: screeningCardTsx },
