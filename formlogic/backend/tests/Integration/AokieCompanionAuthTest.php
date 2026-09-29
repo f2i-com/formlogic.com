@@ -2505,6 +2505,39 @@ final class AokieCompanionAuthTest extends TestCase
         });
     }
 
+    public function testALapsedEntryThatListsStunAndTurnTogetherStillGivesEverySurfaceItsStunUrl(): void
+    {
+        // The single-entry shape Aokie's self-host README documents (stun:, turn: and turns: URLs under one
+        // credential): when that credential lapses, its STUN URL must survive, not vanish with the entry.
+        $device = $this->iceDevice();
+        $healthy = $this->iceSurfaces($device);
+
+        $this->withIceSettings([
+            'AOKIE_COMPANION_ICE_SERVERS_JSON' => json_encode([[
+                'urls' => [
+                    'stun:turn.example.test:3478',
+                    'turn:turn.example.test:3478?transport=udp',
+                    'turns:turn.example.test:5349?transport=tcp',
+                ],
+                'username' => 'lapsed-user',
+                'credential' => 'lapsed-secret',
+                'expiresAt' => time() - 1,
+            ]], JSON_UNESCAPED_SLASHES),
+        ], function (callable $log) use ($device, $healthy): void {
+            foreach ($this->iceSurfaces($device) as $surface => $body) {
+                $this->assertSame(200, $body['status'], $surface . ': ' . json_encode($body));
+                $this->assertSame([['urls' => ['stun:turn.example.test:3478'], 'username' => '', 'credential' => '']], $body['iceServers'], $surface);
+                $this->assertFalse($body['relayOnly'], $surface);
+                $this->assertNull($body['turnCredentialExpiresAt'], $surface);
+                $this->assertSame(array_keys($healthy[$surface]), array_keys($body), $surface . ' keeps its exact member list');
+            }
+
+            $written = $log();
+            $this->assertStringContainsString('entry 1, turn:turn.example.test:3478?transport=udp', $written, 'the warning names a TURN URL');
+            $this->assertStringNotContainsString('lapsed-secret', $written);
+        });
+    }
+
     public function testAListWhoseEveryTurnEntryLapsedIsJustTheUnconfiguredBootstrap(): void
     {
         $device = $this->iceDevice();

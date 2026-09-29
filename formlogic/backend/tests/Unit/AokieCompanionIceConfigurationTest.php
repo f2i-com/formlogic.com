@@ -260,6 +260,85 @@ final class AokieCompanionIceConfigurationTest extends TestCase
         $this->assertCount(1, self::withList([self::turn(self::NOW + 31)])->forDiscovery(self::NOW)['servers']);
     }
 
+    /**
+     * The one-entry shape Aokie's self-host README and reference minter (mint_credentials.py, mint_turn)
+     * give: STUN and TURN URLs listed together, sharing one credential and one expiry.
+     */
+    private const TOGETHER_URLS = [
+        'stun:turn.example.test:3478',
+        'turn:turn.example.test:3478?transport=udp',
+        'turns:turn.example.test:5349?transport=tcp',
+    ];
+
+    public function testAnEntryThatListsStunAndTurnTogetherIsAcceptedWholeWhileItsCredentialLasts(): void
+    {
+        $entry = self::turn(self::NOW + 600, ['urls' => self::TOGETHER_URLS]);
+
+        $result = self::withList([$entry])->forDiscovery(self::NOW);
+
+        $this->assertSame([$entry], $result['servers']);
+        $this->assertSame(self::NOW + 600, $result['expiresAt']);
+    }
+
+    public function testALapsedEntryThatListsStunAndTurnTogetherKeepsItsStunUrls(): void
+    {
+        $log = [];
+        $result = self::withList([
+            self::turn(self::NOW - 10, ['urls' => self::TOGETHER_URLS, 'username' => 'lapsed-user', 'credential' => 'lapsed-secret']),
+        ], '', $log)->forDiscovery(self::NOW);
+
+        // Only what needed the credential goes; the STUN URL needs none, so phones still connect directly.
+        $this->assertSame([['urls' => ['stun:turn.example.test:3478'], 'username' => '', 'credential' => '']], $result['servers']);
+        $this->assertNull($result['expiresAt'], 'no TURN URL is left to expire');
+        $this->assertFalse($result['relayOnly']);
+
+        $this->assertCount(1, $log);
+        $this->assertStringContainsString('1 TURN entry', $log[0]);
+        $this->assertStringContainsString('entry 1, turn:turn.example.test:3478?transport=udp', $log[0], 'named by its first TURN URL, not the STUN one it shares the entry with');
+        $this->assertStringNotContainsString('entry 1, stun:', $log[0]);
+        $this->assertStringNotContainsString('lapsed-secret', $log[0]);
+        $this->assertStringNotContainsString('lapsed-user', $log[0]);
+    }
+
+    public function testTheStunUrlsOfALapsedEntryStayInItsPlace(): void
+    {
+        $result = self::withList([
+            ['urls' => ['stun:first.example.test:3478']],
+            self::turn(self::NOW - 1, ['urls' => ['stuns:second.example.test:5349', 'turns:second.example.test:5349?transport=tcp']]),
+            self::turn(self::NOW + 900, ['urls' => ['turn:third.example.test:3478']]),
+        ])->forDiscovery(self::NOW);
+
+        $this->assertSame([
+            ['urls' => ['stun:first.example.test:3478'], 'username' => '', 'credential' => ''],
+            ['urls' => ['stuns:second.example.test:5349'], 'username' => '', 'credential' => ''],
+            [
+                'urls' => ['turn:third.example.test:3478'],
+                'username' => 'temporary-user',
+                'credential' => 'temporary-secret',
+                'expiresAt' => self::NOW + 900,
+            ],
+        ], $result['servers']);
+        $this->assertSame(self::NOW + 900, $result['expiresAt']);
+    }
+
+    public function testKeepingStunUrlsNeverGrowsTheListPastItsCap(): void
+    {
+        $lapsed = array_fill(0, AokieCompanionIceConfiguration::MAX_SERVERS, self::turn(self::NOW - 1, ['urls' => self::TOGETHER_URLS]));
+
+        $result = self::withList($lapsed)->forDiscovery(self::NOW);
+
+        $this->assertCount(AokieCompanionIceConfiguration::MAX_SERVERS, $result['servers']);
+        foreach ($result['servers'] as $server) {
+            $this->assertSame(['urls' => ['stun:turn.example.test:3478'], 'username' => '', 'credential' => ''], $server);
+        }
+    }
+
+    public function testRelayOnlyStillFailsWhenTheTogetherEntryHasLapsedBecauseItsStunUrlIsNoRelay(): void
+    {
+        $this->expectException(\UnexpectedValueException::class);
+        self::withList([self::turn(self::NOW - 1, ['urls' => self::TOGETHER_URLS])], 'true')->forDiscovery(self::NOW);
+    }
+
     public function testNothingIsLoggedWhenNothingHasLapsed(): void
     {
         $log = [];

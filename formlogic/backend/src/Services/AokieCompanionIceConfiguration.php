@@ -26,9 +26,11 @@ namespace FormLogic\Services;
  *  2. A static list (AOKIE_COMPANION_ICE_SERVERS_JSON) whose TURN entries carry an `expiresAt`. A
  *     malformed list fails closed, with an \UnexpectedValueException that says why in the log (the
  *     Companion only ever sees a 503). A TURN entry whose credential has LAPSED no longer takes
- *     every discovery and admission down with it: it is left out, a warning is logged, and every
- *     STUN and unexpired TURN entry still applies — STUN alone still lets phones connect directly.
- *     Only a relay-only deployment, which cannot work without TURN, keeps failing.
+ *     every discovery and admission down with it: its TURN URLs are left out, a warning is logged,
+ *     and every STUN URL and unexpired TURN entry still applies — STUN alone still lets phones
+ *     connect directly. That includes the STUN URLs an entry lists alongside its TURN ones (the
+ *     one-entry shape in Aokie's self-host README): they stay, as an entry of their own. Only a
+ *     relay-only deployment, which cannot work without TURN, keeps failing.
  *
  * Discovery is public and unauthenticated, so it never mints a credential per request. It lists the
  * STUN URLs and, only when the deployment is relay-only — the Companion refuses such a document
@@ -258,7 +260,7 @@ final class AokieCompanionIceConfiguration
         $validated = [];
         $turnExpiry = null;
         $hasTurnServer = false;
-        /** @var list<array{int,string,int}> $lapsed entry position, its first URL, when its credential ran out */
+        /** @var list<array{int,string,int}> $lapsed entry position, its first TURN URL, when its credential ran out */
         $lapsed = [];
         foreach ($servers as $position => $server) {
             if (!is_array($server)
@@ -270,13 +272,17 @@ final class AokieCompanionIceConfiguration
                 throw new \UnexpectedValueException('ICE server shape is invalid');
             }
             $urls = [];
-            $hasTurn = false;
+            $stunUrls = [];
+            $firstTurnUrl = null;
             foreach ($server['urls'] as $url) {
                 if (self::urlIsTurn(self::checkedUrl($url))) {
-                    $hasTurn = true;
+                    $firstTurnUrl ??= $url;
+                } else {
+                    $stunUrls[] = $url;
                 }
                 $urls[] = $url;
             }
+            $hasTurn = $firstTurnUrl !== null;
             $username = $server['username'] ?? '';
             $credential = $server['credential'] ?? '';
             if (!is_string($username)
@@ -301,8 +307,14 @@ final class AokieCompanionIceConfiguration
                     throw new \UnexpectedValueException('TURN credentials require an expiresAt Unix timestamp 31 seconds to 24 hours in the future');
                 }
                 if ($expiresAt <= $now + self::TURN_MIN_REMAINING_SECONDS) {
-                    // Lapsed (or about to be: the Companion refuses one with 30 seconds left).
-                    $lapsed[] = [$position, $urls[0], $expiresAt];
+                    // Lapsed (or about to be: the Companion refuses one with 30 seconds left). Only the
+                    // TURN URLs needed the credential. Aokie's self-host README lists STUN and TURN URLs
+                    // together in one entry, and a STUN URL needs none, so it stays where it was, without
+                    // the credential the Companion refuses on a STUN-only entry.
+                    $lapsed[] = [$position, $firstTurnUrl, $expiresAt];
+                    if ($stunUrls !== []) {
+                        $validated[] = ['urls' => $stunUrls, 'username' => '', 'credential' => ''];
+                    }
                     continue;
                 }
                 $hasTurnServer = true;
@@ -315,7 +327,7 @@ final class AokieCompanionIceConfiguration
         }
         if ($lapsed !== []) {
             $this->warn(sprintf(
-                '%d TURN %s in AOKIE_COMPANION_ICE_SERVERS_JSON lapsed and %s left out (%s); every STUN and unexpired TURN entry still applies. '
+                '%d TURN %s in AOKIE_COMPANION_ICE_SERVERS_JSON lapsed and %s left out (%s); every STUN URL (including any listed inside a lapsed entry) and every unexpired TURN entry still applies. '
                 . 'Renew the credentials in that list, or set AOKIE_COMPANION_TURN_REST_SECRET and AOKIE_COMPANION_TURN_REST_URLS so FormLogic mints them itself.',
                 count($lapsed),
                 count($lapsed) === 1 ? 'entry' : 'entries',
