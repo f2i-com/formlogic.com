@@ -20,6 +20,7 @@ use FormLogic\Services\McpOAuthService;
 use FormLogic\Services\McpTokenService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\SigningService;
+use FormLogic\Services\ThrottledLog;
 use PDO;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
@@ -2402,17 +2403,30 @@ final class AokieCompanionAuthTest extends TestCase
         ]], JSON_UNESCAPED_SLASHES);
     }
 
+    /**
+     * The ICE warnings are written once a minute per message, and what remembers that is a marker file:
+     * forget them, so what one test logs never hides what the next one expects to read.
+     */
+    private static function forgetThrottledWarnings(): void
+    {
+        foreach (glob(sys_get_temp_dir() . DIRECTORY_SEPARATOR . ThrottledLog::MARKER_PREFIX . '*') ?: [] as $marker) {
+            @unlink($marker);
+        }
+    }
+
     /** Run $body with the ICE settings given, the PHP error log captured, and everything restored after. */
     private function withIceSettings(array $settings, callable $body): void
     {
         $logFile = tempnam(sys_get_temp_dir(), 'ice-log-');
         $previousLog = ini_set('error_log', $logFile);
+        self::forgetThrottledWarnings();
         foreach ($settings as $name => $value) {
             self::setEnvironment($name, $value);
         }
         try {
             $body(fn (): string => (string) file_get_contents($logFile));
         } finally {
+            self::forgetThrottledWarnings();
             self::setEnvironment('AOKIE_COMPANION_ICE_SERVERS_JSON', self::validIceServersJson());
             foreach (['AOKIE_COMPANION_RELAY_ONLY', 'AOKIE_COMPANION_TURN_REST_SECRET', 'AOKIE_COMPANION_TURN_REST_URLS', 'AOKIE_COMPANION_TURN_REST_TTL_SECONDS'] as $name) {
                 self::setEnvironment($name, '');
@@ -2535,6 +2549,26 @@ final class AokieCompanionAuthTest extends TestCase
             $written = $log();
             $this->assertStringContainsString('entry 1, turn:turn.example.test:3478?transport=udp', $written, 'the warning names a TURN URL');
             $this->assertStringNotContainsString('lapsed-secret', $written);
+        });
+    }
+
+    public function testALapseIsWrittenToTheLogOnceNotOnEveryRequest(): void
+    {
+        // Discovery is public and unlimited, and every connected phone asks for an admission about once
+        // a minute: a lapse that lasts would otherwise put a line in the PHP error log for each of them.
+        $device = $this->iceDevice();
+        $this->withIceSettings([
+            'AOKIE_COMPANION_ICE_SERVERS_JSON' => json_encode([[
+                'urls' => ['turn:turn.example.test:3478?transport=udp'],
+                'username' => 'lapsed-user',
+                'credential' => 'lapsed-secret',
+                'expiresAt' => time() - 1,
+            ]], JSON_UNESCAPED_SLASHES),
+        ], function (callable $log) use ($device): void {
+            $this->iceSurfaces($device); // discovery, a mobile admission and a plugin admission
+            $this->iceSurfaces($device); // and the same three again
+
+            $this->assertSame(1, substr_count($log(), '1 TURN entry in AOKIE_COMPANION_ICE_SERVERS_JSON lapsed'), 'six requests, one line');
         });
     }
 

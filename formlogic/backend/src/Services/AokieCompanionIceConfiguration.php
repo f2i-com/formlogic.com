@@ -37,6 +37,9 @@ namespace FormLogic\Services;
  * without a TURN entry — one shared bootstrap credential that changes once per lifetime window, so
  * every anonymous caller in a window sees the same username, just as a static list has always
  * exposed one credential. Fresh, per-endpoint credentials go to the authenticated admissions only.
+ *
+ * What it tells the operator (a lapse, a refusal and why) goes to the PHP error log, each distinct
+ * message at most once a minute however often discovery and the admissions are asked (ThrottledLog).
  */
 final class AokieCompanionIceConfiguration
 {
@@ -61,7 +64,8 @@ final class AokieCompanionIceConfiguration
      * Every value is the raw setting ('' when unset); nothing is validated until a configuration
      * is asked for, so constructing one never throws.
      *
-     * @param (callable(string): void)|null $log receives operator-facing warnings; error_log() by default
+     * @param (callable(string): void)|null $log receives every operator-facing warning; by default
+     *        they go to the PHP error log, each message at most once a minute (see ThrottledLog)
      */
     public function __construct(
         private readonly string $relayOnly = '',
@@ -71,11 +75,10 @@ final class AokieCompanionIceConfiguration
         private readonly string $turnRestTtlSeconds = '',
         ?callable $log = null,
     ) {
-        $this->log = $log !== null
-            ? \Closure::fromCallable($log)
-            : static function (string $message): void {
-                error_log($message);
-            };
+        // Discovery is public and unlimited, and each connected phone asks for an admission about once
+        // a minute: a warning that repeated on every one of them would grow the log at the rate anyone
+        // cares to hit the route.
+        $this->log = \Closure::fromCallable($log ?? ThrottledLog::forErrorLog());
     }
 
     /**

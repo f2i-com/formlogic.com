@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Tests\Unit;
 
 use FormLogic\Services\AokieCompanionIceConfiguration;
+use FormLogic\Services\ThrottledLog;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -372,6 +373,58 @@ final class AokieCompanionIceConfigurationTest extends TestCase
         $this->assertStringContainsString('lapsed', $log[0]);
         $this->assertStringContainsString('ice_configuration_invalid', $log[1]);
         $this->assertStringContainsString('relayOnly requires', $log[1]);
+    }
+
+    // ── what reaches the operator's log ──
+
+    private static function forgetThrottledWarnings(): void
+    {
+        foreach (glob(sys_get_temp_dir() . DIRECTORY_SEPARATOR . ThrottledLog::MARKER_PREFIX . '*') ?: [] as $marker) {
+            @unlink($marker);
+        }
+    }
+
+    public function testTheDefaultLogWritesAWarningOnceNotOnEveryRequest(): void
+    {
+        // Public discovery is unauthenticated and unlimited: while a fault lasts, every hit would otherwise
+        // add a line to the PHP error log.
+        $file = tempnam(sys_get_temp_dir(), 'ice-default-log-');
+        $previous = ini_set('error_log', $file);
+        self::forgetThrottledWarnings();
+        try {
+            $config = new AokieCompanionIceConfiguration('true'); // relay-only with no TURN configured: refused, and logged
+            for ($request = 0; $request < 5; $request++) {
+                try {
+                    $config->forDiscovery(self::NOW);
+                    $this->fail('relay-only with no TURN configured must be refused');
+                } catch (\UnexpectedValueException) {
+                }
+            }
+            try {
+                $config->forAdmission('mobile', 'app_test', 'device_test', self::NOW);
+            } catch (\UnexpectedValueException) {
+            }
+
+            $lines = array_values(array_filter(explode("\n", (string) file_get_contents($file))));
+            $this->assertCount(1, $lines, 'six refusals, one line');
+            $this->assertStringContainsString('ice_configuration_invalid', $lines[0]);
+        } finally {
+            self::forgetThrottledWarnings();
+            ini_set('error_log', $previous === false ? '' : $previous);
+            @unlink($file);
+        }
+    }
+
+    public function testALoggerPassedInSeesEveryWarning(): void
+    {
+        // Only the default is throttled; whoever supplies a logger decides what to do with each one.
+        $log = [];
+        $config = self::withList([self::turn(self::NOW - 1)], '', $log);
+
+        $config->forDiscovery(self::NOW);
+        $config->forDiscovery(self::NOW);
+
+        $this->assertCount(2, $log);
     }
 
     // ── TURN REST minting: the bytes coturn's use-auth-secret expects ──
