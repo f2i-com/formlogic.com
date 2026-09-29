@@ -2363,7 +2363,7 @@ final class AokieCompanionAuthTest extends TestCase
         $this->assertSame('revoked', $state->fetchColumn());
     }
 
-    public function testMissingConsentAndExpiredTurnCredentialsFailClosed(): void
+    public function testMissingConsentFailsClosed(): void
     {
         $app = self::$apps->getApp($this->appId);
         $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
@@ -2389,27 +2389,176 @@ final class AokieCompanionAuthTest extends TestCase
             'participant_identity_read',
             'audio_levels_read',
         ], $admission['scopes']);
+    }
 
-        self::setEnvironment('AOKIE_COMPANION_ICE_SERVERS_JSON', json_encode([[
+    /** The static list every test but the ICE ones runs against: one valid TURN entry. */
+    private static function validIceServersJson(): string
+    {
+        return json_encode([[
             'urls' => ['turns:turn.example.test:5349?transport=tcp'],
-            'username' => 'expired-user',
-            'credential' => 'expired-secret',
-            'expiresAt' => time() - 1,
-        ]], JSON_UNESCAPED_SLASHES));
-        try {
-            $expired = self::$controller->discovery(
-                $this->request('GET', '/.well-known/aokie-companion'),
-                (new ResponseFactory())->createResponse(),
-            );
-            $this->assertSame(503, $expired->getStatusCode());
-            $this->assertSame('ice_configuration_invalid', self::decode($expired)['code']);
-        } finally {
-            self::setEnvironment('AOKIE_COMPANION_ICE_SERVERS_JSON', json_encode([[
-                'urls' => ['turns:turn.example.test:5349?transport=tcp'],
-                'username' => 'temporary-user',
-                'credential' => 'temporary-secret',
-                'expiresAt' => time() + 3600,
-            ]], JSON_UNESCAPED_SLASHES));
+            'username' => 'temporary-user',
+            'credential' => 'temporary-secret',
+            'expiresAt' => time() + 3600,
+        ]], JSON_UNESCAPED_SLASHES);
+    }
+
+    /** Run $body with the ICE settings given, the PHP error log captured, and everything restored after. */
+    private function withIceSettings(array $settings, callable $body): void
+    {
+        $logFile = tempnam(sys_get_temp_dir(), 'ice-log-');
+        $previousLog = ini_set('error_log', $logFile);
+        foreach ($settings as $name => $value) {
+            self::setEnvironment($name, $value);
         }
+        try {
+            $body(fn (): string => (string) file_get_contents($logFile));
+        } finally {
+            self::setEnvironment('AOKIE_COMPANION_ICE_SERVERS_JSON', self::validIceServersJson());
+            self::setEnvironment('AOKIE_COMPANION_RELAY_ONLY', '');
+            ini_set('error_log', $previousLog === false ? '' : $previousLog);
+            @unlink($logFile);
+        }
+    }
+
+    /**
+     * A paired Companion device with a live OAuth grant, made while the ICE settings are still sound:
+     * enrolling a device runs a plugin admission of its own, which a broken setting would refuse.
+     *
+     * @return array{deviceId: string, accessToken: string}
+     */
+    private function iceDevice(): array
+    {
+        $deviceId = 'ice_device_' . bin2hex(random_bytes(4));
+        $oauth = $this->authorizeCompanion($deviceId);
+        $this->ensurePluginRosterContains($this->mobileHolder($deviceId));
+        return ['deviceId' => $deviceId, 'accessToken' => $oauth['accessToken']];
+    }
+
+    /**
+     * What discovery, a mobile admission and a plugin admission each answer right now.
+     *
+     * @param array{deviceId: string, accessToken: string} $device
+     * @return array{discovery: array, mobile: array, plugin: array} each response's body, with its status
+     */
+    private function iceSurfaces(array $device): array
+    {
+        $mobile = $this->mobileAdmission($device['accessToken'], $device['deviceId'], null, null, false);
+        $plugin = self::$controller->pluginAdmission(
+            $this->request('POST', '/api/v1/aokie-companion/admission')
+                ->withParsedBody($this->pluginAdmissionBody())
+                ->withAttribute('apiKeyId', $this->apiKeyId)
+                ->withAttribute('apiKeyScopes', ['aokie:realtime']),
+            (new ResponseFactory())->createResponse(),
+        );
+        $discovery = self::$controller->appDiscovery(
+            $this->request('GET', '/api/app/' . $this->appSlug . '/aokie-discovery'),
+            (new ResponseFactory())->createResponse(),
+            ['slug' => $this->appSlug],
+        );
+        return [
+            'discovery' => ['status' => $discovery->getStatusCode()] + self::decode($discovery),
+            'mobile' => ['status' => $mobile->getStatusCode()] + self::decode($mobile),
+            'plugin' => ['status' => $plugin->getStatusCode()] + self::decode($plugin),
+        ];
+    }
+
+    public function testALapsedTurnCredentialNoLongerTakesDiscoveryAndEveryAdmissionDown(): void
+    {
+        $device = $this->iceDevice();
+        $healthy = $this->iceSurfaces($device);
+        foreach ($healthy as $surface => $body) {
+            $this->assertSame(200, $body['status'], $surface);
+            $this->assertCount(1, $body['iceServers'], $surface);
+        }
+
+        $this->withIceSettings([
+            'AOKIE_COMPANION_ICE_SERVERS_JSON' => json_encode([
+                ['urls' => ['stun:stun.example.test:3478']],
+                [
+                    'urls' => ['turns:turn.example.test:5349?transport=tcp'],
+                    'username' => 'lapsed-user',
+                    'credential' => 'lapsed-secret',
+                    'expiresAt' => time() - 1,
+                ],
+            ], JSON_UNESCAPED_SLASHES),
+        ], function (callable $log) use ($device, $healthy): void {
+            $lapsed = $this->iceSurfaces($device);
+
+            foreach ($lapsed as $surface => $body) {
+                $this->assertSame(200, $body['status'], $surface . ' still answers: ' . json_encode($body));
+                // Only the lapsed TURN entry is gone; the STUN one stays, exactly as the Companion parses it.
+                $this->assertSame([['urls' => ['stun:stun.example.test:3478'], 'username' => '', 'credential' => '']], $body['iceServers'], $surface);
+                $this->assertFalse($body['relayOnly'], $surface);
+                $this->assertNull($body['turnCredentialExpiresAt'], $surface . ': no TURN entry is left to expire');
+                // The native Companion parses these documents with unknown-field rejection: nothing may be added or renamed.
+                $this->assertSame(array_keys($healthy[$surface]), array_keys($body), $surface . ' keeps its exact member list');
+            }
+            $this->assertFalse($lapsed['discovery']['media']['relayOnly']);
+
+            $written = $log();
+            $this->assertStringContainsString('1 TURN entry in AOKIE_COMPANION_ICE_SERVERS_JSON lapsed', $written, 'the operator is told');
+            $this->assertStringContainsString('turns:turn.example.test:5349?transport=tcp', $written, 'which entry');
+            $this->assertStringNotContainsString('lapsed-secret', $written, 'a credential is never logged');
+            $this->assertStringNotContainsString('lapsed-user', $written);
+        });
+    }
+
+    public function testAListWhoseEveryTurnEntryLapsedIsJustTheUnconfiguredBootstrap(): void
+    {
+        $device = $this->iceDevice();
+        $this->withIceSettings([
+            'AOKIE_COMPANION_ICE_SERVERS_JSON' => json_encode([[
+                'urls' => ['turn:turn.example.test:3478?transport=udp'],
+                'username' => 'lapsed-user',
+                'credential' => 'lapsed-secret',
+                'expiresAt' => time() - 3600,
+            ]], JSON_UNESCAPED_SLASHES),
+        ], function () use ($device): void {
+            foreach ($this->iceSurfaces($device) as $surface => $body) {
+                $this->assertSame(200, $body['status'], $surface);
+                $this->assertSame([], $body['iceServers'], $surface);
+                $this->assertNull($body['turnCredentialExpiresAt'], $surface);
+            }
+        });
+    }
+
+    public function testRelayOnlyStillFailsClosedWhenItsTurnEntryHasLapsed(): void
+    {
+        // Relay-only cannot work without TURN, and a Companion refuses a relay-only document that has
+        // none, so carrying on here would only move the failure onto the phone.
+        $device = $this->iceDevice();
+        $this->withIceSettings([
+            'AOKIE_COMPANION_RELAY_ONLY' => 'true',
+            'AOKIE_COMPANION_ICE_SERVERS_JSON' => json_encode([[
+                'urls' => ['turns:turn.example.test:5349?transport=tcp'],
+                'username' => 'lapsed-user',
+                'credential' => 'lapsed-secret',
+                'expiresAt' => time() - 1,
+            ]], JSON_UNESCAPED_SLASHES),
+        ], function (callable $log) use ($device): void {
+            foreach ($this->iceSurfaces($device) as $surface => $body) {
+                $this->assertSame(503, $body['status'], $surface);
+                $this->assertSame('ice_configuration_invalid', $body['code'], $surface);
+            }
+            $this->assertStringContainsString('relayOnly requires', $log(), 'and the log says why, which the 503 does not');
+        });
+    }
+
+    public function testAnExpiryMoreThanADayAheadIsStillAConfigurationError(): void
+    {
+        $device = $this->iceDevice();
+        $this->withIceSettings([
+            'AOKIE_COMPANION_ICE_SERVERS_JSON' => json_encode([[
+                'urls' => ['turns:turn.example.test:5349?transport=tcp'],
+                'username' => 'forever-user',
+                'credential' => 'forever-secret',
+                'expiresAt' => time() + 86401 + 60,
+            ]], JSON_UNESCAPED_SLASHES),
+        ], function () use ($device): void {
+            foreach ($this->iceSurfaces($device) as $surface => $body) {
+                $this->assertSame(503, $body['status'], $surface);
+                $this->assertSame('ice_configuration_invalid', $body['code'], $surface);
+            }
+        });
     }
 }

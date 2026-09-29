@@ -18,9 +18,22 @@ final class AokieCompanionIceConfigurationTest extends TestCase
     private const NOW = 1_784_160_000;
     private const TURN_URL = 'turns:turn.example.test:5349?transport=tcp';
 
-    private static function withList(array $servers, string $relayOnly = ''): AokieCompanionIceConfiguration
+    /**
+     * A configuration holding this static list. Whatever it logs is appended to $log, so a test can
+     * read what an operator would.
+     *
+     * @param list<string>|null $log
+     */
+    private static function withList(array $servers, string $relayOnly = '', ?array &$log = null): AokieCompanionIceConfiguration
     {
-        return new AokieCompanionIceConfiguration($relayOnly, json_encode($servers, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+        $log = [];
+        return new AokieCompanionIceConfiguration(
+            $relayOnly,
+            json_encode($servers, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+            static function (string $line) use (&$log): void {
+                $log[] = $line;
+            },
+        );
     }
 
     private static function turn(int $expiresAt, array $override = []): array
@@ -164,20 +177,121 @@ final class AokieCompanionIceConfigurationTest extends TestCase
         (new AokieCompanionIceConfiguration('', $json))->resolve(self::NOW);
     }
 
-    // ── the expiry window: 31 seconds to 24 hours ahead ──
-
-    public function testTheExpiryWindowIsThirtyOneSecondsToTwentyFourHours(): void
+    public function testAnExpiryMoreThanADayAheadIsAMistakeAndRefused(): void
     {
-        foreach ([self::NOW + 31, self::NOW + 86400] as $inside) {
-            $this->assertSame($inside, self::withList([self::turn($inside)])->resolve(self::NOW)['expiresAt']);
+        $this->expectException(\UnexpectedValueException::class);
+        self::withList([self::turn(self::NOW + 86401)])->resolve(self::NOW);
+    }
+
+    public function testAnExpiryExactlyADayAheadIsAccepted(): void
+    {
+        $this->assertSame(self::NOW + 86400, self::withList([self::turn(self::NOW + 86400)])->resolve(self::NOW)['expiresAt']);
+    }
+
+    public function testEveryRefusalIsLoggedWithItsReason(): void
+    {
+        $log = [];
+        try {
+            self::withList([self::turn(self::NOW + 86401)], '', $log)->resolve(self::NOW);
+            $this->fail('a credential a day and a second ahead should be refused');
+        } catch (\UnexpectedValueException) {
         }
-        foreach ([self::NOW + 30, self::NOW - 1, self::NOW + 86401] as $outside) {
-            try {
-                self::withList([self::turn($outside)])->resolve(self::NOW);
-                $this->fail("an expiresAt of {$outside} should be refused");
-            } catch (\UnexpectedValueException) {
-                $this->addToAssertionCount(1);
-            }
+
+        $this->assertCount(1, $log);
+        $this->assertStringContainsString('ice_configuration_invalid', $log[0]);
+        $this->assertStringContainsString('expiresAt', $log[0]);
+        $this->assertStringNotContainsString('temporary-secret', $log[0], 'a credential never reaches the log');
+        $this->assertStringNotContainsString('temporary-user', $log[0]);
+    }
+
+    // ── a lapsed TURN credential is left out; it no longer takes the deployment down ──
+
+    public function testALapsedTurnEntryIsLeftOutAndEverythingElseStillApplies(): void
+    {
+        $log = [];
+        $result = self::withList([
+            ['urls' => ['stun:stun.example.test:3478']],
+            self::turn(self::NOW - 86_400, ['urls' => ['turns:old.example.test:5349?transport=tcp'], 'username' => 'lapsed-user', 'credential' => 'lapsed-secret']),
+            self::turn(self::NOW + 3600, ['urls' => ['turn:turn.example.test:3478?transport=udp']]),
+        ], '', $log)->resolve(self::NOW);
+
+        $this->assertSame(['stun:stun.example.test:3478'], $result['servers'][0]['urls']);
+        $this->assertSame(['turn:turn.example.test:3478?transport=udp'], $result['servers'][1]['urls']);
+        $this->assertCount(2, $result['servers']);
+        $this->assertSame(self::NOW + 3600, $result['expiresAt'], 'the reported expiry is the earliest of the entries that remain');
+        $this->assertFalse($result['relayOnly']);
+
+        $this->assertCount(1, $log);
+        $this->assertStringContainsString('1 TURN entry', $log[0]);
+        $this->assertStringContainsString('AOKIE_COMPANION_ICE_SERVERS_JSON', $log[0]);
+        $this->assertStringContainsString('entry 2, turns:old.example.test:5349?transport=tcp', $log[0], 'it names which entry, by position and URL');
+        $this->assertStringContainsString(gmdate('Y-m-d\TH:i:s\Z', self::NOW - 86_400), $log[0], 'and when its credential ran out');
+        $this->assertStringNotContainsString('lapsed-user', $log[0]);
+        $this->assertStringNotContainsString('lapsed-secret', $log[0], 'a credential never reaches the log');
+    }
+
+    public function testWhenEveryTurnEntryHasLapsedStunAloneRemains(): void
+    {
+        $log = [];
+        $result = self::withList([
+            ['urls' => ['stun:stun.example.test:3478']],
+            self::turn(self::NOW - 1),
+            self::turn(self::NOW + 5, ['urls' => ['turn:turn.example.test:3478']]),
+        ], '', $log)->resolve(self::NOW);
+
+        $this->assertSame([['urls' => ['stun:stun.example.test:3478'], 'username' => '', 'credential' => '']], $result['servers']);
+        $this->assertNull($result['expiresAt'], 'no TURN entry is left to expire');
+        $this->assertFalse($result['relayOnly']);
+        $this->assertCount(1, $log);
+        $this->assertStringContainsString('2 TURN entries', $log[0]);
+    }
+
+    public function testWhenTheWholeListHasLapsedThisIsTheUnconfiguredBootstrap(): void
+    {
+        $result = self::withList([self::turn(self::NOW - 3600)])->resolve(self::NOW);
+
+        $this->assertSame(['servers' => [], 'relayOnly' => false, 'expiresAt' => null], $result);
+    }
+
+    public function testACredentialWithThirtySecondsLeftHasLapsedForTheCompanion(): void
+    {
+        // The Companion refuses one with 30 seconds or fewer to live, so forwarding it would just move the failure to the phone.
+        $this->assertSame([], self::withList([self::turn(self::NOW + 30)])->resolve(self::NOW)['servers']);
+        $this->assertCount(1, self::withList([self::turn(self::NOW + 31)])->resolve(self::NOW)['servers']);
+    }
+
+    public function testNothingIsLoggedWhenNothingHasLapsed(): void
+    {
+        $log = [];
+        self::withList([['urls' => ['stun:stun.example.test']], self::turn(self::NOW + 600)], '', $log)->resolve(self::NOW);
+
+        $this->assertSame([], $log);
+    }
+
+    public function testRelayOnlyKeepsWorkingWhileOneTurnEntryStillHasItsCredential(): void
+    {
+        $result = self::withList([
+            self::turn(self::NOW - 10),
+            self::turn(self::NOW + 1200, ['urls' => ['turn:turn.example.test:3478']]),
+        ], 'true')->resolve(self::NOW);
+
+        $this->assertTrue($result['relayOnly']);
+        $this->assertCount(1, $result['servers']);
+        $this->assertSame(self::NOW + 1200, $result['expiresAt']);
+    }
+
+    public function testRelayOnlyCannotWorkWithoutTurnSoItStillFailsOnceEveryEntryHasLapsed(): void
+    {
+        $log = [];
+        try {
+            self::withList([['urls' => ['stun:stun.example.test']], self::turn(self::NOW - 10)], 'true', $log)->resolve(self::NOW);
+            $this->fail('relay-only with no unexpired TURN entry must not be served');
+        } catch (\UnexpectedValueException) {
         }
+
+        $this->assertCount(2, $log, 'the lapse, and the refusal that follows from it');
+        $this->assertStringContainsString('lapsed', $log[0]);
+        $this->assertStringContainsString('ice_configuration_invalid', $log[1]);
+        $this->assertStringContainsString('relayOnly requires', $log[1]);
     }
 }
