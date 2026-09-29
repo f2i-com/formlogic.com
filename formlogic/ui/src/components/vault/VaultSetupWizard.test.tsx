@@ -31,6 +31,7 @@ import { api } from '../../lib/api';
 import { setSessionOwner } from '../../lib/sessionGeneration';
 import { setCryptoClientForTests, type CryptoClient } from '../../lib/crypto/cryptoClient';
 import { useVaultStore, __resetVaultStoreForTests } from '../../stores/vaultStore';
+import { useToastStore } from '../../stores/toastStore';
 import type { VaultWire } from '../../types/e2ee';
 import { VaultSetupWizard } from './VaultSetupWizard';
 
@@ -104,6 +105,7 @@ describe('VaultSetupWizard', () => {
     client.status.mockClear();
     onClose = vi.fn<() => void>();
     onComplete = vi.fn<() => void>();
+    useToastStore.getState().clearToasts();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -114,6 +116,7 @@ describe('VaultSetupWizard', () => {
     container.remove();
     vi.useRealTimers();
     vi.restoreAllMocks();
+    useToastStore.getState().clearToasts();
     document.body.innerHTML = '';
     __resetVaultStoreForTests();
     setSessionOwner(null);
@@ -559,5 +562,210 @@ describe('VaultSetupWizard', () => {
 
     expect(useVaultStore.getState().status).toBe('unlocked');
     expect(client.lockAndTerminate).not.toHaveBeenCalled();
+  });
+
+  // --- a create request that got no answer ------------------------------------------------------
+  //
+  // The request may have created the vault even though nothing came back. Then the kit the user
+  // saved may be the only way into it, so the wizard must not say that nothing was saved, or that
+  // the kit can be thrown away, until the server has said there is no vault.
+
+  describe('when the create request gets no answer', () => {
+    const FALSE_COMFORT = /nothing has been saved|nothing was saved|not created yet|no vault will be created|throw away/i;
+    const toasts = () => useToastStore.getState().toasts;
+    let serverVault: VaultWire | null;
+
+    beforeEach(() => {
+      serverVault = null;
+      vi.mocked(api.getVault).mockImplementation(async () => ({ data: { vault: serverVault } }));
+      vi.mocked(api.createVault).mockImplementation(async (vault) => {
+        if (serverVault) return { ok: false, status: 409, body: { error: true, code: 'vault_exists' } };
+        serverVault = vault;
+        return { ok: true, status: 200, body: { data: { vault } } };
+      });
+    });
+
+    /** The request reaches the server and the vault is stored, but the answer is lost. */
+    const loseResponse = () => vi.mocked(api.createVault).mockImplementationOnce(async (vault) => {
+      serverVault = vault;
+      return { ok: false, status: 0, body: null };
+    });
+    /** The request never reaches the server. */
+    const dropRequest = () => vi.mocked(api.createVault).mockImplementationOnce(async () => ({ ok: false, status: 0, body: null }));
+
+    async function confirmWithNoAnswer(lose: 'response' | 'request' = 'response'): Promise<void> {
+      if (lose === 'response') loseResponse(); else dropRequest();
+      await goToConfirmStep();
+      await typeInto('FLRK1-XXXX-XXXX-…', KIT);
+      await click('Confirm & create vault');
+      expect(text()).toContain('FormLogic did not confirm that the vault was created');
+      expect(api.createVault).toHaveBeenCalledTimes(1);
+    }
+
+    it('says the vault may exist and to keep the kit — and nothing on the page says it was not created', async () => {
+      await confirmWithNoAnswer();
+
+      expect(text()).toMatch(/may already exist/i);
+      expect(text()).toMatch(/keep it/i);
+      // Even the small print under the buttons no longer promises that Cancel creates no vault.
+      expect(text()).toMatch(/first checks with FormLogic whether your vault was created/i);
+      expect(text()).not.toMatch(FALSE_COMFORT);
+      // The kit step reached with Back says the same, not "not created yet".
+      await click('Back');
+      expect(text()).toContain(KIT);
+      expect(text()).toMatch(/may already exist/i);
+      expect(text()).toMatch(/first checks with FormLogic whether your vault was created/i);
+      expect(text()).not.toMatch(FALSE_COMFORT);
+    });
+
+    it('"Cancel and start over" asks the server first — and when the vault is there it keeps it, unlocked', async () => {
+      await confirmWithNoAnswer('response');
+      const lookedBefore = vi.mocked(api.getVault).mock.calls.length;
+
+      await click('Cancel and start over');
+
+      // It found the vault: adopted, the wizard closes, and the user is told the kit is its kit.
+      expect(vi.mocked(api.getVault).mock.calls.length - lookedBefore).toBe(1);
+      expect(useVaultStore.getState().status).toBe('unlocked');
+      expect(useVaultStore.getState().setupPending).toBe(false);
+      expect(client.lockAndTerminate).not.toHaveBeenCalled();
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(onComplete).not.toHaveBeenCalled(); // they asked to cancel; the vault exists, that is all
+      expect(toasts().map((t) => `${t.title} ${t.message ?? ''}`).join(' ')).toMatch(/vault was created/i);
+      expect(text()).not.toContain('Discard');
+    });
+
+    it('when the server has no vault it says so, and only then offers to discard the kit', async () => {
+      await confirmWithNoAnswer('request');
+      expect(text()).not.toContain('Discard kit and start over');
+
+      await click('Cancel and start over');
+
+      expect(text()).toContain('FormLogic checked');
+      expect(text()).toContain('no vault was created');
+      expect(text()).toContain('no vault will be created');
+      expect(useVaultStore.getState().setupPending).toBe(true);
+      expect(client.lockAndTerminate).not.toHaveBeenCalled();
+
+      await click('Discard kit and start over');
+      expect(text()).toContain('Create your encryption vault');
+      expect(text()).not.toContain(KIT);
+      expect(useVaultStore.getState().setupPending).toBe(false);
+      expect(useVaultStore.getState().status).toBe('none');
+      expect(client.isRunning).toBe(false);
+      expect(api.createVault).toHaveBeenCalledTimes(1);
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('"Keep this kit" after that check backs out, and the same kit can still be confirmed', async () => {
+      await confirmWithNoAnswer('request');
+      await click('Cancel and start over');
+      await click('Keep this kit');
+
+      expect(text()).not.toContain('FormLogic checked');
+      await click('Confirm & create vault');
+
+      expect(api.createVault).toHaveBeenCalledTimes(2);
+      expect(onComplete).toHaveBeenCalledTimes(1);
+      expect(useVaultStore.getState().status).toBe('unlocked');
+    });
+
+    it('when the server cannot be reached it does not discard: it says the vault may exist and lets the user leave knowingly', async () => {
+      await confirmWithNoAnswer('response');
+      vi.mocked(api.getVault).mockResolvedValueOnce({ error: 'Network error' });
+
+      await click('Cancel and start over');
+
+      expect(text()).toMatch(/could not be reached/i);
+      expect(text()).toMatch(/may already exist/i);
+      expect(text()).toContain('Recovery kit'); // still on the confirm step, kit not thrown away
+      expect(text()).not.toMatch(FALSE_COMFORT);
+      expect(useVaultStore.getState().setupPending).toBe(true);
+      expect(client.lockAndTerminate).not.toHaveBeenCalled();
+
+      // Keeping the kit backs out; leaving anyway is the user's explicit choice.
+      await click('Keep this kit');
+      expect(useVaultStore.getState().setupPending).toBe(true);
+      vi.mocked(api.getVault).mockResolvedValueOnce({ error: 'Network error' });
+      await click('Cancel and start over');
+      await click('Leave anyway');
+      expect(text()).toContain('Create your encryption vault');
+      expect(text()).not.toContain(KIT);
+      expect(useVaultStore.getState().setupPending).toBe(false);
+      // The vault DOES exist on the server, and the store now knows: locked, not "none".
+      await flush();
+      expect(useVaultStore.getState().status).toBe('locked');
+      expect(useVaultStore.getState().vault).toEqual(serverVault);
+    });
+
+    it('when the server holds a DIFFERENT vault the wizard closes with the reason, and that vault opens locked', async () => {
+      await confirmWithNoAnswer('request');
+      serverVault = { ...VAULT, kdfSalt: 'c29tZWJvZHktZWxzZQ==' };
+
+      await click('Cancel and start over');
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(toasts().map((t) => `${t.title} ${t.message ?? ''}`).join(' ')).toMatch(/already exists/i);
+      expect(useVaultStore.getState().status).toBe('locked');
+      expect(useVaultStore.getState().vault).toEqual(serverVault);
+      expect(useVaultStore.getState().setupPending).toBe(false);
+      expect(client.isRunning).toBe(false);
+    });
+
+    it('a lock after the no-answer, then another confirm: says the vault may exist — not that nothing was saved', async () => {
+      await confirmWithNoAnswer('response');
+
+      act(() => { useVaultStore.getState().lock(); });
+      await flush();
+      await click('Confirm & create vault');
+
+      expect(api.createVault).toHaveBeenCalledTimes(1);
+      expect(text()).toContain('Create your encryption vault');
+      expect(text()).toMatch(/may already exist/i);
+      expect(text()).toMatch(/keep the recovery kit you saved/i);
+      expect(text()).not.toMatch(/nothing was saved|void/i);
+    });
+
+    it('a lock after the no-answer, then "Cancel and start over": no discard notice — the reason is shown instead', async () => {
+      await confirmWithNoAnswer('response');
+
+      act(() => { useVaultStore.getState().lock(); });
+      await flush();
+      await click('Cancel and start over');
+
+      expect(text()).toContain('Create your encryption vault');
+      expect(text()).toMatch(/may already exist/i);
+      expect(text()).toMatch(/keep the recovery kit you saved/i);
+      expect(text()).not.toContain('Discard');
+      expect(text()).not.toMatch(/nothing was saved|void/i);
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('a different vault found when the confirm is sent closes the wizard too (no create form under a message about an existing vault)', async () => {
+      await goToConfirmStep();
+      // Somebody else's session created a vault while the kit was being saved.
+      serverVault = { ...VAULT, kdfSalt: 'c29tZWJvZHktZWxzZQ==' };
+      await typeInto('FLRK1-XXXX-XXXX-…', KIT);
+
+      await click('Confirm & create vault');
+
+      expect(api.createVault).toHaveBeenCalledTimes(1);
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(onComplete).not.toHaveBeenCalled();
+      expect(toasts().map((t) => `${t.title} ${t.message ?? ''}`).join(' ')).toMatch(/already exists/i);
+      expect(useVaultStore.getState().status).toBe('locked');
+    });
+
+    it('a setup whose request was never sent still says no vault will be created — with no check and no doubt', async () => {
+      await goToConfirmStep();
+      vi.mocked(api.getVault).mockClear();
+
+      await click('Cancel and start over');
+
+      expect(text()).toContain('Nothing has been saved to your account');
+      expect(text()).toContain('no vault will be created');
+      expect(text()).not.toContain('FormLogic checked');
+      expect(api.getVault).not.toHaveBeenCalled();
+    });
   });
 });

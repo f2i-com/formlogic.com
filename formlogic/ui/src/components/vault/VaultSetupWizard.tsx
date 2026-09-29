@@ -12,6 +12,11 @@
 // The kit is shown ONCE, so from the moment it is on screen until it has been confirmed
 // the wizard cannot be dismissed — not by the close button, a click outside, or Escape.
 // The only way out is the explicit "Cancel and start over", which says what it discards.
+//
+// If the create request goes out and no answer comes back, the vault may exist and the kit
+// the user saved may be the only way into it. From then on nothing here says the kit can be
+// thrown away or that nothing was saved until the server has been asked and has said there
+// is no vault ("Cancel and start over" asks first).
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { ShieldCheck, Copy, Check, Download, Printer, TriangleAlert } from 'lucide-react';
@@ -21,6 +26,7 @@ import { PasswordInput } from '../ui/PasswordInput';
 import { Input } from '../ui/Input';
 import { useAuthStore } from '../../stores/authStore';
 import { useVaultStore } from '../../stores/vaultStore';
+import { toast } from '../../stores/toastStore';
 import { copyToClipboard } from '../../lib/utils';
 import { downloadRecoveryKit, printRecoveryKit } from '../../lib/crypto/recoveryKitFile';
 
@@ -31,15 +37,40 @@ interface VaultSetupWizardProps {
   onComplete?: () => void;
 }
 
+/**
+ * What "Cancel and start over" is about to do:
+ *  - plain: no request was ever sent, so nothing exists anywhere;
+ *  - none-found: a request was sent without an answer, and the server has now said it has no vault;
+ *  - unreachable: a request was sent without an answer and the server could not be asked, so
+ *    the vault may exist and leaving is a choice made in the dark.
+ */
+type CancelMode = 'plain' | 'none-found' | 'unreachable';
+
 /** Shown before "Cancel and start over" takes effect: says exactly what is thrown away. */
-function DiscardKitNotice({ onKeep, onDiscard }: { onKeep: () => void; onDiscard: () => void }) {
+function DiscardKitNotice({ mode, onKeep, onDiscard }: { mode: CancelMode; onKeep: () => void; onDiscard: () => void }) {
+  if (mode === 'unreachable') {
+    return (
+      <div className="rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 p-3 space-y-3" role="alert">
+        <p className="text-sm text-red-800 dark:text-red-200">
+          <strong>Leave without checking?</strong> FormLogic could not be reached to check whether your
+          vault was created, so it <strong>may already exist</strong>. If you leave now and it does,
+          unlock it with your vault passphrase — or with this recovery kit, so keep every copy of it.
+        </p>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={onKeep}>Keep this kit</Button>
+          <Button variant="danger" size="sm" onClick={onDiscard}>Leave anyway</Button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 p-3 space-y-3" role="alert">
       <p className="text-sm text-red-800 dark:text-red-200">
-        <strong>Discard this recovery kit and start over?</strong> The kit you were just shown will be
-        discarded and <strong>no vault will be created</strong>. Nothing has been saved to your account,
-        so you will begin again with a new passphrase and get a new recovery kit — throw away any copy
-        of this one.
+        <strong>Discard this recovery kit and start over?</strong>{' '}
+        {mode === 'none-found' && <>FormLogic checked: <strong>no vault was created</strong> for your account. </>}
+        The kit you were just shown will be discarded and <strong>no vault will be created</strong>.{' '}
+        {mode === 'plain' ? 'Nothing has been saved to your account, so you' : 'You'} will begin again
+        with a new passphrase and get a new recovery kit — throw away any copy of this one.
       </p>
       <div className="flex flex-wrap justify-end gap-2">
         <Button variant="outline" size="sm" onClick={onKeep}>Keep this kit</Button>
@@ -53,6 +84,7 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
   const user = useAuthStore((s) => s.user);
   const prepareSetup = useVaultStore((s) => s.prepareSetup);
   const commitSetup = useVaultStore((s) => s.commitSetup);
+  const checkSetup = useVaultStore((s) => s.checkSetup);
   const abandonSetup = useVaultStore((s) => s.abandonSetup);
   const cancelHintId = useId();
 
@@ -73,6 +105,11 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
   const [setupId, setSetupId] = useState<string | null>(null);
   /** "Cancel and start over" was pressed and is waiting for its second, explicit click. */
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [cancelMode, setCancelMode] = useState<CancelMode>('plain');
+  /** The create request went out and no answer came back: the vault MAY exist. */
+  const [uncertain, setUncertain] = useState(false);
+  /** Asking the server what became of that request (so "Cancel" can say something true). */
+  const [checking, setChecking] = useState(false);
 
   // The prepared vault belongs to this wizard: whenever the wizard stops holding it (a
   // reset, a parent closing it, unmount) the store is told to drop it — which is a no-op
@@ -104,6 +141,9 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
     setConfirmText('');
     setSetupId(null);
     setConfirmingCancel(false);
+    setCancelMode('plain');
+    setUncertain(false);
+    setChecking(false);
   };
 
   // A parent that closes the wizard without going through onClose must not leave a kit on
@@ -203,14 +243,72 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
       onComplete?.();
       return;
     }
+    if (result.code === 'vault_exists') {
+      // A DIFFERENT vault already exists, so this one can never be created: close with the
+      // reason (the store now has that vault, locked, so the next attempt routes to unlock)
+      // rather than leaving a create form under a message saying a vault exists.
+      toast.warning('A vault already exists', result.error);
+      reset();
+      onClose();
+      return;
+    }
     if (result.discarded) {
-      // The prepared vault is gone (signed out, locked, refused): the kit on screen is void.
+      // The prepared vault is gone (signed out, locked, refused). The message says whether
+      // the kit is void (no request was sent) or the vault may exist (one was).
       reset();
       setError(result.error ?? 'Vault setup failed — start again.');
       return;
     }
     setBusy(false);
+    // No verdict (the request may have got through): the vault may exist, so from here on
+    // nothing may call the kit void — "Cancel and start over" asks the server first.
+    if (result.code === 'save_failed') setUncertain(true);
     setError(result.error ?? 'Could not create the vault.');
+  };
+
+  /** "Cancel and start over": one click to say what it discards, a second to do it. */
+  const startCancel = async () => {
+    if (busy || confirmingCancel) return;
+    if (!uncertain || !setupId) {
+      setCancelMode('plain');
+      setConfirmingCancel(true);
+      return;
+    }
+    // A create request went out and nothing came back, so the vault may exist and the kit
+    // the user saved may be the only way into it: find out BEFORE saying anything is
+    // discarded.
+    setError(null);
+    setBusy(true);
+    setChecking(true);
+    const check = await checkSetup(setupId);
+    if (!mountedRef.current) return;
+    setBusy(false);
+    setChecking(false);
+    switch (check.outcome) {
+      case 'created':
+        // It was created after all: adopted and unlocked. They asked to cancel, so the flow
+        // that opened the wizard is not resumed — but the vault exists and they are told so.
+        toast.success('Your vault was created', 'The confirmation was lost on the way, but the vault is ready — and the recovery kit you saved is its kit.');
+        reset();
+        onClose();
+        return;
+      case 'other_vault':
+        toast.warning('A vault already exists', check.error);
+        reset();
+        onClose();
+        return;
+      case 'interrupted':
+        reset();
+        setError(check.error ?? 'Vault setup was interrupted — start again.');
+        return;
+      case 'not_created':
+        setCancelMode('none-found');
+        setConfirmingCancel(true);
+        return;
+      default:
+        setCancelMode('unreachable');
+        setConfirmingCancel(true);
+    }
   };
 
   return (
@@ -305,28 +403,42 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
           )}
           <p className="text-sm text-gray-600 dark:text-slate-400">
             Save it somewhere safe — download it, print it or write it down — then continue.
-            FormLogic never receives the kit: the file and the printout are made in your browser.
-            Your vault is <strong>not created yet</strong>: that happens only after you confirm
-            this kit on the next step.
+            FormLogic never receives the kit: the file and the printout are made in your browser.{' '}
+            {uncertain ? (
+              <>
+                FormLogic did not confirm whether your vault was created, so it{' '}
+                <strong>may already exist</strong> — keep this kit either way.
+              </>
+            ) : (
+              <>
+                Your vault is <strong>not created yet</strong>: that happens only after you confirm
+                this kit on the next step.
+              </>
+            )}
           </p>
+          {checking && (
+            <p className="text-sm text-gray-600 dark:text-slate-400" role="status">Checking with FormLogic whether your vault was created…</p>
+          )}
           {confirmingCancel && (
-            <DiscardKitNotice onKeep={() => setConfirmingCancel(false)} onDiscard={reset} />
+            <DiscardKitNotice mode={cancelMode} onKeep={() => setConfirmingCancel(false)} onDiscard={reset} />
           )}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setConfirmingCancel(true)}
-              disabled={confirmingCancel}
+              onClick={() => void startCancel()}
+              disabled={busy || confirmingCancel}
               aria-describedby={cancelHintId}
             >
               Cancel and start over
             </Button>
-            <Button onClick={() => { setStep('confirm'); setError(null); setConfirmingCancel(false); }}>I saved it — continue</Button>
+            <Button onClick={() => { setStep('confirm'); setError(null); setConfirmingCancel(false); }} disabled={busy}>I saved it — continue</Button>
           </div>
           <p id={cancelHintId} className="text-xs text-gray-500 dark:text-slate-400">
-            This window stays open until you have confirmed your kit, so it cannot be lost by accident.
-            &ldquo;Cancel and start over&rdquo; discards the kit and creates no vault.
+            This window stays open until you have confirmed your kit, so it cannot be lost by accident.{' '}
+            {uncertain
+              ? <>&ldquo;Cancel and start over&rdquo; first checks with FormLogic whether your vault was created.</>
+              : <>&ldquo;Cancel and start over&rdquo; discards the kit and creates no vault.</>}
           </p>
         </div>
       )}
@@ -351,14 +463,17 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
               {error}
             </p>
           )}
+          {checking && (
+            <p className="text-sm text-gray-600 dark:text-slate-400" role="status">Checking with FormLogic whether your vault was created…</p>
+          )}
           {confirmingCancel && (
-            <DiscardKitNotice onKeep={() => setConfirmingCancel(false)} onDiscard={reset} />
+            <DiscardKitNotice mode={cancelMode} onKeep={() => setConfirmingCancel(false)} onDiscard={reset} />
           )}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setConfirmingCancel(true)}
+              onClick={() => void startCancel()}
               disabled={busy || confirmingCancel}
               aria-describedby={cancelHintId}
             >
@@ -372,8 +487,10 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
             </div>
           </div>
           <p id={cancelHintId} className="text-xs text-gray-500 dark:text-slate-400">
-            This window stays open until your vault is created, so the kit cannot be lost by accident.
-            &ldquo;Cancel and start over&rdquo; discards the kit and creates no vault.
+            This window stays open until your vault is created, so the kit cannot be lost by accident.{' '}
+            {uncertain
+              ? <>&ldquo;Cancel and start over&rdquo; first checks with FormLogic whether your vault was created.</>
+              : <>&ldquo;Cancel and start over&rdquo; discards the kit and creates no vault.</>}
           </p>
         </div>
       )}
