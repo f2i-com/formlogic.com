@@ -9,6 +9,7 @@ Aokie is a **plugin, not a platform**: it owns the Bluetooth dongle/phone bridge
 
 - Plugin id / connector id: `aokie`
 - Manifest: `plugins/aokie/manifest.json` per `plugin-manifest.schema.json`, `pluginApiVersion: 1`.
+- The shipped manifest is `schemaVersion: 3` (`docs/contracts/aokie-plugin-manifest.v3.json`, a byte copy). `docs/contracts/aokie-plugin-manifest.v4.json` is the same manifest at `schemaVersion: 4` with OAIY's module-system sections: `modules` (`{"provides": ["phone", "calendar"]}`) and a three-step `setup` (consent, dongle, pair: `screen` steps of `receptionist-home` with `done`/`when` checks on read-only, non-journalled commands). `agentTools` (service-definition actions of `aokie.phone` offered to the agent, each with an `audience` and, for an action with side effects, a `confirm` template) is allowed at v4 but not yet declared. Aokie stays at v3 until an OAIY build that reads v4 has shipped: a v3 manifest carrying any v4 section is refused, and a v4 manifest does not load on a host that reads only 1-3. Hosts reading v4 also enforce `minDesktopVersion` (Aokie declares `0.1.0`).
 
 ## 2. Connector commands (surface FormLogic may call)
 
