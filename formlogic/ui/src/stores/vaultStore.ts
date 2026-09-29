@@ -3,6 +3,13 @@
 // Holds ONLY wrapped vault material + status — never passphrases, never unwrapped
 // keys, never decrypted answers. Lifecycle:
 //   - unlock/create/recovery go through the crypto worker (secrets stay there);
+//   - creating a vault is TWO-PHASE (plan D5): prepareSetup generates the wrappers and
+//     the recovery kit locally and sends NOTHING; only commitSetup — which needs the kit
+//     typed back exactly — sends the create request. Until then the store still says
+//     'none': a closed tab, a lock or a sign-out drops the prepared vault and the user
+//     simply starts again. A vault therefore never exists without a kit that was shown
+//     and confirmed. The prepared wrappers and kit live in module scope (not in state)
+//     and are dropped on every exit;
 //   - lock() bumps the vault GENERATION (forcing remount of anything holding
 //     decrypted data), clears the decrypted LRU, tells the worker to lock and then
 //     terminates it (bounded: a wedged worker is hard-terminated after ~250ms), and
@@ -17,6 +24,7 @@
 import { create } from 'zustand';
 import { api } from '../lib/api';
 import { getCryptoClient } from '../lib/crypto/cryptoClient';
+import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent } from '../lib/sessionGeneration';
 import { usePrivateDataStore } from './privateDataStore';
 import type { VaultWire } from '../types/e2ee';
 
@@ -24,6 +32,37 @@ export type VaultStatus = 'unknown' | 'none' | 'locked' | 'unlocked';
 
 export const DEFAULT_AUTO_LOCK_MINUTES = 30;
 const CHANNEL_NAME = 'fl-vault';
+
+/** Outcome of prepareSetup: the kit to show, and the token that identifies this setup. */
+export interface PrepareSetupResult {
+  ok: boolean;
+  /** Identifies the prepared vault; commitSetup/abandonSetup only act on their own token. */
+  setupId?: string;
+  /** The recovery kit (FLRK1-…) to show the user. Nothing has been sent anywhere. */
+  recoveryDisplay?: string;
+  error?: string;
+}
+
+export type CommitSetupCode =
+  /** The typed-back kit is not the one shown — nothing was sent; the setup is still open. */
+  | 'kit_mismatch'
+  /** Locked, signed out or the worker died while the kit was on screen — start again. */
+  | 'setup_interrupted'
+  /** A vault already exists on the account (another session got there first). */
+  | 'vault_exists'
+  /** The request did not get through (network / 5xx / rate limit) — the same kit can be re-sent. */
+  | 'save_failed'
+  /** The server refused this vault outright — start again. */
+  | 'setup_rejected'
+  | 'setup_busy';
+
+export interface CommitSetupResult {
+  ok: boolean;
+  code?: CommitSetupCode;
+  error?: string;
+  /** True when the prepared vault no longer exists: the caller must start over. */
+  discarded?: boolean;
+}
 
 interface VaultState {
   status: VaultStatus;
@@ -36,9 +75,17 @@ interface VaultState {
   autoLockAt: number | null;
   /** True while a lock was initiated locally (suppresses re-broadcast loops). */
   locking: boolean;
+  /** True from the moment a vault has been prepared locally until it is committed or
+   *  dropped — the vault is NOT on the server in that window. */
+  setupPending: boolean;
 
   refreshStatus: () => Promise<void>;
-  setup: (userId: string, passphrase: string) => Promise<{ ok: boolean; recoveryDisplay?: string; error?: string }>;
+  /** Phase 1 of vault creation: generate the wrappers + recovery kit locally. Sends nothing. */
+  prepareSetup: (userId: string, passphrase: string) => Promise<PrepareSetupResult>;
+  /** Phase 2: the kit typed back must match; only then is the create request sent. */
+  commitSetup: (setupId: string, typedKit: string) => Promise<CommitSetupResult>;
+  /** Drop a prepared vault (and its kit) without creating anything. Acts only on its own token. */
+  abandonSetup: (setupId?: string) => Promise<void>;
   unlock: (userId: string, passphrase: string) => Promise<{ ok: boolean; error?: string; code?: string }>;
   recoveryUnlock: (userId: string, recoveryCode: string, newPassphrase: string) => Promise<{ ok: boolean; error?: string; code?: string }>;
   changePassphrase: (userId: string, currentPassphrase: string, newPassphrase: string) => Promise<{ ok: boolean; error?: string; code?: string }>;
@@ -111,6 +158,7 @@ export function lockVaultForSessionTeardown(): void {
  */
 async function forceLockAfterUnknownState(): Promise<void> {
   stopIdleTimer();
+  dropPendingSetup();
   await getCryptoClient().lockAndTerminate();
   const gen = useVaultStore.getState().generation + 1;
   useVaultStore.setState({
@@ -128,6 +176,101 @@ function vaultFromBody(body: Record<string, unknown> | null): VaultWire | null {
   return data?.vault ?? null;
 }
 
+// --- two-phase vault creation (plan D5) --------------------------------------
+
+/**
+ * A vault that exists ONLY in this tab: wrappers + kit generated, nothing sent. The
+ * secrets behind it are in the crypto worker's heap; the recovery kit (a secret in its
+ * own right) is held only so the typed-back confirmation can be checked HERE, and is
+ * dropped on every exit. Module scope on purpose: not Zustand state, so it is never
+ * broadcast to subscribers or serialised by devtools.
+ */
+interface PendingSetup {
+  id: string;
+  userId: string;
+  /** Auth session that prepared it — a sign-out/sign-in in between voids it. */
+  sessionGeneration: number;
+  vault: VaultWire;
+  recoveryDisplay: string;
+  /** True while the create request is in flight (nothing may tear the setup down then). */
+  committing: boolean;
+}
+
+let pendingSetup: PendingSetup | null = null;
+let nextSetupId = 1;
+/** True while prepareSetup runs (its Argon2id derivation takes a moment): one at a time. */
+let preparing = false;
+
+const SETUP_VOID_MESSAGE =
+  'This setup was interrupted (you were signed out or the vault was locked). Nothing was saved and that recovery kit is void — start again to get a new one.';
+
+/** The same normalisation the recovery paths use: case, spaces and hyphens do not matter. */
+function normalizeKit(text: string): string {
+  return text.trim().toUpperCase().replace(/[\s-]+/g, '');
+}
+
+/** Forget the prepared vault and its kit NOW (synchronously). The worker is the caller's job. */
+function dropPendingSetup(): void {
+  pendingSetup = null;
+  if (useVaultStore.getState().setupPending) useVaultStore.setState({ setupPending: false });
+}
+
+/** Drop the prepared vault AND kill the worker that holds its secrets. */
+async function discardPendingSetup(): Promise<void> {
+  dropPendingSetup();
+  await getCryptoClient().lockAndTerminate();
+}
+
+/** True when the server's vault is byte-for-byte the one this tab prepared. */
+function isSameVault(a: VaultWire, b: VaultWire): boolean {
+  return a.kdfSalt === b.kdfSalt
+    && a.wrappedUmk === b.wrappedUmk
+    && a.wrappedUmkRecovery === b.wrappedUmkRecovery
+    && a.encKeyBundle === b.encKeyBundle
+    && a.x25519Pk === b.x25519Pk
+    && a.ed25519Pk === b.ed25519Pk;
+}
+
+/**
+ * The create request succeeded: the vault now exists on the server. It is adopted as
+ * UNLOCKED only if this setup is still the live one — nothing locked or signed out while
+ * the request was in flight. Otherwise its secrets are gone and it opens locked (or, for
+ * a different sign-in, is not adopted at all: that store must not receive this account's
+ * vault).
+ */
+async function adoptCreatedVault(pending: PendingSetup, stored: VaultWire): Promise<CommitSetupResult> {
+  const sameSession = isSessionGenerationCurrent(pending.sessionGeneration);
+  const live = pendingSetup === pending && sameSession;
+  dropPendingSetup();
+  if (!live) {
+    await getCryptoClient().lockAndTerminate();
+    if (!sameSession) {
+      return {
+        ok: false,
+        code: 'setup_interrupted',
+        discarded: true,
+        error: 'You were signed out while your vault was being created. Sign back in — if it was created, unlock it with your vault passphrase.',
+      };
+    }
+    useVaultStore.setState({ vault: stored, status: 'locked' });
+    return {
+      ok: false,
+      code: 'setup_interrupted',
+      discarded: true,
+      error: 'Your vault was created, but the session was locked before setup finished. Unlock it with your vault passphrase.',
+    };
+  }
+  useVaultStore.setState({ status: 'unlocked', vault: stored });
+  lastActivity = Date.now();
+  bindActivityListeners();
+  startIdleTimer();
+  // Private-data surfaces remount under the new generation.
+  const gen = useVaultStore.getState().generation + 1;
+  useVaultStore.setState({ generation: gen });
+  usePrivateDataStore.getState().setGeneration(gen);
+  return { ok: true };
+}
+
 export const useVaultStore = create<VaultState>()((set, get) => ({
   status: 'unknown',
   vault: null,
@@ -135,6 +278,7 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
   autoLockMinutes: DEFAULT_AUTO_LOCK_MINUTES,
   autoLockAt: null,
   locking: false,
+  setupPending: false,
 
   refreshStatus: async () => {
     if (!api.isAuthenticated()) {
@@ -154,6 +298,10 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
       set({ status: 'none', vault: null });
       return;
     }
+    // A vault exists on the server, so a setup still waiting to create one is void — and
+    // the worker it left unlocked holds a DIFFERENT vault's secrets, which must never be
+    // mistaken for this account's.
+    if (pendingSetup) await discardPendingSetup();
     const client = getCryptoClient();
     let unlocked: boolean;
     try {
@@ -164,36 +312,147 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
     set({ status: unlocked ? 'unlocked' : 'locked', vault });
   },
 
-  setup: async (userId, passphrase) => {
+  prepareSetup: async (userId, passphrase) => {
     ensureChannel();
-    const client = getCryptoClient();
+    if (preparing || pendingSetup?.committing) {
+      return { ok: false, error: 'A vault is already being set up — wait for it to finish.' };
+    }
+    preparing = true;
     try {
-      const { vault, recoveryDisplay } = await client.createVault(userId, passphrase);
-      const res = await api.createVault(vault);
-      if (!res.ok) {
+      // A second start replaces the first: its kit is void the moment a new one exists.
+      if (pendingSetup) await discardPendingSetup();
+
+      // Refuse BEFORE the Argon2id run — and before any kit is shown — when the create
+      // request cannot succeed anyway (a vault already exists, this account may not use
+      // vaults, private forms are off on this server). The user must never save a kit
+      // for a vault that cannot come into being.
+      const existing = await api.getVault();
+      if (existing.error) return { ok: false, error: existing.error };
+      if (existing.data?.vault) {
+        set({ vault: existing.data.vault, ...(get().status === 'unlocked' ? {} : { status: 'locked' as const }) });
+        return { ok: false, error: 'A vault already exists for this account — unlock it with your vault passphrase.' };
+      }
+      const health = await api.healthCheck();
+      if (health.data?.privateForms === false) {
+        return { ok: false, error: 'Private forms are not enabled on this server.' };
+      }
+
+      const client = getCryptoClient();
+      const sessionGeneration = currentSessionGeneration();
+      try {
+        // Generates the wrappers + kit in the worker (which keeps the secrets). NOTHING is
+        // sent to the server here: the vault does not exist until commitSetup.
+        const { vault, recoveryDisplay } = await client.createVault(userId, passphrase);
+        if (!isSessionGenerationCurrent(sessionGeneration)) {
+          await client.lockAndTerminate();
+          return { ok: false, error: 'You were signed out while the vault was being prepared — try again.' };
+        }
+        const setupId = `setup-${nextSetupId++}`;
+        pendingSetup = { id: setupId, userId, sessionGeneration, vault, recoveryDisplay, committing: false };
+        set({ setupPending: true });
+        return { ok: true, setupId, recoveryDisplay };
+      } catch (e) {
         await client.lockAndTerminate();
-        set({ status: 'none', vault: null });
-        const body = (res.body ?? {}) as { code?: string; message?: string };
+        return { ok: false, error: e instanceof Error ? e.message : 'Vault setup failed' };
+      }
+    } finally {
+      preparing = false;
+    }
+  },
+
+  commitSetup: async (setupId, typedKit) => {
+    const pending = pendingSetup;
+    if (!pending || pending.id !== setupId) {
+      return { ok: false, code: 'setup_interrupted', discarded: true, error: SETUP_VOID_MESSAGE };
+    }
+    if (pending.committing) {
+      return { ok: false, code: 'setup_busy', error: 'The vault is already being saved.' };
+    }
+    // The typed-back confirmation that gates persistence (plan D5) is enforced HERE, not
+    // only in the UI: nothing below runs — and no request is made — unless the kit that
+    // was shown has been entered back exactly.
+    if (normalizeKit(typedKit) !== normalizeKit(pending.recoveryDisplay)) {
+      return { ok: false, code: 'kit_mismatch', error: "That doesn't match your recovery kit — check each group carefully." };
+    }
+    pending.committing = true;
+    try {
+      // The setup must still be exactly what the user confirmed: the same sign-in session
+      // (the wrappers are bound to this user id — the vault is create-only, so sending
+      // them under another account would brick it) and a live worker holding its secrets.
+      const client = getCryptoClient();
+      const wasRunning = client.isRunning;
+      let holdsSecrets = false;
+      try {
+        const worker = await client.status();
+        holdsSecrets = wasRunning && worker.unlocked && worker.userId === pending.userId;
+      } catch {
+        holdsSecrets = false;
+      }
+      const sameSession = isSessionGenerationCurrent(pending.sessionGeneration) && currentSessionOwner() === pending.userId;
+      if (pendingSetup !== pending || !holdsSecrets || !sameSession) {
+        if (pendingSetup === pending) await discardPendingSetup();
+        return { ok: false, code: 'setup_interrupted', discarded: true, error: SETUP_VOID_MESSAGE };
+      }
+
+      // The ONLY place the vault is sent to the server.
+      const res = await api.createVault(pending.vault);
+      // The server returns the stored vault ({data:{vault}}) — adopt it verbatim.
+      if (res.ok) return await adoptCreatedVault(pending, vaultFromBody(res.body) ?? pending.vault);
+
+      const body = (res.body ?? {}) as { code?: string; message?: string };
+      if (res.status === 409 && body.code === 'vault_exists') {
+        // Either an earlier attempt of THIS setup got through (its response was lost) or
+        // another session created a vault first.
+        const existing = await api.getVault();
+        const theirs = existing.data?.vault ?? null;
+        if (theirs && isSameVault(theirs, pending.vault)) return await adoptCreatedVault(pending, theirs);
+        const stillThisSession = pendingSetup === pending && isSessionGenerationCurrent(pending.sessionGeneration);
+        await discardPendingSetup();
+        if (theirs && stillThisSession) set({ vault: theirs, status: 'locked' });
         return {
           ok: false,
-          error: body.code === 'kdf_downgrade'
-            ? 'The server rejected the vault encryption parameters — reload the app and try again.'
-            : body.message ?? 'Could not save the vault',
+          code: 'vault_exists',
+          discarded: true,
+          error: 'A vault already exists for this account, so nothing new was created. Unlock it with its vault passphrase — the recovery kit you just saw does not belong to it.',
         };
       }
-      // The server returns the stored vault ({data:{vault}}) — adopt it verbatim.
-      set({ status: 'unlocked', vault: vaultFromBody(res.body) ?? vault });
-      lastActivity = Date.now();
-      bindActivityListeners();
-      startIdleTimer();
-      // Private-data surfaces remount under the new generation.
-      const gen = get().generation + 1;
-      set({ generation: gen });
-      usePrivateDataStore.getState().setGeneration(gen);
-      return { ok: true, recoveryDisplay };
+      if (res.status === 0 || res.status === 408 || res.status === 429 || res.status >= 500) {
+        // No verdict came back (a dropped connection, a server error, a rate limit). The
+        // very same vault and kit can be sent again — regenerating would make the kit the
+        // user wrote down useless — and if the first attempt did get through, the retry
+        // meets a 409 for that same vault and is adopted above.
+        return {
+          ok: false,
+          code: 'save_failed',
+          error: 'FormLogic did not confirm that the vault was created. Your recovery kit is unchanged — check your connection and try again.',
+        };
+      }
+      await discardPendingSetup();
+      return {
+        ok: false,
+        code: 'setup_rejected',
+        discarded: true,
+        error: body.code === 'kdf_downgrade'
+          ? 'The server rejected the vault encryption parameters — reload the app and try again.'
+          : body.message ?? 'Could not save the vault',
+      };
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : 'Vault setup failed' };
+      // Not a verdict from the server: keep the setup so the same kit can be re-sent.
+      return { ok: false, code: 'save_failed', error: e instanceof Error ? e.message : 'Could not save the vault' };
+    } finally {
+      pending.committing = false;
     }
+  },
+
+  abandonSetup: async (setupId) => {
+    const pending = pendingSetup;
+    if (!pending) return;
+    // Only the holder of a setup may drop it (several closed wizards can be mounted at once).
+    if (setupId !== undefined && pending.id !== setupId) return;
+    // Once the request is out let it finish — tearing the worker down under it would
+    // leave a vault on the server that this tab cannot open.
+    if (pending.committing) return;
+    await discardPendingSetup();
   },
 
   unlock: async (userId, passphrase) => {
@@ -316,6 +575,9 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
     set({ locking: true });
     try {
       stopIdleTimer();
+      // A vault prepared but not yet created dies with the worker that holds its
+      // secrets: its kit is void, and nothing was ever sent.
+      dropPendingSetup();
       const gen = get().generation + 1;
       // 1. Bump the generation — private-data components remount empty (§10). This is
       //    the synchronous plaintext boundary: editors close and drafts drop NOW.
@@ -368,5 +630,8 @@ export function __resetVaultStoreForTests(): void {
   }
   activityListenersBound = false;
   lastActivity = Date.now();
-  useVaultStore.setState({ status: 'unknown', vault: null, generation: 0, autoLockMinutes: DEFAULT_AUTO_LOCK_MINUTES, autoLockAt: null, locking: false });
+  pendingSetup = null;
+  nextSetupId = 1;
+  preparing = false;
+  useVaultStore.setState({ status: 'unknown', vault: null, generation: 0, autoLockMinutes: DEFAULT_AUTO_LOCK_MINUTES, autoLockAt: null, locking: false, setupPending: false });
 }

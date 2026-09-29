@@ -1,9 +1,15 @@
 // Vault setup wizard (docs/E2EE_PRIVATE_FORMS_PLAN.md §5, §10, §16-P2).
-// Steps: passphrase → recovery kit (MANDATORY — confirmed by typing it back; the
-// checksum catches a mistype before any KDF work) → done. The recovery kit is the
-// ONLY way back in if the passphrase is lost; FormLogic cannot recover the vault.
+// Steps: passphrase → recovery kit → typed-back confirmation → done. The recovery kit is
+// MANDATORY (D5) and is the ONLY way back in if the passphrase is lost; FormLogic cannot
+// recover the vault.
+//
+// Ordering (D5): the vault is only PREPARED when the passphrase is entered — the wrappers
+// and the kit are generated locally and nothing is sent. The vault is created on the
+// server after the kit has been shown AND typed back (the checksum catches a mistype
+// before any KDF work). Closing the tab, cancelling, or losing the session before that
+// creates nothing; the user simply starts again.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ShieldCheck, Copy, Check, TriangleAlert } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -22,7 +28,9 @@ interface VaultSetupWizardProps {
 
 export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWizardProps) {
   const user = useAuthStore((s) => s.user);
-  const setup = useVaultStore((s) => s.setup);
+  const prepareSetup = useVaultStore((s) => s.prepareSetup);
+  const commitSetup = useVaultStore((s) => s.commitSetup);
+  const abandonSetup = useVaultStore((s) => s.abandonSetup);
 
   const [step, setStep] = useState<'passphrase' | 'kit' | 'confirm'>('passphrase');
   const [passphrase, setPassphrase] = useState('');
@@ -32,6 +40,24 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
   const [recoveryDisplay, setRecoveryDisplay] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [confirmText, setConfirmText] = useState('');
+  /** Token of the vault this wizard prepared (null until a kit has been generated). */
+  const [setupId, setSetupId] = useState<string | null>(null);
+
+  // The prepared vault belongs to this wizard: whenever the wizard stops holding it (a
+  // reset, a parent closing it, unmount) the store is told to drop it — which is a no-op
+  // once it was created, and never touches another wizard's setup or an unlocked vault.
+  useEffect(() => {
+    if (!setupId) return undefined;
+    return () => { void abandonSetup(setupId); };
+  }, [setupId, abandonSetup]);
+
+  // A prepare that finishes after the wizard is gone must not leave a kit + an unlocked
+  // worker behind.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const reset = () => {
     setStep('passphrase');
@@ -42,7 +68,16 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
     setRecoveryDisplay(null);
     setCopied(false);
     setConfirmText('');
+    setSetupId(null);
   };
+
+  // A parent that closes the wizard without going through onClose must not leave a kit on
+  // screen (or a prepared vault behind) for the next time it opens.
+  const [wasOpen, setWasOpen] = useState(isOpen);
+  if (wasOpen !== isOpen) {
+    setWasOpen(isOpen);
+    if (!isOpen) reset();
+  }
 
   const close = () => {
     reset();
@@ -64,32 +99,48 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
       return;
     }
     setBusy(true);
-    const result = await setup(user.id, passphrase);
+    // Generates the wrappers and the kit locally — NOTHING is sent to the server yet.
+    const result = await prepareSetup(user.id, passphrase);
+    if (!mountedRef.current) {
+      if (result.setupId) void abandonSetup(result.setupId);
+      return;
+    }
     setBusy(false);
     setPassphrase('');
     setPassphrase2('');
-    if (!result.ok || !result.recoveryDisplay) {
+    if (!result.ok || !result.recoveryDisplay || !result.setupId) {
       setError(result.error ?? 'Vault setup failed.');
       return;
     }
+    setSetupId(result.setupId);
     setRecoveryDisplay(result.recoveryDisplay);
     setStep('kit');
   };
 
-  const confirmKit = () => {
+  const confirmKit = async () => {
+    if (!setupId || busy) return;
     setError(null);
-    // Mandatory confirmation (D5): the kit must be typed back. decodeRecoveryKey on
-    // the worker side already verified the checksum at creation; here a mistyped
-    // re-entry is caught by exact comparison — a wrong character means the user did
-    // NOT copy it correctly, which is exactly what this step exists to catch.
-    const normalize = (s: string) => s.trim().toUpperCase().replace(/[\s-]+/g, '');
-    if (!recoveryDisplay || normalize(confirmText) !== normalize(recoveryDisplay)) {
-      setError("That doesn't match the recovery kit above — check each group carefully.");
+    setBusy(true);
+    // The store checks the typed-back kit (a wrong one sends nothing) and only then
+    // creates the vault on the server. The kit has been shown by now (D5).
+    const result = await commitSetup(setupId, confirmText);
+    if (!mountedRef.current) return;
+    // A second press while the first request is still out: that one will report.
+    if (result.code === 'setup_busy') return;
+    if (result.ok) {
+      reset();
+      onClose();
+      onComplete?.();
       return;
     }
-    reset();
-    onClose();
-    onComplete?.();
+    if (result.discarded) {
+      // The prepared vault is gone (signed out, locked, refused): the kit on screen is void.
+      reset();
+      setError(result.error ?? 'Vault setup failed — start again.');
+      return;
+    }
+    setBusy(false);
+    setError(result.error ?? 'Could not create the vault.');
   };
 
   return (
@@ -161,7 +212,8 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
             {copied ? 'Copied' : 'Copy to clipboard'}
           </Button>
           <p className="text-sm text-gray-600 dark:text-slate-400">
-            Write it down or store it somewhere safe, then continue.
+            Write it down or store it somewhere safe, then continue. Your vault is <strong>not
+            created yet</strong> — that happens only after you confirm this kit on the next step.
           </p>
           <div className="flex justify-end">
             <Button onClick={() => { setStep('confirm'); setError(null); }}>I saved it — continue</Button>
@@ -172,7 +224,8 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
       {step === 'confirm' && (
         <div className="px-4 py-5 sm:px-6 space-y-5">
           <p className="text-sm text-gray-600 dark:text-slate-400">
-            Type or paste your recovery kit back to confirm you saved it correctly.
+            Type or paste your recovery kit back to confirm you saved it correctly. Your vault is
+            created as soon as it matches.
           </p>
           <Input
             label="Recovery kit"
@@ -189,8 +242,10 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
             </p>
           )}
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setStep('kit')}>Back</Button>
-            <Button onClick={confirmKit} disabled={!confirmText.trim()}>Confirm &amp; finish</Button>
+            <Button variant="outline" onClick={() => setStep('kit')} disabled={busy}>Back</Button>
+            <Button onClick={() => void confirmKit()} isLoading={busy} disabled={!confirmText.trim()}>
+              Confirm &amp; create vault
+            </Button>
           </div>
         </div>
       )}

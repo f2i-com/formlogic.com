@@ -1717,7 +1717,7 @@ class ApiClient {
   }
 
   // Health check
-  async healthCheck(): Promise<ApiResponse<{ status: string; timestamp: string; plans?: PlatformPlans; betaMode?: boolean; emailConfigured?: boolean; supportEmail?: string; maintenanceMode?: boolean; maintenanceMessage?: string | null }>> {
+  async healthCheck(): Promise<ApiResponse<{ status: string; timestamp: string; plans?: PlatformPlans; betaMode?: boolean; /** E2EE Private Forms beta flag (plan D9); absent on servers that predate it. */ privateForms?: boolean; emailConfigured?: boolean; supportEmail?: string; maintenanceMode?: boolean; maintenanceMessage?: string | null }>> {
     return this.request('/health');
   }
 
