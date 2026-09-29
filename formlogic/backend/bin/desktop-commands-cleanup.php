@@ -19,12 +19,21 @@ declare(strict_types=1);
  * expires_at (in case expireStale() above failed soft) — never a row that is still genuinely live
  * within its expiry window, regardless of age.
  *
+ * That first step also sweeps the two SEALED relay lanes, desktop_ai_requests and desktop_flow_runs,
+ * for EVERY owner. A poll on those lanes expires only its own owner's overdue rows (it must not reach
+ * into other tenants' rows, nor scan the table for them), so an owner who never polls again would
+ * otherwise keep an overdue sealed request or run, sealed body and all, until they next use the lane.
+ * Expiring a row purges that body, so how long sealed content can outlive its request is bounded by
+ * how often THIS job runs: nightly leaves up to a day, and hourly bounds it to the hour (the job is
+ * idempotent and lock-guarded; the sweep across all owners scans the three tables, which is fine at
+ * cron cadence).
+ *
  * Run from cron, e.g. once a day:
  *   23 3 * * * php /path/to/formlogic/backend/bin/desktop-commands-cleanup.php >> /var/log/formlogic-desktop-commands.log 2>&1
  *
  * Options:
  *   --days=N     override the retention window (else DESKTOP_COMMANDS_RETENTION_DAYS, else 7)
- *   --dry-run    report how many rows WOULD be expired/deleted without changing them
+ *   --dry-run    report how many rows WOULD be expired/deleted (on all three lanes) without changing them
  *
  * Deletes in bounded batches so a large backlog doesn't hold one long lock. Idempotent + safe to re-run.
  * The DB schema is created by the web app on boot; this job assumes the application has been deployed
@@ -37,7 +46,9 @@ require __DIR__ . '/../vendor/autoload.php';
 date_default_timezone_set('UTC');
 
 use FormLogic\Database\MySQLConnection;
+use FormLogic\Services\DesktopAiRelayService;
 use FormLogic\Services\DesktopCommandService;
+use FormLogic\Services\DesktopFlowRelayService;
 
 /**
  * Parse the retention window (days): a --days=N CLI flag wins, else DESKTOP_COMMANDS_RETENTION_DAYS,
@@ -65,9 +76,47 @@ function desktopCommandsRetentionDays(array $argv, array $env): int
     return $days;
 }
 
+/**
+ * The sweep this job runs first, on every relay lane and for EVERY owner (expireStale() with no owner):
+ * the connector commands, the sealed AI requests and the sealed flow runs. A swept AI request or flow run
+ * also has its sealed body purged. Each lane's sweep fails soft, as it does on a poll.
+ *
+ * With $dryRun nothing is changed: the result is how many rows the real sweep would expire right now,
+ * by the same two predicates each service applies —
+ *   - 'pending' rows past their own expires_at (nothing claimed them in time);
+ *   - 'claimed' (and, on the AI and flow lanes, 'streaming') rows whose claimed_at — NOT expires_at,
+ *     which is fixed at enqueue() time and can pass while a claimed row is still genuinely in flight —
+ *     is older than that lane's CLAIMED_STALE_SECONDS.
+ * (The flow lane's read-once purge of old unread results is not an expiry and is not counted.)
+ *
+ * @return array{commands:int, ai:int, flow:int} rows expired, or with $dryRun rows that would be
+ */
+function desktopRelaySweep(MySQLConnection $mysql, bool $dryRun): array
+{
+    if (!$dryRun) {
+        return [
+            'commands' => (new DesktopCommandService($mysql))->expireStale(),
+            'ai' => (new DesktopAiRelayService($mysql))->expireStale(),
+            'flow' => (new DesktopFlowRelayService($mysql))->expireStale(),
+        ];
+    }
+    $pdo = $mysql->getConnection();
+    // The interpolated values are class constants and literals, never input.
+    $count = static fn (string $table, string $inFlight, int $silentSeconds): int => (int) $pdo->query(
+        "SELECT COUNT(*) FROM {$table} WHERE "
+        . "(status = 'pending' AND expires_at <= NOW()) "
+        . "OR (status IN ({$inFlight}) AND claimed_at IS NOT NULL AND claimed_at < (NOW() - INTERVAL {$silentSeconds} SECOND))"
+    )->fetchColumn();
+    return [
+        'commands' => $count('desktop_commands', "'claimed'", DesktopCommandService::CLAIMED_STALE_SECONDS),
+        'ai' => $count('desktop_ai_requests', "'claimed', 'streaming'", DesktopAiRelayService::CLAIMED_STALE_SECONDS),
+        'flow' => $count('desktop_flow_runs', "'claimed', 'streaming'", DesktopFlowRelayService::CLAIMED_STALE_SECONDS),
+    ];
+}
+
 // Guard so this file is require-able from a unit test (which only exercises
-// desktopCommandsRetentionDays()). Everything below — env/settings load + DB work — is skipped so the
-// pure parsing function can be tested without a DB or a valid production settings.php.
+// desktopCommandsRetentionDays() and desktopRelaySweep()). Everything below — env/settings load + DB work — is
+// skipped so those functions can be tested without a valid production settings.php.
 if (PHP_SAPI !== 'cli' || (defined('DESKTOP_COMMANDS_CLEANUP_NO_RUN') && DESKTOP_COMMANDS_CLEANUP_NO_RUN)) {
     return;
 }
@@ -110,22 +159,23 @@ $where = "created_at < :cutoff AND (status IN ('done', 'failed', 'expired') OR e
 
 try {
     if ($dryRun) {
-        // Report (never mutate) how many stale pending/claimed rows expireStale() would flip to
-        // 'expired' — same TWO predicates that method applies (pending: past its own expires_at;
-        // claimed: past CLAIMED_STALE_SECONDS since its own claimed_at — NOT expires_at, which is
-        // fixed at enqueue() time and can pass while a claimed row is still genuinely in flight), just
-        // as a SELECT instead of an UPDATE.
-        $claimedCutoff = DesktopCommandService::CLAIMED_STALE_SECONDS;
-        $staleStmt = $pdo->query(
-            "SELECT COUNT(*) FROM desktop_commands WHERE "
-            . "(status = 'pending' AND expires_at <= NOW()) "
-            . "OR (status = 'claimed' AND claimed_at IS NOT NULL AND claimed_at < (NOW() - INTERVAL {$claimedCutoff} SECOND))"
-        );
-        $staleWould = (int) $staleStmt->fetchColumn();
+        // Report (never mutate) how many stale rows each lane's expireStale() would flip to 'expired'
+        // (see desktopRelaySweep() for the predicates, which are those methods' own, as a SELECT).
+        $staleWould = desktopRelaySweep($mysql, true);
         fwrite(STDOUT, sprintf(
             "[%s] desktop_commands cleanup DRY RUN: %d stale pending/claimed row(s) would be expired.\n",
             date('c'),
-            $staleWould
+            $staleWould['commands']
+        ));
+        fwrite(STDOUT, sprintf(
+            "[%s] desktop_ai_requests cleanup DRY RUN: %d stale pending/claimed/streaming request(s) would be expired and their sealed content purged.\n",
+            date('c'),
+            $staleWould['ai']
+        ));
+        fwrite(STDOUT, sprintf(
+            "[%s] desktop_flow_runs cleanup DRY RUN: %d stale pending/claimed/streaming run(s) would be expired and their sealed content purged.\n",
+            date('c'),
+            $staleWould['flow']
         ));
 
         $stmt = $pdo->prepare("SELECT COUNT(*) FROM desktop_commands WHERE {$where}");
@@ -143,9 +193,12 @@ try {
 
     // Real run only: expire stale pending/claimed rows FIRST (see docblock) so a crashed desktop's
     // claimed-but-abandoned command is visible as 'expired' well before the age-based delete below
-    // ever gets to it.
-    $expired = (new DesktopCommandService($mysql))->expireStale();
-    fwrite(STDOUT, sprintf("[%s] desktop_commands cleanup: expired %d stale pending/claimed row(s).\n", date('c'), $expired));
+    // ever gets to it — and so an idle owner's overdue sealed AI requests and flow runs lose their
+    // sealed content, which no poll of theirs will do for them.
+    $expired = desktopRelaySweep($mysql, false);
+    fwrite(STDOUT, sprintf("[%s] desktop_commands cleanup: expired %d stale pending/claimed row(s).\n", date('c'), $expired['commands']));
+    fwrite(STDOUT, sprintf("[%s] desktop_ai_requests cleanup: expired %d stale pending/claimed/streaming request(s), sealed content purged.\n", date('c'), $expired['ai']));
+    fwrite(STDOUT, sprintf("[%s] desktop_flow_runs cleanup: expired %d stale pending/claimed/streaming run(s), sealed content purged.\n", date('c'), $expired['flow']));
 
     // Delete in bounded batches so a large backlog doesn't take one long table lock.
     $batch = 5000;

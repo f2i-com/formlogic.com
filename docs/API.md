@@ -217,6 +217,14 @@ TTL is never handed out either way); a periodic sweep should also call
 `DesktopCommandService::expireStale()` (no argument = global) to reap commands from owners whose
 desktop never polls.
 
+The sealed AI and flow-run relay lanes sweep the same way, but a poll there expires only its own
+owner's overdue rows. What reaches an owner who never polls again is
+`DesktopAiRelayService::expireStale()` and `DesktopFlowRelayService::expireStale()` (no argument =
+global), and expiring a row is what purges its sealed envelope. `bin/desktop-commands-cleanup.php`
+calls all three, so how long an idle owner's overdue sealed request stays in the database is how often
+that job runs: nightly by default, or hourly to bound it to the hour (the job is idempotent and
+lock-guarded).
+
 ### Chat tools (site chat, Phase 6)
 
 The floating site chat's tool surface (`docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md` §5.4). The

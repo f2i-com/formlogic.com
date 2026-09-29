@@ -643,6 +643,8 @@ class DesktopFlowRelayService
 
     /**
      * Sweep stale rows (opportunistic GC, owner-scoped when polled; fails soft like the AI lane).
+     * With no owner it sweeps everyone's rows, which bin/desktop-commands-cleanup.php does: the
+     * only thing that reaches an owner who never polls again.
      *
      * Three branches:
      *   - 'pending' rows past their enqueue-anchored expires_at (nothing claimed them in time)

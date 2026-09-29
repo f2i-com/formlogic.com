@@ -669,6 +669,8 @@ class DesktopAiRelayService
     /**
      * Sweep stale requests to 'expired', purging their sealed content in the same pass
      * (opportunistic GC, owner-scoped when polled; fails soft like DesktopCommandService).
+     * With no owner it sweeps everyone's rows, which bin/desktop-commands-cleanup.php does: the
+     * only thing that reaches an owner who never polls again.
      *
      * Two branches, mirroring DesktopCommandService::expireStale:
      *   - 'pending' rows past their enqueue-anchored expires_at (nothing claimed them in time);
