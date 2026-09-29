@@ -409,25 +409,141 @@ describe('VaultSetupWizard', () => {
     expect(useVaultStore.getState().setupPending).toBe(true);
   });
 
-  it('dismissal attempts are ignored while the kit is being prepared', async () => {
-    let release!: (r: { vault: VaultWire; recoveryDisplay: string }) => void;
-    client = makeFakeClient(() => new Promise((resolve) => { release = resolve; }));
-    setCryptoClientForTests(client as unknown as CryptoClient);
-    await renderWizard();
-    await typeInto('At least 12 characters', PASSPHRASE);
-    await typeInto('Repeat the passphrase', PASSPHRASE);
-    await click('Create vault');
-    expect(client.createVault).toHaveBeenCalledTimes(1);
+  // While a prepare runs (its preflight requests, then the key derivation) NO kit exists yet, so
+  // nothing is at stake and the user must be able to leave — a stalled connection must not trap
+  // them in a dialog with no way out but a reload. What was being prepared is dropped when it ends.
+  describe('while the vault is being prepared (no kit exists yet)', () => {
+    let release: (r: { vault: VaultWire; recoveryDisplay: string }) => void;
 
+    async function startSlowPrepare(): Promise<void> {
+      client = makeFakeClient(() => new Promise((resolve) => { release = resolve; }));
+      setCryptoClientForTests(client as unknown as CryptoClient);
+      await renderWizard();
+      await typeInto('At least 12 characters', PASSPHRASE);
+      await typeInto('Repeat the passphrase', PASSPHRASE);
+      await click('Create vault');
+      expect(client.createVault).toHaveBeenCalledTimes(1);
+    }
+
+    it.each([
+      ['Escape', () => pressEscape()],
+      ['a click outside', () => clickBackdrop()],
+      ['the close button', () => act(() => { (closeButton() as HTMLButtonElement).click(); })],
+      ['the Cancel button', () => act(() => { button('Cancel')!.click(); })],
+    ])('%s still dismisses it, and a prepare that finishes afterwards is dropped', async (_name, dismiss) => {
+      await startSlowPrepare();
+      expect(closeButton(), 'a close button while preparing').not.toBeNull();
+
+      dismiss();
+      expect(onClose).toHaveBeenCalledTimes(1);
+
+      client.markUnlocked();
+      await act(async () => { release({ vault: VAULT, recoveryDisplay: KIT }); });
+      await flush();
+      // It finished after the wizard was closed: no kit on screen, nothing pending, worker gone.
+      expect(text()).not.toContain(KIT);
+      expect(text()).toContain('Create your encryption vault');
+      expect(useVaultStore.getState().setupPending).toBe(false);
+      expect(client.isRunning).toBe(false);
+      expect(api.createVault).not.toHaveBeenCalled();
+    });
+
+    it('a parent closing the wizard while it is preparing makes that prepare stale too', async () => {
+      await startSlowPrepare();
+
+      await renderWizard(false);
+      client.markUnlocked();
+      await act(async () => { release({ vault: VAULT, recoveryDisplay: KIT }); });
+      await flush();
+
+      expect(useVaultStore.getState().setupPending).toBe(false);
+      expect(client.isRunning).toBe(false);
+      await renderWizard(true);
+      expect(text()).toContain('Create your encryption vault');
+      expect(text()).not.toContain(KIT);
+    });
+
+    it('after dismissing mid-prepare the wizard is not stuck: Create vault reaches the store again', async () => {
+      await startSlowPrepare();
+      pressEscape();
+      expect(onClose).toHaveBeenCalledTimes(1);
+
+      // The first prepare is still running, so the store says wait — but it WAS asked.
+      await typeInto('At least 12 characters', PASSPHRASE);
+      await typeInto('Repeat the passphrase', PASSPHRASE);
+      await click('Create vault');
+      expect(text()).toMatch(/already being set up/i);
+      expect(button('Create vault')!.disabled).toBe(false);
+
+      client.markUnlocked();
+      await act(async () => { release({ vault: VAULT, recoveryDisplay: KIT }); });
+      await flush();
+    });
+
+    it('a second Enter is ignored: no second prepare, no error, the fields are kept', async () => {
+      client = makeFakeClient(() => new Promise((resolve) => { release = resolve; }));
+      setCryptoClientForTests(client as unknown as CryptoClient);
+      await renderWizard();
+      await typeInto('At least 12 characters', PASSPHRASE);
+      await typeInto('Repeat the passphrase', PASSPHRASE);
+      const repeat = document.body.querySelector<HTMLInputElement>('input[placeholder="Repeat the passphrase"]')!;
+      const pressEnter = () => act(() => {
+        repeat.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      });
+
+      pressEnter();
+      await flush();
+      pressEnter();
+      await flush();
+
+      expect(client.createVault).toHaveBeenCalledTimes(1);
+      expect(text()).not.toMatch(/already being set up/i);
+      expect(repeat.value).toBe(PASSPHRASE);
+
+      client.markUnlocked();
+      await act(async () => { release({ vault: VAULT, recoveryDisplay: KIT }); });
+      await flush();
+      expect(text()).toContain(KIT);
+    });
+
+    it('a prepare that throws is reported and does not leave the wizard busy for good', async () => {
+      const original = useVaultStore.getState().prepareSetup;
+      useVaultStore.setState({ prepareSetup: vi.fn().mockRejectedValue(new Error('the connection blew up')) });
+      try {
+        await renderWizard();
+        await typeInto('At least 12 characters', PASSPHRASE);
+        await typeInto('Repeat the passphrase', PASSPHRASE);
+        await click('Create vault');
+
+        expect(text()).toContain('the connection blew up');
+        expect(button('Create vault')!.disabled).toBe(false);
+        expect(button('Cancel')!.disabled).toBe(false);
+      } finally {
+        useVaultStore.setState({ prepareSetup: original });
+      }
+    });
+  });
+
+  it('says the vault is being saved while the create request is out, and dismissal stays blocked meanwhile', async () => {
+    await goToConfirmStep();
+    await typeInto('FLRK1-XXXX-XXXX-…', KIT);
+    let respond!: (r: { ok: boolean; status: number; body: Record<string, unknown> | null }) => void;
+    vi.mocked(api.createVault).mockImplementation(() => new Promise((resolve) => { respond = resolve; }));
+
+    await click('Confirm & create vault');
+
+    expect(api.createVault).toHaveBeenCalledTimes(1);
+    expect(text()).toMatch(/Saving your vault/);
+    expect(text()).toMatch(/recovery kit stays valid/i);
     expect(closeButton()).toBeNull();
     pressEscape();
     clickBackdrop();
     expect(onClose).not.toHaveBeenCalled();
+    expect(button('Cancel and start over')!.disabled).toBe(true);
 
-    client.markUnlocked();
-    await act(async () => { release({ vault: VAULT, recoveryDisplay: KIT }); });
+    await act(async () => { respond({ ok: true, status: 200, body: { data: { vault: VAULT } } }); });
     await flush();
-    expect(text()).toContain(KIT);
+    expect(onComplete).toHaveBeenCalledTimes(1);
   });
 
   it('"Cancel and start over" says what it discards and needs a second, explicit click', async () => {

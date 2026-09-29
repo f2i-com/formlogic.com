@@ -816,6 +816,17 @@ describe('vaultStore two-phase setup', () => {
       await expect(useVaultStore.getState().checkSetup(setupId)).resolves.toEqual({ outcome: 'created' });
     });
 
+    it('checkSetup whose look at the server throws concludes nothing too, instead of never settling', async () => {
+      const { setupId } = await sentWithNoAnswer();
+      vi.mocked(api.getVault).mockRejectedValueOnce(new Error('the connection blew up'));
+
+      const check = await useVaultStore.getState().checkSetup(setupId);
+
+      expect(check.outcome).toBe('unknown');
+      expect(check.error).toMatch(MAY_EXIST);
+      expect(useVaultStore.getState().setupPending).toBe(true);
+    });
+
     it('checkSetup after a lock says the vault may exist — the setup is gone and cannot be retried', async () => {
       const { setupId } = await sentWithNoAnswer();
       useVaultStore.getState().lock();

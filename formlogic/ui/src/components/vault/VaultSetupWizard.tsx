@@ -25,7 +25,7 @@ import { Button } from '../ui/Button';
 import { PasswordInput } from '../ui/PasswordInput';
 import { Input } from '../ui/Input';
 import { useAuthStore } from '../../stores/authStore';
-import { useVaultStore } from '../../stores/vaultStore';
+import { useVaultStore, type PrepareSetupResult } from '../../stores/vaultStore';
 import { toast } from '../../stores/toastStore';
 import { copyToClipboard } from '../../lib/utils';
 import { downloadRecoveryKit, printRecoveryKit } from '../../lib/crypto/recoveryKitFile';
@@ -93,6 +93,10 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
   const [passphrase2, setPassphrase2] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** `busy`, readable synchronously: a second Enter or click must not start a second run. */
+  const busyRef = useRef(false);
+  /** Bumped whenever the wizard is closed: a prepare that was started before that is stale. */
+  const attemptRef = useRef(0);
   const [recoveryDisplay, setRecoveryDisplay] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
@@ -127,6 +131,19 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
     return () => { mountedRef.current = false; };
   }, []);
 
+  // `busy` is only ever reset in state (reset() runs during render when a parent closes the
+  // wizard, where refs must not be written), so the ref follows it here; and a parent closing
+  // the wizard makes any prepare still running stale, exactly as close() does.
+  useEffect(() => { busyRef.current = busy; }, [busy]);
+  useEffect(() => {
+    if (!isOpen) attemptRef.current += 1;
+  }, [isOpen]);
+
+  const setWorking = (working: boolean) => {
+    busyRef.current = working;
+    setBusy(working);
+  };
+
   const reset = () => {
     setStep('passphrase');
     setPassphrase('');
@@ -155,21 +172,25 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
   }
 
   const close = () => {
+    attemptRef.current += 1; // a prepare still running is stale from here on
     reset();
     onClose();
   };
 
-  // Dismissal (close button, backdrop click, Escape) is possible ONLY on the passphrase
-  // step while nothing is running. From the moment the kit is shown until it is
-  // confirmed — and while a prepare or the create request is in flight — every attempt
-  // is ignored: the kit is displayed once, and closing would silently discard it (or
-  // leave the create request's outcome with nobody to show it to).
-  const dismissible = step === 'passphrase' && !busy;
+  // Dismissal (close button, backdrop click, Escape) is possible only on the passphrase
+  // step: from the moment the kit is shown until it is confirmed — including while the
+  // create request is out — every attempt is ignored, because the kit is displayed once and
+  // closing would silently discard it (or leave the request's outcome with nobody to show it
+  // to). While a vault is still being PREPARED no kit exists, so nothing is at stake: the user
+  // can leave (a stalled connection must not trap them), and a prepare that finishes after
+  // that is dropped, not shown.
+  const dismissible = step === 'passphrase';
   const requestClose = () => {
     if (dismissible) close();
   };
 
   const startSetup = async () => {
+    if (busyRef.current) return; // a second Enter while the first run is still going
     setError(null);
     if (passphrase.length < 12) {
       setError('Passphrase must be at least 12 characters.');
@@ -183,14 +204,23 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
       setError('You must be signed in.');
       return;
     }
-    setBusy(true);
+    const attempt = attemptRef.current + 1;
+    attemptRef.current = attempt;
+    setWorking(true);
     // Generates the wrappers and the kit locally — NOTHING is sent to the server yet.
-    const result = await prepareSetup(user.id, passphrase);
-    if (!mountedRef.current) {
+    let result: PrepareSetupResult;
+    try {
+      result = await prepareSetup(user.id, passphrase);
+    } catch (e) {
+      result = { ok: false, error: e instanceof Error ? e.message : 'Vault setup failed.' };
+    }
+    // Closed (or unmounted) while it ran: nothing shows this attempt any more, so it must not
+    // leave a kit and an unlocked worker behind.
+    if (!mountedRef.current || attempt !== attemptRef.current) {
       if (result.setupId) void abandonSetup(result.setupId);
       return;
     }
-    setBusy(false);
+    setWorking(false);
     setPassphrase('');
     setPassphrase2('');
     if (!result.ok || !result.recoveryDisplay || !result.setupId) {
@@ -228,9 +258,9 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
   };
 
   const confirmKit = async () => {
-    if (!setupId || busy) return;
+    if (!setupId || busyRef.current) return;
     setError(null);
-    setBusy(true);
+    setWorking(true);
     // The store checks the typed-back kit (a wrong one sends nothing) and only then
     // creates the vault on the server. The kit has been shown by now (D5).
     const result = await commitSetup(setupId, confirmText);
@@ -259,7 +289,7 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
       setError(result.error ?? 'Vault setup failed — start again.');
       return;
     }
-    setBusy(false);
+    setWorking(false);
     // No verdict (the request may have got through): the vault may exist, so from here on
     // nothing may call the kit void — "Cancel and start over" asks the server first.
     if (result.code === 'save_failed') setUncertain(true);
@@ -268,7 +298,7 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
 
   /** "Cancel and start over": one click to say what it discards, a second to do it. */
   const startCancel = async () => {
-    if (busy || confirmingCancel) return;
+    if (busyRef.current || confirmingCancel) return;
     if (!uncertain || !setupId) {
       setCancelMode('plain');
       setConfirmingCancel(true);
@@ -278,11 +308,11 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
     // the user saved may be the only way into it: find out BEFORE saying anything is
     // discarded.
     setError(null);
-    setBusy(true);
+    setWorking(true);
     setChecking(true);
     const check = await checkSetup(setupId);
     if (!mountedRef.current) return;
-    setBusy(false);
+    setWorking(false);
     setChecking(false);
     switch (check.outcome) {
       case 'created':
@@ -352,7 +382,7 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
             </p>
           )}
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={close} disabled={busy}>Cancel</Button>
+            <Button variant="outline" onClick={close}>Cancel</Button>
             <Button onClick={() => void startSetup()} isLoading={busy}>Create vault</Button>
           </div>
         </div>
@@ -465,6 +495,11 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
           )}
           {checking && (
             <p className="text-sm text-gray-600 dark:text-slate-400" role="status">Checking with FormLogic whether your vault was created…</p>
+          )}
+          {busy && !checking && (
+            <p className="text-sm text-gray-600 dark:text-slate-400" role="status">
+              Saving your vault… this can take a moment. If it stalls, check your connection — your recovery kit stays valid.
+            </p>
           )}
           {confirmingCancel && (
             <DiscardKitNotice mode={cancelMode} onKeep={() => setConfirmingCancel(false)} onDiscard={reset} />

@@ -554,7 +554,13 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
     // No request was ever sent: there is nothing to ask the server about.
     if (!pending.sent) return { outcome: 'not_created' };
 
-    const res = await api.getVault();
+    let res: Awaited<ReturnType<typeof api.getVault>>;
+    try {
+      res = await api.getVault();
+    } catch {
+      // A request that throws is no answer: conclude nothing.
+      return { outcome: 'unknown', error: SETUP_UNCHECKED_MESSAGE };
+    }
     // If the setup was dropped (a lock, a sign-out) or started saving while the server was
     // being asked, this answer is no longer about it.
     if (pendingSetup !== pending) return { outcome: 'interrupted', error: endedSetupMessage(setupId) };
