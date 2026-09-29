@@ -8,8 +8,12 @@
 // server after the kit has been shown AND typed back (the checksum catches a mistype
 // before any KDF work). Closing the tab, cancelling, or losing the session before that
 // creates nothing; the user simply starts again.
+//
+// The kit is shown ONCE, so from the moment it is on screen until it has been confirmed
+// the wizard cannot be dismissed — not by the close button, a click outside, or Escape.
+// The only way out is the explicit "Cancel and start over", which says what it discards.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { ShieldCheck, Copy, Check, TriangleAlert } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -26,11 +30,30 @@ interface VaultSetupWizardProps {
   onComplete?: () => void;
 }
 
+/** Shown before "Cancel and start over" takes effect: says exactly what is thrown away. */
+function DiscardKitNotice({ onKeep, onDiscard }: { onKeep: () => void; onDiscard: () => void }) {
+  return (
+    <div className="rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 p-3 space-y-3" role="alert">
+      <p className="text-sm text-red-800 dark:text-red-200">
+        <strong>Discard this recovery kit and start over?</strong> The kit you were just shown will be
+        discarded and <strong>no vault will be created</strong>. Nothing has been saved to your account,
+        so you will begin again with a new passphrase and get a new recovery kit — throw away any copy
+        of this one.
+      </p>
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button variant="outline" size="sm" onClick={onKeep}>Keep this kit</Button>
+        <Button variant="danger" size="sm" onClick={onDiscard}>Discard kit and start over</Button>
+      </div>
+    </div>
+  );
+}
+
 export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWizardProps) {
   const user = useAuthStore((s) => s.user);
   const prepareSetup = useVaultStore((s) => s.prepareSetup);
   const commitSetup = useVaultStore((s) => s.commitSetup);
   const abandonSetup = useVaultStore((s) => s.abandonSetup);
+  const cancelHintId = useId();
 
   const [step, setStep] = useState<'passphrase' | 'kit' | 'confirm'>('passphrase');
   const [passphrase, setPassphrase] = useState('');
@@ -42,6 +65,8 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
   const [confirmText, setConfirmText] = useState('');
   /** Token of the vault this wizard prepared (null until a kit has been generated). */
   const [setupId, setSetupId] = useState<string | null>(null);
+  /** "Cancel and start over" was pressed and is waiting for its second, explicit click. */
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
 
   // The prepared vault belongs to this wizard: whenever the wizard stops holding it (a
   // reset, a parent closing it, unmount) the store is told to drop it — which is a no-op
@@ -69,6 +94,7 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
     setCopied(false);
     setConfirmText('');
     setSetupId(null);
+    setConfirmingCancel(false);
   };
 
   // A parent that closes the wizard without going through onClose must not leave a kit on
@@ -82,6 +108,16 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
   const close = () => {
     reset();
     onClose();
+  };
+
+  // Dismissal (close button, backdrop click, Escape) is possible ONLY on the passphrase
+  // step while nothing is running. From the moment the kit is shown until it is
+  // confirmed — and while a prepare or the create request is in flight — every attempt
+  // is ignored: the kit is displayed once, and closing would silently discard it (or
+  // leave the create request's outcome with nobody to show it to).
+  const dismissible = step === 'passphrase' && !busy;
+  const requestClose = () => {
+    if (dismissible) close();
   };
 
   const startSetup = async () => {
@@ -146,7 +182,8 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
   return (
     <Modal
       isOpen={isOpen}
-      onClose={close}
+      onClose={requestClose}
+      showCloseButton={dismissible}
       title={step === 'passphrase' ? 'Create your encryption vault' : 'Save your recovery kit'}
       size="md"
     >
@@ -215,9 +252,25 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
             Write it down or store it somewhere safe, then continue. Your vault is <strong>not
             created yet</strong> — that happens only after you confirm this kit on the next step.
           </p>
-          <div className="flex justify-end">
-            <Button onClick={() => { setStep('confirm'); setError(null); }}>I saved it — continue</Button>
+          {confirmingCancel && (
+            <DiscardKitNotice onKeep={() => setConfirmingCancel(false)} onDiscard={reset} />
+          )}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setConfirmingCancel(true)}
+              disabled={confirmingCancel}
+              aria-describedby={cancelHintId}
+            >
+              Cancel and start over
+            </Button>
+            <Button onClick={() => { setStep('confirm'); setError(null); setConfirmingCancel(false); }}>I saved it — continue</Button>
           </div>
+          <p id={cancelHintId} className="text-xs text-gray-500 dark:text-slate-400">
+            This window stays open until you have confirmed your kit, so it cannot be lost by accident.
+            &ldquo;Cancel and start over&rdquo; discards the kit and creates no vault.
+          </p>
         </div>
       )}
 
@@ -241,12 +294,30 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
               {error}
             </p>
           )}
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setStep('kit')} disabled={busy}>Back</Button>
-            <Button onClick={() => void confirmKit()} isLoading={busy} disabled={!confirmText.trim()}>
-              Confirm &amp; create vault
+          {confirmingCancel && (
+            <DiscardKitNotice onKeep={() => setConfirmingCancel(false)} onDiscard={reset} />
+          )}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setConfirmingCancel(true)}
+              disabled={busy || confirmingCancel}
+              aria-describedby={cancelHintId}
+            >
+              Cancel and start over
             </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => { setStep('kit'); setConfirmingCancel(false); }} disabled={busy}>Back</Button>
+              <Button onClick={() => void confirmKit()} isLoading={busy} disabled={!confirmText.trim()}>
+                Confirm &amp; create vault
+              </Button>
+            </div>
           </div>
+          <p id={cancelHintId} className="text-xs text-gray-500 dark:text-slate-400">
+            This window stays open until your vault is created, so the kit cannot be lost by accident.
+            &ldquo;Cancel and start over&rdquo; discards the kit and creates no vault.
+          </p>
         </div>
       )}
     </Modal>
