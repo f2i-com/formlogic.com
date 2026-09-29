@@ -25,7 +25,7 @@ Policy and what each allowance is for:
 | `media-src` | `'self' data: blob:` | Form media fields. |
 | `connect-src` | `'self' wss: https://www.paypal.com` | API is same-origin; wss for realtime; no third-party telemetry exists to allow. |
 | `worker-src` | `'self' blob:` | Module workers: formlogic eval worker + the E2EE crypto worker. |
-| `frame-src` | `'self' https://www.paypal.com https://*.paypal.com` | Sandboxed custom-screen iframes are same-origin/srcdoc; PayPal button iframes. |
+| `frame-src` | `'self' https://www.paypal.com https://*.paypal.com` | Sandboxed custom-screen iframes load the same-origin `/screen-host.html` — deliberately not `srcdoc`, because a `srcdoc` document inherits this shell policy and its `script-src` blocks the screen's inline bootstrap; the recovery kit's temporary print frame (see below); PayPal button iframes. |
 | `object-src` | `'none'` | No plugins. |
 | `base-uri` | `'self'` | Base-tag injection defence. |
 | `form-action` | `'self'` | No external form posts. |
@@ -78,14 +78,36 @@ of the baseline (plan D5, §10 "Vault setup order"):
     and a plain warning.
   - *Print* — a minimal one-page view in a temporary same-origin iframe: a static shell whose
     content is added with `textContent` (no markup is built from the kit or any other
-    string), removed when `afterprint` fires or after a five-minute cap. It loads nothing and
-    sets its styles through the CSSOM, and same-origin `srcdoc` frames are already used by the
-    custom screens under this policy, so it needs no CSP change. (Verified in jsdom only; the
-    built meta CSP with a real `srcdoc` print frame is a manual browser check.)
+    string), removed when `afterprint` fires or after a five-minute cap. It is an `about:srcdoc`
+    document, so it inherits the shell policy above (which is why custom screens do *not* use
+    `srcdoc`); it needs no CSP change because it contains no script, loads nothing and sets its
+    styles through the CSSOM, leaving the inherited policy nothing to block. Checked by a reviewer
+    on 2026-09-29 in headless Chromium, Firefox and WebKit (Playwright) against a replica of the
+    production meta policy and the SPA's Apache headers: the frame loaded, was filled, reached
+    `print()` with no CSP violation and was removed on `afterprint` (Chromium and Firefox;
+    headless WebKit never fires `afterprint`, so only the five-minute cap applies there). Not yet
+    checked: Android Chrome, and a real production build.
   - *Copy* — the existing clipboard copy.
 - **No accidental loss.** While the kit is on screen the dialog ignores its close button,
   click-outside and Escape; the only way out is an explicit "Cancel and start over" that
-  discards the kit and creates no vault.
+  discards the kit and creates no vault. This holds when the wizard is opened from another
+  dialog too (Form settings is the usual place): a dialog underneath — the shared `Modal` and
+  every overlay using `useFocusTrap` — acts on Escape and Tab only while it is the one on top
+  (`src/lib/dialogStack.ts`); before that, Escape closed Form settings, which unmounted the
+  wizard and dropped the kit, and Tab was pulled onto Form settings' own close button behind it.
+  While the vault is only being *prepared* no kit exists yet, so the passphrase step can still be
+  left; a prepare that finishes afterwards is dropped.
+- **A create request that gets no answer.** Once `PUT /api/vault` has been sent and nothing came
+  back, the vault may exist and the saved kit may be the only way into it, so nothing calls the
+  kit void, says nothing was saved or tells the user to throw it away until the server has said
+  there is no vault: retries re-send the same vault (a `409` for it is adopted), "Cancel and
+  start over" asks the server first, and a lock or sign-out in that window says the vault may
+  exist. See the plan's §10 "Vault setup order".
+- **Idle lock.** A vault that is only *prepared* (kit on screen, not yet created) has no idle
+  timer: it is not on the server yet, its worker holds only its own new secrets and there is
+  nothing to decrypt, and an auto-lock would void a kit the user may be writing down. Any lock,
+  sign-out or closed tab still drops it, and the 30-minute idle lock starts when the vault is
+  created.
 - **What it does not change.** Like the passphrase, the kit is visible to whatever script runs
   in the page while it is displayed: a server that serves hostile JavaScript defeats it (see
   *Threat model honesty*). A downloaded or printed kit is as safe as the place the user keeps

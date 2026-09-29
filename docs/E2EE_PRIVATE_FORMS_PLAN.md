@@ -611,6 +611,11 @@ propagates across tabs via a `BroadcastChannel('fl-vault')` (all tabs lock toget
 Auto-lock after 30 min idle (configurable) + explicit lock + lock on logout
 (`authStore.clearUserSessionData` hook — which today does NOT clear IndexedDB/uiCache; the
 vault path must not rely on it for secrets, and holds none outside the worker anyway).
+One deliberate exception: a vault that is only *prepared* (its kit on screen, not yet confirmed
+and created — see "Vault setup order") has no idle timer. It does not exist on the server yet,
+its worker holds only that new vault's own secrets and there is nothing to decrypt, and an
+auto-lock would void a kit the user may be writing down. Any lock, sign-out or closed tab still
+drops it, and the 30-minute idle lock starts the moment the vault is created.
 
 **Never persisted:** PUK/UMK/private keys/FK/DEKs, decrypted answers, and the recovery kit
 itself — the app stores and transmits the kit nowhere. During setup it exists only in memory
@@ -639,8 +644,12 @@ trusted to the UI:
 2. *Show the kit.* The wizard offers Copy, Download (a text file with the FLRK1 kit exactly as
    displayed, its date and a plain warning) and Print. From the moment the kit is on screen until
    it is confirmed the wizard cannot be dismissed — close button, click outside and Escape are all
-   ignored. The one way out is an explicit "Cancel and start over", which says the kit will be
-   discarded and no vault created, and drops the prepared vault.
+   ignored, also when it is opened from another dialog such as Form settings (a dialog underneath
+   never acts on Escape or Tab while another is on top, `lib/dialogStack.ts`). The one way out is
+   an explicit "Cancel and start over", which says the kit will be discarded and no vault created,
+   and drops the prepared vault. Before that, while the vault is only being prepared, no kit
+   exists and the passphrase step can still be left (a stalled connection must not trap the user);
+   a prepare that finishes after the wizard was closed is dropped, not shown.
 3. *Confirm and create* (`commitSetup`): the kit typed back must match exactly. Only then is
    `PUT /api/vault` sent — the server API is unchanged (still create-only, recovery wrapper
    mandatory). The store also refuses to send a vault prepared under another sign-in session or
@@ -648,9 +657,30 @@ trusted to the UI:
    create-only.
 
 Abandoning, a lock, a sign-out or a closed tab before step 3 persists nothing: the user starts
-again and gets a new kit (the old one is void). A request that fails to get through keeps the
-prepared vault so the *same* kit can be re-sent, and a `409 vault_exists` for the very same vault
-(a lost response) is adopted rather than reported as a failure.
+again and gets a new kit (the old one is void).
+
+**A create request that gets no answer.** From the moment `PUT /api/vault` is sent until a verdict
+comes back (created, refused, or the server showing another vault or none) the vault *may* exist
+even though the browser never heard, and the kit the user saved is then the only way into it. So
+in that window nothing may call the kit void, say that nothing was saved, or tell the user to
+throw it away; the store enforces this (a `sent` flag on the pending setup), not the UI:
+
+- The prepared vault is kept so the *same* kit can be re-sent, and a `409 vault_exists` for the
+  very same vault (a lost response) is adopted rather than reported as a failure. A `409` whose
+  follow-up look at the server fails or shows no vault concludes nothing and keeps the setup.
+- "Cancel and start over" first asks the server (`checkSetup`): this very vault is adopted
+  (unlocked) and the user is told the saved kit is its kit; another vault closes the wizard with
+  the reason; no vault is reported as such before the kit can be discarded; and if the server
+  cannot be reached the wizard says the vault may exist and offers "Leave anyway" as an explicit
+  choice.
+- A lock, sign-out or worker loss in that window still drops the secrets (a lock always does),
+  but what the user is then told is that the vault may exist and the kit should be kept; a lock
+  that lands during the request no longer reports "unchanged, try again" for a setup that is gone.
+  `refreshStatus` leaves the setup alone while its request is in flight or when the server shows
+  this very vault, and abandoning a setup that was sent brings the store in line with the server
+  (vault present, locked) — never unlocked.
+- Only a verdict clears the flag: created, a refusal, another vault, or the server answering that
+  it has no vault. Only then is "nothing was saved" true, and the kit void.
 
 **Read pipeline:** `useDecryptedResponses(formId, rows)` hook wraps the existing fetches in
 `FormResponses.tsx`, `FormResponseView.tsx`, `recordDisplay.tsx`, `renderEditField.tsx`
@@ -853,7 +883,9 @@ seeds a canary answer through a private form and asserts it appears nowhere in t
   revocation per §10 — otherwise it slips to a later phase whole.)
 - **Gate:** server cannot recover a test vault without passphrase/recovery kit; **no create
   request is sent before the kit has been shown and typed back, abandoning before that persists
-  nothing, and the wizard ignores every dismissal attempt while the kit is on screen**; passphrase
+  nothing, the wizard ignores every dismissal attempt while the kit is on screen (also when opened
+  from Form settings), and a create request that got no answer never leaves the user told to
+  discard a kit for a vault that may exist**; passphrase
   change rewraps only (vault row diff proves no data touched); KDF params round-trip and
   refuse downgrade; a mistyped recovery code is caught by checksum before any KDF work;
   corrupted bundle (pubkey mismatch) fails closed; lock in one tab locks all tabs and
