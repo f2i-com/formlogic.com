@@ -14,7 +14,7 @@
 // The only way out is the explicit "Cancel and start over", which says what it discards.
 
 import { useEffect, useId, useRef, useState } from 'react';
-import { ShieldCheck, Copy, Check, TriangleAlert } from 'lucide-react';
+import { ShieldCheck, Copy, Check, Download, Printer, TriangleAlert } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { PasswordInput } from '../ui/PasswordInput';
@@ -22,6 +22,7 @@ import { Input } from '../ui/Input';
 import { useAuthStore } from '../../stores/authStore';
 import { useVaultStore } from '../../stores/vaultStore';
 import { copyToClipboard } from '../../lib/utils';
+import { downloadRecoveryKit, printRecoveryKit } from '../../lib/crypto/recoveryKitFile';
 
 interface VaultSetupWizardProps {
   isOpen: boolean;
@@ -62,6 +63,11 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
   const [busy, setBusy] = useState(false);
   const [recoveryDisplay, setRecoveryDisplay] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [downloaded, setDownloaded] = useState(false);
+  /** When the kit was generated: dates the downloaded file and the print view. */
+  const [kitCreatedAt, setKitCreatedAt] = useState<Date | null>(null);
+  /** Set when a save action could not be started (blocked download, no print support). */
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [confirmText, setConfirmText] = useState('');
   /** Token of the vault this wizard prepared (null until a kit has been generated). */
   const [setupId, setSetupId] = useState<string | null>(null);
@@ -92,6 +98,9 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
     setBusy(false);
     setRecoveryDisplay(null);
     setCopied(false);
+    setDownloaded(false);
+    setKitCreatedAt(null);
+    setSaveNotice(null);
     setConfirmText('');
     setSetupId(null);
     setConfirmingCancel(false);
@@ -150,7 +159,32 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
     }
     setSetupId(result.setupId);
     setRecoveryDisplay(result.recoveryDisplay);
+    setKitCreatedAt(new Date());
     setStep('kit');
+  };
+
+  // The kit leaves the page only through the browser's own download / print — never
+  // to the server (nothing here touches the network).
+  const saveKitFile = () => {
+    if (!recoveryDisplay || !kitCreatedAt) return;
+    try {
+      downloadRecoveryKit(recoveryDisplay, kitCreatedAt);
+      setDownloaded(true);
+      setSaveNotice(null);
+    } catch {
+      setSaveNotice("Your browser couldn't start the download — copy the kit or print it instead.");
+    }
+  };
+
+  const printKit = () => {
+    if (!recoveryDisplay || !kitCreatedAt) return;
+    let started: boolean;
+    try {
+      started = printRecoveryKit(recoveryDisplay, kitCreatedAt);
+    } catch {
+      started = false;
+    }
+    setSaveNotice(started ? null : "Printing isn't available here — copy the kit or download it instead.");
   };
 
   const confirmKit = async () => {
@@ -238,19 +272,42 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
           <div className="p-3 rounded-lg bg-gray-100 dark:bg-slate-800 font-mono text-sm break-all select-all text-gray-900 dark:text-slate-100">
             {recoveryDisplay}
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              void copyToClipboard(recoveryDisplay).then((ok) => { if (ok) setCopied(true); });
-            }}
-            leftIcon={copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-          >
-            {copied ? 'Copied' : 'Copy to clipboard'}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                void copyToClipboard(recoveryDisplay).then((ok) => { if (ok) setCopied(true); });
+              }}
+              leftIcon={copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            >
+              {copied ? 'Copied' : 'Copy to clipboard'}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={saveKitFile}
+              leftIcon={downloaded ? <Check className="h-4 w-4" /> : <Download className="h-4 w-4" />}
+            >
+              {downloaded ? 'Downloaded' : 'Download'}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={printKit}
+              leftIcon={<Printer className="h-4 w-4" />}
+            >
+              Print
+            </Button>
+          </div>
+          {saveNotice && (
+            <p className="text-sm text-amber-800 dark:text-amber-200" role="status">{saveNotice}</p>
+          )}
           <p className="text-sm text-gray-600 dark:text-slate-400">
-            Write it down or store it somewhere safe, then continue. Your vault is <strong>not
-            created yet</strong> — that happens only after you confirm this kit on the next step.
+            Save it somewhere safe — download it, print it or write it down — then continue.
+            FormLogic never receives the kit: the file and the printout are made in your browser.
+            Your vault is <strong>not created yet</strong>: that happens only after you confirm
+            this kit on the next step.
           </p>
           {confirmingCancel && (
             <DiscardKitNotice onKeep={() => setConfirmingCancel(false)} onDiscard={reset} />
