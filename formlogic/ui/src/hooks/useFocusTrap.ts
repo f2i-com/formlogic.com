@@ -1,5 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { lockBodyScroll, unlockBodyScroll } from '../lib/scrollLock';
+import { isTopDialog, pushDialog, removeDialog } from '../lib/dialogStack';
 
 const FOCUSABLE_SELECTORS = [
   'button:not([disabled])',
@@ -16,6 +17,9 @@ const FOCUSABLE_SELECTORS = [
  * - traps Tab / Shift+Tab within the dialog
  * - closes on Escape (via `onEscape`)
  * - restores focus to the previously-focused element on close
+ * - stands aside while another dialog (a shared <Modal>, or another trap) is open above
+ *   it: Escape and Tab then belong to that dialog alone, so a dialog opened FROM this one
+ *   is neither closed by its own Escape nor robbed of focus
  *
  * Attach `containerRef` to the dialog panel (give it `tabIndex={-1}` so it can
  * receive focus when it has no focusable children).
@@ -25,6 +29,7 @@ export function useFocusTrap(
   active: boolean,
   onEscape?: () => void
 ) {
+  const dialogId = useId();
   const previousFocus = useRef<HTMLElement | null>(null);
   const onEscapeRef = useRef(onEscape);
 
@@ -38,6 +43,7 @@ export function useFocusTrap(
     previousFocus.current = document.activeElement as HTMLElement;
     // Lock page scroll behind the dialog (shared with Modal so they coexist).
     lockBodyScroll();
+    pushDialog(dialogId);
 
     // Move focus into the dialog (defer so children have mounted).
     const raf = requestAnimationFrame(() => {
@@ -50,6 +56,7 @@ export function useFocusTrap(
     });
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (!isTopDialog(dialogId)) return;
       if (e.key === 'Escape') {
         onEscapeRef.current?.();
         return;
@@ -76,6 +83,7 @@ export function useFocusTrap(
     return () => {
       cancelAnimationFrame(raf);
       document.removeEventListener('keydown', handleKeyDown);
+      removeDialog(dialogId);
       unlockBodyScroll();
       const prev = previousFocus.current;
       if (prev && typeof prev.focus === 'function') {
@@ -83,5 +91,5 @@ export function useFocusTrap(
       }
       previousFocus.current = null;
     };
-  }, [active, containerRef]);
+  }, [active, containerRef, dialogId]);
 }

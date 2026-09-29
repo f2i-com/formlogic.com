@@ -4,6 +4,7 @@ import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import { X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { lockBodyScroll, unlockBodyScroll } from '../../lib/scrollLock';
+import { isTopDialog, pushDialog, removeDialog } from '../../lib/dialogStack';
 
 // Every dialog MUST have an accessible name (audit FL-27): either the visible
 // `title` or an explicit `ariaLabel` (for dialogs that render their own heading,
@@ -31,7 +32,6 @@ const FOCUSABLE_SELECTORS = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(', ');
 
-const openModals: string[] = [];
 function focusable(panel: HTMLElement): HTMLElement[] {
   return Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS)).filter((el) => {
     if (el.tabIndex < 0 || el.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
@@ -70,7 +70,7 @@ export function Modal({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (openModals.at(-1) !== uniqueId || e.defaultPrevented) return;
+      if (!isTopDialog(uniqueId) || e.defaultPrevented) return;
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
@@ -119,7 +119,7 @@ export function Modal({
     }
 
     document.addEventListener('keydown', handleKeyDown);
-    openModals.push(uniqueId);
+    pushDialog(uniqueId);
     lockBodyScroll();
 
     // Focus the first focusable element in the modal (only on initial open).
@@ -129,7 +129,7 @@ export function Modal({
     if (!hasInitialFocusRef.current) {
       hasInitialFocusRef.current = true;
       focusFrame = requestAnimationFrame(() => {
-        if (modalRef.current && openModals.at(-1) === uniqueId) {
+        if (modalRef.current && isTopDialog(uniqueId)) {
           const focusableElements = focusable(modalRef.current);
           if (focusableElements[0]) focusableElements[0].focus();
           else modalRef.current.focus();
@@ -139,9 +139,8 @@ export function Modal({
 
     return () => {
       cancelAnimationFrame(focusFrame);
-      const wasTop = openModals.at(-1) === uniqueId;
-      const index = openModals.indexOf(uniqueId);
-      if (index >= 0) openModals.splice(index, 1);
+      const wasTop = isTopDialog(uniqueId);
+      removeDialog(uniqueId);
       hasInitialFocusRef.current = false;
       document.removeEventListener('keydown', handleKeyDown);
       unlockBodyScroll();

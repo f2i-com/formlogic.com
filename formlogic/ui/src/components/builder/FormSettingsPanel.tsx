@@ -45,24 +45,19 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
   // value that merely lacks a default is not counted as an edit.)
   const dirty = JSON.stringify(editedSettings) !== JSON.stringify(normalizeFormSettings(settings));
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      // Escape used to discard every unsaved edit without a word. Keep the dialog
-      // dismissible by keyboard (an undismissable modal is its own a11y problem) but
-      // make the loss explicit first.
-      if (dirty && !window.confirm('Discard your unsaved changes to these settings?')) return;
-      onClose();
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-    // `dirty` is a dependency so the handler always sees the current buffer —
-    // mirroring it into a ref would mean writing a ref during render.
-  }, [isOpen, onClose, dirty]);
+  // Escape used to discard every unsaved edit without a word. Keep the dialog dismissible
+  // by keyboard (an undismissable modal is its own a11y problem) but make the loss
+  // explicit first. It goes through the focus trap's Escape hook — not a listener of its
+  // own — so it only fires while THIS dialog is the one on top: a dialog opened from here
+  // (the vault setup wizard showing a recovery kit, a confirm) owns Escape and Tab, and
+  // closing this panel behind it would unmount that dialog and everything it holds.
+  const handleEscape = () => {
+    if (dirty && !window.confirm('Discard your unsaved changes to these settings?')) return;
+    onClose();
+  };
 
   const panelRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(panelRef, isOpen);
+  useFocusTrap(panelRef, isOpen, handleEscape);
 
   if (!isOpen) return null;
 
