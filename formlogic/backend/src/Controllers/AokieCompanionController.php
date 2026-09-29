@@ -173,7 +173,7 @@ final class AokieCompanionController
         }
         $expectedPeerKeyThumbprint = $pluginIdentity['holderKeyThumbprint'];
         try {
-            $ice = $this->iceConfiguration();
+            $ice = $this->iceConfiguration()->forAdmission('mobile', $appId, $deviceId);
             $device = $this->devices->enrollOrTouch(
                 (string) $session['userId'],
                 $appId,
@@ -354,7 +354,7 @@ final class AokieCompanionController
         $grants = $this->consentGatewayGrants($this->remoteConsent($app));
         $displayName = is_string($body['displayName'] ?? null) ? $body['displayName'] : 'Aokie Desktop';
         try {
-            $ice = $this->iceConfiguration();
+            $ice = $this->iceConfiguration()->forAdmission('plugin', $appId, $pluginId);
             $endpointIdentity = [
                 'endpointPublicKey' => $body['endpointPublicKey'] ?? null,
                 'holderKeyThumbprint' => $body['holderKeyThumbprint'] ?? null,
@@ -1904,7 +1904,7 @@ final class AokieCompanionController
             );
         }
         try {
-            $ice = $this->iceConfiguration();
+            $ice = $this->iceConfiguration()->forDiscovery();
         } catch (\UnexpectedValueException) {
             return $this->error(
                 $response,
@@ -2054,14 +2054,15 @@ final class AokieCompanionController
     }
 
     /**
-     * @return array{servers:list<array<string,mixed>>,relayOnly:bool,expiresAt:?int}
-     * @throws \UnexpectedValueException when operator ICE/relay policy is unsafe
+     * The operator's ICE settings: asked for discovery (public, so it mints nothing per request) or
+     * for one endpoint's admission (which gets its own short-lived TURN REST credential when the
+     * deployment mints them). Whatever it refuses surfaces as \UnexpectedValueException → 503.
      */
-    private function iceConfiguration(): array
+    private function iceConfiguration(): AokieCompanionIceConfiguration
     {
         return AokieCompanionIceConfiguration::fromEnvironment(
             fn (string $name): string => $this->environment($name),
-        )->resolve();
+        );
     }
 
     private function bearer(Request $request): ?string

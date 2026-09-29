@@ -2414,7 +2414,9 @@ final class AokieCompanionAuthTest extends TestCase
             $body(fn (): string => (string) file_get_contents($logFile));
         } finally {
             self::setEnvironment('AOKIE_COMPANION_ICE_SERVERS_JSON', self::validIceServersJson());
-            self::setEnvironment('AOKIE_COMPANION_RELAY_ONLY', '');
+            foreach (['AOKIE_COMPANION_RELAY_ONLY', 'AOKIE_COMPANION_TURN_REST_SECRET', 'AOKIE_COMPANION_TURN_REST_URLS', 'AOKIE_COMPANION_TURN_REST_TTL_SECONDS'] as $name) {
+                self::setEnvironment($name, '');
+            }
             ini_set('error_log', $previousLog === false ? '' : $previousLog);
             @unlink($logFile);
         }
@@ -2559,6 +2561,135 @@ final class AokieCompanionAuthTest extends TestCase
                 $this->assertSame(503, $body['status'], $surface);
                 $this->assertSame('ice_configuration_invalid', $body['code'], $surface);
             }
+        });
+    }
+
+    private const REST_SECRET = 'turn-rest-test-secret-not-a-real-key-0123456789';
+    private const REST_URLS = 'stun:turn.example.test:3478,turn:turn.example.test:3478?transport=udp,turns:turn.example.test:5349?transport=tcp';
+
+    /** The settings that make FormLogic mint TURN credentials. */
+    private static function mintingSettings(array $more = []): array
+    {
+        return $more + [
+            'AOKIE_COMPANION_TURN_REST_SECRET' => self::REST_SECRET,
+            'AOKIE_COMPANION_TURN_REST_URLS' => self::REST_URLS,
+        ];
+    }
+
+    /**
+     * What coturn recomputes from a minted TURN entry: its username is "<expiry>:<opaque id>" and its
+     * credential the base64 of the HMAC-SHA1 of that username under the shared secret.
+     *
+     * @param array<string,mixed> $entry
+     */
+    private function assertMintedTurnEntry(array $entry, string $surface): void
+    {
+        $this->assertSame(['urls', 'username', 'credential', 'expiresAt'], array_keys($entry), $surface);
+        $this->assertSame(['turn:turn.example.test:3478?transport=udp', 'turns:turn.example.test:5349?transport=tcp'], $entry['urls'], $surface);
+        $this->assertSame(1, preg_match('/^(\d+):([0-9a-f]{32})$/', $entry['username'], $parts), $surface . ': ' . $entry['username']);
+        $this->assertSame((int) $parts[1], $entry['expiresAt'], $surface . ': the username carries the expiry');
+        $this->assertSame(
+            base64_encode(hash_hmac('sha1', $entry['username'], self::REST_SECRET, true)),
+            $entry['credential'],
+            $surface . ': the credential is what coturn use-auth-secret computes',
+        );
+    }
+
+    public function testMintedTurnCredentialsGoToEachAdmissionAndNeverPerRequestToDiscovery(): void
+    {
+        $device = $this->iceDevice();
+        $healthy = $this->iceSurfaces($device);
+
+        $this->withIceSettings(self::mintingSettings([
+            // A lapsed static list is not even read once minting is configured.
+            'AOKIE_COMPANION_ICE_SERVERS_JSON' => json_encode([[
+                'urls' => ['turns:turn.example.test:5349?transport=tcp'],
+                'username' => 'lapsed-user',
+                'credential' => 'lapsed-secret',
+                'expiresAt' => time() - 1,
+            ]], JSON_UNESCAPED_SLASHES),
+        ]), function (callable $log) use ($device, $healthy): void {
+            $minted = $this->iceSurfaces($device);
+
+            foreach (['mobile', 'plugin'] as $surface) {
+                $body = $minted[$surface];
+                $this->assertSame(200, $body['status'], $surface . ': ' . json_encode($body));
+                $this->assertCount(2, $body['iceServers'], $surface);
+                $this->assertSame([['urls' => ['stun:turn.example.test:3478'], 'username' => '', 'credential' => '']], [$body['iceServers'][0]], $surface);
+                $this->assertMintedTurnEntry($body['iceServers'][1], $surface);
+                $this->assertEqualsWithDelta(time() + 600, $body['iceServers'][1]['expiresAt'], 5, $surface . ': ten minutes by default');
+                $this->assertSame($body['iceServers'][1]['expiresAt'], $body['turnCredentialExpiresAt'], $surface . ': the Companion checks it equals the earliest TURN expiry');
+                $this->assertFalse($body['relayOnly'], $surface);
+                // The native Companion rejects unknown members and parses these documents strictly: the shape may not change.
+                $this->assertSame(array_keys($healthy[$surface]), array_keys($body), $surface . ' keeps its exact member list');
+            }
+            $this->assertNotSame(
+                $minted['mobile']['iceServers'][1]['username'],
+                $minted['plugin']['iceServers'][1]['username'],
+                'each endpoint has an identity of its own',
+            );
+
+            // Discovery is public: no per-request credential, only what needs none.
+            $discovery = $minted['discovery'];
+            $this->assertSame(200, $discovery['status']);
+            $this->assertSame([['urls' => ['stun:turn.example.test:3478'], 'username' => '', 'credential' => '']], $discovery['iceServers']);
+            $this->assertNull($discovery['turnCredentialExpiresAt']);
+            $this->assertFalse($discovery['relayOnly']);
+            $this->assertSame(array_keys($healthy['discovery']), array_keys($discovery));
+
+            $this->assertStringNotContainsString(self::REST_SECRET, json_encode($minted), 'the shared secret is never sent to anyone');
+            $this->assertSame('', $log(), 'nothing to warn about: the static list was never read');
+        });
+    }
+
+    public function testEveryAdmissionIsMintedFreshFromTheClock(): void
+    {
+        $device = $this->iceDevice();
+        $this->withIceSettings(self::mintingSettings(['AOKIE_COMPANION_TURN_REST_TTL_SECONDS' => '60']), function () use ($device): void {
+            $body = $this->iceSurfaces($device)['mobile'];
+
+            $this->assertSame(200, $body['status']);
+            $this->assertEqualsWithDelta(time() + 60, $body['iceServers'][1]['expiresAt'], 5);
+            $this->assertMintedTurnEntry($body['iceServers'][1], 'mobile');
+        });
+    }
+
+    public function testARelayOnlyMintingDeploymentCarriesOneSharedCredentialInDiscoveryAndItsOwnInEachAdmission(): void
+    {
+        $device = $this->iceDevice();
+        $this->withIceSettings(self::mintingSettings(['AOKIE_COMPANION_RELAY_ONLY' => 'true']), function () use ($device): void {
+            $surfaces = $this->iceSurfaces($device);
+
+            foreach ($surfaces as $surface => $body) {
+                $this->assertSame(200, $body['status'], $surface . ': ' . json_encode($body));
+                $this->assertTrue($body['relayOnly'], $surface);
+                $this->assertSame($body['iceServers'][1]['expiresAt'], $body['turnCredentialExpiresAt'], $surface);
+                $this->assertMintedTurnEntry($body['iceServers'][1], $surface);
+            }
+            $this->assertTrue($surfaces['discovery']['media']['relayOnly']);
+
+            // Public discovery: every anonymous caller within a window sees one and the same credential.
+            $again = $this->iceSurfaces($device)['discovery'];
+            if ($again['turnCredentialExpiresAt'] === $surfaces['discovery']['turnCredentialExpiresAt']) {
+                $this->assertSame($surfaces['discovery']['iceServers'], $again['iceServers']);
+            } else {
+                $this->assertSame(600, $again['turnCredentialExpiresAt'] - $surfaces['discovery']['turnCredentialExpiresAt'], 'the window turned over between the two calls');
+            }
+            $this->assertNotSame($surfaces['discovery']['iceServers'][1]['username'], $surfaces['mobile']['iceServers'][1]['username']);
+        });
+    }
+
+    public function testHalfConfiguredMintingFailsClosedAndTheLogNamesTheMissingSetting(): void
+    {
+        $device = $this->iceDevice();
+        $this->withIceSettings(['AOKIE_COMPANION_TURN_REST_SECRET' => self::REST_SECRET], function (callable $log) use ($device): void {
+            foreach ($this->iceSurfaces($device) as $surface => $body) {
+                $this->assertSame(503, $body['status'], $surface);
+                $this->assertSame('ice_configuration_invalid', $body['code'], $surface);
+            }
+            $written = $log();
+            $this->assertStringContainsString('AOKIE_COMPANION_TURN_REST_URLS', $written);
+            $this->assertStringNotContainsString(self::REST_SECRET, $written, 'the secret never reaches the log');
         });
     }
 }
