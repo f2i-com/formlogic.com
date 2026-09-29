@@ -60,6 +60,37 @@ Known limitations (documented, accepted for the baseline):
   surfaces; record URLs carry `recordId` (already visible to the server as the row
   id) — no answer content in query strings, hashes, or `data-*` attributes.
 
+## Recovery kit handling (vault setup wizard)
+
+The recovery kit is key material the user has to be able to keep, so its handling is part
+of the baseline (plan D5, §10 "Vault setup order"):
+
+- **Ordering.** The vault is prepared in the browser and the kit shown and typed back
+  *before* `PUT /api/vault` is sent (`vaultStore.prepareSetup` / `commitSetup`). Closing the
+  tab, cancelling, a lock or a sign-out before that persists nothing. The prepared wrappers
+  and the kit live in module memory only — outside the Zustand state, so they are never
+  broadcast to subscribers — and are dropped on every exit.
+- **Not persisted, not sent.** The app writes the kit to no storage (local/session storage,
+  IndexedDB, caches) and to no request. It leaves the page only by the user's own explicit
+  saves through the browser:
+  - *Download* — a `text/plain` Blob URL on a temporary link, revoked shortly after the click
+    (also when the click fails); the file holds the FLRK1 kit exactly as displayed, its date
+    and a plain warning.
+  - *Print* — a minimal one-page view in a temporary same-origin iframe: a static shell whose
+    content is added with `textContent` (no markup is built from the kit or any other
+    string), removed when `afterprint` fires or after a five-minute cap. It loads nothing and
+    sets its styles through the CSSOM, and same-origin `srcdoc` frames are already used by the
+    custom screens under this policy, so it needs no CSP change. (Verified in jsdom only; the
+    built meta CSP with a real `srcdoc` print frame is a manual browser check.)
+  - *Copy* — the existing clipboard copy.
+- **No accidental loss.** While the kit is on screen the dialog ignores its close button,
+  click-outside and Escape; the only way out is an explicit "Cancel and start over" that
+  discards the kit and creates no vault.
+- **What it does not change.** Like the passphrase, the kit is visible to whatever script runs
+  in the page while it is displayed: a server that serves hostile JavaScript defeats it (see
+  *Threat model honesty*). A downloaded or printed kit is as safe as the place the user keeps
+  it; the file says so in plain words.
+
 ## Decrypted-renderer review
 
 Every renderer that can touch decrypted answers was reviewed (P3 standalone

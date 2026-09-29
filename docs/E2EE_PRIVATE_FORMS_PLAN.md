@@ -192,7 +192,7 @@ in §3.
 | D2 | Browser-only operation | Permanent release gate. Desktop is never required. (Desktop becomes an *optional* grant target in P7 via its existing X25519 identity.) |
 | D3 | Crypto library | **libsodium** everywhere: `libsodium-wrappers-sumo` (browser, lazy-loaded WASM, works on the http dev origin), PHP `ext-sodium` (hard requirement for private mode — fail closed, no fallbacks), Rust RustCrypto equivalents later (P7) pinned by shared vectors. |
 | D4 | Vault | Separate vault passphrase; Argon2id (`crypto_pwhash_ALG_ARGON2ID13`; opslimit/memlimit stored per-vault, upgrade-only); UMK rewrap on passphrase change. |
-| D5 | Recovery | Recovery kit (§5 format) is **mandatory at vault creation**. Organization recovery keys deferred to P5. |
+| D5 | Recovery | Recovery kit (§5 format) is **mandatory at vault creation**, and is **shown and confirmed BEFORE the vault exists on the server**: the wizard only prepares the vault locally (wrappers + kit; nothing is sent), the create request goes out only after the kit has been typed back exactly, and the wizard cannot be dismissed while the kit is on screen (§10). Abandoning, locking, signing out or closing the tab before that persists nothing — the user starts again with a new kit — so a vault never exists without a kit the user was shown and confirmed. Organization recovery keys deferred to P5. |
 | D6 | Server behavior on private forms | Fail closed with typed error **`private_form_encrypted`** for every content-dependent server feature (§9 matrix). No silent degradation. |
 | D7 | Search | v1 = client-side decrypt-and-filter with **progressive full fetch** (§10). No blind indexes, no persisted plaintext index. |
 | D8 | Eligibility & irreversibility | Private is chosen **at creation of a standalone form** (P3) that has `ever_published_at IS NULL` and passes the §9.1 preflight atomically. **Private mode is irreversible in v1**: no disable toggle; clone yields either a new private form (fresh keys, no data) or a schema-only plain form; imports preserve privacy or refuse; stale clients cannot write plaintext (envelope is mandatory forever). Legacy migration is Phase 8. |
@@ -612,7 +612,14 @@ Auto-lock after 30 min idle (configurable) + explicit lock + lock on logout
 (`authStore.clearUserSessionData` hook — which today does NOT clear IndexedDB/uiCache; the
 vault path must not rely on it for secrets, and holds none outside the worker anyway).
 
-**Never persisted:** PUK/UMK/private keys/FK/DEKs, decrypted answers. Decrypted rows live in a
+**Never persisted:** PUK/UMK/private keys/FK/DEKs, decrypted answers, and the recovery kit
+itself — the app stores and transmits the kit nowhere. During setup it exists only in memory
+(the worker heap holds the keys; the wizard holds the kit text it displays, and the store keeps
+it, outside its subscribable state, only to check the typed-back confirmation), and it is
+dropped on completion, cancel, lock, sign-out and unmount. The only ways it leaves the page are
+the user's own explicit saves through the browser — copy, a downloaded `.txt` (a Blob URL revoked
+right after the click) and a print view (a temporary same-origin frame filled with text,
+removed when printing ends). Decrypted rows live in a
 non-persisted in-memory LRU (cap 2000 *viewed* records) keyed by `recordId`+`rev`. The
 existing Zustand persist stores must never receive decrypted content (`formlogic-responses`
 persist stays API-mode empty; local-storage-mode is incompatible with private forms — refuse).
@@ -621,6 +628,29 @@ persist stays API-mode empty; local-storage-mode is incompatible with private fo
 Settings → Security; `VaultUnlockDialog` on first private-data access; visible locked/unlocked
 chip in the app shell. Locked state renders rows as "🔒 Encrypted — unlock to view", never
 spinners pretending to load.
+
+**Vault setup order (D5).** Creating a vault is two-phase, enforced in `vaultStore` rather than
+trusted to the UI:
+
+1. *Prepare* (`prepareSetup`, on the passphrase step): the worker generates the wrappers and the
+   kit and adopts the secrets in its heap. **Nothing is sent to the server**; the store still says
+   `none`. Before the Argon2id run it refuses — so no kit is ever shown — if a vault already
+   exists, the account may not use vaults, or `/api/health` reports `privateForms: false`.
+2. *Show the kit.* The wizard offers Copy, Download (a text file with the FLRK1 kit exactly as
+   displayed, its date and a plain warning) and Print. From the moment the kit is on screen until
+   it is confirmed the wizard cannot be dismissed — close button, click outside and Escape are all
+   ignored. The one way out is an explicit "Cancel and start over", which says the kit will be
+   discarded and no vault created, and drops the prepared vault.
+3. *Confirm and create* (`commitSetup`): the kit typed back must match exactly. Only then is
+   `PUT /api/vault` sent — the server API is unchanged (still create-only, recovery wrapper
+   mandatory). The store also refuses to send a vault prepared under another sign-in session or
+   whose worker is gone, because the wrappers are bound to the user id and the vault is
+   create-only.
+
+Abandoning, a lock, a sign-out or a closed tab before step 3 persists nothing: the user starts
+again and gets a new kit (the old one is void). A request that fails to get through keeps the
+prepared vault so the *same* kit can be re-sent, and a `409 vault_exists` for the very same vault
+(a lost response) is adopted rather than reported as a failure.
 
 **Read pipeline:** `useDecryptedResponses(formId, rows)` hook wraps the existing fetches in
 `FormResponses.tsx`, `FormResponseView.tsx`, `recordDisplay.tsx`, `renderEditField.tsx`
@@ -816,11 +846,14 @@ seeds a canary answer through a private form and asserts it appears nowhere in t
 - MySQL `user_vaults`; `VaultService`/`VaultController`; routes `GET/PUT /api/vault`,
   `POST /api/vault/change-passphrase` (version-checked), acting-as denied.
 - Worker + `cryptoClient`; setup wizard w/ mandatory recovery kit (§5 format incl. checksum
-  round-trip); unlock dialog (with re-derived-pubkey verification); lock/auto-lock +
+  round-trip) shown, downloadable/printable and confirmed **before** the vault is created (§10
+  "Vault setup order"); unlock dialog (with re-derived-pubkey verification); lock/auto-lock +
   `BroadcastChannel` multi-tab propagation + worker termination on lock; passphrase change;
   recovery unlock. ("Remember this device", if built now, includes device inventory +
   revocation per §10 — otherwise it slips to a later phase whole.)
-- **Gate:** server cannot recover a test vault without passphrase/recovery kit; passphrase
+- **Gate:** server cannot recover a test vault without passphrase/recovery kit; **no create
+  request is sent before the kit has been shown and typed back, abandoning before that persists
+  nothing, and the wizard ignores every dismissal attempt while the kit is on screen**; passphrase
   change rewraps only (vault row diff proves no data touched); KDF params round-trip and
   refuse downgrade; a mistyped recovery code is caught by checksum before any KDF work;
   corrupted bundle (pubkey mismatch) fails closed; lock in one tab locks all tabs and
