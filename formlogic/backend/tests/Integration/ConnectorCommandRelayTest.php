@@ -421,6 +421,23 @@ class ConnectorCommandRelayTest extends TestCase
         $this->assertSame('expired', $this->read($this->ownerId, $id)['body']['command']['status']);
     }
 
+    public function testAnOwnerScopedSweepNeverTouchesAnotherTenantsCommands(): void
+    {
+        // The command lane filters by owner in every branch of its sweep. The AI and flow lanes'
+        // copies of it did not (an unparenthesised OR), so this pins the invariant for all three.
+        $mine = self::$commands->enqueue($this->ownerId, $this->ownerId, null, ['connectorId' => 'aokie', 'command' => 'call'])['command']['commandId'];
+        $theirs = self::$commands->enqueue($this->memberId, $this->memberId, null, ['connectorId' => 'aokie', 'command' => 'call'])['command']['commandId'];
+        self::$pdo->prepare('UPDATE desktop_commands SET expires_at = DATE_SUB(NOW(), INTERVAL 5 SECOND) WHERE id IN (?, ?)')
+            ->execute([$mine, $theirs]);
+
+        $this->assertSame(1, self::$commands->expireStale($this->ownerId), 'the owner-scoped sweep reaps the owner\'s command and nothing else');
+        $this->assertSame('expired', self::$commands->get($mine, $this->ownerId)['status']);
+        $this->assertSame('pending', self::$commands->get($theirs, $this->memberId)['status'], 'another tenant\'s overdue command is left alone');
+
+        self::$commands->expireStale();
+        $this->assertSame('expired', self::$commands->get($theirs, $this->memberId)['status'], 'the global sweep still reaches every tenant');
+    }
+
     // ── claimed-row reclaim (the desktop crashed/lost connectivity mid-command) ──
 
     public function testClaimedCommandPastClaimedAtThresholdIsReapedByExpireStale(): void

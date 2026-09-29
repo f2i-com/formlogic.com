@@ -659,11 +659,15 @@ class DesktopAiRelayService
         $params = $ownerUserId !== null ? ['o' => $ownerUserId] : [];
         try {
             $this->mysql->beginTransaction();
+            // The two stale conditions are ONE parenthesised group so {$ownerSql} constrains both:
+            // AND binds tighter than OR, and the unparenthesised form scoped only the claimed
+            // branch, so every poll expired every tenant's overdue pending rows (and scanned the
+            // whole table to find them).
             $select = $this->mysql->prepare("
                 SELECT id FROM desktop_ai_requests
-                WHERE (status = 'pending' AND expires_at <= NOW())
-                   OR (status IN ('claimed', 'streaming') AND claimed_at IS NOT NULL
-                       AND claimed_at < (NOW() - INTERVAL {$claimedCutoff} SECOND))
+                WHERE ((status = 'pending' AND expires_at <= NOW())
+                    OR (status IN ('claimed', 'streaming') AND claimed_at IS NOT NULL
+                        AND claimed_at < (NOW() - INTERVAL {$claimedCutoff} SECOND)))
                    {$ownerSql}
             ");
             $select->execute($params);

@@ -483,6 +483,43 @@ class DesktopAiRelayTest extends TestCase
         $this->assertNull($this->rawRequestRow($id)['envelope'], 'expiry purges the sealed envelope');
     }
 
+    /**
+     * A poll sweeps ONE owner's rows. The expiry scan used to read
+     * `(pending AND overdue) OR (claimed AND silent) AND owner = :o`, and AND binds tighter than
+     * OR, so the owner filter reached only the second branch: every poll expired — and purged the
+     * sealed envelope of — every other tenant's overdue pending request as well, scanning the
+     * whole table to do it.
+     */
+    public function testAnOwnerScopedSweepNeverTouchesAnotherTenantsRows(): void
+    {
+        $mine = self::$relay->enqueue($this->ownerId, $this->ownerId, $this->sealedBody())['request']['requestId'];
+        $theirs = self::$relay->enqueue($this->otherId, $this->otherId, $this->sealedBody())['request']['requestId'];
+        $theirsClaimed = self::$relay->enqueue($this->otherId, $this->otherId, $this->sealedBody())['request']['requestId'];
+        $this->assertSame('claimed', self::$relay->claim($theirsClaimed, $this->otherId, ['instanceId' => 'desk-x'])['status']);
+
+        // Both tenants' pending rows are overdue; the other tenant's claimed row went silent.
+        self::$pdo->prepare('UPDATE desktop_ai_requests SET expires_at = DATE_SUB(NOW(), INTERVAL 5 SECOND) WHERE id IN (?, ?)')
+            ->execute([$mine, $theirs]);
+        $silent = DesktopAiRelayService::CLAIMED_STALE_SECONDS + 5;
+        self::$pdo->prepare("UPDATE desktop_ai_requests SET claimed_at = DATE_SUB(NOW(), INTERVAL {$silent} SECOND) WHERE id = ?")
+            ->execute([$theirsClaimed]);
+
+        $this->assertSame(1, self::$relay->expireStale($this->ownerId), 'the owner-scoped sweep reaps the owner\'s row and nothing else');
+
+        $this->assertSame('expired', $this->rawRequestRow($mine)['status']);
+        $this->assertNull($this->rawRequestRow($mine)['envelope'], 'the owner\'s own overdue request is purged');
+        $foreign = $this->rawRequestRow($theirs);
+        $this->assertSame('pending', $foreign['status'], 'another tenant\'s overdue row is not this owner\'s to expire');
+        $this->assertNotNull($foreign['envelope'], 'and its sealed envelope is not purged by someone else\'s poll');
+        $this->assertSame('claimed', $this->rawRequestRow($theirsClaimed)['status']);
+
+        // The global sweep (owner = null) is the one that reaches every tenant.
+        self::$relay->expireStale();
+        $this->assertSame('expired', $this->rawRequestRow($theirs)['status']);
+        $this->assertNull($this->rawRequestRow($theirs)['envelope']);
+        $this->assertSame('expired', $this->rawRequestRow($theirsClaimed)['status']);
+    }
+
     public function testStaleClaimedRowIsReapedAndPurged(): void
     {
         $id = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
