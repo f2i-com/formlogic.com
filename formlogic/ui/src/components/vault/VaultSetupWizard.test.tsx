@@ -565,6 +565,96 @@ describe('VaultSetupWizard', () => {
     expect(useVaultStore.getState().setupPending).toBe(true);
   });
 
+  // The notice opens above the trigger, often below the fold on a phone: focus goes to its safe
+  // choice and the notice is scrolled into view, so a keyboard or screen-reader user (and a thumb)
+  // lands on it instead of on <body>.
+  describe('the discard notice and focus', () => {
+    let scrollIntoView: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      scrollIntoView = vi.fn();
+      // jsdom does not implement it.
+      Object.defineProperty(Element.prototype, 'scrollIntoView', { value: scrollIntoView, configurable: true, writable: true });
+    });
+
+    afterEach(() => {
+      delete (Element.prototype as unknown as Record<string, unknown>).scrollIntoView;
+    });
+
+    it('moves focus to "Keep this kit" and scrolls the notice into view when it opens', async () => {
+      await enterPassphraseAndShowKit();
+
+      await click('Cancel and start over');
+
+      expect(document.activeElement).toBe(button('Keep this kit'));
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    });
+
+    it('does not disable the trigger while the notice is open — it says it is expanded instead', async () => {
+      await enterPassphraseAndShowKit();
+      const trigger = () => button('Cancel and start over')!;
+      expect(trigger().getAttribute('aria-expanded')).toBe('false');
+
+      await click('Cancel and start over');
+
+      expect(trigger().disabled).toBe(false);
+      expect(trigger().getAttribute('aria-expanded')).toBe('true');
+      const notice = document.getElementById(trigger().getAttribute('aria-controls')!);
+      expect(notice, 'the notice the trigger controls').not.toBeNull();
+      expect(notice!.textContent).toContain('Discard this recovery kit and start over?');
+      expect(document.activeElement).not.toBe(document.body);
+    });
+
+    it('a second press on the trigger while the notice is open changes nothing', async () => {
+      await enterPassphraseAndShowKit();
+      await click('Cancel and start over');
+
+      await click('Cancel and start over');
+
+      expect(button('Keep this kit')).not.toBeNull();
+      expect(useVaultStore.getState().setupPending).toBe(true);
+      expect(document.activeElement).toBe(button('Keep this kit'));
+    });
+
+    it('"Keep this kit" puts focus back on the trigger it came from', async () => {
+      await enterPassphraseAndShowKit();
+      await click('Cancel and start over');
+
+      await click('Keep this kit');
+
+      expect(document.activeElement).toBe(button('Cancel and start over'));
+      expect(button('Cancel and start over')!.getAttribute('aria-expanded')).toBe('false');
+      expect(text()).not.toContain('Discard kit and start over');
+    });
+
+    it('the same on the confirm step, and after a check that had to ask the server first', async () => {
+      vi.mocked(api.createVault).mockResolvedValueOnce({ ok: false, status: 0, body: null });
+      await goToConfirmStep();
+      await typeInto('FLRK1-XXXX-XXXX-…', KIT);
+      await click('Confirm & create vault');
+      expect(text()).toContain('FormLogic did not confirm');
+
+      await click('Cancel and start over'); // the server has no vault: the notice opens after the check
+
+      expect(text()).toContain('FormLogic checked');
+      expect(document.activeElement).toBe(button('Keep this kit'));
+      await click('Keep this kit');
+      expect(document.activeElement).toBe(button('Cancel and start over'));
+    });
+
+    it('names its warning for a screen reader: a labelled group whose description is on the safe button', async () => {
+      await enterPassphraseAndShowKit();
+
+      await click('Cancel and start over');
+
+      const keep = button('Keep this kit')!;
+      const group = keep.closest('[role="group"]');
+      expect(group, 'the notice is a group').not.toBeNull();
+      expect(document.getElementById(group!.getAttribute('aria-labelledby')!)?.textContent).toContain('Discard this recovery kit');
+      expect(document.getElementById(keep.getAttribute('aria-describedby')!)?.textContent).toContain('no vault will be created');
+    });
+  });
+
   it('confirming "Cancel and start over" discards the kit and the prepared vault, sends nothing, and starts again', async () => {
     await enterPassphraseAndShowKit();
 

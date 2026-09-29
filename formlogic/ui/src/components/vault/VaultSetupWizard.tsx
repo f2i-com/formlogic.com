@@ -18,7 +18,7 @@
 // thrown away or that nothing was saved until the server has been asked and has said there
 // is no vault ("Cancel and start over" asks first).
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type Ref } from 'react';
 import { ShieldCheck, Copy, Check, Download, Printer, TriangleAlert } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -46,35 +46,50 @@ interface VaultSetupWizardProps {
  */
 type CancelMode = 'plain' | 'none-found' | 'unreachable';
 
-/** Shown before "Cancel and start over" takes effect: says exactly what is thrown away. */
-function DiscardKitNotice({ mode, onKeep, onDiscard }: { mode: CancelMode; onKeep: () => void; onDiscard: () => void }) {
-  if (mode === 'unreachable') {
-    return (
-      <div className="rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 p-3 space-y-3" role="alert">
-        <p className="text-sm text-red-800 dark:text-red-200">
-          <strong>Leave without checking?</strong> FormLogic could not be reached to check whether your
-          vault was created, so it <strong>may already exist</strong>. If you leave now and it does,
-          unlock it with your vault passphrase — or with this recovery kit, so keep every copy of it.
-        </p>
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={onKeep}>Keep this kit</Button>
-          <Button variant="danger" size="sm" onClick={onDiscard}>Leave anyway</Button>
-        </div>
-      </div>
-    );
-  }
+/**
+ * Shown before "Cancel and start over" takes effect: says exactly what is thrown away. It is
+ * a labelled group whose warning is also the description of its safe button — focus moves to
+ * "Keep this kit" when it opens (see the wizard), so a screen reader reads the warning there.
+ */
+function DiscardKitNotice({ id, mode, noticeRef, keepRef, onKeep, onDiscard }: {
+  id: string;
+  mode: CancelMode;
+  noticeRef: Ref<HTMLDivElement>;
+  keepRef: Ref<HTMLButtonElement>;
+  onKeep: () => void;
+  onDiscard: () => void;
+}) {
+  const titleId = useId();
+  const bodyId = useId();
+  const unreachable = mode === 'unreachable';
   return (
-    <div className="rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 p-3 space-y-3" role="alert">
-      <p className="text-sm text-red-800 dark:text-red-200">
-        <strong>Discard this recovery kit and start over?</strong>{' '}
-        {mode === 'none-found' && <>FormLogic checked: <strong>no vault was created</strong> for your account. </>}
-        The kit you were just shown will be discarded and <strong>no vault will be created</strong>.{' '}
-        {mode === 'plain' ? 'Nothing has been saved to your account, so you' : 'You'} will begin again
-        with a new passphrase and get a new recovery kit — throw away any copy of this one.
+    <div
+      id={id}
+      ref={noticeRef}
+      role="group"
+      aria-labelledby={titleId}
+      className="rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 p-3 space-y-3"
+    >
+      <p id={bodyId} className="text-sm text-red-800 dark:text-red-200">
+        {unreachable ? (
+          <>
+            <strong id={titleId}>Leave without checking?</strong> FormLogic could not be reached to check whether your
+            vault was created, so it <strong>may already exist</strong>. If you leave now and it does,
+            unlock it with your vault passphrase — or with this recovery kit, so keep every copy of it.
+          </>
+        ) : (
+          <>
+            <strong id={titleId}>Discard this recovery kit and start over?</strong>{' '}
+            {mode === 'none-found' && <>FormLogic checked: <strong>no vault was created</strong> for your account. </>}
+            The kit you were just shown will be discarded and <strong>no vault will be created</strong>.{' '}
+            {mode === 'plain' ? 'Nothing has been saved to your account, so you' : 'You'} will begin again
+            with a new passphrase and get a new recovery kit — throw away any copy of this one.
+          </>
+        )}
       </p>
       <div className="flex flex-wrap justify-end gap-2">
-        <Button variant="outline" size="sm" onClick={onKeep}>Keep this kit</Button>
-        <Button variant="danger" size="sm" onClick={onDiscard}>Discard kit and start over</Button>
+        <Button ref={keepRef} variant="outline" size="sm" onClick={onKeep} aria-describedby={bodyId}>Keep this kit</Button>
+        <Button variant="danger" size="sm" onClick={onDiscard}>{unreachable ? 'Leave anyway' : 'Discard kit and start over'}</Button>
       </div>
     </div>
   );
@@ -87,6 +102,10 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
   const checkSetup = useVaultStore((s) => s.checkSetup);
   const abandonSetup = useVaultStore((s) => s.abandonSetup);
   const cancelHintId = useId();
+  const noticeId = useId();
+  const noticeRef = useRef<HTMLDivElement>(null);
+  const keepRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
 
   const [step, setStep] = useState<'passphrase' | 'kit' | 'confirm'>('passphrase');
   const [passphrase, setPassphrase] = useState('');
@@ -142,6 +161,20 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
   const setWorking = (working: boolean) => {
     busyRef.current = working;
     setBusy(working);
+  };
+
+  // The notice opens above its trigger, which on a phone is often below the fold: move focus
+  // to its safe choice and bring it into view, so a keyboard or screen-reader user (and a
+  // thumb) lands on it rather than on <body>.
+  useEffect(() => {
+    if (!confirmingCancel) return;
+    keepRef.current?.focus();
+    noticeRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [confirmingCancel, cancelMode]);
+
+  const keepKit = () => {
+    setConfirmingCancel(false);
+    cancelRef.current?.focus();
   };
 
   const reset = () => {
@@ -450,14 +483,17 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
             <p className="text-sm text-gray-600 dark:text-slate-400" role="status">Checking with FormLogic whether your vault was created…</p>
           )}
           {confirmingCancel && (
-            <DiscardKitNotice mode={cancelMode} onKeep={() => setConfirmingCancel(false)} onDiscard={reset} />
+            <DiscardKitNotice id={noticeId} mode={cancelMode} noticeRef={noticeRef} keepRef={keepRef} onKeep={keepKit} onDiscard={reset} />
           )}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Button
               variant="ghost"
               size="sm"
+              ref={cancelRef}
               onClick={() => void startCancel()}
-              disabled={busy || confirmingCancel}
+              disabled={busy}
+              aria-expanded={confirmingCancel}
+              aria-controls={confirmingCancel ? noticeId : undefined}
               aria-describedby={cancelHintId}
             >
               Cancel and start over
@@ -502,14 +538,17 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
             </p>
           )}
           {confirmingCancel && (
-            <DiscardKitNotice mode={cancelMode} onKeep={() => setConfirmingCancel(false)} onDiscard={reset} />
+            <DiscardKitNotice id={noticeId} mode={cancelMode} noticeRef={noticeRef} keepRef={keepRef} onKeep={keepKit} onDiscard={reset} />
           )}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Button
               variant="ghost"
               size="sm"
+              ref={cancelRef}
               onClick={() => void startCancel()}
-              disabled={busy || confirmingCancel}
+              disabled={busy}
+              aria-expanded={confirmingCancel}
+              aria-controls={confirmingCancel ? noticeId : undefined}
               aria-describedby={cancelHintId}
             >
               Cancel and start over
