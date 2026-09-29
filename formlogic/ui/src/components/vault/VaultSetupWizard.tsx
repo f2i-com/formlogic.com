@@ -290,6 +290,18 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
     setSaveNotice(started ? null : "Printing isn't available here — copy the kit or download it instead.");
   };
 
+  /** The vault exists on the server but could not be left unlocked here (the session was locked,
+   *  or the worker was lost while the request was out): the store has it, locked. Close with the
+   *  reason rather than leaving a create form under a message saying the vault was created. */
+  const closeBecauseVaultExists = () => {
+    toast.warning(
+      'Your vault was created',
+      'It could not be left unlocked here. Unlock it with your vault passphrase — or with the recovery kit you saved.',
+    );
+    reset();
+    onClose();
+  };
+
   const confirmKit = async () => {
     if (!setupId || busyRef.current) return;
     setError(null);
@@ -304,6 +316,10 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
       reset();
       onClose();
       onComplete?.();
+      return;
+    }
+    if (result.vaultCreated) {
+      closeBecauseVaultExists();
       return;
     }
     if (result.code === 'vault_exists') {
@@ -361,6 +377,10 @@ export function VaultSetupWizard({ isOpen, onClose, onComplete }: VaultSetupWiza
         onClose();
         return;
       case 'interrupted':
+        if (check.vaultCreated) {
+          closeBecauseVaultExists();
+          return;
+        }
         reset();
         setError(check.error ?? 'Vault setup was interrupted — start again.');
         return;

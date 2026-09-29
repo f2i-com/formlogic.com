@@ -931,6 +931,42 @@ describe('VaultSetupWizard', () => {
       expect(client.isRunning).toBe(false);
     });
 
+    it('the worker lost after the no-answer: Cancel finds the vault, which opens LOCKED — the wizard closes with the reason', async () => {
+      await confirmWithNoAnswer('response');
+      // The worker dies outside the store's knowledge (a crash on a low-memory phone).
+      await client.lockAndTerminate();
+
+      await click('Cancel and start over');
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(onComplete).not.toHaveBeenCalled();
+      expect(toasts().map((t) => `${t.title} ${t.message ?? ''}`).join(' ')).toMatch(/vault was created.*unlock it/i);
+      expect(useVaultStore.getState().status).toBe('locked');
+      expect(useVaultStore.getState().vault).toEqual(serverVault);
+      expect(useVaultStore.getState().setupPending).toBe(false);
+    });
+
+    it('a create request that succeeds after the worker was lost closes the wizard with the reason, not on a create form', async () => {
+      await goToConfirmStep();
+      await typeInto('FLRK1-XXXX-XXXX-…', KIT);
+      let respond!: () => void;
+      vi.mocked(api.createVault).mockImplementationOnce((vault) => new Promise((resolve) => {
+        serverVault = vault;
+        respond = () => resolve({ ok: true, status: 200, body: { data: { vault } } });
+      }));
+      await click('Confirm & create vault');
+      await client.lockAndTerminate(); // lost while the request is out
+
+      await act(async () => { respond(); });
+      await flush();
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(onComplete).not.toHaveBeenCalled();
+      expect(toasts().map((t) => `${t.title} ${t.message ?? ''}`).join(' ')).toMatch(/vault was created.*unlock it/i);
+      expect(useVaultStore.getState().status).toBe('locked');
+      expect(useVaultStore.getState().vault).toEqual(serverVault);
+    });
+
     it('a lock after the no-answer, then another confirm: says the vault may exist — not that nothing was saved', async () => {
       await confirmWithNoAnswer('response');
 
