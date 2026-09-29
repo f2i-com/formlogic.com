@@ -128,6 +128,12 @@ describe('VaultSetupWizard', () => {
     await act(async () => {
       root.render(strict ? <StrictMode>{wizard}</StrictMode> : wizard);
     });
+    // The Modal focuses its first control one animation frame after it opens. Let that frame
+    // pass now: on a loaded machine it can otherwise land in the middle of a test and take focus
+    // from whatever the test has just focused.
+    await act(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
   }
 
   // The Modal portals into document.body, so everything is looked up there.
@@ -371,11 +377,18 @@ describe('VaultSetupWizard', () => {
 
   // --- dismissal -----------------------------------------------------------------------
 
-  it('the passphrase step is dismissible as before (nothing exists yet)', async () => {
+  // The positive controls for the "ignored" tests below: each way of dismissing really does dismiss
+  // where dismissal is allowed, so those tests cannot pass merely because the gesture stopped working.
+  it.each([
+    ['Escape', () => pressEscape()],
+    ['a click outside', () => clickBackdrop()],
+    ['the close button', () => act(() => { (closeButton() as HTMLButtonElement).click(); })],
+  ])('the passphrase step is dismissible as before by %s (nothing exists yet)', async (_name, dismiss) => {
     await renderWizard();
     expect(closeButton()).not.toBeNull();
 
-    pressEscape();
+    dismiss();
+
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

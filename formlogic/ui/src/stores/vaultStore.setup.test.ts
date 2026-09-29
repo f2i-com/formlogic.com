@@ -253,6 +253,20 @@ describe('vaultStore two-phase setup', () => {
     expect(api.createVault).toHaveBeenCalledTimes(1);
   });
 
+  it('a second prepare terminates the first setup\'s worker: nothing of the void kit lingers in a live heap', async () => {
+    const first = await prepare();
+    const client = getCryptoClient();
+    const terminate = vi.spyOn(client, 'lockAndTerminate');
+
+    const second = await prepare('another correct horse battery');
+
+    expect(terminate).toHaveBeenCalledTimes(1);
+    expect(second.setupId).not.toBe(first.setupId);
+    // Exactly one setup is live, and its secrets are the second's.
+    expect((await client.status()).unlocked).toBe(true);
+    await expect(useVaultStore.getState().commitSetup(second.setupId, second.kit)).resolves.toEqual({ ok: true });
+  });
+
   it('prepares one vault at a time', async () => {
     const [a, b] = await Promise.all([
       useVaultStore.getState().prepareSetup(USER, PASS),
