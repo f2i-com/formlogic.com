@@ -466,4 +466,438 @@ describe('vaultStore two-phase setup', () => {
     expect(useVaultStore.getState().setupPending).toBe(true);
     await expect(useVaultStore.getState().commitSetup(setupId, kit)).resolves.toEqual({ ok: true });
   });
+
+  it('a pending setup whose worker was terminated behind the store\'s back sends nothing', async () => {
+    const { setupId, kit } = await prepare();
+
+    // Not through the store: a crashed or externally terminated worker took the secrets with it.
+    await getCryptoClient().lockAndTerminate();
+    const result = await useVaultStore.getState().commitSetup(setupId, kit);
+
+    expect(result).toMatchObject({ ok: false, code: 'setup_interrupted', discarded: true });
+    expect(api.createVault).not.toHaveBeenCalled();
+    expect(useVaultStore.getState().setupPending).toBe(false);
+    expect(useVaultStore.getState().status).toBe('none');
+  });
+
+  it('a preflight that throws is reported as a failure and does not wedge later attempts', async () => {
+    vi.mocked(api.getVault).mockRejectedValueOnce(new Error('connection exploded'));
+
+    const failed = await useVaultStore.getState().prepareSetup(USER, PASS);
+
+    expect(failed).toMatchObject({ ok: false, error: 'connection exploded' });
+    expect(useVaultStore.getState().setupPending).toBe(false);
+    expect(getCryptoClient().isRunning).toBe(false);
+    // "One at a time" was released: the next attempt goes through.
+    await expect(useVaultStore.getState().prepareSetup(USER, PASS)).resolves.toMatchObject({ ok: true });
+  });
+
+  // --- a create request that got no answer ------------------------------------------------------
+  //
+  // Once the request has been sent and nothing came back, the vault may exist on the server
+  // even though this tab never heard, and the kit the user saved may be the only way into it.
+  // Nothing may then call the kit void, say "nothing was saved" or tell the user to throw it
+  // away - until the server has said there is no vault.
+
+  describe('after a create request that got no answer', () => {
+    // What no message about a vault that may exist is allowed to say.
+    const FALSE_COMFORT = /void|nothing was saved|nothing has been saved|throw away|throw it away/i;
+    const MAY_EXIST = /may already exist/i;
+
+    /** A server that holds at most one vault (create-only, like the real one). */
+    let serverVault: VaultWire | null;
+
+    beforeEach(() => {
+      serverVault = null;
+      vi.mocked(api.getVault).mockImplementation(async () => ({ data: { vault: serverVault } }));
+      vi.mocked(api.createVault).mockImplementation(async (vault) => {
+        if (serverVault) return { ok: false, status: 409, body: { error: true, code: 'vault_exists' } };
+        serverVault = vault;
+        return createdOk(vault);
+      });
+    });
+
+    /** The next request reaches the server (the vault is stored) but its response never arrives. */
+    function loseNextResponse(): void {
+      vi.mocked(api.createVault).mockImplementationOnce(async (vault) => {
+        serverVault = vault;
+        return { ok: false, status: 0, body: null };
+      });
+    }
+
+    /** The next request never reaches the server at all. */
+    function dropNextRequest(): void {
+      vi.mocked(api.createVault).mockImplementationOnce(async () => ({ ok: false, status: 0, body: null }));
+    }
+
+    /** Prepare, confirm, and end up with a request that was sent and not answered. */
+    async function sentWithNoAnswer(lose: 'response' | 'request' = 'response'): Promise<{ setupId: string; kit: string }> {
+      const { setupId, kit } = await prepare();
+      if (lose === 'response') loseNextResponse(); else dropNextRequest();
+      const first = await useVaultStore.getState().commitSetup(setupId, kit);
+      expect(first).toMatchObject({ ok: false, code: 'save_failed' });
+      expect(first.discarded).toBeFalsy();
+      expect(api.createVault).toHaveBeenCalledTimes(1);
+      return { setupId, kit };
+    }
+
+    it('says the vault may exist and that the kit is unchanged — not that nothing happened', async () => {
+      const { setupId, kit } = await prepare();
+      loseNextResponse();
+
+      const result = await useVaultStore.getState().commitSetup(setupId, kit);
+
+      expect(result).toMatchObject({ ok: false, code: 'save_failed' });
+      expect(result.error).toMatch(MAY_EXIST);
+      expect(result.error).toMatch(/keep/i);
+      expect(result.error).not.toMatch(FALSE_COMFORT);
+    });
+
+    it.each([408, 429, 500, 503])('a %i is no verdict either: the setup is kept and the same vault can be sent again', async (status) => {
+      const { setupId, kit } = await prepare();
+      vi.mocked(api.createVault).mockResolvedValueOnce({ ok: false, status, body: { error: true } });
+
+      const first = await useVaultStore.getState().commitSetup(setupId, kit);
+
+      expect(first).toMatchObject({ ok: false, code: 'save_failed' });
+      expect(first.error).toMatch(MAY_EXIST);
+      expect(useVaultStore.getState().setupPending).toBe(true);
+      await expect(useVaultStore.getState().commitSetup(setupId, kit)).resolves.toEqual({ ok: true });
+    });
+
+    it('a lock afterwards drops the kit and the worker, but never calls the kit void', async () => {
+      const { setupId, kit } = await sentWithNoAnswer();
+      expect(serverVault).not.toBeNull();
+
+      useVaultStore.getState().lock();
+      await flushAsync();
+      // The secrets are gone as a lock always makes them...
+      expect(useVaultStore.getState().setupPending).toBe(false);
+      expect(getCryptoClient().isRunning).toBe(false);
+
+      // ...but the server DOES hold the vault, and what the user is told must not say otherwise.
+      const later = await useVaultStore.getState().commitSetup(setupId, kit);
+      expect(later).toMatchObject({ ok: false, code: 'setup_interrupted', discarded: true });
+      expect(later.error).toMatch(MAY_EXIST);
+      expect(later.error).not.toMatch(FALSE_COMFORT);
+      expect(api.createVault).toHaveBeenCalledTimes(1);
+    });
+
+    it('a lock while the request is in flight, then no answer: not "try again", and not "nothing was saved"', async () => {
+      const { setupId, kit } = await prepare();
+      let release!: (r: CreateResponse) => void;
+      vi.mocked(api.createVault).mockImplementationOnce((vault) => new Promise<CreateResponse>((resolve) => {
+        serverVault = vault; // it got there
+        release = resolve;
+      }));
+
+      const committing = useVaultStore.getState().commitSetup(setupId, kit);
+      await flushAsync();
+      useVaultStore.getState().lock();
+      await flushAsync();
+      release({ ok: false, status: 0, body: null });
+      const result = await committing;
+
+      // There is no setup left to retry, so it cannot say "your kit is unchanged, try again".
+      expect(result).toMatchObject({ ok: false, code: 'setup_interrupted', discarded: true });
+      expect(result.error).toMatch(MAY_EXIST);
+      expect(result.error).not.toMatch(FALSE_COMFORT);
+      const retry = await useVaultStore.getState().commitSetup(setupId, kit);
+      expect(retry.error).toMatch(MAY_EXIST);
+      expect(retry.error).not.toMatch(FALSE_COMFORT);
+      expect(api.createVault).toHaveBeenCalledTimes(1);
+    });
+
+    it('a sign-out and sign-in as someone else before the retry: the vault may exist, and nothing more is sent', async () => {
+      const { setupId, kit } = await sentWithNoAnswer();
+
+      bumpSessionGeneration();
+      const later = await useVaultStore.getState().commitSetup(setupId, kit);
+
+      expect(later).toMatchObject({ ok: false, code: 'setup_interrupted', discarded: true });
+      expect(later.error).toMatch(MAY_EXIST);
+      expect(later.error).not.toMatch(FALSE_COMFORT);
+      expect(api.createVault).toHaveBeenCalledTimes(1);
+    });
+
+    it('a worker that died before the retry: the vault may exist, and nothing more is sent', async () => {
+      const { setupId, kit } = await sentWithNoAnswer();
+
+      await getCryptoClient().lockAndTerminate();
+      const later = await useVaultStore.getState().commitSetup(setupId, kit);
+
+      expect(later).toMatchObject({ ok: false, code: 'setup_interrupted', discarded: true });
+      expect(later.error).toMatch(MAY_EXIST);
+      expect(later.error).not.toMatch(FALSE_COMFORT);
+      expect(api.createVault).toHaveBeenCalledTimes(1);
+    });
+
+    it('a definite refusal after an earlier no-answer settles it: then, and only then, nothing was saved', async () => {
+      const { setupId, kit } = await sentWithNoAnswer('request');
+      vi.mocked(api.createVault).mockResolvedValueOnce({
+        ok: false, status: 403, body: { error: true, code: 'private_forms_disabled', message: 'Private forms are not enabled on this server.' },
+      });
+
+      const refused = await useVaultStore.getState().commitSetup(setupId, kit);
+      expect(refused).toMatchObject({ ok: false, code: 'setup_rejected', discarded: true });
+
+      const later = await useVaultStore.getState().commitSetup(setupId, kit);
+      expect(later.error).toMatch(/nothing was saved/i);
+    });
+
+    it('a setup that was never sent still says nothing was saved (no request, no doubt)', async () => {
+      const { setupId, kit } = await prepare();
+
+      useVaultStore.getState().lock();
+      await flushAsync();
+      const later = await useVaultStore.getState().commitSetup(setupId, kit);
+
+      expect(later.error).toMatch(/nothing was saved/i);
+      expect(later.error).not.toMatch(MAY_EXIST);
+      expect(api.createVault).not.toHaveBeenCalled();
+    });
+
+    it('the record of a lost setup does not leak into the next one', async () => {
+      await sentWithNoAnswer('request');
+      useVaultStore.getState().lock();
+      await flushAsync();
+
+      const second = await prepare('another correct horse battery');
+      await expect(useVaultStore.getState().commitSetup(second.setupId, second.kit)).resolves.toEqual({ ok: true });
+    });
+
+    // --- the 409 branch ----------------------------------------------------------------------
+
+    it('a 409 whose follow-up look at the server fails concludes nothing: the setup is kept, then adopted', async () => {
+      const { setupId, kit } = await sentWithNoAnswer();
+      // Attempt 2: the PUT meets the vault its own first attempt created, and the GET flakes.
+      vi.mocked(api.getVault).mockResolvedValueOnce({ error: 'Network error' });
+
+      const second = await useVaultStore.getState().commitSetup(setupId, kit);
+
+      expect(second).toMatchObject({ ok: false, code: 'save_failed' });
+      expect(second.discarded).toBeFalsy();
+      expect(second.error).not.toMatch(/does not belong/);
+      expect(second.error).not.toMatch(FALSE_COMFORT);
+      expect(useVaultStore.getState().setupPending).toBe(true);
+      expect((await getCryptoClient().status()).unlocked).toBe(true);
+      expect(useVaultStore.getState().status).toBe('none');
+
+      // The network is back: the same kit is recognised as the owner of that vault.
+      await expect(useVaultStore.getState().commitSetup(setupId, kit)).resolves.toEqual({ ok: true });
+      expect(useVaultStore.getState().status).toBe('unlocked');
+      expect(useVaultStore.getState().vault).toEqual(serverVault);
+    });
+
+    it('a 409 when the server then shows no vault at all concludes nothing either', async () => {
+      const { setupId, kit } = await prepare();
+      vi.mocked(api.createVault).mockResolvedValueOnce({ ok: false, status: 409, body: { error: true, code: 'vault_exists' } });
+
+      const result = await useVaultStore.getState().commitSetup(setupId, kit);
+
+      expect(result).toMatchObject({ ok: false, code: 'save_failed' });
+      expect(result.discarded).toBeFalsy();
+      expect(useVaultStore.getState().setupPending).toBe(true);
+      expect(getCryptoClient().isRunning).toBe(true);
+    });
+
+    // --- refreshStatus -------------------------------------------------------------------------
+
+    it('refreshStatus meeting this very vault on the server keeps the setup: the kit still completes it', async () => {
+      const { setupId, kit } = await sentWithNoAnswer();
+
+      await useVaultStore.getState().refreshStatus();
+
+      const state = useVaultStore.getState();
+      expect(state.setupPending).toBe(true);
+      expect(state.status).toBe('locked');
+      expect(state.vault).toEqual(serverVault);
+      expect((await getCryptoClient().status()).unlocked).toBe(true);
+      await expect(useVaultStore.getState().commitSetup(setupId, kit)).resolves.toEqual({ ok: true });
+      expect(useVaultStore.getState().status).toBe('unlocked');
+      expect(useVaultStore.getState().setupPending).toBe(false);
+    });
+
+    it('refreshStatus while the create request is in flight leaves the setup to that request', async () => {
+      const { setupId, kit } = await prepare();
+      let release!: (r: CreateResponse) => void;
+      vi.mocked(api.createVault).mockImplementationOnce((vault) => new Promise<CreateResponse>((resolve) => {
+        serverVault = vault;
+        release = resolve;
+      }));
+      const committing = useVaultStore.getState().commitSetup(setupId, kit);
+      await flushAsync();
+
+      await useVaultStore.getState().refreshStatus(); // e.g. some component mounting meanwhile
+
+      expect(useVaultStore.getState().setupPending).toBe(true);
+      expect(getCryptoClient().isRunning).toBe(true);
+      release(createdOk(serverVault!));
+      await expect(committing).resolves.toEqual({ ok: true });
+      expect(useVaultStore.getState().status).toBe('unlocked');
+      expect((await getCryptoClient().status()).unlocked).toBe(true);
+    });
+
+    // --- checkSetup: the wizard asking before it discards --------------------------------------
+
+    it('checkSetup finds this very vault on the server: adopts it, unlocked, and the saved kit is its kit', async () => {
+      const { setupId, kit } = await sentWithNoAnswer();
+
+      const check = await useVaultStore.getState().checkSetup(setupId);
+
+      expect(check).toEqual({ outcome: 'created' });
+      const state = useVaultStore.getState();
+      expect(state.status).toBe('unlocked');
+      expect(state.vault).toEqual(serverVault);
+      expect(state.setupPending).toBe(false);
+      expect((await getCryptoClient().status()).unlocked).toBe(true);
+      expect(api.createVault).toHaveBeenCalledTimes(1);
+      // The kit that was saved really opens it.
+      await getCryptoClient().lockAndTerminate();
+      const recovery = new CryptoClient(createInlineWorker);
+      await expect(recovery.recoveryUnlock(USER, kit, 'a-brand-new-passphrase', serverVault!)).resolves.toHaveProperty('rewrap');
+      await recovery.lockAndTerminate();
+    });
+
+    it('checkSetup finding no vault says so and keeps the setup — the same kit can still be sent', async () => {
+      const { setupId, kit } = await sentWithNoAnswer('request');
+
+      const check = await useVaultStore.getState().checkSetup(setupId);
+
+      expect(check).toEqual({ outcome: 'not_created' });
+      expect(useVaultStore.getState().setupPending).toBe(true);
+      expect(useVaultStore.getState().status).toBe('none');
+      await expect(useVaultStore.getState().commitSetup(setupId, kit)).resolves.toEqual({ ok: true });
+    });
+
+    it('checkSetup finding a DIFFERENT vault discards the setup and opens that vault locked', async () => {
+      const { setupId, kit } = await sentWithNoAnswer('request');
+      const other = await foreignVault();
+      serverVault = other;
+
+      const check = await useVaultStore.getState().checkSetup(setupId);
+
+      expect(check.outcome).toBe('other_vault');
+      expect(check.error).toMatch(/already exists/i);
+      const state = useVaultStore.getState();
+      expect(state.setupPending).toBe(false);
+      expect(state.status).toBe('locked');
+      expect(state.vault).toEqual(other);
+      expect(getCryptoClient().isRunning).toBe(false);
+      // That kit belongs to a vault that was never created: it IS void, and may be said to be.
+      const later = await useVaultStore.getState().commitSetup(setupId, kit);
+      expect(later.error).toMatch(/nothing was saved/i);
+      expect(api.createVault).toHaveBeenCalledTimes(1);
+    });
+
+    it('once checkSetup has found no vault, a lock makes the kit void — nothing was saved is true now', async () => {
+      const { setupId, kit } = await sentWithNoAnswer('request');
+      await expect(useVaultStore.getState().checkSetup(setupId)).resolves.toEqual({ outcome: 'not_created' });
+
+      useVaultStore.getState().lock();
+      await flushAsync();
+      const later = await useVaultStore.getState().commitSetup(setupId, kit);
+
+      expect(later.error).toMatch(/nothing was saved/i);
+      expect(later.error).not.toMatch(MAY_EXIST);
+    });
+
+    it('checkSetup that cannot reach the server concludes nothing: the setup is kept', async () => {
+      const { setupId } = await sentWithNoAnswer();
+      vi.mocked(api.getVault).mockResolvedValueOnce({ error: 'Network error' });
+
+      const check = await useVaultStore.getState().checkSetup(setupId);
+
+      expect(check.outcome).toBe('unknown');
+      expect(check.error).toMatch(MAY_EXIST);
+      expect(check.error).not.toMatch(FALSE_COMFORT);
+      expect(useVaultStore.getState().setupPending).toBe(true);
+      // ...and asking again works once the server can be reached.
+      await expect(useVaultStore.getState().checkSetup(setupId)).resolves.toEqual({ outcome: 'created' });
+    });
+
+    it('checkSetup after a lock says the vault may exist — the setup is gone and cannot be retried', async () => {
+      const { setupId } = await sentWithNoAnswer();
+      useVaultStore.getState().lock();
+      await flushAsync();
+
+      const check = await useVaultStore.getState().checkSetup(setupId);
+
+      expect(check.outcome).toBe('interrupted');
+      expect(check.error).toMatch(MAY_EXIST);
+      expect(check.error).not.toMatch(FALSE_COMFORT);
+    });
+
+    it('checkSetup for a setup that was never sent needs no answer from the server', async () => {
+      const { setupId } = await prepare();
+      vi.mocked(api.getVault).mockClear();
+
+      const check = await useVaultStore.getState().checkSetup(setupId);
+
+      expect(check).toEqual({ outcome: 'not_created' });
+      expect(api.getVault).not.toHaveBeenCalled();
+    });
+
+    it('checkSetup with an unknown token does nothing to a live setup', async () => {
+      const { setupId, kit } = await sentWithNoAnswer('request');
+
+      const check = await useVaultStore.getState().checkSetup('setup-belonging-to-someone-else');
+
+      expect(check.outcome).toBe('interrupted');
+      expect(useVaultStore.getState().setupPending).toBe(true);
+      await expect(useVaultStore.getState().commitSetup(setupId, kit)).resolves.toEqual({ ok: true });
+    });
+
+    it('checkSetup while the request is in flight does not act', async () => {
+      const { setupId, kit } = await prepare();
+      let release!: (r: CreateResponse) => void;
+      vi.mocked(api.createVault).mockImplementationOnce((vault) => new Promise<CreateResponse>((resolve) => {
+        serverVault = vault;
+        release = resolve;
+      }));
+      const committing = useVaultStore.getState().commitSetup(setupId, kit);
+      await flushAsync();
+
+      const check = await useVaultStore.getState().checkSetup(setupId);
+
+      expect(check.outcome).toBe('unknown');
+      expect(useVaultStore.getState().setupPending).toBe(true);
+      release(createdOk(serverVault!));
+      await expect(committing).resolves.toEqual({ ok: true });
+    });
+
+    // --- abandoning ----------------------------------------------------------------------------
+
+    it('abandoning after a no-answer brings the store in line with the server: the vault exists, so locked — never unlocked', async () => {
+      const { setupId } = await sentWithNoAnswer();
+      expect(useVaultStore.getState().status).toBe('none');
+
+      await useVaultStore.getState().abandonSetup(setupId);
+
+      const state = useVaultStore.getState();
+      expect(state.setupPending).toBe(false);
+      expect(state.status).toBe('locked');
+      expect(state.vault).toEqual(serverVault);
+      expect(getCryptoClient().isRunning).toBe(false);
+    });
+
+    it('abandoning after a no-answer where the server has no vault leaves the store empty', async () => {
+      const { setupId } = await sentWithNoAnswer('request');
+
+      await useVaultStore.getState().abandonSetup(setupId);
+
+      expect(useVaultStore.getState().status).toBe('none');
+      expect(useVaultStore.getState().vault).toBeNull();
+    });
+
+    it('abandoning a setup that was never sent asks the server nothing', async () => {
+      const { setupId } = await prepare();
+      vi.mocked(api.getVault).mockClear();
+
+      await useVaultStore.getState().abandonSetup(setupId);
+
+      expect(api.getVault).not.toHaveBeenCalled();
+      expect(useVaultStore.getState().status).toBe('none');
+    });
+  });
 });
