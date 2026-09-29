@@ -773,6 +773,45 @@ describe('vaultStore two-phase setup', () => {
       await recovery.lockAndTerminate();
     });
 
+    it('checkSetup finding this vault while the worker has been lost meanwhile: the vault exists, but it is NOT called unlocked', async () => {
+      const { setupId } = await sentWithNoAnswer();
+      // The worker dies outside the store's knowledge (a crash on a low-memory phone) between
+      // the failed request and the user asking the server what became of it.
+      await getCryptoClient().lockAndTerminate();
+
+      const check = await useVaultStore.getState().checkSetup(setupId);
+
+      expect(check).toMatchObject({ outcome: 'interrupted', vaultCreated: true });
+      expect(check.error).toMatch(/vault was created/i);
+      expect(check.error).toMatch(/unlock/i);
+      expect(check.error).not.toMatch(FALSE_COMFORT);
+      const state = useVaultStore.getState();
+      expect(state.status).toBe('locked');
+      expect(state.vault).toEqual(serverVault);
+      expect(state.setupPending).toBe(false);
+      expect((await getCryptoClient().status()).unlocked).toBe(false);
+    });
+
+    it('a create request that succeeds after the worker was lost opens the vault LOCKED, never unlocked without secrets', async () => {
+      const { setupId, kit } = await prepare();
+      let release!: (r: CreateResponse) => void;
+      vi.mocked(api.createVault).mockImplementationOnce((vault) => new Promise<CreateResponse>((resolve) => {
+        serverVault = vault;
+        release = resolve;
+      }));
+      const committing = useVaultStore.getState().commitSetup(setupId, kit);
+      await flushAsync();
+
+      await getCryptoClient().lockAndTerminate(); // lost while the request is out, without a lock()
+      release(createdOk(serverVault!));
+      const result = await committing;
+
+      expect(result).toMatchObject({ ok: false, code: 'setup_interrupted', discarded: true, vaultCreated: true });
+      expect(useVaultStore.getState().status).toBe('locked');
+      expect(useVaultStore.getState().vault).toEqual(serverVault);
+      expect((await getCryptoClient().status()).unlocked).toBe(false);
+    });
+
     it('checkSetup finding no vault says so and keeps the setup — the same kit can still be sent', async () => {
       const { setupId, kit } = await sentWithNoAnswer('request');
 

@@ -678,7 +678,15 @@ throw it away; the store enforces this (a `sent` flag on the pending setup), not
   that lands during the request no longer reports "unchanged, try again" for a setup that is gone.
   `refreshStatus` leaves the setup alone while its request is in flight or when the server shows
   this very vault, and abandoning a setup that was sent brings the store in line with the server
-  (vault present, locked) — never unlocked.
+  (vault present, locked) — never unlocked. (`refreshStatus` in that case says "locked" while the
+  setup's worker still holds its secrets: a bounded exception to "locked means the worker is
+  dead" — nothing has adopted those secrets yet, the wizard that owns them is still open, and
+  every exit of the setup terminates that worker.)
+- A vault found on the server (by the request's answer, a retry's `409`, or "Cancel and start
+  over") is adopted as *unlocked* only if the worker still holds the setup's secrets, checked
+  again at that moment — a worker lost meanwhile (a crash on a low-memory phone) means the vault
+  opens locked, and the wizard closes with a notice instead of leaving a create form under a
+  message that the vault was created.
 - Only a verdict clears the flag: created, a refusal, another vault, or the server answering that
   it has no vault. Only then is "nothing was saved" true, and the kit void.
 

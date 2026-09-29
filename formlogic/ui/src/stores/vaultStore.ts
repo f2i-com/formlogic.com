@@ -17,7 +17,11 @@
 //     terminates it (bounded: a wedged worker is hard-terminated after ~250ms), and
 //     broadcasts on BroadcastChannel('fl-vault') so every other tab locks too
 //     (worker terminated there as well). The status flips to 'locked' ONLY after
-//     the worker is dead — never 'locked' with a live worker holding keys;
+//     the worker is dead — never 'locked' with a live worker holding keys. (One bounded
+//     exception: refreshStatus meeting the very vault a setup has just sent says 'locked'
+//     while that setup's worker still holds its secrets — nothing has adopted them yet,
+//     the wizard that owns them is still open, and every exit of the setup terminates
+//     that worker);
 //   - a recovery-rewrap / passphrase-CAS failure (unknown server state) forces the
 //     same full lock + terminate;
 //   - auto-lock fires after 30 min idle (configurable via setAutoLockMinutes);
@@ -66,6 +70,9 @@ export interface CommitSetupResult {
   error?: string;
   /** True when the prepared vault no longer exists: the caller must start over. */
   discarded?: boolean;
+  /** True when the vault DOES exist on the server but could not be left unlocked here (a lock,
+   *  or the worker was lost): the store has it, locked, and the user unlocks it as usual. */
+  vaultCreated?: boolean;
 }
 
 /** What asking the server about a setup whose create request got no verdict found. */
@@ -84,6 +91,8 @@ export type CheckSetupOutcome =
 export interface CheckSetupResult {
   outcome: CheckSetupOutcome;
   error?: string;
+  /** With 'interrupted': the vault DOES exist (the store has it, locked) — see CommitSetupResult. */
+  vaultCreated?: boolean;
 }
 
 interface VaultState {
@@ -301,15 +310,29 @@ function isSameVault(a: VaultWire, b: VaultWire): boolean {
 }
 
 /**
- * The create request succeeded: the vault now exists on the server. It is adopted as
- * UNLOCKED only if this setup is still the live one — nothing locked or signed out while
- * the request was in flight. Otherwise its secrets are gone and it opens locked (or, for
- * a different sign-in, is not adopted at all: that store must not receive this account's
- * vault).
+ * The vault now exists on the server (the create request succeeded, or a look at the server
+ * found this very vault). It is adopted as UNLOCKED only if this setup is still the live
+ * one: nothing locked or signed out meanwhile AND the worker still holds its secrets — that
+ * can be lost outside the store's knowledge (a crash on a low-memory phone) in the time
+ * between the request going out and its answer being known, and "unlocked" without secrets
+ * would be a lie. Otherwise it opens locked (or, for a different sign-in, is not adopted at
+ * all: that store must not receive this account's vault).
  */
 async function adoptCreatedVault(pending: PendingSetup, stored: VaultWire): Promise<CommitSetupResult> {
+  let holdsSecrets = false;
+  if (pendingSetup === pending && isSessionGenerationCurrent(pending.sessionGeneration)) {
+    const client = getCryptoClient();
+    const wasRunning = client.isRunning; // status() would spawn a fresh, empty worker
+    try {
+      const worker = await client.status();
+      holdsSecrets = wasRunning && worker.unlocked && worker.userId === pending.userId;
+    } catch {
+      holdsSecrets = false;
+    }
+  }
+  // Decided AFTER the worker was asked: a lock or sign-out can land while it answers.
   const sameSession = isSessionGenerationCurrent(pending.sessionGeneration);
-  const live = pendingSetup === pending && sameSession;
+  const live = pendingSetup === pending && sameSession && holdsSecrets;
   pending.sent = false; // a verdict: the vault exists
   dropPendingSetup();
   if (!live) {
@@ -327,7 +350,8 @@ async function adoptCreatedVault(pending: PendingSetup, stored: VaultWire): Prom
       ok: false,
       code: 'setup_interrupted',
       discarded: true,
-      error: 'Your vault was created, but the session was locked before setup finished. Unlock it with your vault passphrase.',
+      vaultCreated: true,
+      error: 'Your vault was created, but it could not be left unlocked (the session was locked, or its worker was lost). Unlock it with your vault passphrase.',
     };
   }
   useVaultStore.setState({ status: 'unlocked', vault: stored });
@@ -574,7 +598,8 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
     }
     if (isSameVault(theirs, pending.vault)) {
       const adopted = await adoptCreatedVault(pending, theirs);
-      return adopted.ok ? { outcome: 'created' } : { outcome: 'interrupted', error: adopted.error };
+      if (adopted.ok) return { outcome: 'created' };
+      return { outcome: 'interrupted', error: adopted.error, ...(adopted.vaultCreated ? { vaultCreated: true } : {}) };
     }
     // Somebody else's vault: this one can never be created.
     pending.sent = false;
