@@ -237,6 +237,55 @@ final class DesktopRelayPollLoadTest extends TestCase
         $this->assertSame([$live], $this->ids($lane, $found));
     }
 
+    // ── the housekeeping that rides the sweep still happens ──
+
+    private function scalar(string $sql, string $id): mixed
+    {
+        $stmt = self::$pdo->prepare($sql);
+        $stmt->execute([$id]);
+        return $stmt->fetchColumn();
+    }
+
+    public function testAHeldPollOnTheAiLaneStillPurgesSealedFramesOnceTheirGraceHasPassed(): void
+    {
+        $service = $this->service('ai');
+        $id = $this->enqueue('ai', $service);
+        $service->claim($id, $this->ownerId, ['instanceId' => 'desk-1']);
+        $service->appendFrame($id, $this->ownerId, base64_encode('sealed-delta'), 'desk-1');
+        $service->complete($id, $this->ownerId, ['status' => 'done', 'instanceId' => 'desk-1']);
+        $frames = 'SELECT COUNT(*) FROM desktop_ai_frames WHERE request_id = ?';
+
+        // Inside the drain window the reply stream can still read the frame: a poll leaves it be.
+        $this->poll('ai', $service, 0);
+        $this->assertSame(1, (int) $this->scalar($frames, $id));
+
+        // Once the grace has passed, the sweep that starts the next poll reaps every sealed byte.
+        self::$pdo->prepare('UPDATE desktop_ai_requests SET finished_at = (NOW() - INTERVAL 120 SECOND) WHERE id = ?')->execute([$id]);
+        $service->sweeps = 0;
+        $this->poll('ai', $service, 600);
+        $this->assertSame(0, (int) $this->scalar($frames, $id));
+        $this->assertSame(1, $service->sweeps, 'by the one sweep the held poll ran as it started');
+    }
+
+    public function testAHeldPollOnTheFlowLaneStillPurgesAnUnreadResultOnceItsRetentionHasPassed(): void
+    {
+        $service = $this->service('flow');
+        $id = $this->enqueue('flow', $service);
+        $service->claim($id, $this->ownerId, ['instanceId' => 'desk-1']);
+        $service->complete($id, $this->ownerId, ['status' => 'done', 'instanceId' => 'desk-1', 'resultEnvelope' => base64_encode('sealed-result')]);
+        $result = 'SELECT result_envelope FROM desktop_flow_runs WHERE id = ?';
+
+        $this->poll('flow', $service, 0);
+        $this->assertNotNull($this->scalar($result, $id), 'a fresh result is kept for its requester');
+
+        $stale = DesktopFlowRelayService::RESULT_RETENTION_SECONDS + 60;
+        self::$pdo->prepare("UPDATE desktop_flow_runs SET finished_at = (NOW() - INTERVAL {$stale} SECOND) WHERE id = ?")->execute([$id]);
+        $service->sweeps = 0;
+        $this->poll('flow', $service, 600);
+        $this->assertNull($this->scalar($result, $id), 'an unread one is bounded by retention');
+        $this->assertSame(1, $service->sweeps, 'by the one sweep the held poll ran as it started');
+    }
+
     #[DataProvider('lanes')]
     public function testListPendingStillSweepsBeforeItReads(string $lane): void
     {
