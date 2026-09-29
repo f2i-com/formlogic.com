@@ -211,9 +211,11 @@ Reserve-first on `idempotencyKey`: a duplicate enqueue returns the existing comm
 connector client checks — a per-connector wildcard `connector.<connectorId>.*` or the bare
 `connector.<connectorId>` grant also satisfies it, and the app owner always passes.
 
-**Cleanup cron note:** pending commands are expired opportunistically on each poll; a periodic sweep
-should also call `DesktopCommandService::expireStale()` (no argument = global) to reap commands from
-owners whose desktop never polls.
+**Cleanup cron note:** pending commands are expired opportunistically as each poll starts and, while a
+poll is held, every few seconds (`SWEEP_INTERVAL_SECONDS`, not on every 500 ms round; a row past its
+TTL is never handed out either way); a periodic sweep should also call
+`DesktopCommandService::expireStale()` (no argument = global) to reap commands from owners whose
+desktop never polls.
 
 ### Chat tools (site chat, Phase 6)
 

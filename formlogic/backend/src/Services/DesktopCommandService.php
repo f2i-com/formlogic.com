@@ -57,6 +57,14 @@ class DesktopCommandService
     /** Long-poll ceiling: a single pending request blocks at most 25s before returning empty. */
     public const MAX_WAIT_MS = 25000;
     private const POLL_INTERVAL_MS = 500;
+    /**
+     * A held long-poll sweeps for expired rows once as it starts and then at most this often, not
+     * on every POLL_INTERVAL_MS round: that was a transaction and two UPDATEs per round, per lane,
+     * per linked desktop, whether or not anything had expired. Delivery never waits on the sweep —
+     * the read filters `expires_at > NOW()` itself, so nothing is handed out after its TTL either
+     * way; the sweep only decides how soon a row's STATUS reads 'expired'.
+     */
+    public const SWEEP_INTERVAL_SECONDS = 5.0;
 
     /** ROUTE-001: a desktop connection heartbeated within this window counts as online —
      *  the same 90s the MCP desktop_status check uses (a linked desktop long-polls ≤25s). */
@@ -67,7 +75,7 @@ class DesktopCommandService
 
     private PDO $mysql;
 
-    public function __construct(MySQLConnection $mysql)
+    public function __construct(MySQLConnection $mysql, private readonly float $sweepIntervalSeconds = self::SWEEP_INTERVAL_SECONDS)
     {
         $this->mysql = $mysql->getConnection();
     }
@@ -236,6 +244,16 @@ class DesktopCommandService
     public function listPending(string $ownerUserId, ?string $sinceId = null, int $limit = 50, ?string $instanceId = null): array
     {
         $this->expireStale($ownerUserId);
+        return $this->readPending($ownerUserId, $sinceId, $limit, $instanceId);
+    }
+
+    /**
+     * The read half of listPending(): what this poller may see right now, without sweeping. A
+     * row past its expires_at is never returned, swept or not.
+     * @return array[]
+     */
+    private function readPending(string $ownerUserId, ?string $sinceId, int $limit, ?string $instanceId): array
+    {
         $limit = max(1, min(200, $limit));
 
         $where = "owner_user_id = :o AND status = 'pending' AND expires_at > NOW()";
@@ -272,14 +290,22 @@ class DesktopCommandService
      * MAX_WAIT_MS). Polls every POLL_INTERVAL_MS. $waitMs=0 returns immediately (the default the
      * tests exercise). Sleeping happens between DB polls, so a command enqueued mid-wait is picked
      * up within one interval.
+     *
+     * Every poll sweeps expired rows once as it starts, whatever its wait, and a held one again
+     * only when SWEEP_INTERVAL_SECONDS have passed — not on every round (see that constant).
      * @return array[]
      */
     public function pollPending(string $ownerUserId, ?string $sinceId, int $waitMs, int $limit = 50, ?string $instanceId = null): array
     {
         $waitMs = LongPollBudget::milliseconds($waitMs, self::MAX_WAIT_MS);
         $deadline = microtime(true) + ($waitMs / 1000);
+        $sweepDue = 0.0;
         do {
-            $pending = $this->listPending($ownerUserId, $sinceId, $limit, $instanceId);
+            if (microtime(true) >= $sweepDue) {
+                $this->expireStale($ownerUserId);
+                $sweepDue = microtime(true) + $this->sweepIntervalSeconds;
+            }
+            $pending = $this->readPending($ownerUserId, $sinceId, $limit, $instanceId);
             if ($pending !== [] || $waitMs === 0) {
                 return $pending;
             }
@@ -288,7 +314,7 @@ class DesktopCommandService
             }
             usleep(self::POLL_INTERVAL_MS * 1000);
         } while (microtime(true) < $deadline);
-        return $this->listPending($ownerUserId, $sinceId, $limit, $instanceId);
+        return $this->readPending($ownerUserId, $sinceId, $limit, $instanceId);
     }
 
     /**

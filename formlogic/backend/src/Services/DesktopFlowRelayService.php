@@ -61,6 +61,13 @@ class DesktopFlowRelayService
     /** Long-poll ceiling: a single pending run blocks at most 25s before returning empty. */
     public const MAX_WAIT_MS = 25000;
     private const POLL_INTERVAL_MS = 500;
+    /**
+     * A held long-poll sweeps (expiry, and the result-retention purge that rides it) once as it
+     * starts and then at most this often, not on every POLL_INTERVAL_MS round. Delivery never
+     * waits on it: the read filters `expires_at > NOW()` itself. See
+     * DesktopCommandService::SWEEP_INTERVAL_SECONDS.
+     */
+    public const SWEEP_INTERVAL_SECONDS = 5.0;
 
     /** Same shape DesktopCommandService enforces for desktop instance ids. */
     private const INSTANCE_ID_PATTERN = '/^[A-Za-z0-9._-]+$/';
@@ -68,7 +75,7 @@ class DesktopFlowRelayService
 
     private PDO $mysql;
 
-    public function __construct(MySQLConnection $mysql)
+    public function __construct(MySQLConnection $mysql, private readonly float $sweepIntervalSeconds = self::SWEEP_INTERVAL_SECONDS)
     {
         $this->mysql = $mysql->getConnection();
     }
@@ -264,6 +271,16 @@ class DesktopFlowRelayService
     public function listPending(string $ownerUserId, ?string $sinceId = null, int $limit = 50, ?string $instanceId = null): array
     {
         $this->expireStale($ownerUserId);
+        return $this->readPending($ownerUserId, $sinceId, $limit, $instanceId);
+    }
+
+    /**
+     * The read half of listPending(): what this poller may see right now, without sweeping. A
+     * row past its expires_at is never returned, swept or not.
+     * @return array[]
+     */
+    private function readPending(string $ownerUserId, ?string $sinceId, int $limit, ?string $instanceId): array
+    {
         $limit = max(1, min(200, $limit));
 
         $where = "owner_user_id = :o AND status = 'pending' AND expires_at > NOW()";
@@ -294,14 +311,22 @@ class DesktopFlowRelayService
     /**
      * Long-poll: return pending runs as soon as any exist, or after up to $waitMs (capped
      * at MAX_WAIT_MS). $waitMs=0 returns immediately (the default the tests exercise).
+     *
+     * Every poll sweeps once as it starts, whatever its wait, and a held one again only when
+     * SWEEP_INTERVAL_SECONDS have passed — not on every round (see that constant).
      * @return array[]
      */
     public function pollPending(string $ownerUserId, ?string $sinceId, int $waitMs, int $limit = 50, ?string $instanceId = null): array
     {
         $waitMs = LongPollBudget::milliseconds($waitMs, self::MAX_WAIT_MS);
         $deadline = microtime(true) + ($waitMs / 1000);
+        $sweepDue = 0.0;
         do {
-            $pending = $this->listPending($ownerUserId, $sinceId, $limit, $instanceId);
+            if (microtime(true) >= $sweepDue) {
+                $this->expireStale($ownerUserId);
+                $sweepDue = microtime(true) + $this->sweepIntervalSeconds;
+            }
+            $pending = $this->readPending($ownerUserId, $sinceId, $limit, $instanceId);
             if ($pending !== [] || $waitMs === 0) {
                 return $pending;
             }
@@ -310,7 +335,7 @@ class DesktopFlowRelayService
             }
             usleep(self::POLL_INTERVAL_MS * 1000);
         } while (microtime(true) < $deadline);
-        return $this->listPending($ownerUserId, $sinceId, $limit, $instanceId);
+        return $this->readPending($ownerUserId, $sinceId, $limit, $instanceId);
     }
 
     /**
