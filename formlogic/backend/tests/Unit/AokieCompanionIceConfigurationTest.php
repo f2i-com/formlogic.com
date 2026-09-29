@@ -602,25 +602,27 @@ final class AokieCompanionIceConfigurationTest extends TestCase
     public function testARelayOnlyDiscoveryCarriesOneSharedCredentialPerWindow(): void
     {
         // The Companion refuses a relay-only document that has no TURN entry, so this one credential is
-        // unavoidable; it is the same for every caller in a window instead of one per request.
+        // unavoidable; it is the same for every caller in a window instead of one per request. A window is
+        // half the lifetime, so the credential is never valid for longer than the lifetime itself.
         $config = self::minting(relayOnly: 'true');
         $first = $config->forDiscovery(self::NOW);
-        $sameWindow = $config->forDiscovery(self::NOW + 599);
-        $nextWindow = $config->forDiscovery(self::NOW + 600);
+        $sameWindow = $config->forDiscovery(self::NOW + 299);
+        $nextWindow = $config->forDiscovery(self::NOW + 300);
 
-        // Known answer for now = 1784160000, lifetime 600: expiry (now / 600 + 2) * 600 = 1784161200 (Python hmac).
+        // Known answers for now = 1784160000, lifetime 600, so windows of 300 s: expiry (now / 300 + 2) * 300
+        // = 1784160600, and 1784160900 in the next window (Python hmac and openssl, not this code).
         $this->assertSame(
-            self::mintedServers(1_784_161_200, '1784161200:2ff4bc309023ce8c082c27e0881ef28b', 'kpPsrDefpa6x6xTJTBgVS4wjKRI='),
+            self::mintedServers(1_784_160_600, '1784160600:2ff4bc309023ce8c082c27e0881ef28b', 'StF84NOL2ogLNVPHYKeseWvPxEc='),
             $first['servers'],
         );
-        $this->assertSame(1_784_161_200, $first['expiresAt']);
+        $this->assertSame(1_784_160_600, $first['expiresAt']);
         $this->assertTrue($first['relayOnly']);
         $this->assertSame($first, $sameWindow, 'every anonymous caller in a window sees the same credential');
-        $this->assertSame(1_784_161_800, $nextWindow['expiresAt']);
-        $this->assertNotSame($first['servers'][1]['credential'], $nextWindow['servers'][1]['credential']);
-        foreach ([self::NOW => $first, self::NOW + 599 => $sameWindow, self::NOW + 600 => $nextWindow] as $now => $result) {
-            $this->assertGreaterThanOrEqual($now + 600, $result['expiresAt'], 'never closer than a full lifetime to lapsing');
-            $this->assertLessThanOrEqual($now + 1200, $result['expiresAt']);
+        $this->assertSame(1_784_160_900, $nextWindow['expiresAt']);
+        $this->assertSame('9l+YSRvn+THJQ2nwDvFXNSX/oQs=', $nextWindow['servers'][1]['credential']);
+        foreach ([self::NOW => $first, self::NOW + 299 => $sameWindow, self::NOW + 300 => $nextWindow] as $now => $result) {
+            $this->assertGreaterThan($now + 300, $result['expiresAt'], 'at least half a lifetime left');
+            $this->assertLessThanOrEqual($now + 600, $result['expiresAt'], 'never more than the lifetime');
         }
     }
 
@@ -630,8 +632,33 @@ final class AokieCompanionIceConfigurationTest extends TestCase
         for ($second = 0; $second < 130; $second++) {
             $expiresAt = $config->forDiscovery(self::NOW + $second)['expiresAt'];
             $this->assertGreaterThan(self::NOW + $second + 30, $expiresAt, "at second {$second}");
-            $this->assertLessThanOrEqual(self::NOW + $second + 120, $expiresAt);
+            $this->assertLessThanOrEqual(self::NOW + $second + 60, $expiresAt);
         }
+    }
+
+    /** @return array<string, array{int}> */
+    public static function lifetimes(): array
+    {
+        return ['the shortest' => [60], 'odd' => [61], 'a few minutes' => [299], 'the default' => [600], 'odd and long' => [3599], 'the longest' => [3600]];
+    }
+
+    #[DataProvider('lifetimes')]
+    public function testThePublicCredentialNeverOutlivesTheConfiguredLifetimeNorGetsTooCloseToTheFloor(int $ttl): void
+    {
+        // Aokie's README never lets a credential run past coturn's 3600 s: the one anyone can fetch from public
+        // discovery must not be valid for longer than the lifetime the operator chose, whenever it is fetched.
+        $config = self::minting(relayOnly: 'true', ttl: (string) $ttl);
+        $step = max(1, intdiv($ttl, 120));
+        $shortest = PHP_INT_MAX;
+        $longest = 0;
+        for ($second = 0; $second <= 2 * $ttl + 1; $second += $step) {
+            $remaining = $config->forDiscovery(self::NOW + $second)['expiresAt'] - (self::NOW + $second);
+            $shortest = min($shortest, $remaining);
+            $longest = max($longest, $remaining);
+        }
+
+        $this->assertLessThanOrEqual($ttl, $longest, 'never valid for longer than the lifetime');
+        $this->assertGreaterThan(AokieCompanionIceConfiguration::TURN_MIN_REMAINING_SECONDS, $shortest, 'and never inside the Companion\'s 30 second floor');
     }
 
     // ── incomplete or unsafe minting configuration fails closed, and the log says why ──

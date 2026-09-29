@@ -34,9 +34,11 @@ namespace FormLogic\Services;
  *
  * Discovery is public and unauthenticated, so it never mints a credential per request. It lists the
  * STUN URLs and, only when the deployment is relay-only — the Companion refuses such a document
- * without a TURN entry — one shared bootstrap credential that changes once per lifetime window, so
+ * without a TURN entry — one shared bootstrap credential that changes every half lifetime, so
  * every anonymous caller in a window sees the same username, just as a static list has always
- * exposed one credential. Fresh, per-endpoint credentials go to the authenticated admissions only.
+ * exposed one credential (which is also to say that anyone who can fetch a relay-only discovery
+ * document can use the TURN server until it lapses, never for longer than the lifetime).
+ * Fresh, per-endpoint credentials go to the authenticated admissions only.
  *
  * What it tells the operator (a lapse, a refusal and why) goes to the PHP error log, each distinct
  * message at most once a minute however often discovery and the admissions are asked (ThrottledLog).
@@ -222,10 +224,14 @@ final class AokieCompanionIceConfiguration
             $opaqueId = self::opaqueId($secret, $admittedSubject);
         } elseif ($relayOnly) {
             // Discovery cannot be authenticated, yet a relay-only Companion will not accept it
-            // without TURN. One credential per lifetime window, the same for every caller, and
-            // never closer than a full lifetime to lapsing (so always above the 30 seconds the
-            // Companion insists on).
-            $expiresAt = (intdiv($now, $ttl) + 2) * $ttl;
+            // without TURN. One credential per window, the same for every caller. A window is half
+            // the lifetime and the credential runs to the end of the NEXT one, so it is valid for
+            // more than half the lifetime and never for longer than the lifetime itself (an
+            // operator who chose 600 seconds never has an anonymous caller holding one for 1200),
+            // and, with a lifetime of at least 60, always for more than the 30 seconds the
+            // Companion insists on.
+            $window = intdiv($ttl, 2);
+            $expiresAt = (intdiv($now, $window) + 2) * $window;
             $opaqueId = self::opaqueId($secret, 'discovery');
         } else {
             return ['servers' => $servers, 'relayOnly' => false, 'expiresAt' => null];

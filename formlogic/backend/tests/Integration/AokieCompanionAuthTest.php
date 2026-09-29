@@ -2735,14 +2735,24 @@ final class AokieCompanionAuthTest extends TestCase
             }
             $this->assertTrue($surfaces['discovery']['media']['relayOnly']);
 
-            // Public discovery: every anonymous caller within a window sees one and the same credential.
+            // Public discovery: every anonymous caller within a window sees one and the same credential,
+            // and it is never valid for longer than the ten minutes an admission's is.
             $again = $this->iceSurfaces($device)['discovery'];
             if ($again['turnCredentialExpiresAt'] === $surfaces['discovery']['turnCredentialExpiresAt']) {
                 $this->assertSame($surfaces['discovery']['iceServers'], $again['iceServers']);
             } else {
-                $this->assertSame(600, $again['turnCredentialExpiresAt'] - $surfaces['discovery']['turnCredentialExpiresAt'], 'the window turned over between the two calls');
+                $this->assertSame(300, $again['turnCredentialExpiresAt'] - $surfaces['discovery']['turnCredentialExpiresAt'], 'the window (half the lifetime) turned over between the two calls');
             }
+            $this->assertLessThanOrEqual(time() + 600, $surfaces['discovery']['turnCredentialExpiresAt']);
             $this->assertNotSame($surfaces['discovery']['iceServers'][1]['username'], $surfaces['mobile']['iceServers'][1]['username']);
+
+            // A response that carries a credential is never cached, by the browser or a shared cache.
+            $discovery = self::$controller->appDiscovery(
+                $this->request('GET', '/api/app/' . $this->appSlug . '/aokie-discovery'),
+                (new ResponseFactory())->createResponse(),
+                ['slug' => $this->appSlug],
+            );
+            $this->assertSame('no-store', $discovery->getHeaderLine('Cache-Control'));
         });
     }
 
