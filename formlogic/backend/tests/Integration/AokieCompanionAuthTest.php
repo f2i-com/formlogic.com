@@ -2756,6 +2756,30 @@ final class AokieCompanionAuthTest extends TestCase
         });
     }
 
+    public function testARevokedDeviceGetsNoCredentialEvenWhileMintingIsOn(): void
+    {
+        $device = $this->iceDevice();
+        $this->assertSame(200, $this->iceSurfaces($device)['mobile']['status'], 'enrolled by its first admission');
+        // The endpoint's record is revoked but its token has not been withdrawn (revoking through the API does
+        // both at once). The credential is computed before the device is checked, so this is the case where a
+        // careless response could hand one to a revoked endpoint.
+        self::$pdo->prepare("UPDATE aokie_companion_devices SET revoked_at = NOW() WHERE app_id = ? AND subject_id = ? AND role = 'mobile'")
+            ->execute([$this->appId, $device['deviceId']]);
+
+        $this->withIceSettings(self::mintingSettings(), function () use ($device): void {
+            $response = $this->mobileAdmission($device['accessToken'], $device['deviceId'], null, null, false);
+            $raw = (string) $response->getBody();
+            $body = json_decode($raw, true);
+
+            $this->assertSame(403, $response->getStatusCode(), $raw);
+            $this->assertSame('device_revoked', $body['code']);
+            $this->assertSame(['error', 'code', 'message'], array_keys($body), 'an error, and nothing else');
+            $this->assertStringNotContainsString('credential', $raw);
+            $this->assertStringNotContainsString('iceServers', $raw);
+            $this->assertStringNotContainsString(self::REST_SECRET, $raw);
+        });
+    }
+
     public function testHalfConfiguredMintingFailsClosedAndTheLogNamesTheMissingSetting(): void
     {
         $device = $this->iceDevice();
