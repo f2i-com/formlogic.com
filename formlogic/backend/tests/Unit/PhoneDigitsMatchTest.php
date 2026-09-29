@@ -26,7 +26,7 @@ class PhoneDigitsMatchTest extends TestCase
 
     public function testDifferentNumbersDoNotMatch(): void
     {
-        $this->assertFalse(ResponseService::phoneDigitsMatch('0491570156', '0432602110'));
+        $this->assertFalse(ResponseService::phoneDigitsMatch('0491570156', '0491570157'));
     }
 
     public function testShortFragmentsNeverMatch(): void
