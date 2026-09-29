@@ -19,9 +19,10 @@ namespace FormLogic\Services;
  *     gets its own short-lived credential, so nothing has to be renewed by hand:
  *         username   = <expiry unix seconds>:<opaque id>
  *         credential = base64(HMAC-SHA1(secret, username))
- *     The opaque id is a keyed hash of the endpoint (role, app, device), so coturn's per-user quota
- *     still means something, TURN logs carry no device ids, and it is lowercase hex, which can
- *     never contain the ':' that separates it from the expiry.
+ *     The opaque id is a keyed hash of the endpoint (role, app, device): the same endpoint keeps
+ *     the same id from one admission to the next, so its allocations can be told apart in coturn's
+ *     logs without those logs carrying a device id, and it is lowercase hex, which can never
+ *     contain the ':' that separates it from the expiry.
  *
  *  2. A static list (AOKIE_COMPANION_ICE_SERVERS_JSON) whose TURN entries carry an `expiresAt`. A
  *     malformed list fails closed, with an \UnexpectedValueException that says why in the log (the
@@ -177,7 +178,10 @@ final class AokieCompanionIceConfiguration
         if ($secret === '' || $this->turnRestUrls === '') {
             throw new \UnexpectedValueException('TURN REST minting needs both AOKIE_COMPANION_TURN_REST_SECRET and AOKIE_COMPANION_TURN_REST_URLS');
         }
-        // The same rules the self-host bundle applies to the secret coturn shares with the issuer.
+        // The length and placeholder rules the self-host bundle applies to the secret coturn shares with
+        // the issuer. Its coturn also refuses any character outside [A-Za-z0-9._~+/=-]; nothing here
+        // depends on that (the secret is only ever an HMAC key), so it is documented in .env.example
+        // rather than enforced, and a coturn that takes other bytes keeps working.
         if (strlen($secret) < 32 || strlen($secret) > 4096
             || str_contains($secret, 'REPLACE') || str_contains($secret, 'CHANGE_ME')) {
             throw new \UnexpectedValueException('AOKIE_COMPANION_TURN_REST_SECRET must be 32 to 4096 bytes and not a placeholder');

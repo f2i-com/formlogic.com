@@ -530,7 +530,7 @@ final class AokieCompanionIceConfigurationTest extends TestCase
         $this->assertSame($a, $b);
         $this->assertNotSame($a['servers'][1]['credential'], $later['servers'][1]['credential'], 'a fresh credential per admission');
         $this->assertNotSame($a['servers'][1]['username'], $another['servers'][1]['username'], 'and one identity per endpoint');
-        $this->assertStringEndsWith(substr($a['servers'][1]['username'], strpos($a['servers'][1]['username'], ':')), $later['servers'][1]['username'], 'the same endpoint keeps the same id, so a coturn per-user quota holds');
+        $this->assertStringEndsWith(substr($a['servers'][1]['username'], strpos($a['servers'][1]['username'], ':')), $later['servers'][1]['username'], 'the same endpoint keeps the same id from one admission to the next');
     }
 
     public function testTheLifetimeIsConfigurableWithinCoturnsAllocationLimit(): void
