@@ -9,6 +9,7 @@ use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Helpers\AppUrl;
 use FormLogic\Services\AokieCompanionAdmissionSigner;
 use FormLogic\Services\AokieCompanionDeviceService;
+use FormLogic\Services\AokieCompanionIceConfiguration;
 use FormLogic\Services\AokieCompanionPushService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppUserService;
@@ -2058,90 +2059,9 @@ final class AokieCompanionController
      */
     private function iceConfiguration(): array
     {
-        $relayRaw = $this->environment('AOKIE_COMPANION_RELAY_ONLY');
-        if (!in_array($relayRaw, ['', 'true', 'false'], true)) {
-            throw new \UnexpectedValueException('AOKIE_COMPANION_RELAY_ONLY must be true or false');
-        }
-        $relayOnly = $relayRaw === 'true';
-        $raw = $this->environment('AOKIE_COMPANION_ICE_SERVERS_JSON');
-        if ($raw === '') {
-            if ($relayOnly) {
-                throw new \UnexpectedValueException('relayOnly requires a configured TURN server');
-            }
-            return ['servers' => [], 'relayOnly' => false, 'expiresAt' => null];
-        }
-        try {
-            $servers = json_decode($raw, true, 32, JSON_THROW_ON_ERROR);
-        } catch (\JsonException $error) {
-            throw new \UnexpectedValueException('Invalid ICE JSON', 0, $error);
-        }
-        if (!is_array($servers) || !array_is_list($servers) || count($servers) > 8) {
-            throw new \UnexpectedValueException('ICE servers must be a list of at most eight entries');
-        }
-        $validated = [];
-        $turnExpiry = null;
-        $hasTurnServer = false;
-        foreach ($servers as $server) {
-            if (!is_array($server)
-                || array_diff(array_keys($server), ['urls', 'username', 'credential', 'expiresAt']) !== []
-                || !is_array($server['urls'] ?? null)
-                || !array_is_list($server['urls'])
-                || $server['urls'] === []
-                || count($server['urls']) > 8) {
-                throw new \UnexpectedValueException('ICE server shape is invalid');
-            }
-            $urls = [];
-            $hasTurn = false;
-            foreach ($server['urls'] as $url) {
-                if (!is_string($url)
-                    || $url === ''
-                    || strlen($url) > 2048
-                    // PHP escapes U+2028/U+2029 in its compact signing JSON,
-                    // while serde_json emits them literally. Reject those two
-                    // separators before signing so native verification cannot
-                    // become runtime-dependent.
-                    || preg_match('/[\x00-\x1F\x7F\x{2028}\x{2029}]/u', $url)
-                    || preg_match('/^(?:stun|stuns|turn|turns):/i', $url) !== 1) {
-                    throw new \UnexpectedValueException('ICE server URL is invalid');
-                }
-                if (preg_match('/^turns?:/i', $url) === 1) {
-                    $hasTurn = true;
-                    $hasTurnServer = true;
-                }
-                $urls[] = $url;
-            }
-            $username = $server['username'] ?? '';
-            $credential = $server['credential'] ?? '';
-            if (!is_string($username)
-                || !is_string($credential)
-                || strlen($username) > 512
-                || strlen($credential) > 2048
-                || preg_match('/[\x00-\x1F\x7F\x{2028}\x{2029}]/u', $username)
-                || preg_match('/[\x00-\x1F\x7F\x{2028}\x{2029}]/u', $credential)) {
-                throw new \UnexpectedValueException('ICE server credentials are invalid');
-            }
-            $entry = [
-                'urls' => $urls,
-                'username' => $username,
-                'credential' => $credential,
-            ];
-            if ($hasTurn) {
-                $expiresAt = $server['expiresAt'] ?? null;
-                if ($username === '' || $credential === '' || !is_int($expiresAt)
-                    || $expiresAt <= time() + 30 || $expiresAt > time() + 86400) {
-                    throw new \UnexpectedValueException('TURN credentials require an expiresAt Unix timestamp 31 seconds to 24 hours in the future');
-                }
-                $entry['expiresAt'] = $expiresAt;
-                $turnExpiry = $turnExpiry === null ? $expiresAt : min($turnExpiry, $expiresAt);
-            } elseif ($username !== '' || $credential !== '' || array_key_exists('expiresAt', $server)) {
-                throw new \UnexpectedValueException('STUN-only entries must not contain TURN credentials or expiry');
-            }
-            $validated[] = $entry;
-        }
-        if ($relayOnly && !$hasTurnServer) {
-            throw new \UnexpectedValueException('relayOnly requires at least one TURN or TURNS URL');
-        }
-        return ['servers' => $validated, 'relayOnly' => $relayOnly, 'expiresAt' => $turnExpiry];
+        return AokieCompanionIceConfiguration::fromEnvironment(
+            fn (string $name): string => $this->environment($name),
+        )->resolve();
     }
 
     private function bearer(Request $request): ?string
