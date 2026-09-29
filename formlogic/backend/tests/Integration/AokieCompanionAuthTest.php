@@ -2519,6 +2519,32 @@ final class AokieCompanionAuthTest extends TestCase
         });
     }
 
+    public function testAnEntryThatListsStunAndTurnTogetherIsServedWholeWhileItsCredentialLasts(): void
+    {
+        $device = $this->iceDevice();
+        $healthy = $this->iceSurfaces($device);
+        $entry = [
+            'urls' => [
+                'stun:turn.example.test:3478',
+                'turn:turn.example.test:3478?transport=udp',
+                'turns:turn.example.test:5349?transport=tcp',
+            ],
+            'username' => 'temporary-user',
+            'credential' => 'temporary-secret',
+            'expiresAt' => time() + 3600,
+        ];
+
+        $this->withIceSettings(['AOKIE_COMPANION_ICE_SERVERS_JSON' => json_encode([$entry], JSON_UNESCAPED_SLASHES)], function (callable $log) use ($device, $healthy, $entry): void {
+            foreach ($this->iceSurfaces($device) as $surface => $body) {
+                $this->assertSame(200, $body['status'], $surface . ': ' . json_encode($body));
+                $this->assertSame([$entry], $body['iceServers'], $surface . ': the entry as configured, STUN URL and all');
+                $this->assertSame($entry['expiresAt'], $body['turnCredentialExpiresAt'], $surface);
+                $this->assertSame(array_keys($healthy[$surface]), array_keys($body), $surface . ' keeps its exact member list');
+            }
+            $this->assertSame('', $log(), 'nothing lapsed, nothing to say');
+        });
+    }
+
     public function testALapsedEntryThatListsStunAndTurnTogetherStillGivesEverySurfaceItsStunUrl(): void
     {
         // The single-entry shape Aokie's self-host README documents (stun:, turn: and turns: URLs under one
