@@ -1,121 +1,207 @@
 # Native database rollback safety
 
-This change repairs snapshot restoration in `NativeAppService::rollBack` when an update
-of an existing native app fails. Its base is FormLogic
-`81860c8a937b9e2a2ed7e6f71c5d7a9dd8cad1fc` (the latest upstream main checked on 2026-10-01).
-The original implementation attempted a checkpoint, deleted WAL/SHM files without checking
-the outcome, then copied the snapshot over the live SQLite file. A checkpoint does not
-exclude another SQLite connection from using that file.
+How a failed update of a native app puts its SQLite database back, what can stop that, and
+what an operator does when it does not finish. The update phases, the install journal and
+the recovery marker are described in [Hosted apps](HOSTED_APPS.md#how-an-update-is-applied-and-what-happens-when-it-is-interrupted);
+this page covers the database step.
 
-## Restore and failure behavior
+## How the database is restored
 
-The verified pre-install snapshot is opened read-only. The existing database is opened
-read-write without `CREATE`. SQLite's online backup API restores its contents in a SQLite
-write transaction, preserving the original pathname and SQLite's sidecar/lock protocol.
-There is no raw-copy, rename or sidecar-deletion fallback. The destination connection uses
-`synchronous=FULL`; source and destination have 1500 ms busy timeouts. That timeout bounds
-lock waiting, not total copy time for an arbitrarily large database.
+Before an update of an app that already has a database, the host takes a snapshot of it
+(`private/pre-install-<op>.sqlite`, made with `VACUUM INTO`) and checks it. If the update
+fails or is interrupted after the source has been swapped, the rollback restores that
+snapshot into the live file, `private/data/application.sqlite`, through SQLite's online
+backup API (the PHP `SQLite3::backup` method):
 
-Both the API boolean and both connections' error codes are checked immediately. PHP's
-SQLite wrapper can return `true` after `backup_init` fails because it reads the source's
-error while SQLite stores initialization failures on the destination. A subsequent query
-can reset that error, so the health check runs only after the error checks. Both connections
-close in `finally`, including on errors, and the snapshot remains unchanged.
+1. The snapshot is checked again: SQLite must open it, it must have at least one page, and
+   `PRAGMA quick_check` must say `ok`. A snapshot that is damaged, empty or locked is refused
+   before the live database is touched. (An empty snapshot would pass `quick_check` as an
+   empty database, and restoring it would empty the live one.)
+2. The snapshot is opened read-only and the live file read-write, without permission to
+   create it, so a missing file is an error and never a new empty database beside leftover
+   `-wal`/`-shm` files.
+3. The backup runs in one SQLite write transaction on the live file with
+   `PRAGMA synchronous=FULL`. SQLite's own locking decides who may read and write meanwhile;
+   nothing is checkpointed, deleted, renamed or overwritten outside SQLite.
+4. The result is checked three ways, immediately: the API's return value, the error SQLite
+   recorded on each connection (PHP can return `true` after a backup that failed to start)
+   and `PRAGMA quick_check` on the restored database. Both connections are then closed,
+   whatever happened.
 
-Retained idle connections remain usable. A WAL reader can finish its older consistent
-snapshot; fresh readers and the retained reader's next transaction see the restored state.
-An old read transaction must finish before it can safely become a writer. Competing writers
-and rollback-journal readers can block restoration, which fails within its lock-wait bound.
-Failed or incomplete restoration uses the existing recovery branch: the journal records
-`recovery`, the marker names the problem, and source/snapshot/configuration/project inputs
-are retained. Managed requests, record operations, captures, snapshots, event dispatch and
-installation remain blocked. Removing only the marker or releasing a database handle does
-not clear that barrier.
+Other connections to the live file are not disturbed. An idle connection stays usable and
+sees the restored database on its next statement. A WAL reader that is inside a read
+transaction finishes with the data it started with and sees the restored data in its next
+transaction. A writer, or a reader of a database that is not in WAL mode, holds a lock the
+restore must wait for (next section).
 
-## Compatibility and scope
+The restored file is not byte-for-byte the snapshot, so do not compare hashes. SQLite writes
+its own header into the destination (the file change counter and the schema cookie are
+updated); the snapshot is in rollback-journal mode while the live file stays in WAL mode, so
+the WAL version bytes of the header differ too; and while another connection has the file
+open the restored pages sit in the `-wal` file until the next checkpoint. Compare what
+matters: `PRAGMA integrity_check`, the schema (`sqlite_master`) and the rows.
 
-- Native installation, update and restore now require PHP `sqlite3` as well as `pdo_sqlite`.
-  `available()` and native preflight check this before installation changes begin. Existing
-  installations can still serve through their existing request path; a host without
-  `sqlite3` must provide it before management operations. No extension or host setting is
-  changed by this patch.
-- PHP's supported floor remains 8.2; the backup API has existed since PHP 7.4. No schema,
-  journal format, app source, authentication policy or host-key migration is introduced.
-- Database byte hashes can change because SQLite updates its destination schema cookie.
-  Validate schema and complete logical contents, integrity, source and keys rather than
-  requiring the main-file bytes to match a `VACUUM INTO` snapshot.
-- Missing main files, incompatible WAL page sizes, lock failures, I/O failures and corrupt
-  snapshots require operator recovery. The patch never creates a replacement beside
-  orphan sidecars.
-- The unchanged first-install database removal branch is outside this existing-database
-  snapshot repair. Whole-installation atomicity, unmanaged writes before the snapshot or
-  after restoration, storage-device failure, and best-effort recovery-journal/marker
-  writes remain separate limits. SQLite serializes restoration with unmanaged handles;
-  FormLogic's management lock governs managed operations.
+## Locks, retries and the time they take
 
-## Operator recovery boundary
+An editor, a backup or sync tool, or a worker that is still running can hold the live file
+when a rollback needs it. SQLite reports that as BUSY (error 5) or LOCKED (error 6), and it
+usually passes.
 
-There is no new automatic recovery endpoint or recovery command. The established recovery
-procedure remains manual reconciliation of the journal's inputs by the operator:
+| | |
+|---|---|
+| Wait for a lock in one attempt | up to 1.5 s (SQLite's busy timeout, on the snapshot and on the live file) |
+| Attempts | at most 3, with a short pause between them, on fresh connections |
+| Total time for all attempts | about 2.5 s (the exclusive management lock is held throughout) |
+| Retried | BUSY and LOCKED only |
+| Not retried | everything else: a damaged, empty or missing snapshot, a read-only or missing database, an incompatible page size, a failed health check |
 
-1. Keep `private/install.json` and `private/recovery-required` intact while investigating.
-   Read the journal's reason, problems and named snapshot/configuration/project/source
-   artifacts. Do not treat handle release as permission to discard those inputs.
-2. Quiesce this installation's managed workers and coordinate closure of external SQLite
-   handles. Acquire and hold the existing `private/manage.lock` exclusively during any
-   reconciliation. Do not replace that lock file or use an unlocked filesystem overwrite.
-3. Preserve the installation and the journal-named inputs before repairing it. Preserve
-   committed WAL content using a consistent SQLite snapshot; copying just a live main
-   file is insufficient. Keep configuration/key material private.
-4. Verify the pre-install snapshot's integrity and expected schema/data. Reconcile source,
-   project version and configuration to that same previous generation. Restore the
-   database through SQLite into the existing file, checking actual completion and errors.
-   Missing files or damaged snapshots require a separately reviewed recovery plan.
-5. Check integrity, foreign keys, complete app rows/migration/event state and the coherent
-   source/project/configuration generation. Retain the evidence and recovery inputs until
-   the operator accepts that result. Only then retire both journal and marker under the
-   lock and permit normal operations. A database restore by itself does not complete the
-   multi-file recovery.
+A lock that lasts longer than that ends the rollback's database step as a failure. Waiting
+for a lock fails before anything is written (the backup is one transaction), so the live
+database is left as it was, and the journal moves to phase `recovery` with the snapshot and
+every other input kept. The marker `private/recovery-required` and the PHP error log then
+say, for example:
 
-The regression tests demonstrate retry of the database helper after release and demonstrate
-that a successful helper retry still leaves a recovery journal blocking managed access.
-They do not certify an automated whole-installation recovery tool.
+> An update could not be rolled back (…). Unfinished: restore the database: The live database
+> could not be restored: database is locked (SQLite error 5). It stayed locked for 2.6 s over
+> 2 attempts. The snapshot is kept: stop whatever has the app database open, then restore the
+> snapshot as docs/NATIVE_ROLLBACK_SAFETY.md describes. Inputs are kept under the
+> installation's private/ folder …
 
-## Qualification
+Until the operator has finished the recovery (below), requests, records, backups, event
+delivery, updates and restores for that app are refused as needing operator recovery. Nothing
+retries on its own.
 
-`tests/Unit/NativeAppRollbackSafetyTest.php` uses only fresh synthetic temporary databases.
-Standalone tests cover retained idle connections, WAL readers with later committed frames,
-blocked writers and rollback-journal readers, retry after release, immutable snapshots,
-corrupt/missing snapshots, missing destinations/orphan sidecars, false/throw faults and
-PHP's misleading successful no-op. Runtime tests use the prepared real Node/ZIPP host:
-failed migration and failure after committed migration, source/configuration/project/data
-restoration, synthetic own/cross authorization, and recovery input/entry-point barriers.
+## Requirement: the `sqlite3` PHP extension
 
-Run the focused suite from `formlogic/backend` with the official runtime prepared and
-`FORMLOGIC_NODE_BIN` naming the intended Node binary:
+The backup API belongs to the `sqlite3` extension; `pdo_sqlite` does not have it. A host
+without `sqlite3`:
+
+- refuses to update an app that already has a database, with a 422 that tells the owner what
+  to enable, before anything is created, locked or changed;
+- still serves apps, installs an app for the first time (there is no database to restore)
+  and restores account backups;
+- lists `php.sqlite3` among the failed checks of the native preflight, which the owner's
+  native app panel shows.
+
+The installer's requirements table and the release `INSTALL.txt` list `sqlite3`. On
+Debian/Ubuntu it is the `php-sqlite3` package; the same package carries `pdo_sqlite`.
+
+## When the rollback could not finish: recovering by hand
+
+Do these in order. Nothing here is automatic.
+
+1. **Read what is unfinished.** `private/recovery-required` names the problems;
+   `private/install.json` (the journal) names the inputs: the snapshot
+   (`pre-install-<op>.sqlite`), the configuration and project backups, the staged source
+   (`staging-*`) and the previous source (`previous-*`). Keep both files in place and do not
+   delete any input they name until the end.
+2. **Find the installation.** It is `backend/storage/native-apps/<sha256(appId)>/`;
+   `php -r 'echo hash("sha256", "<appId>");'` prints the folder name.
+3. **Stop whatever has the live database open** (the lock error above means something does):
+   an editor or database tool, a backup or sync job, a worker you can see. If a lock is
+   stuck, stop the web server's PHP workers for that app.
+4. **Keep a copy of what is there now,** with the database consistent: copy
+   `private/data/application.sqlite` together with its `-wal` file, or take a
+   `VACUUM INTO` copy. Copying just the main file of a WAL database loses committed data.
+5. **Restore the snapshot into the live file through SQLite.** Save this as
+   `restore-native-db.php` and run
+   `php restore-native-db.php <installation>/private pre-install-<op>.sqlite`. It takes the
+   management lock exclusively (so no managed request or update runs meanwhile), refuses a
+   snapshot that is not healthy, restores through the backup API and checks the result:
+
+   ```php
+   <?php
+   // php restore-native-db.php <installation>/private <snapshot file name in private/>
+   [$self, $private, $name] = $argv + [null, null, null];
+   if ($private === null || $name === null) { fwrite(STDERR, "usage: php restore-native-db.php <installation>/private <snapshot file name>\n"); exit(64); }
+   $lock = fopen($private . '/manage.lock', 'c');
+   if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) { fwrite(STDERR, "The installation is in use: its management lock is held.\n"); exit(1); }
+   try {
+       $snapshot = new SQLite3($private . '/' . $name, SQLITE3_OPEN_READONLY);
+       $live = new SQLite3($private . '/data/application.sqlite', SQLITE3_OPEN_READWRITE); // never creates it
+       foreach ([$snapshot, $live] as $db) { $db->enableExceptions(true); $db->busyTimeout(10000); }
+       if ((int) $snapshot->querySingle('PRAGMA page_count') < 1 || $snapshot->querySingle('PRAGMA quick_check') !== 'ok') throw new RuntimeException('the snapshot is empty or damaged: do not restore it');
+       $live->exec('PRAGMA synchronous=FULL');
+       $done = $snapshot->backup($live);
+       // The return value alone can be true after a failure: ask the destination too.
+       if (!$done || $live->lastErrorCode() !== 0) throw new RuntimeException('SQLite error ' . $live->lastErrorCode() . ': ' . $live->lastErrorMsg());
+       if ($live->querySingle('PRAGMA quick_check') !== 'ok') throw new RuntimeException('the restored database failed its health check');
+   } catch (Throwable $e) {
+       // PHP words a busy destination as "source database is busy": SQLite's own message is on $live.
+       $why = isset($live) && $live->lastErrorCode() !== 0 ? 'SQLite error ' . $live->lastErrorCode() . ': ' . $live->lastErrorMsg() : $e->getMessage();
+       fwrite(STDERR, 'The restore did not complete: ' . $why . ".\n");
+       exit(2);
+   }
+   echo "Restored from $name; quick_check ok.\n";
+   ```
+
+   The SQLite shell does the same with `sqlite3 <installation>/private/data/application.sqlite ".restore <installation>/private/<snapshot>"`,
+   but it does not take the management lock, so stop the app's workers first. An error such
+   as `database is locked` means something still has the file open: go back to step 3. Do not
+   copy the snapshot over the file, delete `-wal`/`-shm` files or rename anything: another
+   process may still hold the old file open, and the next worker would then fail on the
+   database.
+6. **Put the rest back to the same generation.** The database now matches the previous
+   version, so the source, `project.json` and `private/config.json` must too. The rollback
+   has already done what it could: read the journal's problems for what is left. The previous
+   source is in `previous-*` (move it back to `app/`), `project.previous-<op>.json` holds the
+   previous `project.json`, and `config.previous-<op>.json` the previous configuration. Keep
+   the private key material private.
+7. **Check.** `PRAGMA integrity_check;`, `PRAGMA foreign_key_check;`, the app's tables and
+   rows, and that source, project version and configuration all name the same version.
+8. **Finish.** Only when that is accepted, remove **both** `private/install.json` and
+   `private/recovery-required` (and the inputs the journal named) while holding
+   `private/manage.lock`. Removing only the marker does not unblock the app: the next
+   operation finds the journal still in `recovery` and writes the marker again. A restore
+   of the database by itself does not complete the recovery.
+
+## Known limits
+
+Not fixed here, and written down so they are not mistaken for guarantees.
+
+- **A lock that outlasts the retries needs the manual recovery above.** An automatic retry
+  of a recovery that failed only because of BUSY or LOCKED, when the next operation takes the
+  exclusive lock, was considered and left out: the rollback overwrites the journal's phase
+  with `recovery`, so a re-run would need new journal fields to know what to undo; a success
+  would have to delete the marker, which today only the operator does; and every request
+  settles the journal under the exclusive lock, so each would pay the retry time while the
+  app is unavailable. If it is added, restrict it to the database step, make it rate-limited
+  and leave the marker alone when its text was edited.
+- **Cold workers can fail on a WAL database that is opened at the same time.** The generated
+  Node runtime (`request-worker.mjs`) runs `PRAGMA journal_mode=WAL` before it sets
+  `busy_timeout=3000`, so several workers starting at once can fail instantly with `database
+  is locked`: 4 of 40 in a synthetic race, against 0 of 40 with the timeout set first. The
+  fix belongs upstream, in SoftN's generated runtime.
+- **A first install that fails deletes its database** (and `-wal`/`-shm`) with plain file
+  deletes, not through SQLite. There is nothing to restore, but a process that already has the
+  file open is not coordinated with.
+- **The recovery journal and the marker are written on a best-effort basis.** If writing
+  them fails the failure is logged, and the next operation settles the journal again.
+- **`SqliteSnapshot::copyWithBackupApi`** (the snapshot taken for backups, not for rollback)
+  has the same unchecked-boolean exposure as the backup call described above. It writes a
+  fresh destination, so the exposure is low.
+- **The lock timeouts bound waiting, not copying.** A very large database takes as long to
+  restore as it takes to copy while the management lock is held.
+- Whole-installation atomicity, writes that bypass FormLogic before the snapshot or after the
+  restore, and failure of the storage device itself are outside this mechanism. SQLite
+  serialises the restore with other connections to the file; FormLogic's management lock
+  governs managed operations only.
+
+## Tests
+
+`formlogic/backend/tests/Unit/NativeAppRollbackSafetyTest.php` uses synthetic temporary
+databases and, where the prepared native runtime and Node are present, the real host. It
+covers retained idle, reader and writer connections; locks held by another process and by this
+one; the retry and its budget; a snapshot that is damaged, empty, locked or missing; a missing
+live file with orphan sidecars; a damaged restore result; handles left open after success and
+failure; a failed update whose rollback is blocked by a writer; and a PHP process with
+`pdo_sqlite` and without `sqlite3`. Run it from `formlogic/backend`, with `FORMLOGIC_NODE_BIN`
+naming the Node binary:
 
 ```powershell
 php -d xdebug.mode=off vendor/bin/phpunit --filter 'NativeApp(Lifecycle|Service|RollbackSafety)Test'
 ```
 
-The isolated Windows baseline for the six retained-handle runtime cases had four failures
-and eight sidecar-unlink warnings; the closed-handle controls passed. An independent replay
-of the original synthetic Coffee reproducer observed idle-handle auth `503/database_busy`
-and recovery inputs already retired, while the retained-reader case reported checkpoint
-`[1,1,0]`. Historical Coffee management-auth failures still lack their original status/error
-codes; these reproductions do not establish their cause.
-
-With the repair, the combined lifecycle/service/safety suite passed **67 tests and 1,199
-assertions**, with zero skips or warnings, using PHP 8.4.15, Node 24.19.0, frozen SoftN
-v0.0.18 (`3ba22d2b44a99ef9ac8d4e2935ec43590970336e`) and ZIPP v0.0.21. Its WASM SHA-256
-is `0aa8ecf5eea40f97bb35341e698c0c098d7a2050a260725bbf72d90cd3256473`.
-The same original Coffee reproducer then returned expected wrong/own-bearer `401/200`
-for all three modes while retained handles were still open, with zero sidecar warnings,
-preserved project and committed value, and `quick_check=ok` after explicit release.
-A separate PHP process with PDO SQLite present and `sqlite3` absent refused installation
-before creating storage.
-
-Primary API guarantees and wrapper behavior are documented in
-[SQLite's backup API](https://www.sqlite.org/c3ref/backup_finish.html),
-[SQLite WAL handling](https://www.sqlite.org/wal.html), and the
-[PHP 8.2 SQLite wrapper](https://github.com/php/php-src/blob/PHP-8.2/ext/sqlite3/sqlite3.c).
+SQLite's own description of the API is at
+[sqlite.org/c3ref/backup_finish.html](https://www.sqlite.org/c3ref/backup_finish.html) and of
+WAL at [sqlite.org/wal.html](https://www.sqlite.org/wal.html).
