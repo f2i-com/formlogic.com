@@ -282,7 +282,7 @@ FormLogic defaults to **free access**. Payments are **off by default**. Administ
 | Node.js | 24.19.0 LTS recommended (pinned in `.node-version`); supported: 22.22.2+ (22.x), 24.15.0+ (24.x), or 26+ |
 | Composer | Any recent release |
 
-Node.js builds the web client and is also required on servers using native app hosting: its trusted Node host runs the ZIPP VM and SQLite migrations. Standard form scripts and named hosted actions use their packaged sandbox launcher. Native hosting also needs PDO SQLite, prepared backend modules and the generated Softn browser runtime and editor assets.
+Node.js builds the web client and is also required on servers using native app hosting: its trusted Node host runs the ZIPP VM and SQLite migrations. Standard form scripts and named hosted actions use their packaged sandbox launcher. Native hosting also needs PDO SQLite, the `sqlite3` PHP extension for transactional rollback, prepared backend modules and the generated Softn browser runtime and editor assets. Native preflight checks both SQLite extensions before installation or an update can begin.
 
 The frontend test suite uses jsdom 30. Node 20 and older Node 22/24 releases cannot run it. Check `node --version` before `npm ci`; use the version in `.node-version` for the same environment as the manual build and release checks.
 

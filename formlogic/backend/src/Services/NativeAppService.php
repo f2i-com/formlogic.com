@@ -85,7 +85,7 @@ class NativeAppService
 
     public function available(): bool
     {
-        return function_exists('proc_open') && extension_loaded('pdo_sqlite') && is_file($this->runtime() . '/host-protocol.json') && is_file($this->runtime() . '/runner.mjs') && is_file($this->runtime() . '/wasm/zipp_wasm_bg.wasm');
+        return function_exists('proc_open') && extension_loaded('pdo_sqlite') && extension_loaded('sqlite3') && is_file($this->runtime() . '/host-protocol.json') && is_file($this->runtime() . '/runner.mjs') && is_file($this->runtime() . '/wasm/zipp_wasm_bg.wasm');
     }
 
     private function runtime(): string { return $this->runtimePath ?? dirname(__DIR__, 2) . '/resources/softn-native'; }
@@ -417,6 +417,7 @@ class NativeAppService
 
         function_exists('proc_open') ? $pass('php.proc_open', 'PHP can start worker processes') : $fail('php.proc_open', 'PHP proc_open() is disabled; the native runtime cannot start');
         extension_loaded('pdo_sqlite') ? $pass('php.pdo_sqlite', 'PDO SQLite is available') : $fail('php.pdo_sqlite', 'The pdo_sqlite PHP extension is not loaded');
+        extension_loaded('sqlite3') ? $pass('php.sqlite3', 'SQLite online restore is available') : $fail('php.sqlite3', 'The sqlite3 PHP extension is required for safe native app rollback');
 
         $missing = [];
         foreach (['host-protocol.json', 'runner.mjs', 'request-worker.mjs', 'wasm-host.mjs', 'migrations.mjs', 'wasm/zipp_wasm.mjs', 'wasm/zipp_wasm_bg.wasm'] as $file) {
@@ -841,15 +842,7 @@ class NativeAppService
                 if ($snapshot === null || !is_file($snapshot)) $problems[] = 'the pre-install database snapshot is missing';
                 else {
                     try {
-                        $this->assertSnapshotHealthy($snapshot);
-                        if (is_file($database)) {
-                            $db = new PDO('sqlite:' . $database, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-                            $db->exec('PRAGMA wal_checkpoint(TRUNCATE)'); $db = null;
-                        }
-                        foreach (['-wal', '-shm'] as $suffix) if (is_file($database . $suffix)) unlink($database . $suffix);
-                        // Copied, not moved: the snapshot stays until the journal is retired, so a
-                        // rollback that fails later still has it.
-                        if (!copy($snapshot, $database) || !$this->sameSize($database, $snapshot)) $problems[] = 'restore the database from its snapshot';
+                        $this->restoreDatabaseSnapshot($snapshot, $database);
                     } catch (\Throwable $error) { $problems[] = 'restore the database: ' . $error->getMessage(); }
                 }
             } else {
@@ -904,6 +897,48 @@ class NativeAppService
         } catch (\Throwable $error) {
             error_log('Native install rollback cleanup: ' . $error->getMessage());
         }
+    }
+
+    /**
+     * Restore into the existing SQLite file under SQLite's own write transaction. The caller
+     * holds the exclusive management lock. Retained WAL readers may finish their old snapshot;
+     * competing writers (and rollback-journal readers) cause a bounded failure and recovery.
+     * Never checkpoint/unlink sidecars or overwrite/rename the live file outside SQLite: a
+     * checkpoint is not an exclusion lock, and even an idle connection may retain its handles.
+     * The recovery snapshot remains untouched until the entire rollback has succeeded.
+     */
+    protected function restoreDatabaseSnapshot(string $snapshot, string $database): void
+    {
+        if (!class_exists(\SQLite3::class)) throw new RuntimeException('The sqlite3 PHP extension is required for safe database rollback');
+        $this->assertSnapshotHealthy($snapshot);
+        $source = new \SQLite3($snapshot, SQLITE3_OPEN_READONLY);
+        try {
+            $source->enableExceptions(true);
+            $source->busyTimeout(1500);
+            // Do not CREATE a new file beside orphan sidecars or an unlinked retained handle.
+            $destination = new \SQLite3($database, SQLITE3_OPEN_READWRITE);
+            try {
+                $destination->enableExceptions(true);
+                $destination->busyTimeout(1500);
+                $destination->exec('PRAGMA synchronous=FULL');
+                $restored = $this->backupDatabaseChecked($source, $destination);
+                // PHP can report true when backup_init failed: it reads the source error even
+                // though SQLite records initialization failures on the destination. Read both
+                // errors immediately, before any health query can reset them.
+                $sourceError = $source->lastErrorCode();
+                $destinationError = $destination->lastErrorCode();
+                if (!$restored || $sourceError !== 0 || $destinationError !== 0) {
+                    throw new RuntimeException('SQLite snapshot restore failed (source ' . $sourceError . ', destination ' . $destinationError . ')');
+                }
+                if ($destination->querySingle('PRAGMA quick_check') !== 'ok') throw new RuntimeException('The restored database failed its health check');
+            } finally { $destination->close(); }
+        } finally { $source->close(); }
+    }
+
+    /** SQLite's atomic copy, with a seam for rollback fault injection. */
+    protected function backupDatabaseChecked(\SQLite3 $source, \SQLite3 $destination): bool
+    {
+        return $source->backup($destination);
     }
 
     /**

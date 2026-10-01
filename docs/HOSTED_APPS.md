@@ -569,6 +569,16 @@ The recovery is finished only when the operator has put the installation back to
 and `private/recovery-required`. Removing only the marker does not unblock the app: the next
 operation finds the journal still in `recovery` and writes the marker again.
 
+For an update of an existing database, snapshot rollback uses SQLite's online backup API to
+restore into the existing file in one SQLite write transaction. It never overwrites the file
+or deletes its WAL/SHM sidecars outside SQLite. An idle retained connection remains usable;
+a WAL reader can finish its previous read snapshot and sees the restored generation on its
+next transaction. A competing writer or rollback-journal reader can prevent restoration;
+the 1500 ms SQLite busy timeout bounds lock waiting, and a failure retains the recovery
+journal and its inputs. The host requires the `sqlite3` PHP extension before installing or
+updating a native app. See [rollback review and recovery notes](NATIVE_ROLLBACK_SAFETY.md)
+for compatibility, test evidence and the manual recovery boundary.
+
 Every file the host publishes (`project.json`, `config.json`, staged source and media, the
 journal, the marker) is written completely or not at all: to a private temporary file beside
 the destination, with the byte count checked against the bytes intended, flushed, then renamed
