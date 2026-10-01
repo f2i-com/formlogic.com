@@ -502,8 +502,9 @@ support requires the prepared host's `recordEvents:1` protocol capability.
 ### Preparing the optional native runtime
 
 The local preview requires PHP 8.2+, PDO SQLite, `proc_open` and Node 24.19+ with `node:sqlite`
-and its authorizer API. Set `FORMLOGIC_NODE_BIN` to the absolute Node executable in the backend
-operator environment. From the FormLogic repository root, run:
+and its authorizer API. Updating an installed app also needs the `sqlite3` PHP extension (it
+restores the database if the update fails). Set `FORMLOGIC_NODE_BIN` to the absolute Node
+executable in the backend operator environment. From the FormLogic repository root, run:
 
 ```sh
 node scripts/fetch-softn-release.mjs
@@ -568,6 +569,18 @@ The recovery is finished only when the operator has put the installation back to
 (using the inputs listed in `private/install.json`) and removed **both** `private/install.json`
 and `private/recovery-required`. Removing only the marker does not unblock the app: the next
 operation finds the journal still in `recovery` and writes the marker again.
+
+For an update of an existing database, snapshot rollback uses SQLite's online backup API (the
+`sqlite3` PHP extension) to restore into the existing file in one SQLite write transaction. It
+never overwrites the file or deletes its WAL/SHM sidecars outside SQLite. An idle retained
+connection remains usable; a WAL reader can finish its previous read snapshot and sees the
+restored generation on its next transaction. A competing writer or rollback-journal reader is
+waited out (up to 1.5 s per attempt, retried within about 2.5 s in all); a lock that lasts
+longer fails the database step, keeps the recovery journal and its inputs and leaves the live
+database as it was. Updating an installed app is refused, with nothing changed, on a host
+without `sqlite3`; serving, first installs and account-backup restore do not need it. See
+[Native database rollback safety](NATIVE_ROLLBACK_SAFETY.md) for the details, the known limits
+and the commands for the manual restore.
 
 Every file the host publishes (`project.json`, `config.json`, staged source and media, the
 journal, the marker) is written completely or not at all: to a private temporary file beside

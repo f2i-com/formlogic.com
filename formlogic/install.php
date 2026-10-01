@@ -317,6 +317,17 @@ function checkRequirements(): array
         ];
     }
 
+    // sqlite3 is not critical: only updating a native app needs it (a failed update restores the
+    // app's database through SQLite's backup API). Its key does not start with ext_, so a missing
+    // one is listed as an optional requirement and does not stop the wizard.
+    $checks['sqlite3'] = [
+        'label' => 'PHP Extension: sqlite3 (updating native apps)',
+        'required' => 'Installed',
+        'current' => extension_loaded('sqlite3') ? 'Installed' : 'Missing',
+        'pass' => extension_loaded('sqlite3'),
+        'help' => extension_loaded('sqlite3') ? '' : 'Needed only to update a native app: an update is refused without it. Forms and first native installs work. Enable it (php-sqlite3 on Debian/Ubuntu, extension=sqlite3 in php.ini).',
+    ];
+
     // Composer dependencies
     $vendorExists = is_dir(flBackendDir() . '/vendor');
     $checks['composer'] = [

@@ -12,7 +12,8 @@
 #   ./install.sh
 #
 # Prerequisites:
-#   - PHP >= 8.1 with extensions: pdo_mysql, pdo_sqlite, mbstring, json, openssl
+#   - PHP >= 8.1 with extensions: pdo_mysql, pdo_sqlite, sqlite3, mbstring, json, openssl
+#     (sqlite3 restores a native app's database when an update of it fails)
 #   - Composer (https://getcomposer.org)
 #   - Node.js >= 20.19 (or 22.12+) and npm
 #   - MySQL 8.0+

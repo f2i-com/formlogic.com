@@ -139,7 +139,7 @@ final class NativeAppServiceTest extends TestCase
         $this->assertTrue($first['ok'], json_encode($first['checks']));
         $this->assertFalse($first['cached']);
         $ids = array_column($first['checks'], 'id');
-        foreach (['php.proc_open', 'php.pdo_sqlite', 'runtime.files', 'runtime.protocol', 'node.executable', 'node.version', 'node.capabilities', 'storage.writable', 'worker.startup'] as $id) {
+        foreach (['php.proc_open', 'php.pdo_sqlite', 'php.sqlite3', 'runtime.files', 'runtime.protocol', 'node.executable', 'node.version', 'node.capabilities', 'storage.writable', 'worker.startup'] as $id) {
             $this->assertContains($id, $ids);
         }
         $this->assertSame(1, $first['runtime']['nativeProtocol']);
