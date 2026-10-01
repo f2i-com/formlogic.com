@@ -668,6 +668,17 @@ final class Probe extends NativeAppService
 {
     public function restoreSnapshot(string $snapshot, string $database): void { $this->restoreDatabaseSnapshot($snapshot, $database); }
 }
+/** A database that appears between the first look and the lock: what a first install that finishes at that moment leaves. */
+final class Racing extends NativeAppService
+{
+    protected function beforeLock(string $root, string $operation): void
+    {
+        if ($operation !== 'install') return;
+        $pdo = new PDO('sqlite:' . $root . '/private/data/application.sqlite');
+        $pdo->exec('CREATE TABLE raced(x)');
+        $pdo = null;
+    }
+}
 function tree(string $directory): array
 {
     $files = [];
@@ -692,6 +703,7 @@ try { $out['serving'] = $service->request('notes', ['method' => 'POST', 'path' =
 $before = tree($storage);
 try { $service->install('notes', $v2, 1); $out['update'] = 'installed'; } catch (Throwable $e) { $out['update'] = [get_class($e), $e->getCode(), $e->getMessage()]; }
 $out['storageUnchanged'] = tree($storage) === $before;
+try { (new Racing($storage, $runtime, $node))->install('raced', $v1, 0); $out['race'] = 'installed'; } catch (Throwable $e) { $out['race'] = [get_class($e), $e->getCode(), $e->getMessage()]; }
 try { $out['restore'] = $service->restore('restored', $v1, null, null)['database']; } catch (Throwable $e) { $out['restore'] = get_class($e) . ': ' . $e->getMessage(); }
 try { (new Probe($storage, $runtime, $node))->restoreSnapshot($storage . '/missing-snapshot.sqlite', $storage . '/missing.sqlite'); $out['guard'] = 'no error'; } catch (Throwable $e) { $out['guard'] = [get_class($e), $e->getMessage()]; }
 echo json_encode($out, JSON_THROW_ON_ERROR);
@@ -719,6 +731,7 @@ PHP);
         $this->assertSame(201, $out['serving']);
         $this->assertSame(['RuntimeException', 422, 'Updating this app needs the sqlite3 PHP extension (it restores the database if an update fails). Enable it and try again.'], $out['update']);
         $this->assertTrue($out['storageUnchanged'], 'the refused update created, locked and changed nothing');
+        $this->assertSame($out['update'], $out['race'], 'a database that appears after the first look is refused under the lock, as an update');
         $this->assertSame('none', $out['restore'], 'account-backup restore does not use the backup API');
         $this->assertSame('RuntimeException', $out['guard'][0]);
         $this->assertStringContainsString('sqlite3 PHP extension', $out['guard'][1]);
