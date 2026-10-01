@@ -147,8 +147,281 @@ final class NativeAppRollbackSafetyTest extends TestCase
         $this->assertSame(['current'], $this->values($database));
     }
 
+    public function testAnEmptySnapshotIsRefusedBecauseRestoringItWouldEmptyTheDatabase(): void
+    {
+        [$snapshot, $database] = $this->databases('WAL');
+        file_put_contents($snapshot, '');
+        $before = $this->databaseFiles($database);
+        $error = $this->assertRestoreFails($this->helper(), $snapshot, $database);
+        $this->assertStringContainsString('snapshot is empty', $error->getMessage());
+        $this->assertSame($before, $this->databaseFiles($database));
+        $this->assertSame(['current'], $this->values($database));
+    }
+
+    /** Guard: the pre-restore check is what keeps a damaged snapshot from replacing healthy data. */
+    public function testASnapshotThatIsReadableButFailsQuickCheckLeavesTheLiveDataAlone(): void
+    {
+        $snapshot = $this->storage . '/snapshot.sqlite';
+        $database = $this->storage . '/application.sqlite';
+        $source = new \SQLite3($snapshot);
+        $source->enableExceptions(true);
+        try {
+            $source->exec('CREATE TABLE records(id INTEGER PRIMARY KEY, value TEXT NOT NULL); BEGIN');
+            for ($i = 1; $i <= 600; $i++) $source->exec("INSERT INTO records VALUES($i, '" . str_repeat('x', 40) . "$i')");
+            $source->exec('COMMIT');
+            $pageSize = (int) $source->querySingle('PRAGMA page_size');
+            $pages = (int) $source->querySingle('PRAGMA page_count');
+        } finally { $source->close(); }
+        $this->assertGreaterThan(3, $pages);
+        // The last page is a leaf of the table's b-tree: give it a page type SQLite does not have.
+        $handle = fopen($snapshot, 'r+b');
+        fseek($handle, ($pages - 1) * $pageSize);
+        fwrite($handle, "\x01");
+        fclose($handle);
+        $reader = new \SQLite3($snapshot, SQLITE3_OPEN_READONLY);
+        try {
+            $this->assertSame($pages, $reader->querySingle('PRAGMA page_count'), 'the snapshot still opens and reads');
+            $this->assertNotSame('ok', $reader->querySingle('PRAGMA quick_check'));
+        } finally { $reader->close(); }
+        $live = new \SQLite3($database);
+        $live->enableExceptions(true);
+        try { $live->exec("PRAGMA journal_mode=WAL; CREATE TABLE records(id INTEGER PRIMARY KEY, value TEXT NOT NULL); INSERT INTO records VALUES(1, 'live and healthy')"); }
+        finally { $live->close(); }
+        $snapshotHash = hash_file('sha256', $snapshot);
+        $before = $this->databaseFiles($database);
+        $error = $this->assertRestoreFails($this->helper(), $snapshot, $database);
+        $this->assertStringContainsString('failed its integrity check', $error->getMessage());
+        $this->assertSame($before, $this->databaseFiles($database), 'the check runs before the restore, so nothing of the live database is written');
+        $this->assertSame(['live and healthy'], $this->values($database));
+        $this->assertSame($snapshotHash, hash_file('sha256', $snapshot));
+    }
+
+    public function testASnapshotThatStaysLockedIsReportedAsUncheckedNotAsDamaged(): void
+    {
+        [$snapshot, $database] = $this->databases('WAL');
+        $lock = $this->database($snapshot);
+        try {
+            $lock->exec('BEGIN EXCLUSIVE');
+            $error = $this->assertRestoreFails($this->helper(), $snapshot, $database);
+            $lock->exec('ROLLBACK');
+        } finally { $lock->close(); }
+        $this->assertStringContainsString('could not be checked because it is locked', $error->getMessage());
+        $this->assertStringNotContainsString('failed its integrity check', $error->getMessage());
+        $this->assertSame(5, $error->getCode() & 0xFF);
+        $this->assertSame(['current'], $this->values($database));
+    }
+
+    // ── Waiting out locks: SQLite's busy timeouts and the rollback's bounded retry ───────────────
+
+    public function testALockHeldBrieflyByAnotherProcessIsWaitedOut(): void
+    {
+        [$snapshot, $database] = $this->databases('WAL');
+        $holder = $this->holdLock($database, "BEGIN IMMEDIATE; UPDATE records SET value='held'", 700);
+        try {
+            $started = microtime(true);
+            $this->helper()->restoreSnapshot($snapshot, $database);
+            $elapsed = microtime(true) - $started;
+        } finally { $this->releaseLock($holder); }
+        $this->assertGreaterThanOrEqual(0.4, $elapsed, 'the restore waited for the writer instead of failing at once');
+        $this->assertLessThan(5.0, $elapsed);
+        $this->assertSame(['snapshot'], $this->values($database), 'the writer rolled back and the snapshot was restored');
+    }
+
+    public function testALockOnTheSnapshotWhileItIsBeingCopiedIsWaitedOut(): void
+    {
+        [$snapshot, $database] = $this->databases('WAL');
+        $snapshotHash = hash_file('sha256', $snapshot);
+        $service = $this->helper();
+        $holder = null;
+        $service->beforeBackup = function () use (&$holder, $snapshot): void { $holder = $this->holdLock($snapshot, 'BEGIN EXCLUSIVE', 600); };
+        try {
+            $started = microtime(true);
+            $service->restoreSnapshot($snapshot, $database);
+            $elapsed = microtime(true) - $started;
+        } finally { if ($holder !== null) $this->releaseLock($holder); }
+        $this->assertGreaterThanOrEqual(0.4, $elapsed, 'the restore waited for the lock on the snapshot');
+        $this->assertSame(['snapshot'], $this->values($database));
+        $this->assertSame($snapshotHash, hash_file('sha256', $snapshot));
+    }
+
+    public function testALockOnTheSnapshotBeforeTheRestoreIsWaitedOutByItsHealthCheck(): void
+    {
+        [$snapshot, $database] = $this->databases('WAL');
+        $holder = $this->holdLock($snapshot, 'BEGIN EXCLUSIVE', 600);
+        try {
+            $started = microtime(true);
+            $this->helper()->restoreSnapshot($snapshot, $database);
+            $elapsed = microtime(true) - $started;
+        } finally { $this->releaseLock($holder); }
+        $this->assertGreaterThanOrEqual(0.4, $elapsed);
+        $this->assertSame(['snapshot'], $this->values($database));
+    }
+
+    public function testALockThatOutlastsTheRetriesFailsWithinTheBudgetAndLeavesTheDatabaseAlone(): void
+    {
+        [$snapshot, $database] = $this->databases('WAL');
+        $writer = $this->database($database);
+        $service = $this->helper();
+        try {
+            $writer->exec("BEGIN IMMEDIATE; UPDATE records SET value='uncommitted'");
+            $before = $this->databaseFiles($database);
+            $snapshotHash = hash_file('sha256', $snapshot);
+            $error = null;
+            $started = microtime(true);
+            try { $service->restoreSnapshotWithRetry($snapshot, $database); }
+            catch (\RuntimeException $caught) { $error = $caught; }
+            $elapsed = microtime(true) - $started;
+            $this->assertNotNull($error, 'a lock that never passes must not report success');
+            $this->assertGreaterThanOrEqual(2.0, $elapsed, 'it was retried inside its budget');
+            $this->assertLessThan(5.0, $elapsed, 'and gave up inside it');
+            $this->assertGreaterThanOrEqual(2, $service->backupCalls);
+            $this->assertLessThanOrEqual(3, $service->backupCalls);
+            $this->assertSame(5, $error->getCode(), 'SQLite BUSY travels with the exception');
+            $this->assertStringContainsString('The live database could not be restored', $error->getMessage());
+            $this->assertStringContainsString('database is locked (SQLite error 5)', $error->getMessage());
+            $this->assertStringContainsString('attempts', $error->getMessage());
+            $this->assertStringContainsString('NATIVE_ROLLBACK_SAFETY.md', $error->getMessage());
+            $this->assertStringNotContainsString('source database is busy', $error->getMessage(), 'it is the live database that was busy');
+            $this->assertNotNull($error->getPrevious());
+            $this->assertSame($before, $this->databaseFiles($database), 'failed attempts change neither the main file nor the committed WAL');
+            $this->assertSame($snapshotHash, hash_file('sha256', $snapshot));
+            $writer->exec('ROLLBACK');
+        } finally { $writer->close(); }
+        $this->assertSame(['current'], $this->values($database));
+    }
+
+    public function testALockThatPassesDuringARetryIsWaitedOutAndTheRestoreSucceeds(): void
+    {
+        [$snapshot, $database] = $this->databases('WAL');
+        $writer = $this->database($database);
+        $service = $this->helper();
+        // The first attempt meets the writer and fails with BUSY; the writer goes before the second.
+        $service->beforeBackup = static function (int $call) use ($writer): void { if ($call === 2) $writer->exec('ROLLBACK'); };
+        try {
+            $writer->exec("BEGIN IMMEDIATE; UPDATE records SET value='uncommitted'");
+            $service->restoreSnapshotWithRetry($snapshot, $database);
+        } finally { $writer->close(); }
+        $this->assertSame(2, $service->backupCalls);
+        $this->assertSame(['snapshot'], $this->values($database));
+    }
+
     /** @return list<array{string}> */
     public static function backupFaults(): array { return [['false'], ['throw'], ['destination-transaction']]; }
+
+    #[DataProvider('backupFaults')]
+    public function testAFailureThatCannotPassIsAttemptedOnceAndNamesTheLiveDatabase(string $fault): void
+    {
+        [$snapshot, $database] = $this->databases('DELETE');
+        $service = $this->helper($fault);
+        $started = microtime(true);
+        try { $service->restoreSnapshotWithRetry($snapshot, $database); $this->fail('Unsafe restore reported success'); }
+        catch (\RuntimeException $error) { $this->assertStringContainsString('The live database could not be restored', $error->getMessage()); }
+        $this->assertSame(1, $service->backupCalls);
+        $this->assertLessThan(1.0, microtime(true) - $started, 'no pause or wait follows a failure that cannot pass');
+        $this->assertSame(['current'], $this->values($database));
+    }
+
+    public function testOnlyBusyAndLockedAreTreatedAsTransient(): void
+    {
+        $transient = new \ReflectionMethod(NativeAppService::class, 'isTransientSqliteError');
+        // 261 BUSY_RECOVERY, 517 BUSY_SNAPSHOT, 262 LOCKED_SHAREDCACHE; 1 ERROR, 8 READONLY, 11 CORRUPT, 14 CANTOPEN, 26 NOTADB
+        foreach ([5 => true, 6 => true, 261 => true, 517 => true, 262 => true, 0 => false, 1 => false, 8 => false, 11 => false, 14 => false, 26 => false] as $code => $expected) {
+            $this->assertSame($expected, $transient->invoke(null, $code), 'SQLite code ' . $code);
+        }
+    }
+
+    public function testAFailedBackupNamesTheLiveDatabaseAndSQLitesOwnReason(): void
+    {
+        // A WAL database with 8192-byte pages cannot take a 4096-byte-page snapshot. PHP's own
+        // message for that is "Backup failed: not an error"; SQLite's is what the operator needs.
+        [$snapshot, $database] = $this->databases('DELETE');
+        $live = $this->database($database);
+        try { $live->exec('PRAGMA journal_mode=DELETE; PRAGMA page_size=8192; VACUUM; PRAGMA journal_mode=WAL'); }
+        finally { $live->close(); }
+        $error = $this->assertRestoreFails($this->helper(), $snapshot, $database);
+        $this->assertStringContainsString('The live database could not be restored', $error->getMessage());
+        $this->assertStringContainsString('(SQLite error 8)', $error->getMessage());
+        $this->assertStringNotContainsString('not an error', $error->getMessage());
+        $this->assertStringNotContainsString('source database is busy', $error->getMessage());
+        $this->assertSame(8, $error->getCode());
+        $this->assertSame(['current'], $this->values($database));
+    }
+
+    public function testTheSnapshotIsOpenedReadOnlyAndCannotBeWrittenThroughTheRestore(): void
+    {
+        [$snapshot, $database] = $this->databases('WAL');
+        $snapshotHash = hash_file('sha256', $snapshot);
+        $service = $this->helper();
+        $writeRefused = null;
+        $service->beforeBackup = static function (int $call, \SQLite3 $source) use (&$writeRefused): void {
+            try { $source->exec('CREATE TABLE intruder(value TEXT)'); $writeRefused = false; }
+            catch (\Throwable $refused) { $writeRefused = true; }
+            // The refusal is the handle's last error; a clean statement clears it, as it would have been.
+            $source->querySingle('SELECT 1');
+        };
+        $service->restoreSnapshot($snapshot, $database);
+        $this->assertTrue($writeRefused, 'the handle on the recovery snapshot cannot write');
+        $this->assertSame($snapshotHash, hash_file('sha256', $snapshot));
+        $this->assertSame(['snapshot'], $this->values($database));
+    }
+
+    public function testARestoreThatLeavesAnUnhealthyDatabaseIsReportedAsFailed(): void
+    {
+        // The snapshot passes its own check and the backup completes; the damage appears in the
+        // restored database, so only the check after the restore can catch it. The page type of
+        // the table's root is spoiled on disk and a second connection's write makes the
+        // restoring handle drop its cached pages and read what is really there.
+        [$snapshot, $database] = $this->databases('DELETE');
+        $source = new \SQLite3($snapshot, SQLITE3_OPEN_READONLY);
+        try { $pageSize = (int) $source->querySingle('PRAGMA page_size'); $root = (int) $source->querySingle("SELECT rootpage FROM sqlite_master WHERE name='records'"); }
+        finally { $source->close(); }
+        $service = $this->helper();
+        $service->afterBackup = function () use ($database, $pageSize, $root): void {
+            $handle = fopen($database, 'r+b');
+            fseek($handle, ($root - 1) * $pageSize);
+            fwrite($handle, "\x01");
+            fclose($handle);
+            $other = $this->database($database);
+            try { $other->exec('PRAGMA user_version=7'); } finally { $other->close(); }
+        };
+        $error = $this->assertRestoreFails($service, $snapshot, $database);
+        $this->assertSame(1, $service->backupCalls, 'the backup itself completed');
+        $this->assertStringContainsString('The restored database failed its health check', $error->getMessage());
+    }
+
+    /** @return list<array{string}> */
+    public static function restoreOutcomes(): array { return [['success'], ['failure']]; }
+
+    /**
+     * No SQLite handle may outlive a restore. After a success PHP's reference counting would close
+     * them anyway; a failure whose exception is kept (a test, a logger) keeps its trace arguments,
+     * so only close() in the helper releases them. An open handle stops WAL being left and, on
+     * Windows, the files being renamed.
+     */
+    #[DataProvider('restoreOutcomes')]
+    public function testNoSQLiteHandleOutlivesARestore(string $outcome): void
+    {
+        $previous = ini_set('zend.exception_ignore_args', '0');
+        try {
+            [$snapshot, $database] = $this->databases('WAL');
+            $service = $this->helper($outcome === 'failure' ? 'throw' : null);
+            $kept = null;
+            try { $service->restoreSnapshot($snapshot, $database); }
+            catch (\Throwable $caught) { $kept = $caught; }
+            $this->assertSame($outcome === 'failure', $kept !== null);
+            $probe = new \SQLite3($database);
+            $probe->enableExceptions(true);
+            $probe->busyTimeout(0);
+            try { $this->assertSame('delete', $probe->querySingle('PRAGMA journal_mode=DELETE'), 'every other handle is closed, so WAL can be left'); }
+            finally { $probe->close(); }
+            foreach ([$database, $snapshot] as $file) {
+                $this->assertTrue(rename($file, $file . '.moved'), 'a file with no open handle can be renamed');
+                $this->assertTrue(rename($file . '.moved', $file));
+            }
+            unset($kept);
+        } finally { if ($previous !== false) ini_set('zend.exception_ignore_args', $previous); }
+    }
+
 
     #[DataProvider('backupFaults')]
     public function testBackupFailureKeepsBothDatabasesAndCanBeRetried(string $fault): void
@@ -254,6 +527,84 @@ final class NativeAppRollbackSafetyTest extends TestCase
         // Releasing handles permits an operator's restore, but does not authorize serving a recovery journal.
         $this->helper()->restoreSnapshot($snapshot, $this->root() . '/private/data/application.sqlite');
         $this->assertRecoveryBlocksEveryEntryPoint($service, $journalBytes, $inputs);
+    }
+
+    public function testALockThatOutlastsTheRollbackLeavesRecoveryInputsAndAMessageAnOperatorCanActOn(): void
+    {
+        $service = $this->runtimeService();
+        $service->install('notes', $this->project(), 0);
+        $this->createNote($service, 'Kept');
+        $oldProject = file_get_contents($this->root() . '/project.json');
+        $oldConfig = file_get_contents($this->root() . '/private/config.json');
+        $live = $this->root() . '/private/data/application.sqlite';
+        $failing = $this->runtimeService(null, 'project-written');
+        $writer = null;
+        // An unmanaged writer (an editor, a sync tool, a stuck worker) takes the lock as the update fails.
+        $failing->onStep = function (string $step) use (&$writer, $live): void {
+            if ($step !== 'project-written') return;
+            $writer = $this->database($live);
+            $writer->exec("BEGIN IMMEDIATE; UPDATE notes SET title='unmanaged writer'");
+        };
+        try {
+            $started = microtime(true);
+            try { $failing->install('notes', $this->projectV2(), 1); $this->fail('The injected failure did not run'); }
+            catch (\RuntimeException $error) { $this->assertSame('Injected failure at project-written', $error->getMessage()); }
+            $this->assertLessThan(20.0, microtime(true) - $started, 'the rollback gave up inside its budget');
+            $this->assertGreaterThanOrEqual(2, $failing->backupCalls, 'the lock was retried');
+            $journal = json_decode(file_get_contents($this->root() . '/private/install.json'), true, 64, JSON_THROW_ON_ERROR);
+            $this->assertSame('recovery', $journal['phase']);
+            $this->assertCount(1, $journal['problems']);
+            $this->assertStringContainsString('restore the database: The live database could not be restored: database is locked (SQLite error 5)', $journal['problems'][0]);
+            $this->assertStringNotContainsString('source database is busy', $journal['problems'][0]);
+            $marker = file_get_contents($this->root() . '/private/recovery-required');
+            $this->assertStringContainsString('stop whatever has the app database open', $marker);
+            $this->assertStringContainsString('NATIVE_ROLLBACK_SAFETY.md', $marker);
+            foreach (['snapshot', 'configBackup', 'projectBackup'] as $artifact) $this->assertFileExists($this->root() . '/private/' . $journal[$artifact]);
+            $this->assertDirectoryExists($this->root() . '/' . $journal['staging']);
+            $this->assertSame($oldProject, file_get_contents($this->root() . '/project.json'));
+            $this->assertSame($oldConfig, file_get_contents($this->root() . '/private/config.json'));
+            $writer->exec('ROLLBACK');
+        } finally { $writer?->close(); }
+        // The failed restore changed nothing: the database is still as the failed migration left it.
+        $database = $this->database($live);
+        try {
+            $this->assertSame(1, $database->querySingle("SELECT COUNT(*) FROM sqlite_master WHERE name='tags'"));
+            $this->assertSame('Changed by migration', $database->querySingle('SELECT title FROM notes'));
+        } finally { $database->close(); }
+        try { $this->createNote($service, 'Blocked'); $this->fail('A recovery journal was served'); }
+        catch (\RuntimeException $error) { $this->assertStringContainsString('needs operator recovery', $error->getMessage()); }
+        // The operator's step (docs/NATIVE_ROLLBACK_SAFETY.md) works once the writer is gone.
+        $this->helper()->restoreSnapshot($this->root() . '/private/' . $journal['snapshot'], $live);
+        $database = $this->database($live);
+        try {
+            $this->assertSame('Kept', $database->querySingle('SELECT title FROM notes'));
+            $this->assertSame(0, $database->querySingle("SELECT COUNT(*) FROM sqlite_master WHERE name='tags'"));
+        } finally { $database->close(); }
+    }
+
+    public function testARollbackWaitsOutALockThatPassesWhileItRetries(): void
+    {
+        $service = $this->runtimeService();
+        $service->install('notes', $this->project(), 0);
+        $this->createNote($service, 'Kept');
+        $oldProject = file_get_contents($this->root() . '/project.json');
+        $oldConfig = file_get_contents($this->root() . '/private/config.json');
+        $live = $this->root() . '/private/data/application.sqlite';
+        $failing = $this->runtimeService(null, 'project-written');
+        $writer = null;
+        $failing->onStep = function (string $step) use (&$writer, $live): void {
+            if ($step !== 'project-written') return;
+            $writer = $this->database($live);
+            $writer->exec("BEGIN IMMEDIATE; UPDATE notes SET title='unmanaged writer'");
+        };
+        // The first attempt meets the writer and fails with BUSY; the writer is gone before the second.
+        $failing->beforeBackup = static function (int $call) use (&$writer): void { if ($call === 2) $writer->exec('ROLLBACK'); };
+        try {
+            try { $failing->install('notes', $this->projectV2(), 1); $this->fail('The injected failure did not run'); }
+            catch (\RuntimeException $error) { $this->assertSame('Injected failure at project-written', $error->getMessage()); }
+        } finally { $writer?->close(); }
+        $this->assertSame(2, $failing->backupCalls);
+        $this->assertRestoredRuntime($service, $oldProject, $oldConfig);
     }
 
     /**
@@ -432,7 +783,7 @@ PHP);
         return $files;
     }
 
-    private function assertRestoreFails(RollbackFixtureNativeAppService $service, string $snapshot, string $database): void
+    private function assertRestoreFails(RollbackFixtureNativeAppService $service, string $snapshot, string $database): \Throwable
     {
         $started = microtime(true);
         $error = null;
@@ -441,6 +792,36 @@ PHP);
         $this->assertNotNull($error, 'Unsafe restore reported success');
         $this->assertNotSame('', $error->getMessage());
         $this->assertLessThan(5.0, microtime(true) - $started, 'a blocked restore must return within its bounded busy timeout');
+        return $error;
+    }
+
+    /**
+     * Another PROCESS that takes a lock on $database with $sql, says so, keeps it for $millis and
+     * rolls back. Only a separate process can hold a lock while this one waits for it.
+     *
+     * @return array{resource, list<resource>}
+     */
+    private function holdLock(string $database, string $sql, int $millis): array
+    {
+        $code = '$c = new SQLite3($argv[1]); $c->busyTimeout(3000); $c->exec($argv[2]); fwrite(STDOUT, "held\n"); fflush(STDOUT); usleep((int) $argv[3] * 1000); $c->exec("ROLLBACK"); $c->close();';
+        $process = proc_open([PHP_BINARY, '-d', 'xdebug.mode=off', '-r', $code, $database, $sql, (string) $millis], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        $this->assertIsResource($process, 'a lock holder process could not be started');
+        stream_set_timeout($pipes[1], 20);
+        if (fgets($pipes[1]) !== "held\n") {
+            $error = stream_get_contents($pipes[2]);
+            $this->releaseLock([$process, $pipes]);
+            $this->fail('The lock holder never held its lock: ' . $error);
+        }
+        return [$process, $pipes];
+    }
+
+    /** @param array{resource, list<resource>} $holder */
+    private function releaseLock(array $holder): void
+    {
+        [$process, $pipes] = $holder;
+        foreach ($pipes as $pipe) fclose($pipe);
+        proc_terminate($process);
+        proc_close($process);
     }
 
     private function root(): string { return $this->storage . '/' . hash('sha256', 'notes'); }
@@ -561,10 +942,16 @@ PHP);
     }
 }
 
-/** Real backup with deterministic false/throw faults and an install-failure seam. */
+/** Real backup with deterministic false/throw faults, hooks around each attempt and an install-failure seam. */
 final class RollbackFixtureNativeAppService extends NativeAppService
 {
     public int $backupCalls = 0;
+    /** @var (\Closure(int, \SQLite3, \SQLite3): void)|null Runs before each backup attempt, given the attempt's number. */
+    public ?\Closure $beforeBackup = null;
+    /** @var (\Closure(): void)|null Runs after the backup returned and before the health check. */
+    public ?\Closure $afterBackup = null;
+    /** @var (\Closure(string): void)|null Runs at each install step, before the injected failure. */
+    public ?\Closure $onStep = null;
 
     public function __construct(?string $storage, ?string $runtime, ?string $node, private ?string $fault = null, private ?string $failStep = null)
     {
@@ -576,18 +963,28 @@ final class RollbackFixtureNativeAppService extends NativeAppService
         $this->restoreDatabaseSnapshot($snapshot, $database);
     }
 
+    /** What a rollback does: the same, with the bounded retry of a lock that passes. */
+    public function restoreSnapshotWithRetry(string $snapshot, string $database): void
+    {
+        $this->restoreDatabaseWithRetry($snapshot, $database);
+    }
+
     protected function backupDatabaseChecked(\SQLite3 $source, \SQLite3 $destination): bool
     {
         $this->backupCalls++;
+        if ($this->beforeBackup !== null) ($this->beforeBackup)($this->backupCalls, $source, $destination);
         if ($this->fault === 'false') return false;
         if ($this->fault === 'throw') throw new \RuntimeException('Injected SQLite backup failure');
         // PHP can report true even though backup_step failed. The real API leaves a SQLite error.
         if ($this->fault === 'destination-transaction') $destination->exec('BEGIN IMMEDIATE');
-        return parent::backupDatabaseChecked($source, $destination);
+        $restored = parent::backupDatabaseChecked($source, $destination);
+        if ($this->afterBackup !== null) ($this->afterBackup)();
+        return $restored;
     }
 
     protected function afterStep(string $root, string $step): void
     {
+        if ($this->onStep !== null) ($this->onStep)($step);
         if ($step === $this->failStep) throw new \RuntimeException('Injected failure at ' . $step);
     }
 }

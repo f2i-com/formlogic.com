@@ -60,6 +60,17 @@ class NativeAppService
 
     private const PREFLIGHT_TTL = 60;
 
+    /**
+     * Waiting out another connection's lock while a rollback restores the database: SQLite's busy
+     * timeout in one attempt, the time all attempts may take together, how many attempts there are
+     * and the pause between them. The total stays small because the exclusive management lock is
+     * held throughout.
+     */
+    private const RESTORE_BUSY_MS = 1500;
+    private const RESTORE_BUDGET_MS = 2500;
+    private const RESTORE_ATTEMPTS = 3;
+    private const RESTORE_PAUSE_MS = 150;
+
     /** The install journal, relative to the installation root. */
     private const JOURNAL = '/private/install.json';
 
@@ -359,20 +370,54 @@ class NativeAppService
         }
     }
 
-    private function assertSnapshotHealthy(string $path): void
+    /**
+     * A snapshot is used only if SQLite can open it, it holds at least one page and `quick_check`
+     * passes. A lock on the snapshot is waited out like the restore's own locks; one that does not
+     * clear is reported as a snapshot that could not be checked, not as a damaged one.
+     */
+    private function assertSnapshotHealthy(string $path, int $busyMs = self::RESTORE_BUSY_MS): void
     {
         // Explicitly closed handle (see SqliteSnapshot::readRows for why that matters on Windows).
+        $pages = 0;
+        $check = '';
+        $locked = null;
         if (class_exists(\SQLite3::class)) {
             $db = new \SQLite3($path, SQLITE3_OPEN_READONLY);
-            try { $db->enableExceptions(true); $check = (string) $db->querySingle('PRAGMA quick_check'); }
-            catch (\Throwable $e) { $check = $e->getMessage(); }
+            try {
+                $db->enableExceptions(true);
+                $db->busyTimeout($busyMs);
+                $pages = (int) $db->querySingle('PRAGMA page_count');
+                $check = (string) $db->querySingle('PRAGMA quick_check');
+            } catch (\Throwable $e) {
+                $code = $db->lastErrorCode();
+                if (self::isTransientSqliteError($code)) $locked = [$e->getMessage(), $code];
+                else $check = $e->getMessage();
+            }
             finally { $db->close(); }
         } else {
             $pdo = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-            try { $check = (string) $pdo->query('PRAGMA quick_check')->fetchColumn(); } catch (\Throwable $e) { $check = $e->getMessage(); }
+            try {
+                $pdo->exec('PRAGMA busy_timeout=' . $busyMs);
+                $pages = (int) $pdo->query('PRAGMA page_count')->fetchColumn();
+                $check = (string) $pdo->query('PRAGMA quick_check')->fetchColumn();
+            } catch (\Throwable $e) {
+                $code = $e instanceof \PDOException ? (int) ($e->errorInfo[1] ?? 0) : 0;
+                if (self::isTransientSqliteError($code)) $locked = [$e->getMessage(), $code];
+                else $check = $e->getMessage();
+            }
             $pdo = null;
         }
+        if ($locked !== null) throw new RuntimeException('The native database snapshot could not be checked because it is locked: ' . $locked[0], $locked[1]);
         if ($check !== 'ok') throw new RuntimeException('The native database snapshot failed its integrity check: ' . $check);
+        // A snapshot with no pages passes quick_check as an empty database, and restoring it would
+        // empty the live one. VACUUM INTO and SqliteSnapshot never write one.
+        if ($pages < 1) throw new RuntimeException('The native database snapshot is empty (it has no pages)');
+    }
+
+    /** SQLite's BUSY (5) and LOCKED (6), whichever extended code carries them: another connection holds a lock, which can pass. */
+    private static function isTransientSqliteError(int $code): bool
+    {
+        return in_array($code & 0xFF, [5, 6], true);
     }
 
     // ── Runtime preflight (audit FL-03) ───────────────────────────────────────
@@ -856,7 +901,7 @@ class NativeAppService
                 if ($snapshot === null || !is_file($snapshot)) $problems[] = 'the pre-install database snapshot is missing';
                 else {
                     try {
-                        $this->restoreDatabaseSnapshot($snapshot, $database);
+                        $this->restoreDatabaseWithRetry($snapshot, $database);
                     } catch (\Throwable $error) { $problems[] = 'restore the database: ' . $error->getMessage(); }
                 }
             } else {
@@ -914,39 +959,88 @@ class NativeAppService
     }
 
     /**
-     * Restore into the existing SQLite file under SQLite's own write transaction. The caller
-     * holds the exclusive management lock. Retained WAL readers may finish their old snapshot;
-     * competing writers (and rollback-journal readers) cause a bounded failure and recovery.
-     * Never checkpoint/unlink sidecars or overwrite/rename the live file outside SQLite: a
-     * checkpoint is not an exclusion lock, and even an idle connection may retain its handles.
-     * The recovery snapshot remains untouched until the entire rollback has succeeded.
+     * Restore the database for a rollback, waiting out another connection's lock. SQLite reports
+     * BUSY (5) or LOCKED (6) while an editor, a backup tool or a worker holds the live file, and
+     * that usually passes, so it is retried: at most RESTORE_ATTEMPTS attempts inside
+     * RESTORE_BUDGET_MS in all, each on fresh handles with a busy timeout that fits what is left of
+     * the budget. Every other failure (a damaged or empty snapshot, a read-only or missing
+     * database, a failed health check) ends at once, since another attempt cannot change it. A
+     * lock that outlasts the budget is thrown with the SQLite code, for the caller to record as a
+     * problem: the journal goes to recovery and the snapshot stays.
      */
-    protected function restoreDatabaseSnapshot(string $snapshot, string $database): void
+    protected function restoreDatabaseWithRetry(string $snapshot, string $database): void
     {
-        if (!class_exists(\SQLite3::class)) throw new RuntimeException('The sqlite3 PHP extension is required for safe database rollback');
-        $this->assertSnapshotHealthy($snapshot);
+        $started = hrtime(true);
+        for ($attempt = 1; ; $attempt++) {
+            $left = self::RESTORE_BUDGET_MS - (int) ((hrtime(true) - $started) / 1_000_000);
+            try {
+                $this->restoreDatabaseSnapshot($snapshot, $database, max(100, min(self::RESTORE_BUSY_MS, $left)));
+                return;
+            } catch (\Throwable $error) {
+                if (!self::isTransientSqliteError((int) $error->getCode())) throw $error;
+                $elapsed = (int) ((hrtime(true) - $started) / 1_000_000);
+                if ($attempt >= self::RESTORE_ATTEMPTS || $elapsed + self::RESTORE_PAUSE_MS + 250 > self::RESTORE_BUDGET_MS) {
+                    throw new RuntimeException($error->getMessage() . '. It stayed locked for ' . number_format($elapsed / 1000, 1) . ' s over ' . $attempt . ' attempt' . ($attempt === 1 ? '' : 's') . '. The snapshot is kept: stop whatever has the app database open, then restore the snapshot as docs/NATIVE_ROLLBACK_SAFETY.md describes', (int) $error->getCode(), $error);
+                }
+                usleep(self::RESTORE_PAUSE_MS * 1000);
+            }
+        }
+    }
+
+    /**
+     * One attempt to restore into the existing SQLite file under SQLite's own write transaction.
+     * The caller holds the exclusive management lock. Retained WAL readers may finish their old
+     * snapshot; competing writers (and rollback-journal readers) make it fail, within $busyMs of
+     * lock waiting. Never checkpoint/unlink sidecars or overwrite/rename the live file outside
+     * SQLite: a checkpoint is not an exclusion lock, and even an idle connection may retain its
+     * handles. The recovery snapshot remains untouched until the entire rollback has succeeded.
+     * Any failure is a RuntimeException that names the live database and carries SQLite's code.
+     */
+    protected function restoreDatabaseSnapshot(string $snapshot, string $database, int $busyMs = self::RESTORE_BUSY_MS): void
+    {
+        if (!class_exists(\SQLite3::class)) throw new RuntimeException('The sqlite3 PHP extension is required to restore the database from its snapshot');
+        $this->assertSnapshotHealthy($snapshot, $busyMs);
         $source = new \SQLite3($snapshot, SQLITE3_OPEN_READONLY);
         try {
             $source->enableExceptions(true);
-            $source->busyTimeout(1500);
+            $source->busyTimeout($busyMs);
             // Do not CREATE a new file beside orphan sidecars or an unlinked retained handle.
             $destination = new \SQLite3($database, SQLITE3_OPEN_READWRITE);
             try {
                 $destination->enableExceptions(true);
-                $destination->busyTimeout(1500);
+                $destination->busyTimeout($busyMs);
                 $destination->exec('PRAGMA synchronous=FULL');
-                $restored = $this->backupDatabaseChecked($source, $destination);
-                // PHP can report true when backup_init failed: it reads the source error even
-                // though SQLite records initialization failures on the destination. Read both
-                // errors immediately, before any health query can reset them.
-                $sourceError = $source->lastErrorCode();
-                $destinationError = $destination->lastErrorCode();
-                if (!$restored || $sourceError !== 0 || $destinationError !== 0) {
-                    throw new RuntimeException('SQLite snapshot restore failed (source ' . $sourceError . ', destination ' . $destinationError . ')');
+                try {
+                    $restored = $this->backupDatabaseChecked($source, $destination);
+                    // PHP can report true when backup_init failed: it reads the source error even
+                    // though SQLite records initialization failures on the destination. Read both
+                    // errors immediately, before any health query can reset them.
+                    $sourceError = $source->lastErrorCode();
+                    $destinationError = $destination->lastErrorCode();
+                    if (!$restored || $sourceError !== 0 || $destinationError !== 0) {
+                        throw new RuntimeException('SQLite did not report the restore as complete');
+                    }
+                    if ($destination->querySingle('PRAGMA quick_check') !== 'ok') throw new RuntimeException('The restored database failed its health check');
+                } catch (\Throwable $failure) {
+                    throw $this->databaseRestoreFailure($failure, $source, $destination);
                 }
-                if ($destination->querySingle('PRAGMA quick_check') !== 'ok') throw new RuntimeException('The restored database failed its health check');
             } finally { $destination->close(); }
         } finally { $source->close(); }
+    }
+
+    /**
+     * The failure of a restore attempt, as the live database's: SQLite records a failed backup on
+     * the destination handle (PHP's message says "source database is busy" for a busy
+     * destination, and "not an error" for a read-only one), so its code and its own message are
+     * what is read. Called before the handles are closed, which discards both.
+     */
+    private function databaseRestoreFailure(\Throwable $cause, \SQLite3 $source, \SQLite3 $destination): RuntimeException
+    {
+        $code = $destination->lastErrorCode();
+        $message = $destination->lastErrorMsg();
+        if ($code === 0) { $code = $source->lastErrorCode(); $message = $source->lastErrorMsg(); }
+        $detail = $code !== 0 ? $message . ' (SQLite error ' . $code . ')' : $cause->getMessage();
+        return new RuntimeException('The live database could not be restored: ' . $detail, $code, $cause);
     }
 
     /** SQLite's atomic copy, with a seam for rollback fault injection. */
