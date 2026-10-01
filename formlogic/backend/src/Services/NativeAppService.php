@@ -85,7 +85,7 @@ class NativeAppService
 
     public function available(): bool
     {
-        return function_exists('proc_open') && extension_loaded('pdo_sqlite') && extension_loaded('sqlite3') && is_file($this->runtime() . '/host-protocol.json') && is_file($this->runtime() . '/runner.mjs') && is_file($this->runtime() . '/wasm/zipp_wasm_bg.wasm');
+        return function_exists('proc_open') && extension_loaded('pdo_sqlite') && is_file($this->runtime() . '/host-protocol.json') && is_file($this->runtime() . '/runner.mjs') && is_file($this->runtime() . '/wasm/zipp_wasm_bg.wasm');
     }
 
     private function runtime(): string { return $this->runtimePath ?? dirname(__DIR__, 2) . '/resources/softn-native'; }
@@ -345,6 +345,20 @@ class NativeAppService
         return filesize($copy) === filesize($original);
     }
 
+    /**
+     * Updating an installed app snapshots its database first and, when the update fails, restores
+     * it from that snapshot through SQLite's backup API (the sqlite3 extension; PDO has none).
+     * Refused before anything is created, locked or changed, so a host without the extension
+     * leaves the installation as it was. A first install has no database to restore, and serving
+     * and restore() never use the backup API, so none of them needs the extension.
+     */
+    private function assertCanRestoreDatabase(string $database): void
+    {
+        if (is_file($database) && !extension_loaded('sqlite3')) {
+            throw new RuntimeException('Updating this app needs the sqlite3 PHP extension (it restores the database if an update fails). Enable it and try again.', 422);
+        }
+    }
+
     private function assertSnapshotHealthy(string $path): void
     {
         // Explicitly closed handle (see SqliteSnapshot::readRows for why that matters on Windows).
@@ -417,7 +431,7 @@ class NativeAppService
 
         function_exists('proc_open') ? $pass('php.proc_open', 'PHP can start worker processes') : $fail('php.proc_open', 'PHP proc_open() is disabled; the native runtime cannot start');
         extension_loaded('pdo_sqlite') ? $pass('php.pdo_sqlite', 'PDO SQLite is available') : $fail('php.pdo_sqlite', 'The pdo_sqlite PHP extension is not loaded');
-        extension_loaded('sqlite3') ? $pass('php.sqlite3', 'SQLite online restore is available') : $fail('php.sqlite3', 'The sqlite3 PHP extension is required for safe native app rollback');
+        extension_loaded('sqlite3') ? $pass('php.sqlite3', 'SQLite online restore is available') : $fail('php.sqlite3', 'The sqlite3 PHP extension is not loaded; updating an installed app needs it to restore its database if the update fails (a first install and serving do not)');
 
         $missing = [];
         foreach (['host-protocol.json', 'runner.mjs', 'request-worker.mjs', 'wasm-host.mjs', 'migrations.mjs', 'wasm/zipp_wasm.mjs', 'wasm/zipp_wasm_bg.wasm'] as $file) {
@@ -1136,6 +1150,8 @@ class NativeAppService
         [$files, $decoded, $manifest, $capabilities] = self::validateProject($project);
         $assets = $project['assets'] ?? [];
         $root = $this->root($appId);
+        $database = $root . '/private/data/application.sqlite';
+        $this->assertCanRestoreDatabase($database);
         $this->directory($root);
         $this->directory($root . '/private');
         $this->directory($root . '/private/data');
@@ -1144,13 +1160,13 @@ class NativeAppService
         $operation = bin2hex(random_bytes(8));
         $staging = $root . '/staging-' . $operation;
         $configPath = $root . '/private/config.json';
-        $database = $root . '/private/data/application.sqlite';
         $journal = null;
         try {
             // Decided under the lock (FL-S04): an update a terminated process left behind is
             // settled first, then the marker, the version and the identity are checked.
             $this->resolveJournal($root);
             $this->assertNotRecoveryRequired($root, 'Restore the app database before installing another update');
+            $this->assertCanRestoreDatabase($database);
             $old = $this->get($appId);
             if (($old['version'] ?? 0) !== $expectedVersion) throw new RuntimeException('The project changed. Reload before importing.', 409);
             if ($old && json_decode($old['files']['manifest.json'], true)['id'] !== $manifest['id']) throw new InvalidArgumentException('Import updates with the same app identity to preserve its database');

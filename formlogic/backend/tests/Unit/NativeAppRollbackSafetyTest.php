@@ -256,6 +256,115 @@ final class NativeAppRollbackSafetyTest extends TestCase
         $this->assertRecoveryBlocksEveryEntryPoint($service, $journalBytes, $inputs);
     }
 
+    /**
+     * A host with pdo_sqlite and without the sqlite3 extension, as a separate PHP process (the
+     * extension cannot be unloaded here). Updating an installed app is refused first, as a 422
+     * that reaches the owner, with nothing created, locked or changed. Everything that needs no
+     * restore keeps working: available(), a first install, serving requests and restore().
+     */
+    public function testWithoutTheSqlite3ExtensionAnUpdateIsRefusedUntouchedWhileEverythingElseKeepsWorking(): void
+    {
+        $this->runtimeService();   // skips when the prepared runtime or Node is missing
+        $php = $this->phpWithoutSqlite3();
+        $directory = $this->storage . '/no-sqlite3';
+        mkdir($directory, 0700);
+        file_put_contents($directory . '/v1.json', json_encode($this->project(), JSON_THROW_ON_ERROR));
+        file_put_contents($directory . '/v2.json', json_encode($this->projectV2(), JSON_THROW_ON_ERROR));
+        file_put_contents($directory . '/child.php', <<<'PHP'
+<?php
+declare(strict_types=1);
+[$self, $autoload, $storage, $runtime, $node, $v1File, $v2File] = $argv;
+require $autoload;
+use FormLogic\Services\NativeAppService;
+
+final class Probe extends NativeAppService
+{
+    public function restoreSnapshot(string $snapshot, string $database): void { $this->restoreDatabaseSnapshot($snapshot, $database); }
+}
+function tree(string $directory): array
+{
+    $files = [];
+    $base = strlen(str_replace('\\', '/', $directory)) + 1;
+    foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS)) as $file) {
+        $path = substr(str_replace('\\', '/', $file->getPathname()), $base);
+        if ($file->isFile() && !str_ends_with($path, '-shm')) $files[$path] = hash_file('sha256', $file->getPathname());
+    }
+    ksort($files);
+    return $files;
+}
+$v1 = json_decode(file_get_contents($v1File), true, 64, JSON_THROW_ON_ERROR);
+$v2 = json_decode(file_get_contents($v2File), true, 64, JSON_THROW_ON_ERROR);
+$out = ['sqlite3' => extension_loaded('sqlite3'), 'pdoSqlite' => extension_loaded('pdo_sqlite')];
+$service = new NativeAppService($storage, $runtime, $node);
+$out['available'] = $service->available();
+$preflight = $service->preflight(true);
+$out['preflightOk'] = $preflight['ok'];
+foreach ($preflight['checks'] as $check) if ($check['id'] === 'php.sqlite3') $out['sqlite3Check'] = $check;
+try { $out['firstInstall'] = $service->install('notes', $v1, 0)['version']; } catch (Throwable $e) { $out['firstInstall'] = get_class($e) . ': ' . $e->getMessage(); }
+try { $out['serving'] = $service->request('notes', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'Kept'], 'client_ip' => '127.0.0.1'])['status']; } catch (Throwable $e) { $out['serving'] = get_class($e) . ': ' . $e->getMessage(); }
+$before = tree($storage);
+try { $service->install('notes', $v2, 1); $out['update'] = 'installed'; } catch (Throwable $e) { $out['update'] = [get_class($e), $e->getCode(), $e->getMessage()]; }
+$out['storageUnchanged'] = tree($storage) === $before;
+try { $out['restore'] = $service->restore('restored', $v1, null, null)['database']; } catch (Throwable $e) { $out['restore'] = get_class($e) . ': ' . $e->getMessage(); }
+try { (new Probe($storage, $runtime, $node))->restoreSnapshot($storage . '/missing-snapshot.sqlite', $storage . '/missing.sqlite'); $out['guard'] = 'no error'; } catch (Throwable $e) { $out['guard'] = [get_class($e), $e->getMessage()]; }
+echo json_encode($out, JSON_THROW_ON_ERROR);
+PHP);
+        $process = proc_open(
+            [...$php, $directory . '/child.php', dirname(__DIR__, 2) . '/vendor/autoload.php', $directory . '/storage', dirname(__DIR__, 2) . '/resources/softn-native', (string) getenv('FORMLOGIC_NODE_BIN'), $directory . '/v1.json', $directory . '/v2.json'],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+        );
+        $this->assertIsResource($process);
+        $stdout = stream_get_contents($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($process);
+        $out = json_decode($stdout, true);
+        $this->assertIsArray($out, 'the child reported nothing usable: ' . $stdout . $stderr);
+        $this->assertFalse($out['sqlite3'], 'the child runs without ext-sqlite3');
+        $this->assertTrue($out['pdoSqlite']);
+        $this->assertTrue($out['available'], 'the host is still available: serving and first installs need no sqlite3');
+        $this->assertFalse($out['preflightOk']);
+        $this->assertFalse($out['sqlite3Check']['ok'], 'the missing extension is a failed preflight check, which the panel lists');
+        $this->assertStringContainsString('sqlite3 PHP extension', $out['sqlite3Check']['message']);
+        $this->assertSame(1, $out['firstInstall'], 'a first install needs no restore');
+        $this->assertSame(201, $out['serving']);
+        $this->assertSame(['RuntimeException', 422, 'Updating this app needs the sqlite3 PHP extension (it restores the database if an update fails). Enable it and try again.'], $out['update']);
+        $this->assertTrue($out['storageUnchanged'], 'the refused update created, locked and changed nothing');
+        $this->assertSame('none', $out['restore'], 'account-backup restore does not use the backup API');
+        $this->assertSame('RuntimeException', $out['guard'][0]);
+        $this->assertStringContainsString('sqlite3 PHP extension', $out['guard'][1]);
+    }
+
+    /**
+     * The arguments of a PHP process with pdo_sqlite and without sqlite3, or a skip when this PHP
+     * cannot be started that way (sqlite3 compiled in, or an extension that is not a shared file).
+     *
+     * @return list<string>
+     */
+    private function phpWithoutSqlite3(): array
+    {
+        $extensionDir = (string) ini_get('extension_dir');
+        $arguments = [PHP_BINARY, '-n', '-d', 'extension_dir=' . $extensionDir, '-d', 'xdebug.mode=off'];
+        foreach (get_loaded_extensions() as $extension) {
+            $name = strtolower($extension);
+            if (in_array($name, ['sqlite3', 'xdebug'], true)) continue;
+            foreach (['php_' . $name . '.dll', $name . '.so'] as $file) {
+                if (is_file($extensionDir . DIRECTORY_SEPARATOR . $file)) { array_push($arguments, '-d', 'extension=' . $name); break; }
+            }
+        }
+        $process = proc_open([...$arguments, '-r', 'echo json_encode([extension_loaded("pdo_sqlite"), extension_loaded("sqlite3"), extension_loaded("sodium")]);'], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        $this->assertIsResource($process);
+        $stdout = stream_get_contents($pipes[1]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($process);
+        $loaded = json_decode($stdout, true);
+        if ($loaded !== [true, false, true]) $this->markTestSkipped('This PHP cannot be started with pdo_sqlite and without sqlite3 (' . $stdout . ').');
+        return $arguments;
+    }
+
     private function helper(?string $fault = null): RollbackFixtureNativeAppService
     {
         return new RollbackFixtureNativeAppService($this->storage, null, null, $fault);

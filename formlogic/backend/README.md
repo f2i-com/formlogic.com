@@ -4,7 +4,7 @@ PHP Slim-based REST API for the FormLogic Form Builder.
 
 ## Requirements
 
-- PHP 8.1+ (`pdo_mysql`, `pdo_sqlite`, `mbstring`, `json`, `openssl`, `fileinfo`)
+- PHP 8.1+ (`pdo_mysql`, `pdo_sqlite`, `sqlite3`, `mbstring`, `json`, `openssl`, `fileinfo`)
 - Composer
 - MySQL 8.0+
 

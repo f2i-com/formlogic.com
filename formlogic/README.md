@@ -18,7 +18,7 @@ Hosted app interfaces use Softn. Their browser runtime, embedded editors and nat
 | Requirement | Version | Check |
 |-------------|---------|-------|
 | PHP | 8.2+ | `php -v` |
-| PHP extensions | pdo_mysql, pdo_sqlite, mbstring, json, openssl, fileinfo, sodium | `php -m` |
+| PHP extensions | pdo_mysql, pdo_sqlite, sqlite3, mbstring, json, openssl, fileinfo, sodium | `php -m` |
 | Composer | any | `composer --version` |
 | MySQL | 8.0+ | `mysql --version` |
 | Node.js | Use `.node-version` (24.19.0); frontend supports ^22.22.2, ^24.15.0 or >=26 | `node -v` |

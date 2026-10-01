@@ -28,7 +28,9 @@ and `app-editors/` assets with the UI, and the installed `backend/resources/soft
 modules with the API. The release preparation action installs these the same way for
 packaged releases. Native backend execution requires PHP 8.2+, PDO SQLite,
 `proc_open` and a compatible Node runtime (use the repository's pinned version); configure
-`FORMLOGIC_NODE_BIN` for the PHP worker environment. OAIY is a separate optional desktop host.
+`FORMLOGIC_NODE_BIN` for the PHP worker environment. Updating an installed native app also
+needs the `sqlite3` PHP extension, which restores its database if the update fails
+([details](docs/NATIVE_ROLLBACK_SAFETY.md)). OAIY is a separate optional desktop host.
 
 The server sandbox launcher (`backend/bin/runtime/`, which runs form logic and scripts) is
 not in git either. The release zip ships it for both platforms; a source deployment builds it

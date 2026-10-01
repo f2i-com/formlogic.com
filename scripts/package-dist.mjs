@@ -213,7 +213,7 @@ Requirements
 - Apache with mod_rewrite enabled and "AllowOverride All" for the web root
   (the shipped .htaccess does the /api routing AND the security hardening —
   it must be honoured).
-- PHP 8.2+ (8.3 recommended) with pdo_mysql, pdo_sqlite, mbstring, curl, gd, zip.
+- PHP 8.2+ (8.3 recommended) with pdo_mysql, pdo_sqlite, sqlite3, mbstring, curl, gd, zip.
 - MySQL 8.
 - HTTPS in production: auth uses Secure cookies, so login FAILS over plain HTTP.
 
