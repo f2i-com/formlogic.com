@@ -290,6 +290,24 @@ final class NativeAppRollbackSafetyTest extends TestCase
         $this->assertSame(['current'], $this->values($database));
     }
 
+    public function testAWriterInAnotherProcessThatHoldsItForThreeSecondsFailsTheRollbackInBoundedTime(): void
+    {
+        [$snapshot, $database] = $this->databases('WAL');
+        $service = $this->helper();
+        $holder = $this->holdLock($database, "BEGIN IMMEDIATE; UPDATE records SET value='held'", 3300);
+        try {
+            $before = $this->databaseFiles($database);
+            $started = microtime(true);
+            try { $service->restoreSnapshotWithRetry($snapshot, $database); $this->fail('A lock that outlasts the budget must not report success'); }
+            catch (\RuntimeException $error) { $this->assertSame(5, $error->getCode()); }
+            $elapsed = microtime(true) - $started;
+            $this->assertGreaterThanOrEqual(2.0, $elapsed, 'the lock was waited for');
+            $this->assertLessThan(5.0, $elapsed, 'and given up on inside the budget, not when the writer let go');
+            $this->assertSame($before, $this->databaseFiles($database), 'nothing of the live database was written');
+        } finally { $this->releaseLock($holder); }
+        $this->assertSame(['current'], $this->values($database), 'the writer rolled back and the live data is as it was');
+    }
+
     public function testALockThatPassesDuringARetryIsWaitedOutAndTheRestoreSucceeds(): void
     {
         [$snapshot, $database] = $this->databases('WAL');
@@ -363,6 +381,24 @@ final class NativeAppRollbackSafetyTest extends TestCase
         $this->assertTrue($writeRefused, 'the handle on the recovery snapshot cannot write');
         $this->assertSame($snapshotHash, hash_file('sha256', $snapshot));
         $this->assertSame(['snapshot'], $this->values($database));
+    }
+
+    public function testAnErrorLeftOnTheSnapshotHandleFailsTheRestoreEvenWhenTheBackupReportsSuccess(): void
+    {
+        // The error codes of both handles are read right after the backup, whatever it returned.
+        // The destination's is rewritten by the backup itself (the destination-transaction fault
+        // covers it); the snapshot handle's is not, so a refused write left on it before the
+        // backup, SQLite error 8, is still there afterwards although the backup completed and
+        // returned true. Failing is the safe answer: the caller keeps the journal in recovery.
+        [$snapshot, $database] = $this->databases('DELETE');
+        $service = $this->helper();
+        $service->beforeBackup = static function (int $call, \SQLite3 $source): void {
+            try { $source->exec('CREATE TABLE intruder(value TEXT)'); } catch (\Throwable $refused) { /* the error stays on the handle */ }
+        };
+        $error = $this->assertRestoreFails($service, $snapshot, $database);
+        $this->assertStringContainsString('The live database could not be restored', $error->getMessage());
+        $this->assertStringContainsString('(SQLite error 8)', $error->getMessage());
+        $this->assertSame(1, $service->backupCalls);
     }
 
     public function testARestoreThatLeavesAnUnhealthyDatabaseIsReportedAsFailed(): void
