@@ -5,7 +5,8 @@ description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
 # MSRV pin (audit FL-31) — kept in lock-step with formlogic/desktop/src-tauri.
-rust-version = "1.88"
+# 1.90 because Tauri 2.12 and its plugins declare it (no locked crate declares more).
+rust-version = "1.90"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

@@ -11,7 +11,7 @@
 #   powershell -File scripts/check-release.ps1 -DistSmoke      # + package + boot the zip (FL-30)
 #   powershell -File scripts/check-release.ps1 -Fmt            # + cargo fmt --check, both Rust roots (FL-31)
 #   powershell -File scripts/check-release.ps1 -RustAudit      # + cargo audit, both Rust roots (FL-31)
-#   powershell -File scripts/check-release.ps1 -Msrv           # + compile with the pinned 1.88 MSRV (FL-31)
+#   powershell -File scripts/check-release.ps1 -Msrv           # + compile with the pinned 1.90 MSRV (FL-31)
 #   powershell -File scripts/check-release.ps1 -Android        # + native-runtime Android target check (FL-31)
 #
 # Requires: PHP + composer deps installed (backend/vendor), Node deps
@@ -128,13 +128,13 @@ if ($RustAudit) {
     Write-Host "(skipped: cargo audit — pass -RustAudit to include; requires cargo-audit installed)" -ForegroundColor Yellow
 }
 if ($Msrv) {
-    # rust-version = "1.88" is pinned in the native-runtime Cargo.toml; compiling
+    # rust-version = "1.90" is pinned in the native-runtime Cargo.toml; compiling
     # WITH that toolchain is what actually detects an accidental MSRV increase.
-    Invoke-Gate 'native-runtime: MSRV check (cargo +1.88.0)' (Join-Path $repo 'formlogic/native-runtime/src-tauri') {
-        cargo +1.88.0 check
+    Invoke-Gate 'native-runtime: MSRV check (cargo +1.90.0)' (Join-Path $repo 'formlogic/native-runtime/src-tauri') {
+        cargo +1.90.0 check
     }
 } else {
-    Write-Host "(skipped: MSRV compile — pass -Msrv to include; requires 'rustup toolchain install 1.88.0')" -ForegroundColor Yellow
+    Write-Host "(skipped: MSRV compile — pass -Msrv to include; requires 'rustup toolchain install 1.90.0')" -ForegroundColor Yellow
 }
 if ($Android) {
     Invoke-Gate 'native-runtime: Android target check' (Join-Path $repo 'formlogic/native-runtime/src-tauri') {
