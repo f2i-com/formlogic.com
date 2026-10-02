@@ -685,7 +685,8 @@ function tree(string $directory): array
     $base = strlen(str_replace('\\', '/', $directory)) + 1;
     foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS)) as $file) {
         $path = substr(str_replace('\\', '/', $file->getPathname()), $base);
-        if ($file->isFile() && !str_ends_with($path, '-shm')) $files[$path] = hash_file('sha256', $file->getPathname());
+        // A lock file is compared by size: another process may hold it, and Windows then refuses to read it.
+        if ($file->isFile() && !str_ends_with($path, '-shm')) $files[$path] = str_ends_with($path, '.lock') ? 'lock file, ' . $file->getSize() . ' bytes' : hash_file('sha256', $file->getPathname());
     }
     ksort($files);
     return $files;
@@ -733,6 +734,17 @@ PHP);
         $this->assertTrue($out['storageUnchanged'], 'the refused update created, locked and changed nothing');
         $this->assertSame($out['update'], $out['race'], 'a database that appears after the first look is refused under the lock, as an update');
         $this->assertSame('none', $out['restore'], 'account-backup restore does not use the backup API');
+// The same refusal while another process holds the app's management lock: it comes before the lock is tried, so it is still the 422, not the busy 409.
+$holder = proc_open([PHP_BINARY, '-n', '-r', '$f = fopen($argv[1], "c"); flock($f, LOCK_EX); echo "held\n"; sleep(8);', $storage . '/' . hash('sha256', 'notes') . '/private/manage.lock'], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $holderPipes);
+$holderPid = proc_get_status($holder)['pid'];
+stream_set_timeout($holderPipes[1], 15);
+$out['holderHeld'] = fgets($holderPipes[1]) === "held\n";
+$beforeLocked = tree($storage);
+try { $service->install('notes', $v2, 1); $out['updateLocked'] = 'installed'; } catch (Throwable $e) { $out['updateLocked'] = [get_class($e), $e->getCode(), $e->getMessage()]; }
+$out['storageUnchangedLocked'] = tree($storage) === $beforeLocked;
+proc_terminate($holder);
+proc_close($holder);
+$out['holderPid'] = $holderPid;
         $this->assertSame('RuntimeException', $out['guard'][0]);
         $this->assertStringContainsString('sqlite3 PHP extension', $out['guard'][1]);
     }
@@ -765,6 +777,10 @@ PHP);
         return $arguments;
     }
 
+        $this->assertTrue($out['holderHeld'], 'another process held the app\'s management lock');
+        $this->assertSame($out['update'], $out['updateLocked'], 'refused before the lock is tried: 422, not the busy 409');
+        $this->assertTrue($out['storageUnchangedLocked']);
+        $this->assertGreaterThan(0, $out['holderPid']);
     private function helper(?string $fault = null): RollbackFixtureNativeAppService
     {
         return new RollbackFixtureNativeAppService($this->storage, null, null, $fault);
