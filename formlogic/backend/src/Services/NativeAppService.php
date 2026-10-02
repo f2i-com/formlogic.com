@@ -382,7 +382,8 @@ class NativeAppService
         $check = '';
         $locked = null;
         if (class_exists(\SQLite3::class)) {
-            $db = new \SQLite3($path, SQLITE3_OPEN_READONLY);
+            try { $db = new \SQLite3($path, SQLITE3_OPEN_READONLY); }
+            catch (\Throwable $e) { throw new RuntimeException('The snapshot could not be opened: ' . $e->getMessage(), 0, $e); }
             try {
                 $db->enableExceptions(true);
                 $db->busyTimeout($busyMs);
@@ -994,22 +995,23 @@ class NativeAppService
      * lock waiting. Never checkpoint/unlink sidecars or overwrite/rename the live file outside
      * SQLite: a checkpoint is not an exclusion lock, and even an idle connection may retain its
      * handles. The recovery snapshot remains untouched until the entire rollback has succeeded.
-     * Any failure is a RuntimeException that names the live database and carries SQLite's code.
+     * Any failure is a RuntimeException that says which file it concerns (the snapshot or the live
+     * database, whether it could not be opened or the restore failed) and, once the backup has
+     * started, carries SQLite's code.
      */
     protected function restoreDatabaseSnapshot(string $snapshot, string $database, int $busyMs = self::RESTORE_BUSY_MS): void
     {
         if (!class_exists(\SQLite3::class)) throw new RuntimeException('The sqlite3 PHP extension is required to restore the database from its snapshot');
         $this->assertSnapshotHealthy($snapshot, $busyMs);
-        $source = new \SQLite3($snapshot, SQLITE3_OPEN_READONLY);
+        try { $source = new \SQLite3($snapshot, SQLITE3_OPEN_READONLY); }
+        catch (\Throwable $e) { throw new RuntimeException('The snapshot could not be opened: ' . $e->getMessage(), 0, $e); }
         try {
             $source->enableExceptions(true);
             $source->busyTimeout($busyMs);
             // Do not CREATE a new file beside orphan sidecars or an unlinked retained handle.
-            $destination = new \SQLite3($database, SQLITE3_OPEN_READWRITE);
+            try { $destination = new \SQLite3($database, SQLITE3_OPEN_READWRITE); }
+            catch (\Throwable $e) { throw new RuntimeException('The live database could not be opened: ' . $e->getMessage(), 0, $e); }
             try {
-                $destination->enableExceptions(true);
-                $destination->busyTimeout($busyMs);
-                $destination->exec('PRAGMA synchronous=FULL');
                 try {
                     $restored = $this->backupDatabaseChecked($source, $destination);
                     // PHP can report true when backup_init failed: it reads the source error even
@@ -1019,6 +1021,9 @@ class NativeAppService
                     $destinationError = $destination->lastErrorCode();
                     if (!$restored || $sourceError !== 0 || $destinationError !== 0) {
                         throw new RuntimeException('SQLite did not report the restore as complete');
+                    $destination->enableExceptions(true);
+                    $destination->busyTimeout($busyMs);
+                    $destination->exec('PRAGMA synchronous=FULL');
                     }
                     if ($destination->querySingle('PRAGMA quick_check') !== 'ok') throw new RuntimeException('The restored database failed its health check');
                 } catch (\Throwable $failure) {

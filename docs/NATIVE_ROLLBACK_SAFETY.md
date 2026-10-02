@@ -19,7 +19,11 @@ backup API (the PHP `SQLite3::backup` method):
    empty database, and restoring it would empty the live one.)
 2. The snapshot is opened read-only and the live file read-write, without permission to
    create it, so a missing file is an error and never a new empty database beside leftover
-   `-wal`/`-shm` files.
+   `-wal`/`-shm` files. Every failure says which file it concerns: "The snapshot could not be
+   opened: …" and "The live database could not be opened: …" for a missing or unreadable file,
+   "The native database snapshot failed its integrity check: …" for a damaged snapshot, and "The
+   live database could not be restored: … (SQLite error N)" once the restore has started,
+   including a live file that is not a database.
 3. The backup runs in one SQLite write transaction on the live file with
    `PRAGMA synchronous=FULL`. SQLite's own locking decides who may read and write meanwhile;
    nothing is checkpointed, deleted, renamed or overwritten outside SQLite.

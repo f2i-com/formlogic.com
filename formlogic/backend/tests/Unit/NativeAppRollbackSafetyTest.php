@@ -117,11 +117,33 @@ final class NativeAppRollbackSafetyTest extends TestCase
         file_put_contents($database . '-wal', 'synthetic orphan WAL');
         file_put_contents($database . '-shm', 'synthetic orphan shared memory');
         $snapshotHash = hash_file('sha256', $snapshot);
-        $this->assertRestoreFails($this->helper(), $snapshot, $database);
+        $error = $this->assertRestoreFails($this->helper(), $snapshot, $database);
+        $this->assertStringContainsString('The live database could not be opened:', $error->getMessage(), 'it says which file is missing');
+        $this->assertStringNotContainsString('snapshot', $error->getMessage());
         $this->assertFileDoesNotExist($database);
         $this->assertSame('synthetic orphan WAL', file_get_contents($database . '-wal'));
         $this->assertSame('synthetic orphan shared memory', file_get_contents($database . '-shm'));
         $this->assertSame($snapshotHash, hash_file('sha256', $snapshot));
+    }
+
+    public function testAGarbageLiveDatabaseIsNamedAsTheLiveDatabaseAndLeftAsItWas(): void
+    {
+        [$snapshot, $database] = $this->databases('DELETE');
+        file_put_contents($database, str_repeat('synthetic garbage in place of the live database ', 200));
+        $liveHash = hash_file('sha256', $database);
+        $snapshotHash = hash_file('sha256', $snapshot);
+        $service = $this->helper();
+        $error = $this->assertRestoreFails($service, $snapshot, $database);
+        $this->assertStringContainsString('The live database could not be', $error->getMessage(), 'it says which file is garbage');
+        $this->assertStringContainsString('file is not a database', $error->getMessage());
+        $this->assertStringNotContainsString('snapshot', $error->getMessage());
+        $this->assertSame($liveHash, hash_file('sha256', $database));
+        $this->assertSame($snapshotHash, hash_file('sha256', $snapshot));
+        // Nothing here can pass, so a rollback gives up on it at once.
+        $started = microtime(true);
+        try { $service->restoreSnapshotWithRetry($snapshot, $database); $this->fail('A garbage live database was restored over'); }
+        catch (\RuntimeException $retried) { $this->assertStringContainsString('The live database could not be', $retried->getMessage()); }
+        $this->assertLessThan(1.0, microtime(true) - $started);
     }
 
     public function testCorruptSnapshotRefusesBeforeChangingTheDestination(): void
@@ -130,7 +152,9 @@ final class NativeAppRollbackSafetyTest extends TestCase
         file_put_contents($snapshot, str_repeat('synthetic corrupt snapshot ', 200));
         $snapshotHash = hash_file('sha256', $snapshot);
         $before = $this->databaseFiles($database);
-        $this->assertRestoreFails($this->helper(), $snapshot, $database);
+        $error = $this->assertRestoreFails($this->helper(), $snapshot, $database);
+        $this->assertStringContainsString('snapshot', $error->getMessage(), 'it says which file is damaged');
+        $this->assertStringNotContainsString('live database', $error->getMessage());
         $this->assertSame($snapshotHash, hash_file('sha256', $snapshot));
         $this->assertSame($before, $this->databaseFiles($database));
         $this->assertSame(['current'], $this->values($database));
@@ -141,7 +165,9 @@ final class NativeAppRollbackSafetyTest extends TestCase
         [$snapshot, $database] = $this->databases('DELETE');
         $this->assertTrue(unlink($snapshot));
         $before = $this->databaseFiles($database);
-        $this->assertRestoreFails($this->helper(), $snapshot, $database);
+        $error = $this->assertRestoreFails($this->helper(), $snapshot, $database);
+        $this->assertStringContainsString('The snapshot could not be opened:', $error->getMessage(), 'it says which file is missing');
+        $this->assertStringNotContainsString('live database', $error->getMessage());
         $this->assertFileDoesNotExist($snapshot);
         $this->assertSame($before, $this->databaseFiles($database));
         $this->assertSame(['current'], $this->values($database));
