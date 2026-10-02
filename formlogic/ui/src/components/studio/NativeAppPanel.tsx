@@ -70,7 +70,12 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
       {ready && !readOnly && !available && !preflight && <p role="alert" className="text-sm text-amber-700 dark:text-amber-300">The server needs the native app runtime installed before it can run this project.</p>}
       {ready && !readOnly && preflight && !preflight.ok && <div role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
         <p className="font-medium">The native runtime is prepared but cannot start on this server yet.</p>
-        <ul className="mt-2 list-disc space-y-1 pl-5">{preflight.checks.filter(check => !check.ok).map(check => <li key={check.id}><span className="font-mono text-xs">{check.id}</span> — {check.message}</li>)}</ul>
+        <ul className="mt-2 list-disc space-y-1 pl-5">{preflight.checks.filter(check => !check.ok && !check.warning).map(check => <li key={check.id}><span className="font-mono text-xs">{check.id}</span> — {check.message}</li>)}</ul>
+      </div>}
+      {/* A warning limits something without stopping the runtime: Publish and Install stay available. */}
+      {ready && !readOnly && !!preflight?.warnings?.length && <div role="note" aria-label="Native runtime warnings" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+        <p className="font-medium">The native runtime works here, with a limit.</p>
+        <ul className="mt-2 list-disc space-y-1 pl-5">{preflight.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>
       </div>}
       {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
       {notice && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">{notice}</p>}

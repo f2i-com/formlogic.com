@@ -724,12 +724,27 @@ $service = new NativeAppService($storage, $runtime, $node);
 $out['available'] = $service->available();
 $preflight = $service->preflight(true);
 $out['preflightOk'] = $preflight['ok'];
-foreach ($preflight['checks'] as $check) if ($check['id'] === 'php.sqlite3') $out['sqlite3Check'] = $check;
+$out['preflightWarnings'] = $preflight['warnings'];
+foreach ($preflight['checks'] as $check) {
+    if ($check['id'] === 'php.sqlite3') $out['sqlite3Check'] = $check;
+    if ($check['id'] === 'worker.startup') $out['workerCheck'] = $check;
+}
 try { $out['firstInstall'] = $service->install('notes', $v1, 0)['version']; } catch (Throwable $e) { $out['firstInstall'] = get_class($e) . ': ' . $e->getMessage(); }
 try { $out['serving'] = $service->request('notes', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'Kept'], 'client_ip' => '127.0.0.1'])['status']; } catch (Throwable $e) { $out['serving'] = get_class($e) . ': ' . $e->getMessage(); }
 $before = tree($storage);
 try { $service->install('notes', $v2, 1); $out['update'] = 'installed'; } catch (Throwable $e) { $out['update'] = [get_class($e), $e->getCode(), $e->getMessage()]; }
 $out['storageUnchanged'] = tree($storage) === $before;
+// The same refusal while another process holds the app's management lock: it comes before the lock is tried, so it is still the 422, not the busy 409.
+$holder = proc_open([PHP_BINARY, '-n', '-r', '$f = fopen($argv[1], "c"); flock($f, LOCK_EX); echo "held\n"; sleep(8);', $storage . '/' . hash('sha256', 'notes') . '/private/manage.lock'], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $holderPipes);
+$holderPid = proc_get_status($holder)['pid'];
+stream_set_timeout($holderPipes[1], 15);
+$out['holderHeld'] = fgets($holderPipes[1]) === "held\n";
+$beforeLocked = tree($storage);
+try { $service->install('notes', $v2, 1); $out['updateLocked'] = 'installed'; } catch (Throwable $e) { $out['updateLocked'] = [get_class($e), $e->getCode(), $e->getMessage()]; }
+$out['storageUnchangedLocked'] = tree($storage) === $beforeLocked;
+proc_terminate($holder);
+proc_close($holder);
+$out['holderPid'] = $holderPid;
 try { (new Racing($storage, $runtime, $node))->install('raced', $v1, 0); $out['race'] = 'installed'; } catch (Throwable $e) { $out['race'] = [get_class($e), $e->getCode(), $e->getMessage()]; }
 try { $out['restore'] = $service->restore('restored', $v1, null, null)['database']; } catch (Throwable $e) { $out['restore'] = get_class($e) . ': ' . $e->getMessage(); }
 try { (new Probe($storage, $runtime, $node))->restoreSnapshot($storage . '/missing-snapshot.sqlite', $storage . '/missing.sqlite'); $out['guard'] = 'no error'; } catch (Throwable $e) { $out['guard'] = [get_class($e), $e->getMessage()]; }
@@ -751,26 +766,23 @@ PHP);
         $this->assertFalse($out['sqlite3'], 'the child runs without ext-sqlite3');
         $this->assertTrue($out['pdoSqlite']);
         $this->assertTrue($out['available'], 'the host is still available: serving and first installs need no sqlite3');
-        $this->assertFalse($out['preflightOk']);
-        $this->assertFalse($out['sqlite3Check']['ok'], 'the missing extension is a failed preflight check, which the panel lists');
+        $this->assertTrue($out['preflightOk'], 'a missing sqlite3 is a warning: the runtime can run, so the panel keeps Publish and Install');
+        $this->assertFalse($out['sqlite3Check']['ok'], 'the check stays visible and is not met');
+        $this->assertTrue($out['sqlite3Check']['warning'], 'and is marked as a warning, not a failure');
         $this->assertStringContainsString('sqlite3 PHP extension', $out['sqlite3Check']['message']);
+        $this->assertSame([$out['sqlite3Check']['message']], $out['preflightWarnings'], 'the warning is the check message, and the only one');
+        $this->assertStringContainsString('updating an app that already has a database needs it', $out['preflightWarnings'][0], 'it says what is limited');
+        $this->assertTrue($out['workerCheck']['ok'], 'the worker still starts: a warning does not skip the probe that a failure would');
         $this->assertSame(1, $out['firstInstall'], 'a first install needs no restore');
         $this->assertSame(201, $out['serving']);
         $this->assertSame(['RuntimeException', 422, 'Updating this app needs the sqlite3 PHP extension (it restores the database if an update fails). Enable it and try again.'], $out['update']);
         $this->assertTrue($out['storageUnchanged'], 'the refused update created, locked and changed nothing');
+        $this->assertTrue($out['holderHeld'], 'another process held the app\'s management lock');
+        $this->assertSame($out['update'], $out['updateLocked'], 'refused before the lock is tried: 422, not the busy 409');
+        $this->assertTrue($out['storageUnchangedLocked']);
+        $this->assertGreaterThan(0, $out['holderPid']);
         $this->assertSame($out['update'], $out['race'], 'a database that appears after the first look is refused under the lock, as an update');
         $this->assertSame('none', $out['restore'], 'account-backup restore does not use the backup API');
-// The same refusal while another process holds the app's management lock: it comes before the lock is tried, so it is still the 422, not the busy 409.
-$holder = proc_open([PHP_BINARY, '-n', '-r', '$f = fopen($argv[1], "c"); flock($f, LOCK_EX); echo "held\n"; sleep(8);', $storage . '/' . hash('sha256', 'notes') . '/private/manage.lock'], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $holderPipes);
-$holderPid = proc_get_status($holder)['pid'];
-stream_set_timeout($holderPipes[1], 15);
-$out['holderHeld'] = fgets($holderPipes[1]) === "held\n";
-$beforeLocked = tree($storage);
-try { $service->install('notes', $v2, 1); $out['updateLocked'] = 'installed'; } catch (Throwable $e) { $out['updateLocked'] = [get_class($e), $e->getCode(), $e->getMessage()]; }
-$out['storageUnchangedLocked'] = tree($storage) === $beforeLocked;
-proc_terminate($holder);
-proc_close($holder);
-$out['holderPid'] = $holderPid;
         $this->assertSame('RuntimeException', $out['guard'][0]);
         $this->assertStringContainsString('sqlite3 PHP extension', $out['guard'][1]);
     }
@@ -803,10 +815,6 @@ $out['holderPid'] = $holderPid;
         return $arguments;
     }
 
-        $this->assertTrue($out['holderHeld'], 'another process held the app\'s management lock');
-        $this->assertSame($out['update'], $out['updateLocked'], 'refused before the lock is tried: 422, not the busy 409');
-        $this->assertTrue($out['storageUnchangedLocked']);
-        $this->assertGreaterThan(0, $out['holderPid']);
     private function helper(?string $fault = null): RollbackFixtureNativeAppService
     {
         return new RollbackFixtureNativeAppService($this->storage, null, null, $fault);

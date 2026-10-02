@@ -142,6 +142,8 @@ final class NativeAppServiceTest extends TestCase
         foreach (['php.proc_open', 'php.pdo_sqlite', 'php.sqlite3', 'runtime.files', 'runtime.protocol', 'node.executable', 'node.version', 'node.capabilities', 'storage.writable', 'worker.startup'] as $id) {
             $this->assertContains($id, $ids);
         }
+        $this->assertSame([], $first['warnings'], 'with sqlite3 loaded there is nothing to warn about');
+        $this->assertSame([], array_filter($first['checks'], static fn ($c) => !empty($c['warning'])));
         $this->assertSame(1, $first['runtime']['nativeProtocol']);
         $this->assertMatchesRegularExpression('/^\d+\.\d+\.\d+$/', $first['runtime']['node']);
         // No probe app, worker file or record survives the check.

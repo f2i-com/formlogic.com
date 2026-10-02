@@ -432,7 +432,10 @@ class NativeAppService
      * Messages name relative files only — never absolute paths or secrets — so they can be shown to
      * an app owner. Operators get the same structure through the admin tooling.
      *
-     * @return array{ok:bool, checkedAt:string, cached:bool, checks:list<array{id:string,ok:bool,message:string}>, runtime:array<string,mixed>}
+     * `ok` means the runtime can run here. A check marked `warning` (not ok, listed in `checks` and
+     * repeated in `warnings`) limits something without stopping it, and does not count against `ok`.
+     *
+     * @return array{ok:bool, checkedAt:string, cached:bool, checks:list<array{id:string,ok:bool,warning?:bool,message:string}>, warnings:list<string>, runtime:array<string,mixed>}
      */
     public function preflight(bool $fresh = false): array
     {
@@ -471,13 +474,18 @@ class NativeAppService
     private function runPreflight(): array
     {
         $checks = [];
+        $warnings = [];
         $runtime = [];
         $fail = static function (string $id, string $message) use (&$checks): void { $checks[] = ['id' => $id, 'ok' => false, 'message' => $message]; };
         $pass = static function (string $id, string $message) use (&$checks): void { $checks[] = ['id' => $id, 'ok' => true, 'message' => $message]; };
+        // A check that is not met but does not stop the runtime: listed with the others (not ok, marked
+        // as a warning), its message repeated in `warnings`, and left out of the verdict.
+        $warn = static function (string $id, string $message) use (&$checks, &$warnings): void { $checks[] = ['id' => $id, 'ok' => false, 'warning' => true, 'message' => $message]; $warnings[] = $message; };
+        $failed = static fn (array $check): bool => !$check['ok'] && empty($check['warning']);
 
         function_exists('proc_open') ? $pass('php.proc_open', 'PHP can start worker processes') : $fail('php.proc_open', 'PHP proc_open() is disabled; the native runtime cannot start');
         extension_loaded('pdo_sqlite') ? $pass('php.pdo_sqlite', 'PDO SQLite is available') : $fail('php.pdo_sqlite', 'The pdo_sqlite PHP extension is not loaded');
-        extension_loaded('sqlite3') ? $pass('php.sqlite3', 'SQLite online restore is available') : $fail('php.sqlite3', 'The sqlite3 PHP extension is not loaded; updating an installed app needs it to restore its database if the update fails (a first install and serving do not)');
+        extension_loaded('sqlite3') ? $pass('php.sqlite3', 'SQLite online restore is available') : $warn('php.sqlite3', 'The sqlite3 PHP extension is not loaded. Apps can be installed for the first time and served without it, but updating an app that already has a database needs it to restore that database if the update fails. Enable it (the php-sqlite3 package, or extension=sqlite3 in php.ini).');
 
         $missing = [];
         foreach (['host-protocol.json', 'runner.mjs', 'request-worker.mjs', 'wasm-host.mjs', 'migrations.mjs', 'wasm/zipp_wasm.mjs', 'wasm/zipp_wasm_bg.wasm'] as $file) {
@@ -535,7 +543,7 @@ class NativeAppService
                 $storageOk = true;
                 $pass('storage.writable', 'Private app storage is writable');
                 // Only when everything else passed: start a minimal isolated app in the throw-away root.
-                if (!array_filter($checks, static fn ($c) => !$c['ok'])) {
+                if (!array_filter($checks, $failed)) {
                     $started = $this->probeWorker($probeRoot);
                     $started === null ? $pass('worker.startup', 'A minimal native app started and answered /api/meta') : $fail('worker.startup', $started);
                 }
@@ -546,8 +554,8 @@ class NativeAppService
             if (!$storageOk) $fail('storage.writable', 'Private app storage is not writable: ' . $e->getMessage());
         }
 
-        $ok = !array_filter($checks, static fn ($c) => !$c['ok']);
-        return ['ok' => $ok, 'checkedAt' => gmdate('c'), 'checks' => $checks, 'runtime' => $runtime];
+        $ok = !array_filter($checks, $failed);
+        return ['ok' => $ok, 'checkedAt' => gmdate('c'), 'checks' => $checks, 'warnings' => $warnings, 'runtime' => $runtime];
     }
 
     /** Start a real worker against a throw-away app root; null on success, else the operator message. */
@@ -1013,6 +1021,9 @@ class NativeAppService
             catch (\Throwable $e) { throw new RuntimeException('The live database could not be opened: ' . $e->getMessage(), 0, $e); }
             try {
                 try {
+                    $destination->enableExceptions(true);
+                    $destination->busyTimeout($busyMs);
+                    $destination->exec('PRAGMA synchronous=FULL');
                     $restored = $this->backupDatabaseChecked($source, $destination);
                     // PHP can report true when backup_init failed: it reads the source error even
                     // though SQLite records initialization failures on the destination. Read both
@@ -1021,9 +1032,6 @@ class NativeAppService
                     $destinationError = $destination->lastErrorCode();
                     if (!$restored || $sourceError !== 0 || $destinationError !== 0) {
                         throw new RuntimeException('SQLite did not report the restore as complete');
-                    $destination->enableExceptions(true);
-                    $destination->busyTimeout($busyMs);
-                    $destination->exec('PRAGMA synchronous=FULL');
                     }
                     if ($destination->querySingle('PRAGMA quick_check') !== 'ok') throw new RuntimeException('The restored database failed its health check');
                 } catch (\Throwable $failure) {

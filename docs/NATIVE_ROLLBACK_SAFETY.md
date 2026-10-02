@@ -84,8 +84,10 @@ without `sqlite3`:
   to enable, before anything is created, locked or changed;
 - still serves apps, installs an app for the first time (there is no database to restore)
   and restores account backups;
-- lists `php.sqlite3` among the failed checks of the native preflight, which the owner's
-  native app panel shows.
+- reports `php.sqlite3` as a warning in the native preflight, not as a failure: the preflight's
+  `ok` stays true, the check stays in its `checks` (not met, marked `warning`) and its message
+  is in `warnings`, and the owner's native app panel shows it as an amber note while Publish and
+  Install stay available. The worker probe still runs, which a failed check would have skipped.
 
 The installer's requirements table and the release `INSTALL.txt` list `sqlite3`. On
 Debian/Ubuntu it is the `php-sqlite3` package; the same package carries `pdo_sqlite`.

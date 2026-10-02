@@ -5197,12 +5197,17 @@ export interface AccountBackupImportResult {
   warnings?: string[];
 }
 
-/** NativeAppService::preflight() — can the native runtime actually run on this server? */
+/**
+ * NativeAppService::preflight() — can the native runtime actually run on this server? `ok` is the
+ * verdict; a check with `warning` is not met but does not stop the runtime (it does not count
+ * against `ok`), and `warnings` repeats the messages of those checks.
+ */
 export interface NativeRuntimePreflight {
   ok: boolean;
   cached: boolean;
   checkedAt: string;
-  checks: Array<{ id: string; ok: boolean; message: string }>;
+  checks: Array<{ id: string; ok: boolean; warning?: boolean; message: string }>;
+  warnings?: string[];
   runtime: { nativeProtocol?: number; recordEvents?: number; node?: string; zipp?: { version?: string | null; sha256?: string | null } };
 }
 
