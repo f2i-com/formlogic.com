@@ -489,7 +489,7 @@ final class AokieReceptionistUpgradeService
      * owner's extra dropdown choices), owner-added ones untouched.
      *
      * @param array<string,string> $formMap
-     * @return array{fields:list<array<string,mixed>>,added:string[],updated:string[]}|null
+     * @return array{fields:list<array<string,mixed>>,added:string[],updated:string[],reordered:bool}|null
      */
     private function planFields(string $packFormId, array $packForm, array $form, array $formMap): ?array
     {

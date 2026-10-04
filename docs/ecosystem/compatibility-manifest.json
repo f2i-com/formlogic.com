@@ -1,11 +1,11 @@
 {
   "kind": "formlogic.ecosystemCompatibilityManifest",
   "formatVersion": 1,
-  "generatedAt": "2026-09-28T19:21:24.745Z",
+  "generatedAt": "2026-10-04T02:19:38.286Z",
   "note": "Source revisions and digests of files present in the tree at generation time. Release workflows must recompute digests of the artifacts they actually ship; provenance is not verification of downloaded bytes.",
   "components": {
     "formlogic": {
-      "revision": "9fe24120a45fbfe7d9dc2bf977441ca3e5adc196",
+      "revision": "f7da27045b6d221f1113db3c6429ecba6758808b",
       "backupFormat": {
         "current": 2,
         "importable": [
@@ -13,7 +13,7 @@
           2
         ]
       },
-      "formSqliteSchema": 4
+      "formSqliteSchema": 5
     },
     "softn": {
       "pinnedBy": "latest GitHub release of f2i-com/softn.com (scripts/fetch-softn-release.mjs); SOFTN_RELEASE pins a tag; a release run freezes one record (--resolve-only) that every job installs (--frozen) and the release gate checks with --exact",
@@ -167,7 +167,7 @@
       1,
       2
     ],
-    "formSqliteSchema": 4,
+    "formSqliteSchema": 5,
     "migrationDirection": "forward only: newer FormLogic imports older backup formats; older FormLogic refuses newer ones"
   },
   "problems": []
