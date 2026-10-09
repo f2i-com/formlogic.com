@@ -139,7 +139,7 @@ final class NativeAppServiceTest extends TestCase
         $this->assertTrue($first['ok'], json_encode($first['checks']));
         $this->assertFalse($first['cached']);
         $ids = array_column($first['checks'], 'id');
-        foreach (['php.proc_open', 'php.pdo_sqlite', 'php.sqlite3', 'runtime.files', 'runtime.protocol', 'node.executable', 'node.version', 'node.capabilities', 'storage.writable', 'worker.startup'] as $id) {
+        foreach (['php.proc_open', 'php.pdo_sqlite', 'php.sqlite3', 'runtime.files', 'runtime.protocol', 'node.executable', 'node.version', 'node.options', 'node.capabilities', 'storage.writable', 'worker.startup'] as $id) {
             $this->assertContains($id, $ids);
         }
         $this->assertSame([], $first['warnings'], 'with sqlite3 loaded there is nothing to warn about');
@@ -196,6 +196,35 @@ final class NativeAppServiceTest extends TestCase
         $result = (new NativeAppService($this->storage . '/not-a-dir', $runtime, getenv('FORMLOGIC_NODE_BIN')))->preflight(true);
         $this->assertFalse($result['ok']);
         $this->assertArrayHasKey('storage.writable', $failing($result));
+    }
+
+    /**
+     * A worker lives for one request. Left to itself V8 begins optimizing the engine's dispatch
+     * loop (one WebAssembly function of 280 KB) as soon as it runs hot: a compile of about 450 ms
+     * that the process cannot exit during, for code nothing would run. Every native request
+     * waited about a third of a second after its answer was written. The worker is started
+     * without that compile, from one definition that preflight starts Node with as well, so a
+     * Node that refuses an option fails the check and not every request.
+     */
+    public function testTheWorkerIsStartedWithoutTheOptimizingCompileItNeverLivesToUse(): void
+    {
+        $command = NativeAppService::runnerCommand('node-binary', '/the/runtime');
+        $this->assertSame('node-binary', $command[0]);
+        $this->assertSame('/the/runtime/runner.mjs', $command[count($command) - 1], 'the script is last: everything before it is an option of Node, never of the app');
+        foreach (['--max-old-space-size=128', '--disable-proto=throw', '--no-wasm-tier-up', '--no-wasm-dynamic-tiering'] as $option) {
+            $this->assertContains($option, $command);
+        }
+        // Both, not one: without tier-up alone V8 still tiers up dynamically.
+        $this->assertCount(6, $command);
+
+        // The real Node takes them, and says so in preflight.
+        $checks = array_column($this->service->preflight(true)['checks'], null, 'id');
+        $this->assertTrue($checks['node.options']['ok'], $checks['node.options']['message']);
+        $this->assertStringNotContainsString($this->storage, $checks['node.options']['message']);
+
+        // And a request is still answered when started that way.
+        $this->service->install('notes', $this->project(), 0);
+        $this->assertSame(201, $this->createNote('Started lean')['status']);
     }
 
     // ── integration audit M2/M3/L3: request-time guards and the shared protocol ──

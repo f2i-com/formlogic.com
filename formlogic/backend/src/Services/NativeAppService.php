@@ -456,6 +456,27 @@ class NativeAppService
         return ['cached' => false] + $result;
     }
 
+    /**
+     * The command a native request's worker is started with. One definition: preflight starts
+     * Node with the same options, so a Node that refuses one fails the check and not every
+     * request.
+     *
+     * The two wasm options keep V8's optimizing compiler off the engine. A worker lives for one
+     * request, and the engine's dispatch loop is one WebAssembly function of 280 KB: V8 begins
+     * optimizing it as soon as it runs hot, which takes about 450 ms and over 100 MB, and a
+     * process cannot exit while that compile runs. So every request waited about a third of a
+     * second after its answer was written, with a core busy, for code nothing would run. Both
+     * options are needed: without tier-up alone V8 still tiers up dynamically, and without
+     * dynamic tiering alone it optimizes everything. A request that runs past about three
+     * quarters of a second misses the optimized code and is slower for it (Softn's own PHP host,
+     * which starts its runner the same way, measured up to a quarter).
+     * @return list<string>
+     */
+    public static function runnerCommand(string $node, string $runtime): array
+    {
+        return [$node, '--max-old-space-size=128', '--disable-proto=throw', '--no-wasm-tier-up', '--no-wasm-dynamic-tiering', $runtime . '/runner.mjs'];
+    }
+
     private function nodeBinary(): string
     {
         return $this->nodeBinary ?? ($_ENV['FORMLOGIC_NODE_BIN'] ?? getenv('FORMLOGIC_NODE_BIN') ?: 'node');
@@ -514,6 +535,12 @@ class NativeAppService
             $minimum = is_array($protocol) && is_string($protocol['minimumNode'] ?? null) ? $protocol['minimumNode'] : null;
             if ($minimum !== null && version_compare($m[1], $minimum, '<')) $fail('node.version', 'Node.js ' . $m[1] . ' is older than the runtime minimum ' . $minimum);
             else $pass('node.version', 'Node.js ' . $m[1] . ($minimum !== null ? ' meets the runtime minimum ' . $minimum : ''));
+            // The options a worker is started with (runnerCommand): a Node that refuses one would
+            // refuse to start for every request, and say so only in a file nobody reads.
+            $options = array_slice(self::runnerCommand($node, $this->runtime()), 1, -1);
+            $accepted = $this->runBounded([$node, ...$options, '-e', '0'], 8);
+            if ($accepted === null || $accepted['exit'] !== 0) $fail('node.options', 'Node.js refused an option the native runtime is started with (' . implode(' ', $options) . '): update Node.js');
+            else $pass('node.options', 'Node.js accepts the options the native runtime is started with');
             if (!$missing) {
                 $probe = 'const m=[];for(const n of ["node:sqlite","node:worker_threads","node:crypto"]){try{await import(n)}catch{m.push(n)}}'
                     . 'if(typeof WebAssembly!=="object")m.push("WebAssembly");'
@@ -1428,7 +1455,7 @@ class NativeAppService
             // Only the allowlisted variables reach the runtime (see NODE_ENV_ALLOWLIST); the
             // three SOFTN_* values are the whole host context the worker reads.
             $env = self::nodeEnvironment(getenv(), ['SOFTN_BACKEND_ROOT' => $root, 'SOFTN_HOST_CONTEXT' => json_encode($identity, JSON_THROW_ON_ERROR), 'SOFTN_RECORD_EVENTS' => json_encode($subscriptions, JSON_THROW_ON_ERROR)]);
-            $process = proc_open([$node, '--max-old-space-size=128', '--disable-proto=throw', $this->runtime() . '/runner.mjs'], [0 => ['file', $base . '.in', 'r'], 1 => ['file', $base . '.out', 'w'], 2 => ['file', $base . '.err', 'w']], $pipes, $root, $env, ['bypass_shell' => true]);
+            $process = proc_open(self::runnerCommand($node, $this->runtime()), [0 => ['file', $base . '.in', 'r'], 1 => ['file', $base . '.out', 'w'], 2 => ['file', $base . '.err', 'w']], $pipes, $root, $env, ['bypass_shell' => true]);
             if (!is_resource($process)) throw new RuntimeException('Native runtime could not start');
             $deadline = microtime(true) + 25;
             do {
