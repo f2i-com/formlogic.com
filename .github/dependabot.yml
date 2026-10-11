@@ -18,6 +18,16 @@ updates:
       # this entry. Minor and patch updates within the current major still arrive.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      # preact is the runtime custom screens run on (lib/screenVendorModules.ts inlines its
+      # dist files into the sandbox), and that includes screens people have already written
+      # and stored. A major changes what that code does: 11 no longer adds px to a numeric
+      # style value outside preact/compat, forwards refs to function components, moves
+      # defaultProps to compat, and removes JSX namespace types the screen kit uses, so the
+      # build fails on it as it stands. Moving it is a port with a check of existing screens,
+      # not a routine update. Drop this entry when that port is made. Minor and patch updates
+      # within the current major still arrive.
+      - dependency-name: "preact"
+        update-types: ["version-update:semver-major"]
     groups:
       # Order matters: these coupled packages join their first matching group.
       frontend-build:
