@@ -460,7 +460,7 @@ TXT;
                 continue;
             }
             $jt = $this->uniqueName($this->sqlName($table . '_' . $c['column'] . '_links', 'links'), $usedTables);
-            $junctions[$i] = ['table' => $jt, 'rows' => []];
+            $junctions[$i] = self::junction($jt);
             if ($dialect === 'mysql') {
                 $sink("DROP TABLE IF EXISTS {$q($jt)}", true);
                 $sink("CREATE TABLE {$q($jt)} (\n  `source_id` VARCHAR(36) NOT NULL,\n  `target_id` VARCHAR(36) NOT NULL,\n  `position` INT NOT NULL,\n  PRIMARY KEY (`source_id`, `position`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci", true);
@@ -574,6 +574,19 @@ TXT;
         }
         $flushJunctions();
         $sink('', false);
+    }
+
+    /**
+     * A multi link's junction table and the row tuples waiting to be written to it.
+     * The rows start empty and are added to as responses are read, after the
+     * closure that flushes them is made; the shape says what they become, so the
+     * flush is analysed as code that runs.
+     *
+     * @return array{table: string, rows: list<string>}
+     */
+    private static function junction(string $table): array
+    {
+        return ['table' => $table, 'rows' => []];
     }
 
     /**
