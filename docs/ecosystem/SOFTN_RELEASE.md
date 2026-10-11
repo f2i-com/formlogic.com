@@ -11,7 +11,7 @@ browser engine does too from Softn v0.0.15, and none of the four is in git.
 
 The engine follows releases, ZIPP to Softn to FormLogic: Softn takes it from a
 ZIPP release (its `web-python-base` bundle since Softn v0.0.16 and ZIPP v0.0.21 —
-JavaScript and Python without torch, 7.46 MB; `web-python` before — checked
+JavaScript and Python without torch, 6.52 MB at ZIPP v0.0.22 (7.46 MB at v0.0.21); `web-python` before — checked
 against ZIPP's top-level and the bundle's own `SHA256SUMS`) and ships it in the
 archive as `zipp/`, with the ZIPP
 release it came from recorded in `softn-release.json` `zipp`. FormLogic names no
