@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { openStudioAiPanel } from './studio-panel';
 
 /**
  * Apps a test created, deleted after it. A review app reused across runs carries the last run's
@@ -63,7 +64,7 @@ test('Builder and Studio return an editable native app without losing its backen
       await frame.getByLabel('Text', { exact: true }).fill('Save edited item');
       await frame.getByLabel('Text', { exact: true }).press('Tab');
     } else {
-      await frame.getByRole('button', { name: 'AI', exact: true }).click();
+      await openStudioAiPanel(frame);
       await frame.getByRole('textbox', { name: 'Message to AI' }).fill('Update the heading to AI edited app, preserving all other files.');
       await frame.getByRole('button', { name: 'Send message', exact: true }).click();
       await expect(editor.getByRole('button', { name: 'Review changes', exact: true })).toBeDisabled();

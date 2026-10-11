@@ -19,6 +19,7 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { strToU8, unzipSync, zipSync } from 'fflate';
+import { openStudioAiPanel } from './studio-panel';
 
 const EMAIL = process.env.E2E_EMAIL || 'test@example.com';
 const PASSWORD = process.env.E2E_PASSWORD || 'password123';
@@ -159,7 +160,7 @@ test.describe('embedded editors: round trip and live conflict', () => {
       ]);
       const studioBundle = unzipSync(new Uint8Array(readFileSync(await exported.path())));
       expect(Buffer.from(studioBundle['ui/main.ui']).toString('utf8')).toContain('Save round-trip item');
-      await studioFrame.getByRole('button', { name: 'AI', exact: true }).click();
+      await openStudioAiPanel(studioFrame);
       await studioFrame.getByRole('textbox', { name: 'Message to AI' }).fill('Update the heading to Studio edited app, preserving all other files.');
       await studioFrame.getByRole('button', { name: 'Send message', exact: true }).click();
       await expect(studioFrame.getByText('Updated the heading.', { exact: true })).toBeVisible({ timeout: 60000 });

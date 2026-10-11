@@ -22,6 +22,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { strToU8, zipSync } from 'fflate';
+import { openStudioAiPanel } from './studio-panel';
 
 const EMAIL = process.env.E2E_EMAIL || 'test@example.com';
 const PASSWORD = process.env.E2E_PASSWORD || 'password123';
@@ -89,7 +90,7 @@ async function watchStudioBuild(page: Page, request: string, heading: string) {
   await expect(pasteNotice.or(finished).or(studio.getByRole('status').filter({ hasText: 'AI Studio is building your app' }))).toBeVisible({ timeout: 90000 });
   if (await pasteNotice.isVisible()) {
     await expect(studio.getByRole('button', { name: 'Save changes', exact: true })).toBeEnabled({ timeout: 90000 });
-    await frame.getByRole('button', { name: 'AI', exact: true }).click();
+    await openStudioAiPanel(frame);
     await frame.getByRole('textbox', { name: 'Message to AI' }).fill(request);
     await frame.getByRole('button', { name: 'Send message', exact: true }).click();
     await expect(frame.getByText(`Built ${heading}.`, { exact: true })).toBeVisible({ timeout: 60000 });
