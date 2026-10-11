@@ -44,7 +44,7 @@
     "libsodium-wrappers-sumo": "^0.8.4",
     "lucide-react": "^1.53.0",
     "monaco-editor": "^0.57.0",
-    "preact": "^10.29.7",
+    "preact": "^11.0.1",
     "qrcode.react": "^4.2.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
