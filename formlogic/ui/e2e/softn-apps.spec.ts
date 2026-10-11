@@ -67,6 +67,8 @@ function studioAgent(context: BrowserContext, appId: () => string, from: () => s
       await route.fulfill({ json: { data: { content: '', toolCalls: [{ id: 'call-finish', name: 'finish', arguments: { summary: `Built ${heading}.` } }], stopReason: 'tool_calls' } } });
       return;
     }
+    // Studio can ask before the test has read the new app's id from the address bar: wait for the id, do not ask for app "".
+    await expect.poll(appId, { timeout: 30000 }).not.toBe('');
     const current = (await nativeProject(context, appId()))!.files['ui/main.ui'];
     expect(current).toContain(from());
     await route.fulfill({ json: { data: { content: 'Writing the page.', toolCalls: [
