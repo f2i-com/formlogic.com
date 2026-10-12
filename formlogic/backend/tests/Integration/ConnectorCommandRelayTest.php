@@ -311,12 +311,14 @@ class ConnectorCommandRelayTest extends TestCase
         self::$appUsers->setConnectorGrants($this->roleId, [['permission' => 'connector.aokie.sms.send']], true);
 
         // A delegate (non-owner) may not grant connector capabilities.
+        $refused = null;
         try {
             self::$appUsers->setConnectorGrants($this->roleId, [['permission' => 'connector.aokie.call.answer']], false);
-            $this->fail('expected the owner-only guard to throw');
         } catch (\RuntimeException $e) {
-            $this->assertStringContainsString('owner', strtolower($e->getMessage()));
+            $refused = $e;
         }
+        $this->assertNotNull($refused, 'expected the owner-only guard to throw');
+        $this->assertStringContainsString('owner', strtolower($refused->getMessage()));
 
         // A normal role-editor save (built-ins only) must NOT wipe the connector grant.
         self::$appUsers->setRolePermissions($this->roleId, [['formId' => null, 'permission' => 'view_analytics']], true);

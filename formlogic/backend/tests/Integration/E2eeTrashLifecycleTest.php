@@ -166,12 +166,13 @@ class E2eeTrashLifecycleTest extends E2eeTestCase
 
         // Injected crypto-lifecycle failure mid-restore: the restore throws, the
         // claim is RELEASED, and the snapshot is NOT consumed.
+        $threw = false;
         try {
             $this->failingLifecycleTrash()->restore((string) $item['id'], $this->userId);
-            $this->fail('restore with a failing crypto lifecycle must throw');
         } catch (\Throwable) {
-            // expected — the lifecycle failure propagates
+            $threw = true; // expected — the lifecycle failure propagates
         }
+        $this->assertTrue($threw, 'restore with a failing crypto lifecycle must throw');
         $row = $this->row('SELECT status FROM trash_items WHERE id = ?', [$item['id']]);
         $this->assertNotNull($row, 'the item must not be consumed');
         $this->assertSame('trashed', $row['status'], 'the claim must be released for retry');

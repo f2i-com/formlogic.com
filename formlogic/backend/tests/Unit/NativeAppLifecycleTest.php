@@ -319,8 +319,10 @@ final class NativeAppLifecycleTest extends TestCase
         $this->assertFileExists($root . '/private/' . $journal['configBackup']);
         $this->assertFileExists($root . '/private/data/application.sqlite', 'the database was restored from the snapshot');
         foreach (['request' => fn() => $this->createNote($this->service, 'x'), 'records' => fn() => $this->service->records('notes'), 'install' => fn() => $this->service->install('notes', $this->project(), 1), 'backup' => fn() => $this->service->captureForBackup('notes', $this->storage . '/snap.sqlite'), 'dispatch' => fn() => $this->service->dispatchRecordEvents('notes', static fn() => null)] as $name => $operation) {
-            try { $operation(); $this->fail($name . ' ran while recovery was required'); }
-            catch (\RuntimeException $error) { $this->assertStringContainsString('recovery', $error->getMessage(), $name); }
+            $refused = null;
+            try { $operation(); } catch (\RuntimeException $error) { $refused = $error; }
+            $this->assertNotNull($refused, $name . ' ran while recovery was required');
+            $this->assertStringContainsString('recovery', $refused->getMessage(), $name);
         }
         $this->assertTrue($this->service->describe('notes')['recoveryRequired']);
         $this->assertTrue($this->service->describe('notes')['updateUnfinished']);
