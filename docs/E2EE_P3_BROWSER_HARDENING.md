@@ -23,7 +23,7 @@ Policy and what each allowance is for:
 | `font-src` | `'self' data: https://fonts.gstatic.com` | Webfonts. |
 | `img-src` | `'self' data: blob:` + PayPal hosts | Signature dataURLs, blob previews, PayPal button assets. |
 | `media-src` | `'self' data: blob:` | Form media fields. |
-| `connect-src` | `'self' wss: https://www.paypal.com` | API is same-origin; wss for realtime; no third-party telemetry exists to allow. |
+| `connect-src` | `'self' wss: http://127.0.0.1:17872 http://127.0.0.1:17972 https://esm.sh https://www.paypal.com https://cloudflareinsights.com` | API is same-origin; wss for realtime; the desktop's loopback bridges; esm.sh for the npm imports fetched while a custom screen compiles (the screen's own sandbox keeps `connect-src 'none'`); PayPal; the Cloudflare beacon. |
 | `worker-src` | `'self' blob:` | Module workers: formlogic eval worker + the E2EE crypto worker. |
 | `frame-src` | `'self' https://www.paypal.com https://*.paypal.com` | Sandboxed custom-screen iframes load the same-origin `/screen-host.html` — deliberately not `srcdoc`, because a `srcdoc` document inherits this shell policy and its `script-src` blocks the screen's inline bootstrap; the recovery kit's temporary print frame (see below); PayPal button iframes. |
 | `object-src` | `'none'` | No plugins. |

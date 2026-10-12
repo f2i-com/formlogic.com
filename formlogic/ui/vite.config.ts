@@ -54,7 +54,13 @@ function buildAppShellCsp(apiUrl: string | undefined): string {
     //
     // The bridges still enforce pairing-token auth (LOCAL-SEC-001); this only
     // lets the browser ask.
-    `connect-src 'self' wss:${apiOrigin} ${DESKTOP_LOOPBACK_ORIGINS.join(' ')} https://www.paypal.com https://cloudflareinsights.com`,
+    //
+    // https://esm.sh: a custom screen's npm imports are fetched by THIS page while
+    // the screen compiles (ESM_ORIGIN in src/lib/screenCompile.ts) and bundled into
+    // it; the sandboxed screen itself keeps connect-src 'none'. Without it every
+    // screen with an npm import failed to compile in a production build.
+    // check-security-invariants.mjs pins this origin here, and no wildcard.
+    `connect-src 'self' wss:${apiOrigin} ${DESKTOP_LOOPBACK_ORIGINS.join(' ')} https://esm.sh https://www.paypal.com https://cloudflareinsights.com`,
     // Per-app PWA manifests are served by the API (AppRuntimeRoot injects
     // <link rel="manifest"> to /api/app/{slug}/manifest.json), which is a
     // separate origin on split-host installs.

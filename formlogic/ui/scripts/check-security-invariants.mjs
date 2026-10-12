@@ -124,6 +124,30 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
   }
 }
 
+// ── The shell reaches exactly one npm origin: the screen compiler's ──────────
+// npm imports in a custom screen are fetched by the HOST page while the screen compiles
+// (screenCompile.ts), never by the sandbox, whose connect-src stays 'none' above. The shell's
+// meta policy must allow that one origin, or every screen with an npm import fails to compile
+// in a production build; and nothing broader, so the allowance is that origin and no other.
+{
+  const compiler = readFileSync(resolve(root, 'src/lib/screenCompile.ts'), 'utf8');
+  const origin = compiler.match(/const ESM_ORIGIN = '([^']+)';/)?.[1];
+  const config = readFileSync(resolve(root, 'vite.config.ts'), 'utf8');
+  const line = config.match(/`connect-src ([^`]*)`/)?.[1];
+  if (!origin) fail('could not find ESM_ORIGIN in src/lib/screenCompile.ts');
+  else if (!line) fail('could not find the app shell connect-src in vite.config.ts');
+  else {
+    // ${...} expressions add the API origin and the loopback list; neither is a wildcard.
+    const sources = line.replace(/\$\{[^}]*\}/g, ' ').split(/\s+/).filter(Boolean);
+    if (!sources.includes(origin)) fail(`the app shell connect-src (vite.config.ts) must allow the screen compiler's npm origin ${origin}`);
+    for (const source of sources) {
+      if (source === '*' || /^https?:$/.test(source) || /^https?:\/\/\*/.test(source)) {
+        fail(`the app shell connect-src (vite.config.ts) must not allow a wildcard source (${source})`);
+      }
+    }
+  }
+}
+
 if (process.exitCode) {
   console.error('\nSecurity invariants FAILED. See docs/CUSTOM_SCREEN_DASHBOARD_KIT.md (CSP rule) and docs/HOSTED_APPS.md (frame containment).');
 } else {
