@@ -98,8 +98,24 @@ def _same_value_zero(a, b):
     return a is b
 
 
+# What JavaScript's trim() removes, which is what prelude.js means by a blank or padded
+# string: its WhiteSpace and LineTerminator characters. Python's own str.strip() is another
+# set, and since ZIPP 0.0.23 it is CPython's: it keeps U+FEFF, which trim() removes, and
+# removes U+001C to U+001F and U+0085, which trim() keeps.
+# Written as code points: the served script profile carries this file as JSON, and holds
+# no carriage return in any spelling (oaiy/scriptProfile.test.ts).
+_JS_TRIMMED = "".join(chr(code) for code in (
+    0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20, 0xA0, 0x1680, *range(0x2000, 0x200B),
+    0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF,
+))
+
+
+def _js_trim(text):
+    return text.strip(_JS_TRIMMED)
+
+
 def _blank(value):
-    return value is None or (isinstance(value, str) and len(value.strip()) == 0)
+    return value is None or (isinstance(value, str) and len(_js_trim(value)) == 0)
 
 
 def _tiered_fee(assets, tiers):
@@ -165,7 +181,7 @@ class validators:
         if value is None:
             return False
         if isinstance(value, str):
-            return len(value.strip()) > 0
+            return len(_js_trim(value)) > 0
         length = _array_length(value)
         if length is not None:
             return length > 0
@@ -272,7 +288,7 @@ class compliance:
     def tfnValid(tfn=None):
         if not isinstance(tfn, str):
             return False
-        return _re.fullmatch(r"[0-9]{3}-?[0-9]{3}-?[0-9]{3}", tfn.strip()) is not None
+        return _re.fullmatch(r"[0-9]{3}-?[0-9]{3}-?[0-9]{3}", _js_trim(tfn)) is not None
 
 
 _US_CUSTODIAN_FEES = {"schwab": 50, "fidelity": 0, "vanguard": 100, "etrade": 75, "pershing": 75, "lpl": 75}
@@ -386,7 +402,7 @@ def is_empty(value=None):
     if value is None:
         return True
     if isinstance(value, str):
-        return len(value.strip()) == 0
+        return len(_js_trim(value)) == 0
     length = _array_length(value)
     if length is not None:
         return length == 0

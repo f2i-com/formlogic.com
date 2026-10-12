@@ -29,9 +29,14 @@ class McpOnSubmitGuideTextTest extends TestCase
         return (string) $m->invoke($controller);
     }
 
-    /** The guide's "## onSubmit script" section. */
+    /**
+     * The guide's "## onSubmit script" section, with Unix line ends: the guide is a
+     * nowdoc in McpController.php, which a checkout with core.autocrlf (a Windows
+     * clone) writes with CRLF, and the example script is matched line by line.
+     */
     public static function onSubmitSection(string $guide): string
     {
+        $guide = str_replace("\r\n", "\n", $guide);
         self::assertSame(1, preg_match('/^## onSubmit script.*?(?=^## )/ms', $guide, $m), 'the guide has an onSubmit section');
         return $m[0];
     }
