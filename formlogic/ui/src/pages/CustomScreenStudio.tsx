@@ -181,6 +181,11 @@ export default function CustomScreenStudio() {
   // model (a dashboard-kind section, consumesRelated on the record widget, trust metadata
   // stripped server-side anyway) survive a save instead of being clobbered.
   const storedRef = useRef<CustomScreen | null>(null);
+  // The trust each slot previews with. Opening a screen is not adopting it: an imported screen
+  // previews with the trust the server stored for it, so an untrusted one stays visual-only here
+  // as everywhere else. Only an edit made in this Studio makes it the owner's code, previewed with
+  // the trust its save produces (the server stamps 'owner' when an owner's save changes the screen).
+  const previewTrust = useRef<Record<Mode, CustomScreen['_trust']>>({ section: undefined, record: undefined });
   const aiAvailable = useAiAvailable();
   // Owner direction (screen-authoring centralisation): when the user's default chat AI
   // resolves, the site chat IS the AI surface for screens — it sees this Studio through
@@ -228,21 +233,19 @@ export default function CustomScreenStudio() {
       setFields((form.fields || []).map((f) => ({ id: f.id, label: f.label, type: f.type })));
       const cs = form.customScreen;
       storedRef.current = cs ?? null;
-      // The Studio is the OWNER editing their own screen: preview with the trust a save
-      // produces (the server stamps 'owner' on owner saves), so trusted-only SDK actions
-      // — record()/related() on the record widget — work in the preview too. The server
-      // stays authoritative for every actual data read.
+      // The record widget is part of the same stored screen and carries its trust.
+      previewTrust.current = { section: cs?._trust, record: cs?._trust };
       if (cs && (cs.html || cs.js || cs.ts || cs.files?.length)) {
         setMeta({ enabled: true, publicRecords: cs.publicRecords, publicRecordFields: cs.publicRecordFields, allowNewResponses: cs.allowNewResponses });
         setFiles(toFiles(cs));
-        setPreview({ ...cs, enabled: true, _trust: 'owner' });
+        setPreview({ ...cs, enabled: true });
       }
       const rs = cs?.recordScreen;
       if (rs && rs.kind === 'code') {
         const rf = toFiles(rs);
         if (rf.length) {
           setRecFiles(rf);
-          setRecPreview({ enabled: true, _trust: 'owner', files: rs.files, entry: rs.entry, html: rs.html, css: rs.css, js: rs.js });
+          setRecPreview({ enabled: true, _trust: cs?._trust, files: rs.files, entry: rs.entry, html: rs.html, css: rs.css, js: rs.js });
         }
         setRecMeta({ title: rs.title || '', height: Math.max(160, Math.min(1200, Number(rs.height) || 420)) });
       }
@@ -280,10 +283,11 @@ export default function CustomScreenStudio() {
     previewTimer.current = window.setTimeout(async () => {
       const r = await bundleScreenFiles(nextFiles);
       setCompileError(r.error || null);
+      const _trust = previewTrust.current[m];
       if (m === 'section') {
-        setPreview({ ...meta, enabled: true, _trust: 'owner', files: nextFiles, html: r.html, css: r.css, js: r.error ? '' : r.js });
+        setPreview({ ...meta, enabled: true, _trust, files: nextFiles, html: r.html, css: r.css, js: r.error ? '' : r.js });
       } else {
-        setRecPreview({ enabled: true, _trust: 'owner', files: nextFiles, html: r.html, css: r.css, js: r.error ? '' : r.js });
+        setRecPreview({ enabled: true, _trust, files: nextFiles, html: r.html, css: r.css, js: r.error ? '' : r.js });
       }
     }, 450);
   };
@@ -291,6 +295,7 @@ export default function CustomScreenStudio() {
   const onFilesChange = (nextFiles: ScreenFile[]) => {
     if (mode === 'section') setFiles(nextFiles); else setRecFiles(nextFiles);
     setDirty(true);
+    previewTrust.current[mode] = 'owner';
     rebuild(mode, nextFiles);
   };
 
@@ -298,6 +303,7 @@ export default function CustomScreenStudio() {
   const startWith = (next: ScreenFile[]) => {
     if (mode === 'section') setFiles(next); else setRecFiles(next);
     setDirty(true);
+    previewTrust.current[mode] = 'owner';
     rebuild(mode, next);
   };
 

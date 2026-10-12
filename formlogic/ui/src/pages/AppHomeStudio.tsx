@@ -214,7 +214,10 @@ export default function AppHomeStudio() {
     previewTimer.current = window.setTimeout(async () => {
       const r = await bundleScreenFiles(nextFiles);
       setCompileError(r.error || null);
-      setPreview({ enabled: true, files: nextFiles, html: r.html, css: r.css, js: r.error ? '' : r.js });
+      // Edited here, the code is the owner's: preview it with the trust a save produces (the
+      // server stamps 'owner' on owner saves), as the form Studio does, or records(), submit(),
+      // currentUser() and navigate() are refused in the preview.
+      setPreview({ enabled: true, _trust: 'owner', files: nextFiles, html: r.html, css: r.css, js: r.error ? '' : r.js });
     }, 450);
   };
 

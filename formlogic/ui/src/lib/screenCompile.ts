@@ -143,8 +143,12 @@ function screenVfsPlugin(map: Map<string, string>, vendors: Vendors): Plugin {
   // Per-build budgets so one screen can't quietly pull a huge dependency graph.
   let esmModules = 0;
   let esmBytes = 0;
-  const toEsm = (url: URL): { path: string; namespace: string } =>
-    /\.css$/i.test(url.pathname)
+  // Every route to the network ends here, so the origin is checked here: a specifier that starts
+  // with a slash ('//host/x', or '/host/x' after the bare-name prefix) parses as another host.
+  const toEsm = (url: URL): { path: string; namespace: string } | { errors: Array<{ text: string }> } =>
+    url.origin !== ESM_ORIGIN
+      ? { errors: [{ text: `Only ${ESM_ORIGIN} URL imports are allowed (got ${url.origin}).` }] }
+      : /\.css$/i.test(url.pathname)
       ? { path: '\0css-stub', namespace: 'css-stub' } // package css can't inject into the shell — no-op
       : (() => {
           const reactId = esmReactVendorId(url.pathname);
@@ -169,12 +173,7 @@ function screenVfsPlugin(map: Map<string, string>, vendors: Vendors): Plugin {
           if (args.path.startsWith('/')) return toEsm(new URL(args.path, ESM_ORIGIN));
           const id = vendors.resolveVendorId(args.path);
           if (id) return { path: id, namespace: 'vendor' };
-          if (/^https?:\/\//i.test(args.path)) {
-            const u = new URL(args.path);
-            return u.origin === ESM_ORIGIN
-              ? toEsm(u)
-              : { errors: [{ text: `Only ${ESM_ORIGIN} URL imports are allowed (got ${u.origin}).` }] };
-          }
+          if (/^https?:\/\//i.test(args.path)) return toEsm(new URL(args.path));
           return toEsm(new URL('/' + args.path, ESM_ORIGIN));
         }
         if (args.path.startsWith('.')) {
@@ -187,12 +186,7 @@ function screenVfsPlugin(map: Map<string, string>, vendors: Vendors): Plugin {
         const id = vendors.resolveVendorId(args.path);
         if (id) return { path: id, namespace: 'vendor' };
         // Full-URL imports: esm.sh only (anything else would be an uncontrolled code source).
-        if (/^https?:\/\//i.test(args.path)) {
-          const u = new URL(args.path);
-          return u.origin === ESM_ORIGIN
-            ? toEsm(u)
-            : { errors: [{ text: `Only ${ESM_ORIGIN} URL imports are allowed (got ${u.origin}).` }] };
-        }
+        if (/^https?:\/\//i.test(args.path)) return toEsm(new URL(args.path));
         // Any other bare specifier = an npm package, resolved via esm.sh at compile time.
         return toEsm(new URL('/' + args.path, ESM_ORIGIN));
       });
