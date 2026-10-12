@@ -215,15 +215,15 @@ describe('flushNativeQueue — idempotency-aware ack / fail / keep (task #10)', 
     expect(result).toEqual({ flushed: 0, failed: 1 });
   });
 
-  it('routes a whole-batch transport error to non-terminal sync.fail (never failTerminal)', async () => {
+  it('routes a whole-batch server error to non-terminal sync.fail (never failTerminal)', async () => {
     const items = [item('i1', 'k1', { a: 1 }), item('i2', 'k2', { a: 2 })];
     const bridge = makeBridge(items);
     setBridge(bridge);
-    vi.mocked(api.syncBatch).mockResolvedValueOnce({ error: 'Network error' });
+    vi.mocked(api.syncBatch).mockResolvedValueOnce({ error: 'Server error (502)', status: 502 });
 
     const result = await flushNativeQueue();
 
-    expect(bridge.sync.fail).toHaveBeenCalledWith(['i1', 'i2'], 'Network error');
+    expect(bridge.sync.fail).toHaveBeenCalledWith(['i1', 'i2'], 'Server error (502)');
     expect(bridge.sync.failTerminal).not.toHaveBeenCalled();
     expect(bridge.sync.ack).not.toHaveBeenCalled();
     expect(result).toEqual({ flushed: 0, failed: 2 });

@@ -37,7 +37,7 @@ export interface QueuedSubmission {
 }
 
 /** The classified outcome of a single delivery attempt (see classifyDeliveryResult). */
-export type DeliveryOutcome = 'delivered' | 'processing' | 'retry' | 'terminal';
+export type DeliveryOutcome = 'delivered' | 'processing' | 'retry' | 'unreachable' | 'terminal';
 
 export interface DeliveryClassification {
   outcome: DeliveryOutcome;
@@ -54,6 +54,17 @@ export interface DeliveryResultInput {
   processing?: boolean;
   /** 200: an idempotent replay of an already-completed submission (ok is also true). */
   idempotent?: boolean;
+  /** The HTTP status; 0 when no response arrived at all (the api layer's network failure). */
+  status?: number;
+}
+
+/**
+ * Statuses that say only that the server was not reached, or asked to be tried later: no
+ * response at all (0), 408 Request Timeout and 429 Too Many Requests. Nothing about the
+ * submission was judged, so a delivery that ends this way uses up none of its attempts.
+ */
+export function isUnreachableStatus(status: number | undefined): boolean {
+  return status === 0 || status === 408 || status === 429;
 }
 
 /**
@@ -63,6 +74,7 @@ export interface DeliveryResultInput {
  *   - success / idempotent replay           → 'delivered'  (remove from the queue),
  *   - server says "already being processed"  → 'processing' (keep pending; do NOT remove or fail),
  *   - server says "different submission"     → 'terminal'   (mark failed; never retry — surface it),
+ *   - server not reached (0 / 408 / 429)     → 'unreachable' (keep pending; attempts unchanged),
  *   - any other error                        → 'retry'      (keep pending; bump attempts).
  */
 export function classifyDeliveryResult(result: DeliveryResultInput): DeliveryClassification {
@@ -77,6 +89,9 @@ export function classifyDeliveryResult(result: DeliveryResultInput): DeliveryCla
       outcome: 'terminal',
       error: message || 'This idempotency key was already used with a different submission.',
     };
+  }
+  if (isUnreachableStatus(result.status)) {
+    return { outcome: 'unreachable', error: message || 'The server could not be reached.' };
   }
   return { outcome: 'retry', error: message || 'Delivery failed' };
 }
@@ -206,9 +221,10 @@ const MAX_ATTEMPTS = 8;
 
 /**
  * Flush every retryable item (oldest first). Terminal ('failed') items are skipped — never retried.
- * Outcomes: delivered → removed; processing → kept pending (no attempt bump); conflict → marked
- * terminal 'failed' + surfaced; any other error → kept pending with an incremented attempt count +
- * lastError so a later flush retries it.
+ * Outcomes: delivered → removed; processing → kept pending (attempt bumped, capped); conflict →
+ * marked terminal 'failed' + surfaced; server not reached → kept pending with its attempts
+ * unchanged, and the pass ends; any other error → kept pending with an incremented attempt count
+ * + lastError so a later flush retries it.
  *
  * The returned `failed` counts items that turned NEWLY TERMINAL during this flush (audit FL-25) —
  * an item kept 'pending' for a later retry is not reported as failed.
@@ -239,6 +255,14 @@ export async function flushQueue(): Promise<{ flushed: number; failed: number }>
         classification = { outcome: 'retry', error: e instanceof Error ? e.message : String(e) };
       }
       const { outcome, error } = classification;
+      if (outcome === 'unreachable') {
+        // Not reached, so not judged: back to pending with its attempts untouched, however long
+        // the outage lasts. The rest of the queue would meet the same outage, so this pass ends
+        // here; the next reconnect or "Sync now" tries again (nothing retries on a timer).
+        await run('readwrite', (s) => s.put({ ...item, status: 'pending', lastError: error } as QueuedSubmission));
+        notify();
+        break;
+      }
       if (outcome === 'delivered') {
         await run('readwrite', (s) => s.delete(item.id));
         flushed++;

@@ -5,14 +5,15 @@
 //   flush()   -> returns pending items grouped by appSlug (read-only: nothing removed, attempts untouched)
 //   POST       /api/app/{slug}/sync/batch { items: [{ idempotencyKey, formId, answers }] }
 //   ack(ids)  -> remove the items the server accepted
-//   fail(ids) -> record a RETRYABLE failure (burns one attempt; terminal at the native attempt cap)
+//   fail(ids) -> record a RETRYABLE failure (burns one attempt; terminal at the native attempt cap).
+//                Not called when the batch never reached the server (no status, 408, 429).
 //   failTerminal(ids) -> mark 'failed' immediately (a conflict can never succeed on retry);
 //                        feature-detected, falls back to fail() on older runtimes
 //
 // flushAllQueues() runs the browser queue AND the native queue so a single "Sync now" (and the
 // reconnect auto-flush) drains everything.
 import { api } from '../lib/api';
-import { flushBrowserQueue } from './offlineQueue';
+import { flushBrowserQueue, isUnreachableStatus } from './offlineQueue';
 import type { FormLogicNativeBridge, NativeSyncFlushGroup, NativeSyncQueueItem } from './connectors/connectorTypes';
 
 /** The native bridge, only when present AND its sync surface is available. */
@@ -105,6 +106,14 @@ export async function flushNativeQueue(): Promise<{ flushed: number; failed: num
     if (payload.length === 0) continue;
 
     const res = await api.syncBatch(slug, payload);
+    if ((res.error || !res.data) && (res.status === undefined || isUnreachableStatus(res.status))) {
+      // The server was not reached (the api layer gives no status then), or asked to be tried
+      // later (408/429): nothing was judged, so nothing is failed — sync.fail would use up one of
+      // the runtime's attempts, and an outage would turn queued submissions into failed ones.
+      // The items stay queued as they are, and the other groups would meet the same outage, so
+      // this flush ends here; the next reconnect or "Sync now" tries again.
+      break;
+    }
     if (res.error || !res.data) {
       // Whole-batch transport failure — keep every delivered item (retryable) with the error recorded.
       const err = typeof res.error === 'string' ? res.error : 'Sync failed';

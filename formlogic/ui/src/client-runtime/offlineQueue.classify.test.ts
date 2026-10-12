@@ -46,9 +46,26 @@ describe('classifyDeliveryResult', () => {
   });
 
   it('generic error → retry (attempts++), preserving the message', () => {
-    const c = classifyDeliveryResult({ ok: false, error: 'Network error' });
+    const c = classifyDeliveryResult({ ok: false, status: 500, error: 'Server error (500)' });
     expect(c.outcome).toBe('retry');
-    expect(c.error).toBe('Network error');
+    expect(c.error).toBe('Server error (500)');
+  });
+
+  // The server was not reached, or asked to be tried later: nothing about the submission was
+  // judged, so it must not use up one of its attempts.
+  it('network failure (status 0) → unreachable, preserving the message', () => {
+    const c = classifyDeliveryResult({ ok: false, status: 0, error: 'Failed to fetch' });
+    expect(c.outcome).toBe('unreachable');
+    expect(c.error).toBe('Failed to fetch');
+  });
+
+  it('408 and 429 → unreachable', () => {
+    expect(classifyDeliveryResult({ ok: false, status: 408, error: 'Request Timeout' }).outcome).toBe('unreachable');
+    expect(classifyDeliveryResult({ ok: false, status: 429, error: 'Too many requests' }).outcome).toBe('unreachable');
+  });
+
+  it('a validation refusal still counts as an attempt', () => {
+    expect(classifyDeliveryResult({ ok: false, status: 422, error: 'Validation failed' }).outcome).toBe('retry');
   });
 
   it('unknown failure with no message → retry with a non-empty default error', () => {

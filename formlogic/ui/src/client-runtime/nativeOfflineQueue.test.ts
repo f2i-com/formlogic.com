@@ -78,16 +78,52 @@ describe('flushNativeQueue', () => {
     expect(result).toEqual({ flushed: 1, failed: 1 });
   });
 
-  it('keeps every item (fail, retryable) when the whole batch POST fails', async () => {
+  it('keeps every item (fail, retryable) when the server refuses the whole batch', async () => {
     const bridge = makeBridge();
     setBridge(bridge);
-    vi.mocked(api.syncBatch).mockResolvedValueOnce({ error: 'Network error' });
+    vi.mocked(api.syncBatch).mockResolvedValueOnce({ error: 'Server error (500)', status: 500 });
 
     const result = await flushNativeQueue();
 
     expect(bridge.sync.ack).not.toHaveBeenCalled();
-    expect(bridge.sync.fail).toHaveBeenCalledWith(['i1', 'i2'], 'Network error');
+    expect(bridge.sync.fail).toHaveBeenCalledWith(['i1', 'i2'], 'Server error (500)');
     expect(result).toEqual({ flushed: 0, failed: 2 });
+  });
+
+  // The server was not reached (the api layer gives no status), or asked to be tried later: nothing
+  // was judged, so sync.fail, which uses up one of the runtime's attempts, is not called. The items
+  // stay queued exactly as they were; the native flush() never changes attempts on its own.
+  it.each([
+    ['no response at all', { error: 'Failed to fetch' }],
+    ['408 Request Timeout', { error: 'Request Timeout', status: 408 }],
+    ['429 Too Many Requests', { error: 'Too many requests', status: 429 }],
+  ])('leaves every item queued, with no attempt used, when the batch meets %s', async (_name, response) => {
+    const bridge = makeBridge();
+    setBridge(bridge);
+    vi.mocked(api.syncBatch).mockResolvedValueOnce(response);
+
+    const result = await flushNativeQueue();
+
+    expect(bridge.sync.ack).not.toHaveBeenCalled();
+    expect(bridge.sync.fail).not.toHaveBeenCalled();
+    expect(result).toEqual({ flushed: 0, failed: 0 });
+  });
+
+  it('stops after the first batch that cannot reach the server', async () => {
+    const bridge = makeBridge();
+    bridge.sync.flush.mockResolvedValueOnce({
+      pending: [
+        { appSlug: 'one', items: [item('i1', 'k1', { a: 1 })] },
+        { appSlug: 'two', items: [item('i2', 'k2', { a: 2 })] },
+      ],
+    });
+    setBridge(bridge);
+    vi.mocked(api.syncBatch).mockResolvedValue({ error: 'Failed to fetch' });
+
+    await flushNativeQueue();
+
+    expect(api.syncBatch).toHaveBeenCalledTimes(1);
+    expect(bridge.sync.fail).not.toHaveBeenCalled();
   });
 
   it('is a no-op when there is no native bridge', async () => {
