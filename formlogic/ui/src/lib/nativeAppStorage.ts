@@ -11,6 +11,9 @@ const LIMIT = 256 * 1024;
 const KEY_LIMIT = 256;
 const VALUE_LIMIT = 30000;
 const ENTRY_LIMIT = 200;
+// This is the action INPUT limit used by the private hosted-runtime port,
+// measured in UTF-16 code units after JSON escaping, like the existing map.
+const INPUT_LIMIT = 32768;
 
 export type NativeStorageFailure = 'unavailable' | 'too-large' | 'corrupt' | 'invalid' | 'limit';
 
@@ -55,10 +58,34 @@ export function nativeAppStorage(slug: string) {
     return parse(rawValue());
   }
   function mutate(input: Record<string, unknown>) {
+    let serialized: string | undefined;
+    try { serialized = JSON.stringify(input); } catch { /* Invalid structured-clone input. */ }
+    if (!input || typeof input !== 'object' || Array.isArray(input) || serialized === undefined || serialized.length > INPUT_LIMIT) {
+      throw new NativeStorageError('Invalid storage input.', 'invalid');
+    }
+    const replacement = (value: unknown): { key: string; value: string } => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new NativeStorageError('Invalid storage replacement.', 'invalid');
+      const item = value as Record<string, unknown>;
+      if (typeof item.key !== 'string' || item.key.length > KEY_LIMIT || typeof item.value !== 'string' || item.value.length > VALUE_LIMIT) {
+        throw new NativeStorageError('Invalid storage replacement.', 'invalid');
+      }
+      return { key: item.key, value: item.value };
+    };
+    // Validate the whole batch before reading/changing the candidate map. No
+    // prefix can be saved when a later replacement is invalid or over quota.
+    let replacements: { key: string; value: string }[] | undefined;
+    if (input.operation === 'batch') {
+      if (!Array.isArray(input.replacements) || input.replacements.length > ENTRY_LIMIT) throw new NativeStorageError('Invalid storage replacements.', 'invalid');
+      replacements = input.replacements.map(replacement);
+      if (new Set(replacements.map(item => item.key)).size !== replacements.length) throw new NativeStorageError('Duplicate storage replacement.', 'invalid');
+    }
     // Refused before any change when the stored map is not whole: the
     // original bytes are the owner's to export or reset, not ours to rewrite.
     const entries = new Map(Object.entries(read()));
     if (input.operation === 'clear') entries.clear();
+    else if (replacements) {
+      for (const item of replacements) entries.set(item.key, item.value);
+    }
     else {
       if (typeof input.key !== 'string' || input.key.length > KEY_LIMIT) throw new NativeStorageError('Invalid storage key.', 'invalid');
       if (input.operation === 'remove') entries.delete(input.key);

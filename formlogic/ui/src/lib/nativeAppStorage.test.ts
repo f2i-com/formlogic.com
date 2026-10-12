@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NativeStorageError, nativeAppStorage } from './nativeAppStorage';
 
 const storageKey = (slug: string) => `formlogic:native-storage:${encodeURIComponent(slug)}`;
@@ -91,5 +91,115 @@ describe('recovery', () => {
       expect(nativeAppStorage('alpha').status()).toMatchObject({ state: 'unavailable' });
       expect(() => nativeAppStorage('alpha').read()).toThrow(/not available/);
     } finally { Storage.prototype.getItem = original; }
+  });
+});
+
+describe('acknowledged replacement batches', () => {
+  it('preflights every replacement and saves one candidate map exactly once', () => {
+    const alpha = nativeAppStorage('alpha');
+    alpha.mutate({ operation: 'set', key: 'kept', value: 'original' });
+    const write = vi.spyOn(Storage.prototype, 'setItem');
+    try {
+      expect(alpha.mutate({ operation: 'batch', replacements: [{ key: 'session', value: 'fictional' }, { key: 'looks', value: '[1,2,3]' }] })).toEqual({ saved: true });
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(alpha.read()).toEqual({ kept: 'original', session: 'fictional', looks: '[1,2,3]' });
+    } finally { write.mockRestore(); }
+  });
+  it.each([
+    [{ key: 'new', value: 'valid' }, { key: 'bad', value: 7 }],
+    [{ key: 'new', value: 'valid' }, { key: 'x'.repeat(257), value: 'bad' }],
+    [{ key: 'new', value: 'valid' }, { key: 'bad', value: 'x'.repeat(30001) }],
+    [{ key: 'new', value: 'first' }, { key: 'new', value: 'duplicate' }],
+    [{ key: 'new', value: 'valid' }, null],
+  ].map(replacements => ({ replacements })))('refuses an invalid later replacement without saving the valid prefix: %j', ({ replacements }) => {
+    const alpha = nativeAppStorage('alpha');
+    alpha.mutate({ operation: 'set', key: 'kept', value: 'original' });
+    const raw = alpha.exportRaw();
+    const write = vi.spyOn(Storage.prototype, 'setItem');
+    try {
+      expect(() => alpha.mutate({ operation: 'batch', replacements })).toThrow(NativeStorageError);
+      expect(write).not.toHaveBeenCalled();
+      expect(alpha.exportRaw()).toBe(raw);
+    } finally { write.mockRestore(); }
+  });
+  it('admits the exact full-input UTF-16 boundary, including metadata, and refuses one unit above', () => {
+    const alpha = nativeAppStorage('alpha');
+    const input = { operation: 'batch', replacements: [{ key: 'note', value: 'kept' }], padding: '' };
+    input.padding = 'x'.repeat(32768 - JSON.stringify(input).length);
+    expect(JSON.stringify(input).length).toBe(32768);
+    expect(alpha.mutate(input)).toEqual({ saved: true });
+    const raw = alpha.exportRaw();
+    expect(() => alpha.mutate({ ...input, padding: `${input.padding}x` })).toThrow(/input/);
+    expect(alpha.exportRaw()).toBe(raw);
+  });
+  it('rejects escape-heavy input before any writes, but keeps raw reads that fit the stored-map limit', () => {
+    const alpha = nativeAppStorage('alpha');
+    localStorage.setItem(storageKey('alpha'), JSON.stringify({ existing: '\n'.repeat(17000) }));
+    const raw = alpha.exportRaw();
+    expect(alpha.read().existing).toHaveLength(17000);
+    const write = vi.spyOn(Storage.prototype, 'setItem');
+    try {
+      expect(() => alpha.mutate({ operation: 'set', key: 'new', value: '\n'.repeat(17000) })).toThrow(/input/);
+      expect(() => alpha.mutate({ operation: 'batch', replacements: [{ key: 'new', value: '\n'.repeat(17000) }] })).toThrow(/input/);
+      expect(write).not.toHaveBeenCalled();
+      expect(alpha.exportRaw()).toBe(raw);
+    } finally { write.mockRestore(); }
+  });
+  it('preserves existing key/value limits as UTF-16 units, including non-BMP characters', () => {
+    const alpha = nativeAppStorage('alpha');
+    const key = '😀'.repeat(128);
+    const value = '😀'.repeat(15000);
+    expect(alpha.mutate({ operation: 'batch', replacements: [{ key, value }] })).toEqual({ saved: true });
+    expect(alpha.read()[key]).toBe(value);
+    expect(() => alpha.mutate({ operation: 'batch', replacements: [{ key: `${key}x`, value: '' }] })).toThrow();
+    expect(() => alpha.mutate({ operation: 'batch', replacements: [{ key: 'bad', value: `${value}x` }] })).toThrow();
+  });
+  it('refuses aggregate map and entry quotas without changing the original map', () => {
+    const alpha = nativeAppStorage('alpha');
+    const map = Object.fromEntries(Array.from({ length: 8 }, (_, index) => [`k${index}`, 'x'.repeat(30000)]));
+    localStorage.setItem(storageKey('alpha'), JSON.stringify(map));
+    const raw = alpha.exportRaw();
+    expect(() => alpha.mutate({ operation: 'batch', replacements: [{ key: 'overflow', value: 'x'.repeat(25000) }] })).toThrow(/limit/);
+    expect(alpha.exportRaw()).toBe(raw);
+    const full = Object.fromEntries(Array.from({ length: 200 }, (_, index) => [`k${index}`, 'kept']));
+    localStorage.setItem(storageKey('alpha'), JSON.stringify(full));
+    expect(() => alpha.mutate({ operation: 'batch', replacements: [{ key: 'overflow', value: 'x' }] })).toThrow(/limit/);
+    expect(alpha.read()).toEqual(full);
+    expect(() => alpha.mutate({ operation: 'batch', replacements: Array.from({ length: 201 }, (_, index) => ({ key: `k${index}`, value: '' })) })).toThrow();
+    expect(alpha.read()).toEqual(full);
+  });
+  it('returns no saved acknowledgment on quota failure and keeps corrupt bytes exportable', () => {
+    const alpha = nativeAppStorage('alpha');
+    alpha.mutate({ operation: 'set', key: 'kept', value: 'original' });
+    const raw = alpha.exportRaw();
+    const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Synthetic quota failure'); });
+    try {
+      expect(() => alpha.mutate({ operation: 'batch', replacements: [{ key: 'a', value: 'new' }, { key: 'b', value: 'new' }] })).toThrow(/quota/);
+      expect(alpha.exportRaw()).toBe(raw);
+    } finally { write.mockRestore(); }
+    localStorage.setItem(storageKey('alpha'), '{original damaged bytes');
+    expect(() => alpha.mutate({ operation: 'batch', replacements: [{ key: 'a', value: 'new' }] })).toThrow(NativeStorageError);
+    expect(alpha.exportRaw()).toBe('{original damaged bytes');
+  });
+  it('keeps batches, clear and reset confined to the selected app, including prototype-like keys', () => {
+    const alpha = nativeAppStorage('alpha');
+    nativeAppStorage('beta').mutate({ operation: 'set', key: 'session', value: 'other' });
+    alpha.mutate({ operation: 'batch', replacements: [{ key: '__proto__', value: 'literal' }, { key: 'constructor', value: 'literal' }], slug: 'beta', actor: 'ignored' });
+    expect(Object.entries(alpha.read())).toEqual([['__proto__', 'literal'], ['constructor', 'literal']]);
+    alpha.mutate({ operation: 'clear' });
+    alpha.reset();
+    expect(nativeAppStorage('beta').read()).toEqual({ session: 'other' });
+  });
+  it('rejects malformed/cyclic input without storage mutation', () => {
+    const alpha = nativeAppStorage('alpha');
+    const cyclic: Record<string, unknown> = { operation: 'clear' };
+    cyclic.self = cyclic;
+    const write = vi.spyOn(Storage.prototype, 'setItem');
+    try {
+      expect(() => alpha.mutate(cyclic)).toThrow(/input/);
+      expect(() => alpha.mutate({ operation: 'batch', replacements: {} })).toThrow();
+      expect(() => alpha.mutate({ operation: 'batch', replacements: [1] })).toThrow();
+      expect(write).not.toHaveBeenCalled();
+    } finally { write.mockRestore(); }
   });
 });
