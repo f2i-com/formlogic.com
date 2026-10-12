@@ -82,4 +82,21 @@ final class RateLimitMiddlewareTest extends TestCase
         $this->assertSame(429, $this->answer($limit, null, '203.0.113.10'));
         $this->assertSame(['native_records:' . hash('sha256', '203.0.113.10'), 'native_records:' . hash('sha256', '203.0.113.20')], array_keys($this->hits));
     }
+
+    /**
+     * One IPv6 subscriber is normally handed a whole /64 and can use any address in it, so keying
+     * by the full address gave each client 2^64 budgets. Addresses are keyed by their /64; an
+     * IPv4 address mapped into IPv6 is its IPv4 address.
+     */
+    public function testAnIpv6ClientIsKeyedByItsSlash64(): void
+    {
+        $limit = $this->middleware(1);
+        $this->assertSame(200, $this->answer($limit, null, '2001:db8:1:2::10'));
+        $this->assertSame(429, $this->answer($limit, null, '2001:db8:1:2:ffff:ffff:ffff:1'), 'another address in the same /64 is not a new budget');
+        $this->assertSame(200, $this->answer($limit, null, '2001:db8:1:3::10'), 'the next /64 is another client');
+        $this->assertSame(429, $this->answer($limit, null, '[2001:db8:1:2::99]:443'), 'bracketed with a port, the same /64');
+
+        $this->assertSame(200, $this->answer($limit, null, '::ffff:198.51.100.7'));
+        $this->assertSame(429, $this->answer($limit, null, '198.51.100.7'), 'an IPv4-mapped address is its IPv4 address');
+    }
 }

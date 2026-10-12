@@ -61,4 +61,30 @@ class AppDomainServiceTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         $this->svc->assertValidPublicDomain('192.168.0.1');
     }
+
+    /**
+     * The TLS probe connects to the address its safety check approved, with the domain kept as the
+     * certificate and SNI name, so a second lookup (the one a rebinding name answers) never
+     * happens. Literal addresses here, so no DNS is needed and nothing is connected.
+     */
+    public function testTheTlsProbeConnectsToTheApprovedAddress(): void
+    {
+        $spy = new class extends AppDomainService {
+            /** @var list<string> */
+            public array $targets = [];
+            public function __construct()
+            {
+            }
+            protected function openTls(string $target, $context)
+            {
+                $this->targets[] = $target . ' as ' . stream_context_get_options($context)['ssl']['peer_name'];
+                return false;
+            }
+        };
+        $probe = new \ReflectionMethod(AppDomainService::class, 'probeTls');
+        $this->assertSame('pending', $probe->invoke($spy, '8.8.8.8'));
+        $this->assertSame('pending', $probe->invoke($spy, '2001:4860:4860::8888'));
+        $this->assertSame('external', $probe->invoke($spy, '10.0.0.5'));
+        $this->assertSame(['ssl://8.8.8.8:443 as 8.8.8.8', 'ssl://[2001:4860:4860::8888]:443 as 2001:4860:4860::8888'], $spy->targets);
+    }
 }

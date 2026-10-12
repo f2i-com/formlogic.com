@@ -147,12 +147,13 @@ class RateLimitMiddleware implements MiddlewareInterface
             if (is_string($userId) && $userId !== '') {
                 $user = $request->getAttribute('user');
                 if (in_array(strtoupper($request->getMethod()), ['GET', 'HEAD', 'OPTIONS'], true) && is_object($user) && isset($user->email) && $user->email === ($_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local')) {
-                    return $this->keyPrefix . ':u:' . hash('sha256', $userId) . ':' . hash('sha256', $this->ipResolver->getClientIp($request));
+                    return $this->keyPrefix . ':u:' . hash('sha256', $userId) . ':' . hash('sha256', IpResolver::rateLimitSubject($this->ipResolver->getClientIp($request)));
                 }
                 return $this->keyPrefix . ':u:' . hash('sha256', $userId);
             }
         }
-        $ip = $this->ipResolver->getClientIp($request);
+        // An IPv6 client is counted by its /64 (IpResolver::rateLimitSubject).
+        $ip = IpResolver::rateLimitSubject($this->ipResolver->getClientIp($request));
         return $this->keyPrefix . ':' . hash('sha256', $ip);
     }
 }

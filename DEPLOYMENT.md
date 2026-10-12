@@ -63,6 +63,10 @@ Work top to bottom before exposing the app publicly. Most of these live in
 - [ ] `CORS_ORIGIN` = your exact production frontend origin
 - [ ] `CORS_ALLOWED_ORIGINS` contains only real origins (no leftover `localhost`/staging)
 - [ ] `TRUSTED_PROXIES` set if behind a reverse proxy/load balancer (for correct client IPs)
+- [ ] `TRUSTED_PROXY_HEADER` set with it, to the one header the proxy writes the client address into
+      (`x-forwarded-for`, `x-real-ip` or `client-ip`). Clients can send any of these and a proxy passes
+      on the ones it does not set, so unset (the order X-Forwarded-For, X-Real-IP, Client-IP), a client
+      behind a proxy that sets only X-Real-IP can choose its own address for the rate limits
 - [ ] Request-size layers are aligned: ordinary API JSON is capped at 2 MiB by the app; with
       the default 200 MiB backup setting, use a 220 MiB proxy/PHP request ceiling
       (`client_max_body_size 220m`, `post_max_size=220M`, `upload_max_filesize=200M`). Do not

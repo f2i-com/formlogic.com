@@ -315,7 +315,7 @@ class AuthService
     private function getRateLimitKey(string $email, ?string $ipAddress): string
     {
         // Use both email and IP to prevent both per-account and per-IP attacks
-        return hash('sha256', strtolower($email) . '|' . ($ipAddress ?? 'unknown'));
+        return hash('sha256', strtolower($email) . '|' . ($ipAddress !== null ? \FormLogic\Helpers\IpResolver::rateLimitSubject($ipAddress) : 'unknown'));
     }
 
     /**

@@ -47,9 +47,33 @@ class IpResolver
         'fc00::/7',
     ];
 
-    public function __construct(array $trustedProxies = [])
+    /** The headers TRUSTED_PROXY_HEADER may name, as server-param keys. */
+    private const HEADER_NAMES = [
+        'x-forwarded-for' => 'HTTP_X_FORWARDED_FOR',
+        'x-real-ip' => 'HTTP_X_REAL_IP',
+        'client-ip' => 'HTTP_CLIENT_IP',
+    ];
+
+    /** @var list<string> the forwarding headers read from a trusted proxy, in order */
+    private array $forwardedHeaders;
+
+    /**
+     * @param ?string $forwardedHeader the one header the trusted proxies write (x-forwarded-for,
+     *   x-real-ip or client-ip; case-insensitive). A client can send every one of them and a
+     *   proxy passes on those it does not set, so naming it means the others are never read: a
+     *   proxy that sets only X-Real-IP would otherwise hand on a client's own X-Forwarded-For,
+     *   which is read first. Null keeps the order X-Forwarded-For, X-Real-IP, Client-IP. A name
+     *   outside those three trusts no header.
+     */
+    public function __construct(array $trustedProxies = [], ?string $forwardedHeader = null)
     {
         $this->trustedProxies = $trustedProxies;
+        if ($forwardedHeader === null || trim($forwardedHeader) === '') {
+            $this->forwardedHeaders = self::FORWARDED_HEADERS;
+        } else {
+            $key = self::HEADER_NAMES[strtolower(trim($forwardedHeader))] ?? null;
+            $this->forwardedHeaders = $key !== null ? [$key] : [];
+        }
     }
 
     /**
@@ -67,8 +91,30 @@ class IpResolver
             $trustedProxies = array_map('trim', explode(',', $envValue));
             $trustedProxies = array_filter($trustedProxies);
         }
+        $header = getenv('TRUSTED_PROXY_HEADER') ?: ($_ENV['TRUSTED_PROXY_HEADER'] ?? null);
 
-        return new self($trustedProxies);
+        return new self($trustedProxies, is_string($header) ? $header : null);
+    }
+
+    /**
+     * What a rate limit counts an address as: an IPv4 address itself; an IPv6 address by its /64,
+     * since one subscriber is normally handed a whole /64 and may use any address in it (keyed by
+     * the full address, each client had 2^64 budgets); an IPv4 address mapped into IPv6 as that
+     * IPv4 address. Anything that is not an address is returned unchanged.
+     */
+    public static function rateLimitSubject(string $ip): string
+    {
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) === false) {
+            return $ip;
+        }
+        $bytes = inet_pton($ip);
+        if ($bytes === false || strlen($bytes) !== 16) {
+            return $ip;
+        }
+        if (substr($bytes, 0, 12) === str_repeat("\0", 10) . "\xff\xff") {
+            return (string) inet_ntop(substr($bytes, 12));
+        }
+        return inet_ntop(substr($bytes, 0, 8) . str_repeat("\0", 8)) . '/64';
     }
 
     /**
@@ -94,7 +140,7 @@ class IpResolver
         }
 
         // Connection is from a trusted proxy, check forwarded headers
-        foreach (self::FORWARDED_HEADERS as $header) {
+        foreach ($this->forwardedHeaders as $header) {
             if (!empty($serverParams[$header])) {
                 $ip = $this->extractIpFromForwardedHeader($serverParams[$header]);
                 if ($ip !== null) {

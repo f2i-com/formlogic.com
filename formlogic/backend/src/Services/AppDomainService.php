@@ -454,30 +454,39 @@ class AppDomainService
     private function probeTls(string $domain): string
     {
         $err = null;
-        if (!IpSafety::resolvesToPublicHost($domain, $err)) {
+        $approvedIp = null;
+        if (!IpSafety::resolvesToPublicHost($domain, $err, $approvedIp) || !is_string($approvedIp)) {
             return 'external';
         }
+        // Connect to the address the check approved, not to the name: a second lookup is the one
+        // a rebinding name would answer with an internal address. The certificate and SNI are
+        // still the domain's (peer_name).
         $ctx = stream_context_create(['ssl' => [
             'verify_peer' => true,
             'verify_peer_name' => true,
             'SNI_enabled' => true,
             'peer_name' => $domain,
         ]]);
-        $errno = 0;
-        $errstr = '';
-        $client = @stream_socket_client(
-            'ssl://' . $domain . ':443',
-            $errno,
-            $errstr,
-            5,
-            STREAM_CLIENT_CONNECT,
-            $ctx
-        );
+        $host = str_contains($approvedIp, ':') ? '[' . $approvedIp . ']' : $approvedIp;
+        $client = $this->openTls('ssl://' . $host . ':443', $ctx);
         if ($client === false) {
             return 'pending';
         }
         fclose($client);
         return 'active';
+    }
+
+    /**
+     * The TLS connection behind probeTls (a seam a test can observe).
+     *
+     * @param resource $context
+     * @return resource|false
+     */
+    protected function openTls(string $target, $context)
+    {
+        $errno = 0;
+        $errstr = '';
+        return @stream_socket_client($target, $errno, $errstr, 5, STREAM_CLIENT_CONNECT, $context);
     }
 
     /** Admin-facing shape (includes the verification token + DNS instructions). */
