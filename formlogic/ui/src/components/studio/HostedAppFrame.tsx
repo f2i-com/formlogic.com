@@ -1,17 +1,21 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { api } from "../../lib/api";
 import { workspaceBridge } from "../../lib/softn/workspaceBridge";
 import { NATIVE_PROTOCOL } from "../../lib/softn/protocol";
 import { engineIdentity, engineNeedsBytes, getEngineBytes } from "../../lib/formlogic/zipp-bytes";
 import { announcedIdentity, chooseFrameEngine, frameSource, sameIdentity } from "../../lib/formlogic/frameEngine";
 
-import { nativeAppStorage, NativeStorageError } from "../../lib/nativeAppStorage";
-import { currentSessionGeneration, isSessionGenerationCurrent } from "../../lib/sessionGeneration";
+import { nativeAppStorage, NativeStorageError, isNativeStorageScope, type NativeStorageScope } from "../../lib/nativeAppStorage";
+import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent, subscribeSessionGeneration } from "../../lib/sessionGeneration";
 
 const navigate = (path: string) => window.location.assign(path);
 
 /** The server's decision for one mount: the engine to run, and the revision actions send back. */
 type FrameEngine = { id: string; revision: string };
+type NativeFrame = { assets: Record<string, string>; origins?: string[]; access: 'application' | 'members'; storageScope: NativeStorageScope };
+const scopeAllowed = (native: NativeFrame) => isNativeStorageScope(native.storageScope) &&
+  native.access === native.storageScope.access &&
+  (native.storageScope.access === 'application' || native.storageScope.userId === currentSessionOwner());
 // The frame bootstraps once. Its DOM lifetime must match the effect's client
 // identity, including replacing source without changing a deployment version.
 const clientIdentities = new WeakMap<object, number>();
@@ -35,7 +39,7 @@ export function HostedAppFrame({
   slug: string;
   client: Record<string, string>;
   version: number;
-  native?: { assets: Record<string, string>; origins?: string[] };
+  native?: NativeFrame;
   /**
    * The engine the SERVER decided this app runs on, from the runtime GET, with the revision every
    * action sends back in X-FormLogic-Client-Engine. Absent (a server from before the decision, or
@@ -45,12 +49,21 @@ export function HostedAppFrame({
   engine?: FrameEngine;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
+  const generation = useSyncExternalStore(subscribeSessionGeneration, currentSessionGeneration);
+  // Props identify an admitted server GET. A later session may not reuse that admission,
+  // even if it belongs to the same user; NativeAppPage must fetch a fresh project first.
+  const sourceKey = JSON.stringify([slug, version, clientIdentity(client), native ? clientIdentity(native) : 0,
+    native?.access, native?.storageScope?.access, native?.storageScope?.appId,
+    native?.storageScope?.access === 'members' ? native.storageScope.userId : null, engine?.id, engine?.revision]);
+  const [admitted, setAdmitted] = useState(() => ({ key: sourceKey, generation }));
+  if (admitted.key !== sourceKey) setAdmitted({ key: sourceKey, generation });
+  const admission = admitted.key === sourceKey ? admitted.generation : generation;
 
   const [error, setError] = useState("");
   // Audit FL-S07: damaged saved browser data stops the app before it starts,
   // with the owner's choices in front of them, rather than being filtered
   // into something that looks healthy. Reset boots a fresh frame.
-  const [storageIssue, setStorageIssue] = useState<{ message: string; exportable: boolean } | null>(null);
+  const [storageIssue, setStorageIssue] = useState<{ key: string; message: string; exportable: boolean } | null>(null);
   const [storageEpoch, setStorageEpoch] = useState(0);
   // A 409 engine_changed says this mount's decision is no longer the server's. The refetched one
   // stands in for the props only while the parent keeps handing back the decision the server has
@@ -63,21 +76,19 @@ export function HostedAppFrame({
     engine: FrameEngine;
     client?: Record<string, string>;
     version?: number;
-    native?: { assets: Record<string, string>; origins?: string[] };
+    native?: NativeFrame;
   } | null>(null);
-  const decided = engine ? `${engine.id};${engine.revision}` : "";
-  // Read when a refusal arrives, not when the frame was built: the parent may have refetched for
-  // itself since, and an override belongs to the decision it actually replaced.
-  const decidedRef = useRef(decided);
-  useEffect(() => { decidedRef.current = decided; }, [decided]);
+  // An override belongs to this complete admitted mount, not merely its engine string.
+  const decided = `${sourceKey}/${admission}`;
   const override = refetched?.replaced === decided ? refetched : null;
   const current = override ? override.engine : engine;
   const mountClient = override?.client ?? client;
   const mountVersion = override?.version ?? version;
   const mountNative = native ? (override?.native ?? native) : undefined;
+  const blocked = generation !== admission || (!!mountNative && !scopeAllowed(mountNative));
   const engineId = current?.id ?? "";
   const engineRevision = current?.revision ?? "";
-  const frameKey = `${slug}/${mountVersion}/${clientIdentity(mountClient)}/${mountNative ? clientIdentity(mountNative) : 0}/${storageEpoch}/${engineId}/${engineRevision}`;
+  const frameKey = `${decided}/${mountVersion}/${clientIdentity(mountClient)}/${mountNative ? clientIdentity(mountNative) : 0}/${storageEpoch}/${engineId}/${engineRevision}`;
   // The frame navigated itself (b3/b1: a sandboxed frame may replace its own document). Nothing
   // here can prevent that, so it is detected after the fact and the frame is taken away.
   const [tripped, setTripped] = useState("");
@@ -85,21 +96,26 @@ export function HostedAppFrame({
   const loads = useRef({ key: "", count: 0 });
   const port = useRef<MessagePort | null>(null);
   const invalidateMount = useRef<(() => void) | null>(null);
+  const recovery = useRef<{ key: string; storage: ReturnType<typeof nativeAppStorage>; isCurrent: () => boolean } | null>(null);
   const booting = useRef(0);
   // Layout cleanup fences the previous document synchronously at a source/app/
   // engine replacement, before an old port callback can mutate parent storage.
   useLayoutEffect(() => {
+    // In particular, do not even create a storage helper for an older server response.
+    if (blocked) return;
     let channel: MessageChannel | undefined;
     let active = true;
     let mountValid = true;
     let channelClosed = false;
-    const sessionGeneration = currentSessionGeneration();
-    const isCurrentMount = () => active && mountValid && isSessionGenerationCurrent(sessionGeneration);
+    const sessionGeneration = admission;
+    const sameSession = () => active && isSessionGenerationCurrent(sessionGeneration) && (!mountNative || scopeAllowed(mountNative));
+    const isCurrentMount = () => sameSession() && mountValid;
     let initializing = false;
     let expired = false;
     let inFlight = 0;
     let remounting = false;
-    const storage = mountNative ? nativeAppStorage(slug) : undefined;
+    const storage = mountNative ? nativeAppStorage(slug, mountNative.storageScope) : undefined;
+    if (storage) recovery.current = { key: frameKey, storage, isCurrent: isCurrentMount };
     const controller = new AbortController();
     // What this mount claims on every action. A revision this frame was not given by a runtime GET
     // (AokieWorkspace pins an id, not a decision) claims nothing, so it sends nothing — and an
@@ -112,12 +128,22 @@ export function HostedAppFrame({
     // its new decision and rebuild the frame on it, rather than telling the person about an
     // engine. One refetch at a time: four actions can be in flight and all of them can be refused.
     async function remountOnNewEngine() {
-      if (remounting) return;
+      if (remounting || !isCurrentMount()) return;
       remounting = true;
       invalidate();
-      const result = mountNative ? await api.getNativeRuntime(slug) : await api.getHostedRuntime(slug);
-      if (!active || !isSessionGenerationCurrent(sessionGeneration)) return;
+      let result;
+      try { result = mountNative ? await api.getNativeRuntime(slug) : await api.getHostedRuntime(slug); }
+      catch { if (sameSession()) setError("This app could not be reopened. Please reload to continue."); return; }
+      if (!sameSession()) return;
+      if (result.error) { setError(result.error); return; }
       const data = result.data;
+      const nextNative = data && "project" in data && data.project ? {
+        assets: data.project.assets, origins: data.project.origins, access: data.project.access, storageScope: data.project.storageScope,
+      } : undefined;
+      if (mountNative && (!nextNative || !scopeAllowed(nextNative))) {
+        setError("This app could not verify its browser storage access. Please reload or sign in again.");
+        return;
+      }
       const next = data?.engine;
       if (!next || (next.id === engineId && next.revision === engineRevision)) {
         // Remounting onto the same refused decision would only be refused again.
@@ -128,15 +154,16 @@ export function HostedAppFrame({
       // An answer that lacks it keeps this mount's props.
       const bundle = data && "project" in data ? data.project : data && "deployment" in data ? data.deployment : undefined;
       setRefetched({
-        replaced: decidedRef.current,
+        replaced: decided,
         engine: next,
         client: bundle?.client,
         version: bundle?.version,
-        native: data && "project" in data && data.project ? { assets: data.project.assets, origins: data.project.origins } : undefined,
+        native: nextNative,
       });
     }
     const timeout = window.setTimeout(
       () => {
+        if (!isCurrentMount()) return;
         expired = true;
         invalidate();
         setError(
@@ -160,6 +187,8 @@ export function HostedAppFrame({
       if (port.current === channel?.port1) port.current = null;
     }
     invalidateMount.current = invalidate;
+    // Close the old channel at the session boundary itself, before React cleanup.
+    const unsubscribe = subscribeSessionGeneration(() => { if (!sameSession()) invalidate(); });
     async function receive(event: MessageEvent) {
       if (
         !isCurrentMount() ||
@@ -192,7 +221,7 @@ export function HostedAppFrame({
           zippWasm = await getEngineBytes(chosen);
         } catch (reason) {
           clearTimeout(timeout);
-          if (active) setError(reason instanceof Error ? reason.message : "The app engine could not be loaded.");
+          if (isCurrentMount()) setError(reason instanceof Error ? reason.message : "The app engine could not be loaded.");
           initializing = false;
           return;
         }
@@ -205,7 +234,7 @@ export function HostedAppFrame({
         initializing = false;
         const failure = reason instanceof NativeStorageError ? reason : null;
         const exportable = (() => { try { return failure?.code !== "unavailable" && !!storage?.exportRaw(); } catch { return false; } })();
-        setStorageIssue({ message: failure?.message ?? "This app’s saved browser session could not be read.", exportable });
+        setStorageIssue({ key: frameKey, message: failure?.message ?? "This app's saved browser session could not be read.", exportable });
         setError(failure?.code === "unavailable" ? "Browser storage is not available, so this app cannot keep a session here. Check browser privacy settings and reload." : "This app’s saved browser session could not be read, so the app was not started.");
         return;
       }
@@ -266,7 +295,7 @@ export function HostedAppFrame({
             if (url.origin !== window.location.origin && !mountNative.origins?.includes(url.origin)) throw new Error("This URL is not part of the app backend");
             const options = input.options as Record<string, unknown>;
             const result = await api.runNativeRequest(slug, { path: url.pathname, query: Object.fromEntries(url.searchParams), method: options.method || "GET", headers: options.headers || {}, body: options.body || {} }, controller.signal, clientEngine);
-            if (engineChanged(result)) void remountOnNewEngine();
+            if (isCurrentMount() && engineChanged(result)) void remountOnNewEngine();
             reply(result.error ? { error: result.error } : result.data);
             return;
           }
@@ -275,7 +304,7 @@ export function HostedAppFrame({
               if (!isCurrentMount()) return;
               invalidate();
               navigate(path);
-            }) });
+            }, isCurrentMount) });
             return;
           }
           const result = await api.runHostedAction(
@@ -285,12 +314,12 @@ export function HostedAppFrame({
             controller.signal,
             clientEngine,
           );
-          if (engineChanged(result)) void remountOnNewEngine();
+          if (isCurrentMount() && engineChanged(result)) void remountOnNewEngine();
           reply(result.error ? { error: result.error } : result.data);
         } catch (reason) {
           if (action === "nativeStorage" && reason instanceof NativeStorageError && ["corrupt", "too-large", "unavailable"].includes(reason.code) && isCurrentMount()) {
             const exportable = (() => { try { return reason.code !== "unavailable" && !!storage?.exportRaw(); } catch { return false; } })();
-            setStorageIssue({ message: reason.message, exportable });
+            setStorageIssue({ key: frameKey, message: reason.message, exportable });
             setError("This app's browser data could not be saved. Export or reset it before continuing.");
           }
           reply({ error: reason instanceof Error ? reason.message : "The request could not be completed." });
@@ -326,14 +355,17 @@ export function HostedAppFrame({
     window.addEventListener("message", receive);
     return () => {
       active = false;
+      unsubscribe();
       invalidate();
       window.removeEventListener("message", receive);
       if (invalidateMount.current === invalidate) invalidateMount.current = null;
+      if (recovery.current?.key === frameKey) recovery.current = null;
     };
-  }, [slug, mountClient, mountVersion, mountNative, storageEpoch, engineId, engineRevision]);
+  }, [slug, mountClient, mountVersion, mountNative, storageEpoch, engineId, engineRevision, admission, blocked, decided, frameKey]);
   // Every engine: the first load is the frame starting, a second is the document being replaced
   // under it. Counted per frame, so a remount (new source, reset data, a new engine) starts over.
   const countLoad = () => {
+    if (blocked || !isSessionGenerationCurrent(admission)) return;
     if (loads.current.key !== frameKey) loads.current = { key: frameKey, count: 0 };
     if (++loads.current.count < 2) return;
     invalidateMount.current?.();
@@ -342,7 +374,9 @@ export function HostedAppFrame({
     setTripped(frameKey);
   };
   const exportSavedData = () => {
-    const raw = (() => { try { return nativeAppStorage(slug).exportRaw(); } catch { return null; } })();
+    const current = recovery.current;
+    if (blocked || current?.key !== frameKey || !current.isCurrent()) return;
+    const raw = (() => { try { return current.storage.exportRaw(); } catch { return null; } })();
     if (raw === null) return;
     const url = URL.createObjectURL(new Blob([raw], { type: "application/json" }));
     const link = document.createElement("a");
@@ -352,22 +386,25 @@ export function HostedAppFrame({
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   const resetSavedData = () => {
+    const current = recovery.current;
+    if (blocked || current?.key !== frameKey || !current.isCurrent()) return;
     if (!window.confirm("Reset this app’s saved browser data on this device? Export it first if you may need it.")) return;
+    if (!current.isCurrent()) return;
     invalidateMount.current?.();
-    try { nativeAppStorage(slug).reset(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Browser storage is not available."); return; }
+    try { current.storage.reset(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Browser storage is not available."); return; }
     setStorageIssue(null);
     setError("");
     setStorageEpoch((epoch) => epoch + 1);
   };
   return (
     <div className="flex h-full min-h-[420px] min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-950">
-      {error && (
+      {!blocked && error && (
         <div
           role="alert"
           className="bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200"
         >
           <p>{error}</p>
-          {storageIssue && (
+          {storageIssue?.key === frameKey && (
             <div className="mt-3 space-y-2">
               <p>{storageIssue.message}</p>
               <div className="flex flex-wrap gap-2">
@@ -384,7 +421,7 @@ export function HostedAppFrame({
           )}
         </div>
       )}
-      {navigated ? (
+      {blocked ? <p role="alert" className="p-4 text-sm">This app's browser storage access could not be verified. Please reload or sign in again.</p> : navigated ? (
         <div role="alert" className="bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
           <p>This app tried to navigate away and was stopped</p>
         </div>

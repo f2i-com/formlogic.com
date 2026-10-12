@@ -23,6 +23,8 @@ import { workspaceBridge } from '../../lib/softn/workspaceBridge';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 const identity = { version: '0.0.17', sha256: 'current' };
+// Existing runtime/storage checks use explicitly admitted independent application mode.
+const application = { access: 'application' as const, storageScope: { access: 'application' as const, appId: 'notes-app' } };
 const storageKey = 'formlogic:native-storage:notes';
 let root: Root | undefined;
 let container: HTMLDivElement;
@@ -55,7 +57,7 @@ afterEach(async () => {
 
 async function mountNative(engine?: { id: string; revision: string }) {
   root = createRoot(container);
-  await act(async () => root!.render(<HostedAppFrame slug="notes" client={{ 'manifest.json': '{}' }} version={1} native={{ assets: {} }} engine={engine} />));
+  await act(async () => root!.render(<HostedAppFrame slug="notes" client={{ 'manifest.json': '{}' }} version={1} native={{ ...application, assets: {} }} engine={engine} />));
   return spyOnFrame();
 }
 function spyOnFrame() {
@@ -232,7 +234,7 @@ it('fences a source/app replacement before a delayed old callback can write to e
   const { iframe } = await mountNative();
   await act(async () => sendReady(iframe, 1));
   const oldChannel = channels[0];
-  await act(async () => root!.render(<HostedAppFrame slug="other" client={{ 'manifest.json': '{"changed":true}' }} version={2} native={{ assets: {} }} />));
+  await act(async () => root!.render(<HostedAppFrame slug="other" client={{ 'manifest.json': '{"changed":true}' }} version={2} native={{ ...application, assets: {} }} />));
   await act(async () => call(oldChannel, { operation: 'set', key: 'session', value: 'old-mount' }));
   expect(localStorage.getItem(storageKey)).toBeNull();
   expect(localStorage.getItem('formlogic:native-storage:other')).toBeNull();
@@ -244,12 +246,12 @@ it('fences a source/app replacement before a delayed old callback can write to e
 
 it('remounts when native assets change even if the client/version/engine stay identical', async () => {
   const client = { 'manifest.json': '{}' };
-  const native = { assets: { 'logo.png': 'old' } };
+  const native = { ...application, assets: { 'logo.png': 'old' } };
   root = createRoot(container);
   await act(async () => root!.render(<HostedAppFrame slug="notes" client={client} version={1} native={native} />));
   const first = spyOnFrame();
   await act(async () => sendReady(first.iframe, 1));
-  await act(async () => root!.render(<HostedAppFrame slug="notes" client={client} version={1} native={{ assets: { 'logo.png': 'new' } }} />));
+  await act(async () => root!.render(<HostedAppFrame slug="notes" client={client} version={1} native={{ ...application, assets: { 'logo.png': 'new' } }} />));
   const next = spyOnFrame();
   expect(next.iframe).not.toBe(first.iframe);
   await act(async () => call(channels[0], { operation: 'set', key: 'old', value: 'stale' }));
@@ -268,7 +270,7 @@ it('fences old writes as soon as an engine decision is refused, even while the r
   await act(async () => call(channels[0], { operation: 'set', key: 'resurrect', value: 'old' }, 2));
   expect(localStorage.getItem(storageKey)).toBeNull();
   expect(channels[0].port1.close).toHaveBeenCalledTimes(1);
-  await act(async () => finish({ data: { name: 'Notes', engine: { id: 'zipp-web-python', revision: 'new' } } } as Awaited<ReturnType<typeof api.getNativeRuntime>>));
+  await act(async () => finish({ data: { name: 'Notes', engine: { id: 'zipp-web-python', revision: 'new' }, project: { ...application, assets: {}, client: { 'manifest.json': '{}' }, version: 2 } } } as Awaited<ReturnType<typeof api.getNativeRuntime>>));
   expect(container.querySelector('iframe')).not.toBe(iframe);
 });
 

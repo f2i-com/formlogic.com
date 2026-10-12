@@ -1,8 +1,9 @@
 import { reviewAppArchive } from './appImportReview';
 import { strFromU8, strToU8, zipSync } from 'fflate';
+import type { NativeStorageScope } from './nativeAppStorage';
 
 export interface NativeProject { home?: boolean; version: number; updatedAt?: string; files: Record<string,string>; assets: Record<string,string>; access: 'application' | 'members' }
-export interface NativeRuntimeProject { version: number; client: Record<string,string>; assets: Record<string,string>; access: 'application' | 'members'; origins?: string[] }
+export interface NativeRuntimeProject { version: number; client: Record<string,string>; assets: Record<string,string>; access: 'application' | 'members'; storageScope: NativeStorageScope; origins?: string[] }
 export interface NativeRecordField { name: string; type: string; primary: boolean; required: boolean; defaultValue: string | null; auto: boolean; readOnly: boolean }
 export interface NativeRecordDetail { values: Record<string, string | null>; revision: string; fields: NativeRecordField[] }
 /**

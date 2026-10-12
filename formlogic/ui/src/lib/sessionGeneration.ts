@@ -8,6 +8,13 @@
  * zustand persist) after A signed out or B signed in.
  */
 let generation = 0;
+const listeners = new Set<() => void>();
+
+/** Runtime mounts observe boundaries immediately, including same-owner new sessions. */
+export function subscribeSessionGeneration(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
 
 export function currentSessionGeneration(): number {
   return generation;
@@ -16,6 +23,10 @@ export function currentSessionGeneration(): number {
 /** Called by the auth store on every session boundary. Returns the new generation. */
 export function bumpSessionGeneration(): number {
   generation += 1;
+  for (const listener of listeners) {
+    // A failed observer must not prevent the remaining mounts or teardown from fencing.
+    try { listener(); } catch { /* The generation has already invalidated every callback. */ }
+  }
   return generation;
 }
 
@@ -32,7 +43,9 @@ export function isSessionGenerationCurrent(captured: number): boolean {
 let sessionOwnerUserId: string | null = null;
 
 export function setSessionOwner(userId: string | null): void {
+  if (sessionOwnerUserId === userId) return;
   sessionOwnerUserId = userId;
+  bumpSessionGeneration();
 }
 
 export function currentSessionOwner(): string | null {

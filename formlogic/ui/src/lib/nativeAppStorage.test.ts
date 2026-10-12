@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { NativeStorageError, nativeAppStorage } from './nativeAppStorage';
+import { NativeStorageError, nativeAppStorage as createNativeAppStorage } from './nativeAppStorage';
+
+// These existing bounded-map and acknowledgement cases exercise independent application mode.
+const nativeAppStorage = (slug: string) => createNativeAppStorage(slug, { access: 'application', appId: slug });
 
 const storageKey = (slug: string) => `formlogic:native-storage:${encodeURIComponent(slug)}`;
 beforeEach(() => localStorage.clear());

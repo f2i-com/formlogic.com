@@ -1,14 +1,17 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, type PersistStorage } from 'zustand/middleware';
 import { api } from '../lib/api';
 import { browserTimezone } from '../lib/timezone';
-import { bumpSessionGeneration, setSessionOwner } from '../lib/sessionGeneration';
+import { bumpSessionGeneration, currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent, setSessionOwner } from '../lib/sessionGeneration';
+import { clearNativeMemberStorage } from '../lib/nativeAppStorage';
 import { useFormStore, clearAllDebounceTimers } from './formStore';
 import { useAppStore } from './appStore';
 import { useAppUserStore } from './appUserStore';
 import { useAppRuntimeStore } from './appRuntimeStore';
 import { useResponseStore } from './responseStore';
 import { toast } from './toastStore';
+import { lockVaultForSessionTeardown, useVaultStore } from './vaultStore';
+import { setOaiyToken } from '../client-runtime/oaiy/oaiyRuntime';
 
 interface User {
   id: string;
@@ -53,14 +56,57 @@ let _authSessionCallback: (() => void) | null = null;
 export type SessionTeardownReason = 'logout' | 'session-expired' | 'account-deleted' | 'remote-teardown';
 
 const SESSION_CHANNEL = 'formlogic-session';
+const SESSION_TRANSITION_KEY = 'formlogic-session-transition';
+type SessionMessage = { type?: string; reason?: string; userId?: unknown; revision?: unknown; ordered?: unknown };
+let lastHandledTransition: string | null = null;
+let unconfirmedMemberOwner: string | null = null;
+let preserveMemberOnStartupFailure = false;
+
+/** Ordering metadata only: never a credential and never used to hydrate a user. */
+function publishSessionTransition(type: 'fl-teardown' | 'fl-session-transition', userId: string | null, reason?: SessionTeardownReason): void {
+  const revision = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  const message = { type, userId, revision, ordered: true, ...(reason ? { reason } : {}) };
+  lastHandledTransition = revision;
+  try { localStorage.setItem(SESSION_TRANSITION_KEY, JSON.stringify(message)); }
+  catch { message.ordered = false; } // Do not let an older retained marker suppress this boundary.
+  if (typeof BroadcastChannel !== 'undefined') {
+    try {
+      const channel = new BroadcastChannel(SESSION_CHANNEL);
+      channel.postMessage(message);
+      channel.close();
+    } catch { /* The storage event remains available in browsers without BroadcastChannel. */ }
+  }
+}
+
+/** A sibling tab has already installed the next shared-origin snapshot. Clear
+ * this tab's memory without letting persisted-store setters overwrite it. */
+function withMemoryOnlyPersistence(run: () => void): void {
+  type Persistor = {
+    getOptions: () => { storage?: PersistStorage<unknown> };
+    setOptions: (options: { storage: PersistStorage<unknown> }) => void;
+  };
+  const restore: (() => void)[] = [];
+  try {
+    for (const store of [useAuthStore, useFormStore, useAppStore, useAppRuntimeStore, useResponseStore]) {
+      const persistor = (store as unknown as { persist?: Persistor }).persist;
+      const storage = persistor?.getOptions().storage;
+      if (!persistor || !storage) continue;
+      persistor.setOptions({ storage: { getItem: key => storage.getItem(key), setItem: () => {}, removeItem: () => {} } });
+      restore.push(() => persistor.setOptions({ storage }));
+    }
+    run();
+  } finally {
+    for (const reset of restore.reverse()) reset();
+  }
+}
 
 /**
- * Centralized, awaited whole-client teardown (audit FL-10/FL-11). Purges all
- * user-specific in-memory state + persisted localStorage + cached app data; for
- * account deletion it also erases the user's chat database. Shared by logout(), the
- * session-expired (401) path, account deletion, and cross-tab propagation, so an ended
- * session can't leave a previous user's data to flash to (or be sent by) the next user
- * on a shared device.
+ * Centralized session boundary (audit FL-10/FL-11): fences callbacks, resets local
+ * stores and attempts storage cleanup. Cross-tab memory-only cleanup preserves a
+ * newer shared-origin snapshot; member-key cleanup remains scoped to the leaving
+ * principal. Browser failures can prevent physical deletion, and the legacy
+ * unowned Workbox queue still has a separate conservative purge policy below.
+ * Account deletion also requests erasure of that user's chat database.
  *
  * Submissions still queued on the device (pending or failed) are removed for every
  * reason except 'session-expired': see forgetQueuedSubmissions.
@@ -68,38 +114,37 @@ const SESSION_CHANNEL = 'formlogic-session';
 export async function teardownUserSession(
   userId: string | null,
   reason: SessionTeardownReason,
-  broadcast = true
+  broadcast = true,
+  memoryOnly = false
 ): Promise<void> {
+  if (unconfirmedMemberOwner === userId) unconfirmedMemberOwner = null;
+  // An old caller may finish after another identity has already signed in. Only
+  // its private namespace belongs to it; B's stores and callbacks must survive.
+  if (currentSessionOwner() !== null && currentSessionOwner() !== userId) {
+    if (userId) clearNativeMemberStorage(userId);
+    return;
+  }
   // The generation bump comes FIRST (audit FL-11): an authenticated request still in
   // flight compares its captured generation on resolve and DISCARDS its result rather
   // than repopulating the stores this teardown is about to clear.
-  bumpSessionGeneration();
+  const generation = bumpSessionGeneration();
+  if (userId) clearNativeMemberStorage(userId);
+  // Publish before awaiting cleanup, so a delayed A teardown cannot announce a
+  // newer boundary after B has signed in and published its transition.
+  if (broadcast) publishSessionTransition('fl-teardown', userId, reason);
 
-  await clearUserSessionData();
+  await clearUserSessionData(generation, memoryOnly);
 
-  if (reason !== 'session-expired') await forgetQueuedSubmissions(userId);
+  if (reason !== 'session-expired') await forgetQueuedSubmissions(userId, generation);
 
   if (userId && reason === 'account-deleted') {
-    // A deleted account leaves NOTHING behind (audit FL-10): the per-user chat DB
-    // (plaintext transcripts + image data URIs) is erased, not merely detached.
+    // Request erasure of the deleted account's per-user chat DB (audit FL-10):
+    // plaintext transcripts and image data URIs must not merely be detached.
     try {
       const chat = await import('../components/chat/chatStore');
       await chat.deleteChatDataForUser(userId);
     } catch {
       // best-effort — teardown must never block account deletion
-    }
-  }
-
-  // Propagate to sibling tabs (audit FL-10): a teardown in one tab must not leave
-  // another tab's stores hydrated with the dead session's data. The reason travels with
-  // it, so an expiry in one tab does not become a sign-out (and a purge) in another.
-  if (broadcast && typeof BroadcastChannel !== 'undefined') {
-    try {
-      const channel = new BroadcastChannel(SESSION_CHANNEL);
-      channel.postMessage({ type: 'fl-teardown', reason, userId });
-      channel.close();
-    } catch {
-      // BroadcastChannel unavailable — single-tab cleanup still holds
     }
   }
 }
@@ -117,7 +162,7 @@ export async function teardownUserSession(
  * same person to sign in again; offlineQueue.ts removes a browser row once it is old and
  * someone else uses the device.
  */
-async function forgetQueuedSubmissions(userId: string | null): Promise<void> {
+async function forgetQueuedSubmissions(userId: string | null, generation: number): Promise<void> {
   if (userId) {
     try {
       const queue = await import('../client-runtime/offlineQueue');
@@ -128,6 +173,7 @@ async function forgetQueuedSubmissions(userId: string | null): Promise<void> {
   }
   try {
     const native = await import('../client-runtime/nativeOfflineQueue');
+    if (!userId && !isSessionGenerationCurrent(generation)) return;
     // This account's items and the unstamped ones; with no account, every item, as before.
     await native.purgeNativeQueue(userId ?? undefined);
   } catch {
@@ -203,29 +249,23 @@ async function purgeBackgroundSyncQueue(queueName: string): Promise<void> {
   });
 }
 
-async function clearUserSessionData(): Promise<void> {
+async function clearUserSessionData(generation: number, memoryOnly: boolean): Promise<void> {
   // Cancel pending debounced saves so stale callbacks can't fire after the purge.
   clearAllDebounceTimers();
 
-  // Lock the E2EE vault (terminates the crypto worker, bumps the vault
-  // generation so every decrypted cache drops, and propagates to other tabs).
-  // Dynamic import keeps the crypto worker out of the base bundle for sessions
-  // that never touch private forms.
-  try {
-    const vault = await import('./vaultStore');
-    vault.lockVaultForSessionTeardown();
-    vault.useVaultStore.setState({ status: 'unknown', vault: null });
-  } catch {
-    // Never let vault teardown block the logout path.
-  }
+  // Complete shared synchronous cleanup before any await can let a new identity
+  // populate these stores. Asynchronous cleanup below checks the same boundary.
+  const resetStores = () => {
+    useFormStore.setState({ forms: [], isInitialized: false, isLoading: false, activeFormId: null, selectedFieldId: null, error: null, savingFormIds: {} });
+    useAppStore.setState({ apps: [], activeAppId: null, isLoading: false, _loadingCount: 0, error: null });
+    useAppUserStore.getState().reset();
+    useAppRuntimeStore.getState().reset();
+    useResponseStore.setState({ responses: [], currentFormId: null, currentAnswers: {}, currentStep: 0, startTime: null });
+  };
+  if (memoryOnly) withMemoryOnlyPersistence(resetStores);
+  else resetStores();
 
-  useFormStore.setState({ forms: [], isInitialized: false, isLoading: false, activeFormId: null, selectedFieldId: null, error: null, savingFormIds: {} });
-  useAppStore.setState({ apps: [], activeAppId: null, isLoading: false, _loadingCount: 0, error: null });
-  useAppUserStore.getState().reset();
-  useAppRuntimeStore.getState().reset();
-  useResponseStore.setState({ responses: [], currentFormId: null, currentAnswers: {}, currentStep: 0, startTime: null });
-
-  try {
+  if (!memoryOnly) try {
     localStorage.removeItem('formlogic-auth');
     localStorage.removeItem('formlogic-forms');
     localStorage.removeItem('formlogic-apps');
@@ -242,21 +282,30 @@ async function clearUserSessionData(): Promise<void> {
     // localStorage may be unavailable (e.g. private browsing)
   }
 
+  // Importing these modules does not create a crypto worker or contact hardware.
+  // Lock synchronously: a deferred import must not leave A's vault/token alive
+  // when B starts, or clear B's newly initialized state when it finally resolves.
+  try {
+    if (memoryOnly) useVaultStore.getState().lock(false);
+    else lockVaultForSessionTeardown();
+    useVaultStore.setState({ status: 'unknown', vault: null });
+  } catch {
+    // Never let vault teardown block the logout path.
+  }
+
   // The OAIY pairing token lives in sessionStorage keyed by base URL only. Left
   // behind, it survives into the next session — including the shared demo
-  // account — and drives the operator's real hardware. Dynamic import keeps the
-  // OAIY client out of the base bundle for sessions that never pair.
+  // account — and drives the operator's real hardware.
   try {
-    const oaiy = await import('../client-runtime/oaiy/oaiyRuntime');
-    oaiy.setOaiyToken(null);
+    setOaiyToken(null);
   } catch {
     // never let it block logout
   }
 
-  // Workbox's background-sync queue replays a failed app-form POST with WHATEVER
-  // cookies are present at sync time, and the server records the submitter from
-  // that cookie: a submission A queued offline was created as B's after B signed
-  // in on the same browser. The app-form queue is emptied here, on every teardown:
+  // Workbox's background-sync queue retains unowned plaintext app-form requests.
+  // Replay carries the original CSRF header, which the server binds to the auth
+  // cookie; an A request with a new B cookie is rejected by that check. Retention
+  // still needs cleanup, so the app-form queue is emptied on every teardown:
   // the owner-stamped copy in the offline queue (offlineQueue.ts) is the one that
   // waits for its owner. The public-form queue is kept: it is not kept per account
   // (a visitor who never signed in may have a submission waiting in it), and Workbox
@@ -264,15 +313,18 @@ async function clearUserSessionData(): Promise<void> {
   // submitter (authOptional), so a public submission replayed after an account
   // switch is recorded with the account signed in at that moment.
   try {
+    // Retain the existing conservative purge: these legacy Workbox entries have
+    // no owner stamp. Skipping it on a generation change would retain private bytes.
+    // Owner-scoping this separate queue is outside native snapshot isolation.
     await purgeBackgroundSyncQueue('formSubmissionQueue');
   } catch {
     // IndexedDB unavailable, or no queue yet — nothing to purge
   }
 
   try {
-    if (typeof caches !== 'undefined') {
+    if (!memoryOnly && typeof caches !== 'undefined') {
       const keys = await caches.keys();
-      await Promise.all(keys.filter((k) => k.startsWith('app-')).map((k) => caches.delete(k)));
+      if (isSessionGenerationCurrent(generation)) await Promise.all(keys.filter((k) => k.startsWith('app-')).map((k) => caches.delete(k)));
     }
   } catch {
     // Cache API may be unavailable; non-fatal.
@@ -299,7 +351,7 @@ export const useAuthStore = create<AuthState>()(
           const current = get();
           if (current.user) {
             const expiredUserId = current.user.id;
-            set({ user: null, error: null });
+            set({ user: null, error: null, isLoading: false, isInitialized: true });
             // Purge the same data logout() does, so an expired session doesn't leave the
             // previous user's forms/apps/responses to flash to the next person.
             void teardownUserSession(expiredUserId, 'session-expired');
@@ -310,22 +362,31 @@ export const useAuthStore = create<AuthState>()(
         api.onSessionExpired(_authSessionCallback);
 
         set({ isLoading: true });
+        const generation = currentSessionGeneration();
+        const forgetUnconfirmedIdentity = () => {
+          unconfirmedMemberOwner = get().user?.id ?? unconfirmedMemberOwner;
+          preserveMemberOnStartupFailure = true;
+          try { set({ user: null, isLoading: false, isInitialized: true }); }
+          finally { preserveMemberOnStartupFailure = false; }
+        };
 
         // Check if we have a valid session by calling getMe()
         // The HttpOnly cookie will be sent automatically
         try {
           const result = await api.getMe();
+          if (!isSessionGenerationCurrent(generation)) return;
           if (result.error || !result.data) {
             // No valid session
             api.setAuthenticated(false);
-            const hydratedUser = get().user;
-            set({ user: null, isLoading: false, isInitialized: true });
+            const hydratedUserId = get().user?.id ?? unconfirmedMemberOwner;
+            if (result.status === 401) set({ user: null, isLoading: false, isInitialized: true });
+            else forgetUnconfirmedIdentity();
             // A DEFINITIVE 401 on a previously hydrated session is a session end
             // (audit FL-10): the hydrated forms/apps/responses must be purged, not
             // merely orphaned by user:null. A network failure (no status) keeps the
             // local data — this app is offline-first.
-            if (hydratedUser && result.status === 401) {
-              void teardownUserSession(hydratedUser.id, 'session-expired');
+            if (hydratedUserId && result.status === 401) {
+              void teardownUserSession(hydratedUserId, 'session-expired');
             }
           } else {
             // Mark the API client as authenticated so session-expired
@@ -337,18 +398,22 @@ export const useAuthStore = create<AuthState>()(
               isLoading: false,
               isInitialized: true,
             });
+            if (state.user?.id !== result.data.user.id) publishSessionTransition('fl-session-transition', result.data.user.id);
           }
         } catch {
+          if (!isSessionGenerationCurrent(generation)) return;
           api.setAuthenticated(false);
-          set({ user: null, isLoading: false, isInitialized: true });
+          forgetUnconfirmedIdentity();
         }
       },
 
       login: async (email: string, password: string) => {
         set({ isLoading: true, error: null });
+        const generation = currentSessionGeneration();
 
         try {
           const result = await api.login(email, password);
+          if (!isSessionGenerationCurrent(generation)) return { success: false, error: 'Session changed. Please try again.' };
 
           if (result.error || !result.data) {
             set({ isLoading: false, error: result.error || 'Login failed' });
@@ -373,9 +438,11 @@ export const useAuthStore = create<AuthState>()(
             isLoading: false,
             error: null,
           });
+          publishSessionTransition('fl-session-transition', result.data.user.id);
 
           return { success: true };
         } catch (error) {
+          if (!isSessionGenerationCurrent(generation)) return { success: false, error: 'Session changed. Please try again.' };
           const errorMessage = error instanceof Error ? error.message : 'Login failed';
           set({ isLoading: false, error: errorMessage });
           return { success: false, error: errorMessage };
@@ -384,8 +451,10 @@ export const useAuthStore = create<AuthState>()(
 
       verifyMfa: async (mfaToken: string, code: string, rememberBrowser: boolean) => {
         set({ isLoading: true, error: null });
+        const generation = currentSessionGeneration();
         try {
           const result = await api.verifyMfa(mfaToken, code, rememberBrowser);
+          if (!isSessionGenerationCurrent(generation)) return { success: false, error: 'Session changed. Please try again.' };
           if (result.error || !result.data?.user) {
             const message = result.error || 'Verification failed';
             set({ isLoading: false, error: message });
@@ -393,8 +462,10 @@ export const useAuthStore = create<AuthState>()(
           }
           bumpSessionGeneration(); // a NEW identity begins (audit FL-11)
           set({ user: result.data.user, isLoading: false, error: null });
+          publishSessionTransition('fl-session-transition', result.data.user.id);
           return { success: true };
         } catch (error) {
+          if (!isSessionGenerationCurrent(generation)) return { success: false, error: 'Session changed. Please try again.' };
           const errorMessage = error instanceof Error ? error.message : 'Verification failed';
           set({ isLoading: false, error: errorMessage });
           return { success: false, error: errorMessage };
@@ -403,8 +474,10 @@ export const useAuthStore = create<AuthState>()(
 
       startDemo: async () => {
         set({ isLoading: true, error: null });
+        const generation = currentSessionGeneration();
         try {
           const result = await api.startDemo();
+          if (!isSessionGenerationCurrent(generation)) return { success: false, error: 'Session changed. Please try again.' };
           if (result.error || !result.data) {
             set({ isLoading: false, error: result.error || 'Could not start the demo' });
             return { success: false, error: result.error || 'Could not start the demo' };
@@ -412,8 +485,10 @@ export const useAuthStore = create<AuthState>()(
           api.setDemoMode(!!result.data.user.isDemo);
           bumpSessionGeneration(); // a NEW identity begins (audit FL-11)
           set({ user: result.data.user, isLoading: false, error: null });
+          publishSessionTransition('fl-session-transition', result.data.user.id);
           return { success: true };
         } catch (error) {
+          if (!isSessionGenerationCurrent(generation)) return { success: false, error: 'Session changed. Please try again.' };
           const errorMessage = error instanceof Error ? error.message : 'Could not start the demo';
           set({ isLoading: false, error: errorMessage });
           return { success: false, error: errorMessage };
@@ -422,11 +497,13 @@ export const useAuthStore = create<AuthState>()(
 
       register: async (email: string, password: string, name?: string) => {
         set({ isLoading: true, error: null });
+        const generation = currentSessionGeneration();
 
         try {
           // Auto-capture the browser's timezone so the new account shows record
           // times in the user's own clock by default (editable later in Profile).
           const result = await api.register(email, password, name, browserTimezone() || undefined);
+          if (!isSessionGenerationCurrent(generation)) return { success: false, error: 'Session changed. Please try again.' };
 
           if (result.error || !result.data) {
             set({ isLoading: false, error: result.error || 'Registration failed' });
@@ -439,9 +516,11 @@ export const useAuthStore = create<AuthState>()(
             isLoading: false,
             error: null,
           });
+          publishSessionTransition('fl-session-transition', result.data.user.id);
 
           return { success: true };
         } catch (error) {
+          if (!isSessionGenerationCurrent(generation)) return { success: false, error: 'Session changed. Please try again.' };
           const errorMessage = error instanceof Error ? error.message : 'Registration failed';
           set({ isLoading: false, error: errorMessage });
           return { success: false, error: errorMessage };
@@ -449,26 +528,30 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: async () => {
-        const leavingUserId = get().user?.id ?? null;
+        const leavingUserId = get().user?.id ?? unconfirmedMemberOwner;
+        api.setAuthenticated(false);
+        api.setDemoMode(false);
+        set({ user: null, error: null, isLoading: false });
+        // Fence and remove private state before the network can yield to a late callback.
+        const cleanup = teardownUserSession(leavingUserId, 'logout');
         try {
           // Call the logout endpoint to clear the HttpOnly cookie
           await api.logout();
         } catch {
           // Even if the API call fails, clear local state
         }
-        api.setDemoMode(false);
-        set({ user: null, error: null });
-
         // Purge all user-specific in-memory + persisted + cached data (shared with the
         // session-expired path) so nothing leaks between sessions on a shared device.
-        await teardownUserSession(leavingUserId, 'logout');
+        await cleanup;
       },
 
       updateProfile: async (data: Partial<User>) => {
         set({ isLoading: true, error: null });
+        const generation = currentSessionGeneration();
 
         try {
           const result = await api.updateProfile(data);
+          if (!isSessionGenerationCurrent(generation)) return { success: false, error: 'Session changed. Please try again.' };
 
           if (result.error || !result.data) {
             set({ isLoading: false, error: result.error || 'Update failed' });
@@ -483,6 +566,7 @@ export const useAuthStore = create<AuthState>()(
 
           return { success: true };
         } catch (error) {
+          if (!isSessionGenerationCurrent(generation)) return { success: false, error: 'Session changed. Please try again.' };
           const errorMessage = error instanceof Error ? error.message : 'Update failed';
           set({ isLoading: false, error: errorMessage });
           return { success: false, error: errorMessage };
@@ -504,20 +588,63 @@ export const useAuthStore = create<AuthState>()(
 // Mirror the signed-in owner into the session module (audit FL-09): the offline
 // queue stamps every row with its owner and flushes only the current owner's rows.
 setSessionOwner(useAuthStore.getState().user?.id ?? null);
-useAuthStore.subscribe((state) => setSessionOwner(state.user?.id ?? null));
+useAuthStore.subscribe((state) => {
+  const previous = currentSessionOwner();
+  const next = state.user?.id ?? null;
+  setSessionOwner(next); // Fence the old owner before removing any private storage.
+  if (!preserveMemberOnStartupFailure) {
+    if (previous && previous !== next) clearNativeMemberStorage(previous);
+    if (unconfirmedMemberOwner && next) {
+      if (unconfirmedMemberOwner !== next) clearNativeMemberStorage(unconfirmedMemberOwner);
+      unconfirmedMemberOwner = null;
+    }
+  }
+});
 
 // Cross-tab teardown (audit FL-10): when another tab ends the session (logout,
 // expiry, account deletion), clear THIS tab's stores too — without re-broadcasting.
 // An expiry there is an expiry here (queued submissions kept); anything else is a remote
 // teardown, which forgets the account's queued submissions as a sign-out does.
-export async function handleSessionBroadcast(data: { type?: string; reason?: string; userId?: unknown } | null): Promise<void> {
-  if (!data || data.type !== 'fl-teardown') return;
+export async function handleSessionBroadcast(data: SessionMessage | null): Promise<void> {
+  if (!data || (data.type !== 'fl-teardown' && data.type !== 'fl-session-transition')) return;
+  if (typeof data.revision === 'string') {
+    if (data.revision === lastHandledTransition) return;
+    try {
+      const latest: unknown = JSON.parse(localStorage.getItem(SESSION_TRANSITION_KEY) ?? 'null');
+      if (data.ordered !== false && latest && typeof latest === 'object' && (latest as SessionMessage).revision !== data.revision) return;
+    } catch { /* Without shared ordering metadata, a matching teardown is conservative. */ }
+    lastHandledTransition = data.revision;
+  } else if (data.type === 'fl-session-transition') return;
   const user = useAuthStore.getState().user;
-  if (user === null) return;
+  if (data.type === 'fl-session-transition') {
+    if (typeof data.userId !== 'string' || data.userId.length === 0) return;
+    if (user === null || user.id === data.userId) {
+      if (unconfirmedMemberOwner && unconfirmedMemberOwner !== data.userId) {
+        clearNativeMemberStorage(unconfirmedMemberOwner);
+        unconfirmedMemberOwner = null;
+      }
+      // Refetch admission, never install the broadcast's claimed identity.
+      bumpSessionGeneration();
+      withMemoryOnlyPersistence(() => useAuthStore.setState({ isLoading: false, error: null }));
+      return;
+    }
+  } else if (user !== null && typeof data.userId === 'string' && data.userId !== user.id) return;
+  if (user === null) {
+    // A tab can be awaiting startup or sign-in without a hydrated user. The
+    // ended cookie still invalidates that pending continuation.
+    bumpSessionGeneration();
+    const leaving = typeof data.userId === 'string' ? data.userId : unconfirmedMemberOwner;
+    if (leaving) clearNativeMemberStorage(leaving);
+    if (leaving === unconfirmedMemberOwner) unconfirmedMemberOwner = null;
+    withMemoryOnlyPersistence(() => useAuthStore.setState({ isLoading: false, error: null }));
+    return;
+  }
   // Captured before the store forgets it. A tab from before the id was sent names none.
-  const userId = typeof data.userId === 'string' ? data.userId : user.id;
-  useAuthStore.setState({ user: null, error: null });
-  await teardownUserSession(userId, data.reason === 'session-expired' ? 'session-expired' : 'remote-teardown', false);
+  const userId = user.id;
+  api.setAuthenticated(false);
+  api.setDemoMode(false);
+  withMemoryOnlyPersistence(() => useAuthStore.setState({ user: null, error: null, isLoading: false }));
+  await teardownUserSession(userId, data.reason === 'session-expired' ? 'session-expired' : 'remote-teardown', false, true);
 }
 
 // Browser-only: vitest runs in node, and the module-level channel would leak there.
@@ -525,9 +652,17 @@ if (typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined') {
   try {
     const sessionChannel = new BroadcastChannel(SESSION_CHANNEL);
     sessionChannel.onmessage = (event: MessageEvent) => {
-      void handleSessionBroadcast(event.data as { type?: string; reason?: string; userId?: unknown } | null);
+      void handleSessionBroadcast(event.data as SessionMessage | null);
     };
   } catch {
     // BroadcastChannel construction failed — single-tab behavior remains correct.
   }
+}
+
+// localStorage delivers the same transition when BroadcastChannel is unavailable.
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event: StorageEvent) => {
+    if (event.key !== SESSION_TRANSITION_KEY || !event.newValue) return;
+    try { void handleSessionBroadcast(JSON.parse(event.newValue) as SessionMessage); } catch { /* Invalid ordering metadata is ignored. */ }
+  });
 }

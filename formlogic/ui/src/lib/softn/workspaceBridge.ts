@@ -3,8 +3,13 @@ import { parseServerDate } from '../utils';
 import type { AppRuntimeConfig } from '../../types/app';
 
 /** Only app-scoped operations cross the frame boundary. Authentication stays in the host. */
-export async function workspaceBridge(slug: string, action: string, input: Record<string, unknown>, navigate: (path: string) => void) {
+export async function workspaceBridge(slug: string, action: string, input: Record<string, unknown>, navigate: (path: string) => void, isCurrent: () => boolean = () => true) {
+  // A frame's session can end during a lookup. Do not dispatch the second records
+  // request or navigate after that boundary, using the next account's cookie.
+  const checkCurrent = () => { if (!isCurrent()) throw new Error('This workspace session has ended.'); };
+  checkCurrent();
   const result = await api.getAppRuntime(slug);
+  checkCurrent();
   if (result.error || !result.data) throw new Error(result.error || 'Could not connect to this workspace.');
   const config = result.data as Pick<AppRuntimeConfig, 'app' | 'forms'> & { permissions: { appLevel?: string[]; formLevel: Record<string, string[]> } };
   if (action === 'workspaceInfo') return {
@@ -29,6 +34,7 @@ export async function workspaceBridge(slug: string, action: string, input: Recor
   }
   if (action === 'workspaceRecords') {
     const result = await api.getAppResponses(slug, form.formId, { limit: 12, offset: Number.isSafeInteger(input.offset) ? Math.max(0, Math.min(100000, Number(input.offset))) : 0 });
+    checkCurrent();
     if (result.error || !result.data) throw new Error(result.error || 'Could not load records.');
     return { count: result.data.count, records: result.data.responses.map(value => {
       const row = value as { id?: string; answers?: Record<string, unknown>; submittedAt?: string };

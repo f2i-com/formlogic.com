@@ -15,7 +15,10 @@ vi.mock('../lib/api', () => ({
   api: { createAppResponseResult: vi.fn() },
   newIdempotencyKey: () => 'key',
 }));
-vi.mock('../lib/sessionGeneration', () => ({ currentSessionOwner: () => owner.id }));
+vi.mock('../lib/sessionGeneration', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/sessionGeneration')>()),
+  currentSessionOwner: () => owner.id,
+}));
 vi.mock('../lib/swQueue', () => ({ discardBackgroundSyncCopies: vi.fn(async () => 0) }));
 
 import { api } from '../lib/api';

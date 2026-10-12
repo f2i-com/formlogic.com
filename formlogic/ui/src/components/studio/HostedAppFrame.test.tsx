@@ -25,6 +25,8 @@ import { NATIVE_PROTOCOL } from '../../lib/softn/protocol';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 const identity = { version: '0.0.17', sha256: 'current' };
+// Existing runtime/storage checks use explicitly admitted independent application mode.
+const application = { access: 'application' as const, storageScope: { access: 'application' as const, appId: 'notes-app' } };
 let root: Root | undefined;
 let container: HTMLDivElement;
 type StubChannel = {
@@ -88,7 +90,7 @@ describe('hosted app engine handoff', () => {
 
   it('requests a runtime update when native hosting support is missing', async () => {
     root = createRoot(container);
-    await act(async () => root!.render(<HostedAppFrame slug="notes" client={{ 'manifest.json': '{}' }} version={1} native={{ assets: {} }} />));
+    await act(async () => root!.render(<HostedAppFrame slug="notes" client={{ 'manifest.json': '{}' }} version={1} native={{ ...application, assets: {} }} />));
     const iframe = container.querySelector('iframe')!;
     await act(async () => sendReady(iframe));
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('does not support native apps yet');
@@ -424,7 +426,7 @@ describe('a frame that navigates itself', () => {
   it('is not what a remount looks like: each frame counts its own loads', async () => {
     localStorage.setItem('formlogic:native-storage:notes', '{not json');
     root = createRoot(container);
-    await act(async () => root!.render(<HostedAppFrame slug="notes" client={{ 'manifest.json': '{}' }} version={1} native={{ assets: {} }} />));
+    await act(async () => root!.render(<HostedAppFrame slug="notes" client={{ 'manifest.json': '{}' }} version={1} native={{ ...application, assets: {} }} />));
     const first = spyOnFrame();
     await act(async () => window.dispatchEvent(new MessageEvent('message', {
       source: first.iframe.contentWindow!, data: { type: 'formlogic:ready', zipp: identity, nativeProtocol: NATIVE_PROTOCOL },
@@ -473,10 +475,10 @@ describe('a remount on the server’s new decision', () => {
   it('refreshes a native app’s client and assets the same way', async () => {
     vi.mocked(api.runNativeRequest).mockResolvedValue({ error: 'changed', status: 409, code: 'engine_changed' });
     vi.mocked(api.getNativeRuntime).mockResolvedValue({
-      data: { name: 'Notes', engine: { id: 'zipp-web-python', revision: 'r2' }, project: { version: 3, client: fresh, assets: { 'logo.png': 'new' }, access: 'application' } },
+      data: { name: 'Notes', engine: { id: 'zipp-web-python', revision: 'r2' }, project: { version: 3, client: fresh, assets: { 'logo.png': 'new' }, ...application } },
     } as unknown as Awaited<ReturnType<typeof api.getNativeRuntime>>);
     root = createRoot(container);
-    await act(async () => root!.render(<HostedAppFrame slug="notes" client={stale} version={1} native={{ assets: { 'logo.png': 'old' } }} engine={{ id: 'zipp-web', revision: 'r1' }} />));
+    await act(async () => root!.render(<HostedAppFrame slug="notes" client={stale} version={1} native={{ ...application, assets: { 'logo.png': 'old' } }} engine={{ id: 'zipp-web', revision: 'r1' }} />));
     const { iframe } = spyOnFrame();
     const ready = (frame: HTMLIFrameElement) => window.dispatchEvent(new MessageEvent('message', {
       source: frame.contentWindow!, data: { type: 'formlogic:ready', zipp: identity, nativeProtocol: NATIVE_PROTOCOL },

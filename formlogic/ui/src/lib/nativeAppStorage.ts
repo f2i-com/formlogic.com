@@ -7,6 +7,8 @@
 // refuse to touch it, and the original bytes stay where they are until the
 // owner exports or resets them. Filtering the bad entries out and writing the
 // rest back would have destroyed the only copy of whatever went wrong.
+import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent } from './sessionGeneration';
+
 const LIMIT = 256 * 1024;
 const KEY_LIMIT = 256;
 const VALUE_LIMIT = 30000;
@@ -14,6 +16,44 @@ const ENTRY_LIMIT = 200;
 // This is the action INPUT limit used by the private hosted-runtime port,
 // measured in UTF-16 code units after JSON escaping, like the existing map.
 const INPUT_LIMIT = 32768;
+const MEMBER_PREFIX = 'formlogic:native-member-storage:v1:';
+const pendingMemberPurges = new Set<string>();
+
+/** Returned only after the server has admitted the request to this installation. */
+export type NativeStorageScope =
+  | { access: 'members'; appId: string; userId: string }
+  | { access: 'application'; appId: string };
+
+function validIdentity(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 256
+    && value.trim() === value && !Array.from(value).some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127);
+}
+
+export function isNativeStorageScope(value: unknown): value is NativeStorageScope {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const scope = value as Record<string, unknown>;
+  return validIdentity(scope.appId) && (scope.access === 'application'
+    || (scope.access === 'members' && validIdentity(scope.userId)));
+}
+
+/** No legacy slug maps are attributed to a member, including during cleanup. */
+export function clearNativeMemberStorage(userId: string): void {
+  if (!validIdentity(userId)) return;
+  pendingMemberPurges.add(userId);
+  const prefix = `${MEMBER_PREFIX}${encodeURIComponent(userId)}:`;
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(prefix)) keys.push(key);
+    }
+    for (const key of keys) localStorage.removeItem(key);
+    pendingMemberPurges.delete(userId);
+  } catch {
+    // A later access by this member retries the purge before reading any private bytes.
+    // Other principals have different keys even if the browser refuses removal.
+  }
+}
 
 export type NativeStorageFailure = 'unavailable' | 'too-large' | 'corrupt' | 'invalid' | 'limit';
 
@@ -33,9 +73,30 @@ export type NativeStorageStatus =
 
 export const CORRUPT_STORAGE_MESSAGE = 'This app’s saved browser data is damaged. Export or reset it before the app can use browser storage again.';
 
-export function nativeAppStorage(slug: string) {
-  const key = `formlogic:native-storage:${encodeURIComponent(slug)}`;
+export function nativeAppStorage(slug: string, inputScope: NativeStorageScope | null | undefined) {
+  // Copy scalar identities: a response object mutated later cannot retarget this handle.
+  const scope: NativeStorageScope | null = isNativeStorageScope(inputScope)
+    ? inputScope.access === 'members'
+      ? { access: 'members', appId: inputScope.appId, userId: inputScope.userId }
+      : { access: 'application', appId: inputScope.appId }
+    : null;
+  const generation = currentSessionGeneration();
+  const key = scope?.access === 'members'
+    ? `${MEMBER_PREFIX}${encodeURIComponent(scope.userId)}:${encodeURIComponent(scope.appId)}`
+    : `formlogic:native-storage:${encodeURIComponent(slug)}`;
+  function assertScope(): void {
+    if (!scope) throw new NativeStorageError('A valid app storage scope is required.', 'invalid');
+    if (scope.access !== 'members') return; // Independent native login persists across platform logout.
+    if (!isSessionGenerationCurrent(generation) || currentSessionOwner() !== scope.userId) {
+      throw new NativeStorageError('This member session is no longer available.', 'unavailable');
+    }
+    if (pendingMemberPurges.has(scope.userId)) clearNativeMemberStorage(scope.userId);
+    if (pendingMemberPurges.has(scope.userId)) {
+      throw new NativeStorageError('Private browser storage could not be cleared.', 'unavailable');
+    }
+  }
   function rawValue(): string | null {
+    assertScope();
     try { return localStorage.getItem(key); }
     catch { throw new NativeStorageError('Browser storage is not available.', 'unavailable'); }
   }
@@ -58,6 +119,7 @@ export function nativeAppStorage(slug: string) {
     return parse(rawValue());
   }
   function mutate(input: Record<string, unknown>) {
+    assertScope();
     let serialized: string | undefined;
     try { serialized = JSON.stringify(input); } catch { /* Invalid structured-clone input. */ }
     if (!input || typeof input !== 'object' || Array.isArray(input) || serialized === undefined || serialized.length > INPUT_LIMIT) {
@@ -114,6 +176,7 @@ export function nativeAppStorage(slug: string) {
   }
   /** Deliberate recovery for this app only; other apps' data is untouched. */
   function reset(): void {
+    assertScope();
     try { localStorage.removeItem(key); }
     catch { throw new NativeStorageError('Browser storage is not available.', 'unavailable'); }
   }

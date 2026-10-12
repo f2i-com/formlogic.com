@@ -26,6 +26,7 @@ import type {
   WorkflowGraph,
 } from '../types/flows';
 import { logger } from './logger';
+import { currentSessionGeneration, isSessionGenerationCurrent } from './sessionGeneration';
 import {
   addDemoRecord, getDemoRecords, getDemoRecord, updateDemoRecord, deleteDemoRecord, isDemoLocalId, clearDemoRecords,
   listDemoBlueprints, getDemoBlueprint, createDemoBlueprint, renameDemoBlueprint, deleteDemoBlueprint, commitDemoBlueprintOperations,
@@ -88,6 +89,7 @@ interface ApiResponse<T> {
 function isFormLogicReply(body: unknown): boolean {
   return !!body && typeof body === 'object' && !Array.isArray(body);
 }
+const AUTH_SESSION_CHANGED = 'Session changed. Please try again.';
 const NOT_FORMLOGIC_REPLY = 'Your answers were not sent: something on the network answered instead of FormLogic (a Wi-Fi sign-in page, for example). Your answers are still here. Check your connection and send them again.';
 
 /**
@@ -808,7 +810,9 @@ class ApiClient {
    * Only triggers callbacks if we were previously authenticated,
    * to avoid spurious notifications during login/initialization.
    */
-  private handleUnauthorized(): void {
+  private handleUnauthorized(generation: number): void {
+    // A late denial from a previous account must not expire the current session.
+    if (!isSessionGenerationCurrent(generation)) return;
     const wasAuthenticated = this._isAuthenticated;
     this._isAuthenticated = false;
     if (wasAuthenticated && this._onSessionExpiredCallbacks.size > 0) {
@@ -845,6 +849,7 @@ class ApiClient {
     endpoint: string,
     options: RequestInit = {}
   ): Promise<ApiResponse<T>> {
+    const generation = currentSessionGeneration();
     const routed = this.routeForAdminActing(endpoint);
     if (routed.blocked) {
       return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
@@ -879,7 +884,7 @@ class ApiClient {
       } catch {
         if (!response.ok) {
           if (response.status === 401) {
-            this.handleUnauthorized();
+            this.handleUnauthorized(generation);
           }
           return { error: `Server error (${response.status})`, status: response.status };
         }
@@ -888,7 +893,7 @@ class ApiClient {
 
       if (!response.ok) {
         if (response.status === 401) {
-          this.handleUnauthorized();
+          this.handleUnauthorized(generation);
         }
         const d = data as Record<string, unknown>;
         let message = (d?.message as string) || 'An error occurred';
@@ -918,6 +923,7 @@ class ApiClient {
     endpoint: string,
     options: RequestInit = {}
   ): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null; networkError?: string }> {
+    const generation = currentSessionGeneration();
     const routed = this.routeForAdminActing(endpoint);
     if (routed.blocked) {
       return { ok: false, status: 403, body: { error: true, message: ApiClient.ACTING_BLOCKED_MESSAGE } };
@@ -940,7 +946,7 @@ class ApiClient {
       } catch {
         body = null;
       }
-      if (response.status === 401) this.handleUnauthorized();
+      if (response.status === 401) this.handleUnauthorized(generation);
       return { ok: response.ok, status: response.status, body };
     } catch (error) {
       logger.error('API request failed:', error);
@@ -967,10 +973,12 @@ class ApiClient {
 
   // Auth endpoints
   async register(email: string, password: string, name?: string, timezone?: string): Promise<ApiResponse<{ user: User }>> {
+    const generation = currentSessionGeneration();
     const result = await this.request<{ user: User }>('/auth/register', {
       method: 'POST',
       body: JSON.stringify({ email, password, name, timezone }),
     });
+    if (!isSessionGenerationCurrent(generation)) return result.error ? result : { error: AUTH_SESSION_CHANGED };
 
     if (result.data?.user) {
       this.setAuthenticated(true);
@@ -980,12 +988,14 @@ class ApiClient {
   }
 
   async login(email: string, password: string): Promise<ApiResponse<{ user?: User; mfaRequired?: boolean; mfaToken?: string }>> {
+    const generation = currentSessionGeneration();
     // With MFA enabled on an unknown browser, the server answers
     // { mfaRequired, mfaToken } instead of { user } — no session yet.
     const result = await this.request<{ user?: User; mfaRequired?: boolean; mfaToken?: string }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
+    if (!isSessionGenerationCurrent(generation)) return result.error ? result : { error: AUTH_SESSION_CHANGED };
 
     if (result.data?.user) {
       this.setAuthenticated(true);
@@ -996,10 +1006,12 @@ class ApiClient {
 
   /** Finish a two-step login: the pending token from login() + an authenticator (or recovery) code. */
   async verifyMfa(mfaToken: string, code: string, rememberBrowser: boolean): Promise<ApiResponse<{ user: User }>> {
+    const generation = currentSessionGeneration();
     const result = await this.request<{ user: User }>('/auth/mfa/verify', {
       method: 'POST',
       body: JSON.stringify({ mfaToken, code, rememberBrowser }),
     });
+    if (!isSessionGenerationCurrent(generation)) return result.error ? result : { error: AUTH_SESSION_CHANGED };
     if (result.data?.user) {
       this.setAuthenticated(true);
     }
@@ -1041,14 +1053,17 @@ class ApiClient {
 
   /** Start (or resume) the public no-signup demo — mints a session for the shared "Demo" account. */
   async startDemo(): Promise<ApiResponse<{ user: User }>> {
+    const generation = currentSessionGeneration();
     const result = await this.request<{ user: User; seedEpoch?: string | null }>('/demo/start', { method: 'POST' });
+    if (!isSessionGenerationCurrent(generation)) return result.error ? result : { error: AUTH_SESSION_CHANGED };
     if (result.data?.user) {
       this.setAuthenticated(true);
       // The seed epoch bumps whenever the shared demo data is regenerated. Purge this browser's
       // local overlay on mismatch — records referencing the replaced dataset would dangle forever
       // ("Record not found" on every linked field).
-      await this.syncDemoSeedEpoch(result.data.seedEpoch);
+      await this.syncDemoSeedEpoch(result.data.seedEpoch, generation);
     }
+    if (!isSessionGenerationCurrent(generation)) return { error: AUTH_SESSION_CHANGED };
     return result;
   }
 
@@ -1079,19 +1094,22 @@ class ApiClient {
   }
 
   async deleteAccount(password: string): Promise<ApiResponse<{ message: string }>> {
+    const generation = currentSessionGeneration();
     const result = await this.request<{ message: string }>('/auth/me', {
       method: 'DELETE',
       body: JSON.stringify({ password }),
     });
+    if (!isSessionGenerationCurrent(generation)) return result.error ? result : { error: AUTH_SESSION_CHANGED };
     if (!result.error) this.setAuthenticated(false);
     return result;
   }
 
   // Download the user's account data (GDPR portability) as a JSON file.
   async downloadMyData(): Promise<void> {
+    const generation = currentSessionGeneration();
     const response = await fetch(`${this.baseUrl}/auth/me/export`, { credentials: 'include' });
     if (!response.ok) {
-      if (response.status === 401) this.handleUnauthorized();
+      if (response.status === 401) this.handleUnauthorized(generation);
       throw new Error('Failed to export your data');
     }
     const blob = await response.blob();
@@ -1105,11 +1123,12 @@ class ApiClient {
 
   /** Download an app form's responses as CSV (server-gated on the export_responses permission). */
   async exportAppResponses(appSlug: string, formId: string, fileLabel: string): Promise<void> {
+    const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
     const response = await fetch(`${this.baseUrl}/app/${encodeURIComponent(appSlug)}/forms/${encodeURIComponent(formId)}/export`, { credentials: 'include' });
     if (!response.ok) {
-      if (response.status === 401) this.handleUnauthorized();
+      if (response.status === 401) this.handleUnauthorized(generation);
       throw new Error(response.status === 403 ? 'You do not have permission to export responses.' : 'Failed to export responses');
     }
     const blob = await response.blob();
@@ -1123,36 +1142,42 @@ class ApiClient {
   }
 
   async logout(): Promise<ApiResponse<{ message: string }>> {
+    const generation = currentSessionGeneration();
     const result = await this.request<{ message: string }>('/auth/logout', {
       method: 'POST',
     });
+    if (!isSessionGenerationCurrent(generation)) return result.error ? result : { error: AUTH_SESSION_CHANGED };
     this.setAuthenticated(false);
     return result;
   }
 
   /** Compare the server's demo seed epoch to the one this browser last saw; on mismatch, purge
    *  the local demo overlay (its records reference a dataset that no longer exists). */
-  private async syncDemoSeedEpoch(epoch: string | null | undefined): Promise<void> {
-    if (!epoch) return;
+  private async syncDemoSeedEpoch(epoch: string | null | undefined, generation: number): Promise<void> {
+    if (!epoch || !isSessionGenerationCurrent(generation)) return;
     const KEY = 'formlogic-demo-seed-epoch';
     try {
       const prev = localStorage.getItem(KEY);
       if (prev !== null && prev !== epoch) {
         await Promise.all([clearDemoRecords(), clearDemoApps()]);
       }
+      if (!isSessionGenerationCurrent(generation)) return;
       localStorage.setItem(KEY, epoch);
     } catch { /* storage unavailable — skip */ }
   }
 
   async getMe(): Promise<ApiResponse<{ user: User }>> {
+    const generation = currentSessionGeneration();
     const result = await this.request<{ user: User; seedEpoch?: string | null }>('/auth/me');
+    if (!isSessionGenerationCurrent(generation)) return result.error ? result : { error: AUTH_SESSION_CHANGED };
     // Update auth state based on response
     this.setAuthenticated(!!result.data?.user);
     // Returning demo sessions restore here without ever hitting /demo/start — sync the seed
     // epoch so a reopened tab also drops overlay records from a replaced dataset.
     if (result.data?.user?.isDemo) {
-      await this.syncDemoSeedEpoch(result.data.seedEpoch);
+      await this.syncDemoSeedEpoch(result.data.seedEpoch, generation);
     }
+    if (!isSessionGenerationCurrent(generation)) return { error: AUTH_SESSION_CHANGED };
     return result;
   }
 
@@ -1170,10 +1195,11 @@ class ApiClient {
 
   /** Download the full account backup zip (apps/forms/flows + records + files). */
   async exportAccountBackup(): Promise<void> {
+    const generation = currentSessionGeneration();
     if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
     const response = await fetch(`${this.baseUrl}/account/backup/export`, { credentials: 'include' });
     if (!response.ok) {
-      if (response.status === 401) this.handleUnauthorized();
+      if (response.status === 401) this.handleUnauthorized(generation);
       let message = 'Failed to export the backup';
       try { const error = await response.json(); message = error.message || message; } catch { /* non-JSON response */ }
       throw new Error(message);
@@ -1191,6 +1217,7 @@ class ApiClient {
 
   /** Restore a backup zip — creates COPIES of everything (never overwrites). */
   async importAccountBackup(file: File): Promise<ApiResponse<AccountBackupImportResult>> {
+    const generation = currentSessionGeneration();
     if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
     const formData = new FormData();
     formData.append('file', file);
@@ -1206,7 +1233,7 @@ class ApiClient {
       });
       const data = await response.json();
       if (!response.ok) {
-        if (response.status === 401) this.handleUnauthorized();
+        if (response.status === 401) this.handleUnauthorized(generation);
         return { error: data?.message || 'Backup import failed', status: response.status };
       }
       return { data };
@@ -1668,13 +1695,14 @@ class ApiClient {
 
   // Export
   async exportResponses(formId: string): Promise<string> {
+    const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
     const url = `${this.baseUrl}/forms/${formId}/responses/export`;
     const response = await fetch(url, { credentials: 'include' });
 
     if (!response.ok) {
-      if (response.status === 401) this.handleUnauthorized();
+      if (response.status === 401) this.handleUnauthorized(generation);
       const errorText = await response.text();
       throw new Error(errorText || 'Failed to export responses');
     }
@@ -1684,13 +1712,14 @@ class ApiClient {
 
   // Download SQLite database file
   async downloadSqlite(formId: string, filename: string): Promise<void> {
+    const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
     const url = `${this.baseUrl}/forms/${formId}/export/sqlite`;
     const response = await fetch(url, { credentials: 'include' });
 
     if (!response.ok) {
-      if (response.status === 401) this.handleUnauthorized();
+      if (response.status === 401) this.handleUnauthorized(generation);
       let message = 'Failed to download SQLite database';
       try { const error = await response.json(); message = error.message || message; } catch { /* non-JSON response */ }
       throw new Error(message);
@@ -1709,13 +1738,14 @@ class ApiClient {
 
   // Download JSON export
   async downloadJson(formId: string, filename: string): Promise<void> {
+    const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
     const url = `${this.baseUrl}/forms/${formId}/export/json`;
     const response = await fetch(url, { credentials: 'include' });
 
     if (!response.ok) {
-      if (response.status === 401) this.handleUnauthorized();
+      if (response.status === 401) this.handleUnauthorized(generation);
       let message = 'Failed to download JSON export';
       try { const error = await response.json(); message = error.message || message; } catch { /* non-JSON response */ }
       throw new Error(message);
@@ -1747,9 +1777,10 @@ class ApiClient {
    * render the failing checks. Null on auth failure / network error.
    */
   async getDeepHealth(): Promise<DeepHealth | null> {
+    const generation = currentSessionGeneration();
     try {
       const res = await fetch(`${this.baseUrl}/health/deep`, { credentials: 'include' });
-      if (res.status === 401) { this.handleUnauthorized(); return null; }
+      if (res.status === 401) { this.handleUnauthorized(generation); return null; }
       // A degraded health report intentionally returns 503. Other error bodies
       // (e.g. a 403 message) are not reports and must not crash the diagnostics UI.
       if (!res.ok && res.status !== 503) return null;
@@ -1807,6 +1838,7 @@ class ApiClient {
   }
 
   async generateFormFromFile(file: File, prompt?: string): Promise<ApiResponse<AIFormGenerationResult>> {
+    const generation = currentSessionGeneration();
     const url = `${this.baseUrl}/ai/generate-form-from-file`;
     const formData = new FormData();
     formData.append('file', file);
@@ -1833,7 +1865,7 @@ class ApiClient {
 
       if (!response.ok) {
         if (response.status === 401) {
-          this.handleUnauthorized();
+          this.handleUnauthorized(generation);
         }
         // The backend's `error` field is a boolean flag (true), never the message;
         // `data.error ||` short-circuited to `true`, surfacing a useless boolean to
@@ -3789,6 +3821,7 @@ class ApiClient {
    * parses + signature-verifies it without importing, so an archive gets the same review as JSON sources.
    */
   async describePackArchive(file: File): Promise<ApiResponse<PackDescribeResult>> {
+    const generation = currentSessionGeneration();
     const formData = new FormData();
     formData.append('file', file);
     try {
@@ -3803,7 +3836,7 @@ class ApiClient {
       });
       const data = await response.json();
       if (!response.ok) {
-        if (response.status === 401) this.handleUnauthorized();
+        if (response.status === 401) this.handleUnauthorized(generation);
         return { error: data.message || 'Failed to review the application package' };
       }
       return { data };
@@ -3814,11 +3847,12 @@ class ApiClient {
 
   /** Download a whole app as a full .formlogic ARCHIVE (ZIP: manifest + pack + quickjs + signature). */
   async exportAppPackageArchive(appId: string, filename = 'application'): Promise<void> {
+    const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — app exports can embed seeded records, so acting mode refuses.
     if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
     const response = await fetch(`${this.baseUrl}/apps/${appId}/export/package`, { credentials: 'include' });
     if (!response.ok) {
-      if (response.status === 401) this.handleUnauthorized();
+      if (response.status === 401) this.handleUnauthorized(generation);
       let message = 'Failed to export application package';
       try { const error = await response.json(); message = error.message || message; } catch { /* non-JSON response */ }
       throw new Error(message);
@@ -3840,11 +3874,12 @@ class ApiClient {
    * tables, records as rows). Triggers a browser download.
    */
   async exportAppData(appId: string, format: 'sqlite' | 'mysql' | 'mssql', filename = 'app'): Promise<void> {
+    const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — record data is never exposed to acting admins.
     if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
     const response = await fetch(`${this.baseUrl}/apps/${appId}/export/data?format=${format}`, { credentials: 'include' });
     if (!response.ok) {
-      if (response.status === 401) this.handleUnauthorized();
+      if (response.status === 401) this.handleUnauthorized(generation);
       let message = 'Failed to export app data';
       try { const error = await response.json(); message = error.message || message; } catch { /* non-JSON response */ }
       throw new Error(message);
@@ -3863,6 +3898,7 @@ class ApiClient {
   /** Import a .formlogic ARCHIVE (ZIP) — the server verifies + extracts it and stamps trust.
    *  SAFE-001: the reviewed connector-grant array is required (rides as a JSON multipart field). */
   async importApplicationPackage(file: File, approvedConnectorGrants: string[]): Promise<ApiResponse<ApplicationPackageImportResult>> {
+    const generation = currentSessionGeneration();
     const formData = new FormData();
     formData.append('file', file);
     formData.append('approvedConnectorGrants', JSON.stringify(approvedConnectorGrants));
@@ -3878,7 +3914,7 @@ class ApiClient {
       });
       const data = await response.json();
       if (!response.ok) {
-        if (response.status === 401) this.handleUnauthorized();
+        if (response.status === 401) this.handleUnauthorized(generation);
         return { error: data.message || 'Failed to import application package' };
       }
       return { data };
@@ -4059,6 +4095,7 @@ class ApiClient {
   }
 
   async uploadPackZip(file: File): Promise<ApiResponse<{ success: boolean; pack: PackData; formCount: number; appCount: number }>> {
+    const generation = currentSessionGeneration();
     const url = `${this.baseUrl}/packs/catalog/upload`;
     const formData = new FormData();
     formData.append('file', file);
@@ -4079,7 +4116,7 @@ class ApiClient {
 
       const data = await response.json();
       if (!response.ok) {
-        if (response.status === 401) this.handleUnauthorized();
+        if (response.status === 401) this.handleUnauthorized(generation);
         return { error: data.message || 'Failed to upload pack' };
       }
       return { data };
@@ -4115,6 +4152,7 @@ class ApiClient {
 
   // File upload for form responses
   async uploadFile(formId: string, file: File, fieldId?: string): Promise<ApiResponse<UploadedFileMetadata>> {
+    const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
     const url = `${this.baseUrl}/forms/${formId}/upload`;
@@ -4138,7 +4176,7 @@ class ApiClient {
 
       const data = await response.json();
       if (!response.ok) {
-        if (response.status === 401) this.handleUnauthorized();
+        if (response.status === 401) this.handleUnauthorized(generation);
         return { error: data.message || 'Failed to upload file' };
       }
       return { data };
@@ -4148,6 +4186,7 @@ class ApiClient {
   }
 
   async uploadAppFile(slug: string, formId: string, file: File, fieldId?: string): Promise<ApiResponse<UploadedFileMetadata>> {
+    const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
     const url = `${this.baseUrl}/app/${slug}/forms/${formId}/upload`;
@@ -4171,7 +4210,7 @@ class ApiClient {
 
       const data = await response.json();
       if (!response.ok) {
-        if (response.status === 401) this.handleUnauthorized();
+        if (response.status === 401) this.handleUnauthorized(generation);
         return { error: data.message || 'Failed to upload file' };
       }
       return { data };
@@ -4182,6 +4221,7 @@ class ApiClient {
 
   // CSV import
   async parseImportCsv(formId: string, file: File): Promise<ApiResponse<CsvParseResult>> {
+    const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
     const url = `${this.baseUrl}/forms/${formId}/responses/import`;
@@ -4204,7 +4244,7 @@ class ApiClient {
 
       const data = await response.json();
       if (!response.ok) {
-        if (response.status === 401) this.handleUnauthorized();
+        if (response.status === 401) this.handleUnauthorized(generation);
         return { error: data.message || 'Failed to parse CSV' };
       }
       return { data };
@@ -4214,6 +4254,7 @@ class ApiClient {
   }
 
   async importCsv(formId: string, file: File, columnMapping: Record<string, string>): Promise<ApiResponse<CsvImportResult>> {
+    const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
     const url = `${this.baseUrl}/forms/${formId}/responses/import`;
@@ -4237,7 +4278,7 @@ class ApiClient {
 
       const data = await response.json();
       if (!response.ok) {
-        if (response.status === 401) this.handleUnauthorized();
+        if (response.status === 401) this.handleUnauthorized(generation);
         return { error: data.message || 'Failed to import CSV' };
       }
       return { data };
@@ -4624,6 +4665,7 @@ class ApiClient {
 
   /** Upload a release zip for the upgrade wizard (multipart — raw fetch like the other uploads). */
   async adminUpgradeUpload(file: File): Promise<ApiResponse<{ staged: AdminStagedPackage }>> {
+    const generation = currentSessionGeneration();
     try {
       const formData = new FormData();
       formData.append('package', file);
@@ -4636,7 +4678,7 @@ class ApiClient {
         headers,
         body: formData,
       });
-      if (res.status === 401) { this.handleUnauthorized(); return { error: 'Session expired', status: 401 }; }
+      if (res.status === 401) { this.handleUnauthorized(generation); return { error: 'Session expired', status: 401 }; }
       const body = await res.json().catch(() => null);
       if (!res.ok) return { error: body?.message || `Upload failed (HTTP ${res.status})`, status: res.status };
       return { data: body };
