@@ -64,6 +64,23 @@ describe('classifyDeliveryResult', () => {
     expect(classifyDeliveryResult({ ok: false, status: 429, error: 'Too many requests' }).outcome).toBe('unreachable');
   });
 
+  // 503 is what every API route answers while the admin's maintenance mode is on
+  // (MaintenanceMiddleware), and what the submit pipeline answers, marked retryable, when a form
+  // is busy; 502 and 504 are a gateway that could not reach the app server. None of them judged
+  // the submission.
+  it('502, 503 and 504 → unreachable, preserving the message', () => {
+    for (const status of [502, 503, 504]) {
+      const c = classifyDeliveryResult({ ok: false, status, error: 'Down for maintenance' });
+      expect(c.outcome, String(status)).toBe('unreachable');
+      expect(c.error).toBe('Down for maintenance');
+    }
+  });
+
+  it('a conflict or an in-flight duplicate keeps its meaning whatever the status', () => {
+    expect(classifyDeliveryResult({ ok: false, status: 503, processing: true }).outcome).toBe('processing');
+    expect(classifyDeliveryResult({ ok: false, status: 503, conflict: true }).outcome).toBe('terminal');
+  });
+
   it('a validation refusal still counts as an attempt', () => {
     expect(classifyDeliveryResult({ ok: false, status: 422, error: 'Validation failed' }).outcome).toBe('retry');
   });

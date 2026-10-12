@@ -42,14 +42,31 @@ export function ConnectorStatus({ connector }: { connector: string }) {
   );
 }
 
-/** Online/offline sync indicator. */
+/**
+ * Online/offline sync indicator. "Online" is not "saved": a submission can wait on the device
+ * while the browser is online (a Wi-Fi sign-in page answered, the server is in maintenance mode),
+ * so "all changes saved" is said only when nothing waits and nothing failed.
+ */
 export function SyncStatus() {
-  const { offline } = useOfflineQueue();
+  const { offline, pending, failed } = useOfflineQueue();
+  return <SyncStatusLine offline={offline} pending={pending} failed={failed} />;
+}
+
+/** The indicator itself, for a caller that already holds the queue's state (OfflineQueuePanel). */
+function SyncStatusLine({ offline, pending, failed }: { offline: boolean; pending: number; failed: number }) {
+  const count = (n: number) => `${n} submission${n === 1 ? '' : 's'}`;
+  const waiting = !offline && (pending > 0 || failed > 0);
   return (
     <div className="flex items-center gap-2 text-sm">
-      <span className={`h-2 w-2 shrink-0 rounded-full ${offline ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+      <span className={`h-2 w-2 shrink-0 rounded-full ${offline || waiting ? 'bg-amber-500' : 'bg-emerald-500'}`} />
       <span className="text-gray-500 dark:text-slate-400">
-        {offline ? 'Offline — changes sync when you reconnect' : 'Online — all changes saved'}
+        {offline
+          ? 'Offline — changes sync when you reconnect'
+          : pending > 0
+            ? `Online — ${count(pending)} waiting to send`
+            : failed > 0
+              ? `Online — ${count(failed)} could not be sent`
+              : 'Online — all changes saved'}
       </span>
     </div>
   );
@@ -269,7 +286,8 @@ export function OfflineQueuePanel() {
   return (
     <div className="rounded-xl border border-gray-200/80 dark:border-slate-700/60 p-3 text-sm">
       <div className="flex items-center justify-between gap-3">
-        <SyncStatus />
+        {/* From this panel's own reading of the queue, so the line and the counts below it agree. */}
+        <SyncStatusLine offline={q.offline} pending={pending} failed={failed} />
         {flush && pending > 0 && <AppButton variant="secondary" onClick={() => flush()}>Sync now</AppButton>}
       </div>
       {(pending > 0 || failed > 0) && (
@@ -277,8 +295,9 @@ export function OfflineQueuePanel() {
           {pending} pending{failed ? `, ${failed} failed` : ''}{syncing ? ' · syncing…' : ''}
         </p>
       )}
-      {failed > 0 && lastError && (
-        <p className="mt-1 text-xs text-red-600 dark:text-red-400">{lastError}</p>
+      {/* A failure is an error; a "Sync now" that could send nothing yet is only news. */}
+      {lastError && (pending > 0 || failed > 0) && (
+        <p className={`mt-1 text-xs ${failed > 0 ? 'text-red-600 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'}`}>{lastError}</p>
       )}
     </div>
   );

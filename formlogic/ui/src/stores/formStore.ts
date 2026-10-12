@@ -6,6 +6,7 @@ import { api } from '../lib/api';
 import { frozenWhileActing } from '../lib/adminFrozenStorage';
 import { currentSessionGeneration, isSessionGenerationCurrent } from '../lib/sessionGeneration';
 import { logger } from '../lib/logger';
+import { isReservedExpressionName } from '../lib/utils';
 import { toast } from './toastStore';
 
 /**
@@ -48,11 +49,12 @@ async function fetchAllForms(): Promise<Form[] | null> {
 // Field-id slugs must not collide with the FormLogic expression prelude's global
 // names: a field id like "count"/"sum"/"format" would shadow that builtin in the
 // generated expression context (let count = <value>) and break every conditional/
-// calculated expression on the form. Such collisions get a numeric suffix instead.
-const RESERVED_FIELD_IDS = new Set([
-  '__isArr', 'validators', 'format', 'compliance', 'finance', 'safety',
-  'isEmpty', 'isNotEmpty', 'contains', 'sum', 'avg', 'count', 'value',
-]);
+// calculated expression on the form; the server refuses to save a form holding one, and
+// a field labelled Print or Console got exactly such an id. Nor may an id be a word the
+// expression language keeps for itself: a field labelled Class, Case, New or Default got
+// an id no show-if rule or calculation can read. Such collisions get a numeric suffix
+// instead (isReservedExpressionName has both lists). Only a NEW field is named here; a
+// stored id never changes.
 
 // Generate a human-friendly field ID from a label
 function generateFieldId(label: string, existingIds: string[]): string {
@@ -79,7 +81,7 @@ function generateFieldId(label: string, existingIds: string[]): string {
   // Check if ID already exists, if so append a number
   let finalId = baseId;
   let counter = 1;
-  while (existingIds.includes(finalId) || RESERVED_FIELD_IDS.has(finalId)) {
+  while (existingIds.includes(finalId) || isReservedExpressionName(finalId)) {
     finalId = `${baseId}_${counter}`;
     counter++;
   }
@@ -992,9 +994,12 @@ export const useFormStore = create<FormState>()(
         historyCoalesceKey = null;
         // Match the deleted field as a whole token so deleting "email" doesn't also
         // wipe conditional/calc logic that references a sibling like "email_address"
-        // (a plain substring `.includes` did exactly that).
+        // (a plain substring `.includes` did exactly that). Quoted text is not read as a
+        // field: `contact_method == "email"` compares against an option's value, and removing
+        // that rule with the Email field left its field showing for every answer.
         const escaped = fieldId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const refsDeletedField = (expr: string) => new RegExp(`\\b${escaped}\\b`).test(expr);
+        const withoutQuoted = (expr: string) => expr.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""');
+        const refsDeletedField = (expr: string) => new RegExp(`\\b${escaped}\\b`).test(withoutQuoted(expr));
         set((state) => ({
           forms: state.forms.map((form) => {
             if (form.id !== formId) return form;

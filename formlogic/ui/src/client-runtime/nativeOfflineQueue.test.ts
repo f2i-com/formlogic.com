@@ -97,6 +97,11 @@ describe('flushNativeQueue', () => {
     ['no response at all', { error: 'Failed to fetch' }],
     ['408 Request Timeout', { error: 'Request Timeout', status: 408 }],
     ['429 Too Many Requests', { error: 'Too many requests', status: 429 }],
+    // Maintenance mode answers 503 on every API route; a gateway answers 502/504 while the app
+    // server is down.
+    ['502 Bad Gateway', { error: 'Server error (502)', status: 502 }],
+    ['503 from maintenance mode', { error: 'Down for maintenance', status: 503 }],
+    ['504 Gateway Timeout', { error: 'Server error (504)', status: 504 }],
   ])('leaves every item queued, with no attempt used, when the batch meets %s', async (_name, response) => {
     const bridge = makeBridge();
     setBridge(bridge);

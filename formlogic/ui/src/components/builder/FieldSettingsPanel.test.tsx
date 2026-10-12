@@ -95,6 +95,135 @@ describe('FieldSettingsPanel scale bounds', () => {
     act(() => input.blur());
     expect(input.value).toBe('5');
   });
+
+  // The Start is typed the same way. A cleared Start that snaps back to "1" puts the next key
+  // after that 1: "0" arrives as "10", and a Start of 10 pushes the End from 5 to 11.
+  it('lets the Start be cleared and retyped without moving the End', () => {
+    render(scale);
+    const input = inputLabelled('Start');
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    const key = (k: string) => act(() => { setValue.call(input, k === 'Backspace' ? input.value.slice(0, -1) : input.value + k); input.dispatchEvent(new Event('input', { bubbles: true })); });
+    act(() => input.focus());
+    key('Backspace');
+    expect(input.value).toBe('');
+    expect(latest?.properties.scaleStart).toBe(1);
+    key('0');
+    expect(latest?.properties.scaleStart).toBe(0);
+    expect(latest?.properties.scaleEnd).toBe(5);
+    act(() => input.blur());
+    expect(input.value).toBe('0');
+    expect(history.filter((f) => f.properties.scaleEnd !== 5)).toEqual([]);
+  });
+
+  it('moves the End above a Start the author settles on, and not before', () => {
+    render(scale);
+    const input = inputLabelled('Start');
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    act(() => input.focus());
+    act(() => { setValue.call(input, '7'); input.dispatchEvent(new Event('input', { bubbles: true })); });
+    expect(input.value).toBe('7');
+    expect(latest?.properties.scaleEnd).toBe(5);
+    expect(latest?.properties.scaleStart).toBe(1);
+    act(() => input.blur());
+    expect(latest?.properties.scaleStart).toBe(7);
+    expect(latest?.properties.scaleEnd).toBe(8);
+    expect(history.filter((f) => (f.properties.scaleStart ?? 1) >= (f.properties.scaleEnd ?? 10))).toEqual([]);
+  });
+});
+
+describe('FieldSettingsPanel number bounds', () => {
+  const age: FormField = { id: 'n1', type: 'number', label: 'Age', required: false, properties: { min: 18, max: 65 } } as FormField;
+
+  // A Max of 99 arrives as "9" and then "99". The 9 is below the Min of 18, and the editor keeps
+  // Min at or below Max: correcting on the first key stored a Min of 9, which the form then
+  // enforced, and nothing on screen said the Min had changed.
+  it('keeps the Min when a Max of 99 is typed key by key', () => {
+    render(age);
+    type(inputLabelled('Max'), ['9', '99']);
+    expect(latest?.properties.max).toBe(99);
+    expect(latest?.properties.min).toBe(18);
+    expect(history.filter((f) => f.properties.min !== 18)).toEqual([]);
+  });
+
+  it('keeps the Max when a Min of 70 is retyped as 7', () => {
+    render(age);
+    const input = inputLabelled('Min');
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    act(() => input.focus());
+    for (const value of ['7', '70', '7']) act(() => { setValue.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })); });
+    act(() => input.blur());
+    expect(latest?.properties.min).toBe(7);
+    expect(latest?.properties.max).toBe(65);
+    expect(history.filter((f) => f.properties.max !== 65)).toEqual([]);
+  });
+
+  it('still brings the other bound along for a value the author settles on', () => {
+    render(age);
+    type(inputLabelled('Max'), ['9']);
+    expect(latest?.properties.max).toBe(9);
+    expect(latest?.properties.min).toBe(9);
+    // Never stored with Min above Max on the way there: no answer would pass.
+    expect(history.filter((f) => (f.properties.min ?? -Infinity) > (f.properties.max ?? Infinity))).toEqual([]);
+  });
+
+  it('still clears a bound when its box is emptied', () => {
+    render(age);
+    type(inputLabelled('Max'), ['']);
+    expect(latest?.properties.max).toBeUndefined();
+    expect(latest?.properties.min).toBe(18);
+  });
+});
+
+describe('FieldSettingsPanel number settings that always hold a value', () => {
+  /** Keys as a keyboard sends them: each is applied to what the box shows at that moment. */
+  function press(input: HTMLInputElement, keys: string[]) {
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    act(() => input.focus());
+    for (const k of keys) {
+      act(() => { setValue.call(input, k === 'Backspace' ? input.value.slice(0, -1) : input.value + k); input.dispatchEvent(new Event('input', { bubbles: true })); });
+    }
+  }
+
+  // Cleared to retype it, the box must stay cleared. Filled back in with the default at once, the
+  // next key lands after it: a 3 typed over Max Stars 5 read "53" and was stored as 10.
+  it('lets Max Stars be cleared and retyped', () => {
+    render({ id: 'r1', type: 'rating', label: 'Rate us', required: false, properties: { maxStars: 5 } } as FormField);
+    const input = inputLabelled('Max Stars');
+    press(input, ['Backspace']);
+    expect(input.value).toBe('');
+    expect(latest?.properties.maxStars).toBe(5);
+    press(input, ['3']);
+    expect(latest?.properties.maxStars).toBe(3);
+    act(() => input.blur());
+    expect(input.value).toBe('3');
+  });
+
+  it('puts back what was stored when Max Stars is left empty', () => {
+    render({ id: 'r1', type: 'rating', label: 'Rate us', required: false, properties: { maxStars: 4 } } as FormField);
+    const input = inputLabelled('Max Stars');
+    press(input, ['Backspace']);
+    act(() => input.blur());
+    expect(input.value).toBe('4');
+    expect(latest?.properties.maxStars).toBe(4);
+  });
+
+  it('lets Max File Size be cleared and retyped', () => {
+    render({ id: 'f1', type: 'file_upload', label: 'Attachment', required: false, properties: {} } as FormField);
+    const input = inputLabelled('Max File Size (MB)');
+    press(input, ['Backspace', 'Backspace']);
+    expect(input.value).toBe('');
+    press(input, ['2', '5']);
+    expect(latest?.properties.maxFileSize).toBe(25 * 1024 * 1024);
+  });
+
+  it('lets the number of files be cleared and retyped', () => {
+    render({ id: 'f1', type: 'file_upload', label: 'Attachment', required: false, properties: { allowMultiple: true, maxFiles: 20 } } as FormField);
+    const input = inputLabelled('Maximum number of files');
+    press(input, ['Backspace', 'Backspace']);
+    expect(input.value).toBe('');
+    press(input, ['3']);
+    expect(latest?.properties.maxFiles).toBe(3);
+  });
 });
 
 describe('FieldSettingsPanel accepted file types', () => {

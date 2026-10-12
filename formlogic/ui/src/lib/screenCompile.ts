@@ -92,8 +92,9 @@ const ENTRY_CANDIDATES = ['index.tsx', 'index.ts', 'main.tsx', 'main.ts', 'app.t
 // (its CSP is unchanged). Pack-owned screens deliberately do NOT get this — they must stay
 // hermetic/deterministic (check-pack-screens keeps refusing npm imports for them).
 
-/** Minimal fetch shape the resolver needs — lets tests inject an offline fake registry. */
-export type EsmFetch = (url: string) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
+/** Minimal fetch shape the resolver needs — lets tests inject an offline fake registry. `url` is
+ *  where the answer came from once redirects were followed (Response.url). */
+export type EsmFetch = (url: string) => Promise<{ ok: boolean; status: number; url?: string; text(): Promise<string> }>;
 
 let esmFetchOverride: EsmFetch | null = null;
 const esmCache = new Map<string, Promise<string>>();
@@ -111,8 +112,16 @@ const ESM_MAX_BYTES = 4 * 1024 * 1024;
 function esmFetchText(url: string): Promise<string> {
   let p = esmCache.get(url);
   if (!p) {
-    const f: EsmFetch = esmFetchOverride ?? ((u) => fetch(u));
+    // No credentials: the request is made by the host page, and nothing of the person's session
+    // belongs on it, wherever a redirect leads.
+    const f: EsmFetch = esmFetchOverride ?? ((u) => fetch(u, { credentials: 'omit' }));
     p = f(url).then(async (res) => {
+      // fetch follows redirects, and esm.sh uses them (an unpinned version to the pinned one).
+      // toEsm checks the URL that is asked for; this checks the one that answered, so the origin
+      // rule holds without leaning on the shell's CSP, which lists other origins too (the app,
+      // the API, the desktop bridges on loopback) and is not sent by a dev server.
+      const from = res.url ? new URL(res.url).origin : ESM_ORIGIN;
+      if (from !== ESM_ORIGIN) throw new Error(`esm.sh redirected to another site, ${from}`);
       if (!res.ok) throw new Error(`esm.sh returned ${res.status}`);
       return res.text();
     });

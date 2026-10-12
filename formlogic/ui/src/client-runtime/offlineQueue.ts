@@ -60,11 +60,15 @@ export interface DeliveryResultInput {
 
 /**
  * Statuses that say only that the server was not reached, or asked to be tried later: no
- * response at all (0), 408 Request Timeout and 429 Too Many Requests. Nothing about the
- * submission was judged, so a delivery that ends this way uses up none of its attempts.
+ * response at all (0), 408 Request Timeout, 429 Too Many Requests, and 502, 503 and 504. 503 is
+ * what every API route answers while the admin's maintenance mode is on (MaintenanceMiddleware),
+ * and what the submit pipeline itself answers, marked retryable, when a form is busy; 502 and 504
+ * are a gateway that could not reach the app server. Nothing about the submission was judged, so
+ * a delivery that ends this way uses up none of its attempts. 500 is not one of them: a
+ * submission the server fails on every time has to reach the attempt cap and stop.
  */
 export function isUnreachableStatus(status: number | undefined): boolean {
-  return status === 0 || status === 408 || status === 429;
+  return status === 0 || status === 408 || status === 429 || status === 502 || status === 503 || status === 504;
 }
 
 /**
@@ -74,7 +78,8 @@ export function isUnreachableStatus(status: number | undefined): boolean {
  *   - success / idempotent replay           → 'delivered'  (remove from the queue),
  *   - server says "already being processed"  → 'processing' (keep pending; do NOT remove or fail),
  *   - server says "different submission"     → 'terminal'   (mark failed; never retry — surface it),
- *   - server not reached (0 / 408 / 429)     → 'unreachable' (keep pending; attempts unchanged),
+ *   - server not reached (0 / 408 / 429 / 502 / 503 / 504, see isUnreachableStatus)
+ *                                            → 'unreachable' (keep pending; attempts unchanged),
  *   - any other error                        → 'retry'      (keep pending; bump attempts).
  */
 export function classifyDeliveryResult(result: DeliveryResultInput): DeliveryClassification {
@@ -303,7 +308,8 @@ export async function flushQueue(): Promise<{ flushed: number; failed: number }>
 /** Alias of flushQueue for the unified flush surface (contract FU-3/#9: browser + native). */
 export const flushBrowserQueue = flushQueue;
 
-// Flush automatically when connectivity returns.
+// Flush automatically when connectivity returns. (Opening an app and coming back to the page
+// flush too, spaced apart: flushQueuesWhenDue in nativeOfflineQueue.ts, which knows both queues.)
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
     void flushQueue();

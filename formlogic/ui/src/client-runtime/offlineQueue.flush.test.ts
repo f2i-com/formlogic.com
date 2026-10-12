@@ -72,6 +72,22 @@ describe('flushQueue while the server cannot be reached', () => {
     expect(row.attempts).toBe(0);
   });
 
+  // Maintenance mode answers 503 on every API route for as long as the admin leaves it on, and a
+  // reverse proxy answers 502/504 while the app server is restarting. Each reconnect and each
+  // "Sync now" in that time is a flush: eight of them must not turn the submission into a failed
+  // one, which is never sent again.
+  it.each([502, 503, 504])('keeps a submission pending, with no attempt used, through any number of %i answers', async (status) => {
+    await queue();
+    vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: false, status, error: 'Down for maintenance' });
+    for (let i = 0; i < 12; i++) expect(await flushQueue()).toEqual({ flushed: 0, failed: 0 });
+    const [row] = await listQueue();
+    expect(row.status).toBe('pending');
+    expect(row.attempts).toBe(0);
+    expect(row.lastError).toBe('Down for maintenance');
+    vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 201 });
+    expect(await flushQueue()).toEqual({ flushed: 1, failed: 0 });
+  });
+
   it('stops the pass at the first unreachable result instead of sending every queued item into it', async () => {
     await queue();
     await queue();

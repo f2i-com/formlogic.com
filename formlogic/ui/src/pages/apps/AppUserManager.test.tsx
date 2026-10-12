@@ -4,7 +4,8 @@
 // anyone else. A non-owner manager sees those controls disabled, with the reason, instead of a
 // failed save. The same holds for giving a member such a role. Which members those are is the
 // server's call (each row's holdsAppLevelRole), and who the owner is comes from the apps list
-// (canManage true, and ownerId present, only on the owner's row).
+// (canManage true, and ownerId present, only on the owner's row), or from the app itself when the
+// list does not hold it (see useViewerOwnsApp).
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -16,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   users: [] as AppUser[],
   roles: [] as AppRole[],
   app: undefined as Record<string, unknown> | undefined,
+  acting: null as { ownerId: string } | null,
+  getApp: vi.fn(),
 }));
 vi.mock('../../stores/appUserStore', () => ({
   useAppUserStore: () => ({
@@ -33,7 +36,9 @@ vi.mock('../../stores/authStore', () => ({
 }));
 vi.mock('../../components/admin/AdminActingContext', () => ({
   useResourcePaths: () => ({ appSub: (id: string, path: string) => `/apps/${id}/${path}` }),
+  useAdminActing: () => mocks.acting,
 }));
+vi.mock('../../lib/api', () => ({ api: { getApp: mocks.getApp } }));
 vi.mock('../../components/layout/Header', () => ({
   Header: ({ title, actions }: { title: string; actions: ReactNode }) => <header><h1>{title}</h1>{actions}</header>,
 }));
@@ -61,6 +66,9 @@ beforeEach(() => {
   mocks.roles = roles;
   mocks.users = [member('m-admin', 'r-admin', 'Ada Admin', true), member('m-flows', 'r-flows', 'Flo Runner', false), member('m-plain', 'r-member', 'Pat Plain', false)];
   mocks.app = ownerRow;
+  mocks.acting = null;
+  // GET /apps/{id} for an app that is not the asker's to open is answered not found.
+  mocks.getApp.mockReset().mockResolvedValue({ error: 'App not found or access denied', status: 404 });
   window.matchMedia = vi.fn().mockReturnValue({ matches: false, addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn() });
   // The table measures its width to choose between rows and cards.
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
@@ -119,10 +127,18 @@ describe('AppUserManager for a manager who is not the Owner', () => {
     expect(controls('Pat Plain').remove.disabled).toBe(true);
   });
 
-  it('does not take an app missing from the list as the viewer’s own', async () => {
+  it('does not take an app missing from the list as the viewer’s own: a draft is not listed to a member, and asking for it is answered not found', async () => {
     await mount('manager-user', null);
+    expect(mocks.getApp).toHaveBeenCalledWith('app1');
     expect(controls('Ada Admin').edit.disabled).toBe(true);
     expect(controls('Ada Admin').remove.disabled).toBe(true);
+  });
+
+  it('is told the same when the app answers with the member’s copy, which has no ownerId', async () => {
+    mocks.getApp.mockResolvedValue({ data: { app: { id: 'app1', name: 'Shared app' } } });
+    await mount('manager-user', null);
+    expect(controls('Ada Admin').edit.disabled).toBe(true);
+    expect(controls('Ada Admin').text).toContain('Owner only');
   });
 
   it('leaves other members editable, including one whose role only runs flows', async () => {
@@ -173,5 +189,72 @@ describe('AppUserManager for the Owner', () => {
     expect(admin.edit.disabled).toBe(false);
     expect(admin.remove.disabled).toBe(false);
     expect(admin.text).not.toContain('Owner only');
+    // The list already says whose app it is: nothing more is asked.
+    expect(mocks.getApp).not.toHaveBeenCalled();
+  });
+});
+
+// The apps list is loaded by the page shell, not by this page. An owner can be here before it has
+// arrived (a direct link in a new browser) or after it failed to load, and neither is to be told
+// "Owner only" about their own app.
+describe('AppUserManager when the apps list does not hold the app', () => {
+  it('asks for the app itself and gives its owner every control', async () => {
+    mocks.getApp.mockResolvedValue({ data: { app: { id: 'app1', ownerId: 'owner-user' } } });
+    await mount('owner-user', null);
+    expect(mocks.getApp).toHaveBeenCalledWith('app1');
+    const admin = controls('Ada Admin');
+    expect(admin.edit.disabled).toBe(false);
+    expect(admin.remove.disabled).toBe(false);
+    expect(admin.text).not.toContain('Owner only');
+  });
+
+  it('does not say "Owner only" while that answer is on its way', async () => {
+    let answer!: (value: unknown) => void;
+    mocks.getApp.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    await mount('owner-user', null);
+    expect(controls('Ada Admin').text).not.toContain('Owner only');
+    expect(controls('Ada Admin').edit.disabled).toBe(false);
+    await act(async () => { answer({ data: { app: { id: 'app1', ownerId: 'owner-user' } } }); });
+    expect(controls('Ada Admin').edit.disabled).toBe(false);
+  });
+
+  it('does not lock the owner out when the app could not be read either', async () => {
+    mocks.getApp.mockResolvedValue({ error: 'Failed to fetch' });
+    await mount('owner-user', null);
+    const admin = controls('Ada Admin');
+    expect(admin.edit.disabled).toBe(false);
+    expect(admin.remove.disabled).toBe(false);
+    expect(admin.text).not.toContain('Owner only');
+  });
+
+  it('takes the list’s word as soon as the list holds the app', async () => {
+    mocks.getApp.mockResolvedValue({ error: 'Failed to fetch' });
+    await mount('manager-user', null);
+    expect(controls('Ada Admin').edit.disabled).toBe(false);
+    await mount('manager-user', managerRow);
+    expect(controls('Ada Admin').edit.disabled).toBe(true);
+    expect(controls('Ada Admin').text).toContain('Owner only');
+  });
+});
+
+// /admin/apps/{id}/users: the server runs each request as the app's owner (AdminActAsMiddleware),
+// so the admin is given the owner's controls. The signed-in id is the admin's own, and the apps
+// list is the admin's own unless another page fetched the owner's.
+describe('AppUserManager for a platform admin acting for the owner', () => {
+  it('gives the owner’s controls without the app in the list', async () => {
+    mocks.acting = { ownerId: 'owner-user' };
+    await mount('admin-user', null);
+    const admin = controls('Ada Admin');
+    expect(admin.edit.disabled).toBe(false);
+    expect(admin.remove.disabled).toBe(false);
+    expect(admin.text).not.toContain('Owner only');
+  });
+
+  it('offers a member any role but Owner', async () => {
+    mocks.acting = { ownerId: 'owner-user' };
+    await mount('admin-user', null);
+    await act(async () => controls('Pat Plain').edit.click());
+    const select = [...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => o.value === 'r-admin'))!;
+    expect([...select.options].find((o) => o.value === 'r-admin')!.disabled).toBe(false);
   });
 });

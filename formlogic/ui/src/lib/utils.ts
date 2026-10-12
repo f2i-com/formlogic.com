@@ -193,6 +193,46 @@ export function labelToVariableName(label: string): string {
 }
 
 /**
+ * Words an answer cannot be named in a show-if rule or a calculation. Those are JavaScript
+ * expressions, run by the ZIPP engine with each answer as a global named after its field. A word
+ * of the language does not parse as a name there (`class == "5A"` is an error, and a rule that
+ * errors shows its field); `true`, `false`, `null`, `this` and `undefined` parse, and read the
+ * language's value instead of the answer; and an answer named `eval` replaces the function the
+ * engine runs every expression on the form with. Checked against the engine itself, which reads
+ * the strict-mode-only words (`let`, `package`, `public`, …) as ordinary names.
+ */
+export const EXPRESSION_RESERVED_WORDS: ReadonlySet<string> = new Set([
+  'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default', 'delete', 'do',
+  'else', 'enum', 'export', 'extends', 'finally', 'for', 'function', 'if', 'import', 'in',
+  'instanceof', 'new', 'return', 'super', 'switch', 'throw', 'try', 'typeof', 'var', 'void',
+  'while', 'with',
+  'true', 'false', 'null', 'this', 'undefined',
+  'eval',
+]);
+
+/**
+ * Names that are taken where expressions run: the globals the expression prelude defines
+ * (lib/formlogic/prelude.js), `value`, which a validation expression is given, and the JavaScript
+ * globals. An answer of the same name would hide the helper from every expression on the form.
+ * This is the server's FormService::RESERVED_FIELD_IDS, which refuses to save a form holding
+ * such a field id (a test reads that list and holds this one to it).
+ */
+export const EXPRESSION_GLOBAL_NAMES: ReadonlySet<string> = new Set([
+  '__isArr', 'validators', 'format', 'compliance', 'finance', 'safety',
+  'isEmpty', 'isNotEmpty', 'contains', 'sum', 'avg', 'count', 'value',
+  'globalThis', 'undefined', 'NaN', 'Infinity', 'eval', 'Object', 'Array',
+  'Function', 'String', 'Number', 'Boolean', 'Symbol', 'BigInt', 'JSON',
+  'Math', 'Date', 'RegExp', 'Error', 'Promise', 'Map', 'Set', 'WeakMap',
+  'WeakSet', 'Reflect', 'Proxy', 'parseInt', 'parseFloat', 'isNaN',
+  'isFinite', 'print', 'console', 'ctx',
+]);
+
+/** Can this not be the name of an answer in an expression (a field id, or the name the editors show)? */
+export function isReservedExpressionName(name: string): boolean {
+  return EXPRESSION_RESERVED_WORDS.has(name) || EXPRESSION_GLOBAL_NAMES.has(name);
+}
+
+/**
  * Create a mapping of variable names to field IDs
  * Handles duplicates by appending numbers
  */
@@ -209,6 +249,14 @@ export function createFieldVariableMap(
     // Handle empty or invalid names
     if (!varName) {
       varName = 'field';
+    }
+
+    // The name is typed and shown in expressions, and turned back into the field's id by whole
+    // word when the expression is saved. A word of the language cannot be typed as a name at all,
+    // and a helper's name would turn every use of the helper into the field (`count(items)` was
+    // saved as a call to the Count field).
+    if (isReservedExpressionName(varName)) {
+      varName = `${varName}Field`;
     }
 
     // Handle duplicates by appending a number. Keep incrementing until the

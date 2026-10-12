@@ -219,11 +219,11 @@ describe('flushNativeQueue — idempotency-aware ack / fail / keep (task #10)', 
     const items = [item('i1', 'k1', { a: 1 }), item('i2', 'k2', { a: 2 })];
     const bridge = makeBridge(items);
     setBridge(bridge);
-    vi.mocked(api.syncBatch).mockResolvedValueOnce({ error: 'Server error (502)', status: 502 });
+    vi.mocked(api.syncBatch).mockResolvedValueOnce({ error: 'Server error (500)', status: 500 });
 
     const result = await flushNativeQueue();
 
-    expect(bridge.sync.fail).toHaveBeenCalledWith(['i1', 'i2'], 'Server error (502)');
+    expect(bridge.sync.fail).toHaveBeenCalledWith(['i1', 'i2'], 'Server error (500)');
     expect(bridge.sync.failTerminal).not.toHaveBeenCalled();
     expect(bridge.sync.ack).not.toHaveBeenCalled();
     expect(result).toEqual({ flushed: 0, failed: 2 });

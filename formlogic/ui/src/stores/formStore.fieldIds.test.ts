@@ -1,0 +1,113 @@
+// A field's id is the name its value has in show-if rules and calculations, which are JavaScript
+// expressions: `total > 100`. An id that is a word of the language cannot be read there at all
+// (`class == "5A"` does not parse), so a rule about a field labelled Class, Case, New or Default
+// never ran, and the form showed the field it was meant to hide. Such a label gets a suffixed id,
+// as a label that would hide one of the expression helpers (count, sum) already did.
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Form, FormField } from '../types/form';
+import { createFieldVariableMap, isReservedExpressionName, replaceIdsWithVariables, replaceVariablesWithIds } from '../lib/utils';
+import { safeFieldId } from '../lib/ai-app-builder/engine';
+
+vi.mock('../lib/api', () => ({
+  api: {
+    isDemoMode: vi.fn(() => false),
+    isAdminActing: vi.fn(() => false),
+    setAdminActing: vi.fn(),
+    getForm: vi.fn(),
+    getForms: vi.fn(async () => ({ data: { forms: [] } })),
+    createForm: vi.fn(),
+    updateForm: vi.fn(),
+    deleteForm: vi.fn(),
+  },
+}));
+vi.mock('./toastStore', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
+}));
+
+import { clearAllDebounceTimers, useFormStore } from './formStore';
+
+const add = (label: string) =>
+  useFormStore.getState().addField('f1', { type: 'short_text', label, required: false, properties: {} } as Omit<FormField, 'id' | 'order'>);
+
+/** Does `name == "x"` parse as an expression that reads a variable? */
+const readable = (name: string) => {
+  try { new Function(`return (${name} == "x");`); return true; } catch { return false; }
+};
+
+beforeEach(() => {
+  clearAllDebounceTimers();
+  const form = {
+    id: 'f1', title: 'Enrolment', description: '', status: 'draft', fields: [],
+    settings: {}, theme: {}, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-10T00:00:00.000Z',
+  } as unknown as Form;
+  useFormStore.setState({ forms: [form], storageMode: 'local', isInitialized: true, pendingDeletions: [], syncConflicts: null, savingFormIds: {}, saveErrors: {} });
+});
+
+describe('the id a new field is given', () => {
+  it('can be read in an expression, whatever word the label is', () => {
+    for (const label of ['Class', 'Case', 'New', 'Default', 'Return', 'Function', 'Package', 'In', 'For', 'This', 'Null', 'True', 'Delete', 'Export']) {
+      const id = add(label).id;
+      expect(readable(id), `${label} -> ${id}`).toBe(true);
+      expect(id.startsWith(label.toLowerCase()), `${label} -> ${id}`).toBe(true);
+    }
+  });
+
+  // The engine runs an expression with eval, and puts each answer in a global named after its
+  // field: an answer named eval would replace it and stop every expression on the form.
+  it('does not take the name the engine itself needs', () => {
+    expect(add('Eval').id).not.toBe('eval');
+    expect(add('Undefined').id).not.toBe('undefined');
+  });
+
+  // The server refuses to save a form whose field id is one of these (FormService::validateFieldId,
+  // "Field ID is reserved and cannot be used"): a field labelled Print or Console could not be saved.
+  it('is never one the server refuses, for a label that slugs to it', () => {
+    const php = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../backend/src/Services/FormService.php'), 'utf8');
+    const list = php.match(/private const RESERVED_FIELD_IDS = \[([\s\S]*?)\];/)?.[1] ?? '';
+    // The list has comments between its entries, with apostrophes of their own.
+    const refused = [...list.replace(/\/\/.*$/gm, '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    expect(refused.length).toBeGreaterThan(20);
+    expect(refused).toContain('print');
+    for (const id of refused) expect(isReservedExpressionName(id), id).toBe(true);
+    expect(add('Print').id).toBe('print_1');
+    expect(add('Console').id).toBe('console_1');
+  });
+
+  it('is the same for the AI app builder’s fields', () => {
+    const used = new Set<string>();
+    expect(safeFieldId('Class', used)).toBe('class_1');
+    expect(safeFieldId('Print', used)).toBe('print_1');
+    expect(safeFieldId('Class name', used)).toBe('class_name');
+  });
+
+  it('is still the plain slug for an ordinary label', () => {
+    expect(add('Class name').id).toBe('class_name');
+    expect(add('Email').id).toBe('email');
+    expect(add('Count').id).toBe('count_1');
+  });
+});
+
+describe('the name a field has in the expression editors', () => {
+  it('can be read in an expression when the label is a word of the language', () => {
+    const { toId, toVar } = createFieldVariableMap([{ id: 'class_1', label: 'Class' }, { id: 'case_1', label: 'Case' }, { id: 'age', label: 'Age' }]);
+    expect(readable(toVar.class_1)).toBe(true);
+    expect(readable(toVar.case_1)).toBe(true);
+    expect(toVar.age).toBe('age');
+    // What the editor shows goes back to the ids it was made from, and parses once it has.
+    const shown = replaceIdsWithVariables('class_1 == "5A" && age > 10', toVar);
+    expect(replaceVariablesWithIds(shown, toId)).toBe('class_1 == "5A" && age > 10');
+  });
+
+  // A field labelled Count would be shown as `count`, the helper's own name: `count(items) > 2`
+  // was then saved as `count_1(items) > 2`, a call to an answer.
+  it('is not the name of an expression helper, so a helper typed in an expression stays one', () => {
+    const { toId, toVar } = createFieldVariableMap([{ id: 'count_1', label: 'Count' }, { id: 'items', label: 'Items' }, { id: 'is_empty', label: 'Is empty' }]);
+    expect(toVar.count_1).not.toBe('count');
+    expect(toVar.is_empty).not.toBe('isEmpty');
+    expect(replaceVariablesWithIds('count(items) > 2 && !isEmpty(items)', toId)).toBe('count(items) > 2 && !isEmpty(items)');
+    expect(replaceVariablesWithIds(`${toVar.count_1} > 2`, toId)).toBe('count_1 > 2');
+  });
+});

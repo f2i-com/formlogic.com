@@ -1,4 +1,4 @@
-import { useState, memo } from 'react';
+import { useState, memo, type ChangeEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus,
@@ -37,6 +37,59 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
   const [typesDraft, setTypesDraft] = useState<{ fieldId: string; text: string } | null>(null);
   // A scale End being typed that is not yet above the Start (see the End input).
   const [endDraft, setEndDraft] = useState<{ fieldId: string; text: string } | null>(null);
+  // The other number settings are typed a key at a time too, and what is in the box part-way is
+  // not always a value to store: a cleared box is no number, and the "9" of "99" is below a Min of
+  // 18. Text a setting does not take is held here, shown as typed, and settled when the input is
+  // left. So a default is not written into a box the author has just cleared (the next key then
+  // landed after it: a 3 typed over Max Stars 5 read "53"), and a paired bound moves only for the
+  // value the author settles on (a Max of 99 typed over 65 no longer stores a Min of 9 on the way).
+  const [numberDraft, setNumberDraft] = useState<{ fieldId: string; name: string; text: string } | null>(null);
+  /**
+   * The props of one such input. `take` stores the number and answers true, or answers false to
+   * have it held; `settle` is given a held number when the input is left; `empty` is called at
+   * once when the box is emptied, for a setting that may be blank. Without `empty`, an emptied
+   * box is held, and left empty it shows what is stored again.
+   */
+  const heldNumber = (
+    name: string,
+    stored: number | string,
+    on: { take: (n: number) => boolean; settle?: (n: number) => void; empty?: () => void },
+  ) => {
+    const held = numberDraft?.fieldId === field.id && numberDraft.name === name ? numberDraft.text : null;
+    const read = (text: string) => (text.trim() === '' ? NaN : Number(text));
+    return {
+      value: held ?? stored,
+      onChange: (e: ChangeEvent<HTMLInputElement>) => {
+        const text = e.target.value;
+        const n = read(text);
+        if (text === '' && on.empty) {
+          on.empty();
+          setNumberDraft(null);
+        } else if (!Number.isNaN(n) && on.take(n)) {
+          setNumberDraft(null);
+        } else {
+          setNumberDraft({ fieldId: field.id, name, text });
+        }
+      },
+      onBlur: () => {
+        if (held === null) return;
+        setNumberDraft(null);
+        const n = read(held);
+        if (!Number.isNaN(n)) on.settle?.(n);
+      },
+    };
+  };
+  /** A whole number kept within [min, max]: stored as typed while inside, brought inside on leaving. */
+  const wholeNumber = (name: string, stored: number, min: number, max: number, store: (n: number) => void) =>
+    heldNumber(name, stored, {
+      take: (n) => {
+        const whole = Math.trunc(n);
+        if (whole < min || whole > max) return false;
+        store(whole);
+        return true;
+      },
+      settle: (n) => store(Math.min(max, Math.max(min, Math.trunc(n)))),
+    });
 
   const handleSaveLogic = (logic: ConditionalLogic | undefined) => {
     onUpdate({ conditionalLogic: logic });
@@ -182,13 +235,8 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                 type="number"
                 min={1}
                 max={10}
-                value={field.properties.maxStars || 5}
-                onChange={(e) => {
-                  const val = parseInt(e.target.value);
-                  onUpdate({
-                    properties: { ...field.properties, maxStars: isNaN(val) ? 5 : Math.min(10, Math.max(1, val)) },
-                  });
-                }}
+                {...wholeNumber('maxStars', field.properties.maxStars || 5, 1, 10, (maxStars) =>
+                  onUpdate({ properties: { ...field.properties, maxStars } }))}
               />
             </div>
           )}
@@ -203,15 +251,21 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                   type="number"
                   min={0}
                   max={99}
-                  value={field.properties.scaleStart ?? 1}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value);
-                    const start = isNaN(val) ? 1 : Math.max(0, Math.min(99, val));
-                    const end = field.properties.scaleEnd ?? 10;
-                    onUpdate({
-                      properties: { ...field.properties, scaleStart: start, scaleEnd: Math.max(start + 1, end) },
-                    });
-                  }}
+                  // The mirror of the End beside it: only a Start below the End is stored as it is
+                  // typed, and the End moves up only for the Start the author settles on.
+                  {...heldNumber('scaleStart', field.properties.scaleStart ?? 1, {
+                    take: (n) => {
+                      const start = Math.trunc(n);
+                      if (start < 0 || start > 99 || start >= (field.properties.scaleEnd ?? 10)) return false;
+                      onUpdate({ properties: { ...field.properties, scaleStart: start } });
+                      return true;
+                    },
+                    settle: (n) => {
+                      const start = Math.max(0, Math.min(99, Math.trunc(n)));
+                      const end = field.properties.scaleEnd ?? 10;
+                      onUpdate({ properties: { ...field.properties, scaleStart: start, scaleEnd: Math.max(start + 1, end) } });
+                    },
+                  })}
                 />
                 <Input
                   label="End"
@@ -276,29 +330,40 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                 <Input
                   label="Min"
                   type="number"
-                  value={field.properties.min ?? ''}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    const min = v === '' ? undefined : Number(v);
-                    const max = field.properties.max;
-                    // Keep min <= max (self-correct like the Scale editor) so the
-                    // field can't be made unsubmittable with min > max.
-                    const nextMax = (min !== undefined && max !== undefined && min > max) ? min : max;
-                    onUpdate({ properties: { ...field.properties, min, max: nextMax } });
-                  }}
+                  // Keep min <= max (self-correct like the Scale editor) so the field can't be
+                  // made unsubmittable with min > max. The other bound is corrected for the value
+                  // the author settles on, not for each key on the way to it.
+                  {...heldNumber('min', field.properties.min ?? '', {
+                    take: (min) => {
+                      const max = field.properties.max;
+                      if (max !== undefined && min > max) return false;
+                      onUpdate({ properties: { ...field.properties, min } });
+                      return true;
+                    },
+                    settle: (min) => {
+                      const max = field.properties.max;
+                      onUpdate({ properties: { ...field.properties, min, max: max !== undefined && min > max ? min : max } });
+                    },
+                    empty: () => onUpdate({ properties: { ...field.properties, min: undefined } }),
+                  })}
                   placeholder="—"
                 />
                 <Input
                   label="Max"
                   type="number"
-                  value={field.properties.max ?? ''}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    const max = v === '' ? undefined : Number(v);
-                    const min = field.properties.min;
-                    const nextMin = (min !== undefined && max !== undefined && max < min) ? max : min;
-                    onUpdate({ properties: { ...field.properties, max, min: nextMin } });
-                  }}
+                  {...heldNumber('max', field.properties.max ?? '', {
+                    take: (max) => {
+                      const min = field.properties.min;
+                      if (min !== undefined && max < min) return false;
+                      onUpdate({ properties: { ...field.properties, max } });
+                      return true;
+                    },
+                    settle: (max) => {
+                      const min = field.properties.min;
+                      onUpdate({ properties: { ...field.properties, max, min: min !== undefined && max < min ? max : min } });
+                    },
+                    empty: () => onUpdate({ properties: { ...field.properties, max: undefined } }),
+                  })}
                   placeholder="—"
                 />
                 <Input
@@ -390,12 +455,8 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                 type="number"
                 min={1}
                 max={500}
-                value={Math.max(1, Math.round((field.properties.maxFileSize ?? 10 * 1024 * 1024) / (1024 * 1024)))}
-                onChange={(e) => {
-                  const mb = parseInt(e.target.value);
-                  const safeMb = isNaN(mb) ? 10 : Math.min(500, Math.max(1, mb));
-                  onUpdate({ properties: { ...field.properties, maxFileSize: safeMb * 1024 * 1024 } });
-                }}
+                {...wholeNumber('maxFileSize', Math.max(1, Math.round((field.properties.maxFileSize ?? 10 * 1024 * 1024) / (1024 * 1024))), 1, 500, (mb) =>
+                  onUpdate({ properties: { ...field.properties, maxFileSize: mb * 1024 * 1024 } }))}
                 hint="Per-file limit. The server may enforce a lower cap."
               />
               <Input
@@ -424,12 +485,8 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                   type="number"
                   min={1}
                   max={50}
-                  value={field.properties.maxFiles ?? 20}
-                  onChange={(e) => {
-                    const n = parseInt(e.target.value);
-                    const safe = isNaN(n) ? 20 : Math.min(50, Math.max(1, n));
-                    onUpdate({ properties: { ...field.properties, maxFiles: safe } });
-                  }}
+                  {...wholeNumber('maxFiles', field.properties.maxFiles ?? 20, 1, 50, (maxFiles) =>
+                    onUpdate({ properties: { ...field.properties, maxFiles } }))}
                   hint="Between 1 and 50."
                 />
               )}

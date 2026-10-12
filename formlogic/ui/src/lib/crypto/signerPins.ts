@@ -124,6 +124,22 @@ export function getPinnedSigner(formId: string, storage?: Storage | null): strin
 }
 
 /**
+ * Whether a form this browser has sealed answers for is now served as an ordinary one.
+ *
+ * Private mode cannot be turned off, and a form's signer is pinned here only when this
+ * browser encrypted a submission to it. So a pinned form that arrives with no private
+ * encryption block had it taken off on the way or by the server, and submitting would
+ * send in the clear what the person expects to be sealed. Unreadable pins answer false:
+ * nothing is known, so nothing is claimed.
+ */
+export function servedWithoutItsEncryption(
+  form: { id: string; encryption?: { mode?: string } | null },
+  storage?: Storage | null,
+): boolean {
+  return form.encryption?.mode !== 'private' && getPinnedSigner(form.id, storage) !== null;
+}
+
+/**
  * Record an EXPLICIT trust decision - first trust, or re-trust after the user
  * approved a changed-key prompt (a rotated signer is never adopted silently;
  * this is the ONLY path that may overwrite an existing pin). Fails closed with

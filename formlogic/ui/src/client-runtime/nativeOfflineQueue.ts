@@ -6,7 +6,8 @@
 //   POST       /api/app/{slug}/sync/batch { items: [{ idempotencyKey, formId, answers }] }
 //   ack(ids)  -> remove the items the server accepted
 //   fail(ids) -> record a RETRYABLE failure (burns one attempt; terminal at the native attempt cap).
-//                Not called when the batch never reached the server (no status, 408, 429).
+//                Not called when the batch never reached the server (no status, 408, 429, or a
+//                502/503/504: maintenance mode, a gateway with no app server behind it).
 //   failTerminal(ids) -> mark 'failed' immediately (a conflict can never succeed on retry);
 //                        feature-detected, falls back to fail() on older runtimes
 //
@@ -39,6 +40,9 @@ export async function nativeQueueCounts(): Promise<{ pending: number; failed: nu
   }
 }
 
+/** A pass over the native queue is under way (see flushNativeQueue). */
+let nativeFlushing = false;
+
 /**
  * Flush the native runtime's persistent queue: ask the runtime for pending items grouped by appSlug,
  * POST each group to /sync/batch, then ack the accepted items and fail the rest. A no-op (0/0) when the
@@ -47,7 +51,19 @@ export async function nativeQueueCounts(): Promise<{ pending: number; failed: nu
 export async function flushNativeQueue(): Promise<{ flushed: number; failed: number }> {
   const sync = nativeSync();
   if (!sync?.flush) return { flushed: 0, failed: 0 };
+  // One pass at a time, as the browser queue has it. Reconnecting, coming back to the page,
+  // opening an app and "Sync now" can all ask at once, and a second pass would read the same
+  // items from the runtime and post the same batch again while the first is still in flight.
+  if (nativeFlushing) return { flushed: 0, failed: 0 };
+  nativeFlushing = true;
+  try {
+    return await drainNativeQueue(sync);
+  } finally {
+    nativeFlushing = false;
+  }
+}
 
+async function drainNativeQueue(sync: NonNullable<FormLogicNativeBridge['sync']>): Promise<{ flushed: number; failed: number }> {
   let flushResult: { pending: NativeSyncFlushGroup[] };
   try {
     flushResult = await sync.flush();
@@ -108,7 +124,7 @@ export async function flushNativeQueue(): Promise<{ flushed: number; failed: num
     const res = await api.syncBatch(slug, payload);
     if ((res.error || !res.data) && (res.status === undefined || isUnreachableStatus(res.status))) {
       // The server was not reached (the api layer gives no status then), or asked to be tried
-      // later (408/429): nothing was judged, so nothing is failed — sync.fail would use up one of
+      // later (isUnreachableStatus): nothing was judged, so nothing is failed — sync.fail would use up one of
       // the runtime's attempts, and an outage would turn queued submissions into failed ones.
       // The items stay queued as they are, and the other groups would meet the same outage, so
       // this flush ends here; the next reconnect or "Sync now" tries again.
@@ -216,10 +232,47 @@ export async function flushAllQueues(): Promise<FlushAllResult> {
   return { browser, native, lastError };
 }
 
+/** The least time between two flushes nobody asked for (see flushQueuesWhenDue). */
+export const AUTO_FLUSH_SPACING_MS = 2 * 60 * 1000;
+let lastAutoFlushAt = -Infinity;
+
+/**
+ * A flush nobody asked for: an app has just opened, or the person has come back to the page.
+ *
+ * The `online` event is the queues' own automatic trigger, and it fires only when the browser's
+ * idea of the connection changes. It does not fire on a page that loads already online, so a
+ * submission made offline, after which the app was closed (as the "saved on this device" screen
+ * says it may be), waited for the connection to drop and return; and a Wi-Fi sign-in page,
+ * maintenance mode and a rate limit all leave a submission waiting while the browser says
+ * "online" throughout.
+ *
+ * These passes are spaced. A submission has a fixed number of attempts, and an answer of "still
+ * being processed" or a server error uses one; the server can hold a submission as being
+ * processed for ten minutes. Spaced two minutes apart, the eight attempts of the browser queue
+ * cannot all be spent inside that time by someone flipping between tabs. Reconnecting and
+ * "Sync now" are not spaced: they are a reason to try now.
+ *
+ * Not in the demo, whose submissions stay in the browser: delivering there would move a waiting
+ * submission into the demo's local records and drop it from the queue.
+ */
+export async function flushQueuesWhenDue(): Promise<FlushAllResult | null> {
+  if (api.isDemoMode()) return null;
+  const now = Date.now();
+  if (now - lastAutoFlushAt < AUTO_FLUSH_SPACING_MS) return null;
+  lastAutoFlushAt = now;
+  return flushAllQueues();
+}
+
 // Auto-flush the native queue when connectivity returns (the browser queue registers its own listener
-// in offlineQueue.ts, so between the two everything drains on reconnect).
+// in offlineQueue.ts, so between the two everything drains on reconnect), and both queues when the
+// person comes back to the page.
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
     void flushNativeQueue();
   });
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') void flushQueuesWhenDue().catch(() => { /* stays queued */ });
+    });
+  }
 }

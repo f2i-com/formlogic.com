@@ -4,27 +4,12 @@ import {
   type DesktopAiSource,
 } from '../../client-runtime/desktop/desktopClient';
 import type { AIFormGenerationResult } from '../../lib/api';
+import { EXPRESSION_GLOBAL_NAMES, EXPRESSION_RESERVED_WORDS, isReservedExpressionName } from '../../lib/utils';
 
 const MAX_PROMPT_BYTES = 12_000;
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const MAX_FIELDS = 100;
 const MAX_OPTIONS = 100;
-const RESERVED_FIELD_IDS = new Set([
-  '__isArr',
-  'validators',
-  'format',
-  'compliance',
-  'finance',
-  'safety',
-  'isEmpty',
-  'isNotEmpty',
-  'contains',
-  'sum',
-  'avg',
-  'count',
-  'value',
-]);
-
 const FIELD_TYPES = new Set([
   'short_text',
   'long_text',
@@ -150,7 +135,9 @@ function uniqueFieldId(label: string, seen: Set<string>): string {
   const base = safeSlug(label, 'field', 48);
   let candidate = base;
   let suffix = 1;
-  while (seen.has(candidate) || RESERVED_FIELD_IDS.has(candidate)) {
+  // Not a name taken where expressions run, nor a word of the expression language: the server
+  // refuses the first, and no show-if rule or calculation can read the second.
+  while (seen.has(candidate) || isReservedExpressionName(candidate)) {
     candidate = `${base.slice(0, 43)}_${suffix}`;
     suffix += 1;
   }
@@ -161,9 +148,14 @@ function uniqueFieldId(label: string, seen: Set<string>): string {
 function suppliedFieldId(value: unknown, label: string, seen: Set<string>): string {
   if (value === undefined || value === null || value === '') return uniqueFieldId(label, seen);
   const id = boundedString(value, `Field ${label} id`, 64, { required: true, singleLine: true });
-  if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(id) || RESERVED_FIELD_IDS.has(id)) {
+  // A name taken where expressions run is refused, as the server would refuse it on save.
+  if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(id) || EXPRESSION_GLOBAL_NAMES.has(id)) {
     throw new DesktopFormGenerationError(`Field ${label} has an unsafe or reserved id.`);
   }
+  // A word of the expression language is an id the server would store, so the form is not
+  // refused for it; but no show-if rule or calculation could read the field, so it is given the
+  // suffixed id a label of the same word gets.
+  if (EXPRESSION_RESERVED_WORDS.has(id)) return uniqueFieldId(id, seen);
   if (seen.has(id)) {
     throw new DesktopFormGenerationError(`Field ${label} has a duplicate id.`);
   }

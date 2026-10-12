@@ -4,7 +4,7 @@ import { useReturnTo } from '../../hooks/useReturnTo';
 import { UserPlus, Trash2, Pencil, Users, Check, Copy } from 'lucide-react';
 import { useAppUserStore } from '../../stores/appUserStore';
 import { useAppStore } from '../../stores/appStore';
-import { useAuthStore } from '../../stores/authStore';
+import { useViewerOwnsApp } from '../../hooks/useViewerOwnsApp';
 import { useResourcePaths } from '../../components/admin/AdminActingContext';
 import { toast } from '../../stores/toastStore';
 import { api } from '../../lib/api';
@@ -16,7 +16,7 @@ import { DataTable, type Column } from '../../components/ui/DataTable';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
 import { statusBadgeVariant, formatStatusLabel, formatDate, parseServerDate, copyToClipboard } from '../../lib/utils';
 import { Badge } from '../../components/ui/Badge';
-import { OWNER_ONLY_MEMBER_REASON as OWNER_ONLY_REASON, roleGrantsOwnerGuarded, viewerOwnsApp, type AppUser, type AppInvitation, type AppRole, type AppUserGroup } from '../../types/app';
+import { OWNER_ONLY_MEMBER_REASON as OWNER_ONLY_REASON, roleGrantsOwnerGuarded, type AppUser, type AppInvitation, type AppRole, type AppUserGroup } from '../../types/app';
 
 // User groups have full CRUD but group membership is not yet consumed by permission
 // resolution, so the tab is hidden until group-based authorization ships (flip to
@@ -32,18 +32,20 @@ export function AppUserManager() {
   const [loading, setLoading] = useState(true);
   const { users, invitations, groups, fetchUsers, fetchInvitations, fetchGroups, inviteUser, revokeInvitation, removeUser, updateUser, createGroup, deleteGroup, addGroupMember, removeGroupMember } = useAppUserStore();
   const { fetchRoles, getApp } = useAppStore();
-  const userId = useAuthStore((s) => s.user?.id);
   // Only the Owner may re-role, suspend or remove a member whose role grants an app-level
   // permission, or give a member such a role; the server refuses anyone else, so those controls are
   // disabled, with the reason, for anyone else. The owner is known from the apps list (canManage /
-  // ownerId); an app that is not loaded is not taken as the viewer's (see viewerOwnsApp).
+  // ownerId), or from the app itself when the list does not hold it; a platform admin acting for
+  // the owner is the owner here. Nothing is locked until it is known that the viewer is not the
+  // owner (see useViewerOwnsApp), so a list that is late or failed to load does not tell an owner
+  // "Owner only" about their own app.
   const app = appId ? getApp(appId) : undefined;
-  const isActorOwner = viewerOwnsApp(app, userId);
+  const viewerIsNotOwner = useViewerOwnsApp(appId, app) === false;
   const [roles, setRoles] = useState<AppRole[]>([]);
   // A role offered for assignment has no member row to ask, so it is judged here, by the same
   // rule as the server's (roleGrantsOwnerGuarded); a member's own role is the server's flag.
-  const ownerOnlyRole = (role: AppRole) => !isActorOwner && roleGrantsOwnerGuarded(role);
-  const ownerOnlyMember = (member: AppUser) => !isActorOwner && member.holdsAppLevelRole === true;
+  const ownerOnlyRole = (role: AppRole) => viewerIsNotOwner && roleGrantsOwnerGuarded(role);
+  const ownerOnlyMember = (member: AppUser) => viewerIsNotOwner && member.holdsAppLevelRole === true;
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRoleId, setInviteRoleId] = useState('');

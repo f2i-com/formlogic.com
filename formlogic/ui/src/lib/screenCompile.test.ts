@@ -246,6 +246,80 @@ describe('bundleScreenFiles — npm via esm.sh (compile-time, offline-faked)', (
     expect(direct.error).toContain('Only https://esm.sh');
     expect(nested.error).toContain('Only https://esm.sh');
   });
+
+  it('holds the origin for every spelling of another host that a URL parser accepts', async () => {
+    const fetched: string[] = [];
+    __setEsmFetchForTests((url) => { fetched.push(url); return fakeEsm({})(url); });
+    const spellings = [
+      '\\\\evil.example/x.js', // backslashes read as slashes
+      '/\\evil.example/x.js',
+      '\t//evil.example/x.js', // tabs and newlines are dropped by the parser
+      'HTTPS://evil.example/x.js',
+      'http://esm.sh/x.js', // esm.sh over plain http is another origin
+      'https://esm.sh@evil.example/x.js',
+      'https://esm.sh.evil.example/x.js',
+    ];
+    for (const spec of spellings) {
+      const r = await bundleScreenFiles([
+        { path: 'index.ts', content: `import x from ${JSON.stringify(spec)}; console.log(x);` },
+      ]);
+      expect(r.js, spec).toBe('');
+      expect(r.error, spec).toContain('Only https://esm.sh');
+    }
+    expect(fetched.filter((url) => new URL(url).origin !== 'https://esm.sh')).toEqual([]);
+  });
+
+  // fetch follows redirects, and esm.sh uses them (an unpinned version to the pinned one). The
+  // shell's CSP stops a hop to an origin it does not list, but it lists more than esm.sh (the app
+  // itself, the API, the desktop bridges on loopback), and a dev server sends no CSP at all: the
+  // compiler holds its own rule and bundles nothing that was answered from anywhere else.
+  it('does not bundle what a redirect off esm.sh answered', async () => {
+    __setEsmFetchForTests(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      url: 'http://127.0.0.1:17872/anything',
+      text: () => Promise.resolve(`export default 'answered by another host';`),
+    }));
+    const r = await bundleScreenFiles([
+      { path: 'index.ts', content: `import x from 'moved-lib@1.0.0'; console.log(x);` },
+    ]);
+    expect(r.js).toBe('');
+    expect(r.error).toContain('redirected to another site');
+    expect(r.error).not.toContain('answered by another host');
+  });
+
+  it('still follows a redirect that stays on esm.sh', async () => {
+    __setEsmFetchForTests(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      url: 'https://esm.sh/moved-lib@1.0.1',
+      text: () => Promise.resolve(`export default 'pinned';`),
+    }));
+    const r = await bundleScreenFiles([
+      { path: 'index.ts', content: `import x from 'moved-lib'; console.log(x);` },
+    ]);
+    expect(r.error).toBeUndefined();
+    expect(r.js).toContain('pinned');
+  });
+
+  it('asks esm.sh without the session: no credentials are sent', async () => {
+    __setEsmFetchForTests(null);
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    vi.stubGlobal('fetch', (url: string, init?: RequestInit) => {
+      calls.push([url, init]);
+      return Promise.resolve({ ok: true, status: 200, url, text: () => Promise.resolve(`export default 1;`) });
+    });
+    try {
+      const r = await bundleScreenFiles([
+        { path: 'index.ts', content: `import x from 'plain-lib@1.0.0'; console.log(x);` },
+      ]);
+      expect(r.error).toBeUndefined();
+      expect(calls).toEqual([['https://esm.sh/plain-lib@1.0.0', { credentials: 'omit' }]]);
+    } finally {
+      vi.unstubAllGlobals();
+      __setEsmFetchForTests(null);
+    }
+  });
 });
 
 describe('bundleScreenFiles — image assets', () => {

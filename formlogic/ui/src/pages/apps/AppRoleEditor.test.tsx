@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   getPermissions: vi.fn(),
   savePermissions: vi.fn(),
   viewer: 'owner',
+  acting: null as { ownerId: string } | null,
+  getApp: vi.fn(),
   store: {
     fetchRoles: vi.fn(), fetchAppForms: vi.fn(), createRole: vi.fn(),
     deleteRole: vi.fn(), updateRole: vi.fn(), getApp: vi.fn(),
@@ -18,9 +20,10 @@ vi.mock('../../stores/appStore', () => ({ useAppStore: () => mocks.store }));
 vi.mock('../../stores/authStore', () => ({
   useAuthStore: (selector: (state: { user: { id: string } }) => unknown) => selector({ user: { id: mocks.viewer } }),
 }));
-vi.mock('../../lib/api', () => ({ api: { getAppRolePermissions: mocks.getPermissions, setAppRolePermissions: mocks.savePermissions } }));
+vi.mock('../../lib/api', () => ({ api: { getAppRolePermissions: mocks.getPermissions, setAppRolePermissions: mocks.savePermissions, getApp: mocks.getApp } }));
 vi.mock('../../components/admin/AdminActingContext', () => ({
   useResourcePaths: () => ({ appSub: (id: string, path: string) => `/apps/${id}/${path}` }),
+  useAdminActing: () => mocks.acting,
 }));
 vi.mock('../../components/layout/Header', () => ({
   Header: ({ title, actions }: { title: string; actions: ReactNode }) => <header><h1>{title}</h1>{actions}</header>,
@@ -58,6 +61,9 @@ describe('role permission loading', () => {
     mocks.store.fetchAppForms.mockResolvedValue([]);
     mocks.store.getApp.mockReturnValue({ ownerId: 'owner', canManage: true });
     mocks.viewer = 'owner';
+    mocks.acting = null;
+    // GET /apps/{id} for an app that is not the asker's to open is answered not found.
+    mocks.getApp.mockResolvedValue({ error: 'App not found or access denied', status: 404 });
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -128,11 +134,37 @@ describe('role permission loading', () => {
       expect(appLevel()).toBe('owner only');
     });
 
-    it('are the owner’s alone when the app is not in the list (a draft or archived app is not listed to a member)', async () => {
+    it('are the owner’s alone when the app is not in the list (a draft or archived app is not listed to a member, and asking for it is answered not found)', async () => {
       mocks.viewer = 'manager';
       mocks.store.getApp.mockReturnValue(undefined);
       await mount();
+      expect(mocks.getApp).toHaveBeenCalledWith('app');
       expect(appLevel()).toBe('owner only');
+    });
+
+    // The list is loaded by the page shell: an owner can be here before it arrives, or after it
+    // failed to load, and is not to be shown their own app's grants as someone else's.
+    it('are editable for the owner whose list does not hold the app, once the app itself says whose it is', async () => {
+      mocks.store.getApp.mockReturnValue(undefined);
+      mocks.getApp.mockResolvedValue({ data: { app: { id: 'app', ownerId: 'owner' } } });
+      await mount();
+      expect(appLevel()).toBe('editable');
+    });
+
+    it('are not locked when neither the list nor the app could be read', async () => {
+      mocks.store.getApp.mockReturnValue(undefined);
+      mocks.getApp.mockResolvedValue({ error: 'Failed to fetch' });
+      await mount();
+      expect(appLevel()).toBe('editable');
+    });
+
+    // /admin/apps/{id}/roles: the server runs the request as the owner, and the list is the admin's.
+    it('are editable for a platform admin acting for the owner', async () => {
+      mocks.viewer = 'admin';
+      mocks.acting = { ownerId: 'owner' };
+      mocks.store.getApp.mockReturnValue(undefined);
+      await mount();
+      expect(appLevel()).toBe('editable');
     });
 
     it('go back unchanged when a delegated manager saves the role', async () => {

@@ -16,6 +16,7 @@ import { LinkedRecordInput } from '../components/app-runtime/LinkedRecordInput';
 import { CustomScreenRuntime } from '../components/custom-screen/CustomScreenRuntime';
 import { FormWidgetDashboard } from '../components/custom-screen/FormWidgetDashboard';
 import { logger } from '../lib/logger';
+import { servedWithoutItsEncryption } from '../lib/crypto/signerPins';
 import { PhoneInput } from '../components/ui/PhoneInput';
 import { CalculatedFieldDisplay } from '../components/ui/CalculatedFieldDisplay';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
@@ -968,6 +969,10 @@ function FormResponseContent() {
   // Use store form (with fields) if available, otherwise fetched form
   const rawForm = (storeForm && storeForm.fields.length > 0) ? storeForm : publicForm?.id === formId ? publicForm : storeForm;
   const currentEncryption = rawForm?.encryption;
+  // E2EE downgrade by omission: the form as the server served it to a visitor, with no
+  // encryption block, though this browser has sealed answers for it before (private mode
+  // cannot be turned off). Rendering it would collect the answers and send them in the clear.
+  const strippedOfEncryption = !!rawForm && rawForm === publicForm && servedWithoutItsEncryption(rawForm);
   const [schemaEncryption, setSchemaEncryption] = useState(currentEncryption);
   if (schemaEncryption !== currentEncryption) {
     setSchemaEncryption(currentEncryption);
@@ -1221,6 +1226,26 @@ function FormResponseContent() {
     );
   }
 
+  if (strippedOfEncryption) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950 p-4">
+        <div className="text-center max-w-sm" role="alert">
+          <div className="w-16 h-16 bg-red-100 dark:bg-red-500/15 rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <ShieldAlert className="h-8 w-8 text-red-500 dark:text-red-400" />
+          </div>
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">This form is no longer being sent as private</h1>
+          <p className="text-gray-500 dark:text-slate-400 mb-6">
+            This browser has sent encrypted answers to this form before, and a private form cannot be made ordinary again.
+            It has now arrived without its encryption, so the form was not shown. Do not enter any data — contact the form owner.
+          </p>
+          <Button onClick={() => window.location.reload()} leftIcon={<RefreshCw className="h-4 w-4" />}>
+            Try again
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   // E2EE fail-closed (blocker 2): a private form renders ONLY from its verified,
   // signed schema snapshot. While verification runs show a spinner; if the
   // manifest is missing or invalid, refuse to render the unsigned fields at all.
@@ -1367,6 +1392,9 @@ function FormResponseContent() {
     // POST the same answers twice (the server has no dedup, so it would create
     // duplicate responses).
     if (isSubmitting) return;
+    // Never reached while the page refuses to show such a form; kept so that no later change
+    // to what is shown can turn into answers sent in the clear.
+    if (strippedOfEncryption) return;
     setIsSubmitting(true);
 
     // Capture completion time before the store clears in-progress state.

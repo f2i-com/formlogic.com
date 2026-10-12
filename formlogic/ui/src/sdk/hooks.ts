@@ -298,6 +298,15 @@ export function useOfflineQueue(): SdkOfflineQueue {
       setLastError(`${failed} submission${failed === 1 ? '' : 's'} failed to sync`);
     } else if (r.lastError) {
       setLastError(r.lastError);
+    } else if (r.browser.flushed + r.native.flushed === 0 && !isFlushing()) {
+      // Nothing was sent and nothing failed. If something still waits, the server was not reached
+      // or asked to be tried later (the queues keep such a submission as it is): say so, or
+      // "Sync now" looks as though it did nothing. Not while another pass is under way: this one
+      // then returned at once, and that one may be sending.
+      const [browser, native] = await Promise.all([queueCounts(), nativeQueueCounts()]).catch(() => [{ pending: 0 }, { pending: 0 }]);
+      if (browser.pending + native.pending > 0) {
+        setLastError('Nothing could be sent just now. Your submissions are still on this device; try again in a while.');
+      }
     }
     refreshRef.current();
   }, []);

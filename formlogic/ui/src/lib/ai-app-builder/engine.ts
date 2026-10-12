@@ -2,12 +2,8 @@
 // Ported from formlogic/tools/ai-app-builder/assemble.mjs so the harness and the in-app flow share
 // the same logic.
 import type { AppPlan, PlannedForm, GeneratedForm, GeneratedPack, PackField } from './types';
+import { isReservedExpressionName } from '../utils';
 
-// Field ids the expression prelude reserves — must mirror FormService::RESERVED_FIELD_IDS.
-const RESERVED_IDS = new Set([
-  '__isArr', 'validators', 'format', 'compliance', 'finance', 'safety',
-  'isEmpty', 'isNotEmpty', 'contains', 'sum', 'avg', 'count', 'value',
-]);
 const ID_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 export function slug(text: string): string {
@@ -20,7 +16,9 @@ export function safeFieldId(label: string, used: Set<string>): string {
   if (/^\d/.test(base)) base = `_${base}`;
   let id = base;
   let n = 1;
-  while (used.has(id) || RESERVED_IDS.has(id) || !ID_RE.test(id)) id = `${base}_${n++}`;
+  // Not a name the server reserves (FormService::RESERVED_FIELD_IDS), nor a word of the expression
+  // language, which no show-if rule or calculation could read as a field.
+  while (used.has(id) || isReservedExpressionName(id) || !ID_RE.test(id)) id = `${base}_${n++}`;
   used.add(id);
   return id;
 }
@@ -45,7 +43,7 @@ export function assemblePack(plan: AppPlan, generated: Record<string, GeneratedF
   const forms = plan.forms.map((f) => {
     const used = new Set<string>();
     const baseFields: PackField[] = (generated[f.key]?.fields || []).map((fld) => {
-      const id = (ID_RE.test(fld.id || '') && !RESERVED_IDS.has(fld.id) && !used.has(fld.id))
+      const id = (ID_RE.test(fld.id || '') && !isReservedExpressionName(fld.id) && !used.has(fld.id))
         ? (used.add(fld.id), fld.id)
         : safeFieldId(fld.label || fld.id || 'field', used);
       return {
@@ -141,7 +139,7 @@ export function validatePack(pack: GeneratedPack): string[] {
     if ((f.fields?.length || 0) > 200) errors.push(`Form "${f.packFormId}" has too many fields.`);
     const seen = new Set<string>();
     for (const fld of f.fields || []) {
-      if (!ID_RE.test(fld.id) || RESERVED_IDS.has(fld.id)) errors.push(`Form "${f.packFormId}" has an invalid field id "${fld.id}".`);
+      if (!ID_RE.test(fld.id) || isReservedExpressionName(fld.id)) errors.push(`Form "${f.packFormId}" has an invalid field id "${fld.id}".`);
       if (seen.has(fld.id)) errors.push(`Form "${f.packFormId}" has a duplicate field id "${fld.id}".`);
       seen.add(fld.id);
       if (fld.type === 'linked_record') {

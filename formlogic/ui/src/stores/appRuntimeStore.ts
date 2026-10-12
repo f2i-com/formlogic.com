@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import { api, newIdempotencyKey } from '../lib/api';
 import { setConnectorCapabilityContext } from '../client-runtime/desktop/desktopClient';
 import { enqueueSubmission } from '../client-runtime/offlineQueue';
+import { flushQueuesWhenDue } from '../client-runtime/nativeOfflineQueue';
 import { toast } from './toastStore';
 import type { LinkedRecord } from '../lib/api';
 import type { AppRuntimeConfig, AppRuntimeForm, AppUserPermissions, AppReportItem, AppReportSpec, AppReportResult, DashboardScreen } from '../types/app';
@@ -166,6 +167,10 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
             // Pack-declared connectors are app-scoped: (re)register this app's
             // driver bundle against its granted permissions.
             syncPackConnectors(config);
+            // The server just answered, so send what waits on this device (flushQueuesWhenDue
+            // says why opening an app is a moment to do it). Not awaited: the app does not wait
+            // on it.
+            void flushQueuesWhenDue().catch(() => { /* stays queued */ });
           }
         } catch (e) {
           set({ error: e instanceof Error ? e.message : 'Failed to load app', isLoading: false });

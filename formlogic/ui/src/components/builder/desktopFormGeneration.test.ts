@@ -81,6 +81,37 @@ describe('Desktop standalone form response parser', () => {
     expect(parsed.data.fields.map((field) => field.id)).toEqual(['count_1', 'count_2']);
   });
 
+  // A word the expression language keeps for itself cannot be read as a field in a show-if rule
+  // or a calculation, and the server refuses to save a form whose field is named after a global.
+  it('does not name a field after a word of the expression language or one of its globals', () => {
+    const parsed = parseDesktopFormGenerationResponse(completion(formJson({
+      fields: [
+        { type: 'short_text', label: 'Class', required: true, properties: {} },
+        { type: 'short_text', label: 'Case', required: false, properties: {} },
+        { type: 'short_text', label: 'Print', required: false, properties: {} },
+      ],
+    })));
+
+    expect(parsed.data.fields.map((field) => field.id)).toEqual(['class_1', 'case_1', 'print_1']);
+  });
+
+  it('gives a supplied id that is a word of the expression language its suffixed form, without refusing the form', () => {
+    const parsed = parseDesktopFormGenerationResponse(completion(formJson({
+      fields: [
+        { id: 'class', type: 'short_text', label: 'Class', required: true, properties: {} },
+        { id: 'teacher', type: 'short_text', label: 'Teacher', required: false, properties: {} },
+      ],
+    })));
+
+    expect(parsed.data.fields.map((field) => field.id)).toEqual(['class_1', 'teacher']);
+  });
+
+  it('refuses a supplied id the server would refuse on save', () => {
+    expect(() => parseDesktopFormGenerationResponse(completion(formJson({
+      fields: [{ id: 'console', type: 'short_text', label: 'Console', required: true, properties: {} }],
+    })))).toThrow(DesktopFormGenerationError);
+  });
+
   it.each([
     ['surrounding prose', { choices: [{ finish_reason: 'stop', message: { content: `Here it is: ${JSON.stringify(formJson())}` } }] }],
     ['truncated completion', completion(formJson(), 'length')],

@@ -12,8 +12,8 @@ import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
 import { deferEffect } from '../../lib/deferredEffect';
 import { toast } from '../../stores/toastStore';
-import { viewerOwnsApp, type AppRole, type AppForm, type PermissionAction } from '../../types/app';
-import { useAuthStore } from '../../stores/authStore';
+import type { AppRole, AppForm, PermissionAction } from '../../types/app';
+import { useViewerOwnsApp } from '../../hooks/useViewerOwnsApp';
 
 export function AppRoleEditor() {
   const { appId } = useParams<{ appId: string }>();
@@ -27,7 +27,6 @@ function AppRoleEditorContent() {
   // Origin-relative Back: opened from the App Studio this returns to its step.
   const backTo = useReturnTo(paths.appSub(`${appId}`, 'settings?tab=access'));
   const { fetchRoles, createRole, deleteRole, updateRole, fetchAppForms, getApp } = useAppStore();
-  const userId = useAuthStore((s) => s.user?.id);
   const [roles, setRoles] = useState<AppRole[]>([]);
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
@@ -111,13 +110,14 @@ function AppRoleEditorContent() {
   // not the display string alone — a custom role literally named "Owner" must
   // remain editable.
   const isOwnerRole = !!selectedRole?.isSystem && selectedRole?.name === 'Owner';
-  // App-level permission grants are owner-only on the backend, so their toggles are enabled only
-  // for the owner, known from the apps list (canManage / ownerId). An app that is not loaded is
-  // not taken as owned: a draft or archived app is not listed to a member, and treating that as
-  // the owner offered a delegated manager the toggles and then a refusal. The list is loaded with
-  // the page shell, so an owner sees the toggles enable as soon as it arrives.
+  // App-level permission grants are owner-only on the backend, so their toggles are locked for
+  // anyone known not to be the owner. The owner is known from the apps list (canManage / ownerId),
+  // or from the app itself when the list does not hold it: a draft or archived app is not listed
+  // to a member, and taking a missing row as the owner's offered a delegated manager the toggles
+  // and then a refusal, while taking it as someone else's locked an owner whose list was late or
+  // had failed to load, and a platform admin acting for the owner (see useViewerOwnsApp).
   const app = appId ? getApp(appId) : undefined;
-  const isActorOwner = viewerOwnsApp(app, userId);
+  const viewerIsNotOwner = useViewerOwnsApp(appId, app) === false;
 
   const startRenameRole = (role: AppRole) => {
     setEditingRoleId(role.id);
@@ -296,7 +296,7 @@ function AppRoleEditorContent() {
                   permissions={permissions}
                   forms={appForms.map((f) => ({ formId: f.formId, displayName: f.displayName }))}
                   onChange={(p) => { setPermissions(p); setDirty(true); }}
-                  appLevelDisabled={!isActorOwner}
+                  appLevelDisabled={viewerIsNotOwner}
                 />
               )}
             </>
