@@ -32,6 +32,11 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
   const appId = searchParams.get('appId');
   const formId = searchParams.get('formId') || undefined;
   const [showLogicEditor, setShowLogicEditor] = useState(false);
+  // What is typed in Accepted File Types, shown as typed until the input is left: the stored list
+  // drops an empty entry, so re-rendering from it would remove a comma the moment it is typed.
+  const [typesDraft, setTypesDraft] = useState<{ fieldId: string; text: string } | null>(null);
+  // A scale End being typed that is not yet above the Start (see the End input).
+  const [endDraft, setEndDraft] = useState<{ fieldId: string; text: string } | null>(null);
 
   const handleSaveLogic = (logic: ConditionalLogic | undefined) => {
     onUpdate({ conditionalLogic: logic });
@@ -213,14 +218,30 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                   type="number"
                   min={1}
                   max={100}
-                  value={field.properties.scaleEnd ?? 10}
+                  value={endDraft?.fieldId === field.id ? endDraft.text : (field.properties.scaleEnd ?? 10)}
+                  // An End is typed a key at a time, and the "1" of "10" is not above a Start of 1.
+                  // Only an End above the Start is stored as it is typed; anything else is held here
+                  // and settled when the input is left, so the Start moves down only for the End the
+                  // author settles on, and the stored scale never runs backwards (it would draw no
+                  // buttons) while the form saves in between.
                   onChange={(e) => {
                     const val = parseInt(e.target.value);
-                    const end = isNaN(val) ? 10 : Math.max(1, Math.min(100, val));
+                    const end = Math.max(1, Math.min(100, val));
+                    if (!isNaN(val) && end > (field.properties.scaleStart ?? 1)) {
+                      setEndDraft(null);
+                      onUpdate({ properties: { ...field.properties, scaleEnd: end } });
+                    } else {
+                      setEndDraft({ fieldId: field.id, text: e.target.value });
+                    }
+                  }}
+                  onBlur={() => {
+                    if (endDraft?.fieldId !== field.id) return;
+                    setEndDraft(null);
+                    const val = parseInt(endDraft.text);
+                    if (isNaN(val)) return;
+                    const end = Math.max(1, Math.min(100, val));
                     const start = field.properties.scaleStart ?? 1;
-                    onUpdate({
-                      properties: { ...field.properties, scaleEnd: end, scaleStart: Math.min(end - 1, start) },
-                    });
+                    onUpdate({ properties: { ...field.properties, scaleEnd: end, scaleStart: Math.min(start, end - 1) } });
                   }}
                 />
               </div>
@@ -379,14 +400,16 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
               />
               <Input
                 label="Accepted File Types"
-                value={(field.properties.acceptedFileTypes || []).join(', ')}
+                value={typesDraft?.fieldId === field.id ? typesDraft.text : (field.properties.acceptedFileTypes || []).join(', ')}
                 onChange={(e) => {
+                  setTypesDraft({ fieldId: field.id, text: e.target.value });
                   const types = e.target.value
                     .split(',')
                     .map((t) => t.trim())
                     .filter(Boolean);
                   onUpdate({ properties: { ...field.properties, acceptedFileTypes: types } });
                 }}
+                onBlur={() => setTypesDraft(null)}
                 placeholder="e.g. .pdf, .jpg, image/*"
                 hint="Comma-separated extensions or MIME types. Leave blank to allow any."
               />
