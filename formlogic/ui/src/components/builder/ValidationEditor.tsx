@@ -1,12 +1,10 @@
 import { useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { Trash2, AlertCircle, CheckCircle, Play } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
-import { Textarea } from '../ui/Textarea';
 import { Dropdown } from '../ui/Dropdown';
 import { cn } from '../../lib/utils';
-import { useExpressionTester } from '../../hooks/useFormLogic';
 import type { ValidationRule, FieldType } from '../../types/form';
 
 interface ValidationEditorProps {
@@ -25,9 +23,10 @@ const VALIDATION_TYPES: Record<string, { label: string; hasValue: boolean; value
     { label: 'Minimum Value', hasValue: true, valueType: 'number' },
     { label: 'Maximum Value', hasValue: true, valueType: 'number' },
   ],
-  // 'Custom Expression' (type 'custom') was removed: it was never enforced at
-  // submit time in either runtime or on the server, so offering it was misleading.
-  // Existing saved custom rules remain in data (and stay inert) for back-compat.
+  // 'Custom Expression' (type 'custom') is not offered: no screen a form is filled in
+  // and not the server checks one, so offering it was misleading. A custom rule saved
+  // on a field (older forms, packs, MCP or API writes) stays in the data and is shown
+  // below as not checked; the form's onSubmit script is where such a check runs.
   default: [],
 };
 
@@ -37,7 +36,6 @@ const TYPE_TO_VALIDATION: Record<string, string> = {
   'Pattern (Regex)': 'pattern',
   'Minimum Value': 'min',
   'Maximum Value': 'max',
-  'Custom Expression': 'custom',
 };
 
 function getValidationOptions(fieldType: FieldType) {
@@ -52,15 +50,9 @@ function getValidationOptions(fieldType: FieldType) {
 
 export function ValidationEditor({ rules, fieldType, onChange }: ValidationEditorProps) {
   const [expandedRuleId, setExpandedRuleId] = useState<string | null>(null);
-  const { result, isTesting, testExpression, reset } = useExpressionTester();
-  const [testValue, setTestValue] = useState('');
 
-  // Switch which rule's editor is expanded, clearing the shared tester result and
-  // test input so one rule's result never shows under another.
   const toggleRule = (ruleId: string) => {
     setExpandedRuleId((prev) => (prev === ruleId ? null : ruleId));
-    reset();
-    setTestValue('');
   };
 
   const options = getValidationOptions(fieldType);
@@ -76,13 +68,10 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
       type,
       message: `Validation failed for ${optionLabel.toLowerCase()}`,
       value: option.hasValue ? (option.valueType === 'number' ? 0 : '') : undefined,
-      expression: type === 'custom' ? '' : undefined,
     };
 
     onChange([...rules, newRule]);
     setExpandedRuleId(ruleId);
-    reset();
-    setTestValue('');
   };
 
   const updateRule = (ruleId: string, updates: Partial<ValidationRule>) => {
@@ -99,16 +88,6 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
     }
   };
 
-  const handleTestExpression = async (expression: string) => {
-    // value is passed safely via the context object (not interpolated into code)
-    const testExpr = `
-      (() => {
-        ${expression}
-      })()
-    `;
-    await testExpression(testExpr, { value: testValue });
-  };
-
   const getRuleLabel = (rule: ValidationRule): string => {
     switch (rule.type) {
       case 'minLength':
@@ -122,7 +101,7 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
       case 'pattern':
         return `Pattern: ${rule.value}`;
       case 'custom':
-        return 'Custom validation';
+        return 'Custom expression (not checked)';
       default:
         return rule.type;
     }
@@ -222,69 +201,30 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
                     );
                   })()}
 
-                  {rule.type === 'custom' && (
-                    <div className="space-y-3">
-                      <Textarea
-                        label="Custom Expression"
-                        value={rule.expression || ''}
-                        onChange={(e) =>
-                          updateRule(rule.id, { expression: e.target.value })
-                        }
-                        placeholder={`// Return error message or null if valid
-if (value.length < 5) {
-  return "Must be at least 5 characters";
-}
-return null;`}
-                        rows={5}
-                        className="font-mono text-sm"
-                      />
-
-                      {/* Test Expression */}
-                      <div className="bg-gray-50 dark:bg-slate-800/50 rounded-lg p-3 space-y-2 border border-gray-200 dark:border-slate-800">
-                        <div className="flex gap-2">
-                          <Input
-                            placeholder="Test value"
-                            value={testValue}
-                            onChange={(e) => setTestValue(e.target.value)}
-                            className="flex-1"
-                          />
-                          <Button
-                            size="sm"
-                            onClick={() => handleTestExpression(rule.expression || '')}
-                            isLoading={isTesting}
-                            leftIcon={<Play className="h-4 w-4" />}
-                          >
-                            Test
-                          </Button>
-                        </div>
-                        {result && (
-                          <div role="status" aria-live="polite" className="flex items-center gap-2 text-sm">
-                            {result.valid ? (
-                              <>
-                                <CheckCircle className="h-4 w-4 text-green-500" />
-                                <span className="text-green-700 dark:text-green-400">
-                                  {result.output === null ? 'Valid!' : `Error: ${result.output}`}
-                                </span>
-                              </>
-                            ) : (
-                              <>
-                                <AlertCircle className="h-4 w-4 text-red-500" />
-                                <span className="text-red-700 dark:text-red-400">{result.error}</span>
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
+                  {rule.type === 'custom' ? (
+                    // Shown so the author can move the check where it runs, and remove the rule.
+                    <div className="space-y-2 text-sm text-gray-600 dark:text-slate-300">
+                      <p>
+                        This expression rule is not checked when the form is filled in or submitted, by any
+                        screen or by the server. To refuse an answer, use a rule from Add Rule or the
+                        form&apos;s onSubmit script (return <code>{'{ reject: true, message }'}</code>), then
+                        remove this rule.
+                      </p>
+                      {rule.expression && (
+                        <pre className="whitespace-pre-wrap break-words rounded-lg border border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50 p-3 font-mono text-xs">
+                          {rule.expression}
+                        </pre>
+                      )}
                     </div>
+                  ) : (
+                    /* Error Message */
+                    <Input
+                      label="Error Message"
+                      value={rule.message}
+                      onChange={(e) => updateRule(rule.id, { message: e.target.value })}
+                      placeholder="This field is invalid"
+                    />
                   )}
-
-                  {/* Error Message */}
-                  <Input
-                    label="Error Message"
-                    value={rule.message}
-                    onChange={(e) => updateRule(rule.id, { message: e.target.value })}
-                    placeholder="This field is invalid"
-                  />
                 </div>
               )}
             </div>

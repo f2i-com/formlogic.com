@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
   evaluateCondition,
-  validateWithExpression,
   calculateValue,
   validateExpression,
   testExpression as runTest,
@@ -148,12 +147,18 @@ export function useConditionalLogic(
 }
 
 /**
- * Hook for field validation with custom expressions
+ * Hook for a field's validation rules (minLength, maxLength, pattern, min, max).
+ *
+ * A 'custom' rule (an expression in `rule.expression`) is skipped. No screen a person fills a form
+ * in checks one (the public form, the app runtime) and neither does the server, so checking it
+ * here alone would refuse an answer every other path accepts. The builder no longer offers the
+ * rule and says a saved one is not checked (ValidationEditor); a check that must hold belongs in
+ * the form's onSubmit script (returning `{ reject: true, message }`), which the server runs on
+ * every write. With that rule gone, nothing here reads the other answers, so the hook takes none.
  */
 export function useFieldValidation(
   field: FormField,
-  value: unknown,
-  formData: Record<string, unknown>
+  value: unknown
 ) {
   const [error, setError] = useState<string | null>(null);
   const [isValidating, setIsValidating] = useState(false);
@@ -178,19 +183,7 @@ export function useFieldValidation(
     // Check validation rules
     if (field.validation && field.validation.length > 0) {
       for (const rule of field.validation) {
-        if (rule.type === 'custom' && rule.expression) {
-          const result = await validateWithExpression(
-            rule.expression,
-            value,
-            formData
-          );
-          if (!mountedRef.current) return false;
-          if (result) {
-            setError(result);
-            setIsValidating(false);
-            return false;
-          }
-        } else if (rule.type === 'minLength' && typeof value === 'string') {
+        if (rule.type === 'minLength' && typeof value === 'string') {
           if (value.length < (rule.value as number)) {
             if (mountedRef.current) { setError(rule.message || `Minimum ${rule.value} characters required`); setIsValidating(false); }
             return false;
@@ -237,7 +230,7 @@ export function useFieldValidation(
 
     if (mountedRef.current) { setError(null); setIsValidating(false); }
     return true;
-  }, [field, value, formData]);
+  }, [field, value]);
 
   // Debounced validation
   const validateDebounced = useCallback(() => {
