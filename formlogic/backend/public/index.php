@@ -817,7 +817,8 @@ $container->set(AppController::class, function (Container $c) {
         $c->get(LoggerInterface::class),
         $c->get(AuditService::class),
         $c->get(\FormLogic\Services\AppReportService::class),
-        $c->get(\FormLogic\Services\TrashService::class)
+        $c->get(\FormLogic\Services\TrashService::class),
+        $c->get(AppUserService::class)
     );
 });
 

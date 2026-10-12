@@ -234,6 +234,33 @@ class AppUserService
             throw new \RuntimeException('The Owner role cannot be modified');
         }
 
+        // App-level grants are the owner's to manage. A non-owner may not add one (a delegated
+        // MANAGE_ROLES holder could grant itself MANAGE_APP / MANAGE_USERS / MANAGE_ROLES and
+        // escalate to full app admin), nor drop one (the delete-and-reinsert below would strip
+        // the Admin role of what the owner gave it). The role editor shows them disabled to a
+        // non-owner and sends them back as they are, which is what passes here.
+        if (!$actorIsOwner) {
+            $appLevelPlaceholders = implode(',', array_fill(0, count(AppPermissions::APP_LEVEL), '?'));
+            $cur = $this->mysql->prepare("SELECT permission, form_id FROM app_role_permissions WHERE role_id = ? AND permission IN ($appLevelPlaceholders)");
+            $cur->execute(array_merge([$roleId], AppPermissions::APP_LEVEL));
+            $currentAppLevel = [];
+            foreach ($cur->fetchAll() as $row) {
+                $currentAppLevel[$row['permission'] . '|' . ($row['form_id'] ?? '')] = true;
+            }
+            $requestedAppLevel = [];
+            foreach ($permissions as $perm) {
+                if (in_array($perm['permission'] ?? null, AppPermissions::APP_LEVEL, true)) {
+                    $requestedAppLevel[$perm['permission'] . '|' . ($perm['formId'] ?? '')] = true;
+                }
+            }
+            if (array_diff_key($requestedAppLevel, $currentAppLevel) !== []) {
+                throw new \RuntimeException('Only the app owner can grant app-level permissions');
+            }
+            if (array_diff_key($currentAppLevel, $requestedAppLevel) !== []) {
+                throw new \RuntimeException('Only the app owner can remove app-level permissions');
+            }
+        }
+
         // Build set of valid form IDs for this app (to validate formId in permissions)
         $appId = $role['appId'];
         $validFormIds = [];
@@ -264,12 +291,7 @@ class AppUserService
                 if (!in_array($perm['permission'], AppPermissions::ALL, true)) {
                     continue;
                 }
-                // Only the app owner may grant app-level permissions. Otherwise a
-                // delegated MANAGE_ROLES holder could grant itself MANAGE_APP /
-                // MANAGE_USERS / MANAGE_ROLES and escalate to full app admin.
-                if (!$actorIsOwner && in_array($perm['permission'], AppPermissions::APP_LEVEL, true)) {
-                    throw new \RuntimeException('Only the app owner can grant app-level permissions');
-                }
+                // (A non-owner's app-level grants were checked above to equal the role's own.)
                 $formId = $perm['formId'] ?? null;
                 // Skip permissions referencing forms not in this app
                 if ($formId !== null && !isset($validFormIds[$formId])) {

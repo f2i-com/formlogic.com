@@ -420,7 +420,7 @@ class FileController
                     return 'private';
                 }
                 if ($this->appUserService->hasPermission($appId, $userId, AppPermissions::VIEW_OWN_RESPONSES, $formId)
-                    && $this->fileBelongsToOwnResponse($formId, $fileId, $userId)) {
+                    && $this->fileBelongsToOwnResponse($formId, $fileId, $userId, $form['fields'] ?? [])) {
                     return 'private';
                 }
             }
@@ -444,7 +444,7 @@ class FileController
                 'is_string'
             ));
             if ($publicFields !== [] && $this->responseService !== null
-                && array_intersect($publicFields, $this->responseService->fileAttachedFieldIds($formId, $fileId)) !== []) {
+                && array_intersect($publicFields, $this->responseService->fileAttachedFieldIds($formId, $fileId, $form['fields'] ?? [])) !== []) {
                 return 'public';
             }
         }
@@ -456,11 +456,14 @@ class FileController
      * True if $fileId is attached to one of $userId's OWN submitted responses on $formId — the linkage
      * that lets a view-own member fetch their own upload but not another member's. Uses an unbounded
      * lookup (ResponseService::userOwnsFile), so it works regardless of how many responses the user has.
-     * Conservative: with no ResponseService wired, returns false.
+     * Only the form's file_upload answers count ($fields). Conservative: with no ResponseService
+     * wired, returns false.
+     *
+     * @param array<int, array<string, mixed>> $fields
      */
-    private function fileBelongsToOwnResponse(string $formId, string $fileId, string $userId): bool
+    private function fileBelongsToOwnResponse(string $formId, string $fileId, string $userId, array $fields): bool
     {
         return $this->responseService !== null
-            && $this->responseService->userOwnsFile($formId, $fileId, $userId);
+            && $this->responseService->userOwnsFile($formId, $fileId, $userId, $fields);
     }
 }

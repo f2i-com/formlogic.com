@@ -154,9 +154,18 @@ class FileServeRouteTest extends TestCase
             ->execute(['af' . $this->uuid(), $appId, $formId]);
     }
 
+    /** Declare a field of the form, as the builder stores it (the per-form SQLite `fields` table). */
+    private function declareField(string $formId, string $fieldId, string $type): void
+    {
+        self::$sqlite->getFormDatabase($formId)
+            ->prepare("INSERT OR IGNORE INTO fields (id, type, label, field_order) VALUES (?, ?, ?, 0)")
+            ->execute([$fieldId, $type, $fieldId]);
+    }
+
     /** Direct SQLite insert so we control response age + file linkage without the submit pipeline. */
     private function insertResponse(string $formId, ?string $fileId, string $submittedBy, string $submittedAt): void
     {
+        $this->declareField($formId, 'f1', 'file_upload');
         $db = self::$sqlite->getFormDatabase($formId);
         $answers = $fileId ? json_encode(['f1' => [['id' => $fileId, 'storedFilename' => $fileId . '.txt']]]) : '{}';
         $meta = json_encode(['submittedByUserId' => $submittedBy]);
@@ -253,6 +262,49 @@ class FileServeRouteTest extends TestCase
 
         $this->assertSame(404, $this->serve($userOwn, $form, $otherFile)['status'], 'a file id in a text answer must not grant access');
         $this->assertSame(200, $this->serve($userAll, $form, $otherFile)['status'], 'view_all still reaches the real file');
+    }
+
+    /**
+     * Only a file_upload answer attaches a file. A location answer may carry extra keys and a
+     * signature or any other type the validators pass through may hold any shape, so an
+     * {id, storedFilename} object tucked into one of those must not count as "my attachment"
+     * (VIEW_OWN) or as "attached under a public field" (the public-asset policy): either would
+     * make knowing a file id enough to read it.
+     */
+    public function testAFileIdTuckedIntoAnotherAnswerTypeGrantsNoAccess(): void
+    {
+        $owner = $this->makeUser();
+        $appId = $this->makeApp($owner);
+        $form = $this->makeForm($owner);
+        $this->addFormToApp($appId, $form);
+        $userAll = $this->makeUser();
+        $userOwn = $this->makeUser();
+        $this->addMember($appId, $userAll, $this->makeRole($appId, AppPermissions::VIEW_ALL_RESPONSES));
+        $this->addMember($appId, $userOwn, $this->makeRole($appId, AppPermissions::VIEW_OWN_RESPONSES));
+
+        $otherFile = 'tucked' . substr($this->uuid(), 0, 6);
+        $this->insertResponse($form, $otherFile, $userAll, '2024-06-01 00:00:00');
+        $this->placeFile($form, $otherFile);
+        $this->declareField($form, 'loc', 'location');
+        $db = self::$sqlite->getFormDatabase($form);
+        $tucked = ['loc' => ['latitude' => 1, 'longitude' => 2, 'x' => ['id' => $otherFile, 'storedFilename' => $otherFile . '.txt']]];
+        $db->prepare("INSERT INTO responses (id, answers, metadata, status, submitted_at) VALUES (?, ?, ?, 'submitted', '2024-07-01 00:00:00')")
+            ->execute(['r' . $this->uuid(), json_encode($tucked), json_encode(['submittedByUserId' => $userOwn])]);
+
+        $this->assertSame(404, $this->serve($userOwn, $form, $otherFile)['status'], 'a file id inside a location answer is not an attachment');
+        $this->assertSame(200, $this->serve($userAll, $form, $otherFile)['status'], 'view_all still reaches the real file');
+
+        // The public-asset policy: a whitelisted public field that is not a file field.
+        $public = $this->makeForm($owner, 'published', ['publicRecords' => true, 'publicRecordFields' => ['loc']]);
+        $privateFile = 'tpriv' . substr($this->uuid(), 0, 6);
+        $this->insertResponse($public, $privateFile, $owner, '2024-06-01 00:00:00');
+        $this->placeFile($public, $privateFile);
+        $this->declareField($public, 'loc', 'location');
+        $tucked['loc']['x'] = ['id' => $privateFile, 'storedFilename' => $privateFile . '.txt'];
+        self::$sqlite->getFormDatabase($public)
+            ->prepare("INSERT INTO responses (id, answers, metadata, status, submitted_at) VALUES (?, ?, '{}', 'submitted', '2024-07-01 00:00:00')")
+            ->execute(['r' . $this->uuid(), json_encode($tucked)]);
+        $this->assertSame(404, $this->serve(null, $public, $privateFile)['status'], 'a file id inside a public location answer stays private');
     }
 
     public function testStandalonePublishedFormFileIsPrivateByDefault(): void

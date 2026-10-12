@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
+use FormLogic\Helpers\AppMemberView;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppReportService;
 use FormLogic\Services\AuditService;
@@ -23,7 +24,7 @@ class AppController
     private ?AuditService $auditService;
     private ?AppReportService $reportValidator;
 
-    public function __construct(AppService $appService, ?LoggerInterface $logger = null, ?AuditService $auditService = null, ?AppReportService $reportValidator = null, private ?\FormLogic\Services\TrashService $trashService = null)
+    public function __construct(AppService $appService, ?LoggerInterface $logger = null, ?AuditService $auditService = null, ?AppReportService $reportValidator = null, private ?\FormLogic\Services\TrashService $trashService = null, private ?\FormLogic\Services\AppUserService $appUserService = null)
     {
         $this->appService = $appService;
         $this->logger = $logger ?? new NullLogger();
@@ -74,6 +75,19 @@ class AppController
         return null;
     }
 
+    /**
+     * A non-owner member's view of an app: what the runtime gives them (AppPublicController::getApp),
+     * the config narrowed to the forms they can open, without the owner's id. Without the
+     * permission service (a bare construction) nothing counts as openable.
+     */
+    private function memberView(array $app, string $userId): array
+    {
+        $permissions = $this->appUserService?->getUserPermissions((string) $app['id'], $userId) ?? ['appLevel' => [], 'formLevel' => []];
+        $navigable = AppMemberView::navigableFormIds($this->appService->getAppForms((string) $app['id']), $permissions);
+        unset($app['ownerId']);
+        return AppMemberView::narrow($app, $navigable);
+    }
+
     public function index(Request $request, Response $response): Response
     {
         $userId = $request->getAttribute('userId');
@@ -88,11 +102,11 @@ class AppController
         foreach ($apps as &$a) {
             if (is_array($a)) {
                 $isOwner = ($a['ownerId'] ?? null) === $userId;
+                if (!$isOwner) {
+                    $a = $this->memberView($a, $userId);
+                }
                 $a['canManage'] = $isOwner;
                 $a['canCreateCompanion'] = $isOwner;
-                if (!$isOwner) {
-                    unset($a['ownerId']);
-                }
             }
         }
         unset($a);
@@ -169,11 +183,15 @@ class AppController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
         }
 
-        // Don't expose the owner's platform UUID to non-owner members (mirrors the
-        // runtime AppPublicController::getApp stripping).
-        $userId = $request->getAttribute('userId');
+        // A non-owner member gets what the runtime gives them (AppPublicController::getApp): the
+        // app only while it is published, its config narrowed to the forms they can open, and
+        // not the owner's platform UUID.
+        $userId = (string) $request->getAttribute('userId');
         if (($app['ownerId'] ?? null) !== $userId) {
-            unset($app['ownerId']);
+            if (!$this->appService->isRuntimeVisible($app, $userId)) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
+            }
+            $app = $this->memberView($app, $userId);
         }
 
         return $this->jsonResponse($response, ['app' => $app]);

@@ -7,6 +7,7 @@ namespace FormLogic\Controllers;
 use FormLogic\Services\SubmissionIdempotencyService;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
+use FormLogic\Helpers\AppMemberView;
 use FormLogic\Helpers\CustomLogicSanitizer;
 use FormLogic\Helpers\RelatedRecords;
 use FormLogic\Services\AppService;
@@ -65,26 +66,10 @@ class AppPublicController
         return (bool) preg_match('/^[a-z0-9][a-z0-9-]{0,60}$/', $slug);
     }
 
-    /**
-     * Whether an app member should receive $formId's schema in the runtime config. True if they hold
-     * any per-form permission on it (submit/view/edit/delete/export/analytics), or an app-wide grant
-     * that covers all forms (manage_app / view_analytics / an app-level form permission). The owner's
-     * permission set is ALL, so owners always pass.
-     */
+    /** See AppMemberView::canSeeForm. */
     private function memberCanSeeForm(array $permissions, string $formId): bool
     {
-        $appLevel = $permissions['appLevel'] ?? [];
-        if (in_array(AppPermissions::MANAGE_APP, $appLevel, true) || in_array(AppPermissions::VIEW_ANALYTICS, $appLevel, true)) {
-            return true;
-        }
-        $relevant = array_merge(AppPermissions::FORM_LEVEL, [AppPermissions::VIEW_ANALYTICS]);
-        $formLevel = $permissions['formLevel'][$formId] ?? [];
-        foreach ($relevant as $perm) {
-            if (in_array($perm, $appLevel, true) || in_array($perm, $formLevel, true)) {
-                return true;
-            }
-        }
-        return false;
+        return AppMemberView::canSeeForm($permissions, $formId);
     }
 
     public function getApp(Request $request, Response $response, array $args): Response
@@ -204,103 +189,10 @@ class AppPublicController
         ]);
     }
 
-    /**
-     * Narrow an app's payload to what a non-owner member may see, given the form ids they can access.
-     * Drops nav items, dashboard widgets, and report specs bound to forms they can't use, and resets a
-     * landing page that points at an inaccessible form — so no hidden form id / field name / query
-     * leaks through the app config. (Custom CODE screens are owner-authored, app-wide trusted content;
-     * the SDK's form context is already filtered via `forms`.)
-     *
-     * @param array    $safeApp
-     * @param string[] $accessible
-     */
+    /** See AppMemberView::narrow. */
     private function filterAppForMember(array $safeApp, array $accessible): array
     {
-        $ok = fn($fid) => $fid === null || $fid === '' || in_array($fid, $accessible, true);
-
-        // Nav: accessible forms only. Custom LINK entries (kind 'link', no form
-        // reference) are app-chrome the owner authored for everyone — kept.
-        if (isset($safeApp['navConfig']) && is_array($safeApp['navConfig'])) {
-            $safeApp['navConfig'] = array_values(array_filter(
-                $safeApp['navConfig'],
-                fn($item) => is_array($item) && (
-                    (($item['kind'] ?? 'form') === 'link' && !isset($item['formId']))
-                    || in_array($item['formId'] ?? null, $accessible, true)
-                )
-            ));
-        }
-
-        // Landing page: fall back to the dashboard if it targets an inaccessible form.
-        if (isset($safeApp['settings']) && is_array($safeApp['settings'])) {
-            $lp = $safeApp['settings']['landingPage'] ?? null;
-            if (is_string($lp) && $lp !== 'dashboard' && !in_array($lp, $accessible, true)) {
-                $safeApp['settings']['landingPage'] = 'dashboard';
-            }
-        }
-
-        // Reports: drop chart specs whose base/join form is inaccessible; then drop document blocks
-        // that referenced a dropped report.
-        if (isset($safeApp['reports']) && is_array($safeApp['reports'])) {
-            $specUsesAccessibleForms = function ($spec) use ($ok): bool {
-                if (!is_array($spec)) { return true; }
-                if (!$ok($spec['formId'] ?? null)) { return false; }
-                foreach (($spec['joins'] ?? []) as $j) {
-                    if (is_array($j) && !$ok($j['formId'] ?? null)) { return false; }
-                }
-                return true;
-            };
-            $keptReportIds = [];
-            $charts = [];
-            $docs = [];
-            foreach ($safeApp['reports'] as $item) {
-                if (!is_array($item)) { continue; }
-                if (($item['type'] ?? null) === 'document') { $docs[] = $item; continue; }
-                if ($specUsesAccessibleForms($item['spec'] ?? null)) {
-                    $charts[] = $item;
-                    if (isset($item['id'])) { $keptReportIds[$item['id']] = true; }
-                }
-            }
-            foreach ($docs as &$doc) {
-                if (isset($doc['blocks']) && is_array($doc['blocks'])) {
-                    $doc['blocks'] = array_values(array_filter($doc['blocks'], function ($b) use ($keptReportIds) {
-                        if (!is_array($b)) { return false; }
-                        if (($b['kind'] ?? null) === 'report') {
-                            return isset($b['reportId'], $keptReportIds[$b['reportId']]);
-                        }
-                        return true; // text blocks stay
-                    }));
-                }
-            }
-            unset($doc);
-            $safeApp['reports'] = array_merge(array_values($charts), array_values($docs));
-        }
-
-        // Dashboard home screen: drop widgets bound to inaccessible forms.
-        if (isset($safeApp['customScreen']) && is_array($safeApp['customScreen'])) {
-            $cs = $safeApp['customScreen'];
-            if (($cs['kind'] ?? null) === 'dashboard' && isset($cs['dashboard']['widgets']) && is_array($cs['dashboard']['widgets'])) {
-                $cs['dashboard']['widgets'] = array_values(array_filter($cs['dashboard']['widgets'], function ($w) use ($ok) {
-                    if (!is_array($w)) { return false; }
-                    $kind = $w['kind'] ?? null;
-                    if ($kind === 'report') {
-                        $spec = $w['spec'] ?? null;
-                        if (!is_array($spec)) { return true; }
-                        if (!$ok($spec['formId'] ?? null)) { return false; }
-                        foreach (($spec['joins'] ?? []) as $j) {
-                            if (is_array($j) && !$ok($j['formId'] ?? null)) { return false; }
-                        }
-                        return true;
-                    }
-                    if ($kind === 'list') {
-                        return $ok($w['list']['formId'] ?? null);
-                    }
-                    return true; // text/actions/activity derive only from accessible forms
-                }));
-                $safeApp['customScreen'] = $cs;
-            }
-        }
-
-        return $safeApp;
+        return AppMemberView::narrow($safeApp, $accessible);
     }
 
     /**
@@ -1071,6 +963,12 @@ class AppPublicController
         if (!$this->appUserService->hasPermission($app['id'], $userId, AppPermissions::EXPORT_RESPONSES, $formId)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
         }
+        // An export is a read: the caller gets the rows the record list gives them (listResponses),
+        // every row with view-all, their own with view-own, none without either.
+        $canViewAll = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_ALL_RESPONSES, $formId);
+        if (!$canViewAll && !$this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_OWN_RESPONSES, $formId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
+        }
         $form = $this->formService->getForm($formId);
         if (!$form) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found'], 404);
@@ -1080,7 +978,7 @@ class AppPublicController
         $filename = trim($safeTitle, '-') . '-responses.csv';
         $stream = fopen('php://temp', 'r+');
         try {
-            $this->responseService->exportResponsesStreaming($formId, $form['fields'] ?? [], $stream);
+            $this->responseService->exportResponsesStreaming($formId, $form['fields'] ?? [], $stream, $canViewAll ? null : $userId);
         } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
             // §9.2: server-side CSV assembly is impossible over ciphertext.
             fclose($stream);
@@ -2043,6 +1941,9 @@ class AppPublicController
         // flow-/logic-written rows never set the picker value — resolves its target by the
         // shared join key (e.g. a transcript turn's call_id → its Call). Newest match wins.
         // The synthesized target goes into _resolved only; the stored answer stays empty.
+        // The lookup itself is guarded like the batch load below (a form of this app the caller
+        // may view; only their own records under view-own): the target id is whatever the form's
+        // author wrote, and even an unresolved match used to hand back the matched record's id.
         $matchResolved = []; // respIndex => fieldId => targetResponseId
         if (count($responses) === 1) {
             foreach ($responses as $ri => $resp) {
@@ -2052,6 +1953,7 @@ class AppPublicController
                     $targetFormId = $props['targetFormId'] ?? null;
                     $matchField = $props['matchField'] ?? null;
                     if (!$targetFormId || !is_string($matchField) || $matchField === '') continue;
+                    if (!isset($appFormIds[$targetFormId])) continue;
                     $existing = $answers[$field['id']] ?? null;
                     if ($existing !== null && $existing !== '' && $existing !== []) continue;
                     $tmf = $props['targetMatchField'] ?? null;
@@ -2060,7 +1962,12 @@ class AppPublicController
                     if (!is_scalar($key)) continue;
                     $key = trim((string) $key);
                     if ($key === '') continue;
-                    $matches = $this->responseService->getFormResponses($targetFormId, ['answersEq' => [$tmf => $key], 'limit' => 1]);
+                    $matchOptions = ['answersEq' => [$tmf => $key], 'limit' => 1];
+                    if (!$this->appUserService->hasPermission($appId, $userId, AppPermissions::VIEW_ALL_RESPONSES, $targetFormId)) {
+                        if (!$this->appUserService->hasPermission($appId, $userId, AppPermissions::VIEW_OWN_RESPONSES, $targetFormId)) continue;
+                        $matchOptions['submittedByUserId'] = $userId;
+                    }
+                    $matches = $this->responseService->getFormResponses($targetFormId, $matchOptions);
                     $mid = $matches[0]['id'] ?? null;
                     if (!is_string($mid) || $mid === '') continue;
                     $matchResolved[$ri][$field['id']] = $mid;

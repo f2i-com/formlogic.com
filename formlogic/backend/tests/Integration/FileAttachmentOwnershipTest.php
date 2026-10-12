@@ -231,6 +231,28 @@ class FileAttachmentOwnershipTest extends TestCase
         $this->assertSame([], $errors);
     }
 
+    public function testAFileIdTuckedIntoAnotherAnswerTypeIsNotOwnership(): void
+    {
+        // A location answer may carry extra keys; an {id, storedFilename} object put in one is
+        // not an attachment, so it must not make the victim's file "the attacker's own" for a
+        // later re-attach, whether through a new submission or an update of that response.
+        $fields = [...self::FIELDS, ['id' => 'loc', 'type' => 'location', 'label' => 'Where', 'properties' => []]];
+        $fid = 'eeee' . bin2hex(random_bytes(6));
+        $this->placeCommitted($fid);
+        $this->insertResponse('resp-victim', $this->fileAnswer($fid), 'user-victim');
+        $this->insertResponse('resp-attacker', ['loc' => [
+            'latitude' => 1, 'longitude' => 2, 'x' => ['id' => $fid, 'storedFilename' => $fid . '.txt'],
+        ]], 'user-attacker');
+
+        $answers = $this->fileAnswer($fid);
+        $errors = self::$responses->validateFileAnswers($fields, $answers, $this->formId, ['submitterUserId' => 'user-attacker']);
+        $this->assertArrayHasKey('f1', $errors, 'a new submission cannot attach it');
+
+        $answers = $this->fileAnswer($fid);
+        $errors = self::$responses->validateFileAnswers($fields, $answers, $this->formId, ['submitterUserId' => 'user-attacker', 'existingResponseId' => 'resp-attacker']);
+        $this->assertArrayHasKey('f1', $errors, 'an update of the response that tucked it away cannot attach it');
+    }
+
     // ── Deferred GC: cross-response + concurrency safety ────────────────────────
 
     /** Age every orphan marker past the grace window so the sweep may act on them. */

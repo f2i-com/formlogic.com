@@ -1011,7 +1011,9 @@ class ResponseService
         $existingFileIds = null;
         if (is_string($context['existingResponseId'] ?? null) && $context['existingResponseId'] !== '') {
             $existing = $this->getResponse($formId, $context['existingResponseId']);
-            $existingFileIds = is_array($existing['answers'] ?? null) ? $this->fileUploadIds($existing['answers']) : [];
+            $existingFileIds = is_array($existing['answers'] ?? null)
+                ? $this->fileUploadIds($existing['answers'], self::fileFieldIdSet($fields))
+                : [];
         }
         foreach ($fields as $field) {
             $id = $field['id'] ?? null;
@@ -1044,7 +1046,7 @@ class ResponseService
                     $errors[$id] = "$label: uploaded file could not be found";
                     break;
                 }
-                if (!$this->mayAttachFile($formId, $fileId, $claimToken, $submitterUserId, $isOwner, $existingFileIds)) {
+                if (!$this->mayAttachFile($formId, $fileId, $claimToken, $submitterUserId, $isOwner, $existingFileIds, $fields)) {
                     $errors[$id] = "$label: uploaded file could not be found";
                     break;
                 }
@@ -1070,6 +1072,7 @@ class ResponseService
      * The FILE-PRIV-001 attachment decision for one file id (see validateFileAnswers).
      *
      * @param string[]|null $existingFileIds file ids already on the response being updated
+     * @param array<int, array<string, mixed>> $fields the form's field definitions
      */
     private function mayAttachFile(
         string $formId,
@@ -1077,7 +1080,8 @@ class ResponseService
         ?string $claimToken,
         ?string $submitterUserId,
         bool $isOwner,
-        ?array $existingFileIds
+        ?array $existingFileIds,
+        array $fields
     ): bool {
         if ($isOwner) {
             return true;
@@ -1101,7 +1105,7 @@ class ResponseService
         if ($existingFileIds !== null && in_array($fileId, $existingFileIds, true)) {
             return true;
         }
-        return $submitterUserId !== null && $this->userOwnsFile($formId, $fileId, $submitterUserId);
+        return $submitterUserId !== null && $this->userOwnsFile($formId, $fileId, $submitterUserId, $fields);
     }
 
     /**
@@ -1477,11 +1481,15 @@ class ResponseService
      * The LIKE is only a cheap PREFILTER: the caller-supplied id could appear as a plain text answer, so
      * a raw substring match would let a view-own member grant themselves access to another user's file by
      * typing its id into a text field. We therefore decode each candidate and require the id to appear as
-     * a real file-upload metadata object ({ id, storedFilename }) — exact ownership, not substring.
+     * a real file-upload metadata object ({ id, storedFilename }) under one of the form's file_upload
+     * fields ($fields, the form's field definitions) — exact ownership, not substring.
+     *
+     * @param array<int, array<string, mixed>> $fields
      */
-    public function userOwnsFile(string $formId, string $fileId, string $userId): bool
+    public function userOwnsFile(string $formId, string $fileId, string $userId, array $fields): bool
     {
-        if ($fileId === '' || !$this->sqlite->formDatabaseExists($formId)) {
+        $fileFields = self::fileFieldIdSet($fields);
+        if ($fileId === '' || $fileFields === [] || !$this->sqlite->formDatabaseExists($formId)) {
             return false;
         }
         $db = $this->sqlite->getFormDatabase($formId);
@@ -1496,7 +1504,7 @@ class ResponseService
         $stmt->execute();
         foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $answersJson) {
             $answers = json_decode((string) $answersJson, true);
-            if (is_array($answers) && in_array($fileId, $this->fileUploadIds($answers), true)) {
+            if (is_array($answers) && in_array($fileId, $this->fileUploadIds($answers, $fileFields), true)) {
                 return true;
             }
         }
@@ -1507,7 +1515,8 @@ class ResponseService
      * True if ANY response of $formId still references $fileId as a real file-upload attachment —
      * the authoritative check behind the deferred file GC (FILE-PRIV-001): a physical file may
      * only be deleted once this says no. Same LIKE-prefilter + exact-object-match discipline as
-     * userOwnsFile (a bare id in a text answer is not a reference).
+     * userOwnsFile (a bare id in a text answer is not a reference), but under ANY answer key: a
+     * file left under a field since deleted or retyped is kept rather than collected.
      */
     public function fileIsReferenced(string $formId, string $fileId): bool
     {
@@ -1532,13 +1541,16 @@ class ResponseService
      * The answer-field ids under which $fileId is attached across the form's responses —
      * powers the EXPLICIT public-asset policy (FILE-PRIV-001): a file is only publicly
      * servable when one of these ids is on the form's customScreen.publicRecordFields
-     * whitelist. Empty when the file is attached nowhere.
+     * whitelist. Only the form's file_upload fields ($fields) count. Empty when the file is
+     * attached nowhere.
      *
+     * @param array<int, array<string, mixed>> $fields
      * @return string[]
      */
-    public function fileAttachedFieldIds(string $formId, string $fileId): array
+    public function fileAttachedFieldIds(string $formId, string $fileId, array $fields): array
     {
-        if ($fileId === '' || !$this->sqlite->formDatabaseExists($formId)) {
+        $fileFields = self::fileFieldIdSet($fields);
+        if ($fileId === '' || $fileFields === [] || !$this->sqlite->formDatabaseExists($formId)) {
             return [];
         }
         $db = $this->sqlite->getFormDatabase($formId);
@@ -1553,7 +1565,7 @@ class ResponseService
                 continue;
             }
             foreach ($answers as $fieldId => $value) {
-                if (!is_array($value)) {
+                if (!is_array($value) || !isset($fileFields[(string) $fieldId])) {
                     continue;
                 }
                 foreach ($value as $item) {
@@ -1564,6 +1576,26 @@ class ResponseService
             }
         }
         return array_keys($fieldIds);
+    }
+
+    /**
+     * The ids of the file_upload fields among $fields, as a set. Only those answers attach a
+     * file: a location answer may carry extra keys, and a signature or any type the validators
+     * pass through may hold any shape, so an {id, storedFilename} object found elsewhere is not
+     * an attachment when access to a file is decided.
+     *
+     * @param array<int, array<string, mixed>> $fields
+     * @return array<string, true>
+     */
+    private static function fileFieldIdSet(array $fields): array
+    {
+        $ids = [];
+        foreach ($fields as $field) {
+            if (is_array($field) && ($field['type'] ?? null) === 'file_upload' && is_string($field['id'] ?? null) && $field['id'] !== '') {
+                $ids[$field['id']] = true;
+            }
+        }
+        return $ids;
     }
 
     /**
@@ -1644,16 +1676,18 @@ class ResponseService
     /**
      * The stored ids of files actually attached via file_upload fields in $answers — a file_upload answer
      * is an array of { id, storedFilename, … } objects. Mirrors FileStorageService::extractFileIds so a
-     * bare id sitting in an unrelated text answer is NOT treated as an attached file.
+     * bare id sitting in an unrelated text answer is NOT treated as an attached file. With $fileFields
+     * (see fileFieldIdSet), only those answers are read.
      *
      * @param array<string,mixed> $answers
+     * @param array<string, true>|null $fileFields
      * @return string[]
      */
-    private function fileUploadIds(array $answers): array
+    private function fileUploadIds(array $answers, ?array $fileFields = null): array
     {
         $ids = [];
-        foreach ($answers as $value) {
-            if (!is_array($value)) {
+        foreach ($answers as $fieldId => $value) {
+            if (!is_array($value) || ($fileFields !== null && !isset($fileFields[(string) $fieldId]))) {
                 continue;
             }
             foreach ($value as $item) {
@@ -3202,8 +3236,10 @@ class ResponseService
      * Returns headers array for Content-Disposition.
      *
      * @param resource $outputStream A writable stream (e.g. php://output)
+     * @param ?string $submittedByUserId only this user's own rows (a view-own caller), as the
+     *   record list filters them
      */
-    public function exportResponsesStreaming(string $formId, array $fields, $outputStream): int
+    public function exportResponsesStreaming(string $formId, array $fields, $outputStream, ?string $submittedByUserId = null): int
     {
         // §9.2 gate: CSV assembly interprets answers per field — refuse for private
         // forms (client-side decrypt-and-export replaces it; sqlite-bundle and
@@ -3270,11 +3306,12 @@ class ResponseService
         $totalWritten = 0;
         $maxExportRows = 100000; // Hard limit to prevent DoS
 
+        $batchOptions = ['limit' => $batchSize];
+        if ($submittedByUserId !== null) {
+            $batchOptions['submittedByUserId'] = $submittedByUserId;
+        }
         do {
-            $batch = $this->getFormResponses($formId, [
-                'limit' => $batchSize,
-                'offset' => $offset,
-            ]);
+            $batch = $this->getFormResponses($formId, $batchOptions + ['offset' => $offset]);
 
             // Resolve linked record display values for this batch
             $linkedDisplayCache = [];

@@ -223,6 +223,53 @@ class AppRbacTest extends TestCase
         $this->assertFalse(self::$svc->hasPermission($appId, $pending, AppPermissions::VIEW_OWN_RESPONSES));
     }
 
+    /**
+     * App-level grants are the owner's to manage: the backend refuses a non-owner who adds one,
+     * and the role editor shows them disabled to a non-owner (AppRoleEditor appLevelDisabled).
+     * A non-owner's save must therefore leave them exactly as they are, in both directions: a
+     * save that drops them must not strip the Admin role, and a save that carries them unchanged
+     * (what the editor sends) must go through.
+     */
+    public function testANonOwnerSaveLeavesTheRolesAppLevelGrantsAsTheyAre(): void
+    {
+        $owner = $this->makeUser();
+        $appId = $this->makeApp($owner);
+        $form = $this->makeForm($owner);
+        self::$pdo->prepare("INSERT INTO app_forms (id, app_id, form_id, display_name, sort_order, is_visible, settings) VALUES (?, ?, ?, 'T', 0, 1, '{}')")
+            ->execute(['af-' . $this->uuid(), $appId, $form]);
+        $admin = $this->makeRole($appId, 'Admin');
+        $this->grant($admin, AppPermissions::MANAGE_APP);
+        $this->grant($admin, AppPermissions::MANAGE_USERS);
+        $current = static fn (): array => array_map(
+            static fn (array $p): string => $p['permission'] . '@' . ($p['formId'] ?? '*'),
+            self::$svc->getRolePermissions($admin)
+        );
+
+        $refused = null;
+        try {
+            self::$svc->setRolePermissions($admin, [['formId' => $form, 'permission' => AppPermissions::VIEW_ALL_RESPONSES]], false);
+        } catch (\RuntimeException $e) {
+            $refused = $e;
+        }
+        $this->assertNotNull($refused, 'a non-owner save that drops app-level grants must be refused');
+        $this->assertEqualsCanonicalizing([AppPermissions::MANAGE_APP . '@*', AppPermissions::MANAGE_USERS . '@*'], $current());
+
+        // The editor's save: the app-level grants unchanged, a form grant added.
+        self::$svc->setRolePermissions($admin, [
+            ['formId' => null, 'permission' => AppPermissions::MANAGE_APP],
+            ['formId' => null, 'permission' => AppPermissions::MANAGE_USERS],
+            ['formId' => $form, 'permission' => AppPermissions::VIEW_ALL_RESPONSES],
+        ], false);
+        $this->assertEqualsCanonicalizing(
+            [AppPermissions::MANAGE_APP . '@*', AppPermissions::MANAGE_USERS . '@*', AppPermissions::VIEW_ALL_RESPONSES . '@' . $form],
+            $current()
+        );
+
+        // The owner may still change them.
+        self::$svc->setRolePermissions($admin, [['formId' => $form, 'permission' => AppPermissions::VIEW_ALL_RESPONSES]], true);
+        $this->assertSame([AppPermissions::VIEW_ALL_RESPONSES . '@' . $form], $current());
+    }
+
     public function testNonMemberDenied(): void
     {
         $owner = $this->makeUser();

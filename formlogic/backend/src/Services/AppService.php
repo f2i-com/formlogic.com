@@ -145,11 +145,13 @@ class AppService
         // form_count subquery: the REAL number of attached forms for list displays. navConfig is NOT a
         // reliable source (pack-provisioned apps can have an empty/other-shaped navConfig — showing
         // "0 forms" in the Apps list), and per-app follow-up requests don't scale to 36 demo apps.
+        // Membership means an ACTIVE membership, as in isAppMember and hasPermission: a suspended
+        // or pending member is listed nothing a non-member is not.
         $stmt = $this->mysql->prepare("
             SELECT DISTINCT a.*,
                    (SELECT COUNT(*) FROM app_forms af WHERE af.app_id = a.id) AS form_count
             FROM apps a
-            LEFT JOIN app_users au ON au.app_id = a.id AND au.user_id = :user_id
+            LEFT JOIN app_users au ON au.app_id = a.id AND au.user_id = :user_id AND au.status = 'active'
             WHERE a.owner_id = :owner_id OR au.user_id = :user_id2
             ORDER BY a.updated_at DESC
         ");
@@ -1039,7 +1041,7 @@ class AppService
     /**
      * Batched "apps + their attached forms" listing for the caller
      * (GET /api/apps/form-usage): the same app visibility as getAllApps (owner OR
-     * member), each app with its forms — two batched queries total, no per-app N+1.
+     * active member), each app with its forms — two batched queries total, no per-app N+1.
      *
      * @return array<int, array{appId:string, appName:string, slug:string, canManage:bool, forms:array<int, array{formId:string, displayName:string, sortOrder:int, isVisible:bool}>}>
      */
@@ -1048,7 +1050,7 @@ class AppService
         $stmt = $this->mysql->prepare("
             SELECT DISTINCT a.id, a.name, a.slug, a.owner_id, a.updated_at
             FROM apps a
-            LEFT JOIN app_users au ON au.app_id = a.id AND au.user_id = :user_id
+            LEFT JOIN app_users au ON au.app_id = a.id AND au.user_id = :user_id AND au.status = 'active'
             WHERE a.owner_id = :owner_id OR au.user_id = :user_id2
             ORDER BY a.updated_at DESC
         ");

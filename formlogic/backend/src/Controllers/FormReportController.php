@@ -137,10 +137,23 @@ class FormReportController
                 'path' => $this->sqlite->getFormDbPath($jf),
             ];
         }
+        // Owner: may resolve linked-record labels from the target forms they own. A linked_record
+        // field can name any form id as its target, so "the caller's own field" is not enough:
+        // a target owned by another account would read that account's records into the labels.
+        $resolvable = [];
+        foreach ([$form['fields'] ?? [], ...array_column($resolvedJoins, 'fields')] as $fieldSet) {
+            foreach ($fieldSet as $f) {
+                $target = (string) ($f['properties']['targetFormId'] ?? '');
+                if (($f['type'] ?? '') !== 'linked_record' || $target === '' || isset($resolvable[$target])) { continue; }
+                $tForm = $this->formService->getForm($target);
+                if ($tForm && ($tForm['userId'] ?? null) === $userId) {
+                    $resolvable[$target] = true;
+                }
+            }
+        }
         try {
-            // Owner: may resolve linked-record labels from any of their own target forms (null allowlist).
             $svc = new ReportService($this->sqlite, $this->formService, $this->mysql);
-            $result = $svc->runReport($spec, $form['fields'] ?? [], $formId, 'all', $userId, $resolvedJoins, 'UTC', null);
+            $result = $svc->runReport($spec, $form['fields'] ?? [], $formId, 'all', $userId, $resolvedJoins, 'UTC', array_map('strval', array_keys($resolvable)));
             return ['status' => 200, 'body' => $result];
         } catch (PrivateFormEncryptedException $e) {
             // §9.2: private forms render a "Private form — open records to view" placeholder client-side.
