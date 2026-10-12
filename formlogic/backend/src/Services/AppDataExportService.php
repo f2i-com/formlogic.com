@@ -317,7 +317,7 @@ TXT;
         $usedTables = array_fill_keys(array_values($tableByFormId), true);
 
         $sink('-- FormLogic app data export — ' . ($dialect === 'mysql' ? 'MySQL' : 'SQL Server') . ' dialect', false);
-        $sink('-- App: ' . str_replace(["\r", "\n"], ' ', (string) ($app['name'] ?? '')) . ' (' . ($app['slug'] ?? '') . ')', false);
+        $sink('-- App: ' . self::commentText((string) ($app['name'] ?? '')) . ' (' . self::commentText((string) ($app['slug'] ?? '')) . ')', false);
         $sink('-- Exported (UTC): ' . gmdate('Y-m-d H:i:s'), false);
         $sink('-- One table per form; one row per record. submitted_at / updated_at are UTC.', false);
         $sink('-- Zone-less datetime answers are the wall-clock time the respondent picked.', false);
@@ -330,6 +330,10 @@ TXT;
         if ($dialect === 'mysql') {
             $sink('SET NAMES utf8mb4', true);
             $sink('SET FOREIGN_KEY_CHECKS = 0', true);
+            // String literals use backslash escapes (see mysqlString), which a server running
+            // with NO_BACKSLASH_ESCAPES reads as plain characters: drop that mode for the load.
+            $sink('SET @formlogic_sql_mode = @@SESSION.sql_mode', true);
+            $sink("SET SESSION sql_mode = TRIM(BOTH ',' FROM REPLACE(CONCAT(',', @@SESSION.sql_mode, ','), ',NO_BACKSLASH_ESCAPES,', ','))", true);
             $sink('', false);
         }
 
@@ -347,7 +351,24 @@ TXT;
         }
         if ($dialect === 'mysql') {
             $sink('SET FOREIGN_KEY_CHECKS = 1', true);
+            $sink('SET SESSION sql_mode = @formlogic_sql_mode', true);
         }
+    }
+
+    /**
+     * Text placed in a "--" comment line. The comment ends at a line break, so anything after
+     * one in a name (a form's display name, an app's name, a linked_record target id, which is
+     * free text a pack can ship) would be read by the loading client as SQL. Line breaks and
+     * other control characters become spaces; a backslash (mysql client commands) and "$("
+     * (sqlcmd variables) are defused too.
+     */
+    private static function commentText(string $text): string
+    {
+        $flat = preg_replace('/[\p{Cc}\p{Zl}\p{Zp}]/u', ' ', $text);
+        if (!is_string($flat)) {
+            $flat = (string) preg_replace('/[^\x20-\x7E]/', '?', $text); // not valid UTF-8
+        }
+        return str_replace(['\\', '$('], ['/', '$ ('], $flat);
     }
 
     /**
@@ -404,7 +425,7 @@ TXT;
             ];
         }
 
-        $sink('-- ' . str_replace(["\r", "\n"], ' ', $ef['displayName']) . " ({$formId})", false);
+        $sink('-- ' . self::commentText((string) $ef['displayName']) . ' (' . self::commentText($formId) . ')', false);
         if ($dialect === 'mysql') {
             $sink("DROP TABLE IF EXISTS {$q($table)}", true);
         } else {
@@ -449,7 +470,7 @@ TXT;
                 continue;
             }
             if ($c['link']['targetTable'] === null) {
-                $sink("-- note: {$table}.{$c['column']} references form {$c['link']['targetFormId']}, which is not part of this app — no constraint emitted", false);
+                $sink("-- note: {$table}.{$c['column']} references form " . self::commentText($c['link']['targetFormId']) . ', which is not part of this app — no constraint emitted', false);
                 continue;
             }
             $target = $c['link']['targetTable'];
@@ -659,7 +680,8 @@ TXT;
             case 'number':
             case 'rating':
             case 'scale':
-                return is_numeric($v) ? (string) (float) $v : 'NULL';
+                // "1e999" is numeric to PHP and infinite as a float; INF is no SQL literal.
+                return is_numeric($v) && is_finite((float) $v) ? (string) (float) $v : 'NULL';
             case 'date':
                 return (is_string($v) && preg_match('/^\d{4}-\d{2}-\d{2}/', $v) === 1)
                     ? $this->stringLiteral(substr($v, 0, 10), $dialect)
@@ -714,9 +736,13 @@ TXT;
 
     private function mysqlString(string $s): string
     {
+        // A quote is doubled, not backslash-escaped: under NO_BACKSLASH_ESCAPES "\'" is a
+        // backslash and then the closing quote, and the rest of the value would be read as
+        // SQL. Doubled, it stays inside the literal in either mode (and the dump's header
+        // drops that mode, so the backslash escapes load exactly).
         return "'" . str_replace(
             ['\\', "'", "\r", "\n", "\0", "\x1a"],
-            ['\\\\', "\\'", '\\r', '\\n', '\\0', '\\Z'],
+            ['\\\\', "''", '\\r', '\\n', '\\0', '\\Z'],
             $s
         ) . "'";
     }

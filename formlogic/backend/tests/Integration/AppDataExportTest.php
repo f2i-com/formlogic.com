@@ -291,6 +291,61 @@ class AppDataExportTest extends TestCase
         $this->assertSame('no-such-record-0000', $dangling);
     }
 
+    /**
+     * The .sql file is loaded by someone else's client, so nothing a form's author or a
+     * respondent wrote may leave the syntax it was placed in: a linked_record target id is
+     * free text (a pack can ship any string) and is named in a "--" comment; an answer is a
+     * string literal, read by a server that may run with NO_BACKSLASH_ESCAPES; a number may
+     * be one PHP reads as infinite.
+     */
+    public function testHostileNamesAndAnswersStayInsideTheirSyntax(): void
+    {
+        $tag = 'dump_breakout_' . bin2hex(random_bytes(4));
+        $f3 = self::$forms->createForm([
+            'title' => 'Hostile', 'userId' => $this->userId, 'status' => 'published',
+            'fields' => [
+                ['id' => 'note', 'type' => 'short_text', 'label' => "Note */ -- \nx", 'required' => false],
+                ['id' => 'amount', 'type' => 'number', 'label' => 'Amount', 'required' => false],
+                ['id' => 'elsewhere', 'type' => 'linked_record', 'label' => 'Elsewhere', 'required' => false,
+                 'properties' => ['targetFormId' => "x\nCREATE TABLE `{$tag}_comment` (id INT);\n-- "]],
+            ],
+        ]);
+        self::$apps->addFormToApp($this->appId, (string) $f3['id'], 'Hostile');
+        $note = "it's \\'); CREATE TABLE `{$tag}_literal` (id INT); -- ";
+        self::$responses->createResponse((string) $f3['id'], ['answers' => ['note' => $note, 'amount' => '1e999']], null);
+
+        $path = self::$export->exportSqlDump($this->app(), 'mysql');
+        $this->createdTables = ['job_sheets', 'job_sheets_2', 'job_sheets_2_related_jobs_links', 'hostile', "{$tag}_comment", "{$tag}_literal"];
+        try {
+            $dump = (string) file_get_contents($path);
+        } finally {
+            @unlink($path);
+        }
+        foreach (explode("\n", $dump) as $line) {
+            if (str_starts_with($line, 'x') || str_starts_with($line, 'CREATE TABLE `' . $tag)) {
+                $this->fail('a comment spilled onto its own line: ' . $line);
+            }
+        }
+
+        // Load the whole file in one batch, on a server session with NO_BACKSLASH_ESCAPES.
+        $loader = new PDO(
+            sprintf('mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4', $_ENV['DB_HOST'] ?? '127.0.0.1', $_ENV['DB_PORT'] ?? '3306', $_ENV['DB_TEST_DATABASE'] ?? 'formlogic_test'),
+            $_ENV['DB_USERNAME'] ?? 'root',
+            $_ENV['DB_PASSWORD'] ?? '',
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::MYSQL_ATTR_MULTI_STATEMENTS => true]
+        );
+        $loader->exec("SET SESSION sql_mode = CONCAT(@@SESSION.sql_mode, ',NO_BACKSLASH_ESCAPES')");
+        $loader->exec($dump);
+        $loader = null;
+
+        $exists = self::$pdo->prepare('SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE ?');
+        $exists->execute([$tag . '%']);
+        $this->assertSame(0, (int) $exists->fetchColumn(), 'the dump created a table nobody exported');
+        $row = self::$pdo->query('SELECT `note`, `amount` FROM `hostile`')->fetch(PDO::FETCH_ASSOC);
+        $this->assertSame($note, $row['note'] ?? null, 'the answer loads exactly as it was given');
+        $this->assertNull($row['amount'], 'an infinite number loads as NULL');
+    }
+
     public function testMssqlDumpHasTSqlShape(): void
     {
         $chunks = '';

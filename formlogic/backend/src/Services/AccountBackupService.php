@@ -1191,16 +1191,23 @@ final class AccountBackupService
     private function verifyEntryHashesStreaming(\ZipArchive $zip, array $entries): void
     {
         foreach ($entries as $name => $expected) {
+            $declared = $this->declaredEntrySize($zip, $name);
             $stream = $zip->getStream($name);
             if ($stream === false) {
                 throw new \RuntimeException("Backup entry missing from archive: {$name}");
             }
             $ctx = hash_init('sha256');
+            $read = 0;
             while (!feof($stream)) {
                 $chunk = fread($stream, 1024 * 1024);
                 if ($chunk === false) {
                     fclose($stream);
                     throw new \RuntimeException("Could not read backup entry: {$name}");
+                }
+                $read += strlen($chunk);
+                if ($read > $declared) {
+                    fclose($stream);
+                    throw new \RuntimeException("Backup entry {$name} is larger than the archive declares");
                 }
                 hash_update($ctx, $chunk);
             }
@@ -2332,8 +2339,24 @@ final class AccountBackupService
         return $data;
     }
 
+    /**
+     * The uncompressed size an entry's headers declare: what assertSafeArchive capped. libzip
+     * streams an entry's real inflated length whatever its headers say, so every streamed
+     * read is held to this, or a small upload that under-declares a highly compressible
+     * entry writes without limit.
+     */
+    private function declaredEntrySize(\ZipArchive $zip, string $name): int
+    {
+        $stat = $zip->statName($name);
+        if ($stat === false) {
+            throw new \RuntimeException("Backup entry missing from archive: {$name}");
+        }
+        return (int) ($stat['size'] ?? 0);
+    }
+
     private function extractEntryStreaming(\ZipArchive $zip, string $name, string $dest): void
     {
+        $declared = $this->declaredEntrySize($zip, $name);
         $in = $zip->getStream($name);
         if ($in === false) {
             throw new \RuntimeException("Backup is missing {$name}");
@@ -2343,9 +2366,13 @@ final class AccountBackupService
             fclose($in);
             throw new \RuntimeException("Could not write {$dest}");
         }
-        stream_copy_to_stream($in, $out);
+        $copied = stream_copy_to_stream($in, $out, $declared + 1);
         fclose($in);
         fclose($out);
+        if ($copied === false || $copied > $declared) {
+            @unlink($dest);
+            throw new \RuntimeException("Backup entry {$name} is larger than the archive declares");
+        }
     }
 
     private function openSqliteReadOnly(string $path): PDO

@@ -579,6 +579,63 @@ class AccountBackupTest extends TestCase
         }
     }
 
+    /**
+     * The archive-size caps (assertSafeArchive) read the sizes the zip's headers declare, but
+     * libzip streams an entry's real inflated length whatever its headers say. An entry larger
+     * than declared must be refused before any of it is written, or a small upload whose
+     * headers under-declare a highly compressible entry writes gigabytes to the server's disk.
+     */
+    public function testEntryLargerThanItsHeadersDeclareIsRefused(): void
+    {
+        $zipPath = self::$backup->exportAccount($this->userId);
+        $before = $this->countUserResources($this->userId);
+        $entry = "data/forms/{$this->f1}.sqlite";
+        try {
+            $zip = new \ZipArchive();
+            $this->assertTrue($zip->open($zipPath) === true);
+            $real = (string) $zip->getFromName($entry);
+            $zip->close();
+            // The real database plus 8 MiB of zeros, with the manifest hash matching what streams.
+            $this->replaceZipEntry($zipPath, $entry, $real . str_repeat("\0", 8 * 1024 * 1024), true);
+            $this->underDeclareZipEntry($zipPath, $entry, strlen($real));
+
+            $refused = null;
+            try {
+                self::$backup->importAccount($zipPath, $this->userId);
+            } catch (\RuntimeException $e) {
+                $refused = $e;
+            }
+            $this->assertNotNull($refused, 'an entry larger than its headers declare must be refused');
+            $this->assertStringContainsString('larger than the archive declares', $refused->getMessage());
+            $this->assertSame($before, $this->countUserResources($this->userId), 'nothing may be created');
+        } finally {
+            @unlink($zipPath);
+        }
+    }
+
+    /** Make the zip's local and central headers declare $declared uncompressed bytes for $entry. */
+    private function underDeclareZipEntry(string $zipPath, string $entry, int $declared): void
+    {
+        $bin = (string) file_get_contents($zipPath);
+        $patched = 0;
+        for ($o = strpos($bin, "PK\x03\x04"); $o !== false; $o = strpos($bin, "PK\x03\x04", $o + 4)) {
+            $nameLength = unpack('v', substr($bin, $o + 26, 2))[1];
+            if (substr($bin, $o + 30, $nameLength) === $entry) {
+                $bin = substr_replace($bin, pack('V', $declared), $o + 22, 4);
+                $patched++;
+            }
+        }
+        for ($o = strpos($bin, "PK\x01\x02"); $o !== false; $o = strpos($bin, "PK\x01\x02", $o + 4)) {
+            $nameLength = unpack('v', substr($bin, $o + 28, 2))[1];
+            if (substr($bin, $o + 46, $nameLength) === $entry) {
+                $bin = substr_replace($bin, pack('V', $declared), $o + 24, 4);
+                $patched++;
+            }
+        }
+        $this->assertSame(2, $patched, 'the local and the central header of the entry');
+        file_put_contents($zipPath, $bin);
+    }
+
     public function testZipSlipAndOversizeAreRejected(): void
     {
         // Zip-slip: an escaping entry name is refused up front.
