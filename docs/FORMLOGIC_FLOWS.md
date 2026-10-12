@@ -180,7 +180,7 @@ Flows are first-class per USER, not only per app: a **workspace flow** is a `flo
 
 Small persistent key/value state for flows (counters, cursors, dedupe markers, connector state) in the `flow_kv` table, keyed by `(owner, app, scope, key)`. Scopes are free-form labels, by convention `flow:<slug>` for per-flow state and `app` for app-wide state.
 
-- **Caps** (enforced in `FlowKvService`, every write path): encoded value ≤ **64 KiB**, ≤ **500 keys per (owner, app, scope)**. Scope `^[a-z][a-z0-9:_.-]{0,63}$`; key ≤ 190 chars of `[A-Za-z0-9:_./-]`.
+- **Caps** (enforced in `FlowKvService`, every write path): encoded value ≤ **64 KiB**, ≤ **500 keys per (owner, app, scope)** and ≤ **5000 keys per (owner, app) across scopes** (the caller names the scope, so the per-scope cap alone bounded nothing; a store already past it can update its keys and add none). Scope `^[a-z][a-z0-9:_.-]{0,63}$`; key ≤ 190 chars of `[A-Za-z0-9:_./-]`.
 - **Owner surface** (session auth): `GET /api/flow-kv?scope=&k=&appId=` (one entry with `k`, else the list), `PUT /api/flow-kv {scope, k, v, appId?}`, `DELETE /api/flow-kv?scope=&k=&appId=`. `appId` must be an app the caller owns; omitted = the caller's workspace store.
 - **Runtime surface** (member-gated + `flow_run` rate limit, like flow-runs): `GET/PUT /api/app/{slug}/flow-kv`. Rows are keyed by the APP OWNER + app id, so all members share one app-wide store.
 - Storage note: `app_id` is `''` (empty string, NOT NULL) for the workspace store so the UNIQUE key actually dedupes; the API maps `appId: null ↔ ''`.

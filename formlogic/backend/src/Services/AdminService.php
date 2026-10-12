@@ -443,19 +443,28 @@ class AdminService
      * Complimentary access: ON pushes cloud_until ~100 years out so the account
      * never needs a payment; OFF sets it to NOW (any enforcement then applies
      * normally — on self-hosted installs enforcement is off anyway).
+     *
+     * OFF acts only on an account that is complimentary now (the same test
+     * isComplimentary applies, made in the UPDATE itself). It wrote NOW over
+     * whatever cloud_until held, so sent for an account that was never
+     * complimentary (a second press, a replayed request) it ended the months
+     * that account had paid for.
      */
     public function setComplimentary(string $userId, bool $on): void
     {
         $sql = $on
             ? 'UPDATE users SET cloud_until = DATE_ADD(NOW(), INTERVAL ' . self::COMPLIMENTARY_YEARS . ' YEAR) WHERE id = :id'
-            : 'UPDATE users SET cloud_until = NOW() WHERE id = :id';
+            : 'UPDATE users SET cloud_until = NOW() WHERE id = :id AND cloud_until > DATE_ADD(NOW(), INTERVAL ' . self::COMPLIMENTARY_READS_FROM_YEARS . ' YEAR)';
         $this->mysql->prepare($sql)->execute(['id' => $userId]);
     }
+
+    /** How far out cloud_until must be to read as complimentary rather than as paid time. */
+    private const COMPLIMENTARY_READS_FROM_YEARS = 50;
 
     /** Whether the account's access reads as complimentary (cloud_until decades out). */
     public function isComplimentary(?string $cloudUntil): bool
     {
-        return !empty($cloudUntil) && strtotime((string) $cloudUntil) > time() + 50 * 365 * 86400;
+        return !empty($cloudUntil) && strtotime((string) $cloudUntil) > time() + self::COMPLIMENTARY_READS_FROM_YEARS * 365 * 86400;
     }
 
     // ── Broadcast notices ────────────────────────────────────────────────────

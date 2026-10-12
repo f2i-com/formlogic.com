@@ -165,14 +165,13 @@ class BillingController
                 $capture = $order['purchase_units'][0]['payments']['captures'][0] ?? null;
             } catch (\Throwable $e) { /* fall through to indeterminate handling */ }
         }
+        // Anything that is not a capture object is no capture: the indeterminate answer below.
+        $capture = is_array($capture) ? $capture : null;
 
         $captureStatus = strtoupper((string) ($capture['status'] ?? ''));
         $captureId = $capture['id'] ?? null;
-        $capturedCents = isset($capture['amount']['value']) ? (int) round(((float) $capture['amount']['value']) * 100) : -1;
-        $captureCurrency = strtoupper((string) ($capture['amount']['currency_code'] ?? ''));
-        $amountOk = $captureId
-            && $capturedCents === (int) $payment['amount_cents']
-            && $captureCurrency === strtoupper((string) $payment['currency']);
+        $capturedCents = self::capturedCents($capture);
+        $amountOk = $captureId && self::captureMatchesPayment($capture, $payment);
 
         if ($captureStatus === 'COMPLETED' && $amountOk) {
             try {
@@ -197,8 +196,10 @@ class BillingController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'The payment was declined.'], 400);
         }
 
-        // Indeterminate (couldn't read the capture, or an amount/currency mismatch we can't
-        // confirm): DON'T mark terminal — leave 'pending' so a retry or webhook can credit.
+        // Indeterminate: DON'T mark terminal. A capture that could not be read stays 'pending'
+        // so a retry or the webhook can credit it; one whose amount or currency is not the
+        // recorded order's stays 'pending' too, and neither path credits it (the webhook
+        // applies the same check), so it is left for support.
         $this->logger->warning('PayPal capture indeterminate', ['order' => $orderId, 'captureStatus' => $captureStatus, 'capturedCents' => $capturedCents, 'expected' => $payment['amount_cents']]);
         return $this->jsonResponse($response, ['error' => true, 'message' => "We could not confirm the payment yet. If you were charged, it will be credited shortly — contact support with order $orderId."], 502);
     }
@@ -219,8 +220,8 @@ class BillingController
         }
 
         $type = (string) $event['event_type'];
-        $resource = $event['resource'] ?? [];
-        $captureId = (string) ($resource['id'] ?? '');
+        $resource = is_array($event['resource'] ?? null) ? $event['resource'] : [];
+        $captureId = is_string($resource['id'] ?? null) ? $resource['id'] : '';
         // The capture's parent order id (custom_id was set to "userId:months" on create).
         $pdo = $this->db->getConnection();
 
@@ -229,7 +230,20 @@ class BillingController
             // response leaves the row 'pending' with capture_id NULL, so this webhook is the
             // only path that can still credit it. Credit idempotently.
             $payment = $this->findPaymentForCapture($captureId, $resource);
-            if ($payment && $payment['status'] !== 'completed') {
+            if ($payment && $payment['status'] !== 'completed' && !self::captureMatchesPayment($resource, $payment)) {
+                // The same rule the capture call applies: a capture of another amount or
+                // currency is not the purchase the order was recorded for. The row stays as
+                // it is for support to look at, and the event is acknowledged (PayPal would
+                // otherwise redeliver it for days).
+                $this->logger->warning('PayPal webhook capture does not match the recorded order', [
+                    'capture' => $captureId,
+                    'order' => $payment['order_id'],
+                    'capturedCents' => self::capturedCents($resource),
+                    'capturedCurrency' => $resource['amount']['currency_code'] ?? null,
+                    'expectedCents' => (int) $payment['amount_cents'],
+                    'expectedCurrency' => $payment['currency'],
+                ]);
+            } elseif ($payment && $payment['status'] !== 'completed') {
                 try { $this->creditPayment($payment, $captureId); } catch (\Throwable $e) {
                     $this->logger->error('Webhook credit failed', ['capture' => $captureId, 'error' => $e->getMessage()]);
                     return $response->withStatus(500);
@@ -250,6 +264,24 @@ class BillingController
             }
         }
         return $response->withStatus(200);
+    }
+
+    /** A PayPal capture's amount in cents, or -1 when it carries none. */
+    private static function capturedCents(?array $capture): int
+    {
+        $value = $capture['amount']['value'] ?? null;
+        return is_string($value) || is_int($value) || is_float($value) ? (int) round(((float) $value) * 100) : -1;
+    }
+
+    /**
+     * Whether a PayPal capture is for exactly what the server recorded when it created the order.
+     * Asked on both crediting paths (the capture call and the webhook): the months credited come
+     * from the recorded order, so a capture of any other amount or currency must not credit it.
+     */
+    private static function captureMatchesPayment(?array $capture, array $payment): bool
+    {
+        return self::capturedCents($capture) === (int) $payment['amount_cents']
+            && strtoupper((string) ($capture['amount']['currency_code'] ?? '')) === strtoupper((string) $payment['currency']);
     }
 
     /** Resolve a payment from a webhook capture: by capture_id, else by the parent order id. */

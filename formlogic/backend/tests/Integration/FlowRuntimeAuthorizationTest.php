@@ -302,6 +302,81 @@ class FlowRuntimeAuthorizationTest extends TestCase
         $this->assertNotNull($byId[$freeRun['runId']]['inputSnapshot']);
     }
 
+    /**
+     * A flow.succeeded handler is handed the finished run's result as its input. A run tied to a
+     * form is hidden from a member who may not read that form's responses, but the handler run
+     * it gives rise to carried no form at all, so the same member could list it, claim it, and
+     * read in its snapshot what the hidden run had made of the submission.
+     */
+    public function testAnOutcomeHandlerRunOfAHiddenFormRunIsHiddenToo(): void
+    {
+        $this->grant($this->roleId, 'execute_flows');
+        $handler = self::$flows->createFlow($this->appId, $this->ownerId, [
+            'name' => 'After triage',
+            'slug' => 'after-triage',
+            'flowJson' => ['nodes' => [['id' => 'in', 'type' => 'input']], 'edges' => []],
+        ]);
+        self::$flows->createBinding($this->appId, ['flow' => 'after-triage', 'event' => 'flow.succeeded', 'mode' => 'async']);
+
+        // The owner's runtime runs the form-tied flow; its result repeats what was submitted.
+        $formRun = $this->reserveQueued($this->formId);
+        self::$flows->claimRun($this->appId, $formRun['runId'], ['runtime' => 'browser', 'instanceId' => 'owner-tab']);
+        self::$flows->completeRun($this->appId, $formRun['runId'], [
+            'status' => 'done', 'instanceId' => 'owner-tab', 'result' => ['answers' => ['secret' => 'value']],
+        ]);
+        $find = self::$pdo->prepare('SELECT id FROM flow_run_logs WHERE parent_run_id = ? AND flow_definition_id = ?');
+        $find->execute([$formRun['runId'], $handler['id']]);
+        $handlerRunId = $find->fetchColumn();
+        $this->assertIsString($handlerRunId, 'the handler run was enqueued');
+        $slugArgs = ['slug' => $this->slug];
+
+        // Without view_all_responses on the form: not listed, and not claimable by id.
+        [, $payload] = $this->call('GET', $this->memberId, fn ($rq, $rs) => self::$ctrl->queuedRuns($rq, $rs, $slugArgs));
+        $this->assertNotContains($handlerRunId, array_column($payload['runs'], 'runId'));
+        [$code] = $this->call('POST', $this->memberId, fn ($rq, $rs) => self::$ctrl->claimRun($rq, $rs, $slugArgs + ['runId' => $handlerRunId]), ['runtime' => 'browser', 'instanceId' => 'tab-1']);
+        $this->assertSame(404, $code, 'the handler run of a hidden run is hidden');
+        [$code] = $this->call('PATCH', $this->memberId, fn ($rq, $rs) => self::$ctrl->completeRun($rq, $rs, $slugArgs + ['runId' => $handlerRunId]), ['status' => 'done', 'instanceId' => 'tab-1']);
+        $this->assertSame(404, $code, 'and cannot be completed by id either');
+
+        // The owner still sees it, with its snapshot, and the run row itself is as it was:
+        // it names no form (the rule reads the lineage; nothing a runtime is handed changes).
+        [, $payload] = $this->call('GET', $this->ownerId, fn ($rq, $rs) => self::$ctrl->queuedRuns($rq, $rs, $slugArgs));
+        $byId = array_column($payload['runs'], null, 'runId');
+        $this->assertArrayHasKey($handlerRunId, $byId);
+        $this->assertNull($byId[$handlerRunId]['formId']);
+        $this->assertNull($byId[$handlerRunId]['responseId']);
+
+        // With view_all_responses on the form, the member's runtime takes the handler run like any other.
+        $this->grant($this->roleId, 'view_all_responses', $this->formId);
+        [$code, $payload] = $this->call('POST', $this->memberId, fn ($rq, $rs) => self::$ctrl->claimRun($rq, $rs, $slugArgs + ['runId' => $handlerRunId]), ['runtime' => 'browser', 'instanceId' => 'tab-1']);
+        $this->assertSame(200, $code);
+        $this->assertSame('value', $payload['run']['inputSnapshot']['event']['data']['result']['answers']['secret']);
+    }
+
+    /** A handler run whose source run was tied to no form stays open to any execute_flows member. */
+    public function testAnOutcomeHandlerRunOfAFormlessRunIsStillVisible(): void
+    {
+        $this->grant($this->roleId, 'execute_flows');
+        $handler = self::$flows->createFlow($this->appId, $this->ownerId, [
+            'name' => 'After triage',
+            'slug' => 'after-triage',
+            'flowJson' => ['nodes' => [['id' => 'in', 'type' => 'input']], 'edges' => []],
+        ]);
+        self::$flows->createBinding($this->appId, ['flow' => 'after-triage', 'event' => 'flow.succeeded', 'mode' => 'async']);
+        $freeRun = $this->reserveQueued(null);
+        self::$flows->claimRun($this->appId, $freeRun['runId'], ['runtime' => 'browser', 'instanceId' => 'owner-tab']);
+        self::$flows->completeRun($this->appId, $freeRun['runId'], ['status' => 'done', 'instanceId' => 'owner-tab', 'result' => ['ok' => true]]);
+        $find = self::$pdo->prepare('SELECT id FROM flow_run_logs WHERE parent_run_id = ? AND flow_definition_id = ?');
+        $find->execute([$freeRun['runId'], $handler['id']]);
+        $handlerRunId = $find->fetchColumn();
+        $this->assertIsString($handlerRunId);
+
+        [, $payload] = $this->call('GET', $this->memberId, fn ($rq, $rs) => self::$ctrl->queuedRuns($rq, $rs, ['slug' => $this->slug]));
+        $this->assertContains($handlerRunId, array_column($payload['runs'], 'runId'));
+        [$code] = $this->call('POST', $this->memberId, fn ($rq, $rs) => self::$ctrl->claimRun($rq, $rs, ['slug' => $this->slug, 'runId' => $handlerRunId]), ['runtime' => 'browser', 'instanceId' => 'tab-1']);
+        $this->assertSame(200, $code);
+    }
+
     // ── Completion visibility (audit FL-02) ─────────────────────────────────────────────────
 
     public function testHiddenFormRunCannotBeCompletedByRunId(): void

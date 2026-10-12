@@ -99,6 +99,8 @@ class FlowController
      * needs view_all_responses on that form to list/claim it (queued runs are usually OTHER
      * members' submissions). Runs without a formId (connector/script intents) are visible to
      * any execute_flows holder. Results are memoised per request via $permCache.
+     * The form is the one FlowService::snapshotFormIdOfRun names: the run's own, or the form
+     * of the run it descends from (a flow.succeeded handler run carries its source run's result).
      * @param array<string, bool> $permCache keyed by formId
      */
     private function canSeeRunSnapshot(array $app, string $userId, ?string $formId, array &$permCache): bool
@@ -988,7 +990,7 @@ class FlowController
         $runId = (string) ($args['runId'] ?? '');
         $permCache = [];
         $existing = $this->flows->getRun($app['id'], $runId);
-        if (!$existing || !$this->canSeeRunSnapshot($app, $userId, $existing['formId'] ?? null, $permCache)) {
+        if (!$existing || !$this->canSeeRunSnapshot($app, $userId, $this->flows->snapshotFormIdOfRun($existing), $permCache)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Run not found'], 404);
         }
         try {
@@ -1034,7 +1036,7 @@ class FlowController
             $permCache = [];
             $runs = array_values(array_filter(
                 $runs,
-                fn (array $run) => $this->canSeeRunSnapshot($app, $userId, $run['formId'] ?? null, $permCache)
+                fn (array $run) => $this->canSeeRunSnapshot($app, $userId, $this->flows->snapshotFormIdOfRun($run), $permCache)
             ));
             foreach ($runs as &$run) {
                 $run['inputSnapshot'] = null;
@@ -1059,7 +1061,7 @@ class FlowController
         $runId = (string) ($args['runId'] ?? '');
         $permCache = [];
         $existing = $this->flows->getRun($app['id'], $runId);
-        if (!$existing || !$this->canSeeRunSnapshot($app, $userId, $existing['formId'] ?? null, $permCache)) {
+        if (!$existing || !$this->canSeeRunSnapshot($app, $userId, $this->flows->snapshotFormIdOfRun($existing), $permCache)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Run not found'], 404);
         }
         try {

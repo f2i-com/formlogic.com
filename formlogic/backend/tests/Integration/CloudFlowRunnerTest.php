@@ -475,6 +475,108 @@ class CloudFlowRunnerTest extends TestCase
         $this->assertSame('capability_denied', $outcome['error']['code']);
     }
 
+    /**
+     * The allow-list names one base URL, and cURL sends a flow's headers as they are: a Host
+     * header reached any other site served from the same address (name-based virtual hosts),
+     * and a line break in a value put a header, or a whole second request, on the wire. Those
+     * are refused before anything is sent; ordinary headers still go out.
+     */
+    public function testHttpRequestRefusesHeadersThatRerouteOrSplitTheRequest(): void
+    {
+        $userId = $this->makeUser();
+        $calls = [];
+        $transport = static function (string $method, string $url, array $headers, ?string $body) use (&$calls): array {
+            $calls[] = $headers;
+            return ['status' => 200, 'body' => '{"a":1}'];
+        };
+        $run = function (array $headers) use ($userId, $transport): array {
+            $flow = $this->flowRow($userId, [
+                ['id' => 'http', 'type' => 'http_request', 'data' => ['url' => 'https://site.example/api/health', 'headers' => $headers]],
+            ]);
+            return $this->runner($transport)->run($flow, $userId, []);
+        };
+
+        foreach ([
+            'another host' => ['Host' => 'other-tenant.internal'],
+            'another host, any case' => ['hOsT' => 'other-tenant.internal'],
+            'framing' => ['Transfer-Encoding' => 'chunked'],
+            'length' => ['Content-Length' => '0'],
+            'connection' => ['Connection' => 'keep-alive, X-Api-Key'],
+        ] as $label => $headers) {
+            $outcome = $run($headers);
+            $this->assertSame('error', $outcome['status'], $label);
+            $this->assertSame('capability_denied', $outcome['error']['code'], $label);
+            $this->assertSame('http', $outcome['error']['nodeId'], $label);
+        }
+        foreach ([
+            'line break in a value' => ['X-A' => "1\r\nX-Injected: yes"],
+            'bare line feed in a value' => ['X-A' => "1\nHost: other-tenant.internal"],
+            'NUL in a value' => ['X-A' => "1\0"],
+            'line break in a name' => ["X-A: 1\r\nHost" => 'other-tenant.internal'],
+            'space in a name' => ['X A' => '1'],
+            'colon in a name' => ['Host:x' => '1'],
+        ] as $label => $headers) {
+            $outcome = $run($headers);
+            $this->assertSame('error', $outcome['status'], $label);
+            $this->assertSame('invalid_flow', $outcome['error']['code'], $label);
+        }
+        $this->assertSame([], $calls, 'nothing is sent for a refused header');
+
+        $outcome = $run(['Authorization' => 'Bearer flk_abc', 'X-Trace-Id' => 'run 42', 'Accept' => 'application/json']);
+        $this->assertSame('done', $outcome['status'], json_encode($outcome));
+        // (The stored graph is a JSON column, which does not keep the order of an object's keys.)
+        $this->assertEqualsCanonicalizing(['Authorization: Bearer flk_abc', 'X-Trace-Id: run 42', 'Accept: application/json'], $calls[0]);
+    }
+
+    /**
+     * A response that is not UTF-8 (an image, a download, or text cut mid-character at the size
+     * cap) could not be stored: encoding the run's result failed, the write of the terminal row
+     * threw, the caller got a 500 and the run stayed 'running' until the stuck-run sweep called
+     * it a crash ten minutes later, after its side effects had already happened.
+     */
+    public function testHttpResponseThatIsNotUtf8StillFinishesTheRun(): void
+    {
+        $userId = $this->makeUser();
+        $binary = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe\xfd";
+        $transport = static fn (string $method, string $url, array $headers, ?string $body): array
+            => ['status' => 200, 'body' => $binary];
+        $flow = $this->flowRow($userId, [
+            ['id' => 'http', 'type' => 'http_request', 'data' => ['url' => 'https://site.example/logo.png']],
+        ]);
+
+        $outcome = $this->runner($transport)->run($flow, $userId, []);
+
+        $this->assertSame('done', $outcome['status'], json_encode($outcome, JSON_INVALID_UTF8_SUBSTITUTE));
+        $this->assertSame(200, $outcome['result']['status']);
+        $this->assertIsString($outcome['result']['body']);
+        $this->assertTrue(mb_check_encoding($outcome['result']['body'], 'UTF-8'), 'the body is text a JSON response can carry');
+        $this->assertNotFalse(json_encode($outcome), 'the dispatcher can answer with it');
+        $row = $this->runLogRow($outcome['runId']);
+        $this->assertSame('done', $row['status'], 'the run is not left running');
+        $this->assertNotNull($row['finished_at']);
+        $this->assertSame(200, json_decode((string) $row['result_json'], true)['status']);
+    }
+
+    /** Text cut at the size cap in the middle of a character is the same case. */
+    public function testHttpResponseCutMidCharacterAtTheSizeCapStillFinishesTheRun(): void
+    {
+        $userId = $this->makeUser();
+        // One byte short of the cap, then a two-byte character: the cap falls inside it.
+        $text = str_repeat('a', CloudFlowRunner::MAX_HTTP_RESPONSE_BYTES - 1) . "\u{00e9}" . 'tail';
+        $transport = static fn (string $method, string $url, array $headers, ?string $body): array
+            => ['status' => 200, 'body' => substr($text, 0, CloudFlowRunner::MAX_HTTP_RESPONSE_BYTES)];
+        $flow = $this->flowRow($userId, [
+            ['id' => 'http', 'type' => 'http_request', 'data' => ['url' => 'https://site.example/big.txt']],
+        ]);
+
+        $outcome = $this->runner($transport)->run($flow, $userId, []);
+
+        $this->assertSame('done', $outcome['status'], json_encode($outcome, JSON_INVALID_UTF8_SUBSTITUTE));
+        $this->assertStringStartsWith('aaaa', $outcome['result']['body']);
+        $this->assertTrue(mb_check_encoding($outcome['result']['body'], 'UTF-8'));
+        $this->assertSame('done', $this->runLogRow($outcome['runId'])['status']);
+    }
+
     public function testConnectorRequestWithoutLinkedDesktopIsTyped(): void
     {
         $userId = $this->makeUser();

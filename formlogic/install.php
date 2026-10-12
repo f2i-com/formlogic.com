@@ -21,6 +21,9 @@
  * IMPORTANT: Delete this file after installation is complete. It also hard-disables itself once a
  * configured .env exists — deliberately re-enable it with INSTALL_ENABLE=1 (e.g. `SetEnv
  * INSTALL_ENABLE 1` in the web-root .htaccess) to use the upgrade mode, then remove that again.
+ * While that is set the wizard answers anyone who can reach the site, so on an installed site a
+ * caller that is not on the server itself can only inspect and upgrade it, never replace its
+ * configuration (flInstallerActionAllowed).
  */
 
 declare(strict_types=1);
@@ -47,14 +50,8 @@ function flUiDir(): ?string
 }
 
 // Prevent running if already installed and .env exists with a real JWT secret
-$alreadyInstalled = false;
 $envPath = flBackendDir() . '/.env';
-if (file_exists($envPath)) {
-    $envContent = file_get_contents($envPath);
-    if (preg_match('/^JWT_SECRET=.{32,}/m', $envContent)) {
-        $alreadyInstalled = true;
-    }
-}
+$alreadyInstalled = flEnvIsConfigured($envPath);
 
 // ---------------------------------------------------------------------------
 // Installer access guard
@@ -63,15 +60,15 @@ if (file_exists($envPath)) {
 // accidentally left online. Allowed only from localhost, unless INSTALL_ENABLE=1 is set
 // in the server environment (a deliberate opt-in for remote installs — e.g. `SetEnv
 // INSTALL_ENABLE 1` in .htaccess). Once installed, the web installer is hard-disabled
-// regardless of origin.
+// regardless of origin. "From localhost" means a direct request: one that arrives through a
+// proxy or tunnel on the same host is not local (flInstallerIsLocalRequest).
 $installEnableRaw = getenv('INSTALL_ENABLE');
 if ($installEnableRaw === false || $installEnableRaw === '') {
     // Apache `SetEnv INSTALL_ENABLE 1` surfaces here (mod_php / FPM) even when getenv() misses it.
     $installEnableRaw = $_SERVER['INSTALL_ENABLE'] ?? ($_SERVER['REDIRECT_INSTALL_ENABLE'] ?? '');
 }
 $installEnabled = in_array(strtolower((string) $installEnableRaw), ['1', 'true', 'yes'], true);
-$remoteAddr = $_SERVER['REMOTE_ADDR'] ?? '';
-$isLocalRequest = in_array($remoteAddr, ['127.0.0.1', '::1', 'localhost'], true);
+$isLocalRequest = flInstallerIsLocalRequest($_SERVER);
 
 $installerDenied = null;
 $installerDeniedExtraHtml = '';
@@ -93,7 +90,8 @@ if ($alreadyInstalled && !$installEnabled) {
         . ' <strong>remove that line and delete install.php</strong>.</li></ol>';
 } elseif (!$isLocalRequest && !$installEnabled) {
     $installerDenied = 'For security, run the installer from the server itself (localhost), '
-        . 'or set the environment variable INSTALL_ENABLE=1 to allow remote setup.';
+        . 'or set the environment variable INSTALL_ENABLE=1 to allow remote setup. '
+        . 'A request that reaches the server through a proxy or tunnel counts as remote, even from the same machine.';
     $installerDeniedExtraHtml =
         '<p style="margin-top:1rem">Installing over the network (e.g. a release zip uploaded to a remote host)?'
         . ' Temporarily add this line at the top of the web-root <code>.htaccess</code> (Apache), then reload:</p>'
@@ -130,8 +128,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     header('Content-Type: application/json');
 
     // Verify CSRF token
-    if (!isset($_POST['csrf']) || !hash_equals($csrfToken, $_POST['csrf'])) {
+    if (!isset($_POST['csrf']) || !is_string($_POST['csrf']) || !hash_equals($csrfToken, $_POST['csrf'])) {
         echo json_encode(['success' => false, 'message' => 'Invalid security token. Please refresh the page.']);
+        exit;
+    }
+
+    $action = is_string($_POST['action']) ? $_POST['action'] : '';
+    if (!flInstallerActionAllowed($action, $alreadyInstalled, $isLocalRequest)) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => 'This site is already installed. Over the network the wizard only '
+            . 'inspects and upgrades it; to change its configuration, edit ' . $backendRelName . '/.env on the server, '
+            . 'or open this page from the server itself (localhost).']);
         exit;
     }
 
@@ -149,7 +156,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $failure = flInstallerFailure(new RuntimeException($last['message']));
         echo json_encode($failure, JSON_INVALID_UTF8_SUBSTITUTE);
     });
-    $result = flInstallerAction((string) $_POST['action'], $_POST);
+    $result = flInstallerAction($action, $_POST);
     ob_end_clean();
     $completed = true;
     if (isset($result['errorId'])) http_response_code(500);
@@ -186,6 +193,98 @@ function flInstallerAction(string $action, array $data): array
     } catch (Throwable $error) {
         return flInstallerFailure($error);
     }
+}
+
+/** A .env that carries a real JWT secret is what marks the site as installed. */
+function flEnvIsConfigured(string $envPath): bool
+{
+    if (!is_file($envPath)) {
+        return false;
+    }
+    $content = @file_get_contents($envPath);
+    return is_string($content) && preg_match('/^JWT_SECRET=.{32,}/m', $content) === 1;
+}
+
+/**
+ * Whether the request comes from the machine itself. REMOTE_ADDR alone does not say so: behind
+ * a reverse proxy or a tunnel on the same host (nginx or Caddy in front of Apache, cloudflared,
+ * ngrok) every visitor on the internet arrives from 127.0.0.1. Such a hop adds a forwarding
+ * header and a browser on the server talking to the web server directly sends none, so a request
+ * that carries one is not local. Forging one only makes the sender remote.
+ *
+ * @param array<string,mixed> $server $_SERVER
+ */
+function flInstallerIsLocalRequest(array $server): bool
+{
+    if (!in_array($server['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1', 'localhost'], true)) {
+        return false;
+    }
+    $forwarding = [
+        'HTTP_X_FORWARDED_FOR', 'HTTP_X_FORWARDED_HOST', 'HTTP_X_FORWARDED_PROTO', 'HTTP_FORWARDED',
+        'HTTP_X_REAL_IP', 'HTTP_VIA', 'HTTP_CF_CONNECTING_IP', 'HTTP_TRUE_CLIENT_IP',
+        'HTTP_X_CLIENT_IP', 'HTTP_CLIENT_IP',
+    ];
+    foreach ($forwarding as $header) {
+        if (isset($server[$header]) && $server[$header] !== '') {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * What a caller may ask of the wizard. Once the site is installed, a caller that is not on the
+ * server may only inspect and upgrade it. INSTALL_ENABLE=1 on an installed site is how the
+ * upgrade mode is reached over the network, and while it is set the wizard answers anyone:
+ * without this rule any visitor could replace the site's .env (run_install with overwrite_env)
+ * and point it at a database of their own, or use the connection test to probe the server's
+ * network.
+ */
+function flInstallerActionAllowed(string $action, bool $alreadyInstalled, bool $isLocalRequest): bool
+{
+    if (!$alreadyInstalled || $isLocalRequest) {
+        return true;
+    }
+    return in_array($action, ['check_requirements', 'detect_install', 'run_upgrade'], true);
+}
+
+/**
+ * Write the backend .env so that its secrets are never in a file others can read and a failed
+ * write never leaves half a file: the content goes to a sibling that is made owner-only while
+ * still empty, and takes the real name only once it is complete. The sibling's name starts with
+ * ".env." so the web server rules that deny .env deny it too.
+ */
+function flWriteEnvFile(string $envPath, string $content): bool
+{
+    $tmp = $envPath . '.tmp-' . bin2hex(random_bytes(6));
+    if (@file_put_contents($tmp, '') === false) {
+        return false;
+    }
+    @chmod($tmp, 0600); // no effect on Windows, which has no such bits
+    if (@file_put_contents($tmp, $content, LOCK_EX) !== strlen($content) || !@rename($tmp, $envPath)) {
+        @unlink($tmp);
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Keep the .env that is about to be replaced, beside it, as .env.backup-<UTC time>. Replacing it
+ * generates new secrets and starts again from the template, so without the copy the old audit
+ * key (which the existing audit log is signed with) and every setting added by hand would be
+ * gone. Returns the backup's file name, or null when the copy could not be made.
+ */
+function flBackupEnvFile(string $envPath): ?string
+{
+    $content = @file_get_contents($envPath);
+    if ($content === false) {
+        return null;
+    }
+    $backup = $envPath . '.backup-' . gmdate('Ymd-His');
+    for ($n = 2; file_exists($backup); $n++) {
+        $backup = $envPath . '.backup-' . gmdate('Ymd-His') . '-' . $n;
+    }
+    return flWriteEnvFile($backup, $content) ? basename($backup) : null;
 }
 
 /** Bound optional provisioning below common proxy timeouts; terminate timed-out work. */
@@ -571,71 +670,23 @@ function runInstall(array $data): array
         return ['success' => false, 'steps' => $steps, 'message' => 'Invalid database name.'];
     }
 
-    // 4. Create backend .env
-    $envContent = file_get_contents($backendDir . '/.env.example');
-    if ($envContent === false) {
+    $envTemplate = file_get_contents($backendDir . '/.env.example');
+    if ($envTemplate === false) {
         $steps[] = ['label' => 'Read .env.example', 'status' => 'error', 'message' => 'Could not read backend/.env.example'];
         return ['success' => false, 'steps' => $steps, 'message' => 'Missing .env.example file'];
     }
 
-    $envContent = flRenderEnvContent($envContent, [
-        'devMode' => $devMode,
-        'betaMode' => $betaMode,
-        'dbHost' => $dbHost,
-        'dbPort' => $dbPort,
-        'dbName' => $dbName,
-        'dbUser' => $dbUser,
-        'dbPass' => $dbPass,
-        'corsOrigin' => $corsOrigin,
-        'jwtSecret' => $jwtSecret,
-        'auditKey' => $auditKey,
-    ]);
-    $steps[] = $devMode
-        ? ['label' => 'Application mode', 'status' => 'warn',
-            'message' => 'DEVELOPMENT mode selected — verbose errors and relaxed security policy. Never use this for a public site; edit APP_ENV=production in ' . basename($backendDir) . '/.env before going live.']
-        : ['label' => 'Application mode', 'status' => 'ok', 'message' => 'Production (APP_ENV=production, APP_DEBUG=false)'];
-    $steps[] = $betaMode
-        ? ['label' => 'Sign-ups', 'status' => 'ok', 'message' => 'Free public beta (BETA_MODE=true): anyone can register, new accounts get BETA_FREE_DAYS of Cloud (default 90), the payment gateway stays off. Set BETA_MODE=false in ' . basename($backendDir) . '/.env when you are ready to charge.']
-        : ['label' => 'Sign-ups', 'status' => 'ok', 'message' => 'Standard mode (BETA_MODE=false): sign-ups open; plan limits apply only when CLOUD_PLAN_ENFORCED=true (off by default for self-hosting).'];
-
-    $envPath = $backendDir . '/.env';
-    $envExists = file_exists($envPath);
-    if ($envExists && empty($data['overwrite_env'])) {
-        $steps[] = ['label' => 'Backend .env', 'status' => 'skip', 'message' => 'Already exists (not overwritten)'];
-    } else {
-        if (file_put_contents($envPath, $envContent) === false) {
-            $steps[] = ['label' => 'Create backend .env', 'status' => 'error', 'message' => 'Could not write to backend/.env'];
-            return ['success' => false, 'steps' => $steps, 'message' => 'Failed to create .env file. Check write permissions.'];
-        }
-        // Restrict .env file permissions (no effect on Windows, but important on Linux)
-        @chmod($envPath, 0600);
-        $steps[] = ['label' => 'Create backend .env', 'status' => 'ok'];
-    }
-
-    // 4. Create frontend .env (source layout only — the deployed bundle ships a prebuilt SPA that
-    //    already calls /api on the same origin, so there's nothing to configure).
-    if ($uiDir !== null) {
-        $uiEnvPath = $uiDir . '/.env';
-        if (!file_exists($uiEnvPath)) {
-            $uiEnvExample = $uiDir . '/.env.example';
-            if (file_exists($uiEnvExample)) {
-                copy($uiEnvExample, $uiEnvPath);
-            } else {
-                file_put_contents($uiEnvPath, "VITE_API_URL=http://localhost:8080/api\n");
-            }
-            $steps[] = ['label' => 'Create frontend .env', 'status' => 'ok'];
-        } else {
-            $steps[] = ['label' => 'Frontend .env', 'status' => 'skip', 'message' => 'Already exists'];
-        }
-    }
-
-    // 5. Create database and import schema
+    // 4. Create database and import schema. This comes BEFORE the .env is written: a .env with
+    //    a JWT secret is what marks the site as installed, and the wizard locks itself once one
+    //    exists. Written first, a mistyped password left a locked wizard beside a configuration
+    //    that could not reach its database, with no way to run the step again.
     $dbSchemaReady = false; // gate for the optional demo/marketplace seeding below
     if (!empty($dbPass) || $dbUser === 'root') {
         try {
             $dsn = "mysql:host=$dbHost;port=$dbPort;charset=utf8mb4";
             $pdo = new PDO($dsn, $dbUser, $dbPass, [
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_TIMEOUT => 10, // connect only; an unreachable host must not outlast the request
             ]);
 
             // Create database if needed (dbName is already sanitized to alphanumeric/underscore/hyphen)
@@ -692,19 +743,87 @@ function runInstall(array $data): array
                 $msg = 'Database error: ' . trim(substr($msg, 0, 200));
             }
             $steps[] = ['label' => 'Database setup', 'status' => 'error', 'message' => $msg];
+            return ['success' => false, 'steps' => $steps,
+                'message' => 'Database setup failed, so ' . basename($backendDir) . '/.env was not written. '
+                    . 'Correct the database settings and run the installation again.'];
         }
     } else {
         $steps[] = ['label' => 'Database setup', 'status' => 'skip', 'message' => 'No password provided — set DB_PASSWORD in backend/.env and the schema will auto-create on first request'];
     }
 
-    // 6. Check composer dependencies
+    // 5. Create backend .env
+    $envContent = flRenderEnvContent($envTemplate, [
+        'devMode' => $devMode,
+        'betaMode' => $betaMode,
+        'dbHost' => $dbHost,
+        'dbPort' => $dbPort,
+        'dbName' => $dbName,
+        'dbUser' => $dbUser,
+        'dbPass' => $dbPass,
+        'corsOrigin' => $corsOrigin,
+        'jwtSecret' => $jwtSecret,
+        'auditKey' => $auditKey,
+    ]);
+    $steps[] = $devMode
+        ? ['label' => 'Application mode', 'status' => 'warn',
+            'message' => 'DEVELOPMENT mode selected — verbose errors and relaxed security policy. Never use this for a public site; edit APP_ENV=production in ' . basename($backendDir) . '/.env before going live.']
+        : ['label' => 'Application mode', 'status' => 'ok', 'message' => 'Production (APP_ENV=production, APP_DEBUG=false)'];
+    $steps[] = $betaMode
+        ? ['label' => 'Sign-ups', 'status' => 'ok', 'message' => 'Free public beta (BETA_MODE=true): anyone can register, new accounts get BETA_FREE_DAYS of Cloud (default 90), the payment gateway stays off. Set BETA_MODE=false in ' . basename($backendDir) . '/.env when you are ready to charge.']
+        : ['label' => 'Sign-ups', 'status' => 'ok', 'message' => 'Standard mode (BETA_MODE=false): sign-ups open; plan limits apply only when CLOUD_PLAN_ENFORCED=true (off by default for self-hosting).'];
+
+    // A configured .env is only replaced when the operator asked for that. One that exists but
+    // carries no JWT secret (a copy of .env.example nobody filled in) cannot run the site, and
+    // leaving it reported "installed" over a configuration that does not boot, so it is replaced
+    // too. Either way the file that was there is kept beside the new one.
+    $envPath = $backendDir . '/.env';
+    if (flEnvIsConfigured($envPath) && empty($data['overwrite_env'])) {
+        $steps[] = ['label' => 'Backend .env', 'status' => 'skip', 'message' => 'Already exists (not overwritten)'];
+    } else {
+        $backupName = null;
+        if (file_exists($envPath)) {
+            $backupName = flBackupEnvFile($envPath);
+            if ($backupName === null) {
+                $steps[] = ['label' => 'Keep the existing .env', 'status' => 'error', 'message' => 'Could not copy the existing .env aside, so it was left as it is'];
+                return ['success' => false, 'steps' => $steps, 'message' => 'Failed to back up the existing .env file. Check write permissions.'];
+            }
+        }
+        if (!flWriteEnvFile($envPath, $envContent)) {
+            $steps[] = ['label' => 'Create backend .env', 'status' => 'error', 'message' => 'Could not write to backend/.env'];
+            return ['success' => false, 'steps' => $steps, 'message' => 'Failed to create .env file. Check write permissions.'];
+        }
+        $steps[] = $backupName === null
+            ? ['label' => 'Create backend .env', 'status' => 'ok']
+            : ['label' => 'Create backend .env', 'status' => 'ok',
+                'message' => 'The previous file was kept as ' . basename($backendDir) . '/' . $backupName
+                    . ' (its secrets and any settings added by hand are in it; delete it once you no longer need them)'];
+    }
+
+    // 6. Create frontend .env (source layout only — the deployed bundle ships a prebuilt SPA that
+    //    already calls /api on the same origin, so there's nothing to configure).
+    if ($uiDir !== null) {
+        $uiEnvPath = $uiDir . '/.env';
+        if (!file_exists($uiEnvPath)) {
+            $uiEnvExample = $uiDir . '/.env.example';
+            if (file_exists($uiEnvExample)) {
+                copy($uiEnvExample, $uiEnvPath);
+            } else {
+                file_put_contents($uiEnvPath, "VITE_API_URL=http://localhost:8080/api\n");
+            }
+            $steps[] = ['label' => 'Create frontend .env', 'status' => 'ok'];
+        } else {
+            $steps[] = ['label' => 'Frontend .env', 'status' => 'skip', 'message' => 'Already exists'];
+        }
+    }
+
+    // 7. Check composer dependencies
     if (!is_dir($backendDir . '/vendor')) {
         $steps[] = ['label' => 'Composer dependencies', 'status' => 'warn', 'message' => 'Not installed. Run: cd backend && composer install'];
     } else {
         $steps[] = ['label' => 'Composer dependencies', 'status' => 'ok'];
     }
 
-    // 7. Check npm dependencies (source layout only — the deployed bundle ships the built SPA).
+    // 8. Check npm dependencies (source layout only — the deployed bundle ships the built SPA).
     if ($uiDir !== null) {
         if (!is_dir($uiDir . '/node_modules')) {
             $steps[] = ['label' => 'npm dependencies', 'status' => 'warn', 'message' => 'Not installed. Run: cd ui && npm install'];
@@ -713,7 +832,7 @@ function runInstall(array $data): array
         }
     }
 
-    // 8. Check the FormLogic script runtime launcher (on Linux: also fix/report the execute bit)
+    // 9. Check the FormLogic script runtime launcher (on Linux: also fix/report the execute bit)
     $steps[] = flScriptRuntimeStep();
 
     // Publish the installable catalogue without creating thousands of optional demo
@@ -1119,6 +1238,8 @@ function runUpgrade(): array
 $backendRelHtml = htmlspecialchars(basename(flBackendDir()), ENT_QUOTES);
 $backendAbsHtml = htmlspecialchars(str_replace('\\', '/', flBackendDir()), ENT_QUOTES);
 $isBundle = (flUiDir() === null); // deployed release zip (prebuilt SPA at the web root, backend at api/)
+// Over the network an installed site is only inspected and upgraded (flInstallerActionAllowed).
+$canReconfigure = !$alreadyInstalled || $isLocalRequest;
 $canSeedDemo = file_exists(flBackendDir() . '/bin/provision-demo.php'); // ships in bin/ (release zip included) since v0.0.1
 $defaultCors = 'http://localhost:5173';
 if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
@@ -1205,8 +1326,17 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
     <div id="detect-summary" class="alert alert-info" style="font-size:13px;">Inspecting the existing installation&hellip;</div>
     <div class="btn-group">
       <button class="btn btn-primary" id="btn-mode-upgrade" onclick="chooseMode('upgrade')">Upgrade existing installation</button>
+      <?php if ($canReconfigure): ?>
       <button class="btn btn-secondary" id="btn-mode-fresh" onclick="chooseMode('fresh')">Fresh install / reconfigure</button>
+      <?php endif; ?>
     </div>
+    <?php if (!$canReconfigure): ?>
+    <p class="help-text" style="margin-top:10px;">
+      Over the network this wizard only inspects and upgrades an installed site. To change its
+      configuration, edit <code><?= $backendRelHtml ?>/.env</code> on the server, or open this page
+      from the server itself (localhost).
+    </p>
+    <?php endif; ?>
     <p class="help-text" style="margin-top:10px;">
       <strong>Upgrade</strong> keeps your data and configuration and only applies this release's database
       schema changes — the same guarded, idempotent migrations <code>php <?= $backendRelHtml ?>/bin/upgrade.php</code>
@@ -1252,6 +1382,7 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
   </div>
 
   <!-- Fresh-install flow (hidden until chosen when an existing installation was detected) -->
+  <?php if ($canReconfigure): ?>
   <div id="fresh-flow" class="<?= $alreadyInstalled ? 'hidden' : '' ?>">
 
   <!-- Step 2: Database -->
@@ -1339,6 +1470,7 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
   </div>
 
   </div><!-- /fresh-flow -->
+  <?php endif; ?>
 
   <!-- Final: Next Steps (shown after a successful install OR upgrade) -->
   <div class="card hidden" id="step-next">
@@ -1459,6 +1591,7 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
 <script>
 const CSRF_TOKEN = <?= json_encode($csrfToken) ?>;
 const ALREADY_INSTALLED = <?= json_encode($alreadyInstalled) ?>;
+const CAN_RECONFIGURE = <?= json_encode($canReconfigure) ?>;
 
 // Check requirements on page load; when an existing install was detected, inspect it too.
 document.addEventListener('DOMContentLoaded', () => {
@@ -1471,10 +1604,12 @@ document.addEventListener('DOMContentLoaded', () => {
 function chooseMode(mode) {
   const upgradeCard = document.getElementById('step-upgrade');
   const freshFlow = document.getElementById('fresh-flow');
-  if (!upgradeCard || !freshFlow) return;
-  const upgrade = mode === 'upgrade';
+  if (!upgradeCard) return;
+  // Over the network an installed site has no fresh-install flow: the page does not carry it
+  // and the server refuses its actions, so the upgrade card is the only one to show.
+  const upgrade = mode === 'upgrade' || !CAN_RECONFIGURE || !freshFlow;
   upgradeCard.classList.toggle('hidden', !upgrade);
-  freshFlow.classList.toggle('hidden', upgrade);
+  if (freshFlow) freshFlow.classList.toggle('hidden', upgrade);
   const btnUp = document.getElementById('btn-mode-upgrade');
   const btnFresh = document.getElementById('btn-mode-fresh');
   if (btnUp) btnUp.className = 'btn ' + (upgrade ? 'btn-primary' : 'btn-secondary');
@@ -1500,7 +1635,9 @@ function detectInstall() {
       chooseMode('upgrade');
     } else {
       el.className = 'alert alert-warn';
-      parts.push('<strong>No upgradable database found</strong> — a fresh install / reconfigure is probably what you want.');
+      parts.push(CAN_RECONFIGURE
+        ? '<strong>No upgradable database found</strong> — a fresh install / reconfigure is probably what you want.'
+        : '<strong>No upgradable database found</strong> — check the DB_* values in ' + esc(d.backendRel) + '/.env on the server. Reconfiguring is only offered from the server itself (localhost).');
       chooseMode('fresh');
     }
     el.innerHTML = parts.join('<br>');

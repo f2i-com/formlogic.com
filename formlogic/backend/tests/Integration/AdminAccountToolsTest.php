@@ -126,6 +126,20 @@ class AdminAccountToolsTest extends TestCase
         $this->assertLessThanOrEqual(time() + 60, strtotime((string) $row['cloud_until']));
     }
 
+    public function testTurningComplimentaryOffLeavesAnAccountThatIsNotComplimentaryAlone(): void
+    {
+        // "Off" wrote NOW over cloud_until whatever it held. Sent for an account that was
+        // never complimentary (a second press, a replayed request) it ended the months the
+        // account had paid for.
+        self::$pdo->prepare('UPDATE users SET cloud_until = DATE_ADD(NOW(), INTERVAL 90 DAY) WHERE id = ?')->execute([$this->userId]);
+        $paidUntil = strtotime((string) self::$admin->accountRow($this->userId)['cloud_until']);
+
+        self::$admin->setComplimentary($this->userId, false);
+
+        $row = self::$admin->accountRow($this->userId);
+        $this->assertSame($paidUntil, strtotime((string) $row['cloud_until']), 'paid time must not be ended by turning off what was never on');
+    }
+
     public function testPaymentLedgerListsNewestFirst(): void
     {
         $ins = self::$pdo->prepare(

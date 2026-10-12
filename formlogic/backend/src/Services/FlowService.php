@@ -1604,6 +1604,38 @@ class FlowService
         return [$parentRunId, $rootRunId, $depth, $callNodeId];
     }
 
+    /**
+     * The form whose responses a run's snapshot can carry: the run's own, or else the form of
+     * the run it descends from. A flow.succeeded / flow.failed handler run is handed its source
+     * run's result as input, and names no form itself, so a member who may not read a form's
+     * responses could otherwise read them out of the handler run of that form's run. The source
+     * is the parent, and the root of a longer chain (a handler of a handler); both are looked at.
+     *
+     * @param array<string, mixed> $run a formatted run (formatRun)
+     */
+    public function snapshotFormIdOfRun(array $run): ?string
+    {
+        if (is_string($run['formId'] ?? null) && $run['formId'] !== '') {
+            return $run['formId'];
+        }
+        $ancestors = array_values(array_unique(array_filter(
+            [$run['parentRunId'] ?? null, $run['rootRunId'] ?? null],
+            static fn (mixed $id): bool => is_string($id) && $id !== ''
+        )));
+        if ($ancestors === []) {
+            return null;
+        }
+        $placeholders = implode(',', array_fill(0, count($ancestors), '?'));
+        $stmt = $this->mysql->prepare("
+            SELECT form_id FROM flow_run_logs
+            WHERE id IN ({$placeholders}) AND form_id IS NOT NULL AND form_id != ''
+            ORDER BY depth ASC LIMIT 1
+        ");
+        $stmt->execute($ancestors);
+        $formId = $stmt->fetchColumn();
+        return is_string($formId) && $formId !== '' ? $formId : null;
+    }
+
     public function getRun(string $appId, string $runId): ?array
     {
         $stmt = $this->mysql->prepare("

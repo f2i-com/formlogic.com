@@ -16,22 +16,30 @@ use PDO;
  * The API surface maps appId null ↔ '' transparently.
  *
  * Caps (enforced here, on every write path): value ≤ 64 KiB (encoded JSON), ≤ 500 keys per
- * (owner, app, scope). $maxKeysPerScope is a constructor override for tests only.
+ * (owner, app, scope), and ≤ 5000 keys per (owner, app) across its scopes: the scope is a label
+ * the caller picks, so without the second cap each new scope name was another 500 keys.
+ * $maxKeysPerScope and $maxKeysPerStore are constructor overrides for tests only.
  */
 class FlowKvService
 {
     public const MAX_VALUE_BYTES = 65536;      // 64 KiB per encoded value
     public const MAX_KEYS_PER_SCOPE = 500;
+    public const MAX_KEYS_PER_STORE = 5000;    // across every scope of one (owner, app)
     public const SCOPE_PATTERN = '/^[a-z][a-z0-9:_.-]{0,63}$/';
     public const KEY_PATTERN = '/^[A-Za-z0-9][A-Za-z0-9:_.\/-]{0,189}$/';
 
     private PDO $mysql;
     private int $maxKeysPerScope;
+    private int $maxKeysPerStore;
 
-    public function __construct(MySQLConnection $mysql, int $maxKeysPerScope = self::MAX_KEYS_PER_SCOPE)
-    {
+    public function __construct(
+        MySQLConnection $mysql,
+        int $maxKeysPerScope = self::MAX_KEYS_PER_SCOPE,
+        int $maxKeysPerStore = self::MAX_KEYS_PER_STORE,
+    ) {
         $this->mysql = $mysql->getConnection();
         $this->maxKeysPerScope = $maxKeysPerScope;
+        $this->maxKeysPerStore = $maxKeysPerStore;
     }
 
     /**
@@ -90,6 +98,13 @@ class FlowKvService
             $count->execute(['o' => $ownerUserId, 'a' => $appId ?? '', 's' => $scope]);
             if ((int) $count->fetchColumn() >= $this->maxKeysPerScope) {
                 throw new \InvalidArgumentException("This scope already holds the maximum of {$this->maxKeysPerScope} keys");
+            }
+            // The scope is a label the caller chooses, so the cap above bounds one scope and
+            // nothing else. The store (every scope of this owner and app) has its own.
+            $total = $this->mysql->prepare("SELECT COUNT(*) FROM flow_kv WHERE owner_user_id = :o AND app_id = :a");
+            $total->execute(['o' => $ownerUserId, 'a' => $appId ?? '']);
+            if ((int) $total->fetchColumn() >= $this->maxKeysPerStore) {
+                throw new \InvalidArgumentException("This store already holds the maximum of {$this->maxKeysPerStore} keys across its scopes");
             }
         }
 

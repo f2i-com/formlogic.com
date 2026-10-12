@@ -121,9 +121,10 @@ class EmailService
 
         // Fallback: PHP mail().
         try {
-            // Strip CR/LF from the subject to prevent header injection via the
-            // subject (e.g. an app name containing newlines + "Bcc:").
-            $safeSubject = str_replace(["\r", "\n"], '', $subject);
+            // mail() writes the subject into the header as given, so it is made a header value
+            // here: no line break (an app name with a newline and "Bcc:" would add a header),
+            // and no raw non-ASCII text (see encodeSubject).
+            $safeSubject = self::encodeSubject($subject);
             $headers = [
                 'MIME-Version: 1.0',
                 'Content-Type: text/html; charset=UTF-8',
@@ -164,6 +165,54 @@ class EmailService
 
     private function encodeFromHeader(): string
     {
-        return sprintf('=?UTF-8?B?%s?= <%s>', base64_encode($this->fromName), $this->fromAddress);
+        return sprintf('%s <%s>', self::encodedWords(self::singleLine($this->fromName)), $this->fromAddress);
+    }
+
+    /**
+     * A subject as the value of a Subject header. A header holds ASCII only (RFC 5322), so a
+     * subject with anything else in it (an app called "Café", a form title in Japanese) is sent
+     * as RFC 2047 encoded-words; written raw it arrives as mojibake, or the message is refused
+     * or marked as spam, depending on the servers it passes. Control characters, line breaks
+     * among them, become spaces. Text that is itself shaped like an encoded-word is encoded
+     * too, so the reader sees what was typed and not what it would decode to.
+     */
+    public static function encodeSubject(string $subject): string
+    {
+        $subject = self::singleLine($subject);
+        if (preg_match('/^[\x20-\x7E]*$/', $subject) === 1 && !str_contains($subject, '=?')) {
+            return $subject;
+        }
+        return self::encodedWords($subject);
+    }
+
+    /** One line of text: runs of control characters become one space. */
+    private static function singleLine(string $text): string
+    {
+        return trim((string) preg_replace('/[\x00-\x1F\x7F]+/', ' ', $text));
+    }
+
+    /**
+     * RFC 2047 "B" encoded-words for a line of text, separated by a space (which a reader drops
+     * between adjacent encoded-words). Each holds whole characters and at most 45 bytes of
+     * them, which keeps it within the 75 characters an encoded-word may have.
+     */
+    private static function encodedWords(string $text): string
+    {
+        if (!mb_check_encoding($text, 'UTF-8')) {
+            $text = mb_convert_encoding($text, 'UTF-8', 'UTF-8'); // bytes that are not UTF-8 become '?'
+        }
+        $words = [];
+        $chunk = '';
+        foreach (mb_str_split($text, 1, 'UTF-8') as $char) {
+            if ($chunk !== '' && strlen($chunk) + strlen($char) > 45) {
+                $words[] = '=?UTF-8?B?' . base64_encode($chunk) . '?=';
+                $chunk = '';
+            }
+            $chunk .= $char;
+        }
+        if ($chunk !== '' || $words === []) {
+            $words[] = '=?UTF-8?B?' . base64_encode($chunk) . '?=';
+        }
+        return implode(' ', $words);
     }
 }

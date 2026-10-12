@@ -223,10 +223,14 @@ EASIEST: the install wizard
    (Upload what is INSIDE the zip — index.html must end up at the web root,
    not inside a subfolder.)
 2. Open https://your-domain/install.php in a browser and follow the wizard.
-   The wizard is locked to localhost by default. Installing onto a remote
-   server? Temporarily allow it by adding this line at the TOP of the
+   The wizard is locked to localhost by default, and a request that reaches
+   it through a proxy or tunnel on the same machine (nginx, cloudflared,
+   ngrok) counts as remote. Installing onto a remote server, or behind such
+   a proxy? Temporarily allow it by adding this line at the TOP of the
    web-root .htaccess:
      SetEnv INSTALL_ENABLE 1
+   If the database step fails (a mistyped password, say) nothing is written:
+   correct it on the same page and run it again.
 3. The wizard automates the whole setup: it checks the PHP version and
    extensions, checks + fixes file permissions where it can (api/storage/*,
    api/logs — printing the exact chown/chmod commands for anything it
@@ -344,7 +348,11 @@ Manual path:
    you of the cron lines. Once installed the wizard locks itself — allow
    this one run by adding this line at the TOP of the web-root .htaccess:
      SetEnv INSTALL_ENABLE 1
-   (remove it again — and delete install.php — right after).
+   (remove it again — and delete install.php — right after). While that
+   line is there, a visitor who is not on the server itself can inspect and
+   upgrade and nothing else: settings are changed by editing api/.env, or
+   by running the wizard from the server. A wizard run that replaces
+   api/.env keeps the old file beside it as api/.env.backup-<time>.
 
    CLI (recommended for big installs, runs before traffic hits the code):
      php api/bin/upgrade.php --app-version=${version}

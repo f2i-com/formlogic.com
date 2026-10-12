@@ -792,6 +792,7 @@ class CloudFlowRunner
         if (isset($data['headers']) && is_array($data['headers'])) {
             foreach ($data['headers'] as $k => $v) {
                 if (is_string($k) && is_string($v)) {
+                    $this->assertSendableHeader($node, $k, $v);
                     $headers[] = $k . ': ' . $v;
                 }
             }
@@ -808,13 +809,62 @@ class CloudFlowRunner
             throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': http_request failed: {$e->getMessage()}", $node['id']);
         }
         $status = (int) ($res['status'] ?? 0);
-        $text = (string) ($res['body'] ?? '');
+        $text = self::utf8Text((string) ($res['body'] ?? ''));
         $decoded = $text === '' ? null : json_decode($text, true);
         return [
             'status' => $status,
             'ok' => $status >= 200 && $status < 300,
             'body' => $text === '' ? null : (json_last_error() === JSON_ERROR_NONE ? $decoded : $text),
         ];
+    }
+
+    /**
+     * Headers that decide where a request goes or where it ends. cURL sends a caller's headers
+     * as given, so a flow's own Host would reach any other site served from the allow-listed
+     * address, and its own framing headers would disagree with the body cURL writes.
+     */
+    private const HTTP_REFUSED_HEADERS = [
+        'host', 'content-length', 'transfer-encoding', 'connection', 'keep-alive', 'upgrade',
+        'te', 'trailer', 'expect', 'proxy-authorization', 'proxy-connection',
+    ];
+
+    /**
+     * A flow's header must be one header: a token for a name (RFC 9110 §5.1) and a value with
+     * no control character in it. cURL puts a CR or LF in either straight onto the wire, where
+     * it begins another header or another request, past the allow-list that judged the URL.
+     *
+     * @throws CloudFlowNodeError
+     */
+    private function assertSendableHeader(array $node, string $name, string $value): void
+    {
+        if (preg_match('/\A[!#$%&\'*+\-.^_`|~0-9A-Za-z]+\z/', $name) !== 1) {
+            throw new CloudFlowNodeError('invalid_flow', "Node '{$node['id']}' http_request has a header name that is not valid", $node['id']);
+        }
+        if (preg_match('/[\x00-\x08\x0A-\x1F\x7F]/', $value) === 1) {
+            throw new CloudFlowNodeError('invalid_flow', "Node '{$node['id']}' http_request header '{$name}' has a control character in its value", $node['id']);
+        }
+        if (in_array(strtolower($name), self::HTTP_REFUSED_HEADERS, true)) {
+            throw new CloudFlowNodeError(
+                'capability_denied',
+                "Node '{$node['id']}' http_request may not set the '{$name}' header (the request goes to the FormLogic site base URL only)",
+                $node['id'],
+            );
+        }
+    }
+
+    /**
+     * A response body as text. Bytes that are not UTF-8 (an image, or text cut inside a
+     * character at the size cap) become U+FFFD, as they do when the browser runner reads a
+     * response as text: a run's result is stored and returned as JSON, which cannot carry them.
+     */
+    private static function utf8Text(string $bytes): string
+    {
+        if (mb_check_encoding($bytes, 'UTF-8')) {
+            return $bytes;
+        }
+        $json = json_encode($bytes, JSON_INVALID_UTF8_SUBSTITUTE);
+        $text = is_string($json) ? json_decode($json) : null;
+        return is_string($text) ? $text : '';
     }
 
     /**
@@ -1372,14 +1422,21 @@ class CloudFlowRunner
 
     private function finalizeRun(string $runId, string $status, mixed $result, ?array $error): void
     {
+        // A value JSON cannot carry (bytes that are not UTF-8, nesting past the encoder's depth)
+        // must not stop the terminal write: json_encode would answer false, the JSON column
+        // would refuse it, and the run would stay 'running' with its work already done. The
+        // part that cannot be encoded is replaced; a run with nothing storable keeps no result.
+        $flags = JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR;
+        $resultJson = $status === 'done' ? json_encode($result, $flags) : null;
+        $errorJson = $error !== null ? json_encode($error, $flags) : null;
         $this->mysql->prepare("
             UPDATE flow_run_logs
             SET status = :s, result_json = :result, error_json = :error, finished_at = NOW()
             WHERE id = :id
         ")->execute([
             's' => $status,
-            'result' => $status === 'done' ? json_encode($result) : null,
-            'error' => $error !== null ? json_encode($error) : null,
+            'result' => is_string($resultJson) ? $resultJson : null,
+            'error' => is_string($errorJson) ? $errorJson : null,
             'id' => $runId,
         ]);
         // Canonical outcome event (extensible-flows plan §9) — idempotent, never throws.

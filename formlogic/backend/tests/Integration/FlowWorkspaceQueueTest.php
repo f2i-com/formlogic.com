@@ -190,6 +190,39 @@ class FlowWorkspaceQueueTest extends TestCase
         $kv->put($this->userA, null, 'flow:triage', 'k4', 4);
     }
 
+    /**
+     * The scope is a label the caller picks, so the per-scope cap alone bounds nothing: every
+     * new scope name was another 500 keys of 64 KB. A member with execute_flows writes to the
+     * app owner's store through the runtime route, so that was storage without limit at the
+     * owner's cost. The cap that holds is the one on the store, across its scopes.
+     */
+    public function testFlowKvKeysCapAcrossScopesOfOneStore(): void
+    {
+        $kv = new FlowKvService(self::$mysql, maxKeysPerScope: 2, maxKeysPerStore: 5);
+        foreach (['flow:a', 'flow:b'] as $scope) {
+            $kv->put($this->userA, $this->appId, $scope, 'k1', 1);
+            $kv->put($this->userA, $this->appId, $scope, 'k2', 2);
+        }
+        $kv->put($this->userA, $this->appId, 'flow:c', 'k1', 1);
+
+        // Five keys in three scopes: the store is full, whatever the next scope is called.
+        try {
+            $kv->put($this->userA, $this->appId, 'flow:d', 'k1', 1);
+            $this->fail('a sixth key must be refused');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('maximum of 5 keys', $e->getMessage());
+        }
+        $this->assertNull($kv->get($this->userA, $this->appId, 'flow:d', 'k1'));
+
+        // What is already there can still be read and rewritten…
+        $this->assertSame(7, $kv->put($this->userA, $this->appId, 'flow:a', 'k1', 7)['v']);
+        // …the owner's other stores (the workspace, another app) have their own room…
+        $this->assertSame(1, $kv->put($this->userA, null, 'flow:d', 'k1', 1)['v']);
+        // …and removing a key makes room for one.
+        $this->assertTrue($kv->delete($this->userA, $this->appId, 'flow:c', 'k1'));
+        $this->assertSame(1, $kv->put($this->userA, $this->appId, 'flow:d', 'k1', 1)['v']);
+    }
+
     // ── Queued runs + exactly-once claiming ─────────────────────────────────────────────────
 
     public function testClaimTransitionsQueuedExactlyOnce(): void
