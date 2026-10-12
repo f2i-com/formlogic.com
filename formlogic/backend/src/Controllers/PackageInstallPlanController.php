@@ -103,6 +103,7 @@ class PackageInstallPlanController
                 $tmpPath = (string) tempnam(sys_get_temp_dir(), 'flplanarc_');
                 $uploaded->moveTo($tmpPath);
                 $parsed = $this->packService->parseApplicationPackageArchive($tmpPath, $this->signingService);
+                $parsed['trust'] = PackService::trustForImporter($parsed['trust'], $parsed['exporter'], (string) $userId);
                 $aggregate = $parsed['pack'];
                 if (($aggregate['formatVersion'] ?? null) !== 2) {
                     return $this->jsonResponse($response, [
@@ -155,7 +156,7 @@ class PackageInstallPlanController
                 'signature' => (string) $body['signature'],
                 'alg' => $alg,
             ]);
-            $trust = PackService::classifyTrust(true, (bool) $ok, $alg);
+            $trust = PackService::trustForImporter(PackService::classifyTrust(true, (bool) $ok, $alg), $package['exporter'] ?? null, (string) $userId);
             $allowUnverified = (($body['allowUnverified'] ?? null) === true) || (($body['allowUnverified'] ?? null) === 'true');
             if ($trust === 'unverified' && !$allowUnverified) {
                 return $this->jsonResponse($response, [

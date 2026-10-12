@@ -170,6 +170,45 @@ class PackServicesTest extends TestCase
         $this->assertArrayNotHasKey('services', $app['settings']);
     }
 
+    /**
+     * Remote monitoring, takeover and the rest of the Aokie Companion consent policy are the
+     * installer's to give, through the audited policy endpoint: a pack that ships them in its app
+     * settings must not arrive with them granted. The rest of the companion settings stay.
+     */
+    public function testImportDropsAShippedRemoteConsentPolicy(): void
+    {
+        $pack = $this->servicesPack();
+        $pack['apps'][0]['settings'] = ['aokieCompanion' => [
+            'remoteConsent' => ['configured' => true, 'remoteMonitoring' => true, 'remoteTakeover' => true],
+            'greeting' => 'kept',
+        ]];
+        $result = self::$packs->importPack($pack, $this->userId);
+        $app = self::$apps->getApp((string) $result['apps'][0]['id']);
+        $this->assertArrayNotHasKey('remoteConsent', $app['settings']['aokieCompanion'] ?? []);
+        $this->assertSame('kept', $app['settings']['aokieCompanion']['greeting'] ?? null);
+    }
+
+    /**
+     * A linked_record target in a pack is a '@pack:' reference to one of its own forms. Any other
+     * value is an id from the author's account (or anything at all): it is mapped when it names a
+     * form of the pack, and otherwise dropped, so an import never points at a form outside it.
+     */
+    public function testImportMapsOrDropsARawLinkedRecordTarget(): void
+    {
+        $pack = $this->servicesPack();
+        $pack['forms'][] = ['packFormId' => 'notes', 'title' => 'Notes', 'fields' => [
+            ['id' => 'to_calls', 'type' => 'linked_record', 'label' => 'Call', 'properties' => ['targetFormId' => 'calls']],
+            ['id' => 'elsewhere', 'type' => 'linked_record', 'label' => 'Elsewhere', 'properties' => ['targetFormId' => 'a-form-of-another-account']],
+            ['id' => 'packed', 'type' => 'linked_record', 'label' => 'Packed', 'properties' => ['targetFormId' => '@pack:calls']],
+        ]];
+        $result = self::$packs->importPack($pack, $this->userId);
+        $ids = array_column($result['forms'], 'id', 'title');
+        $fields = array_column(self::$forms->getForm($ids['Notes'])['fields'], null, 'id');
+        $this->assertSame($ids['Calls'], $fields['to_calls']['properties']['targetFormId'] ?? null, 'a pack form named without @pack: is mapped');
+        $this->assertArrayNotHasKey('targetFormId', $fields['elsewhere']['properties'] ?? [], 'an id outside the pack is dropped');
+        $this->assertSame($ids['Calls'], $fields['packed']['properties']['targetFormId'] ?? null);
+    }
+
     public function testFeaturesIsTheV2NameAndImportsIdentically(): void
     {
         // PKG-102 (ADR-010): `features` is the v2 name for the same declarations; runtime

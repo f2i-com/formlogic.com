@@ -172,6 +172,8 @@ class SignedEnvelopePackageTest extends TestCase
             'contentHash' => 'sha256:' . ($entryHashes['pack.json'] ?? ''),
             'entries' => $entryHashes,
             'capabilities' => [],
+            // As the exporter writes it: the exporting account, here the importing one.
+            'exporter' => PackService::exporterBinding($this->userId),
         ];
         $signed = self::$signing->sign($manifest);
 
@@ -342,12 +344,15 @@ class SignedEnvelopePackageTest extends TestCase
         $this->assertArrayHasKey('quickjs/customLogic.json', $manifest['entries'], 'the envelope quickjs bundle is hashed into the signed manifest');
 
         // Import into a SECOND account: the signed manifest verifies + every covered entry hash matches.
+        // Its trust there is an unsigned package's ('community'): this server's signature names the
+        // exporting account, and verified trust is that account's alone. The covered envelope still
+        // applies, as it does for any package that makes no failed verification claim.
         $importer = 'u-' . bin2hex(random_bytes(12));
         self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name, plan, cloud_until) VALUES (?, ?, 'x', 'T', 'personal', DATE_ADD(NOW(), INTERVAL 30 DAY))")
             ->execute([$importer, $importer . '@test.local']);
         try {
             $result = self::$packs->importApplicationPackage($zipPath, $importer, self::$signing);
-            $this->assertContains($result['trust'], ['official', 'local-only']);
+            $this->assertSame('community', $result['trust']);
             $newApp = self::$apps->getApp($result['apps'][0]['id']);
             $this->assertNotEmpty($newApp['customLogic'] ?? [], 'round-tripped customLogic survives + reapplies');
             $this->assertSame('onAppStart', $newApp['customLogic']['scripts'][0]['hook'] ?? null);
@@ -457,6 +462,53 @@ class SignedEnvelopePackageTest extends TestCase
             } else {
                 $_ENV['REQUIRE_VERIFIED_PACKAGES'] = $prev;
             }
+        }
+    }
+
+    /**
+     * The JSON lane carries the same rule as the archive lane: this server's signature on a user's
+     * export (GET /api/apps/{id}/export/signed) proves only that this server exported it, so another
+     * account gets the trust of an unsigned package and the verified-only policy refuses it there,
+     * while the exporting account keeps the verified trust.
+     */
+    public function testSignedJsonExportIsVerifiedOnlyForItsOwnAccount(): void
+    {
+        $formId = $this->uuid();
+        self::$forms->createForm([
+            'id' => $formId, 'userId' => $this->userId, 'title' => 'Intake', 'status' => 'published',
+            'fields' => [['id' => 'a', 'type' => 'short_text', 'label' => 'A', 'required' => false]],
+        ]);
+        $app = self::$apps->createApp(['name' => 'Json Export Shop'], $this->userId);
+        self::$apps->addFormToApp($app['id'], $formId, 'Intake');
+
+        $req = $this->createMock(ServerRequestInterface::class);
+        $req->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
+        $export = json_decode((string) $this->controller()->exportAppSigned($req, new SlimResponse(), ['id' => $app['id']])->getBody(), true);
+        $envelope = ['package' => $export['package'], 'signature' => $export['signature'], 'alg' => $export['alg'], 'approvedConnectorGrants' => []];
+
+        $other = 'u-' . bin2hex(random_bytes(12));
+        self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name, plan, cloud_until) VALUES (?, ?, 'x', 'T', 'personal', DATE_ADD(NOW(), INTERVAL 30 DAY))")
+            ->execute([$other, $other . '@test.local']);
+        $prev = $_ENV['REQUIRE_VERIFIED_PACKAGES'] ?? null;
+        try {
+            $_ENV['REQUIRE_VERIFIED_PACKAGES'] = 'true';
+            $r = $this->callImportSigned($other, $envelope);
+            $this->assertSame(403, $r['status'], "another account's export does not satisfy the verified-only policy");
+            $r = $this->callImportSigned($this->userId, $envelope);
+            $this->assertSame(201, $r['status']);
+            $this->assertContains($r['body']['trust'] ?? null, ['official', 'local-only']);
+
+            unset($_ENV['REQUIRE_VERIFIED_PACKAGES']);
+            $r = $this->callImportSigned($other, $envelope);
+            $this->assertSame(201, $r['status']);
+            $this->assertSame('community', $r['body']['trust'] ?? null);
+        } finally {
+            if ($prev === null) {
+                unset($_ENV['REQUIRE_VERIFIED_PACKAGES']);
+            } else {
+                $_ENV['REQUIRE_VERIFIED_PACKAGES'] = $prev;
+            }
+            $this->cleanupUser($other);
         }
     }
 

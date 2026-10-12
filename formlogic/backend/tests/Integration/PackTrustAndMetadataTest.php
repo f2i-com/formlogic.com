@@ -128,6 +128,7 @@ class PackTrustAndMetadataTest extends TestCase
     private function callDescribe(array $body): array
     {
         $req = $this->createMock(ServerRequestInterface::class);
+        $req->method('getAttribute')->willReturnCallback(fn ($n) => $n === 'userId' ? $this->userId : null);
         $req->method('getParsedBody')->willReturn($body);
         $out = $this->controller()->describe($req, new SlimResponse());
         return ['status' => $out->getStatusCode(), 'body' => json_decode((string) $out->getBody(), true) ?: []];
@@ -154,6 +155,9 @@ class PackTrustAndMetadataTest extends TestCase
     public function testDescribeVerifyingSignatureIsAlgorithmAware(): void
     {
         $pack = $this->minimalPack();
+        // Signed as this server signs an export: naming the exporting account, which is the
+        // describing account here (another account would be told 'community').
+        $pack['exporter'] = PackService::exporterBinding($this->userId);
         $signed = self::$signing->sign($pack);
 
         $r = $this->callDescribe(['pack' => $pack, 'signature' => $signed['signature'], 'alg' => $signed['alg']]);
@@ -196,6 +200,8 @@ class PackTrustAndMetadataTest extends TestCase
             ],
             'launch' => ['landingPage' => 'dashboard', 'theme' => 'dark'],
             'native' => ['enabled' => true, 'window' => ['width' => 1024]],
+            // Exported by the importing account, so the signature's trust is theirs.
+            'exporter' => PackService::exporterBinding($this->userId),
         ];
         $signed = self::$signing->sign($envelope);
 

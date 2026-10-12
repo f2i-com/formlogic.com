@@ -596,9 +596,15 @@ Routes:
   app runtime the scripts inside it run in the ZIPP sandbox.)
 - `POST /api/application-packages/import` — a multipart ZIP **or** a JSON `{ package, signature, alg }`
   envelope; the SERVER verifies the signature, stamps trust, and delegates to the atomic `importPack`.
+  This server signs every account's export of its own app, so a valid signature proves only that the
+  package came from this server unmodified. The signed manifest names the exporting account
+  (`exporter`), and the signature's trust holds only for that account: an import into any other
+  account gets `community`, as an unsigned package does. An export made before `exporter` was added
+  names no account and imports as `community` everywhere.
   Every ZIP entry passes a shared path-traversal + zip-bomb guard (`PackFileService::assertSafeArchive`).
 - `POST /api/packs/describe` with `{ package, signature, alg }` → `{ trust, capabilities }`. A valid
-  signature ⇒ `official`; a tampered payload ⇒ `unverified`; unsigned ⇒ `community`.
+  signature ⇒ `official` (`local-only` under HS256) for the account that exported it, `community` for
+  any other; a tampered payload ⇒ `unverified`; unsigned ⇒ `community`.
 
 #### What the ZIP signature covers (whole-archive model)
 
@@ -632,7 +638,8 @@ Order of operations for a `.formlogic` ZIP:
      listed* in the verified manifest is treated as injected content and fails the import
      (`readArchiveEnvelope`).
    - Trust is then classified by the shared `PackService::classifyTrust`: Ed25519 ⇒ `official`,
-     HS256 ⇒ `local-only`.
+     HS256 ⇒ `local-only`, both only when the manifest's `exporter` is the importing account;
+     otherwise `community`.
 4. An archive **without** `signature.json` imports as `community` — no coverage constraint applies
    (there is no verification claim to enforce).
 5. Only after the covered entries verify does it delegate to the atomic `importPack()` (remap /
@@ -651,7 +658,8 @@ a **present-but-invalid** signature is a tamper / key-mismatch signal and is **r
 #### Workspace policy: `REQUIRE_VERIFIED_PACKAGES`
 
 With env `REQUIRE_VERIFIED_PACKAGES=true`, **every import path requires positive verification**
-(trust `official` or `local-only`):
+(trust `official` or `local-only`, which a server-signed export has only in the account that exported
+it):
 
 - ZIP path — rejected inside `importApplicationPackage` **before** the atomic import commits.
 - JSON path — HTTP 403 (`code: "unverified_package"`); `allowUnverified` **cannot** bypass the policy.

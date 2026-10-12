@@ -154,6 +154,15 @@ class ApplicationPackageTest extends TestCase
         @unlink($zipPath);
     }
 
+    /**
+     * This server signs any user's export of their own app, so its signature says "exported from
+     * this server, unmodified", not "written by someone this importer trusts". Imported into ANOTHER
+     * account it therefore gets what an unsigned import gets: 'community' trust, an 'untrusted'
+     * custom screen (which the SDK runtime treats as untrusted rather than owner-equivalent), and it
+     * does not satisfy REQUIRE_VERIFIED_PACKAGES. Before, the same archive imported elsewhere as
+     * 'official' with a 'verified' screen, so anyone could launder their own screen code into
+     * another account's trusted runtime through the export endpoint.
+     */
     public function testSignedRoundTripImportRecreatesApp(): void
     {
         $appId = $this->buildApp();
@@ -163,15 +172,27 @@ class ApplicationPackageTest extends TestCase
         $importer = 'u-' . bin2hex(random_bytes(12));
         self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name, plan, cloud_until) VALUES (?, ?, 'x', 'T', 'personal', DATE_ADD(NOW(), INTERVAL 30 DAY))")
             ->execute([$importer, $importer . '@test.local']);
+        $previousPolicy = $_ENV['REQUIRE_VERIFIED_PACKAGES'] ?? null;
         try {
+            $_ENV['REQUIRE_VERIFIED_PACKAGES'] = 'true';
+            $refused = null;
+            try {
+                self::$packs->importApplicationPackage($zipPath, $importer, self::$signing);
+            } catch (\RuntimeException $e) {
+                $refused = $e;
+            }
+            $this->assertNotNull($refused, "another account's export does not satisfy REQUIRE_VERIFIED_PACKAGES");
+            unset($_ENV['REQUIRE_VERIFIED_PACKAGES']);
+
             $result = self::$packs->importApplicationPackage($zipPath, $importer, self::$signing);
-            $this->assertContains($result['trust'], ['official', 'local-only'], 'a verified signature yields a trusted import');
+            $this->assertSame('community', $result['trust'], "another account's export imports as an unsigned one would");
             $this->assertCount(2, $result['forms']);
             $this->assertCount(1, $result['apps']);
 
             $newApp = self::$apps->getApp($result['apps'][0]['id']);
             $this->assertSame('Pkg Shop', $newApp['name']);
             $this->assertNotEmpty($newApp['customScreen']['html'] ?? '');
+            $this->assertSame('untrusted', $newApp['customScreen']['_trust'] ?? null);
 
             // linked_record remapped to the imported Customers form.
             $newOrders = null; $newCustomers = null;
@@ -187,8 +208,35 @@ class ApplicationPackageTest extends TestCase
             $this->assertNotNull($link);
             $this->assertSame($newCustomers, $link['properties']['targetFormId']);
         } finally {
+            if ($previousPolicy === null) {
+                unset($_ENV['REQUIRE_VERIFIED_PACKAGES']);
+            } else {
+                $_ENV['REQUIRE_VERIFIED_PACKAGES'] = $previousPolicy;
+            }
             @unlink($zipPath);
             $this->cleanupUser($importer);
+        }
+    }
+
+    /** Re-importing one's own export (a backup, a copy) keeps what the signature proves. */
+    public function testSameAccountRoundTripKeepsVerifiedTrust(): void
+    {
+        $appId = $this->buildApp();
+        $zipPath = self::$packs->exportApplicationPackage($appId, $this->userId, self::$signing);
+        $previousPolicy = $_ENV['REQUIRE_VERIFIED_PACKAGES'] ?? null;
+        try {
+            $_ENV['REQUIRE_VERIFIED_PACKAGES'] = 'true';
+            $result = self::$packs->importApplicationPackage($zipPath, $this->userId, self::$signing);
+            $this->assertContains($result['trust'], ['official', 'local-only']);
+            $newApp = self::$apps->getApp($result['apps'][0]['id']);
+            $this->assertSame('verified', $newApp['customScreen']['_trust'] ?? null);
+        } finally {
+            if ($previousPolicy === null) {
+                unset($_ENV['REQUIRE_VERIFIED_PACKAGES']);
+            } else {
+                $_ENV['REQUIRE_VERIFIED_PACKAGES'] = $previousPolicy;
+            }
+            @unlink($zipPath);
         }
     }
 

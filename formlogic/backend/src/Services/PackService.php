@@ -170,6 +170,11 @@ class PackService
                 // and defer defaultRoleId until roles exist (carried as defaultRoleName).
                 $appSettings = is_array($packApp['settings'] ?? null) ? $packApp['settings'] : [];
                 unset($appSettings['notifications']);
+                // The Aokie Companion's remote monitoring / takeover consent is the installer's to
+                // give (through the audited policy endpoint), never a pack's to ship granted.
+                if (is_array($appSettings['aokieCompanion'] ?? null)) {
+                    unset($appSettings['aokieCompanion']['remoteConsent']);
+                }
                 if (!isset($packApp['hostedProject'])) unset($appSettings['hostedDashboard']);
                 $lp = $appSettings['landingPage'] ?? null;
                 if (is_string($lp) && str_starts_with($lp, '@pack:')) {
@@ -1041,6 +1046,8 @@ class PackService
             // Signed per-entry manifest (Option A): { "pack.json": "<sha256hex>", ... } for every entry above.
             'entries' => $entryHashes,
             'capabilities' => PackCapabilities::describe($pack),
+            // The exporting account, under the signature: see exporterBinding().
+            'exporter' => self::exporterBinding($userId),
         ];
 
         $zipPath = (string) tempnam(sys_get_temp_dir(), 'flapp_');
@@ -1080,9 +1087,11 @@ class PackService
      * per-entry sha256 hashes for pack.json AND every envelope file the importer will consume (quickjs/
      * customLogic.json, launch.json, native.json, assets/*). A tampered file, or an applicable envelope file
      * that is PRESENT but NOT listed in the signed manifest (an unsigned extra), is rejected.
-     * READ-ONLY: no import, no workspace policy (the import path owns policy enforcement).
+     * READ-ONLY: no import, no workspace policy (the import path owns policy enforcement). The trust
+     * returned is the signature's; what it means for a given importer is trustForImporter() over it
+     * and the signed `exporter`.
      *
-     * @return array{pack: array<string,mixed>, trust: string, envelope: array<string,mixed>}
+     * @return array{pack: array<string,mixed>, trust: string, envelope: array<string,mixed>, exporter: mixed}
      */
     public function parseApplicationPackageArchive(string $zipPath, ?SigningService $signing = null): array
     {
@@ -1111,6 +1120,7 @@ class PackService
             //    though it lives outside pack.json. $signatureCovers stays null for an unsigned (community)
             //    archive, and is the covered-entry set for a signed one (drives the "unsigned extra" check).
             $trust = 'community';
+            $exporter = null;
             $signatureCovers = null;
             $sigRaw = $zip->getFromName('signature.json');
             if ($sigRaw !== false) {
@@ -1136,6 +1146,7 @@ class PackService
                 // Only reached when the signature verified: Ed25519 => official, HS256 => local-only.
                 // Same classifier as describe + the JSON import path (single source of truth).
                 $trust = self::classifyTrust(true, true, (string) $sig['alg']);
+                $exporter = $manifest['exporter'] ?? null;
 
                 // The signed manifest carries a sha256 of every covered entry. Enforce it for pack.json AND
                 // every envelope file — recompute + require an exact match; reject any mismatch (tamper).
@@ -1162,7 +1173,7 @@ class PackService
             $zip->close();
         }
 
-        return ['pack' => $pack, 'trust' => $trust, 'envelope' => $envelope];
+        return ['pack' => $pack, 'trust' => $trust, 'envelope' => $envelope, 'exporter' => $exporter];
     }
 
     /**
@@ -1247,7 +1258,7 @@ class PackService
     ): array {
         $parsed = $this->parseApplicationPackageArchive($zipPath, $signing);
         $pack = $parsed['pack'];
-        $trust = $parsed['trust'];
+        $trust = self::trustForImporter($parsed['trust'], $parsed['exporter'], $userId);
         $envelope = $parsed['envelope'];
 
         // Workspace policy (pre-commit): reject an unverified/community archive BEFORE the atomic import, so
@@ -1376,6 +1387,32 @@ class PackService
             $covered[$entryName] = true;
         }
         return $covered;
+    }
+
+    /**
+     * The exporting account as a signed package names it (the archive manifest's and the signed
+     * JSON export's `exporter`). This server signs every user's export of their own app, so its
+     * signature proves "exported from this server, unmodified", not that anyone vouches for the
+     * content; bound to the exporting account, it is verified trust for that account only.
+     */
+    public static function exporterBinding(string $userId): string
+    {
+        return 'sha256:' . hash('sha256', 'formlogic-package-exporter|' . $userId);
+    }
+
+    /**
+     * What a verified signature means to THIS importer: 'official' / 'local-only' only when the
+     * signed content names the importer as its exporter. Another account, or a package signed
+     * before exports carried the binding, gets what an unsigned import gets ('community'): its
+     * screens stay untrusted and REQUIRE_VERIFIED_PACKAGES is not satisfied. Other trust passes
+     * through unchanged.
+     */
+    public static function trustForImporter(string $trust, mixed $exporter, string $userId): string
+    {
+        if (!in_array($trust, ['official', 'local-only'], true)) {
+            return $trust;
+        }
+        return is_string($exporter) && hash_equals(self::exporterBinding($userId), $exporter) ? $trust : 'community';
     }
 
     /**
@@ -2120,6 +2157,11 @@ class PackService
      * Remap @pack: prefixed targetFormId references in linked_record fields.
      * Public for in-place pack upgrades, which install a pack's fields into
      * forms that already exist (an unknown ref throws, as on import).
+     *
+     * Any other non-empty target is not a reference to the pack: an id from the author's account,
+     * or any text at all. It is mapped when it names one of the pack's forms (a packFormId written
+     * without the prefix) and dropped otherwise, so an imported field never points at a form
+     * outside the pack.
      */
     public function remapFieldReferences(array $fields, array $formIdMap): array
     {
@@ -2134,6 +2176,10 @@ class PackService
                         );
                     }
                     $field['properties']['targetFormId'] = $formIdMap[$packFormId];
+                } elseif (is_string($targetFormId) && $targetFormId !== '' && isset($formIdMap[$targetFormId])) {
+                    $field['properties']['targetFormId'] = $formIdMap[$targetFormId];
+                } elseif ($targetFormId !== null && $targetFormId !== '') {
+                    unset($field['properties']['targetFormId']);
                 }
             }
         }

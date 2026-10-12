@@ -239,7 +239,11 @@ class PackageV2InstallTest extends TestCase
         ]);
         $this->assertSame(201, $r['status'], json_encode($r['body']));
         $this->assertSame(2, $r['body']['formatVersion']);
-        $this->assertContains($r['body']['trust'], ['official', 'local-only']);
+        // This server's signature is verified trust only for the account that exported the
+        // signed content (PackService::trustForImporter). A v2 aggregate cannot name one (unknown
+        // fields fail closed) and this server exports none, so its signature alone stamps what an
+        // unsigned package gets.
+        $this->assertSame('community', $r['body']['trust']);
         $this->assertSame(['com.acme.mediatools.generate-image'], $r['body']['nodeTypes']);
         $this->assertSame([], $r['body']['forms'], 'a node-only package creates no forms');
         $this->assertSame([], $r['body']['apps'], 'a node-only package creates no apps (no fake launcher)');

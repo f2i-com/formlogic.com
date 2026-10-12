@@ -471,7 +471,7 @@ Start with **`backend/.env.example`** for local configuration. The defaults belo
 | `AI_MODEL` | `gpt-4o` | Text model for AI generation |
 | `AI_VISION_MODEL` | `AI_MODEL` | Vision model for image/document extraction |
 | `AI_ENABLED` | `true` | Additional Site AI gate: `false` disables it. Site AI still defaults **off** in admin settings, even with a server key present. Does not disable BYO providers or MCP. |
-| `REQUIRE_VERIFIED_PACKAGES` | `false` | Require a verified signature on every package/pack import |
+| `REQUIRE_VERIFIED_PACKAGES` | `false` | Require every package/pack import to be verified for the importing account (signed by this server and exported by that account) |
 
 Legacy `OPENAI_API_KEY` / `OPENAI_API_URL` / `OPENAI_MODEL` names are still honored as fallbacks for the `AI_*` variables.
 

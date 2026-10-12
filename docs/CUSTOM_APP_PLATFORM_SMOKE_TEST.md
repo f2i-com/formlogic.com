@@ -214,7 +214,7 @@ Safe to re-run (batched deletes + a lock file prevents overlapping cron ticks). 
 | `APP_DOMAIN_REQUIRE_TLS_ACTIVE` | `1/true/yes/on` = strict: domain activates only once HTTPS is live |
 | `NATIVE_TRUST_REQUIRES_ED25519` | `0` allows HS256 client manifests (local-only; native runtime won't verify them) |
 | `ANDROID_CERT_FINGERPRINT` | overrides the default runtime fingerprint in dynamic assetlinks.json |
-| `REQUIRE_VERIFIED_PACKAGES` | `true` = only signed (`official`/`local-only`) application packages import |
+| `REQUIRE_VERIFIED_PACKAGES` | `true` = only application packages verified for the importing account import (`official`/`local-only`: signed by this server and exported by that account) |
 | `IDEMPOTENCY_RETENTION_DAYS` | retention window for the cleanup job (default 30) |
 
 Related docs: [[CUSTOM_APP_PLATFORM]] (platform design + signing model),

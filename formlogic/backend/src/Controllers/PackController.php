@@ -96,6 +96,9 @@ class PackController
         if (!$this->signingService) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Signing is not available'], 503);
         }
+        // The exporting account goes under the signature: the trust it carries is this
+        // account's alone (PackService::trustForImporter).
+        $pack['exporter'] = PackService::exporterBinding((string) $userId);
         $signed = $this->signingService->sign($pack);
         // Rename 'payload' -> 'package' to match the application-package envelope (§29.6).
         return $this->jsonResponse($response, [
@@ -249,7 +252,7 @@ class PackController
                 'signature' => (string) $body['signature'],
                 'alg' => $alg,
             ]);
-            $trust = PackService::classifyTrust(true, (bool) $ok, $alg);
+            $trust = PackService::trustForImporter(PackService::classifyTrust(true, (bool) $ok, $alg), $package['exporter'] ?? null, (string) $userId);
 
             // A PRESENT-but-INVALID signature is a tamper / key-mismatch signal, not a "community" package —
             // reject by DEFAULT rather than silently importing it as 'unverified'. An explicit allowUnverified
@@ -408,6 +411,7 @@ class PackController
                 $tmpPath = (string) tempnam(sys_get_temp_dir(), 'flappdesc_');
                 $uploaded->moveTo($tmpPath);
                 $parsed = $this->packService->parseApplicationPackageArchive($tmpPath, $this->signingService);
+                $parsed['trust'] = PackService::trustForImporter($parsed['trust'], $parsed['exporter'], (string) $request->getAttribute('userId'));
                 // ADR-010: an archive may carry a v2 AGGREGATE (its entry-path contributions were
                 // inlined by the parser). Describing it as a Pack v1 would review it as an empty
                 // 0-form pack — the same failure mode SAFE-001 fixed for signed envelopes.
@@ -463,7 +467,7 @@ class PackController
             $alg = (string) ($body['alg'] ?? '');
             $ok = $this->signingService
                 && $this->signingService->verify(['payload' => $outer, 'signature' => $body['signature'], 'alg' => $alg]);
-            $trust = PackService::classifyTrust(true, (bool) $ok, $alg);
+            $trust = PackService::trustForImporter(PackService::classifyTrust(true, (bool) $ok, $alg), $outer['exporter'] ?? null, (string) $request->getAttribute('userId'));
         }
         // ── Application Package v2 (ADR-010): describe the aggregate — package meta, contributed
         // nodes, requirement slots — with the same trust stamp. An invalid aggregate BLOCKS with
