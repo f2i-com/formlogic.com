@@ -3,6 +3,7 @@ import { AlertTriangle, Loader2, PackageCheck, ArrowDownToLine, ArrowUpFromLine,
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { api, type PackageInstallationDetail } from '../../lib/api';
+import { parseServerDate } from '../../lib/utils';
 import { ServiceSlotBindings } from './ServiceSlotBindings';
 
 /**
@@ -198,7 +199,7 @@ export function InstalledExtensionDetail({ installationId }: { installationId: s
       </section>
 
       <p className="text-gray-500 dark:text-slate-400">
-        Installed {new Date(detail.installedAt).toLocaleString()} · source {detail.source} · state {detail.state}
+        Installed {parseServerDate(detail.installedAt).toLocaleString()} · source {detail.source} · state {detail.state}
       </p>
     </div>
   );

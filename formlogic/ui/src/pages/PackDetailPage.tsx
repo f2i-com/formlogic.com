@@ -660,7 +660,7 @@ function PackDetailContent() {
                     <Badge variant={i === 0 ? 'success' : 'default'} size="sm">v{v.version}</Badge>
                     <div className="flex-1">
                       <span className="fl-mono text-xs text-gray-500 dark:text-slate-400">
-                        {new Date(v.created_at).toLocaleDateString()} &middot; {v.form_count} forms, {v.app_count} apps{i === 0 ? ' · latest' : ''}
+                        {parseServerDate(v.created_at).toLocaleDateString()} &middot; {v.form_count} forms, {v.app_count} apps{i === 0 ? ' · latest' : ''}
                       </span>
                       {v.changelog && (
                         <p className="mt-0.5 text-xs text-gray-600 dark:text-slate-400">{v.changelog}</p>

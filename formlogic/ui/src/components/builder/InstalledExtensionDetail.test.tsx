@@ -151,4 +151,20 @@ describe('InstalledExtensionDetail', () => {
 
     expect(await render()).toContain('a stored definition could not be decoded');
   });
+
+  it('shows the install time as the UTC instant the server stored, from its offset-less datetime', async () => {
+    // The detail endpoint sends the row's MySQL created_at as it is. Pinned to a zone with an
+    // offset, so reading it as local time shows the wrong hour on any machine.
+    const zone = process.env.TZ;
+    process.env.TZ = 'Australia/Sydney';
+    try {
+      vi.spyOn(api, 'getPackageInstallation').mockResolvedValue({
+        data: { installation: detail({ installedAt: '2026-07-24 10:00:00' }) },
+      } as Awaited<ReturnType<typeof api.getPackageInstallation>>);
+
+      expect(await render()).toContain(`Installed ${new Date(Date.UTC(2026, 6, 24, 10)).toLocaleString()}`);
+    } finally {
+      if (zone === undefined) delete process.env.TZ; else process.env.TZ = zone;
+    }
+  });
 });

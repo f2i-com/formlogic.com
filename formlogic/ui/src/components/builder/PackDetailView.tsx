@@ -575,7 +575,7 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
                 <div key={v.id} className="text-xs text-gray-600 dark:text-slate-400">
                   <div className="flex items-center gap-2">
                     <Badge variant="default" size="sm">v{v.version}</Badge>
-                    <span>{new Date(v.created_at).toLocaleDateString()}</span>
+                    <span>{parseServerDate(v.created_at).toLocaleDateString()}</span>
                     <span className="text-gray-400 dark:text-slate-500">
                       {v.form_count} forms, {v.app_count} apps
                     </span>

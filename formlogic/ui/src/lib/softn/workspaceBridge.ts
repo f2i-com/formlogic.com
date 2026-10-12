@@ -1,4 +1,5 @@
 import { api } from '../api';
+import { parseServerDate } from '../utils';
 import type { AppRuntimeConfig } from '../../types/app';
 
 /** Only app-scoped operations cross the frame boundary. Authentication stays in the host. */
@@ -32,7 +33,7 @@ export async function workspaceBridge(slug: string, action: string, input: Recor
     return { count: result.data.count, records: result.data.responses.map(value => {
       const row = value as { id?: string; answers?: Record<string, unknown>; submittedAt?: string };
       const title = Object.values(row.answers || {}).find(value => typeof value === 'string' && value.trim());
-      return { id: row.id, answers: row.answers || {}, details: Object.entries(row.answers || {}).map(([key, value]) => ({ label: (form.fields as Array<{ id: string; label?: string }> | undefined)?.find(field => field.id === key)?.label || key.replaceAll('_', ' '), value: typeof value === 'object' ? JSON.stringify(value) : String(value ?? '') })).filter(field => field.value), title: typeof title === 'string' ? title.slice(0, 180) : 'Saved record', date: row.submittedAt ? new Date(row.submittedAt).toLocaleString() : '' };
+      return { id: row.id, answers: row.answers || {}, details: Object.entries(row.answers || {}).map(([key, value]) => ({ label: (form.fields as Array<{ id: string; label?: string }> | undefined)?.find(field => field.id === key)?.label || key.replaceAll('_', ' '), value: typeof value === 'object' ? JSON.stringify(value) : String(value ?? '') })).filter(field => field.value), title: typeof title === 'string' ? title.slice(0, 180) : 'Saved record', date: row.submittedAt ? parseServerDate(row.submittedAt).toLocaleString() : '' };
     }) };
   }
   throw new Error('Unknown workspace operation.');

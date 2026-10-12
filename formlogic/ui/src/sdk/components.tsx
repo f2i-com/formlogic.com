@@ -19,6 +19,7 @@ import {
 } from './hooks';
 import type { ConnectorStatusInfo } from '../client-runtime/connectors/connectorTypes';
 import type { PermissionAction } from '../types/app';
+import { parseServerDate } from '../lib/utils';
 
 /** Live status pill for a connector (green = connected, grey = unavailable). */
 export function ConnectorStatus({ connector }: { connector: string }) {
@@ -125,7 +126,7 @@ export function ResponseList({
             </div>
             {r.submittedAt && (
               <time className="shrink-0 text-xs text-gray-400 dark:text-slate-500">
-                {new Date(r.submittedAt).toLocaleDateString()}
+                {parseServerDate(r.submittedAt).toLocaleDateString()}
               </time>
             )}
           </li>
