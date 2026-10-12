@@ -319,6 +319,43 @@ function flRunInstallerCommand(array $command, string $cwd, float $timeout = 20.
     }
 }
 
+/**
+ * The database host as typed into the wizard, checked before it goes into the PDO DSN
+ * ("mysql:host=<host>;port=...") and into .env, where the backend builds the same DSN from it. A
+ * host name, an IPv4 address or an IPv6 address (bare, or in brackets so a port can follow), with
+ * an optional ":port" after a name, an IPv4 address or a bracketed IPv6 address. Anything else is
+ * refused: a ';' or '=' in it would add DSN settings of the typer's own (unix_socket=, dbname=).
+ *
+ * Returns ['host' => what the DSN takes (an IPv6 address without brackets, which is how PDO
+ * reads it), 'port' => the port written after it or null], or a message saying what is wrong.
+ *
+ * @return array{host:string, port:?string}|string
+ */
+function flParseDbHost(string $value): array|string
+{
+    $value = trim($value);
+    $port = null;
+    if (preg_match('/^\[([^\]]*)\](?::(\d{1,5}))?$/D', $value, $m) === 1) {
+        $host = $m[1];
+        $port = $m[2] ?? null;
+        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) === false) {
+            return 'The database host is not an IPv6 address inside the brackets.';
+        }
+    } elseif (filter_var($value, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
+        $host = $value;
+    } elseif (preg_match('/^([A-Za-z0-9_](?:[A-Za-z0-9_.-]{0,251}[A-Za-z0-9_])?)(?::(\d{1,5}))?$/D', $value, $m) === 1
+        && !str_contains($m[1], '..')) {
+        $host = $m[1];
+        $port = $m[2] ?? null;
+    } else {
+        return 'The database host must be a host name or an IP address (an IPv6 address in brackets when a port follows it), optionally followed by :port.';
+    }
+    if ($port !== null && ((int) $port < 1 || (int) $port > 65535)) {
+        return 'The port after the database host must be a number between 1 and 65535.';
+    }
+    return ['host' => $host, 'port' => $port];
+}
+
 function sanitizeIdentifier(string $value): string
 {
     // Only allow alphanumeric, underscore, hyphen for DB identifiers
@@ -564,8 +601,12 @@ function checkRequirements(): array
 // ---------------------------------------------------------------------------
 function testDatabase(array $data): array
 {
-    $host = $data['db_host'] ?? 'localhost';
-    $port = $data['db_port'] ?? '3306';
+    $parsedHost = flParseDbHost($data['db_host'] ?? 'localhost'); // not text: a TypeError, reported with a reference
+    if (is_string($parsedHost)) {
+        return ['success' => false, 'message' => $parsedHost];
+    }
+    $host = $parsedHost['host'];
+    $port = $parsedHost['port'] ?? ($data['db_port'] ?? '3306');
     $user = $data['db_user'] ?? 'root';
     $pass = $data['db_pass'] ?? '';
     $name = sanitizeIdentifier($data['db_name'] ?? 'formlogic');
@@ -646,8 +687,13 @@ function runInstall(array $data): array
     $steps[] = ['label' => 'Generate security keys', 'status' => 'ok'];
 
     // 3. Validate and sanitize inputs
-    $dbHost = sanitizeEnvValue($data['db_host'] ?? 'localhost');
-    $dbPort = $data['db_port'] ?? '3306';
+    $parsedHost = flParseDbHost($data['db_host'] ?? 'localhost'); // not text: a TypeError, reported with a reference
+    if (is_string($parsedHost)) {
+        $steps[] = ['label' => 'Validate inputs', 'status' => 'error', 'message' => $parsedHost];
+        return ['success' => false, 'steps' => $steps, 'message' => $parsedHost];
+    }
+    $dbHost = $parsedHost['host'];
+    $dbPort = $parsedHost['port'] ?? ($data['db_port'] ?? '3306');
     $dbName = sanitizeIdentifier($data['db_name'] ?? 'formlogic');
     $dbUser = sanitizeEnvValue($data['db_user'] ?? 'root');
     $dbPass = sanitizeEnvValue($data['db_pass'] ?? '');
@@ -905,13 +951,58 @@ function flScriptRuntimeStep(): array
 }
 
 /**
+ * Where the .env self-test sends its request: to this web server's own address and port, never to
+ * a host the request names. The request's Host header only says which site on this server is
+ * asked for, and goes as a header. Built from the Host header, the URL let anyone who could run
+ * install or upgrade (upgrade is open to the network while INSTALL_ENABLE=1) make the server
+ * request any address and port and read back whether it answered and with which status.
+ *
+ * Returns null when the server does not say its own address and port, or when the Host header is
+ * not a host name or address with an optional port (anything else would be written into the
+ * request as it is, line breaks included).
+ *
+ * @param array<string,mixed> $server $_SERVER
+ * @return array{url:string, host:string, peer:string, shown:string}|null
+ */
+function flEnvProbeTarget(array $server, string $backendRel): ?array
+{
+    $addr = is_string($server['SERVER_ADDR'] ?? null) ? $server['SERVER_ADDR'] : '';
+    $port = (string) ($server['SERVER_PORT'] ?? '');
+    if (filter_var($addr, FILTER_VALIDATE_IP) === false || !ctype_digit($port) || (int) $port < 1 || (int) $port > 65535) {
+        return null;
+    }
+    // A server listening on every address names the wildcard; it answers on loopback too.
+    $addr = ['0.0.0.0' => '127.0.0.1', '::' => '::1'][$addr] ?? $addr;
+    $host = is_string($server['HTTP_HOST'] ?? null) ? $server['HTTP_HOST'] : '';
+    if (preg_match('/^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9_.-]+)(?::\d{1,5})?$/D', $host, $m) !== 1) {
+        return null;
+    }
+    $scheme = (!empty($server['HTTPS']) && $server['HTTPS'] !== 'off') ? 'https' : 'http';
+    $dir = str_replace('\\', '/', dirname(is_string($server['SCRIPT_NAME'] ?? null) ? $server['SCRIPT_NAME'] : '/'));
+    $segments = array_filter(explode('/', $dir), static fn (string $s): bool => $s !== '' && $s !== '.');
+    $path = implode('', array_map(static fn (string $s): string => '/' . rawurlencode($s), $segments));
+    $connect = str_contains($addr, ':') ? '[' . $addr . ']' : $addr;
+    $file = $path . '/' . rawurlencode($backendRel) . '/.env';
+    return [
+        'url' => $scheme . '://' . $connect . ':' . $port . $file,
+        'host' => $host,
+        'peer' => trim($m[1], '[]'), // the name TLS asks for, so the right site's certificate answers
+        'shown' => $scheme . '://' . $host . $file, // the address the operator knows the site by
+    ];
+}
+
+/**
  * Post-install probe: is <backend>/.env fetchable over HTTP? The shipped web-root .htaccess denies
  * it on Apache (FilesMatch ^\.env plus a rewrite [F] rule), but that only holds when AllowOverride
  * is honoured — so where a self-request is possible, VERIFY instead of assuming. Non-conclusive
- * results are reported as 'skip' with the manual check to run.
+ * results are reported as 'skip' with the manual check to run. The request goes to this server
+ * only (flEnvProbeTarget).
+ *
+ * @param array<string,mixed>|null $server $_SERVER unless given (tests)
  */
-function flCheckEnvExposure(): array
+function flCheckEnvExposure(?array $server = null): array
 {
+    $server ??= $_SERVER;
     $backendRel = basename(flBackendDir());
     $label = "Check {$backendRel}/.env is not web-readable";
     if (!file_exists(flBackendDir() . '/.env')) {
@@ -922,18 +1013,18 @@ function flCheckEnvExposure(): array
         return ['label' => $label, 'status' => 'skip',
             'message' => 'Not testable under the PHP built-in server — on Apache the shipped .htaccess denies .env; re-verify after deploying'];
     }
-    $host = $_SERVER['HTTP_HOST'] ?? '';
-    if ($host === '' || !function_exists('file_get_contents') || ini_get('allow_url_fopen') != '1') {
+    $target = flEnvProbeTarget($server, $backendRel);
+    if ($target === null || !function_exists('file_get_contents') || ini_get('allow_url_fopen') != '1') {
         return ['label' => $label, 'status' => 'skip',
             'message' => 'Could not self-test here — verify manually that /' . $backendRel . '/.env returns 403/404 (the shipped .htaccess denies it on Apache)'];
     }
-    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-    $basePath = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/')), '/');
-    $url = $scheme . '://' . $host . $basePath . '/' . $backendRel . '/.env';
+    $url = $target['url'];
     $ctx = stream_context_create([
-        'http' => ['timeout' => 5, 'ignore_errors' => true, 'follow_location' => 0],
+        'http' => ['timeout' => 5, 'ignore_errors' => true, 'follow_location' => 0,
+            // A Host header given here is the one sent; PHP adds none of its own.
+            'header' => 'Host: ' . $target['host'] . "\r\n"],
         // Self-signed certs are common on fresh installs; the probe sends no secrets outbound.
-        'ssl' => ['verify_peer' => false, 'verify_peer_name' => false],
+        'ssl' => ['verify_peer' => false, 'verify_peer_name' => false, 'peer_name' => $target['peer'], 'SNI_enabled' => true],
     ]);
     $body = @file_get_contents($url, false, $ctx);
     $status = 0;
@@ -942,11 +1033,11 @@ function flCheckEnvExposure(): array
     }
     if ($body === false && $status === 0) {
         return ['label' => $label, 'status' => 'skip',
-            'message' => "Self-test request failed — verify manually that {$url} is NOT served (the shipped .htaccess denies it on Apache)"];
+            'message' => "Self-test request failed — verify manually that {$target['shown']} is NOT served (the shipped .htaccess denies it on Apache)"];
     }
     if ($status === 200 && is_string($body) && (str_contains($body, 'JWT_SECRET') || str_contains($body, 'DB_PASSWORD'))) {
         return ['label' => $label, 'status' => 'warn',
-            'message' => "SECURITY: {$url} is publicly readable! The .htaccess deny rules are not being honoured — "
+            'message' => "SECURITY: {$target['shown']} is publicly readable! The .htaccess deny rules are not being honoured — "
                 . 'enable AllowOverride All for the web root (Apache) or replicate the deny rules on your web server, then re-run this check'];
     }
     return ['label' => $label, 'status' => 'ok', 'message' => "HTTP {$status} — not served"];

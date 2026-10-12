@@ -33,6 +33,8 @@ class DesktopFlowRelayTest extends TestCase
 
     private static ?MySQLConnection $mysql = null;
     private static ?PDO $pdo = null;
+    /** @var array<string,string> the test database's connection settings */
+    private static array $config = [];
     private static DesktopFlowRelayService $relay;
     private static DesktopFlowRelayController $ctrl;
     private static FlowService $flows;
@@ -64,6 +66,7 @@ class DesktopFlowRelayTest extends TestCase
         } catch (\Throwable $e) {
             self::markTestSkipped('No test database available: ' . $e->getMessage());
         }
+        self::$config = $config;
         self::$mysql = $conn;
         self::$pdo = $conn->getConnection();
         self::$relay = new DesktopFlowRelayService($conn);
@@ -921,5 +924,172 @@ class DesktopFlowRelayTest extends TestCase
         $this->setCapabilities('desk-1', null);
         $ok = $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1', 'logicLanguages' => ['javascript', 'python']]);
         $this->assertSame(200, $ok['status'], json_encode($ok['body']));
+    }
+
+    // ── the sweep against a run that finishes under it; how long and how much a run may stream ──
+
+    /** A run claimed by desk-1 that has streamed one frame and then gone quiet past the stale threshold. */
+    private function staleStreamingRun(): string
+    {
+        $id = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $this->assertSame(200, $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1'])['status']);
+        $this->assertSame(201, $this->v1Frame($id, ['flows:relay'], ['instanceId' => 'desk-1', 'envelope' => base64_encode('p')])['status']);
+        $stale = DesktopFlowRelayService::CLAIMED_STALE_SECONDS + 5;
+        self::$pdo->prepare("UPDATE desktop_flow_runs SET claimed_at = DATE_SUB(NOW(), INTERVAL {$stale} SECOND) WHERE id = ?")->execute([$id]);
+        return $id;
+    }
+
+    /**
+     * expireStale() read the stale ids, then wrote 'expired' to those ids without looking at them
+     * again. A run its desktop completed in between (complete() takes the same row) was turned
+     * from done to expired and its sealed result thrown away. Here the run's row is held by a
+     * second connection while the sweep, in its own process, has read it and waits to write;
+     * the run is completed and the row let go; the sweep must leave it done, with its result.
+     */
+    public function testARunCompletedWhileTheSweepWaitsToWriteKeepsItsResult(): void
+    {
+        $id = $this->staleStreamingRun();
+
+        $other = new PDO(
+            sprintf('mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4', self::$config['host'], self::$config['port'], self::$config['database']),
+            self::$config['username'],
+            self::$config['password'],
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
+        );
+        $other->beginTransaction();
+        $other->prepare('SELECT id FROM desktop_flow_runs WHERE id = ? FOR UPDATE')->execute([$id]);
+
+        $script = tempnam(sys_get_temp_dir(), 'fl-sweep-');
+        file_put_contents($script, '<?php require $argv[1]; $c = json_decode($argv[2], true);'
+            . ' echo (new FormLogic\Services\DesktopFlowRelayService(new FormLogic\Database\MySQLConnection($c)))->expireStale($argv[3]);');
+        $sweep = proc_open(
+            [PHP_BINARY, '-d', 'xdebug.mode=off', $script, dirname(__DIR__, 2) . '/vendor/autoload.php', (string) json_encode(self::$config), $this->ownerId],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes
+        );
+        $this->assertIsResource($sweep);
+        try {
+            // Wait until the sweep has read the run and started writing it: its UPDATE cannot
+            // finish while this connection holds the row.
+            $waiting = $other->prepare("SELECT COUNT(*) FROM information_schema.processlist WHERE db = DATABASE() AND info LIKE 'UPDATE desktop_flow_runs%'");
+            $blocked = false;
+            for ($i = 0; $i < 600 && !$blocked; $i++) { // up to 30 s for the sweep process to start
+                usleep(50000);
+                $waiting->execute();
+                $blocked = (int) $waiting->fetchColumn() > 0;
+            }
+            $this->assertTrue($blocked, 'the sweep read the stale run and waits to write it'
+                . (proc_get_status($sweep)['running'] ? '' : ' (it ended: ' . stream_get_contents($pipes[2]) . stream_get_contents($pipes[1]) . ')'));
+
+            // complete() lands first: the run is done, with a sealed result, and its frames are gone.
+            $other->prepare("UPDATE desktop_flow_runs SET status = 'done', envelope = NULL, result_envelope = ?, finished_at = NOW() WHERE id = ?")
+                ->execute(['sealed-result', $id]);
+            $other->prepare('DELETE FROM desktop_flow_run_frames WHERE request_id = ?')->execute([$id]);
+            $other->commit();
+
+            $out = stream_get_contents($pipes[1]);
+            $err = stream_get_contents($pipes[2]);
+            $this->assertSame(0, proc_close($sweep), $err);
+            $sweep = null;
+        } finally {
+            if ($other->inTransaction()) {
+                $other->rollBack();
+            }
+            if (is_resource($sweep)) {
+                proc_terminate($sweep);
+                proc_close($sweep);
+            }
+            @unlink($script);
+        }
+
+        $row = $this->rawRunRow($id);
+        $this->assertSame('done', $row['status'], 'the sweep did not overwrite the completed run');
+        $this->assertSame('sealed-result', $row['result_envelope']);
+        $this->assertSame('0', trim((string) $out), 'and did not count it as reaped');
+    }
+
+    /**
+     * Each frame refreshed claimed_at, the anchor the stale rule reads, so a desktop that kept
+     * sending frames (one a minute is enough) held its run, and the target's single flight, for
+     * ever. A claimed run now also ends MAX_RUN_SECONDS after it was enqueued, frames or not.
+     */
+    public function testAClaimedRunEndsAtItsHardDeadlineHoweverManyFramesItSends(): void
+    {
+        $id = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $this->assertSame(200, $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1'])['status']);
+        $old = DesktopFlowRelayService::MAX_RUN_SECONDS + 60;
+        self::$pdo->prepare("UPDATE desktop_flow_runs SET created_at = DATE_SUB(NOW(), INTERVAL {$old} SECOND) WHERE id = ?")->execute([$id]);
+        // Still streaming: the frame just now keeps the silence rule away.
+        $this->assertSame(201, $this->v1Frame($id, ['flows:relay'], ['instanceId' => 'desk-1', 'envelope' => base64_encode('p')])['status']);
+
+        self::$relay->expireStale($this->ownerId);
+
+        $row = $this->rawRunRow($id);
+        $this->assertSame('expired', $row['status']);
+        $this->assertNull($row['envelope']);
+        $this->assertSame(0, $this->frameCount($id));
+        // The lane is free for the next run.
+        $next = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $this->assertSame(200, $this->v1Claim($next, ['flows:relay'], ['instanceId' => 'desk-1'])['status']);
+    }
+
+    public function testARunWithinItsDeadlineThatKeepsStreamingIsKept(): void
+    {
+        $id = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $this->assertSame(200, $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1'])['status']);
+        $young = DesktopFlowRelayService::MAX_RUN_SECONDS - 600;
+        self::$pdo->prepare("UPDATE desktop_flow_runs SET created_at = DATE_SUB(NOW(), INTERVAL {$young} SECOND) WHERE id = ?")->execute([$id]);
+        $this->assertSame(201, $this->v1Frame($id, ['flows:relay'], ['instanceId' => 'desk-1', 'envelope' => base64_encode('p')])['status']);
+        self::$relay->expireStale($this->ownerId);
+        $this->assertSame('streaming', $this->rawRunRow($id)['status']);
+    }
+
+    /** Frames straight into the table, as many appends would have left them. */
+    private function storeFrames(string $id, int $count, int $bytes): void
+    {
+        $insert = self::$pdo->prepare('INSERT INTO desktop_flow_run_frames (request_id, envelope) VALUES (?, ?)');
+        for ($i = 0; $i < $count; $i++) {
+            $insert->execute([$id, str_repeat('x', $bytes)]);
+        }
+    }
+
+    /**
+     * A frame may be 1 MiB and a key may send 600 a minute, and nothing bounded a run's total: one
+     * run could fill the database with ciphertext. A run now holds at most MAX_RUN_FRAME_BYTES of
+     * frames; past that a frame is refused (409 frame_limit) and the run can still complete.
+     */
+    public function testARunsFramesStopAtItsTotalSizeAndTheRunCanStillComplete(): void
+    {
+        $id = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $this->assertSame(200, $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1'])['status']);
+        $frame = DesktopFlowRelayService::MAX_FRAME_BYTES;
+        $this->storeFrames($id, intdiv(DesktopFlowRelayService::MAX_RUN_FRAME_BYTES, $frame) - 1, $frame);
+
+        // The last frame that fits exactly is taken; one byte more is not.
+        $this->assertSame(201, $this->v1Frame($id, ['flows:relay'], ['instanceId' => 'desk-1', 'envelope' => base64_encode(str_repeat('y', $frame))])['status']);
+        $refused = $this->v1Frame($id, ['flows:relay'], ['instanceId' => 'desk-1', 'envelope' => base64_encode('z')]);
+        $this->assertSame(409, $refused['status']);
+        $this->assertSame('frame_limit', $refused['body']['code']);
+        $this->assertSame(intdiv(DesktopFlowRelayService::MAX_RUN_FRAME_BYTES, $frame), $this->frameCount($id));
+
+        $this->assertSame(200, $this->v1Complete($id, ['flows:relay'], ['instanceId' => 'desk-1', 'status' => 'done', 'resultEnvelope' => base64_encode('r')])['status']);
+        $this->assertSame(0, $this->frameCount($id));
+    }
+
+    public function testARunsFramesStopAtTheirNumber(): void
+    {
+        $id = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $this->assertSame(200, $this->v1Claim($id, ['flows:relay'], ['instanceId' => 'desk-1'])['status']);
+        $values = implode(',', array_fill(0, DesktopFlowRelayService::MAX_FRAMES_PER_RUN - 1, '(?, ?)'));
+        $params = [];
+        for ($i = 1; $i < DesktopFlowRelayService::MAX_FRAMES_PER_RUN; $i++) {
+            array_push($params, $id, 'f');
+        }
+        self::$pdo->prepare("INSERT INTO desktop_flow_run_frames (request_id, envelope) VALUES {$values}")->execute($params);
+
+        $this->assertSame(201, $this->v1Frame($id, ['flows:relay'], ['instanceId' => 'desk-1', 'envelope' => base64_encode('last')])['status']);
+        $refused = $this->v1Frame($id, ['flows:relay'], ['instanceId' => 'desk-1', 'envelope' => base64_encode('one more')]);
+        $this->assertSame(409, $refused['status']);
+        $this->assertSame('frame_limit', $refused['body']['code']);
     }
 }

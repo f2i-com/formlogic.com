@@ -169,13 +169,18 @@ in `.env` and **test in sandbox before going live**:
 
 - [ ] `PAYPAL_CLIENT_ID` / `PAYPAL_SECRET` — REST app credentials from developer.paypal.com
 - [ ] `PAYPAL_WEBHOOK_ID` — from the app's webhook config; register the webhook URL
-      `https://YOUR_API_HOST/api/billing/webhook/paypal` in the PayPal dashboard
+      `https://YOUR_API_HOST/api/billing/webhook/paypal` in the PayPal dashboard, subscribed to
+      `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.REFUNDED`, `PAYMENT.CAPTURE.REVERSED`,
+      `PAYMENT.CAPTURE.DECLINED` and `PAYMENT.CAPTURE.DENIED` (without the refund and reversal
+      events, a refunded payment keeps the time it bought)
 - [ ] Keep `PAYPAL_ENV=sandbox` and run one full sandbox payment end-to-end:
   - [ ] a successful $5 capture credits exactly 30 days
   - [ ] buying again stacks (does not overwrite the expiry)
   - [ ] a declined payment does not credit
   - [ ] a pending/eCheck payment shows "processing" and credits once it clears (webhook)
   - [ ] re-submitting an order does not double-credit
+  - [ ] a full refund takes back the time; a partial refund is audited as
+        `billing.partial_refund` and leaves it
 - [ ] Only then set `PAYPAL_ENV=live` with live credentials and repeat a real $5 test
 
 Without credentials the `/billing` page degrades to "not configured" and no charges occur.

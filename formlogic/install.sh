@@ -12,7 +12,7 @@
 #   ./install.sh
 #
 # Prerequisites:
-#   - PHP >= 8.1 with extensions: pdo_mysql, pdo_sqlite, sqlite3, mbstring, json, openssl
+#   - PHP >= 8.2 with extensions: pdo_mysql, pdo_sqlite, sqlite3, mbstring, json, openssl
 #     (sqlite3 restores a native app's database when an update of it fails)
 #   - Composer (https://getcomposer.org)
 #   - Node.js >= 20.19 (or 22.12+) and npm
@@ -69,8 +69,10 @@ check_command git
 check_command mysql
 
 PHP_VERSION=$(php -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;')
-if [[ "$(echo "$PHP_VERSION >= 8.1" | bc -l 2>/dev/null || php -r "echo version_compare('$PHP_VERSION','8.1','>=') ? '1' : '0';")" != "1" ]]; then
-    error "PHP >= 8.1 is required (found $PHP_VERSION)"
+# The backend's composer.json requires ^8.2. Compared as versions, not as decimals ("8.10" is
+# not less than "8.2").
+if [[ "$(php -r 'echo version_compare(PHP_VERSION, "8.2.0", ">=") ? "1" : "0";')" != "1" ]]; then
+    error "PHP >= 8.2 is required (found $PHP_VERSION)"
     exit 1
 fi
 
@@ -100,7 +102,11 @@ ok "Backend dependencies installed"
 
 # Create .env if it doesn't exist
 if [[ ! -f .env ]]; then
-    cp .env.example .env
+    # .env holds the JWT secret, the audit key and the database password, so only its owner may
+    # read it (mode 600, as install.php writes it). It is made under umask 077, so it is never
+    # readable by others, not even before the secrets are written into it.
+    (umask 077 && cp .env.example .env)
+    chmod 600 .env
     # Generate random secrets
     JWT_SECRET=$(php -r 'echo bin2hex(random_bytes(32));')
     AUDIT_KEY=$(php -r 'echo bin2hex(random_bytes(32));')
@@ -111,6 +117,7 @@ if [[ ! -f .env ]]; then
         sed -i "s/^JWT_SECRET=$/JWT_SECRET=$JWT_SECRET/" .env
         sed -i "s/^# AUDIT_HMAC_KEY=$/AUDIT_HMAC_KEY=$AUDIT_KEY/" .env
     fi
+    chmod 600 .env # in case this sed did not keep the mode it replaced the file with
     warn "Created .env from .env.example — please update DB_PASSWORD and other settings"
 else
     ok ".env already exists"
@@ -121,36 +128,61 @@ fi
 # -----------------------------------------------------------------------------
 info "Checking database..."
 
-# Read database config from .env
-DB_HOST=$(grep -E '^DB_HOST=' .env | cut -d= -f2 | tr -d '[:space:]')
-DB_PORT=$(grep -E '^DB_PORT=' .env | cut -d= -f2 | tr -d '[:space:]')
-DB_DATABASE=$(grep -E '^DB_DATABASE=' .env | cut -d= -f2 | tr -d '[:space:]')
-DB_USERNAME=$(grep -E '^DB_USERNAME=' .env | cut -d= -f2 | tr -d '[:space:]')
-DB_PASSWORD=$(grep -E '^DB_PASSWORD=' .env | cut -d= -f2 | tr -d '[:space:]')
+# Read the database settings from .env as the backend reads them: with phpdotenv, which composer
+# installed above. Cutting each line at its first '=' kept the quotes of a quoted value and lost
+# everything after a second '=' (a password such as "pa=ss" became "pa").
+env_value() {
+    # shellcheck disable=SC2016 # the $ belongs to the PHP code, not to the shell
+    php -r 'require "vendor/autoload.php"; $v = Dotenv\Dotenv::parse((string) file_get_contents(".env")); echo $v[$argv[1]] ?? "";' "$1"
+}
+DB_HOST=$(env_value DB_HOST)
+DB_PORT=$(env_value DB_PORT)
+DB_DATABASE=$(env_value DB_DATABASE)
+DB_USERNAME=$(env_value DB_USERNAME)
+DB_PASSWORD=$(env_value DB_PASSWORD)
 
 DB_HOST=${DB_HOST:-localhost}
 DB_PORT=${DB_PORT:-3306}
 DB_DATABASE=${DB_DATABASE:-formlogic}
 DB_USERNAME=${DB_USERNAME:-formlogic}
 
+if [[ ! "$DB_DATABASE" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    # The name is written into the SQL below; install.php allows the same characters.
+    error "DB_DATABASE in .env may hold only letters, digits, '_' and '-' (found '$DB_DATABASE')"
+    exit 1
+fi
+
 if [[ -z "$DB_PASSWORD" ]]; then
     warn "DB_PASSWORD is empty in .env — please set it before running the app"
     warn "Skipping database initialization"
+elif [[ "$DB_PASSWORD" == *$'\n'* ]]; then
+    warn "DB_PASSWORD in .env holds a line break, which a MySQL option file cannot carry — create the database by hand"
+    warn "Skipping database initialization"
 else
+    # mysql is given the password in an option file only this user can read, never on its
+    # command line, where every user of the machine sees it in the process list. (MYSQL_PWD is
+    # deprecated in MySQL 8.0.) In the file the value is double-quoted, so '#' does not start a
+    # comment, with '\' and '"' escaped.
+    MYSQL_DEFAULTS=$(umask 077 && mktemp)
+    trap 'rm -f "$MYSQL_DEFAULTS"' EXIT
+    printf '[client]\npassword="%s"\n' "$(printf '%s' "$DB_PASSWORD" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')" > "$MYSQL_DEFAULTS"
+    # --defaults-extra-file must be the first option.
+    db_mysql() { mysql --defaults-extra-file="$MYSQL_DEFAULTS" -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USERNAME" "$@"; }
+
     # Check if database exists, create if not
-    if mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USERNAME" -p"$DB_PASSWORD" -e "USE $DB_DATABASE;" 2>/dev/null; then
+    if db_mysql -e "USE \`$DB_DATABASE\`;" 2>/dev/null; then
         ok "Database '$DB_DATABASE' exists"
     else
         info "Creating database '$DB_DATABASE'..."
-        mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USERNAME" -p"$DB_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS \`$DB_DATABASE\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>/dev/null
+        db_mysql -e "CREATE DATABASE IF NOT EXISTS \`$DB_DATABASE\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>/dev/null
         ok "Database created"
     fi
 
     # Import schema if tables don't exist
-    TABLE_COUNT=$(mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USERNAME" -p"$DB_PASSWORD" -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$DB_DATABASE';" 2>/dev/null || echo "0")
+    TABLE_COUNT=$(db_mysql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$DB_DATABASE';" 2>/dev/null || echo "0")
     if [[ "$TABLE_COUNT" -eq 0 ]] && [[ -f database/schema.sql ]]; then
         info "Importing database schema..."
-        mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USERNAME" -p"$DB_PASSWORD" "$DB_DATABASE" < database/schema.sql 2>/dev/null
+        db_mysql "$DB_DATABASE" < database/schema.sql 2>/dev/null
         ok "Schema imported ($DB_DATABASE)"
     else
         ok "Database already has $TABLE_COUNT tables"
@@ -273,4 +305,8 @@ echo ""
 echo "Or for production, configure your web server to serve:"
 echo "  - Backend API: backend/public/ (PHP)"
 echo "  - Frontend:    ui/dist/ (static files)"
+echo ""
+echo "backend/.env can be read by its owner only (mode 600). If the web server runs PHP as another"
+echo "user (www-data, apache, nginx), make that user its owner, for example:"
+echo "  sudo chown www-data backend/.env"
 echo ""

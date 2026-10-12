@@ -261,6 +261,140 @@ final class InstallerReliabilityTest extends TestCase
         self::assertCount(1, $backups);
         self::assertFileEquals($root . '/api/.env.example', $backups[0]);
     }
+    // ── The .env self-test asks this server only ────────────────────────────────────────────
+
+    /**
+     * The self-test URL was built from the request's Host header, so whoever could run install or
+     * upgrade (upgrade is open to the network while INSTALL_ENABLE=1) could make the server request
+     * any address and port and read back whether it answered, and with which status. It now goes
+     * to the server's own address and port, with the Host sent only as a header.
+     */
+    public function testTheEnvSelfTestGoesToThisServersOwnAddressWhateverHostTheRequestNames(): void
+    {
+        $target = \flEnvProbeTarget([
+            'SERVER_ADDR' => '10.0.0.5', 'SERVER_PORT' => '443', 'HTTPS' => 'on',
+            'HTTP_HOST' => '169.254.169.254:6379', 'SCRIPT_NAME' => '/my forms/install.php',
+        ], 'api');
+        self::assertSame('https://10.0.0.5:443/my%20forms/api/.env', $target['url']);
+        self::assertSame('169.254.169.254:6379', $target['host'], 'the Host travels as a header only');
+        self::assertSame('169.254.169.254', $target['peer']);
+
+        $v6 = \flEnvProbeTarget(['SERVER_ADDR' => '::', 'SERVER_PORT' => '8443', 'HTTP_HOST' => '[2001:db8::1]', 'SCRIPT_NAME' => '/install.php'], 'backend');
+        self::assertSame('http://[::1]:8443/backend/.env', $v6['url'], 'a server on every address is asked on loopback');
+        self::assertSame('2001:db8::1', $v6['peer']);
+        self::assertSame('http://127.0.0.1:80/api/.env', \flEnvProbeTarget(['SERVER_ADDR' => '0.0.0.0', 'SERVER_PORT' => '80', 'HTTP_HOST' => 'forms.example.com'], 'api')['url']);
+    }
+
+    public function testWithoutItsOwnAddressOrWithAHostThatIsNotAHostTheServerDoesNotTestItself(): void
+    {
+        $ok = ['SERVER_ADDR' => '127.0.0.1', 'SERVER_PORT' => '80', 'HTTP_HOST' => 'forms.example.com', 'SCRIPT_NAME' => '/install.php'];
+        self::assertNotNull(\flEnvProbeTarget($ok, 'api'));
+        foreach ([
+            ['SERVER_ADDR' => null], ['SERVER_ADDR' => 'forms.example.com'], ['SERVER_PORT' => null], ['SERVER_PORT' => '0'],
+            ['HTTP_HOST' => ''], ['HTTP_HOST' => "forms.example.com\r\nX-Injected: 1"], ['HTTP_HOST' => 'a b'],
+            ['HTTP_HOST' => 'user@forms.example.com'], ['HTTP_HOST' => 'forms.example.com/x'], ['HTTP_HOST' => ['forms.example.com']],
+        ] as $change) {
+            self::assertNull(\flEnvProbeTarget(array_merge($ok, $change), 'api'), json_encode($change));
+        }
+    }
+
+    /** The real request, against a PHP built-in server standing in for the site's web server. */
+    public function testTheSelfTestRequestReachesThisServerWithTheHostAsAHeader(): void
+    {
+        $root = $this->installerCopy();
+        file_put_contents($root . '/api/.env', "JWT_SECRET=" . str_repeat('a', 64) . "\nDB_PASSWORD=x\n");
+        $docroot = $this->scratchDir();
+        $log = $docroot . '/requests.log';
+        // Answers 403 for .env unless the mode file says to serve it, and logs what it was asked.
+        file_put_contents($docroot . '/router.php', '<?php file_put_contents(' . var_export($log, true)
+            . ', $_SERVER["REQUEST_URI"] . " " . ($_SERVER["HTTP_HOST"] ?? "") . "\n", FILE_APPEND);'
+            . ' if (is_file(__DIR__ . "/serve")) { echo "JWT_SECRET=leaked\n"; return true; }'
+            . ' http_response_code(403); return true;');
+        $probe = stream_socket_server('tcp://127.0.0.1:0');
+        self::assertNotFalse($probe);
+        $port = (int) substr((string) strrchr((string) stream_socket_get_name($probe, false), ':'), 1);
+        fclose($probe);
+        $server = proc_open([PHP_BINARY, '-S', '127.0.0.1:' . $port, $docroot . '/router.php'], [1 => ['file', $docroot . '/server.out', 'w'], 2 => ['file', $docroot . '/server.out', 'a']], $pipes, $docroot);
+        self::assertIsResource($server);
+        try {
+            for ($i = 0; $i < 100 && @fsockopen('127.0.0.1', $port) === false; $i++) {
+                usleep(50000);
+            }
+            $check = function (string $host) use ($root, $port): array {
+                $server = ['SERVER_ADDR' => '127.0.0.1', 'SERVER_PORT' => (string) $port, 'HTTP_HOST' => $host, 'SCRIPT_NAME' => '/install.php'];
+                $code = 'define("FORMLOGIC_INSTALL_NO_RUN", true); require $argv[1];'
+                    . ' echo json_encode(flCheckEnvExposure(json_decode(base64_decode($argv[2]), true)));';
+                $out = \flRunInstallerCommand([PHP_BINARY, '-d', 'xdebug.mode=off', '-r', $code, $root . '/install.php', base64_encode((string) json_encode($server))], $root, 30.0);
+                self::assertSame(0, $out['exitCode'], $out['output']);
+                return json_decode($out['output'], true);
+            };
+
+            // A Host naming another machine: the request still comes here, carrying that Host.
+            $denied = $check('169.254.169.254:6379');
+            self::assertSame('ok', $denied['status'], json_encode($denied));
+            self::assertSame("/api/.env 169.254.169.254:6379\n", file_get_contents($log));
+
+            // And it still tells a .env that is served apart from one that is not.
+            touch($docroot . '/serve');
+            $served = $check('forms.example.com');
+            self::assertSame('warn', $served['status'], json_encode($served));
+            self::assertStringContainsString('http://forms.example.com/api/.env is publicly readable', $served['message']);
+        } finally {
+            proc_terminate($server);
+            proc_close($server);
+        }
+    }
+
+    // ── The database host ──────────────────────────────────────────────────────────────────
+
+    /**
+     * The host went into "mysql:host=<host>;port=..." as typed: a ';' added DSN settings of the
+     * typer's own (unix_socket, dbname). It is now a host name or an address, with an optional port.
+     */
+    public function testTheDatabaseHostIsAHostNameOrAnAddressWithAnOptionalPort(): void
+    {
+        self::assertSame(['host' => 'localhost', 'port' => null], \flParseDbHost('localhost'));
+        self::assertSame(['host' => 'db.internal', 'port' => null], \flParseDbHost(' db.internal '));
+        self::assertSame(['host' => 'mysql_db', 'port' => null], \flParseDbHost('mysql_db'), 'a Docker service name');
+        self::assertSame(['host' => '10.0.0.7', 'port' => '3307'], \flParseDbHost('10.0.0.7:3307'));
+        self::assertSame(['host' => '::1', 'port' => null], \flParseDbHost('::1'));
+        // PDO reads an IPv6 host without brackets ("[::1]" fails to parse there).
+        self::assertSame(['host' => '2001:db8::5', 'port' => '3306'], \flParseDbHost('[2001:db8::5]:3306'));
+        foreach ([
+            'localhost;unix_socket=/tmp/x.sock', 'db;dbname=mysql', 'db host', 'db/x', '', '[db.internal]',
+            'db:0', 'db:70000', 'db:', "db\nDB_PASSWORD=x", '-db', 'a..b', 'user@db',
+        ] as $bad) {
+            self::assertIsString(\flParseDbHost($bad), var_export($bad, true));
+        }
+    }
+
+    public function testAHostThatIsNotAHostStopsTheConnectionTestAndTheInstall(): void
+    {
+        $tested = \testDatabase(['db_host' => 'localhost;unix_socket=/tmp/mysql.sock', 'db_port' => '3306', 'db_name' => 'formlogic']);
+        self::assertFalse($tested['success']);
+        self::assertStringContainsString('The database host must be a host name or an IP address', $tested['message']);
+
+        $root = $this->installerCopy();
+        $result = $this->runInstallIn($root, [
+            'db_host' => '127.0.0.1;dbname=mysql', 'db_port' => '3306', 'db_name' => 'formlogic', 'db_user' => 'root', 'db_pass' => 'x',
+        ]);
+        self::assertFalse($result['success']);
+        self::assertContains('error:Validate inputs', self::steps($result));
+        self::assertFileDoesNotExist($root . '/api/.env');
+    }
+
+    public function testAPortWrittenAfterTheHostIsTheOneUsed(): void
+    {
+        $root = $this->installerCopy();
+        $result = $this->runInstallIn($root, [
+            'db_host' => 'db.internal:3307', 'db_port' => '3306', 'db_name' => 'formlogic', 'db_user' => 'formlogic', 'db_pass' => '',
+        ]);
+        self::assertTrue($result['success'], json_encode($result));
+        $env = (string) file_get_contents($root . '/api/.env');
+        self::assertMatchesRegularExpression('/^DB_HOST=db\.internal$/m', $env);
+        self::assertMatchesRegularExpression('/^DB_PORT=3307$/m', $env);
+    }
+
     public function testAConfiguredEnvIsOnlyReplacedWhenAskedAndThenTheOldOneIsKept(): void
     {
         $root = $this->installerCopy();

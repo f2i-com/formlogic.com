@@ -305,13 +305,22 @@ Troubleshooting
   bit (see manual step 5 — the wizard fixes this automatically).
 - Blank white page: the zip contents were uploaded into a subfolder. The
   app expects to live at the domain root (index.html next to .htaccess).
+- The wizard refuses the database host: write a host name or an IP address,
+  optionally followed by :port (an IPv6 address goes in brackets when a port
+  follows, e.g. [2001:db8::5]:3306). A port written there is the one used.
+- An invitation is refused with "as many invitation emails as it can": the
+  inviting account (50 an hour, 200 a day) or the address (5 a day) has had
+  its share. New-response notifications have limits of their own (200 an
+  hour and 1000 a day per form owner, 100 a day to one address other than
+  the owner's). Each mail not sent is logged in api/logs.
 
 Notes
 -----
 - Never expose api/.env, api/storage/ or api/logs/ over HTTP. The shipped
   .htaccess already denies them on Apache; on any other web server replicate
   those rules (see the comments inside .htaccess). The wizard self-tests
-  api/.env exposure after installing where it can.
+  api/.env exposure after installing where it can: it asks this web server
+  itself (the address and port it reports), never the host a request names.
 - Always delete install.php when you are done (it also disables itself once
   installed, and only ever runs from localhost or with INSTALL_ENABLE=1).
 - Upgrading later? See UPGRADE.txt in the release zip.

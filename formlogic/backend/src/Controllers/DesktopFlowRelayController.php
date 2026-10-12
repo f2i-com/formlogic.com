@@ -363,6 +363,12 @@ class DesktopFlowRelayController
             if ($e->getMessage() === 'claimed_elsewhere') {
                 return $this->jsonError($response, 'This run was claimed by a different desktop instance', 409, 'claimed_elsewhere');
             }
+            if ($e->getMessage() === 'frame_limit') {
+                // The run goes on: it may still complete with its result. Only its progress stops.
+                return $this->jsonError($response, 'This run has sent as many progress frames as a run may hold (at most '
+                    . DesktopFlowRelayService::MAX_FRAMES_PER_RUN . ' frames and ' . intdiv(DesktopFlowRelayService::MAX_RUN_FRAME_BYTES, 1048576)
+                    . ' MiB); it can still complete', 409, 'frame_limit');
+            }
             return $this->jsonError($response, 'This run is not in a claimed state', 409, 'not_claimed');
         }
         return $this->jsonResponse($response, ['accepted' => true, 'seq' => $result['seq'], 'status' => $result['status']], 201);

@@ -39,6 +39,13 @@ class BillingController
     private int $pricePerMonthCents;
     private string $currency = 'USD';
     private const MAX_MONTHS = 12;
+    /** Webhook events that mean the money of a capture is not, or no longer, the merchant's. */
+    private const MONEY_BACK_EVENTS = [
+        'PAYMENT.CAPTURE.REFUNDED',
+        'PAYMENT.CAPTURE.REVERSED',
+        'PAYMENT.CAPTURE.DECLINED',
+        'PAYMENT.CAPTURE.DENIED',
+    ];
 
     public function __construct(PayPalService $paypal, MySQLConnection $db, ?AuditService $auditService = null, ?LoggerInterface $logger = null, ?PlanService $planService = null, bool $betaMode = false, private ?\FormLogic\Services\PlatformPlansService $platformPlans = null)
     {
@@ -249,21 +256,91 @@ class BillingController
                     return $response->withStatus(500);
                 }
             }
-        } elseif (in_array($type, ['PAYMENT.CAPTURE.DENIED', 'PAYMENT.CAPTURE.REVERSED'], true) && $captureId !== '') {
-            $payment = $this->findPaymentForCapture($captureId, $resource);
-            if ($payment && $payment['status'] === 'completed') {
-                // Chargeback/clawback of an already-credited payment — revoke the cloud time
-                // it granted and flag the account (audit), instead of silently ignoring it.
-                try { $this->reversePayment($payment, $captureId); } catch (\Throwable $e) {
-                    $this->logger->error('Webhook reversal failed', ['capture' => $captureId, 'error' => $e->getMessage()]);
+        } elseif (in_array($type, self::MONEY_BACK_EVENTS, true)) {
+            // Money that is not, or no longer, the merchant's. REFUNDED (the operator refunded it)
+            // and REVERSED (PayPal took it back) carry a refund, whose id is the refund's own: the
+            // capture it gives money back from is named only by its 'up' link. DECLINED (Payments
+            // v2) and DENIED (v1) carry the capture that did not go through. An older reversal
+            // that carries the capture itself is still read by its id.
+            $refunds = in_array($type, ['PAYMENT.CAPTURE.REFUNDED', 'PAYMENT.CAPTURE.REVERSED'], true);
+            $targetCaptureId = ($refunds ? self::refundedCaptureId($resource) : null) ?? $captureId;
+            $payment = $targetCaptureId !== '' ? $this->findPaymentForCapture($targetCaptureId, $resource) : null;
+            if (!$payment) {
+                $this->logger->warning('PayPal webhook names no payment recorded here', ['type' => $type, 'resource' => $captureId, 'capture' => $targetCaptureId]);
+                return $response->withStatus(200);
+            }
+            if ($refunds && !self::refundsWholePayment($resource, $payment)) {
+                // Part of the payment given back (a goodwill credit, say): which months it was
+                // meant to cover is the operator's to say. Kept for support; the months stay until
+                // the refunds add up to the whole payment.
+                $this->recordPartialRefund($payment, $targetCaptureId, $type, $resource);
+                return $response->withStatus(200);
+            }
+            if ($payment['status'] === 'completed') {
+                // Already credited — revoke the cloud time it granted and flag the account
+                // (audit), instead of silently ignoring it.
+                try { $this->reversePayment($payment, $targetCaptureId, $type); } catch (\Throwable $e) {
+                    $this->logger->error('Webhook reversal failed', ['capture' => $targetCaptureId, 'error' => $e->getMessage()]);
                     return $response->withStatus(500);
                 }
             } else {
-                // Not yet credited (a pending/processing eCheck that bounced): mark failed.
-                $pdo->prepare("UPDATE payments SET status = 'failed' WHERE capture_id = ? AND status NOT IN ('completed','reversed')")->execute([$captureId]);
+                // Not yet credited (a held eCheck that bounced, or was given back while held):
+                // failed, so a completion delivered later cannot credit it.
+                $pdo->prepare("UPDATE payments SET status = 'failed' WHERE id = ? AND status IN ('pending','processing')")->execute([$payment['id']]);
+                $this->logger->info('PayPal webhook failed a payment that was not credited', ['type' => $type, 'payment' => $payment['id']]);
             }
         }
         return $response->withStatus(200);
+    }
+
+    /** The capture a refund gives money back from: the id in its 'up' link (…/v2/payments/captures/{id}). */
+    private static function refundedCaptureId(array $refund): ?string
+    {
+        foreach (is_array($refund['links'] ?? null) ? $refund['links'] : [] as $link) {
+            if (is_array($link) && ($link['rel'] ?? null) === 'up' && is_string($link['href'] ?? null)
+                && preg_match('#/v[12]/payments/captures?/([A-Za-z0-9-]+)/?(?:[?\#]|$)#', $link['href'], $m) === 1) {
+                return $m[1];
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Whether everything the payment was recorded for has now been given back: the refunded total
+     * so far (seller_payable_breakdown.total_refunded_amount, or this refund's own amount when the
+     * event does not carry a total), in the payment's currency, reaches the recorded amount.
+     */
+    private static function refundsWholePayment(array $refund, array $payment): bool
+    {
+        $total = $refund['seller_payable_breakdown']['total_refunded_amount'] ?? null;
+        $money = is_array($total) ? $total : ($refund['amount'] ?? null);
+        if (!is_array($money)) {
+            return false;
+        }
+        return self::capturedCents(['amount' => $money]) >= (int) $payment['amount_cents']
+            && strtoupper((string) ($money['currency_code'] ?? '')) === strtoupper((string) $payment['currency']);
+    }
+
+    /** Log and audit a refund that gives back part of a payment; the months are left as they are. */
+    private function recordPartialRefund(array $payment, string $captureId, string $type, array $refund): void
+    {
+        $total = $refund['seller_payable_breakdown']['total_refunded_amount'] ?? $refund['amount'] ?? null;
+        $details = [
+            'event' => $type,
+            'payment' => $payment['id'],
+            'refund' => is_string($refund['id'] ?? null) ? $refund['id'] : null,
+            'refundedCents' => is_array($total) ? self::capturedCents(['amount' => $total]) : null,
+            'refundedCurrency' => is_array($total) ? ($total['currency_code'] ?? null) : null,
+            'amountCents' => (int) $payment['amount_cents'],
+            'currency' => $payment['currency'],
+            'months' => (int) $payment['months'],
+        ];
+        $this->logger->warning('PayPal refund gives back part of a payment; its months are left for support to adjust', $details + ['capture' => $captureId]);
+        if ($this->auditService) {
+            try {
+                $this->auditService->log('billing.partial_refund', 'payment', $captureId, (string) $payment['user_id'], null, $details);
+            } catch (\Throwable $e) { /* audit is non-critical */ }
+        }
     }
 
     /** A PayPal capture's amount in cents, or -1 when it carries none. */
@@ -304,8 +381,8 @@ class BillingController
         return null;
     }
 
-    /** Revoke the cloud time granted by a now-reversed/charged-back payment (idempotent). */
-    private function reversePayment(array $payment, string $captureId): void
+    /** Revoke the cloud time granted by a now-refunded/reversed/charged-back payment (idempotent). */
+    private function reversePayment(array $payment, string $captureId, string $eventType): void
     {
         $pdo = $this->db->getConnection();
         try {
@@ -327,9 +404,12 @@ class BillingController
             }
             throw $e;
         }
+        $this->logger->warning('PayPal payment given back; the cloud time it bought was taken back', [
+            'event' => $eventType, 'payment' => $payment['id'], 'capture' => $captureId, 'months' => (int) $payment['months'],
+        ]);
         if ($this->auditService) {
             try {
-                $this->auditService->log('billing.reversal', 'payment', $captureId, (string) $payment['user_id'], null, ['months' => (int) $payment['months'], 'amountCents' => (int) $payment['amount_cents']]);
+                $this->auditService->log('billing.reversal', 'payment', $captureId, (string) $payment['user_id'], null, ['months' => (int) $payment['months'], 'amountCents' => (int) $payment['amount_cents'], 'event' => $eventType]);
             } catch (\Throwable $e) { /* audit is non-critical */ }
         }
     }

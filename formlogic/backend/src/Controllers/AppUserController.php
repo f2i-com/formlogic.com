@@ -8,6 +8,7 @@ use FormLogic\Services\AppUserService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AuditService;
 use FormLogic\Services\EmailService;
+use FormLogic\Services\RateLimiter;
 use FormLogic\Constants\AppPermissions;
 use FormLogic\Helpers\IpResolver;
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
@@ -22,13 +23,16 @@ class AppUserController
     private AppService $appService;
     private ?AuditService $auditService;
     private ?EmailService $emailService;
+    /** Counts invitation emails against EmailService::USER_MAIL_LIMITS; without it they are not limited. */
+    private ?RateLimiter $mailLimiter;
 
-    public function __construct(AppUserService $appUserService, AppService $appService, ?AuditService $auditService = null, ?EmailService $emailService = null)
+    public function __construct(AppUserService $appUserService, AppService $appService, ?AuditService $auditService = null, ?EmailService $emailService = null, ?RateLimiter $mailLimiter = null)
     {
         $this->appUserService = $appUserService;
         $this->appService = $appService;
         $this->auditService = $auditService;
         $this->emailService = $emailService;
+        $this->mailLimiter = $mailLimiter;
     }
 
     private function requireAuth(Request $request): ?string
@@ -317,13 +321,32 @@ class AppUserController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Role not found'], 404);
         }
 
+        // An invitation emails an address the inviter chose, under the app's name, from this
+        // server's address: counted per inviting account and per address before the invitation
+        // is made (EmailService::USER_MAIL_LIMITS). When the limit is reached nothing is made,
+        // so the inviter is told rather than left with an invitation that was never sent. A
+        // store that cannot count stops the email only; the invitation and its link still work.
+        $sendEmail = $this->emailService !== null && $this->emailService->isConfigured();
+        if ($sendEmail && $this->mailLimiter !== null) {
+            $refusal = $this->emailService->userMailRefusal($this->mailLimiter, 'invitation', (string) $userId, (string) $data['email']);
+            if ($refusal !== null && $refusal['limit'] !== 'unavailable') {
+                return $this->jsonResponse($response, [
+                    'error' => true,
+                    'code' => 'email_limit',
+                    'message' => $refusal['message'],
+                    'retryAfter' => $refusal['retryAfter'],
+                ], 429)->withHeader('Retry-After', (string) $refusal['retryAfter']);
+            }
+            $sendEmail = $refusal === null;
+        }
+
         try {
             $invitation = $this->appUserService->createInvitation($appId, $data['email'], $data['roleId'], $userId);
             $this->audit($request, 'user.invite', 'app', $appId, ['email' => $data['email']]);
 
             // Best-effort: email the accept link. The UI also surfaces a copyable
             // link, so onboarding still works if email isn't configured.
-            if ($this->emailService !== null && !empty($invitation['token'])) {
+            if ($sendEmail && $this->emailService !== null && !empty($invitation['token'])) {
                 try {
                     // SECURITY: build the accept-link host from a server-trusted
                     // source only (never the raw Origin header) so the invite
@@ -340,6 +363,7 @@ class AppUserController
                     $this->emailService->send((string) $data['email'], "You're invited to {$rawAppName}", $html);
                 } catch (\Throwable $e) {
                     // Email failure must not fail invitation creation.
+                    error_log('Invitation email failed: ' . $e->getMessage());
                 }
             }
 

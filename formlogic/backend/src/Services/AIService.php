@@ -1756,6 +1756,7 @@ PROMPT;
         ];
 
         $normalizedFields = [];
+        $takenIds = []; // the ids given so far, so each field's is unique (generateFieldId)
         foreach ($data['fields'] as $index => $field) {
             if (!isset($field['type']) || !isset($field['label'])) {
                 continue; // Skip invalid fields
@@ -1768,7 +1769,7 @@ PROMPT;
             }
 
             $normalizedFields[] = [
-                'id' => $field['id'] ?? $this->generateFieldId($field['label']),
+                'id' => $this->generateFieldId($field['label'], $takenIds, $field['id'] ?? null),
                 'type' => $type,
                 'label' => $field['label'],
                 'description' => $field['description'] ?? '',
@@ -1883,13 +1884,22 @@ PROMPT;
     }
 
     /**
-     * Generate a field ID from a label
+     * The id of a field of a generated form. The id the AI supplied is kept when the server would
+     * take it for a new field: a valid id (FormService::fieldIdError), not a reserved name or a
+     * word of the expression language, and not already given on this form. Otherwise the field
+     * is named from its label as the editor names a new field (FormService::newFieldId; the AI
+     * app builder's safeFieldId does the same). The id given is added to $taken.
+     *
+     * @param array<string, true> $taken
      */
-    private function generateFieldId(string $label): string
+    private function generateFieldId(string $label, array &$taken, mixed $supplied = null): string
     {
-        $id = strtolower(preg_replace('/[^a-zA-Z0-9]+/', '_', $label));
-        $id = trim($id, '_');
-        return $id ?: 'field_' . substr(md5($label), 0, 8);
+        $id = is_string($supplied) && $supplied !== '' && FormService::fieldIdError($supplied) === null
+            && !FormService::isReservedFieldName($supplied) && !isset($taken[$supplied])
+            ? $supplied
+            : FormService::newFieldId($label, $taken);
+        $taken[$id] = true;
+        return $id;
     }
 
     /**

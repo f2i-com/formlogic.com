@@ -30,7 +30,9 @@ use PDO;
  *   - caps: per-user ≤ 2 in flight (typed queue_full_user), per-target ≤ 4 (queue_full_desktop);
  *   - TTL 15 min for a pending run; a claimed/streaming run is reaped after
  *     CLAIMED_STALE_SECONDS of SILENCE (claimed_at doubles as the activity anchor — it is
- *     refreshed on every frame append, since a flow can legitimately run for minutes);
+ *     refreshed on every frame append, since a flow can legitimately run for minutes), and in
+ *     any case MAX_RUN_SECONDS after it was enqueued; its frames are bounded in number and
+ *     total size (MAX_FRAMES_PER_RUN, MAX_RUN_FRAME_BYTES);
  *   - single-flight per target: claim() is ONE atomic UPDATE guarded by NOT EXISTS
  *     (claimed|streaming sibling for the same target);
  *   - queue position is computed at read time, never stored.
@@ -45,6 +47,22 @@ class DesktopFlowRelayService
     public const REQUEST_TTL_SECONDS = 900;
     /** A claimed/streaming run silent for this long is reaped (see expireStale()). */
     public const CLAIMED_STALE_SECONDS = 900;
+    /**
+     * A claimed/streaming run is reaped this long after it was ENQUEUED, however many frames it
+     * sends: frames refresh the silence anchor, so without this a desktop that kept sending them
+     * held its run, and the target's single flight, for ever. Four times the longest the browser
+     * waits on a run's stream (desktopFlowRun.ts MAX_STREAM_TIMEOUT_MS, 30 minutes).
+     */
+    public const MAX_RUN_SECONDS = 7200;
+    /**
+     * What one run's progress frames may add up to while it runs (they are purged when it ends): at
+     * most this many frames, of at most this many bytes in all. A frame past either is refused
+     * ('frame_limit'); the run itself goes on and can still complete. A progress frame is a node's
+     * status, well under a KiB sealed; without a total, 1 MiB frames at the key's 600 a minute let
+     * one run fill the database.
+     */
+    public const MAX_FRAMES_PER_RUN = 10000;
+    public const MAX_RUN_FRAME_BYTES = 67108864; // 64 MiB
     /** A completed run's unread sealed result is retained at most this long (read-once GC). */
     public const RESULT_RETENTION_SECONDS = 86400;
     /** Flow-lane caps (plan §5.2). */
@@ -426,7 +444,9 @@ class DesktopFlowRelayService
      *
      * @return array{seq: int, status: string}
      * @throws \InvalidArgumentException on invalid payload
-     * @throws \RuntimeException 'not_found'|'not_claimed'|'claimed_elsewhere' on state/claimant conflicts
+     * @throws \RuntimeException 'not_found'|'not_claimed'|'claimed_elsewhere' on state/claimant conflicts,
+     *         'frame_limit' when the run already holds MAX_FRAMES_PER_RUN frames or this one would
+     *         take its frames past MAX_RUN_FRAME_BYTES
      */
     public function appendFrame(string $id, string $ownerUserId, string $envelope, ?string $instanceId): array
     {
@@ -465,6 +485,19 @@ class DesktopFlowRelayService
             if (!in_array($row['status'] ?? '', ['claimed', 'streaming'], true)) {
                 $this->mysql->rollBack();
                 throw new \RuntimeException('not_claimed');
+            }
+            // The run's frames so far, counted under the row lock that serializes appends. A
+            // refused frame does not refresh claimed_at either.
+            $usage = $this->mysql->prepare("
+                SELECT COUNT(*) AS frames, COALESCE(SUM(LENGTH(envelope)), 0) AS bytes
+                FROM desktop_flow_run_frames WHERE request_id = :id
+            ");
+            $usage->execute(['id' => $id]);
+            $held = $usage->fetch();
+            if ((int) $held['frames'] >= self::MAX_FRAMES_PER_RUN
+                || (int) $held['bytes'] + strlen($envelopeBytes) > self::MAX_RUN_FRAME_BYTES) {
+                $this->mysql->rollBack();
+                throw new \RuntimeException('frame_limit');
             }
             $this->mysql->prepare("
                 UPDATE desktop_flow_runs SET status = 'streaming', claimed_at = NOW() WHERE id = :id
@@ -652,38 +685,32 @@ class DesktopFlowRelayService
      *   - 'claimed'/'streaming' rows whose claimed_at — refreshed on every appended frame, so
      *     it tracks lane ACTIVITY, not just the claim moment — is older than
      *     CLAIMED_STALE_SECONDS → 'expired', all sealed content purged. A silently-crashed
-     *     desktop's claim can't hold the single flight hostage, while a run that keeps
-     *     streaming frames is never reaped;
+     *     desktop's claim can't hold the single flight hostage;
+     *   - 'claimed'/'streaming' rows enqueued more than MAX_RUN_SECONDS ago, frames or not
+     *     (created_at never moves) → 'expired', all sealed content purged;
      *   - terminal rows whose unread result envelope is older than RESULT_RETENTION_SECONDS
      *     → the result is purged (read-once GC; the routing row itself stays for history).
+     *
+     * The rows read as stale are written 'expired' only if they are STILL stale when written: a
+     * run its desktop completed (or sent a frame for) after the read keeps what that did.
      */
     public function expireStale(?string $ownerUserId = null): int
     {
-        $claimedCutoff = self::CLAIMED_STALE_SECONDS; // int class constant, safe to interpolate
-        $resultCutoff = self::RESULT_RETENTION_SECONDS;
+        $resultCutoff = self::RESULT_RETENTION_SECONDS; // int class constant, safe to interpolate
         $ownerSql = $ownerUserId !== null ? ' AND owner_user_id = :o' : '';
         $params = $ownerUserId !== null ? ['o' => $ownerUserId] : [];
         try {
             $this->mysql->beginTransaction();
-            // The two stale conditions are ONE parenthesised group so {$ownerSql} constrains both:
+            // The stale conditions are ONE parenthesised group so {$ownerSql} constrains them all:
             // AND binds tighter than OR, and the unparenthesised form scoped only the claimed
             // branch, so every poll expired every tenant's overdue pending runs (and scanned the
             // whole table to find them).
-            $select = $this->mysql->prepare("
-                SELECT id FROM desktop_flow_runs
-                WHERE ((status = 'pending' AND expires_at <= NOW())
-                    OR (status IN ('claimed', 'streaming') AND claimed_at IS NOT NULL
-                        AND claimed_at < (NOW() - INTERVAL {$claimedCutoff} SECOND)))
-                   {$ownerSql}
-            ");
+            $select = $this->mysql->prepare('SELECT id FROM desktop_flow_runs WHERE ' . self::staleSql() . $ownerSql);
             $select->execute($params);
             $ids = $select->fetchAll(PDO::FETCH_COLUMN);
             $reaped = 0;
             if ($ids !== []) {
-                $quoted = implode(',', array_map(fn ($id) => $this->mysql->quote((string) $id), $ids));
-                $this->mysql->exec("UPDATE desktop_flow_runs SET status = 'expired', envelope = NULL, result_envelope = NULL, finished_at = NOW() WHERE id IN ({$quoted})");
-                $this->mysql->exec("DELETE FROM desktop_flow_run_frames WHERE request_id IN ({$quoted})");
-                $reaped = count($ids);
+                $reaped = $this->expireIfStillStale($ids);
             }
             $purge = $this->mysql->prepare("
                 UPDATE desktop_flow_runs SET result_envelope = NULL
@@ -703,6 +730,41 @@ class DesktopFlowRelayService
     }
 
     // ── Internals ──
+
+    /** What makes a run stale (see expireStale()), as one parenthesised SQL condition. */
+    private static function staleSql(): string
+    {
+        $claimedCutoff = self::CLAIMED_STALE_SECONDS; // int class constants, safe to interpolate
+        $runCutoff = self::MAX_RUN_SECONDS;
+        return "((status = 'pending' AND expires_at <= NOW())
+            OR (status IN ('claimed', 'streaming') AND claimed_at IS NOT NULL
+                AND claimed_at < (NOW() - INTERVAL {$claimedCutoff} SECOND))
+            OR (status IN ('claimed', 'streaming') AND created_at < (NOW() - INTERVAL {$runCutoff} SECOND)))";
+    }
+
+    /**
+     * Expire the given runs that are still stale, and purge their sealed content. The UPDATE asks
+     * the stale condition again, of the row as it is now (an UPDATE reads the latest committed
+     * row and locks it), so a run completed, or sent a frame, since the ids were read is left
+     * alone; frames are purged only for the runs this call expired. Returns how many it expired.
+     *
+     * @param string[] $ids
+     */
+    private function expireIfStillStale(array $ids): int
+    {
+        $quoted = implode(',', array_map(fn ($id) => $this->mysql->quote((string) $id), $ids));
+        $reaped = (int) $this->mysql->exec(
+            "UPDATE desktop_flow_runs SET status = 'expired', envelope = NULL, result_envelope = NULL, finished_at = NOW()
+             WHERE id IN ({$quoted}) AND " . self::staleSql()
+        );
+        if ($reaped > 0) {
+            $this->mysql->exec("
+                DELETE f FROM desktop_flow_run_frames f JOIN desktop_flow_runs r ON r.id = f.request_id
+                WHERE f.request_id IN ({$quoted}) AND r.status = 'expired'
+            ");
+        }
+        return $reaped;
+    }
 
     /** Non-terminal lane occupancy for one requesting user (any target). */
     private function countInFlightForUser(string $ownerUserId, string $requestingUserId): int

@@ -65,6 +65,8 @@ The fetch downloads Softn's `softn-formlogic-runtime-<tag>.zip`, verifies it (ch
 
 The script verifies prerequisites, runs `composer install`, creates `backend/.env` with generated `JWT_SECRET` + `AUDIT_HMAC_KEY`, creates the MySQL database and imports the schema (when a DB password is provided), runs `npm install`, creates `ui/.env`, installs the Softn release runtime, builds the server sandbox launcher from ZIPP source when Rust is installed (and otherwise says where a built one comes from) and makes it executable, and builds the frontend. Afterwards, set your database password in `backend/.env` if you skipped it.
 
+`backend/.env` holds the secrets, so the script creates it readable by its owner only (mode 600), as the wizard does; an existing `.env` is left as it is. If the web server runs PHP as another user (`www-data`, `apache`, `nginx`), make that user its owner (`sudo chown www-data backend/.env`). The script reads the database settings as the backend does (quoted values and values holding `=` or `#` included) and gives the password to the `mysql` client in a temporary option file only it can read, never on its command line.
+
 ### Option 3: Manual setup
 
 #### 1. Clone
@@ -524,6 +526,7 @@ Three ways in, all documented elsewhere:
 - **HttpOnly cookies** for session tokens (not accessible to JavaScript)
 - **CSRF protection** with the double-submit cookie pattern
 - **Rate limiting** per endpoint class: auth 10/min, form mutations 20/min, submissions 30/min, public form views 60/min, external API + MCP 120/min
+- **Mail limits** on mail sent to an address an account chose, which carries text the account wrote: app invitations (an account may send 50 an hour and 200 a day; one address may be sent 5 a day) and form new-response notifications (200 an hour and 1000 a day per form owner; 100 a day to one address, except the owner's own sign-in address). An invitation past a limit is refused with HTTP 429 `email_limit` and a plain message; a notification past one is not sent, and the submission is unaffected. Every mail not sent is logged (`Email not sent: limit reached`). Limits apply only when mail is configured.
 - **Security headers** (X-Content-Type-Options, X-Frame-Options, CSP, etc.)
 - **Input validation** with type checking and constraint enforcement
 - **SSRF protection** on webhooks, `ctx.http`, and domain probes — DNS resolution checks and private/reserved IP blocking, re-resolved per request

@@ -20,6 +20,26 @@ use Psr\Log\NullLogger;
  */
 class EmailService
 {
+    /**
+     * Limits on mail an account sends to an address it chose: an app's invitations, and a form's
+     * new-response notifications (which anyone submitting to the form sets off). Both carry text
+     * the account wrote (the app's name, the form's title) and go out from this server's own
+     * address, so without a limit any account could send mail in the operator's name to anyone,
+     * and get the operator's mail domain blocklisted. The numbers are far above what a real
+     * account sends.
+     *
+     * Per kind: what one account may send in an hour and in a day, and what one address may be
+     * sent in a day, whichever accounts send it. A notification to the form owner's own sign-in
+     * address is held to the account's limits only (a busy form may send its owner more than
+     * recipientDay); an address is held by one account at most (users.email is unique).
+     *
+     * No window is longer than a day: RateLimiter drops counters older than that.
+     */
+    public const USER_MAIL_LIMITS = [
+        'invitation' => ['accountHour' => 50, 'accountDay' => 200, 'recipientDay' => 5],
+        'notification' => ['accountHour' => 200, 'accountDay' => 1000, 'recipientDay' => 100],
+    ];
+
     private LoggerInterface $logger;
     private string $fromAddress;
     private string $fromName;
@@ -28,10 +48,17 @@ class EmailService
     private string $smtpUser;
     private string $smtpPassword;
     private string $smtpEncryption;
+    /** @var array<string, array{accountHour:int, accountDay:int, recipientDay:int}> */
+    private array $userMailLimits;
 
-    public function __construct(?LoggerInterface $logger = null)
+    /**
+     * @param array<string, array{accountHour:int, accountDay:int, recipientDay:int}>|null $userMailLimits
+     *        USER_MAIL_LIMITS unless given (tests give smaller ones)
+     */
+    public function __construct(?LoggerInterface $logger = null, ?array $userMailLimits = null)
     {
         $this->logger = $logger ?? new NullLogger();
+        $this->userMailLimits = $userMailLimits ?? self::USER_MAIL_LIMITS;
         $this->fromAddress = self::env('MAIL_FROM_ADDRESS', '');
         $this->fromName = self::env('MAIL_FROM_NAME', 'FormLogic');
         $this->smtpHost = self::env('SMTP_HOST', '');
@@ -92,6 +119,121 @@ class EmailService
         }
         return ['path' => 'none', 'configured' => false,
             'warning' => 'No SMTP configured and PHP mail() is unavailable — email cannot be sent.'];
+    }
+
+    /**
+     * Count one mail of $kind ('invitation' or 'notification', see USER_MAIL_LIMITS) that the
+     * account $accountId is about to send to $to, and say whether it may go. Returns null when
+     * it may. Otherwise it returns why not, and logs it:
+     *   - limit: 'recipient_day', 'account_hour' or 'account_day'; or 'unavailable' when the
+     *     counters could not be read (the mail is not sent then either);
+     *   - retryAfter: seconds until that counter starts again (0 for 'unavailable');
+     *   - message: a sentence for the person who set the mail off.
+     *
+     * Call it only when the mail would really be sent (isConfigured()): a site that sends no
+     * mail has nothing to count. Throws only for a kind that has no limits.
+     *
+     * @return array{limit:string, retryAfter:int, message:string}|null
+     */
+    public function userMailRefusal(RateLimiter $limiter, string $kind, string $accountId, string $to, bool $toIsAccountOwn = false): ?array
+    {
+        $limits = $this->userMailLimits[$kind] ?? null;
+        if ($limits === null) {
+            throw new \InvalidArgumentException("Unknown kind of mail: {$kind}");
+        }
+        $recipient = strtolower(trim($to));
+        $noun = $kind === 'invitation' ? 'invitation emails' : 'new-response emails';
+        $checks = [];
+        if (!$toIsAccountOwn) {
+            $checks[] = ['recipient_day', "user-mail:{$kind}:to:" . self::mailboxKey($recipient), 86400, $limits['recipientDay'],
+                "This address has been sent as many {$noun} as it can be today. Try again tomorrow."];
+        }
+        $checks[] = ['account_hour', "user-mail:{$kind}:account:{$accountId}", 3600, $limits['accountHour'],
+            "Your account has sent as many {$noun} as it can this hour."];
+        $checks[] = ['account_day', "user-mail:{$kind}:account:{$accountId}", 86400, $limits['accountDay'],
+            "Your account has sent as many {$noun} as it can today."];
+
+        // Each counter is raised and then compared (as RateLimitMiddleware does), so two requests
+        // at once cannot both pass on the last free place. The address is counted first, so an
+        // address that has had its share does not use up the account's.
+        foreach ($checks as [$name, $key, $window, $max, $message]) {
+            $count = $limiter->hit($key . ':' . $window, $window);
+            if ($count === RateLimiter::UNAVAILABLE) {
+                $this->logger->error('Email not sent: the mail limit counters are unavailable', ['kind' => $kind, 'account' => $accountId]);
+                return ['limit' => 'unavailable', 'retryAfter' => 0, 'message' => 'Email cannot be sent right now. Please try again later.'];
+            }
+            if ($count > $max) {
+                $retryAfter = $limiter->secondsUntilReset($window);
+                $this->logger->warning('Email not sent: limit reached', [
+                    'kind' => $kind, 'limit' => $name, 'max' => $max, 'account' => $accountId, 'to' => $recipient,
+                ]);
+                if ($name !== 'recipient_day') {
+                    $minutes = max(1, (int) ceil($retryAfter / 60));
+                    $message .= $minutes < 120
+                        ? " Try again in {$minutes} minute(s)."
+                        : ' Try again in ' . (int) ceil($minutes / 60) . ' hour(s).';
+                }
+                return ['limit' => $name, 'retryAfter' => $retryAfter, 'message' => $message];
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The mailbox an address reaches, for counting what one address is sent: "name+anything@"
+     * reaches "name@" at nearly every provider, and Gmail ignores dots before the '@'. Counted
+     * apart, those spellings would each have the whole daily allowance.
+     */
+    private static function mailboxKey(string $address): string
+    {
+        $at = strrpos($address, '@');
+        if ($at === false) {
+            return $address;
+        }
+        $local = substr($address, 0, $at);
+        $domain = substr($address, $at + 1);
+        $plus = strpos($local, '+');
+        if ($plus !== false && $plus > 0) {
+            $local = substr($local, 0, $plus);
+        }
+        if ($domain === 'gmail.com' || $domain === 'googlemail.com') {
+            $local = str_replace('.', '', $local);
+            $domain = 'gmail.com';
+        }
+        return $local . '@' . $domain;
+    }
+
+    /**
+     * Send a form's new-response notification to the address its owner set (the Notifications
+     * tab), within the 'notification' limits of USER_MAIL_LIMITS. $pdo is the site database: it
+     * holds the limits' counters and the owner's own sign-in address. Without it nothing is
+     * counted, so nothing is sent. Returns whether a delivery path accepted the mail. Never throws.
+     *
+     * @param array<string, mixed> $form the form as FormService gives it (its userId is the owner)
+     */
+    public function sendResponseNotification(?\PDO $pdo, array $form, string $to, string $subject, string $htmlBody): bool
+    {
+        if (!$this->isConfigured() || !filter_var($to, FILTER_VALIDATE_EMAIL)) {
+            return $this->send($to, $subject, $htmlBody); // logs why, sends nothing
+        }
+        if ($pdo === null) {
+            $this->logger->warning('Email not sent: no database to count it against the mail limits', ['kind' => 'notification']);
+            return false;
+        }
+        $ownerId = (string) ($form['userId'] ?? '');
+        $toIsOwn = false;
+        try {
+            $stmt = $pdo->prepare('SELECT email FROM users WHERE id = ?');
+            $stmt->execute([$ownerId]);
+            $ownerEmail = $stmt->fetchColumn();
+            $toIsOwn = is_string($ownerEmail) && strtolower(trim($ownerEmail)) === strtolower(trim($to));
+        } catch (\Throwable $e) {
+            // Not known to be the owner's own: held to the address's limit as well.
+        }
+        if ($this->userMailRefusal(new RateLimiter($pdo), 'notification', $ownerId, $to, $toIsOwn) !== null) {
+            return false;
+        }
+        return $this->send($to, $subject, $htmlBody);
     }
 
     /**

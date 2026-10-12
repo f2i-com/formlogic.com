@@ -14,7 +14,7 @@ class FormService
     /**
      * Field-id slugs must not collide with the FormLogic expression prelude's globals
      * (a field id like "count"/"sum"/"format" would shadow that builtin in generated
-     * expressions). Mirrors the frontend RESERVED_FIELD_IDS (formStore.ts).
+     * expressions). The editor's EXPRESSION_GLOBAL_NAMES (ui/src/lib/utils.ts).
      */
     private const RESERVED_FIELD_IDS = [
         '__isArr', 'validators', 'format', 'compliance', 'finance', 'safety',
@@ -29,6 +29,57 @@ class FormService
         'WeakSet', 'Reflect', 'Proxy', 'parseInt', 'parseFloat', 'isNaN',
         'isFinite', 'print', 'console', 'ctx',
     ];
+
+    /**
+     * Words of the expression language. Show-if rules and calculations are JavaScript expressions
+     * with each answer a global named after its field: a field id that is one of these cannot be
+     * read there (`class == "5A"` does not parse; `true`, `null` and `this` read the language's
+     * value instead). The editor's EXPRESSION_RESERVED_WORDS (ui/src/lib/utils.ts); a test holds
+     * the two lists, and RESERVED_FIELD_IDS with the editor's EXPRESSION_GLOBAL_NAMES, equal.
+     *
+     * Unlike RESERVED_FIELD_IDS these are not refused: fieldIdError() runs on every id of every
+     * save, and forms made before the editor avoided them hold such ids (a field labelled Class
+     * was given `class`); they keep saving, and imports and restores carry them. An id the server
+     * makes itself (newFieldId) is never one of them.
+     */
+    private const EXPRESSION_RESERVED_WORDS = [
+        'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default', 'delete', 'do',
+        'else', 'enum', 'export', 'extends', 'finally', 'for', 'function', 'if', 'import', 'in',
+        'instanceof', 'new', 'return', 'super', 'switch', 'throw', 'try', 'typeof', 'var', 'void',
+        'while', 'with',
+        'true', 'false', 'null', 'this', 'undefined',
+        'eval',
+    ];
+
+    /** A name the server never gives a field it names itself: refused (RESERVED_FIELD_IDS) or unreadable in an expression. */
+    public static function isReservedFieldName(string $id): bool
+    {
+        return in_array($id, self::RESERVED_FIELD_IDS, true) || in_array($id, self::EXPRESSION_RESERVED_WORDS, true);
+    }
+
+    /**
+     * The id for a new field with this label, as the editor names one (formStore.ts
+     * generateFieldId): the label's slug (lower case, runs of anything but letters and digits as
+     * '_', at most 32 characters; 'field' when nothing is left), '_' before a leading digit, and
+     * '_1', '_2', ... after it until it is neither in $taken nor a reserved name.
+     *
+     * @param array<string, mixed> $taken ids already used on the form, as keys
+     */
+    public static function newFieldId(string $label, array $taken): string
+    {
+        $base = substr(trim(strtolower((string) preg_replace('/[^a-zA-Z0-9]+/', '_', $label)), '_'), 0, 32);
+        if ($base === '') {
+            $base = 'field';
+        }
+        if (ctype_digit($base[0])) {
+            $base = '_' . $base;
+        }
+        $id = $base;
+        for ($n = 1; isset($taken[$id]) || self::isReservedFieldName($id); $n++) {
+            $id = $base . '_' . $n;
+        }
+        return $id;
+    }
 
     /**
      * Validate an explicit, client-supplied field id against the same constraints the frontend
@@ -976,26 +1027,15 @@ class FormService
             }
         }
 
-        // Resolve a final, unique id for EVERY field before insert. Fields without
-        // an id get one generated from their label; because that generator is
-        // label-derived and truncated, two id-less fields with the same label
-        // would otherwise produce the same id and the second INSERT would violate
-        // the PRIMARY KEY and roll back the whole save. De-duplicate generated ids
-        // (numeric suffix) against all ids already in use.
+        // Resolve a final, unique id for EVERY field before insert. Fields without an id get
+        // one named from their label as the editor names one (newFieldId): unique among all
+        // ids in use (two id-less fields with one label would otherwise collide on the PRIMARY
+        // KEY and roll back the whole save), and one an expression can read.
         $usedIds = array_fill_keys($explicitIds, true);
         foreach ($fields as $i => $field) {
             $id = $field['id'] ?? '';
             if ($id === null || $id === '') {
-                $base = $this->generateHumanFieldId($field['label'] ?? '');
-                if ($base === '') {
-                    $base = 'field';
-                }
-                $finalId = $base;
-                $counter = 1;
-                while (isset($usedIds[$finalId])) {
-                    $finalId = $base . '_' . $counter;
-                    $counter++;
-                }
+                $finalId = self::newFieldId((string) ($field['label'] ?? ''), $usedIds);
                 $usedIds[$finalId] = true;
                 $fields[$i]['id'] = $finalId;
             }
@@ -1041,8 +1081,11 @@ class FormService
     }
 
     /**
-     * Generate human-friendly field IDs for duplicated fields.
-     * Appends '_copy' suffix and deduplicates with numeric counters.
+     * Field ids for a duplicated form's fields, named again from their labels; every id that
+     * changes is rewritten across the copy's rules and script ($idMapping). A field keeps its id
+     * when its label still gives it (the plain slug, as older forms were named, or the id the
+     * editor's naming gives); any other gets a new id as the editor names one (newFieldId). A
+     * kept id is never rewritten: renaming a stored `new` would rewrite every `new` in the script.
      */
     private function generateDuplicateFieldIds(array $fields, array &$idMapping = []): array
     {
@@ -1050,15 +1093,13 @@ class FormService
         $result = [];
 
         foreach ($fields as $field) {
-            $oldId = $field['id'] ?? '';
-            $baseId = $this->generateHumanFieldId($field['label'] ?? '');
-            $finalId = $baseId;
-            $counter = 1;
-            while (in_array($finalId, $usedIds, true)) {
-                $finalId = $baseId . '_' . $counter;
-                $counter++;
-            }
-            $usedIds[] = $finalId;
+            $oldId = (string) ($field['id'] ?? '');
+            $label = (string) ($field['label'] ?? '');
+            $named = self::newFieldId($label, $usedIds);
+            $finalId = $oldId !== '' && !isset($usedIds[$oldId]) && ($oldId === $named || $oldId === $this->generateHumanFieldId($label))
+                ? $oldId
+                : $named;
+            $usedIds[$finalId] = true;
             if ($oldId !== '' && $oldId !== $finalId) {
                 $idMapping[$oldId] = $finalId;
             }
