@@ -89,7 +89,13 @@ src-tauri/
                          (XChaCha20-Poly1305), fail-closed persistence, per-app quotas, corruption quarantine
   src/trust.rs           NATIVE-SEC-001 TOFU signing-key pin store + consent prompts (first-use / rotation)
   tauri.conf.json        withGlobalTauri; window built in setup() to carry the init script; deep-link plugin config
-  capabilities/          IPC grants incl. remote.urls for approved FormLogic origins + deep-link:default
+  capabilities/          IPC grants incl. remote.urls for approved FormLogic origins + deep-link:default;
+                         shell.json grants the bundled shell page alone the pending deep link
+  permissions/bridge.toml  the runtime's own commands as permissions (`allow-bridge`, `allow-pending-deep-link`).
+                         Tauri refuses an app-defined command from a remote origin unless a permission names it
+                         and a capability grants it, so without this file no hosted app reaches the bridge
+  tests/bridge_ipc.rs    the commands called through Tauri's IPC allowlist on its mock runtime, as pages on an
+                         approved origin, an unlisted origin and the shell
   gen/android/           Tauri-generated Android Gradle project (themes = fl_navy splash; build outputs gitignored)
 ```
 

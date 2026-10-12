@@ -1,0 +1,29 @@
+# The runtime's own commands (src/lib.rs), as permissions a capability can grant.
+#
+# Tauri refuses a command the app itself defines when the call comes from a remote origin,
+# unless a permission names the command and a capability grants that permission to the origin.
+# A hosted FormLogic app is a remote origin, so without this file `window.FormLogicNative`
+# reached no command at all from the pages it exists for. With this file present the same
+# rule holds for the bundled shell page: a command not granted in capabilities/ is refused
+# there too.
+
+[[permission]]
+identifier = "allow-bridge"
+description = "The window.FormLogicNative commands a hosted app calls: runtime info and readiness, connectors, the offline sync queue. Each connector and queue command still checks the calling page's own signed manifest."
+commands.allow = [
+  "runtime_info",
+  "runtime_ready",
+  "connector_list",
+  "connector_status",
+  "connector_request",
+  "sync_enqueue",
+  "sync_get_queue",
+  "sync_flush",
+  "sync_ack",
+  "sync_fail",
+]
+
+[[permission]]
+identifier = "allow-pending-deep-link"
+description = "The deep link the runtime was started with, taken once by the bundled shell page."
+commands.allow = ["pending_deep_link"]

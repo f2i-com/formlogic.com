@@ -42,6 +42,7 @@ pub const MAX_SYNC_ATTEMPTS: u32 = 5;
 /// Per-partition caps: a runaway app can fill its own budget, not the disk.
 pub const MAX_ITEMS_PER_PARTITION: usize = 500;
 pub const MAX_BYTES_PER_PARTITION: usize = 10 * 1024 * 1024;
+pub const MAX_LAST_ERROR_BYTES: usize = 2048;
 
 static QUEUE_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -123,7 +124,9 @@ impl SyncItem {
             idempotency_key,
             answers: v.get("answers").cloned().unwrap_or(Value::Null),
             status: "pending".into(),
-            attempts: v.get("attempts").and_then(Value::as_u64).unwrap_or(0) as u32,
+            // A count past the cap means the same as the cap; `as u32` would wrap it instead.
+            attempts: v.get("attempts").and_then(Value::as_u64).unwrap_or(0).min(MAX_SYNC_ATTEMPTS as u64)
+                as u32,
             last_error: s("lastError"),
             created_at: s("createdAt").filter(|x| !x.is_empty()).unwrap_or_else(now_iso),
             partition: p.key(),
@@ -476,6 +479,13 @@ impl PartitionedSyncQueue {
         let snapshot = items.clone();
         let set: HashSet<&String> = ids.iter().collect();
         let pkey = p.key();
+        // The message is the page's text and is written onto every named item, after the
+        // byte quota was judged at enqueue: keep its start, cut on a character boundary.
+        let mut cut = error.len().min(MAX_LAST_ERROR_BYTES);
+        while !error.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        let error = &error[..cut];
         let mut n = 0;
         for it in items
             .iter_mut()
@@ -485,7 +495,7 @@ impl PartitionedSyncQueue {
             if terminal {
                 it.status = "failed".into();
             } else {
-                it.attempts += 1;
+                it.attempts = it.attempts.saturating_add(1);
                 if it.attempts >= MAX_SYNC_ATTEMPTS {
                     it.status = "failed".into();
                 }
@@ -658,6 +668,43 @@ mod tests {
         // Another partition is unaffected by a full one.
         let other = part("https://x.example", "a", "other-app", "other");
         assert!(q.enqueue(&other, &json!({ "formId": "f", "answers": {} })).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failure_message_cannot_outgrow_the_byte_quota() {
+        // The byte quota is judged when an item is queued. What a later `fail` writes onto
+        // the item is the page's text too, and is held to a size of its own.
+        let dir = tmp("lasterror");
+        let q = load(&dir);
+        let p = part("https://x.example", "a", "app", "slug");
+        let id = q.enqueue(&p, &json!({ "formId": "f", "answers": {} })).unwrap();
+        let long = "é".repeat(1024 * 1024);
+        q.fail(&p, &[id.clone()], &long, false).unwrap();
+        let kept = q.get_queue(&p)[0].last_error.clone().unwrap();
+        assert!(kept.len() <= MAX_LAST_ERROR_BYTES, "kept {} bytes", kept.len());
+        assert!(kept.starts_with("ééé"));
+        // A short message is kept whole.
+        q.fail(&p, &[id], "HTTP 503", false).unwrap();
+        assert_eq!(q.get_queue(&p)[0].last_error.as_deref(), Some("HTTP 503"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_attempt_count_from_the_page_cannot_overflow() {
+        let dir = tmp("attempts-max");
+        let q = load(&dir);
+        let p = part("https://x.example", "a", "app", "slug");
+        for claimed in [json!(u32::MAX), json!(u64::MAX), json!(4_294_967_296u64)] {
+            let id = q
+                .enqueue(&p, &json!({ "formId": "f", "answers": {}, "attempts": claimed }))
+                .unwrap();
+            // One more failure ends the item; it does not wrap round to a fresh one.
+            q.fail(&p, &[id.clone()], "boom", false).unwrap();
+            let item = q.get_queue(&p).into_iter().find(|i| i.id == id).unwrap();
+            assert_eq!(item.status, "failed", "attempts claimed as {claimed}");
+            assert!(item.attempts >= MAX_SYNC_ATTEMPTS, "attempts claimed as {claimed}");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

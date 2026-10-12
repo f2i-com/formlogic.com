@@ -18,7 +18,10 @@
 // at rest (`sync_queue`); every queue operation binds to the calling page's partition.
 //
 // Custom domains: the Tauri capability allowlist (capabilities/default.json) is the
-// authoritative IPC boundary — only the origins listed there ever get `window.__TAURI__`.
+// authoritative IPC boundary — Tauri refuses every command from an origin not listed there.
+// The listed origins reach the bridge commands because permissions/bridge.toml names them
+// and the capability grants `allow-bridge`: a command the app defines is refused from a
+// remote origin unless a permission and a capability say otherwise (tests/bridge_ipc.rs).
 // An app served from a custom domain therefore runs DISPLAY-ONLY in this runtime today
 // (its bridge reports ipc_unavailable and the web runtime falls back), even though signed
 // custom-domain manifests exist; enabling one requires shipping a build whose allowlist
@@ -137,8 +140,8 @@ const READY_WAIT_SECS: u64 = 10;
 /// `origin_denied`. Runs `async` + `spawn_blocking` so the condvar park never blocks the main
 /// (UI) thread. Borrows `State`, so it must return a `Result` (Tauri async-command rule).
 #[tauri::command]
-async fn runtime_ready(
-    webview: tauri::Webview,
+async fn runtime_ready<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     verified: tauri::State<'_, VerifiedOrigins>,
 ) -> Result<Value, String> {
     // Only a hosted app page under `/app/<slug>` triggers manifest verification; the shell and
@@ -161,7 +164,7 @@ async fn runtime_ready(
 }
 
 #[tauri::command]
-fn connector_list(webview: tauri::Webview, verified: tauri::State<VerifiedOrigins>) -> Vec<ConnectorSummary> {
+fn connector_list<R: tauri::Runtime>(webview: tauri::Webview<R>, verified: tauri::State<VerifiedOrigins>) -> Vec<ConnectorSummary> {
     // Only a verified APP discovers native connectors; an unverified page is display-only
     // (the web runtime then sees no native connectors and uses its browser registry).
     let Some((origin, slug)) = caller_identity(&webview) else { return vec![] };
@@ -179,8 +182,8 @@ fn connector_list(webview: tauri::Webview, verified: tauri::State<VerifiedOrigin
 }
 
 #[tauri::command]
-fn connector_status(
-    webview: tauri::Webview,
+fn connector_status<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     verified: tauri::State<VerifiedOrigins>,
     connector_id: String,
 ) -> Result<ConnectorStatus, String> {
@@ -255,8 +258,8 @@ fn vehicle_request(command: &str) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn connector_request(
-    webview: tauri::Webview,
+fn connector_request<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     verified: tauri::State<VerifiedOrigins>,
     connector_id: String,
     command: String,
@@ -309,8 +312,8 @@ fn queue_err(e: QueueError) -> String {
 }
 
 #[tauri::command]
-fn sync_enqueue(
-    webview: tauri::Webview,
+fn sync_enqueue<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     verified: tauri::State<VerifiedOrigins>,
     state: tauri::State<PartitionedSyncQueue>,
     item: Value,
@@ -321,8 +324,8 @@ fn sync_enqueue(
 }
 
 #[tauri::command]
-fn sync_get_queue(
-    webview: tauri::Webview,
+fn sync_get_queue<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     verified: tauri::State<VerifiedOrigins>,
     state: tauri::State<PartitionedSyncQueue>,
 ) -> Result<Vec<SyncItem>, String> {
@@ -331,8 +334,8 @@ fn sync_get_queue(
 }
 
 #[tauri::command]
-fn sync_flush(
-    webview: tauri::Webview,
+fn sync_flush<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     verified: tauri::State<VerifiedOrigins>,
     state: tauri::State<PartitionedSyncQueue>,
 ) -> Result<Value, String> {
@@ -341,8 +344,8 @@ fn sync_flush(
 }
 
 #[tauri::command]
-fn sync_ack(
-    webview: tauri::Webview,
+fn sync_ack<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     verified: tauri::State<VerifiedOrigins>,
     state: tauri::State<PartitionedSyncQueue>,
     ids: Vec<String>,
@@ -352,8 +355,8 @@ fn sync_ack(
 }
 
 #[tauri::command]
-fn sync_fail(
-    webview: tauri::Webview,
+fn sync_fail<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     verified: tauri::State<VerifiedOrigins>,
     state: tauri::State<PartitionedSyncQueue>,
     ids: Vec<String>,
@@ -542,7 +545,7 @@ impl VerifiedOrigins {
 /// None for the shell / a non-web origin / a page outside /app/<slug>.
 /// Re-derived on every command, so a navigation to another app immediately
 /// changes which verification (if any) the caller is bound to.
-fn caller_identity(webview: &tauri::Webview) -> Option<(String, String)> {
+fn caller_identity<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Option<(String, String)> {
     let url = webview.url().ok()?;
     let origin = hosted_app_origin(&url)?;
     let slug = slug_of(&url)?;
@@ -550,7 +553,10 @@ fn caller_identity(webview: &tauri::Webview) -> Option<(String, String)> {
 }
 
 /// The calling APP's verified caps, or the origin_denied typed error.
-fn require_caps(webview: &tauri::Webview, verified: &VerifiedOrigins) -> Result<VerifiedCaps, String> {
+fn require_caps<R: tauri::Runtime>(
+    webview: &tauri::Webview<R>,
+    verified: &VerifiedOrigins,
+) -> Result<VerifiedCaps, String> {
     let (origin, slug) = caller_identity(webview)
         .ok_or_else(|| conn_err(CODE_ORIGIN_DENIED, "This page has no verified FormLogic manifest."))?;
     verified.get(&app_key(&origin, &slug)).ok_or_else(|| {
@@ -563,8 +569,8 @@ fn require_caps(webview: &tauri::Webview, verified: &VerifiedOrigins) -> Result<
 
 /// Gate for sync commands: the caller must be a VERIFIED app, and every
 /// queue operation binds to that app's trust partition (NATIVE-SEC-001).
-fn require_verified_partition(
-    webview: &tauri::Webview,
+fn require_verified_partition<R: tauri::Runtime>(
+    webview: &tauri::Webview<R>,
     verified: &VerifiedOrigins,
 ) -> Result<Partition, String> {
     let (origin, slug) = caller_identity(webview)
@@ -689,12 +695,30 @@ fn extract_caps(payload: &Value) -> VerifiedCaps {
     }
 }
 
+/// The most a manifest or signing-key response may be. A signed client manifest is a few
+/// kilobytes, and the server answering is whatever origin a link opened, so its answer is
+/// not read without end.
+const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
+
+/// The text of a manifest or signing-key response, refused past `MAX_MANIFEST_BYTES`.
+fn read_response(body: impl std::io::Read, url: &str) -> Result<String, String> {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    body.take(MAX_MANIFEST_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("reading {url} failed: {e}"))?;
+    if bytes.len() as u64 > MAX_MANIFEST_BYTES {
+        return Err(format!("{url} answered with more than {MAX_MANIFEST_BYTES} bytes"));
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
 fn http_get(client: &reqwest::blocking::Client, url: &str) -> Result<String, String> {
     let resp = client.get(url).send().map_err(|e| format!("GET {url} failed: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("GET {url} returned HTTP {}", resp.status().as_u16()));
     }
-    resp.text().map_err(|e| format!("reading {url} failed: {e}"))
+    read_response(resp, url)
 }
 
 /// The lowercased host of an http/https origin string (`scheme://host[:port]`), without the port.
@@ -739,19 +763,25 @@ where
 }
 
 /// After the Ed25519 signature checks out, enforce that the signed manifest actually describes the
-/// app+origin we navigated to (spec §25 hardening): a payload `appSlug` (if present) must match the
+/// app+origin we navigated to (spec §25 hardening): a payload `appSlug` MUST be present and match the
 /// URL slug, and a top-level `domain` MUST be present and match the current origin host. A mismatch —
-/// or a MISSING domain — is a HARD verification failure: the caller keeps the webview display-only
-/// rather than granting native capabilities from a manifest bound elsewhere. The server binds `domain`
-/// on every route (the custom-domain host, or the platform host for the slug route), so a domain-less
-/// manifest is a replay attempt — a validly-signed manifest served from a foreign origin — and is refused.
+/// or a MISSING appSlug or domain — is a HARD verification failure: the caller keeps the webview
+/// display-only rather than granting native capabilities from a manifest bound elsewhere. The server
+/// binds `domain` on every route (the custom-domain host, or the platform host for the slug route), so
+/// a domain-less manifest is a replay attempt — a validly-signed manifest served from a foreign origin
+/// — and is refused. It has put `appSlug` in every client manifest since the first one, so a manifest
+/// without it names no app: accepted, it would verify as every app on its origin and hand them all one
+/// queue partition.
 fn check_manifest_identity(payload: &Value, slug: &str, origin_host: Option<&str>) -> Result<(), String> {
-    if let Some(manifest_slug) = payload.get("appSlug").and_then(Value::as_str) {
-        if manifest_slug != slug {
-            return Err(format!(
-                "manifest appSlug \"{manifest_slug}\" does not match navigated slug \"{slug}\""
-            ));
-        }
+    let manifest_slug = payload
+        .get("appSlug")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "manifest is missing a signed `appSlug` app binding".to_string())?;
+    if manifest_slug != slug {
+        return Err(format!(
+            "manifest appSlug \"{manifest_slug}\" does not match navigated slug \"{slug}\""
+        ));
     }
     let domain = payload
         .get("domain")
@@ -1008,6 +1038,23 @@ fn deep_link_target(raw: &str) -> Option<String> {
     }
 }
 
+/// Every command the runtime registers, for the real window and for the tests' mock one.
+fn bridge_commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![
+        runtime_info,
+        runtime_ready,
+        connector_list,
+        connector_status,
+        connector_request,
+        sync_enqueue,
+        sync_get_queue,
+        sync_flush,
+        sync_ack,
+        sync_fail,
+        pending_deep_link
+    ]
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1150,21 +1197,54 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            runtime_info,
-            runtime_ready,
-            connector_list,
-            connector_status,
-            connector_request,
-            sync_enqueue,
-            sync_get_queue,
-            sync_flush,
-            sync_ack,
-            sync_fail,
-            pending_deep_link
-        ])
+        .invoke_handler(bridge_commands())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// What tests/bridge_ipc.rs needs to run the commands on Tauri's mock runtime: the handler
+/// `run()` registers, and the state the commands read, kept in a folder of the test's own
+/// instead of the user's data folder. Nothing in the runtime calls this.
+#[doc(hidden)]
+pub mod test_support {
+    use super::*;
+
+    pub fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+        bridge_commands()
+    }
+
+    /// The state `run()` manages in its setup. The queue and its key live in `data_dir`.
+    pub fn manage_state<R: tauri::Runtime>(app: &tauri::App<R>, data_dir: &std::path::Path) {
+        app.manage(VerifiedOrigins::default());
+        app.manage(Arc::new(DeepLinkNav::default()));
+        app.manage(PartitionedSyncQueue::load(data_dir.join("sync-queue.json"), data_dir));
+    }
+
+    /// Record the app `slug` on `origin` as verified with these `connector.command` grants,
+    /// as the page-load verifier does once a signed manifest has checked out.
+    pub fn mark_verified<R: tauri::Runtime>(
+        app: &tauri::App<R>,
+        origin: &str,
+        slug: &str,
+        app_id: &str,
+        grants: &[&str],
+    ) {
+        app.state::<VerifiedOrigins>().insert_verified(
+            app_key(origin, slug),
+            VerifiedCaps {
+                slug: slug.to_string(),
+                capabilities: grants.iter().map(|grant| grant.to_string()).collect(),
+                app_id: app_id.to_string(),
+                account_id: "account".to_string(),
+                manifest_version: "1".to_string(),
+            },
+        );
+    }
+
+    /// Stash a deep link target as a cold start does.
+    pub fn stash_deep_link<R: tauri::Runtime>(app: &tauri::App<R>, target: &str) {
+        *app.state::<Arc<DeepLinkNav>>().pending.lock().unwrap() = Some(target.to_string());
+    }
 }
 
 #[cfg(test)]
@@ -1584,6 +1664,64 @@ mod tests {
         assert!(check_manifest_identity(&json!({ "appSlug": "demo" }), "demo", Some("demo.example.com")).is_err());
         // EMPTY domain is treated as missing → also rejected.
         assert!(check_manifest_identity(&json!({ "appSlug": "demo", "domain": "" }), "demo", Some("x")).is_err());
+        // MISSING appSlug → REJECTED, and so is one that is empty or not text: a manifest that
+        // names no app must not pass for whichever app the page happens to be.
+        for unnamed in [
+            json!({ "domain": "demo.example.com" }),
+            json!({ "appSlug": "", "domain": "demo.example.com" }),
+            json!({ "appSlug": 7, "domain": "demo.example.com" }),
+            json!({ "appSlug": null, "domain": "demo.example.com" }),
+        ] {
+            assert!(
+                check_manifest_identity(&unnamed, "demo", Some("demo.example.com")).is_err(),
+                "{unnamed} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn a_signed_manifest_that_names_no_app_verifies_for_none() {
+        use base64::Engine as _;
+        use ed25519_dalek::{Signer, SigningKey};
+
+        // Validly signed and bound to the right domain, but with no appSlug (and no appId).
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let pubkey_b64 = base64::engine::general_purpose::STANDARD.encode(signing_key.verifying_key().to_bytes());
+        let payload = json!({
+            "version": 1,
+            "domain": "formlogic.com",
+            "native": { "capabilities": [ { "connector": "vehicle", "commands": ["status.read"] } ] }
+        });
+        let signature = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(signing_key.sign(php_canonical(&payload).as_bytes()).to_bytes());
+        let envelope = json!({ "alg": "Ed25519", "payload": payload, "signature": signature });
+
+        // Accepted, it would verify as every app on the origin, and each of them would be
+        // handed the same queue partition with an empty slug stamped on its items.
+        for slug in ["alpha", "beta"] {
+            let verified = verify_manifest_envelope(&envelope, &pubkey_b64, slug, Some("formlogic.com"));
+            assert!(
+                verified.is_err(),
+                "verified as \"{slug}\" with queue partition {:?}",
+                verified.map(|caps| caps.partition("https://formlogic.com").key())
+            );
+        }
+    }
+
+    #[test]
+    fn a_manifest_response_is_read_up_to_a_megabyte() {
+        // The server is whatever origin a link named: its answer is not read without end.
+        let url = "https://apps.example.org/.well-known/formlogic-app.json";
+        let endless = std::io::Read::take(std::io::repeat(b' '), 64 * 1024 * 1024);
+        let refused = read_response(endless, url).unwrap_err();
+        assert!(refused.contains("more than"), "{refused}");
+
+        let manifest = br#"{"alg":"Ed25519","payload":{"appSlug":"demo"},"signature":"sig"}"#;
+        assert_eq!(read_response(&manifest[..], url).unwrap().as_bytes(), manifest);
+        let largest = vec![b' '; MAX_MANIFEST_BYTES as usize];
+        assert_eq!(read_response(&largest[..], url).unwrap().len(), largest.len());
+        let one_more = vec![b' '; MAX_MANIFEST_BYTES as usize + 1];
+        assert!(read_response(&one_more[..], url).is_err());
     }
 
     #[test]
