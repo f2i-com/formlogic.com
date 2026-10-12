@@ -63,3 +63,85 @@ export async function classifySubmitOutcome(result: SubmitResultLike): Promise<S
   // provably there to have captured the exact request bytes.
   return (await swBackgroundSyncActive()) ? 'queued' : 'rejected';
 }
+
+// -----------------------------------------------------------------------------
+// The requests Workbox holds for replay (the backgroundSync routes in vite.config.ts).
+//
+// Workbox keeps them in its own database: `workbox-background-sync`, store `requests`, index
+// `queueName`, each entry's `requestData.body` being the request body as an ArrayBuffer. Its
+// replay removes an entry once ANY answer comes back (a refusal included), and never sends one
+// older than the route's maxRetentionTime (24 hours): it deletes it instead, the next time it
+// works through the queue. So nothing there is ever kept as "failed". A page finds its own entry
+// by the idempotency key in the JSON body it sent.
+// -----------------------------------------------------------------------------
+
+/** The idempotency key in a queued request's JSON body, or null. */
+function keyOfQueuedBody(body: unknown): string | null {
+  try {
+    if (!body || typeof (body as ArrayBuffer).byteLength !== 'number') return null;
+    const parsed = JSON.parse(new TextDecoder().decode(body as ArrayBuffer)) as { idempotencyKey?: unknown } | null;
+    return typeof parsed?.idempotencyKey === 'string' ? parsed.idempotencyKey : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Count, and with `remove` delete, the requests queued under `queueName` whose body carries
+ * `idempotencyKey`. Resolves 0 when there is no IndexedDB or Workbox never created its database
+ * (opening it does not create it).
+ */
+function visitBackgroundSyncCopies(queueName: string, idempotencyKey: string, remove: boolean): Promise<number> {
+  if (typeof indexedDB === 'undefined' || !indexedDB) return Promise.resolve(0);
+  return new Promise<number>((resolve) => {
+    let matched = 0;
+    const open = indexedDB.open('workbox-background-sync');
+    open.onerror = () => resolve(0);
+    open.onblocked = () => resolve(0);
+    open.onupgradeneeded = () => {
+      // The database did not exist; opening it created an empty one. Abort so it stays absent.
+      open.transaction?.abort();
+      resolve(0);
+    };
+    open.onsuccess = () => {
+      const db = open.result;
+      const done = () => {
+        db.close();
+        resolve(matched);
+      };
+      try {
+        if (!db.objectStoreNames.contains('requests')) {
+          done();
+          return;
+        }
+        const tx = db.transaction('requests', remove ? 'readwrite' : 'readonly');
+        const cursorReq = tx.objectStore('requests').index('queueName').openCursor(IDBKeyRange.only(queueName));
+        cursorReq.onsuccess = () => {
+          const cursor = cursorReq.result;
+          if (!cursor) return;
+          const entry = cursor.value as { requestData?: { body?: unknown } } | undefined;
+          if (keyOfQueuedBody(entry?.requestData?.body) === idempotencyKey) {
+            matched++;
+            if (remove) cursor.delete();
+          }
+          cursor.continue();
+        };
+        tx.oncomplete = done;
+        tx.onerror = done;
+        tx.onabort = done;
+      } catch {
+        done();
+      }
+    };
+  });
+}
+
+/** True while Workbox still holds a request with this idempotency key under `queueName`. */
+export async function hasBackgroundSyncCopy(queueName: string, idempotencyKey: string): Promise<boolean> {
+  return (await visitBackgroundSyncCopies(queueName, idempotencyKey, false)) > 0;
+}
+
+/** Remove every request with this idempotency key from `queueName`, so Workbox never replays it. Resolves with how many. */
+export function discardBackgroundSyncCopies(queueName: string, idempotencyKey: string): Promise<number> {
+  return visitBackgroundSyncCopies(queueName, idempotencyKey, true);
+}

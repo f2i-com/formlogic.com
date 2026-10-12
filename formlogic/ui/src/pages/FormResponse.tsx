@@ -772,6 +772,74 @@ export function FieldResponse({
   );
 }
 
+/**
+ * The note under the success screen when the service worker queued the submission (no network).
+ * That queue is Workbox's (swQueue.ts): it sends the request when the connection is back, never
+ * after 24 hours (vite.config.ts maxRetentionTime; the expired entry is deleted the next time
+ * Workbox works through its queue), and lets it go on any answer, a refusal included. It keeps
+ * nothing as "failed", so there is nothing to retry here; what the person can do is take their
+ * answers off the device (a shared or borrowed one, say), after being told they will then not
+ * be sent.
+ */
+export function QueuedOnDeviceNote({ idempotencyKey, sealed, textColor }: { idempotencyKey: string | null; sealed: boolean; textColor: string }) {
+  const [step, setStep] = useState<'queued' | 'confirm' | 'removing' | 'removed' | 'gone'>('queued');
+  const remove = async () => {
+    if (!idempotencyKey) return;
+    setStep('removing');
+    let removed: number;
+    try {
+      const { discardBackgroundSyncCopies } = await import('../lib/swQueue');
+      removed = await discardBackgroundSyncCopies('publicFormSubmissionQueue', idempotencyKey);
+    } catch {
+      removed = 0;
+    }
+    setStep(removed > 0 ? 'removed' : 'gone');
+  };
+  const action = 'rounded-lg px-3 py-1.5 text-sm font-medium cursor-pointer focus-visible:outline-none focus-visible:ring-2 disabled:opacity-50';
+  return (
+    <div
+      role="status"
+      className="mt-4 mx-auto max-w-md text-center text-sm rounded-lg px-4 py-2.5 border [overflow-wrap:anywhere]"
+      style={{ color: textColor, borderColor: `${textColor}40`, backgroundColor: `${textColor}10` }}
+    >
+      {step === 'removed' ? (
+        <p>Removed from this device. Your answers were not sent.</p>
+      ) : step === 'gone' ? (
+        <p>There is nothing left to remove: your answers have already left this device.</p>
+      ) : (
+        <>
+          <p>
+            {/* "encrypted" was shown to every visitor, including on ordinary forms where
+                nothing was encrypted at all. Only say it when it is true. */}
+            You&apos;re offline — your answers are <strong>saved on this device</strong>
+            {sealed ? ', sealed so only the owner can read them,' : ''} and will be sent automatically
+            when you&apos;re back online. They will not be sent after 24 hours, and if the form is not
+            accepting responses when they are sent, they are not kept. Please don&apos;t clear your
+            browser data before then.
+          </p>
+          {idempotencyKey && (step === 'confirm' || step === 'removing' ? (
+            <div role="group" aria-label="Confirm removal" className="mt-2">
+              <p>Remove your answers from this device? They will not be sent, and they cannot be recovered.</p>
+              <div className="mt-2 flex flex-wrap justify-center gap-2">
+                <button type="button" disabled={step === 'removing'} onClick={() => void remove()} className={`${action} bg-red-600 text-white hover:bg-red-700`}>
+                  Remove
+                </button>
+                <button type="button" disabled={step === 'removing'} onClick={() => setStep('queued')} className={`${action} border`} style={{ borderColor: `${textColor}40` }}>
+                  Keep them
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setStep('confirm')} className={`${action} mt-2 underline underline-offset-2`}>
+              Remove from this device
+            </button>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
 // Success Screen
 function SuccessScreen({ form, isRedirecting, thankYou }: { form: { title: string; theme: { primaryColor: string; textColor: string } }; isRedirecting?: boolean; thankYou?: { label?: string; description?: string; properties?: { mediaUrl?: string; mediaType?: 'image' | 'video'; mediaAlt?: string } } }) {
   // Use a thank_you field's content as the completion message when the form defines one.
@@ -885,6 +953,9 @@ function FormResponseContent() {
   // Offline honesty (blocker 6): set when the sealed envelope was provably queued
   // by the service worker for background delivery (not yet accepted by the server).
   const [submitQueued, setSubmitQueued] = useState(false);
+  // The idempotency key the queued request carries: how the "saved on this device" note finds
+  // it in the service worker's queue to remove it.
+  const [queuedKey, setQueuedKey] = useState<string | null>(null);
   // One idempotency key per fill, reused across manual retries so a retry after a
   // dropped ack can never create a duplicate record.
   const submitIdemKeyRef = useRef<string | null>(null);
@@ -1458,6 +1529,7 @@ function FormResponseContent() {
       // Success: clear the in-progress answers WITHOUT recording them locally -
       // no plaintext may enter responseStore persistence for private forms.
       resetCurrentResponse();
+      setQueuedKey(queued ? submitIdemKeyRef.current : null);
       submitIdemKeyRef.current = null;
       setSubmitQueued(queued);
       // Only an ACCEPTED submission bumps the count — a queued one hasn't landed.
@@ -1561,6 +1633,7 @@ function FormResponseContent() {
     const response = submitResponse();
     if (!response) return;
     // The fill is complete — the NEXT fill gets a fresh idempotency key (FL-13).
+    setQueuedKey(queuedForSync ? submitIdemKeyRef.current : null);
     submitIdemKeyRef.current = null;
     setSubmitQueued(queuedForSync);
     // Only an ACCEPTED submission bumps the count — a queued one hasn't landed yet.
@@ -1847,17 +1920,7 @@ function FormResponseContent() {
         )}
         <SuccessScreen form={form} isRedirecting={isRedirecting} thankYou={form.fields.find((f) => f.type === 'thank_you')} />
         {submitQueued && (
-          <p
-            role="status"
-            className="mt-4 mx-auto max-w-md text-center text-sm rounded-lg px-4 py-2.5 border"
-            style={{ color: form.theme.textColor, borderColor: `${form.theme.textColor}40`, backgroundColor: `${form.theme.textColor}10` }}
-          >
-            {/* "encrypted" was shown to every visitor, including on ordinary forms where
-                nothing was encrypted at all. Only say it when it is true. */}
-            You&apos;re offline — your answers are <strong>saved on this device</strong>
-            {form.encryption?.mode === 'private' ? ', sealed so only the owner can read them,' : ''} and will
-            be sent automatically when you&apos;re back online. Please don&apos;t clear your browser data before then.
-          </p>
+          <QueuedOnDeviceNote idempotencyKey={queuedKey} sealed={form.encryption?.mode === 'private'} textColor={form.theme.textColor} />
         )}
       </div>
     );

@@ -133,6 +133,8 @@ export interface NativeSyncQueueItem {
   attempts: number;
   lastError: string | null;
   createdAt?: string;
+  /** When the item became 'failed', in unix seconds; absent on runtimes that do not record it. */
+  failedAt?: number;
 }
 
 /** One appSlug group returned by the native sync flush() — the items to POST to /sync/batch. */
@@ -176,6 +178,9 @@ export interface FormLogicNativeBridge {
       formId: string;
       idempotencyKey: string;
       answers: Record<string, unknown>;
+      /** Kept by the runtime when given (a failed item queued again keeps its own). */
+      createdAt?: string;
+      attempts?: number;
     }): Promise<{ id: string }>;
     getQueue(): Promise<NativeSyncQueueItem[]>;
     /** Returns pending items grouped by appSlug; nothing is removed and attempts are untouched. */

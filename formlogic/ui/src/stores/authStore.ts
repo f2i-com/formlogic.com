@@ -57,10 +57,13 @@ const SESSION_CHANNEL = 'formlogic-session';
 /**
  * Centralized, awaited whole-client teardown (audit FL-10/FL-11). Purges all
  * user-specific in-memory state + persisted localStorage + cached app data; for
- * account deletion it also erases the user's chat database and queued offline
- * submissions. Shared by logout(), the session-expired (401) path, account
- * deletion, and cross-tab propagation, so an ended session can't leave a previous
- * user's data to flash to (or be sent by) the next user on a shared device.
+ * account deletion it also erases the user's chat database. Shared by logout(), the
+ * session-expired (401) path, account deletion, and cross-tab propagation, so an ended
+ * session can't leave a previous user's data to flash to (or be sent by) the next user
+ * on a shared device.
+ *
+ * Submissions still queued on the device (pending or failed) are removed for every
+ * reason except 'session-expired': see forgetQueuedSubmissions.
  */
 export async function teardownUserSession(
   userId: string | null,
@@ -74,34 +77,80 @@ export async function teardownUserSession(
 
   await clearUserSessionData();
 
+  if (reason !== 'session-expired') await forgetQueuedSubmissions(userId);
+
   if (userId && reason === 'account-deleted') {
     // A deleted account leaves NOTHING behind (audit FL-10): the per-user chat DB
-    // (plaintext transcripts + image data URIs) and the user's queued offline
-    // submissions are erased, not merely detached.
+    // (plaintext transcripts + image data URIs) is erased, not merely detached.
     try {
       const chat = await import('../components/chat/chatStore');
       await chat.deleteChatDataForUser(userId);
     } catch {
       // best-effort — teardown must never block account deletion
     }
-    try {
-      const queue = await import('../client-runtime/offlineQueue');
-      await queue.purgeQueueForOwner(userId);
-    } catch {
-      // best-effort
-    }
   }
 
   // Propagate to sibling tabs (audit FL-10): a teardown in one tab must not leave
-  // another tab's stores hydrated with the dead session's data.
+  // another tab's stores hydrated with the dead session's data. The reason travels with
+  // it, so an expiry in one tab does not become a sign-out (and a purge) in another.
   if (broadcast && typeof BroadcastChannel !== 'undefined') {
     try {
       const channel = new BroadcastChannel(SESSION_CHANNEL);
-      channel.postMessage({ type: 'fl-teardown', reason });
+      channel.postMessage({ type: 'fl-teardown', reason, userId });
       channel.close();
     } catch {
       // BroadcastChannel unavailable — single-tab cleanup still holds
     }
+  }
+}
+
+/**
+ * Remove the submissions an account has queued on this device, pending or failed: its rows
+ * in the browser queue (with the ownerless rows from before rows carried an owner) and this
+ * app's items in the native runtime's queue. They hold answers in plain text, and a row left
+ * behind is sent with whoever signs in next (the native queue is kept per app, not per
+ * account). Signing out says the device should forget this account, and so do an account
+ * deletion and a sign-out in another tab.
+ *
+ * Not on 'session-expired': the person did not ask to leave, a session often runs out while
+ * the device is offline (which is when the queue is used), and the browser rows are stamped
+ * with their owner, so no other account can send or see them. They wait for the same person
+ * to sign in again; offlineQueue.ts removes them once they are old and someone else uses the
+ * device.
+ */
+async function forgetQueuedSubmissions(userId: string | null): Promise<void> {
+  if (userId) {
+    try {
+      const queue = await import('../client-runtime/offlineQueue');
+      await queue.purgeQueueForOwner(userId);
+    } catch {
+      // best-effort — teardown must never block on IndexedDB
+    }
+  }
+  try {
+    const native = await import('../client-runtime/nativeOfflineQueue');
+    await native.purgeNativeQueue();
+  } catch {
+    // best-effort
+  }
+}
+
+/**
+ * How many submissions the signed-in account would lose by signing out now: exactly what
+ * forgetQueuedSubmissions removes. The sign-out buttons ask first when it is not zero.
+ */
+export async function unsentSubmissionsOnSignOut(): Promise<number> {
+  const userId = useAuthStore.getState().user?.id ?? null;
+  if (!userId) return 0;
+  try {
+    const [queue, native] = await Promise.all([
+      import('../client-runtime/offlineQueue'),
+      import('../client-runtime/nativeOfflineQueue'),
+    ]);
+    const [browser, nativeCount] = await Promise.all([queue.unsentCountFor(userId), native.nativeUnsentCount()]);
+    return browser + nativeCount;
+  } catch {
+    return 0;
   }
 }
 
@@ -207,9 +256,13 @@ async function clearUserSessionData(): Promise<void> {
   // Workbox's background-sync queue replays a failed app-form POST with WHATEVER
   // cookies are present at sync time, and the server records the submitter from
   // that cookie: a submission A queued offline was created as B's after B signed
-  // in on the same browser. The public-form queue is anonymous by construction
-  // and is kept; the app-form queue is emptied here. (Those queued submissions
-  // are lost rather than misattributed — the lesser of the two outcomes.)
+  // in on the same browser. The app-form queue is emptied here, on every teardown:
+  // the owner-stamped copy in the offline queue (offlineQueue.ts) is the one that
+  // waits for its owner. The public-form queue is kept: it is not kept per account
+  // (a visitor who never signed in may have a submission waiting in it), and Workbox
+  // never sends what has waited more than 24 hours. Its route does identify a signed-in
+  // submitter (authOptional), so a public submission replayed after an account
+  // switch is recorded with the account signed in at that moment.
   try {
     await purgeBackgroundSyncQueue('formSubmissionQueue');
   } catch {
@@ -455,16 +508,24 @@ useAuthStore.subscribe((state) => setSessionOwner(state.user?.id ?? null));
 
 // Cross-tab teardown (audit FL-10): when another tab ends the session (logout,
 // expiry, account deletion), clear THIS tab's stores too — without re-broadcasting.
+// An expiry there is an expiry here (queued submissions kept); anything else is a remote
+// teardown, which forgets the account's queued submissions as a sign-out does.
+export async function handleSessionBroadcast(data: { type?: string; reason?: string; userId?: unknown } | null): Promise<void> {
+  if (!data || data.type !== 'fl-teardown') return;
+  const user = useAuthStore.getState().user;
+  if (user === null) return;
+  // Captured before the store forgets it. A tab from before the id was sent names none.
+  const userId = typeof data.userId === 'string' ? data.userId : user.id;
+  useAuthStore.setState({ user: null, error: null });
+  await teardownUserSession(userId, data.reason === 'session-expired' ? 'session-expired' : 'remote-teardown', false);
+}
+
 // Browser-only: vitest runs in node, and the module-level channel would leak there.
 if (typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined') {
   try {
     const sessionChannel = new BroadcastChannel(SESSION_CHANNEL);
     sessionChannel.onmessage = (event: MessageEvent) => {
-      const data = event.data as { type?: string } | null;
-      if (!data || data.type !== 'fl-teardown') return;
-      if (useAuthStore.getState().user === null) return;
-      useAuthStore.setState({ user: null, error: null });
-      void teardownUserSession(null, 'remote-teardown', false);
+      void handleSessionBroadcast(event.data as { type?: string; reason?: string; userId?: unknown } | null);
     };
   } catch {
     // BroadcastChannel construction failed — single-tab behavior remains correct.

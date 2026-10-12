@@ -16,7 +16,11 @@ import {
   useResponse,
   useResponses,
   useSubmitResponse,
+  type SdkFailedSubmission,
+  type SdkOfflineQueue,
+  type SdkRetryOutcome,
 } from './hooks';
+import { FAILED_RETENTION_MS } from '../client-runtime/offlineQueue';
 import type { ConnectorStatusInfo } from '../client-runtime/connectors/connectorTypes';
 import type { PermissionAction } from '../types/app';
 import { parseServerDate } from '../lib/utils';
@@ -48,8 +52,130 @@ export function ConnectorStatus({ connector }: { connector: string }) {
  * so "all changes saved" is said only when nothing waits and nothing failed.
  */
 export function SyncStatus() {
-  const { offline, pending, failed } = useOfflineQueue();
-  return <SyncStatusLine offline={offline} pending={pending} failed={failed} />;
+  const q = useOfflineQueue();
+  const [reviewing, setReviewing] = useState(false);
+  const failedItems = q.failedItems ?? [];
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <SyncStatusLine offline={q.offline} pending={q.pending} failed={q.failed} />
+        {failedItems.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setReviewing((open) => !open)}
+            aria-expanded={reviewing}
+            className="text-sm font-medium text-[var(--app-primary,#6366f1)] underline-offset-2 hover:underline"
+          >
+            {reviewing ? 'Hide' : 'Review'}
+          </button>
+        )}
+      </div>
+      {reviewing && failedItems.length > 0 && <FailedSubmissionList queue={q} />}
+    </div>
+  );
+}
+
+/** How a failed submission is named: its form, or the app it came from when that is not this one. */
+function failedItemTitle(item: SdkFailedSubmission): string {
+  return item.formName ?? `A form in ${item.appSlug}`;
+}
+
+function formatWhen(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+}
+
+function formatDay(ms: number): string {
+  return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+const RETRY_RESULT: Record<SdkRetryOutcome, string> = {
+  sent: 'Sent.',
+  waiting: 'The server could not be reached. It is waiting to send again, by itself, when it can.',
+  failed: 'It still could not be sent.',
+  conflict: 'The server already holds a different submission under this one’s reference.',
+  missing: 'It is no longer on this device.',
+};
+
+/**
+ * The submissions that could not be sent, each with "Send again" and "Discard". Shows which form
+ * and when, and a short reason in plain words; never the answers, and never the server's raw
+ * message (it can quote an answer, and "Failed to fetch" means nothing to the person).
+ */
+function FailedSubmissionList({ queue }: { queue: SdkOfflineQueue }) {
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+  const items = queue.failedItems ?? [];
+  const sendAgain = async (item: SdkFailedSubmission) => {
+    setBusy(item.key);
+    setResult(null);
+    try {
+      setResult(`${failedItemTitle(item)}: ${RETRY_RESULT[await queue.retry(item)]}`);
+    } catch {
+      setResult(`${failedItemTitle(item)}: ${RETRY_RESULT.failed}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+  const discard = async (item: SdkFailedSubmission) => {
+    setBusy(item.key);
+    setResult(null);
+    try {
+      const done = await queue.discard(item);
+      setResult(done ? `${failedItemTitle(item)}: discarded.` : `${failedItemTitle(item)}: ${RETRY_RESULT.missing}`);
+    } finally {
+      setConfirming(null);
+      setBusy(null);
+    }
+  };
+  return (
+    <div className="mt-2">
+      <ul className="divide-y divide-gray-100 dark:divide-slate-800">
+        {items.map((item) => (
+          <li key={item.key} className="py-2.5">
+            <p className="text-sm font-medium text-gray-900 dark:text-white [overflow-wrap:anywhere]">{failedItemTitle(item)}</p>
+            <p className="text-xs text-gray-500 dark:text-slate-400">
+              Submitted <time dateTime={new Date(item.createdAt).toISOString()}>{formatWhen(item.createdAt)}</time>
+              {item.failedAt !== null && <> · kept on this device until {formatDay(item.failedAt + FAILED_RETENTION_MS)}</>}
+            </p>
+            <p className="mt-0.5 text-xs text-gray-600 dark:text-slate-300">
+              {item.conflict
+                ? 'The server already holds a different submission under this one’s reference, so it cannot be sent.'
+                : 'It could not be sent after several tries.'}
+            </p>
+            {confirming === item.key ? (
+              <div role="group" aria-label="Confirm discard" className="mt-2 rounded-lg bg-red-50 dark:bg-red-500/10 p-2.5">
+                <p className="text-xs text-red-700 dark:text-red-300">
+                  Discard this submission? Its answers will be lost: they are not on the server, and this removes them from this device.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={busy === item.key}
+                    onClick={() => void discard(item)}
+                    className="inline-flex items-center justify-center rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:opacity-50"
+                  >
+                    Discard answers
+                  </button>
+                  <AppButton variant="secondary" onClick={() => setConfirming(null)}>Keep it</AppButton>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {!item.conflict && (
+                  <AppButton variant="secondary" disabled={busy !== null} onClick={() => void sendAgain(item)}>
+                    {busy === item.key ? 'Sending…' : 'Send again'}
+                  </AppButton>
+                )}
+                <AppButton variant="secondary" disabled={busy !== null} onClick={() => setConfirming(item.key)}>Discard</AppButton>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+      {result && <p role="status" className="mt-1 text-xs text-gray-600 dark:text-slate-300">{result}</p>}
+    </div>
+  );
 }
 
 /** The indicator itself, for a caller that already holds the queue's state (OfflineQueuePanel). */
@@ -273,8 +399,9 @@ export function NativeRequiredNotice({ message }: { message?: string }) {
 /**
  * Compact offline-queue status with a flush action. Counts merge the browser IndexedDB queue AND the
  * native runtime's persistent queue (via useOfflineQueue). `pending` items are retryable; `failed`
- * items are terminal conflicts (an idempotency key reused with a different submission) that are
- * surfaced but never auto-retried. "Sync now" flushes both queues.
+ * items (an idempotency key reused with a different submission, or out of attempts) are no longer
+ * sent by themselves and are listed below, each to send again or discard. "Sync now" flushes both
+ * queues.
  */
 export function OfflineQueuePanel() {
   const q = useOfflineQueue();
@@ -285,7 +412,7 @@ export function OfflineQueuePanel() {
   const flush = (q as { flush?: () => void }).flush;
   return (
     <div className="rounded-xl border border-gray-200/80 dark:border-slate-700/60 p-3 text-sm">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         {/* From this panel's own reading of the queue, so the line and the counts below it agree. */}
         <SyncStatusLine offline={q.offline} pending={pending} failed={failed} />
         {flush && pending > 0 && <AppButton variant="secondary" onClick={() => flush()}>Sync now</AppButton>}
@@ -299,6 +426,7 @@ export function OfflineQueuePanel() {
       {lastError && (pending > 0 || failed > 0) && (
         <p className={`mt-1 text-xs ${failed > 0 ? 'text-red-600 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'}`}>{lastError}</p>
       )}
+      {(q.failedItems?.length ?? 0) > 0 && <FailedSubmissionList queue={q} />}
     </div>
   );
 }

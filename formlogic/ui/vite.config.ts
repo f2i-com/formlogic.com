@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import { replayKeepingUnanswered } from './src/lib/swReplay'
 
 // Baseline Content-Security-Policy for the app shell (E2EE plan §14 — a P3 gate).
 // Injected at BUILD time only: dev mode needs Vite's inline React-refresh preamble,
@@ -202,6 +203,8 @@ export default defineConfig(({ mode }) => {
                 name: 'formSubmissionQueue',
                 options: {
                   maxRetentionTime: 24 * 60, // Retry for up to 24 hours (in minutes)
+                  // A 502/503/504/408/429 is kept for the next try, not dropped (src/lib/swReplay.ts).
+                  onSync: replayKeepingUnanswered,
                 },
               },
             },
@@ -216,6 +219,7 @@ export default defineConfig(({ mode }) => {
                 name: 'publicFormSubmissionQueue',
                 options: {
                   maxRetentionTime: 24 * 60,
+                  onSync: replayKeepingUnanswered,
                 },
               },
             },

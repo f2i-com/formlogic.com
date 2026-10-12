@@ -39,6 +39,8 @@ export type {
   SdkNavigation,
   SdkResponseRow,
   SdkOfflineQueue,
+  SdkFailedSubmission,
+  SdkRetryOutcome,
   UseResponsesResult,
   SdkConnectorPermission,
   SdkNativeRuntime,

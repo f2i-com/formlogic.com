@@ -15,8 +15,23 @@ import { toast } from '../stores/toastStore';
 import { getConnectorClient } from '../client-runtime/connectors/nativeConnectorClient';
 import { isPermissionGranted } from '../client-runtime/logic/appLogicPermissions';
 import { collectConnectorGrants } from '../client-runtime/connectors/connectorGrants';
-import { isFlushing, queueCounts, subscribeQueue } from '../client-runtime/offlineQueue';
-import { flushAllQueues, nativeQueueCounts } from '../client-runtime/nativeOfflineQueue';
+import {
+  discardSubmission,
+  isFlushing,
+  listFailedSubmissions,
+  queueCounts,
+  retrySubmission,
+  subscribeQueue,
+  type FailedSubmissionSummary,
+  type RetryOutcome,
+} from '../client-runtime/offlineQueue';
+import {
+  discardNativeSubmission,
+  flushAllQueues,
+  listNativeFailedSubmissions,
+  nativeQueueCounts,
+  retryNativeSubmission,
+} from '../client-runtime/nativeOfflineQueue';
 import { detectRuntimeEnvironment, type RuntimeEnvironment } from '../client-runtime/detectEnvironment';
 import type { ConnectorStatusInfo, ConnectorSummary, NativeRuntimeInfo } from '../client-runtime/connectors/connectorTypes';
 import type { App, AppRuntimeForm, PermissionAction } from '../types/app';
@@ -228,11 +243,38 @@ export function useRuntimeEnvironment(): RuntimeEnvironment {
   return env;
 }
 
+/** A submission that could not be sent, as the person is shown it. Never its answers. */
+export interface SdkFailedSubmission {
+  /** Unique across both queues (for list keys). */
+  key: string;
+  /** Which queue holds it: the browser's, or the native runtime's. */
+  source: 'browser' | 'native';
+  id: string;
+  appSlug: string;
+  formId: string;
+  /** The form's name when it belongs to the app on screen; null for another app's form. */
+  formName: string | null;
+  /** When it was submitted on the device (ms). */
+  createdAt: number;
+  /** When it failed (ms), when known. It is removed from the device 30 days after. */
+  failedAt: number | null;
+  /** The server holds a different submission under this one's key: it can only be discarded. */
+  conflict: boolean;
+}
+
+export type SdkRetryOutcome = RetryOutcome;
+
 export interface SdkOfflineQueue {
   /** Items waiting to sync (not yet failed). */
   pending: number;
-  /** Items that failed to sync and are kept for retry. */
+  /** Items that could not be sent and are no longer sent by themselves (see failedItems). */
   failed: number;
+  /** Each of those, for the person to send again or discard. */
+  failedItems: SdkFailedSubmission[];
+  /** Send a failed submission again now (same idempotency key, attempts reset). */
+  retry: (item: SdkFailedSubmission) => Promise<SdkRetryOutcome>;
+  /** Remove a failed submission from the device; its answers are lost. Ask the person first. */
+  discard: (item: SdkFailedSubmission) => Promise<boolean>;
   /** A flush is in progress. */
   syncing: boolean;
   /** Last flush error, if any. */
@@ -253,10 +295,13 @@ export interface SdkOfflineQueue {
 export function useOfflineQueue(): SdkOfflineQueue {
   const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
   const [counts, setCounts] = useState<{ pending: number; failed: number }>({ pending: 0, failed: 0 });
+  const [failedRows, setFailedRows] = useState<Array<FailedSubmissionSummary & { source: 'browser' | 'native' }>>([]);
   const [syncing, setSyncing] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   // Keep the latest refresh fn so flush() can re-read counts after it finishes.
   const refreshRef = useRef<() => void>(() => {});
+  const appSlug = useAppRuntimeStore((s) => s.appSlug);
+  const forms = useForms();
 
   useEffect(() => {
     let cancelled = false;
@@ -271,6 +316,15 @@ export function useOfflineQueue(): SdkOfflineQueue {
             pending: browser.pending + native.pending,
             failed: browser.failed + native.failed,
           });
+        })
+        .catch(() => {});
+      Promise.all([listFailedSubmissions(), listNativeFailedSubmissions()])
+        .then(([browser, native]) => {
+          if (cancelled) return;
+          setFailedRows([
+            ...browser.map((row) => ({ ...row, source: 'browser' as const })),
+            ...native.map((row) => ({ ...row, source: 'native' as const })),
+          ]);
         })
         .catch(() => {});
     };
@@ -311,9 +365,41 @@ export function useOfflineQueue(): SdkOfflineQueue {
     refreshRef.current();
   }, []);
 
+  const failedItems = useMemo<SdkFailedSubmission[]>(
+    () =>
+      failedRows.map((row) => ({
+        key: `${row.source}:${row.id}`,
+        source: row.source,
+        id: row.id,
+        appSlug: row.appSlug,
+        formId: row.formId,
+        formName: row.appSlug === appSlug ? (forms.find((f) => f.formId === row.formId)?.displayName ?? null) : null,
+        createdAt: row.createdAt,
+        failedAt: row.failedAt,
+        conflict: row.conflict,
+      })),
+    [failedRows, appSlug, forms]
+  );
+
+  const retry = useCallback(async (item: SdkFailedSubmission) => {
+    setLastError(null);
+    const outcome = item.source === 'native' ? await retryNativeSubmission(item.id) : await retrySubmission(item.id);
+    refreshRef.current();
+    return outcome;
+  }, []);
+
+  const discard = useCallback(async (item: SdkFailedSubmission) => {
+    const done = item.source === 'native' ? await discardNativeSubmission(item.id) : await discardSubmission(item.id);
+    refreshRef.current();
+    return done;
+  }, []);
+
   return {
     pending: counts.pending,
     failed: counts.failed,
+    failedItems,
+    retry,
+    discard,
     syncing,
     lastError,
     offline: !online,

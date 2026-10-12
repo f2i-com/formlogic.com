@@ -28,6 +28,7 @@ function memoryIndexedDB(): IDBFactory {
   };
   const store = {
     put: (row: { id: string }) => { rows.set(row.id, structuredClone(row)); return request(row.id); },
+    get: (id: string) => request(rows.has(id) ? structuredClone(rows.get(id)) : undefined),
     delete: (id: string) => { rows.delete(id); return request(undefined); },
     getAll: () => request([...rows.values()].map((row) => structuredClone(row))),
   };

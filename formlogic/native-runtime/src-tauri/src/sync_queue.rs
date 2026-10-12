@@ -43,6 +43,12 @@ pub const MAX_SYNC_ATTEMPTS: u32 = 5;
 pub const MAX_ITEMS_PER_PARTITION: usize = 500;
 pub const MAX_BYTES_PER_PARTITION: usize = 10 * 1024 * 1024;
 pub const MAX_LAST_ERROR_BYTES: usize = 2048;
+/// A failed item is never handed out by flush() again; the page lets the
+/// person send it again (a fresh enqueue) or discard it (ack). One left
+/// alone is removed this long after it failed (30 days, the same period as
+/// the web queue's FAILED_RETENTION_MS and the server's idempotency keys),
+/// so its answers do not stay on the device for good.
+pub const FAILED_RETENTION_SECS: u64 = 30 * 24 * 60 * 60;
 
 static QUEUE_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -105,6 +111,12 @@ pub struct SyncItem {
     /// Signed manifest version of the app at enqueue time (diagnostics).
     #[serde(default)]
     pub manifest_version: String,
+    /// When the item became "failed", in unix seconds; 0 while it is not
+    /// failed. A failed item is removed FAILED_RETENTION_SECS after it.
+    /// Absent (0) on items that failed before this was recorded: `sweep`
+    /// stamps those with the time it first sees them.
+    #[serde(default)]
+    pub failed_at: u64,
 }
 
 impl SyncItem {
@@ -131,9 +143,18 @@ impl SyncItem {
             created_at: s("createdAt").filter(|x| !x.is_empty()).unwrap_or_else(now_iso),
             partition: p.key(),
             manifest_version: p.manifest_version.clone(),
+            failed_at: 0,
             id,
         }
     }
+}
+
+/// Current time in unix seconds.
+pub fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn gen_id() -> String {
@@ -311,11 +332,39 @@ impl PartitionedSyncQueue {
                 }
             }
         };
-        PartitionedSyncQueue {
+        let queue = PartitionedSyncQueue {
             path,
             crypto,
             items: Mutex::new(items),
             recovered_corruption: recovered,
+        };
+        queue.sweep(&mut queue.items.lock().unwrap());
+        queue
+    }
+
+    /// Retention, applied at load and on every read, across every partition
+    /// (it is the runtime's own housekeeping, not something a page asks
+    /// for): a failed item is removed FAILED_RETENTION_SECS after it failed.
+    /// One that failed before `failed_at` was recorded is stamped now
+    /// instead, so an upgrade never deletes an item nobody has been shown.
+    /// Pending items are never removed for their age. Persisting is
+    /// best-effort, as for `adopt_legacy`: a later write carries it.
+    fn sweep(&self, items: &mut Vec<SyncItem>) {
+        let now = now_secs();
+        let mut changed = false;
+        for it in items
+            .iter_mut()
+            .filter(|i| i.status == "failed" && i.failed_at == 0)
+        {
+            it.failed_at = now;
+            changed = true;
+        }
+        let before = items.len();
+        items.retain(|i| {
+            !(i.status == "failed" && now.saturating_sub(i.failed_at) > FAILED_RETENTION_SECS)
+        });
+        if changed || items.len() != before {
+            let _ = self.persist(items);
         }
     }
 
@@ -411,6 +460,7 @@ impl PartitionedSyncQueue {
         if self.adopt_legacy(&mut items, p) {
             let _ = self.persist(&items); // adoption is re-derivable — best-effort
         }
+        self.sweep(&mut items);
         let pkey = p.key();
         items.iter().filter(|i| i.partition == pkey).cloned().collect()
     }
@@ -423,6 +473,7 @@ impl PartitionedSyncQueue {
         if self.adopt_legacy(&mut items, p) {
             let _ = self.persist(&items);
         }
+        self.sweep(&mut items);
         let pkey = p.key();
         let mut by_slug: BTreeMap<String, Vec<Value>> = BTreeMap::new();
         for it in items
@@ -492,6 +543,7 @@ impl PartitionedSyncQueue {
             .filter(|i| i.partition == pkey && set.contains(&i.id))
         {
             it.last_error = Some(error.to_string());
+            let was_failed = it.status == "failed";
             if terminal {
                 it.status = "failed".into();
             } else {
@@ -499,6 +551,9 @@ impl PartitionedSyncQueue {
                 if it.attempts >= MAX_SYNC_ATTEMPTS {
                     it.status = "failed".into();
                 }
+            }
+            if it.status == "failed" && !was_failed {
+                it.failed_at = now_secs();
             }
             n += 1;
         }
@@ -792,6 +847,117 @@ mod tests {
         let theirs = q2.get_queue(&beta);
         assert_eq!(theirs.len(), 1);
         assert_eq!(theirs[0].id, "L2");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_item_records_when_it_failed() {
+        let dir = tmp("failed-at");
+        let q = load(&dir);
+        let p = part("https://x.example", "a", "app", "slug");
+        let id = q.enqueue(&p, &json!({ "formId": "f", "answers": {} })).unwrap();
+        q.fail(&p, &[id.clone()], "boom", false).unwrap();
+        assert_eq!(q.get_queue(&p)[0].failed_at, 0, "still pending: no failure time");
+        let before = now_secs();
+        q.fail(&p, &[id.clone()], "conflict", true).unwrap();
+        let item = q.get_queue(&p).remove(0);
+        assert_eq!(item.status, "failed");
+        assert!(item.failed_at >= before, "stamped when it failed");
+        // The page reads it as `failedAt`.
+        assert_eq!(serde_json::to_value(&item).unwrap()["failedAt"], json!(item.failed_at));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_item_is_removed_after_the_retention_period_and_a_pending_one_never() {
+        let dir = tmp("retention");
+        let q = load(&dir);
+        let p = part("https://x.example", "a", "app", "slug");
+        let other = part("https://x.example", "a", "other-app", "other");
+        let old = q.enqueue(&p, &json!({ "formId": "f", "answers": { "v": 1 } })).unwrap();
+        let young = q.enqueue(&p, &json!({ "formId": "f", "answers": { "v": 2 } })).unwrap();
+        let waiting = q.enqueue(&p, &json!({ "formId": "f", "answers": { "v": 3 }, "createdAt": "2020-01-01T00:00:00Z" })).unwrap();
+        let elsewhere = q.enqueue(&other, &json!({ "formId": "f", "answers": { "v": 4 } })).unwrap();
+        q.fail(&p, &[old.clone(), young.clone()], "conflict", true).unwrap();
+        q.fail(&other, &[elsewhere.clone()], "conflict", true).unwrap();
+        {
+            let mut items = q.items.lock().unwrap();
+            let now = now_secs();
+            for it in items.iter_mut() {
+                if it.id == old || it.id == elsewhere {
+                    it.failed_at = now - FAILED_RETENTION_SECS - 1;
+                }
+                if it.id == young {
+                    it.failed_at = now - FAILED_RETENTION_SECS + 3600;
+                }
+            }
+            q.persist(&items).unwrap();
+        }
+        // Swept on every read, and from every app's partition, not only the caller's.
+        let ids: Vec<String> = q.get_queue(&p).into_iter().map(|i| i.id).collect();
+        assert_eq!(ids, vec![young.clone(), waiting.clone()]);
+        assert!(q.get_queue(&other).is_empty());
+        // And for good: a fresh load of the file does not bring them back.
+        drop(q);
+        let reopened = load(&dir);
+        let ids: Vec<String> = reopened.get_queue(&p).into_iter().map(|i| i.id).collect();
+        assert_eq!(ids, vec![young, waiting]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_item_stored_before_failure_times_were_kept_gets_the_whole_period_from_now() {
+        let dir = tmp("legacy-failed");
+        // Today's shape: no failedAt, created long ago.
+        let legacy = json!([
+            { "id": "L1", "appSlug": "slug", "formId": "f", "idempotencyKey": "k1",
+              "answers": { "a": 1 }, "status": "failed", "attempts": 5,
+              "lastError": "Server error (500)", "createdAt": "2025-01-01T00:00:00Z" },
+            { "id": "L2", "appSlug": "slug", "formId": "f", "idempotencyKey": "k2",
+              "answers": { "b": 2 }, "status": "pending", "attempts": 1,
+              "lastError": null, "createdAt": "2025-01-01T00:00:00Z" }
+        ]);
+        std::fs::write(dir.join("sync-queue.json"), legacy.to_string()).unwrap();
+        let before = now_secs();
+        let q = load(&dir);
+        let p = part("https://x.example", "acct", "app", "slug");
+        let items = q.get_queue(&p);
+        assert_eq!(items.len(), 2, "neither is removed by the upgrade");
+        let failed = items.iter().find(|i| i.id == "L1").unwrap();
+        assert!(failed.failed_at >= before, "its retention starts now");
+        assert_eq!(items.iter().find(|i| i.id == "L2").unwrap().failed_at, 0);
+        // The stamp is kept, so the clock does not restart on every launch.
+        drop(q);
+        let reopened = load(&dir);
+        let again = reopened.get_queue(&p).into_iter().find(|i| i.id == "L1").unwrap();
+        assert!(again.failed_at >= before && again.failed_at <= now_secs());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_item_queued_again_by_the_page_is_a_new_pending_item_with_its_key_and_time() {
+        // What the page's "Send again" does (nativeOfflineQueue.ts retryNativeSubmission): queue it
+        // afresh with no id, then ack the failed one.
+        let dir = tmp("requeue");
+        let q = load(&dir);
+        let p = part("https://x.example", "a", "app", "slug");
+        let id = q
+            .enqueue(&p, &json!({ "formId": "f", "idempotencyKey": "k1", "answers": { "v": 1 }, "createdAt": "2026-10-01T09:30:00Z" }))
+            .unwrap();
+        q.fail(&p, &[id.clone()], "conflict", true).unwrap();
+        let fresh = q
+            .enqueue(&p, &json!({ "formId": "f", "idempotencyKey": "k1", "answers": { "v": 1 }, "attempts": 0, "createdAt": "2026-10-01T09:30:00Z" }))
+            .unwrap();
+        assert_ne!(fresh, id);
+        assert_eq!(q.ack(&p, &[id]).unwrap()["acked"], 1);
+        let items = q.get_queue(&p);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, fresh);
+        assert_eq!(items[0].status, "pending");
+        assert_eq!(items[0].attempts, 0);
+        assert_eq!(items[0].failed_at, 0);
+        assert_eq!(items[0].idempotency_key, "k1");
+        assert_eq!(items[0].created_at, "2026-10-01T09:30:00Z");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

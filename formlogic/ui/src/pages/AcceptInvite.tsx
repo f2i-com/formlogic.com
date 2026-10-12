@@ -4,6 +4,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useAppUserStore } from '../stores/appUserStore';
 import { Button } from '../components/ui/Button';
 import { Logo } from '../components/ui/Logo';
+import { useSignOutWithUnsentCheck } from '../components/auth/useSignOutWithUnsentCheck';
 import { CheckCircle2, AlertCircle, Loader2, Mail } from 'lucide-react';
 
 /**
@@ -17,12 +18,14 @@ export function AcceptInvite() {
   const token = searchParams.get('token') || '';
   const user = useAuthStore((s) => s.user);
   const authLoading = useAuthStore((s) => s.isLoading);
-  const logout = useAuthStore((s) => s.logout);
   const acceptInvitation = useAppUserStore((s) => s.acceptInvitation);
 
   const [status, setStatus] = useState<'idle' | 'accepting' | 'success' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
+  const signOut = useSignOutWithUnsentCheck(() =>
+    navigate(`/login?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`)
+  );
   const attempted = useRef(false);
 
   useEffect(() => {
@@ -99,14 +102,18 @@ export function AcceptInvite() {
                   isLoading={signingOut}
                   onClick={async () => {
                     setSigningOut(true);
-                    await logout();
-                    navigate(`/login?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+                    try {
+                      await signOut.requestSignOut();
+                    } finally {
+                      setSigningOut(false);
+                    }
                   }}
                 >
                   Sign out & use a different account
                 </Button>
                 <Button variant="outline" onClick={() => navigate('/apps')}>Go to my apps</Button>
               </div>
+              {signOut.dialog}
             </>
           ) : (
             <>

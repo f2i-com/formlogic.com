@@ -13,8 +13,13 @@
 //
 // flushAllQueues() runs the browser queue AND the native queue so a single "Sync now" (and the
 // reconnect auto-flush) drains everything.
+//
+// A 'failed' item is never handed out by flush() again. The person sends it again
+// (retryNativeSubmission) or discards it (discardNativeSubmission); a sign-out clears the queue
+// (purgeNativeQueue). All three use only enqueueSubmission/getQueue/ack, which every installed
+// runtime has, so they work without a runtime update.
 import { api } from '../lib/api';
-import { flushBrowserQueue, isUnreachableStatus } from './offlineQueue';
+import { flushBrowserQueue, isConflict, isUnreachableStatus, type FailedSubmissionSummary, type RetryOutcome } from './offlineQueue';
 import type { FormLogicNativeBridge, NativeSyncFlushGroup, NativeSyncQueueItem } from './connectors/connectorTypes';
 
 /** The native bridge, only when present AND its sync surface is available. */
@@ -40,8 +45,116 @@ export async function nativeQueueCounts(): Promise<{ pending: number; failed: nu
   }
 }
 
-/** A pass over the native queue is under way (see flushNativeQueue). */
-let nativeFlushing = false;
+/** The calling app's items in the native queue (its partition), or [] without the bridge. */
+async function nativeItems(): Promise<NativeSyncQueueItem[]> {
+  const sync = nativeSync();
+  if (!sync?.getQueue) return [];
+  try {
+    const items = await sync.getQueue();
+    return Array.isArray(items) ? items : [];
+  } catch {
+    return [];
+  }
+}
+
+/** The native queue's failed items, oldest first, as the person is shown them: never their answers. */
+export async function listNativeFailedSubmissions(): Promise<FailedSubmissionSummary[]> {
+  return (await nativeItems())
+    .filter((i) => i.status === 'failed')
+    .map((i) => {
+      const created = typeof i.createdAt === 'string' ? Date.parse(i.createdAt) : NaN;
+      return {
+        id: i.id,
+        appSlug: i.appSlug,
+        formId: i.formId,
+        createdAt: Number.isFinite(created) ? created : 0,
+        // Unix seconds, from a runtime that records when an item failed; absent on older ones.
+        failedAt: typeof i.failedAt === 'number' && i.failedAt > 0 ? i.failedAt * 1000 : null,
+        conflict: isConflict(i),
+      };
+    })
+    .sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/**
+ * Send a failed native item again. The runtime has no "retry": the item is queued afresh with its
+ * answers, idempotency key and creation time and no attempts used, the failed one is acknowledged
+ * away, and the queue is flushed now. The fresh item is given no id, because the runtime keeps an
+ * id the page supplies and acknowledging the old one would then remove both. A conflict is never
+ * sent again (see retrySubmission).
+ */
+export async function retryNativeSubmission(id: string): Promise<RetryOutcome> {
+  const sync = nativeSync();
+  const item = (await nativeItems()).find((i) => i.id === id);
+  if (!sync?.enqueueSubmission || !item) return 'missing';
+  if (item.status === 'failed' && isConflict(item)) return 'conflict';
+  if (!item.answers || typeof item.answers !== 'object') return 'missing';
+  let freshId: string;
+  try {
+    const queued = await sync.enqueueSubmission({
+      appSlug: item.appSlug,
+      formId: item.formId,
+      idempotencyKey: item.idempotencyKey,
+      answers: item.answers,
+      attempts: 0,
+      ...(item.createdAt ? { createdAt: item.createdAt } : {}),
+    });
+    freshId = queued.id;
+  } catch {
+    // The runtime refused it (its queue for this app is full, or it could not write to disk):
+    // the failed item stays as it was.
+    return 'failed';
+  }
+  try {
+    await sync.ack?.([id]);
+  } catch {
+    // Left behind, the old item still names the same key: the server answers a second delivery as
+    // a replay, and the person can discard it.
+  }
+  if (nativePass) await nativePass.catch(() => undefined);
+  await flushNativeQueue().catch(() => undefined);
+  const after = (await nativeItems()).find((i) => i.id === freshId);
+  if (!after) return 'sent';
+  if (after.status === 'failed') return isConflict(after) ? 'conflict' : 'failed';
+  return 'waiting';
+}
+
+/** Remove one item from the native queue (its answers are gone for good; the screen asks first). */
+export async function discardNativeSubmission(id: string): Promise<boolean> {
+  const sync = nativeSync();
+  if (!sync?.ack) return false;
+  try {
+    const r = await sync.ack([id]);
+    return (r?.acked ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** How many items, pending or failed, purgeNativeQueue would remove (the sign-out warning). */
+export async function nativeUnsentCount(): Promise<number> {
+  return (await nativeItems()).length;
+}
+
+/**
+ * Remove every item this app has in the native queue, pending or failed: the sign-out teardown.
+ * The runtime's queue is kept per app, not per account, so an item left behind would be sent with
+ * whoever signs in next. Only the calling app's items are reachable from its page; a page that is
+ * not a verified app reaches none.
+ */
+export async function purgeNativeQueue(): Promise<void> {
+  const sync = nativeSync();
+  const ids = (await nativeItems()).map((i) => i.id);
+  if (!sync?.ack || ids.length === 0) return;
+  try {
+    await sync.ack(ids);
+  } catch {
+    // best-effort: teardown must not block on the runtime
+  }
+}
+
+/** The pass over the native queue under way, if any (see flushNativeQueue). */
+let nativePass: Promise<{ flushed: number; failed: number }> | null = null;
 
 /**
  * Flush the native runtime's persistent queue: ask the runtime for pending items grouped by appSlug,
@@ -54,12 +167,13 @@ export async function flushNativeQueue(): Promise<{ flushed: number; failed: num
   // One pass at a time, as the browser queue has it. Reconnecting, coming back to the page,
   // opening an app and "Sync now" can all ask at once, and a second pass would read the same
   // items from the runtime and post the same batch again while the first is still in flight.
-  if (nativeFlushing) return { flushed: 0, failed: 0 };
-  nativeFlushing = true;
+  if (nativePass) return { flushed: 0, failed: 0 };
+  const pass = drainNativeQueue(sync);
+  nativePass = pass;
   try {
-    return await drainNativeQueue(sync);
+    return await pass;
   } finally {
-    nativeFlushing = false;
+    nativePass = null;
   }
 }
 

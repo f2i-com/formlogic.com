@@ -4,6 +4,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useFormStore } from '../../stores/formStore';
 import { toast } from '../../stores/toastStore';
 import { cn } from '../../lib/utils';
+import { useSignOutWithUnsentCheck } from './useSignOutWithUnsentCheck';
 import {
   User,
   LogOut,
@@ -26,7 +27,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
   const [isSyncing, setIsSyncing] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const { user, logout } = useAuthStore();
+  const { user } = useAuthStore();
   const { storageMode, setStorageMode, syncToApi, setSyncConflicts } = useFormStore();
 
   useEffect(() => {
@@ -51,14 +52,14 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
     };
   }, [isOpen]);
 
+  // Return to the home/landing page after signing out. Without this the URL stays on an
+  // authed-only route (e.g. /forms), which no longer exists in the logged-out route table
+  // and renders the 404 page. (AuthRedirector is a safety net for session expiry.)
+  // Storage mode preference is preserved so it restores on next login.
+  const signOut = useSignOutWithUnsentCheck(() => navigate('/', { replace: true }));
   const handleLogout = async () => {
     setIsOpen(false);
-    await logout();
-    // Return to the home/landing page. Without this the URL stays on an authed-only
-    // route (e.g. /forms), which no longer exists in the logged-out route table and
-    // renders the 404 page. (AuthRedirector is a safety net for session expiry.)
-    navigate('/', { replace: true });
-    // Storage mode preference is preserved so it restores on next login
+    await signOut.requestSignOut();
   };
 
   const handleToggleStorageMode = async () => {
@@ -305,6 +306,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
           </div>
         </div>
       )}
+      {signOut.dialog}
     </div>
   );
 }
