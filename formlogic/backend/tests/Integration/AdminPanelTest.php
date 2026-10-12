@@ -235,12 +235,16 @@ class AdminPanelTest extends TestCase
         self::$pdo->prepare("INSERT INTO users (id, email, password_hash) VALUES (?, 'allowlisted-admin@test.local', 'x')")->execute([$allowId]);
         try {
             $this->assertFalse(self::$auth->isPlatformAdmin($this->userModel($allowId)));
+            // fail() inside the try would be caught below (PHPUnit's AssertionFailedError
+            // is a RuntimeException) and its own message contains "reserved".
+            $refused = null;
             try {
                 self::$auth->register('allowlisted-admin@test.local', 'correct-horse-battery');
-                $this->fail('reserved bootstrap address must not register publicly');
             } catch (\RuntimeException $e) {
-                $this->assertStringContainsString('reserved', $e->getMessage());
+                $refused = $e;
             }
+            $this->assertNotNull($refused, 'reserved bootstrap address must not register publicly');
+            $this->assertStringContainsString('reserved', $refused->getMessage());
         } finally {
             self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$allowId]);
         }
@@ -256,6 +260,34 @@ class AdminPanelTest extends TestCase
             $this->assertFalse(self::$auth->isPlatformAdmin($demo));
         } finally {
             self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$demoId]);
+        }
+    }
+
+    public function testReservedBootstrapAddressCannotBeTakenByChangingEmail(): void
+    {
+        // bin/bootstrap-admin.php promotes whichever account holds the reserved address,
+        // so the reservation has to hold on the profile email change too: otherwise a
+        // public account renamed to it before the operator runs the command is the one
+        // made platform admin, keeping its own password.
+        $email = 'rename-' . bin2hex(random_bytes(6)) . '@test.local';
+        $reg = self::$auth->register($email, 'correct-horse-battery');
+        $id = $reg['user']['id'];
+        try {
+            foreach (['allowlisted-admin@test.local', 'Allowlisted-Admin@Test.Local'] as $reserved) {
+                $refused = null;
+                try {
+                    self::$auth->updateUser($id, ['email' => $reserved, 'currentPassword' => 'correct-horse-battery']);
+                } catch (\RuntimeException $e) {
+                    $refused = $e;
+                }
+                $this->assertNotNull($refused, "changing the email to the reserved address $reserved must be refused");
+                $this->assertStringContainsString('reserved', $refused->getMessage());
+            }
+            $stmt = self::$pdo->prepare('SELECT email FROM users WHERE id = ?');
+            $stmt->execute([$id]);
+            $this->assertSame($email, $stmt->fetchColumn());
+        } finally {
+            self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$id]);
         }
     }
 
@@ -645,13 +677,16 @@ class AdminPanelTest extends TestCase
         $maintenance = new MaintenanceService($apiRoot . '/storage/maintenance.json');
         $svc = $this->upgradeService($apiRoot, $maintenance);
 
-        // Missing signature envelope.
+        // Missing signature envelope. (No fail() inside the try: its message contains
+        // "unsigned" and the catch below would accept it.)
+        $refused = null;
         try {
             $svc->stageUploadedPackage($this->buildFakePackage('2.0.0', sign: false));
-            $this->fail('unsigned package must be refused');
         } catch (\RuntimeException $e) {
-            $this->assertStringContainsString('unsigned', $e->getMessage());
+            $refused = $e;
         }
+        $this->assertNotNull($refused, 'unsigned package must be refused');
+        $this->assertStringContainsString('unsigned', $refused->getMessage());
 
         // Signed by an UNKNOWN key — a self-consistent attacker package whose
         // checksums all "verify" against its own manifest.
@@ -879,12 +914,14 @@ class AdminPanelTest extends TestCase
         $release = $svc->latestOfficialRelease();
         $info = $svc->stageOfficialRelease($release['releaseId'], $release['assetId'], $release['digest']);
         $github->metadata['assets'][0]['digest'] = 'sha256:' . str_repeat('0', 64);
+        $refused = null;
         try {
             $svc->apply($this->adminId, false, $info['packageId'], $info['digest']);
-            $this->fail('A changed GitHub asset must be reviewed again.');
         } catch (\RuntimeException $error) {
-            $this->assertStringContainsString('changed', $error->getMessage());
+            $refused = $error;
         }
+        $this->assertNotNull($refused, 'A changed GitHub asset must be reviewed again.');
+        $this->assertStringContainsString('changed', $refused->getMessage());
         $this->assertFalse($maintenance->enabled());
         $this->assertSame([], $svc->listBackups());
     }

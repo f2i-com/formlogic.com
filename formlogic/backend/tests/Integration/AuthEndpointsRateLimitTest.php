@@ -136,6 +136,68 @@ class AuthEndpointsRateLimitTest extends TestCase
         $this->assertSame('Invalid email or password', $this->jsonOf($loginResponse)['message'] ?? null);
     }
 
+    /**
+     * The per-account login limit is the defence against guesses spread over many
+     * addresses, so it must count the ACCOUNT, not the spelling of its email. The
+     * users.email collation (utf8mb4_unicode_ci) is accent- and width-insensitive and
+     * pads trailing spaces, so all of these spellings select the same row; keyed on
+     * the submitted string, each one used to get a fresh budget and a correct password
+     * typed under any of them signed in to the locked account.
+     */
+    public function testPerAccountLoginLimitHoldsForEverySpellingThatSelectsTheAccount(): void
+    {
+        $email = $this->uniqueEmail('spelling');
+        $password = 'a-strong-password-123';
+        self::$authService->register($email, $password);
+
+        // Ten wrong guesses from ten addresses spend the per-account budget (maxEmailAttempts = 10).
+        for ($i = 1; $i <= 10; $i++) {
+            $refused = null;
+            try {
+                self::$authService->login($email, 'wrong-guess-' . $i, '198.51.100.' . $i);
+            } catch (\RuntimeException $e) {
+                $refused = $e;
+            }
+            $this->assertSame('Invalid email or password', $refused?->getMessage(), "guess $i");
+        }
+
+        $spellings = [
+            'accented' => mb_chr(0x00E1, 'UTF-8') . substr($email, 1),
+            'full-width' => mb_chr(0xFF41, 'UTF-8') . substr($email, 1),
+            'no-break space' => $email . mb_chr(0x00A0, 'UTF-8'),
+        ];
+        $n = 0;
+        foreach ($spellings as $label => $spelling) {
+            $n++;
+            $refused = null;
+            try {
+                self::$authService->login($spelling, $password, '203.0.113.' . $n);
+            } catch (\RuntimeException $e) {
+                $refused = $e;
+            }
+            $this->assertNotNull($refused, "the $label spelling signed in to an account its own spelling had locked");
+            $this->assertStringStartsWith('Too many login attempts for this account', $refused->getMessage(), $label);
+        }
+
+        // An address with no account behaves the same way, so the lockout message cannot
+        // be used to tell which addresses have accounts.
+        $ghost = $this->uniqueEmail('spelling-ghost');
+        for ($i = 1; $i <= 10; $i++) {
+            try {
+                self::$authService->login($ghost, 'wrong-guess-' . $i, '198.51.100.' . (20 + $i));
+            } catch (\RuntimeException) {
+            }
+        }
+        $refused = null;
+        try {
+            self::$authService->login(mb_chr(0x00E1, 'UTF-8') . substr($ghost, 1), 'wrong-guess', '203.0.113.99');
+        } catch (\RuntimeException $e) {
+            $refused = $e;
+        }
+        $this->assertNotNull($refused);
+        $this->assertStringStartsWith('Too many login attempts for this account', $refused->getMessage(), 'a missing account must lock the same way');
+    }
+
     // ---------------------------------------------------------------------
     // (c) Gap 1 — PUT/DELETE /me per-user rate limiter returns 429
     // ---------------------------------------------------------------------

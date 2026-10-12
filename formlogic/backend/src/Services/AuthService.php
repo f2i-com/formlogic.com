@@ -207,8 +207,9 @@ class AuthService
      */
     public function login(string $email, string $password, ?string $ipAddress = null): array
     {
-        $rateLimitKey = $this->getRateLimitKey($email, $ipAddress);
-        $emailKey = $this->getEmailRateLimitKey($email);
+        $limitEmail = $this->loginLimitIdentity($email);
+        $rateLimitKey = $this->getRateLimitKey($limitEmail, $ipAddress);
+        $emailKey = $this->getEmailRateLimitKey($limitEmail);
 
         // Atomically increment + gate on the returned count. The previous
         // count()-then-hit()-on-failure pattern was a TOCTOU: a concurrent burst
@@ -273,6 +274,39 @@ class AuthService
             'user' => $this->userPayload($user),
             'token' => $token,
         ];
+    }
+
+    /**
+     * The identity both login limits count against: the address's sort weight in the
+     * users.email collation (utf8mb4_unicode_ci), less the weights of trailing spaces,
+     * which that collation pads away. The collation ignores case, accents and character
+     * width and reads a no-break space as a space, so "user@x.com", "úser@x.com" and
+     * "user@x.com" followed by a no-break space all select the same row; keyed on the
+     * submitted string, each had its own budget and the per-email limit never held.
+     * Every such spelling has one weight whether or not an account exists, so neither
+     * the budget nor the lockout message tells an existing account from a missing one.
+     * Falls back to the lowercased address if the database cannot compute the weight.
+     */
+    private function loginLimitIdentity(string $email): string
+    {
+        try {
+            $stmt = $this->mysql->prepare("
+                SELECT HEX(WEIGHT_STRING(CAST(:email AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci)),
+                       HEX(WEIGHT_STRING(CAST(' ' AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci))
+            ");
+            $stmt->execute(['email' => $email]);
+            $row = $stmt->fetch(\PDO::FETCH_NUM);
+            if (is_array($row) && is_string($row[0]) && is_string($row[1]) && $row[1] !== '') {
+                $weight = $row[0];
+                while (str_ends_with($weight, $row[1])) {
+                    $weight = substr($weight, 0, -strlen($row[1]));
+                }
+                return 'weight:' . $weight;
+            }
+        } catch (\Throwable) {
+            // e.g. bytes that are not UTF-8; the lookup below fails on them the same way
+        }
+        return strtolower(trim($email));
     }
 
     /**
@@ -589,6 +623,12 @@ class AuthService
                 // Validate format
                 if (!filter_var($newEmail, FILTER_VALIDATE_EMAIL)) {
                     throw new \RuntimeException('Invalid email address');
+                }
+                // The same reservation register() applies: bin/bootstrap-admin.php promotes
+                // whichever account holds the address, so taking it by an email change
+                // before the bootstrap would make this account the platform admin.
+                if (in_array(strtolower($newEmail), $this->adminEmails, true)) {
+                    throw new \RuntimeException('This address is reserved for administrator bootstrap and cannot be used for an account.');
                 }
                 // Require current-password verification before changing the email
                 // (a stolen session must not be able to silently take over the account).

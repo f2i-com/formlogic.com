@@ -58,9 +58,12 @@ class CsrfMiddleware implements MiddlewareInterface
         // (form-urlencoded / multipart / text-plain) without a CORS preflight, so
         // this blocks the form vector; a JSON fetch from another origin triggers a
         // preflight the CORS allowlist rejects. The SPA already sends JSON.
+        // The media type (before any ';') is what must be JSON: a no-cors fetch may send
+        // "application/x-www-form-urlencoded; application/json" without a preflight, and
+        // Slim parses that body as a form by its media type.
         if ($this->isAuthCookieSettingRoute($path)) {
-            $contentType = strtolower($request->getHeaderLine('Content-Type'));
-            if (strpos($contentType, 'application/json') === false) {
+            $mediaType = strtolower(trim(explode(';', $request->getHeaderLine('Content-Type'))[0]));
+            if ($mediaType !== 'application/json') {
                 return $this->forbidden('Login and registration require a JSON request');
             }
             return $handler->handle($request);
