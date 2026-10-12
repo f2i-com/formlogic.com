@@ -130,19 +130,19 @@ class NativeAppController
         $app = $this->apps->getAppBySlug((string) $args['slug']);
         $user = $request->getAttribute('userId');
         $owner = $app && $user && $app['ownerId'] === $user;
-        if (!$app || (!$owner && !$this->apps->isRuntimeVisible($app, (string) ($user ?? '')))) return $this->jsonError($response, 'App not found or access denied', 404);
+        if (!$app || !$this->apps->isRuntimeVisible($app, (string) ($user ?? ''))) return $this->jsonError($response, 'App not found or access denied', 404);
         if ($blocked = $this->blockIfDemo($request, $response, 'Native hosting is unavailable in the shared demo.')) return $blocked;
         return $this->respond($response, function () use ($request, $response, $app, $user, $owner) {
-            // The page was loaded on one engine; the server may have decided otherwise since (a
-            // revocation, a policy edit). Inside respond(), so a resolver that cannot answer is the
-            // same generic 503 every other failure here is; the refusal itself is a Response, which
-            // respond() passes through, so it keeps the engine_changed code the parent remounts on.
-            if ($stale = $this->refuseStaleEngine($request, $response, $app['id'])) return $stale;
             // Access is decided against the settled project (FL-S04), never an update's leftover project.json.
             $project = $this->native->project($app['id']);
             if (!$project) throw new \RuntimeException('Native app not found', 404);
             $membership = $user && !$owner && $project['access'] === 'members' ? $this->users->getAppUser($app['id'], $user) : null;
             if ($project['access'] === 'members' && !$owner && (!$user || ($membership['status'] ?? '') !== 'active')) throw new \RuntimeException('Sign in with an active app membership to continue', 403);
+            // The page was loaded on one engine; the server may have decided otherwise since (a
+            // revocation, a policy edit). Inside respond(), so a resolver that cannot answer is the
+            // same generic 503 every other failure here is; the refusal itself is a Response, which
+            // respond() passes through, so it keeps the engine_changed code the parent remounts on.
+            if ($stale = $this->refuseStaleEngine($request, $response, $app['id'])) return $stale;
             $identity = $project['access'] === 'members' ? ['formlogic' => ['appId' => $app['id'], 'userId' => $user, 'roleId' => $owner ? 'owner' : ($membership['roleId'] ?? null)]] : [];
             if ($request->getMethod() === 'GET') {
                 $client = NativeAppService::clientFiles($project);
@@ -163,7 +163,12 @@ class NativeAppController
                 unset($manifest['engine'], $manifest['logicEngine'], $manifest['config']['engine']);
                 $client['manifest.json'] = json_encode($manifest, JSON_THROW_ON_ERROR);
                 $client['permission.json'] = '{"permissions":{}}';
-                return ['name' => $app['name'], 'project' => ['version' => $project['version'], 'client' => $client, 'assets' => $project['assets'], 'access' => $project['access'], 'origins' => $origins]]
+                // This host-owned namespace is emitted only after visibility and membership
+                // admission. Neither manifest metadata nor client input can name its principal;
+                // roles and slugs can change without changing the app/account's saved state.
+                $storageScope = ['access' => $project['access'], 'appId' => $app['id']];
+                if ($project['access'] === 'members') $storageScope['userId'] = $user;
+                return ['name' => $app['name'], 'project' => ['version' => $project['version'], 'client' => $client, 'assets' => $project['assets'], 'access' => $project['access'], 'origins' => $origins, 'storageScope' => $storageScope]]
                     + $this->engineForRuntime($app['id'], $languages);
             }
             $input = $request->getParsedBody();

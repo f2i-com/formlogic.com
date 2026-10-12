@@ -528,6 +528,7 @@ final class NativeAppControllerTest extends TestCase
         $apps->method('getAppBySlug')->willReturn(['id' => 'notes', 'ownerId' => 'owner', 'name' => 'Notes', 'status' => 'published']);
         $apps->method('isRuntimeVisible')->willReturn(true);
         $native = $this->createMock(NativeAppService::class);
+        $native->method('project')->willReturn(['access' => 'application']);
         $native->method('clientLanguages')->willReturn(['javascript']);
         $engines = $this->createMock(RuntimeEngineService::class);
         $engines->method('effective')->willThrowException(new \PDOException('SQLSTATE[HY000] [2002] Connection refused'));
