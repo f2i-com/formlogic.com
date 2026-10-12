@@ -12,7 +12,7 @@ import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
 import { deferEffect } from '../../lib/deferredEffect';
 import { toast } from '../../stores/toastStore';
-import type { AppRole, AppForm, PermissionAction } from '../../types/app';
+import { viewerOwnsApp, type AppRole, type AppForm, type PermissionAction } from '../../types/app';
 import { useAuthStore } from '../../stores/authStore';
 
 export function AppRoleEditor() {
@@ -111,11 +111,13 @@ function AppRoleEditorContent() {
   // not the display string alone — a custom role literally named "Owner" must
   // remain editable.
   const isOwnerRole = !!selectedRole?.isSystem && selectedRole?.name === 'Owner';
-  // App-level permission grants are owner-only on the backend; disable those toggles
-  // only when we're SURE the actor isn't the owner (app loaded + ids differ), so an
-  // owner is never wrongly locked out (e.g. on a direct nav before apps load).
+  // App-level permission grants are owner-only on the backend, so their toggles are enabled only
+  // for the owner, known from the apps list (canManage / ownerId). An app that is not loaded is
+  // not taken as owned: a draft or archived app is not listed to a member, and treating that as
+  // the owner offered a delegated manager the toggles and then a refusal. The list is loaded with
+  // the page shell, so an owner sees the toggles enable as soon as it arrives.
   const app = appId ? getApp(appId) : undefined;
-  const isActorOwner = !app || !userId || app.ownerId === userId;
+  const isActorOwner = viewerOwnsApp(app, userId);
 
   const startRenameRole = (role: AppRole) => {
     setEditingRoleId(role.id);

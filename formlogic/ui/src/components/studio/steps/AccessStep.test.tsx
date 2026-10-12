@@ -25,12 +25,14 @@ vi.mock('../../../lib/api', () => ({
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+// The owner's own copy, as GET /apps/{id} gives it: only the owner's carries ownerId.
 const app = {
   id: 'a1',
   name: 'Test app',
   slug: 'test-app',
   status: 'draft',
   settings: {},
+  ownerId: 'u-m-owner',
 } as unknown as App;
 
 const roles: AppRole[] = [
@@ -43,6 +45,7 @@ let root: Root;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  useAuthStore.setState({ user: { id: 'u-m-owner' } as never });
   vi.mocked(api.getAppRolePermissions).mockReset().mockResolvedValue({ data: { permissions: [{ formId: null, permission: 'manage_users' }] } });
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -52,6 +55,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  useAuthStore.setState({ user: null });
 });
 
 function renderStep(stepRoles: AppRole[], strict = false) {
@@ -174,15 +178,23 @@ describe('AccessStep people, for a manager who is not the Owner', () => {
     { id: 'r-admin', appId: 'a1', name: 'Admin', isSystem: true, sortOrder: 1, permissions: [perm('r-admin', 'manage_users')] },
     { id: 'r2', appId: 'a1', name: 'Member', isSystem: true, sortOrder: 2, permissions: [] },
   ] as unknown as AppRole[];
-  const member = (id: string, roleId: string, name: string) => ({ id, appId: 'a1', userId: `u-${id}`, roleId, status: 'active', name, email: `${id}@example.test` });
+  const member = (id: string, roleId: string, name: string, holdsAppLevelRole = false) => ({ id, appId: 'a1', userId: `u-${id}`, roleId, status: 'active', name, email: `${id}@example.test`, holdsAppLevelRole });
+  // GET /apps/{id} gives the owner their app with ownerId; a member gets it without (AppMemberView).
+  const asViewer = (viewer: string) => {
+    if (viewer === 'u-m-owner') return app;
+    const { ownerId: _stripped, ...asMember } = app;
+    void _stripped;
+    return asMember as App;
+  };
+  let members = () => [member('m-owner', 'r1', 'Olive Owner', false), member('m-admin', 'r-admin', 'Ada Admin', true), member('m-plain', 'r2', 'Pat Plain', false)];
 
   async function openPeople(viewer: string) {
     useAuthStore.setState({ user: { id: viewer } as never });
-    vi.mocked(api.getAppUsers).mockResolvedValue({ data: { users: [member('m-owner', 'r1', 'Olive Owner'), member('m-admin', 'r-admin', 'Ada Admin'), member('m-plain', 'r2', 'Pat Plain')], count: 3 } } as never);
+    vi.mocked(api.getAppUsers).mockResolvedValue({ data: { users: members(), count: 3 } } as never);
     await act(async () => {
       root.render(
         <MemoryRouter>
-          <AccessStep app={{ ...app, ownerId: 'u-m-owner' } as App} roles={guardedRoles} appForms={[]} formsById={{}} onReloadRoles={async () => {}} onReloadApp={async () => {}} />
+          <AccessStep app={asViewer(viewer)} roles={guardedRoles} appForms={[]} formsById={{}} onReloadRoles={async () => {}} onReloadApp={async () => {}} />
         </MemoryRouter>,
       );
     });
@@ -193,14 +205,25 @@ describe('AccessStep people, for a manager who is not the Owner', () => {
   const roleSelect = (name: string) => container.querySelector<HTMLSelectElement>(`select[aria-label="Role for ${name}"]`);
   const removeButton = (name: string) => container.querySelector<HTMLButtonElement>(`button[aria-label^="Remove ${name}"]`);
 
-  afterEach(() => useAuthStore.setState({ user: null }));
-
   it('disables the role and Remove of a member whose role grants an app-level permission, and says why', async () => {
     await openPeople('u-manager');
     expect(roleSelect('Ada Admin')?.disabled).toBe(true);
     expect(removeButton('Ada Admin')?.disabled).toBe(true);
     expect(removeButton('Ada Admin')?.getAttribute('title')).toMatch(/only the app owner/i);
     expect(container.textContent).toContain('Owner only');
+  });
+
+  it('follows the server’s flag for each member, not a reading of the role here', async () => {
+    const usual = members;
+    members = () => [member('m-admin', 'r-admin', 'Ada Admin', false), member('m-plain', 'r2', 'Pat Plain', true)];
+    try {
+      await openPeople('u-manager');
+      expect(roleSelect('Ada Admin')?.disabled).toBe(false);
+      expect(roleSelect('Pat Plain')?.disabled).toBe(true);
+      expect(removeButton('Pat Plain')?.disabled).toBe(true);
+    } finally {
+      members = usual;
+    }
   });
 
   it('leaves a member with an ordinary role manageable, without offering an app-level role', async () => {
@@ -224,7 +247,7 @@ describe('AccessStep people, for a manager who is not the Owner', () => {
       await act(async () => {
         root.render(
           <MemoryRouter>
-            <AccessStep app={{ ...app, ownerId: 'u-m-owner' } as App} roles={guardedRoles} appForms={[]} formsById={{}} onReloadRoles={async () => {}} onReloadApp={async () => {}} />
+            <AccessStep app={asViewer(viewer)} roles={guardedRoles} appForms={[]} formsById={{}} onReloadRoles={async () => {}} onReloadApp={async () => {}} />
           </MemoryRouter>,
         );
       });

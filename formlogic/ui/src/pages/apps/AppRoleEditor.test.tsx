@@ -8,6 +8,7 @@ import { AppRoleEditor } from './AppRoleEditor';
 const mocks = vi.hoisted(() => ({
   getPermissions: vi.fn(),
   savePermissions: vi.fn(),
+  viewer: 'owner',
   store: {
     fetchRoles: vi.fn(), fetchAppForms: vi.fn(), createRole: vi.fn(),
     deleteRole: vi.fn(), updateRole: vi.fn(), getApp: vi.fn(),
@@ -15,7 +16,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('../../stores/appStore', () => ({ useAppStore: () => mocks.store }));
 vi.mock('../../stores/authStore', () => ({
-  useAuthStore: (selector: (state: { user: { id: string } }) => unknown) => selector({ user: { id: 'owner' } }),
+  useAuthStore: (selector: (state: { user: { id: string } }) => unknown) => selector({ user: { id: mocks.viewer } }),
 }));
 vi.mock('../../lib/api', () => ({ api: { getAppRolePermissions: mocks.getPermissions, setAppRolePermissions: mocks.savePermissions } }));
 vi.mock('../../components/admin/AdminActingContext', () => ({
@@ -24,8 +25,15 @@ vi.mock('../../components/admin/AdminActingContext', () => ({
 vi.mock('../../components/layout/Header', () => ({
   Header: ({ title, actions }: { title: string; actions: ReactNode }) => <header><h1>{title}</h1>{actions}</header>,
 }));
+// The matrix, reduced to what it shows and one edit: a form-level grant added.
 vi.mock('../../components/ui/PermissionMatrix', () => ({
-  PermissionMatrix: ({ permissions }: { permissions: unknown[] }) => <output data-testid="permissions">{JSON.stringify(permissions)}</output>,
+  PermissionMatrix: ({ permissions, onChange, appLevelDisabled }: { permissions: unknown[]; onChange: (next: unknown[]) => void; appLevelDisabled?: boolean }) => (
+    <>
+      <output data-testid="permissions">{JSON.stringify(permissions)}</output>
+      <output data-testid="app-level">{appLevelDisabled ? 'owner only' : 'editable'}</output>
+      <button type="button" onClick={() => onChange([...permissions, { formId: 'form-x', permission: 'view_all_responses' }])}>add form grant</button>
+    </>
+  ),
 }));
 vi.mock('../../stores/toastStore', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
@@ -48,7 +56,8 @@ describe('role permission loading', () => {
       { id: 'beta', appId: 'app', name: 'Beta', isSystem: false },
     ]);
     mocks.store.fetchAppForms.mockResolvedValue([]);
-    mocks.store.getApp.mockReturnValue({ ownerId: 'owner' });
+    mocks.store.getApp.mockReturnValue({ ownerId: 'owner', canManage: true });
+    mocks.viewer = 'owner';
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -97,5 +106,46 @@ describe('role permission loading', () => {
     await act(async () => alpha.resolve({ data: { permissions: [{ formId: 'alpha-form', permission: 'read' }] } }));
     expect(container.querySelector('[data-testid="permissions"]')?.textContent).toContain('beta-form');
     expect(container.querySelector('[data-testid="permissions"]')?.textContent).not.toContain('alpha-form');
+  });
+
+  // App-level grants are the owner's alone to give or take away. Who the owner is comes from the
+  // apps list: canManage is true, and ownerId present, only on the owner's own row.
+  describe('app-level grants and who owns the app', () => {
+    const appLevel = () => container.querySelector('[data-testid="app-level"]')?.textContent;
+    beforeEach(() => {
+      mocks.getPermissions.mockResolvedValue({ data: { permissions: [{ formId: null, permission: 'manage_users' }] } });
+    });
+
+    it('are editable for the owner', async () => {
+      await mount();
+      expect(appLevel()).toBe('editable');
+    });
+
+    it('are the owner’s alone for a delegated manager, whose row has canManage false and no ownerId', async () => {
+      mocks.viewer = 'manager';
+      mocks.store.getApp.mockReturnValue({ canManage: false });
+      await mount();
+      expect(appLevel()).toBe('owner only');
+    });
+
+    it('are the owner’s alone when the app is not in the list (a draft or archived app is not listed to a member)', async () => {
+      mocks.viewer = 'manager';
+      mocks.store.getApp.mockReturnValue(undefined);
+      await mount();
+      expect(appLevel()).toBe('owner only');
+    });
+
+    it('go back unchanged when a delegated manager saves the role', async () => {
+      mocks.viewer = 'manager';
+      mocks.store.getApp.mockReturnValue({ canManage: false });
+      mocks.savePermissions.mockResolvedValue({ data: {} });
+      await mount();
+      await click('add form grant');
+      await click('Save permissions');
+      expect(mocks.savePermissions).toHaveBeenCalledTimes(1);
+      const sent = mocks.savePermissions.mock.calls[0][2] as Array<{ formId: string | null; permission: string }>;
+      expect(sent).toContainEqual({ formId: null, permission: 'manage_users' });
+      expect(sent).toContainEqual({ formId: 'form-x', permission: 'view_all_responses' });
+    });
   });
 });

@@ -16,7 +16,7 @@ import { DataTable, type Column } from '../../components/ui/DataTable';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
 import { statusBadgeVariant, formatStatusLabel, formatDate, parseServerDate, copyToClipboard } from '../../lib/utils';
 import { Badge } from '../../components/ui/Badge';
-import { OWNER_ONLY_MEMBER_REASON as OWNER_ONLY_REASON, roleGrantsOwnerGuarded, type AppUser, type AppInvitation, type AppRole, type AppUserGroup } from '../../types/app';
+import { OWNER_ONLY_MEMBER_REASON as OWNER_ONLY_REASON, roleGrantsOwnerGuarded, viewerOwnsApp, type AppUser, type AppInvitation, type AppRole, type AppUserGroup } from '../../types/app';
 
 // User groups have full CRUD but group membership is not yet consumed by permission
 // resolution, so the tab is hidden until group-based authorization ships (flip to
@@ -34,13 +34,16 @@ export function AppUserManager() {
   const { fetchRoles, getApp } = useAppStore();
   const userId = useAuthStore((s) => s.user?.id);
   // Only the Owner may re-role, suspend or remove a member whose role grants an app-level
-  // permission, or give a member such a role; the server refuses anyone else. Those controls are
-  // disabled only when we're SURE the viewer isn't the owner (app loaded + ids differ), as in the
-  // role editor, so an owner is never locked out on a direct visit before apps load.
+  // permission, or give a member such a role; the server refuses anyone else, so those controls are
+  // disabled, with the reason, for anyone else. The owner is known from the apps list (canManage /
+  // ownerId); an app that is not loaded is not taken as the viewer's (see viewerOwnsApp).
   const app = appId ? getApp(appId) : undefined;
-  const isActorOwner = !app || !userId || app.ownerId === userId;
+  const isActorOwner = viewerOwnsApp(app, userId);
   const [roles, setRoles] = useState<AppRole[]>([]);
+  // A role offered for assignment has no member row to ask, so it is judged here, by the same
+  // rule as the server's (roleGrantsOwnerGuarded); a member's own role is the server's flag.
   const ownerOnlyRole = (role: AppRole) => !isActorOwner && roleGrantsOwnerGuarded(role);
+  const ownerOnlyMember = (member: AppUser) => !isActorOwner && member.holdsAppLevelRole === true;
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRoleId, setInviteRoleId] = useState('');
@@ -186,7 +189,9 @@ export function AppUserManager() {
         toast.success('Invitation sent', 'An invite email has been sent to the user.');
       }
     } else {
-      setInviteError('Failed to send invitation. Please check the email and try again.');
+      // The store has shown the server's reason; guessing one here (the email) could contradict it,
+      // e.g. for a role only the owner may give.
+      setInviteError('The invitation was not sent.');
     }
   };
 
@@ -247,7 +252,7 @@ export function AppUserManager() {
               // "Owner" (e.g. franchise operators), with no explanation.
               const ownerRole = roles.find((r) => r.id === u.roleId);
               const isOwner = !!ownerRole?.isSystem && ownerRole.name === 'Owner';
-              const ownerOnly = !!ownerRole && ownerOnlyRole(ownerRole);
+              const ownerOnly = ownerOnlyMember(u);
               return (
               <div className="flex items-center justify-end gap-1">
                 {u.status === 'pending' && (

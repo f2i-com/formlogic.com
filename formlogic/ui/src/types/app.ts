@@ -377,6 +377,9 @@ export interface AppUser {
   email?: string;
   name?: string;
   roleName?: string;
+  /** Server-computed (AppUserService::roleGrantsAppLevel): the member's role grants an app-level
+   *  permission, so only the app's Owner may change their role or status or remove them. */
+  holdsAppLevelRole?: boolean;
 }
 
 export interface AppUserGroup {
@@ -502,6 +505,18 @@ export const APP_LEVEL_PERMISSIONS: PermissionAction[] = [
  * permission above except execute_flows (running flows is not an admin-style grant).
  */
 export const OWNER_GUARDED_PERMISSIONS: PermissionAction[] = APP_LEVEL_PERMISSIONS.filter((p) => p !== 'execute_flows');
+
+/**
+ * Whether the signed-in user owns this app, from what the server sends: `canManage` is true, and
+ * `ownerId` present, only on the owner's own copy of the app. An app that is not loaded is not
+ * taken as owned: a draft or archived app is not listed to a member at all, so assuming ownership
+ * there would offer a delegated manager the owner's controls and a refusal.
+ */
+export function viewerOwnsApp(app: Pick<App, 'ownerId' | 'canManage'> | undefined, userId: string | undefined): boolean {
+  if (!app) return false;
+  if (app.canManage === true) return true;
+  return !!app.ownerId && !!userId && app.ownerId === userId;
+}
 
 /** Why a manager who is not the Owner cannot act on such a member or hand out such a role. */
 export const OWNER_ONLY_MEMBER_REASON = 'Only the app owner can change the role of, suspend or remove a member whose role has app-level permissions.';

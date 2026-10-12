@@ -35,7 +35,7 @@ import { returnToState } from '../../../hooks/useReturnTo';
 import { trackStudioSave } from '../studioSaveState';
 import { cn, copyToClipboard, formatRelativeTime } from '../../../lib/utils';
 import { useAuthStore } from '../../../stores/authStore';
-import { APP_LEVEL_PERMISSIONS, APP_PERMISSION_LABELS, OWNER_ONLY_MEMBER_REASON, roleGrantsOwnerGuarded } from '../../../types/app';
+import { APP_LEVEL_PERMISSIONS, APP_PERMISSION_LABELS, OWNER_ONLY_MEMBER_REASON, roleGrantsOwnerGuarded, viewerOwnsApp } from '../../../types/app';
 import type { App, AppForm, AppRole, PermissionAction } from '../../../types/app';
 import type { Form } from '../../../types/form';
 
@@ -159,9 +159,10 @@ function RolesView({
   const selected = roles.find((r) => r.id === selectedRoleId) ?? roles[0] ?? null;
   const isOwnerRole = selected?.isSystem === true && selected?.name === 'Owner';
   // App-level grants are the Owner's to give or take away (the server refuses anyone else), so
-  // a manager who is not the Owner sees them as the role editor shows them: disabled, "Owner only".
+  // anyone else sees them as the role editor shows them: disabled, "Owner only". The app here comes
+  // from GET /apps/{id}, which carries ownerId for the owner alone.
   const userId = useAuthStore((s) => s.user?.id);
-  const isActorOwner = !userId || !app.ownerId || app.ownerId === userId;
+  const isActorOwner = viewerOwnsApp(app, userId);
   const selectedId = selected?.id ?? null;
   const draft = selectedId ? draftsByRole[selectedId] ?? null : null;
   const error = selectedId ? loadError[selectedId] ?? null : null;
@@ -515,9 +516,11 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
   const assignableRoles = roles.filter((r) => !(r.isSystem && r.name === 'Owner'));
   // Only the Owner may change the role of, suspend or remove a member whose role grants an
   // app-level permission, or give a member such a role; the server refuses anyone else, so those
-  // controls are disabled with the reason for a manager who is not the Owner.
+  // controls are disabled with the reason for anyone else. Which members those are is the server's
+  // flag on each row (holdsAppLevelRole); a role offered for assignment has no row, so it is judged
+  // here by the same rule (roleGrantsOwnerGuarded).
   const userId = useAuthStore((s) => s.user?.id);
-  const isActorOwner = !userId || !app.ownerId || app.ownerId === userId;
+  const isActorOwner = viewerOwnsApp(app, userId);
   const ownerOnlyRole = (role: AppRole | undefined) => !isActorOwner && roleGrantsOwnerGuarded(role);
   const navigate = useNavigate();
   const location = useLocation();
@@ -657,7 +660,7 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
           const memberRole = roles.find((r) => r.id === member.roleId);
           // The Owner's role and membership never change here; the server refuses both.
           const isOwnerMember = (!!memberRole?.isSystem && memberRole.name === 'Owner') || (!!app.ownerId && member.userId === app.ownerId);
-          const ownerOnly = ownerOnlyRole(memberRole);
+          const ownerOnly = !isActorOwner && member.holdsAppLevelRole === true;
           return (
             <div key={member.id} className="flex flex-wrap items-center gap-3 px-4 py-3.5">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-xs font-bold text-primary-700 dark:bg-primary-500/10 dark:text-primary-300">
