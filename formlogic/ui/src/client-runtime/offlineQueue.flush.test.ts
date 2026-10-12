@@ -85,7 +85,7 @@ describe('flushQueue while the server cannot be reached', () => {
     expect(row.status).toBe('pending');
     expect(row.attempts).toBe(0);
     expect(row.lastError).toBe('Down for maintenance');
-    vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 201 });
+    vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 201, response: { id: 'r1' } });
     expect(await flushQueue()).toEqual({ flushed: 1, failed: 0 });
   });
 
@@ -103,7 +103,7 @@ describe('flushQueue while the server cannot be reached', () => {
     await queue();
     vi.mocked(api.createAppResponseResult).mockResolvedValueOnce({ ok: false, status: 0, error: 'Failed to fetch' });
     await flushQueue();
-    vi.mocked(api.createAppResponseResult).mockResolvedValueOnce({ ok: true, status: 201 });
+    vi.mocked(api.createAppResponseResult).mockResolvedValueOnce({ ok: true, status: 201, response: { id: 'r1' } });
     expect(await flushQueue()).toEqual({ flushed: 1, failed: 0 });
     expect(await listQueue()).toEqual([]);
   });
@@ -124,8 +124,10 @@ describe('flushQueue when the server refuses', () => {
 
 describe('flushQueue when something other than FormLogic answers', () => {
   // A captive portal on a plain-HTTP install answers the POST with its own 200 page. Through the
-  // real api layer that must read as "not reached", not as a delivery that removes the submission.
-  it('keeps the submission, with no attempt used, instead of deleting it as delivered', async () => {
+  // real api layer that must not read as a delivery that removes the submission. Nor as "not
+  // reached": a page that answers every time (an SPA fallback for /api) then kept it waiting for
+  // ever. It is an attempt (offlineQueue.unrecognised.test.ts follows it to the cap).
+  it('keeps the submission, using an attempt, instead of deleting it as delivered', async () => {
     const { api: real } = await vi.importActual<typeof import('../lib/api')>('../lib/api');
     vi.stubGlobal('document', { cookie: '' });
     vi.stubGlobal('fetch', vi.fn(async () => new Response('<!doctype html><title>Sign in to the Wi-Fi</title>', { status: 200, headers: { 'Content-Type': 'text/html' } })));
@@ -134,6 +136,6 @@ describe('flushQueue when something other than FormLogic answers', () => {
     expect(await flushQueue()).toEqual({ flushed: 0, failed: 0 });
     const [row] = await listQueue();
     expect(row.status).toBe('pending');
-    expect(row.attempts).toBe(0);
+    expect(row.attempts).toBe(1);
   });
 });

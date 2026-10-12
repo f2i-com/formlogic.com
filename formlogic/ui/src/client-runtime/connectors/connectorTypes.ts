@@ -135,6 +135,11 @@ export interface NativeSyncQueueItem {
   createdAt?: string;
   /** When the item became 'failed', in unix seconds; absent on runtimes that do not record it. */
   failedAt?: number;
+  /**
+   * The account the page queued it under (enqueueNativeSubmission): an account id, null for a
+   * submission made signed out, absent on an item nobody stamped or from a runtime that drops it.
+   */
+  ownerUserId?: string | null;
 }
 
 /** One appSlug group returned by the native sync flush() — the items to POST to /sync/batch. */
@@ -181,6 +186,8 @@ export interface FormLogicNativeBridge {
       /** Kept by the runtime when given (a failed item queued again keeps its own). */
       createdAt?: string;
       attempts?: number;
+      /** The signed-in account, kept by a runtime that knows the field (see NativeSyncQueueItem). */
+      ownerUserId?: string | null;
     }): Promise<{ id: string }>;
     getQueue(): Promise<NativeSyncQueueItem[]>;
     /** Returns pending items grouped by appSlug; nothing is removed and attempts are untouched. */

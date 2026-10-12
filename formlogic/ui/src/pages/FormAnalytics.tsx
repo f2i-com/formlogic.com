@@ -21,6 +21,7 @@ import { isEncryptedEnvelope } from '../lib/crypto/envelope';
 import { useFittedColumns } from '../hooks/useFittedColumns';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { publicUnfillableFieldLabels } from '../lib/publicForm';
+import { csvEscapeCell } from '../lib/csv';
 import { deferEffect } from '../lib/deferredEffect';
 import { useCurrentTime } from '../hooks/useCurrentTime';
 import type { LocalFormResponse } from '../types/form';
@@ -481,13 +482,6 @@ export default function FormAnalytics() {
         return;
       }
 
-      const escapeCell = (val: unknown) => {
-        let str = String(val ?? '').replace(/"/g, '""');
-        // Match the hardened guard used elsewhere: also catch leading whitespace
-        // and TAB/CR before a formula trigger (spreadsheets still evaluate those).
-        if (/^\s*[=+\-@\t\r]/.test(str)) str = "'" + str;
-        return `"${str}"`;
-      };
       const inputFields = form.fields.filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type));
       const headers = ['Response ID', 'Submitted At', 'Completion Time (s)', ...inputFields.map((f) => f.label)];
       const rows = localResponses.map((r) => [
@@ -512,7 +506,8 @@ export default function FormAnalytics() {
         }),
       ]);
 
-      const csv = [headers.map(escapeCell).join(','), ...rows.map((r) => r.map(escapeCell).join(','))].join('\n');
+      // Formula-injection safe, numbers left as numbers (lib/csv.ts).
+      const csv = [headers.map(csvEscapeCell).join(','), ...rows.map((r) => r.map(csvEscapeCell).join(','))].join('\n');
       const blob = new Blob([csv], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

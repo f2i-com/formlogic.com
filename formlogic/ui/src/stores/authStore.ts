@@ -106,17 +106,16 @@ export async function teardownUserSession(
 
 /**
  * Remove the submissions an account has queued on this device, pending or failed: its rows
- * in the browser queue (with the ownerless rows from before rows carried an owner) and this
- * app's items in the native runtime's queue. They hold answers in plain text, and a row left
- * behind is sent with whoever signs in next (the native queue is kept per app, not per
- * account). Signing out says the device should forget this account, and so do an account
- * deletion and a sign-out in another tab.
+ * in the browser queue and its items in this app's native runtime queue, each with the ones
+ * from before they carried an owner. They hold answers in plain text, and an unstamped one
+ * left behind is sent with whoever signs in next. Signing out says the device should forget
+ * this account, and so do an account deletion and a sign-out in another tab.
  *
  * Not on 'session-expired': the person did not ask to leave, a session often runs out while
- * the device is offline (which is when the queue is used), and the browser rows are stamped
- * with their owner, so no other account can send or see them. They wait for the same person
- * to sign in again; offlineQueue.ts removes them once they are old and someone else uses the
- * device.
+ * the device is offline (which is when the queue is used), and browser rows and native items
+ * are stamped with their owner, so no other account can send or see them. They wait for the
+ * same person to sign in again; offlineQueue.ts removes a browser row once it is old and
+ * someone else uses the device.
  */
 async function forgetQueuedSubmissions(userId: string | null): Promise<void> {
   if (userId) {
@@ -129,7 +128,8 @@ async function forgetQueuedSubmissions(userId: string | null): Promise<void> {
   }
   try {
     const native = await import('../client-runtime/nativeOfflineQueue');
-    await native.purgeNativeQueue();
+    // This account's items and the unstamped ones; with no account, every item, as before.
+    await native.purgeNativeQueue(userId ?? undefined);
   } catch {
     // best-effort
   }
@@ -147,7 +147,7 @@ export async function unsentSubmissionsOnSignOut(): Promise<number> {
       import('../client-runtime/offlineQueue'),
       import('../client-runtime/nativeOfflineQueue'),
     ]);
-    const [browser, nativeCount] = await Promise.all([queue.unsentCountFor(userId), native.nativeUnsentCount()]);
+    const [browser, nativeCount] = await Promise.all([queue.unsentCountFor(userId), native.nativeUnsentCount(userId)]);
     return browser + nativeCount;
   } catch {
     return 0;

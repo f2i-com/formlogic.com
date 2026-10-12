@@ -5,11 +5,11 @@ import { classifyDeliveryResult } from './offlineQueue';
 // whether the queued item is delivered (remove), retryable, in-flight (keep), or a terminal conflict.
 describe('classifyDeliveryResult', () => {
   it('success → delivered (remove from queue)', () => {
-    expect(classifyDeliveryResult({ ok: true }).outcome).toBe('delivered');
+    expect(classifyDeliveryResult({ ok: true, response: { id: 'r1' } }).outcome).toBe('delivered');
   });
 
   it('idempotent replay of a completed submission → delivered', () => {
-    expect(classifyDeliveryResult({ ok: true, idempotent: true }).outcome).toBe('delivered');
+    expect(classifyDeliveryResult({ ok: true, response: { id: 'r1' }, idempotent: true }).outcome).toBe('delivered');
   });
 
   it('server processing flag → processing (keep pending, do NOT remove or fail)', () => {

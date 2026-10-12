@@ -45,7 +45,7 @@ function memoryIndexedDB(): IDBFactory {
 beforeEach(() => {
   vi.stubGlobal('indexedDB', memoryIndexedDB());
   vi.mocked(api.createAppResponseResult).mockReset();
-  vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 201, data: { response: { id: 'r1' } } } as never);
+  vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 201, response: { id: 'r1' } });
 });
 
 afterEach(() => {

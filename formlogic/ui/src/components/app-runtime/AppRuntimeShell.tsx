@@ -4,6 +4,7 @@ import { ArrowLeft, Home, User, Menu, X, ChevronLeft, MoreHorizontal, WifiOff, D
 import { DynamicIcon } from '../ui/DynamicIcon';
 import { interleaveMenu, menuForms, menuLinks } from './appMenu';
 import { ThemeToggle } from '../ui/ThemeToggle';
+import { QueuedSubmissionsNotice } from './QueuedSubmissionsNotice';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
@@ -113,6 +114,8 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
     const hasReports = (config.app?.reports?.length ?? 0) > 0 || isOwner();
     return (
       <main id="app-main-content" ref={mainRef} tabIndex={-1} className="h-screen overflow-y-auto bg-gray-50 dark:bg-slate-950 outline-none">
+        {/* No offline banner here, so the notice also names what waits while offline. */}
+        <QueuedSubmissionsNotice offlineBannerShown={false} />
         {children}
         {/* Chromeless draft preview: same owner-only publish reminder as the full shell,
             as a floating pill cluster so it never rearranges the custom screen. */}
@@ -422,6 +425,9 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
             </p>
           </div>
         )}
+
+        {/* Submissions waiting on this device or not sent, with the queue panel behind "Review". */}
+        <QueuedSubmissionsNotice offlineBannerShown={!isOnline} />
 
         {/* Draft preview banner — the server only serves a draft runtime to its
             owner, so this doubles as the "publish before sharing" reminder. */}

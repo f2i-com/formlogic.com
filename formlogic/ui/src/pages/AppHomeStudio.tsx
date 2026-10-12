@@ -123,6 +123,13 @@ export default function AppHomeStudio() {
   const [showAi, setShowAi] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(true);
   const previewTimer = useRef<number | undefined>(undefined);
+  // The trust the preview runs with. Opening a home is not adopting it, and neither is typing in
+  // it: an imported one keeps the trust the server stored for it, so it stays visual-only (its
+  // frame can navigate itself, so records() handed to it could leave the browser, and submit()
+  // writes real records). Saving is adopting: the preview then takes the trust the server answers
+  // (it stamps 'owner' when an owner's save changes the screen). Code started here from blank, a
+  // starter, an upload or a fresh generation is the owner's from the start.
+  const previewTrust = useRef<CustomScreen['_trust']>(undefined);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const aiAvailable = useAiAvailable();
@@ -172,6 +179,7 @@ export default function AppHomeStudio() {
       setName(app.name || '');
       setSlug(app.slug || '');
       const cs = app.customScreen;
+      previewTrust.current = cs?._trust;
       if (cs && (cs.html || cs.js || cs.ts || cs.files?.length)) {
         setFiles(toFiles(cs));
         setPreview({ ...cs, enabled: true });
@@ -214,17 +222,23 @@ export default function AppHomeStudio() {
     previewTimer.current = window.setTimeout(async () => {
       const r = await bundleScreenFiles(nextFiles);
       setCompileError(r.error || null);
-      // Edited here, the code is the owner's: preview it with the trust a save produces (the
-      // server stamps 'owner' on owner saves), as the form Studio does, or records(), submit(),
-      // currentUser() and navigate() are refused in the preview.
-      setPreview({ enabled: true, _trust: 'owner', files: nextFiles, html: r.html, css: r.css, js: r.error ? '' : r.js });
+      setPreview({ enabled: true, _trust: previewTrust.current, files: nextFiles, html: r.html, css: r.css, js: r.error ? '' : r.js });
     }, 450);
   };
 
   const onFilesChange = (nextFiles: ScreenFile[]) => { setFiles(nextFiles); setDirty(true); rebuild(nextFiles); };
 
-  /** An explicit starting choice (blank / starter / upload) — drops the user into the normal editor. */
-  const startWith = (next: ScreenFile[]) => { setFiles(next); setDirty(true); rebuild(next); };
+  /**
+   * An explicit starting choice (blank / starter / upload / generation) — drops the user into the
+   * normal editor. `derived`: the new code was made from the existing code (a generation given it
+   * as context), so it keeps that code's trust until saved.
+   */
+  const startWith = (next: ScreenFile[], derived = false) => {
+    setFiles(next);
+    setDirty(true);
+    if (!derived) previewTrust.current = 'owner';
+    rebuild(next);
+  };
 
   const onUpload = async (picked: File[]) => {
     if (!picked.length) return;
@@ -258,7 +272,7 @@ export default function AppHomeStudio() {
           { path: 'styles.css', content: g.css || '' },
           { path: 'index.ts', content: g.js || '' },
         ];
-    setFiles(next); setDirty(true); rebuild(next);
+    startWith(next, existing !== undefined);
     toast.success('App generated — preview on the right.');
   };
 
@@ -271,6 +285,12 @@ export default function AppHomeStudio() {
     const res = await api.updateApp(appId, { customScreen: toSave });
     setSaving(false);
     if (res.error) { toast.error('Could not save.', typeof res.error === 'string' ? res.error : undefined); return; }
+    // Saved is adopted: preview with the trust the server now holds for the screen. A demo-local
+    // app's answer carries none; the runtime trusts those.
+    const saved = ((res.data?.app as { customScreen?: CustomScreen } | undefined)?.customScreen)?._trust;
+    const trust: CustomScreen['_trust'] = saved === 'owner' || saved === 'verified' || saved === 'untrusted' ? saved : 'owner';
+    previewTrust.current = trust;
+    setPreview((p) => ({ ...p, _trust: trust }));
     setCompileError(null);
     setDirty(false);
     toast.success('Custom app saved.');
@@ -468,7 +488,14 @@ export default function AppHomeStudio() {
 
         {previewOpen && (
           <div className="min-h-0 flex flex-col bg-white dark:bg-slate-900">
-            <div className="px-4 h-9 shrink-0 flex items-center text-xs font-medium text-gray-500 dark:text-slate-400 border-b border-gray-200 dark:border-slate-800">Live preview</div>
+            <div className="px-4 h-9 shrink-0 flex items-center gap-2 text-xs font-medium text-gray-500 dark:text-slate-400 border-b border-gray-200 dark:border-slate-800">
+              Live preview
+              {preview._trust === 'untrusted' && (
+                <span className="min-w-0 truncate text-[10px] font-normal text-amber-700 dark:text-amber-400" title="Imported code is not given records, submit or the signed-in user until you save it as your own.">
+                  imported — no data until you save it
+                </span>
+              )}
+            </div>
             <div className="flex-1 min-h-0">
               {!loaded ? (
                 <div className="h-full flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary-500" /></div>

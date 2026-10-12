@@ -61,6 +61,7 @@ import { EmbedModal } from '../components/builder/EmbedModal';
 import { CsvImportWizard } from '../components/builder';
 import type { Form, LocalFormResponse } from '../types/form';
 import { publicUnfillableFieldLabels } from '../lib/publicForm';
+import { csvEscapeCell } from '../lib/csv';
 
 const ITEMS_PER_PAGE = 10;
 
@@ -586,14 +587,6 @@ function FormResponses() {
     const allExportFields = form.fields.filter(
       (f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type)
     );
-    const escapeCell = (val: unknown) => {
-      let str = String(val ?? '').replace(/"/g, '""');
-      // Prevent CSV formula injection. Match the hardened backend export
-      // (ResponseService::exportResponsesStreaming): also catch leading whitespace
-      // and TAB/CR before a formula trigger, which spreadsheets still evaluate.
-      if (/^\s*[=+\-@\t\r]/.test(str)) str = "'" + str;
-      return `"${str}"`;
-    };
     const headers = ['ID', 'Submitted At', 'Status', ...allExportFields.map((f) => f.label)];
     const rows = filteredResponses.map((r) => [
       r.id,
@@ -606,7 +599,8 @@ function FormResponses() {
       ),
     ]);
 
-    const csv = [headers.map(escapeCell).join(','), ...rows.map((row) => row.map(escapeCell).join(','))].join('\n');
+    // Formula-injection safe, numbers left as numbers (lib/csv.ts).
+    const csv = [headers.map(csvEscapeCell).join(','), ...rows.map((row) => row.map(csvEscapeCell).join(','))].join('\n');
 
     // Prepend a UTF-8 BOM so Excel reads non-ASCII correctly (matches backend export).
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });

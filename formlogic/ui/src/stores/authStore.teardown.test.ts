@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Submissions queued on the device hold the person's answers in plain text, and a row left behind
-// is sent with whoever signs in next. Signing out, deleting the account and a sign-out in another
+// is sent with whoever signs in next. Both queues are asked for the leaving account's items only
+// (the native queue's items carry their account too, enqueueNativeSubmission), so another
+// account's, parked on the device by an expired session, stay for that account. Signing out, deleting the account and a sign-out in another
 // tab remove them; a session that merely expired keeps them, so the same person can sign back in
 // and send what they queued (often offline, which is exactly when a session runs out).
 const queues = vi.hoisted(() => ({
   purgeBrowser: vi.fn(async (userId: string | null) => { void userId; }),
-  purgeNative: vi.fn(async () => {}),
+  purgeNative: vi.fn(async (userId?: string | null) => { void userId; }),
   browserCount: vi.fn(async (userId: string | null) => (userId ? 2 : 0)),
-  nativeCount: vi.fn(async () => 1),
+  nativeCount: vi.fn(async (userId?: string | null) => { void userId; return 1; }),
 }));
 vi.mock('../client-runtime/offlineQueue', () => ({
   purgeQueueForOwner: queues.purgeBrowser,
@@ -47,7 +49,7 @@ describe('queued submissions at the end of a session', () => {
   it.each(['logout', 'account-deleted'] as const)('are removed on %s, for the account that leaves', async (reason) => {
     await teardownUserSession('u1', reason, false);
     expect(queues.purgeBrowser).toHaveBeenCalledWith('u1');
-    expect(queues.purgeNative).toHaveBeenCalledTimes(1);
+    expect(queues.purgeNative).toHaveBeenCalledWith('u1');
   });
 
   it('are kept when the session only expired', async () => {
@@ -60,13 +62,14 @@ describe('queued submissions at the end of a session', () => {
     useAuthStore.setState({ user: { id: 'u1', email: 'a@example.test' } });
     await useAuthStore.getState().logout();
     expect(queues.purgeBrowser).toHaveBeenCalledWith('u1');
-    expect(queues.purgeNative).toHaveBeenCalledTimes(1);
+    expect(queues.purgeNative).toHaveBeenCalledWith('u1');
   });
 
   it('are counted, before the sign-out, for the warning: exactly what the sign-out removes', async () => {
     useAuthStore.setState({ user: { id: 'u1', email: 'a@example.test' } });
     expect(await unsentSubmissionsOnSignOut()).toBe(3);
     expect(queues.browserCount).toHaveBeenCalledWith('u1');
+    expect(queues.nativeCount).toHaveBeenCalledWith('u1');
   });
 });
 
@@ -76,7 +79,7 @@ describe('a sign-out in another tab', () => {
     await handleSessionBroadcast({ type: 'fl-teardown', reason: 'logout', userId: 'u1' });
     expect(useAuthStore.getState().user).toBeNull();
     expect(queues.purgeBrowser).toHaveBeenCalledWith('u1');
-    expect(queues.purgeNative).toHaveBeenCalledTimes(1);
+    expect(queues.purgeNative).toHaveBeenCalledWith('u1');
   });
 
   it('names this tab’s account when an older tab sent no id', async () => {

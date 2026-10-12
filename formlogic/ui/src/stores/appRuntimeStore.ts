@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import { api, newIdempotencyKey } from '../lib/api';
 import { setConnectorCapabilityContext } from '../client-runtime/desktop/desktopClient';
 import { enqueueSubmission } from '../client-runtime/offlineQueue';
-import { flushQueuesWhenDue } from '../client-runtime/nativeOfflineQueue';
+import { enqueueNativeSubmission, flushQueuesWhenDue } from '../client-runtime/nativeOfflineQueue';
 import { toast } from './toastStore';
 import type { LinkedRecord } from '../lib/api';
 import type { AppRuntimeConfig, AppRuntimeForm, AppUserPermissions, AppReportItem, AppReportSpec, AppReportResult, DashboardScreen } from '../types/app';
@@ -255,7 +255,8 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
           const bridge = typeof window !== 'undefined' ? window.FormLogicNative : undefined;
           if (bridge?.available && bridge.sync?.enqueueSubmission) {
             try {
-              const r = await bridge.sync.enqueueSubmission({ appSlug: slug, formId, idempotencyKey: key, answers });
+              // Stamped with the signed-in account, so it waits for that account if the session expires.
+              const r = await enqueueNativeSubmission({ appSlug: slug, formId, idempotencyKey: key, answers });
               return { id: r.id, queued: true, answers, submittedAt: new Date().toISOString() };
             } catch { /* fall through to the browser queue */ }
           }

@@ -59,7 +59,8 @@ export function SyncStatus() {
     <div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <SyncStatusLine offline={q.offline} pending={q.pending} failed={q.failed} />
-        {failedItems.length > 0 && (
+        {/* Kept while open, so what came of the last one can still be closed. */}
+        {(failedItems.length > 0 || reviewing) && (
           <button
             type="button"
             onClick={() => setReviewing((open) => !open)}
@@ -70,7 +71,7 @@ export function SyncStatus() {
           </button>
         )}
       </div>
-      {reviewing && failedItems.length > 0 && <FailedSubmissionList queue={q} />}
+      {reviewing && <FailedSubmissionList queue={q} />}
     </div>
   );
 }
@@ -88,9 +89,13 @@ function formatDay(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 }
 
+/** Said of a submission whose sending was answered by something other than FormLogic. */
+const UNRECOGNISED_TEXT = 'The server answered in a way FormLogic does not recognise (a Wi-Fi sign-in page or a proxy can do this).';
+
 const RETRY_RESULT: Record<SdkRetryOutcome, string> = {
   sent: 'Sent.',
   waiting: 'The server could not be reached. It is waiting to send again, by itself, when it can.',
+  unrecognised: `${UNRECOGNISED_TEXT} It is waiting to send again.`,
   failed: 'It still could not be sent.',
   conflict: 'The server already holds a different submission under this one’s reference.',
   missing: 'It is no longer on this device.',
@@ -99,7 +104,9 @@ const RETRY_RESULT: Record<SdkRetryOutcome, string> = {
 /**
  * The submissions that could not be sent, each with "Send again" and "Discard". Shows which form
  * and when, and a short reason in plain words; never the answers, and never the server's raw
- * message (it can quote an answer, and "Failed to fetch" means nothing to the person).
+ * message (it can quote an answer, and "Failed to fetch" means nothing to the person). Stays
+ * mounted with an empty list, so what came of the last one sent again or discarded is still said
+ * after it has left the list; renders nothing when there is neither.
  */
 function FailedSubmissionList({ queue }: { queue: SdkOfflineQueue }) {
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -128,6 +135,7 @@ function FailedSubmissionList({ queue }: { queue: SdkOfflineQueue }) {
       setBusy(null);
     }
   };
+  if (items.length === 0 && !result) return null;
   return (
     <div className="mt-2">
       <ul className="divide-y divide-gray-100 dark:divide-slate-800">
@@ -141,7 +149,9 @@ function FailedSubmissionList({ queue }: { queue: SdkOfflineQueue }) {
             <p className="mt-0.5 text-xs text-gray-600 dark:text-slate-300">
               {item.conflict
                 ? 'The server already holds a different submission under this one’s reference, so it cannot be sent.'
-                : 'It could not be sent after several tries.'}
+                : item.unrecognised
+                  ? UNRECOGNISED_TEXT
+                  : 'It could not be sent after several tries.'}
             </p>
             {confirming === item.key ? (
               <div role="group" aria-label="Confirm discard" className="mt-2 rounded-lg bg-red-50 dark:bg-red-500/10 p-2.5">
@@ -426,7 +436,7 @@ export function OfflineQueuePanel() {
       {lastError && (pending > 0 || failed > 0) && (
         <p className={`mt-1 text-xs ${failed > 0 ? 'text-red-600 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'}`}>{lastError}</p>
       )}
-      {(q.failedItems?.length ?? 0) > 0 && <FailedSubmissionList queue={q} />}
+      <FailedSubmissionList queue={q} />
     </div>
   );
 }

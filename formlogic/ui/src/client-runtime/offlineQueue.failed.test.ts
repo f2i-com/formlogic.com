@@ -117,13 +117,13 @@ describe('a submission the queue gave up on', () => {
   it('is listed for the person with what identifies it, and never its answers', async () => {
     const q = await giveUp();
     const listed = await listFailedSubmissions();
-    expect(listed).toEqual([{ id: q.id, appSlug: 'shop', formId: 'orders', createdAt: q.createdAt, failedAt: now, conflict: false }]);
+    expect(listed).toEqual([{ id: q.id, appSlug: 'shop', formId: 'orders', createdAt: q.createdAt, failedAt: now, conflict: false, unrecognised: false }]);
     expect(JSON.stringify(listed)).not.toContain('tea');
   });
 
   it('can be sent again: back to pending with its attempts reset, sent now under the same key', async () => {
     const q = await giveUp();
-    vi.mocked(api.createAppResponseResult).mockReset().mockResolvedValue({ ok: true, status: 201 });
+    vi.mocked(api.createAppResponseResult).mockReset().mockResolvedValue({ ok: true, status: 201, response: { id: 'r1' } });
     expect(await retrySubmission(q.id)).toBe('sent');
     expect(api.createAppResponseResult).toHaveBeenCalledTimes(1);
     expect(api.createAppResponseResult).toHaveBeenCalledWith('shop', 'orders', { answers: { item: 'tea' }, idempotencyKey: 'k1' });
@@ -189,7 +189,7 @@ describe('how long a failed submission stays on the device', () => {
 describe('rows stored before this change', () => {
   it('keep sending when pending', async () => {
     rows.set('r1', todaysRow({}));
-    vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 201 });
+    vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 201, response: { id: 'r1' } });
     expect(await flushQueue()).toEqual({ flushed: 1, failed: 0 });
     expect(await listQueue()).toEqual([]);
   });
@@ -207,7 +207,7 @@ describe('rows stored before this change', () => {
   it('when failed, can be sent again', async () => {
     rows.set('r1', todaysRow({ status: 'failed', attempts: 8, lastError: 'Server error (500)' }));
     expect((await listFailedSubmissions())[0].conflict).toBe(false);
-    vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 201 });
+    vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 201, response: { id: 'r1' } });
     expect(await retrySubmission('r1')).toBe('sent');
     expect(api.createAppResponseResult).toHaveBeenCalledWith('shop', 'orders', { answers: { item: 'tea', phone: '0400 000 000' }, idempotencyKey: 'k1' });
   });
@@ -248,9 +248,9 @@ describe('a flush under way', () => {
     await enqueueSubmission({ appSlug: 'shop', formId: 'orders', answers: { item: 'coffee' }, idempotencyKey: 'k2' });
     let release!: () => void;
     vi.mocked(api.createAppResponseResult).mockReset().mockImplementationOnce(() => new Promise((resolve) => {
-      release = () => resolve({ ok: true, status: 201 });
+      release = () => resolve({ ok: true, status: 201, response: { id: 'r1' } });
     }));
-    vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 201 });
+    vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 201, response: { id: 'r1' } });
     const pass = flushQueue();
     await vi.waitFor(() => expect(release).toBeTypeOf('function'));
     const retried = retrySubmission(q.id);

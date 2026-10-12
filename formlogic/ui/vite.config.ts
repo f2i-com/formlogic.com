@@ -61,7 +61,11 @@ function buildAppShellCsp(apiUrl: string | undefined): string {
     // it; the sandboxed screen itself keeps connect-src 'none'. Without it every
     // screen with an npm import failed to compile in a production build.
     // check-security-invariants.mjs pins this origin here, and no wildcard.
-    `connect-src 'self' wss:${apiOrigin} ${DESKTOP_LOOPBACK_ORIGINS.join(' ')} https://esm.sh https://www.paypal.com https://cloudflareinsights.com`,
+    //
+    // No bare `wss:`: it let this page open a socket to any host, and nothing in the shell opens
+    // one. The hosted runtime and the app editors are documents of their own under their own
+    // policies. Should the shell ever need a socket, name its wss:// origin here, not every host.
+    `connect-src 'self'${apiOrigin} ${DESKTOP_LOOPBACK_ORIGINS.join(' ')} https://esm.sh https://www.paypal.com https://cloudflareinsights.com`,
     // Per-app PWA manifests are served by the API (AppRuntimeRoot injects
     // <link rel="manifest"> to /api/app/{slug}/manifest.json), which is a
     // separate origin on split-host installs.

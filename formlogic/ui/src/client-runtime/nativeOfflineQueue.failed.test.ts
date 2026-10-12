@@ -50,7 +50,7 @@ function runtime(rows: Row[]) {
         idempotencyKey: String(item.idempotencyKey),
         answers: item.answers as Record<string, unknown>,
         status: 'pending',
-        attempts: Math.min(Number(item.attempts ?? 0), 5),
+        attempts: Math.min(Number(item.attempts ?? 0), 8), // MAX_SYNC_ATTEMPTS
         lastError: null,
         createdAt: typeof item.createdAt === 'string' && item.createdAt ? item.createdAt : '2026-10-12T00:00:00Z',
       });

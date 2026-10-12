@@ -123,6 +123,22 @@ describe('OfflineQueuePanel with submissions that could not be sent', () => {
     expect(host.textContent).toContain('waiting to send');
   });
 
+  // Sent again, a submission leaves the failed list (it is sent, or waiting again). What came of
+  // it used to vanish with the list, so Send again looked as though it had done nothing.
+  it('still says what came of "Send again" once the submission has left the failed list', async () => {
+    queue.browser = { pending: 0, failed: 1 };
+    queue.browserFailed = [failed()];
+    queue.retry.mockImplementation(async () => {
+      queue.browser = { pending: 1, failed: 0 };
+      queue.browserFailed = [];
+      return 'waiting';
+    });
+    await show(<OfflineQueuePanel />);
+    await click('Send again');
+    expect(host.querySelectorAll('li')).toHaveLength(0);
+    expect(host.querySelector('[role="status"]')?.textContent).toContain('Tea orders: The server could not be reached');
+  });
+
   it('sends a native one again through the native queue', async () => {
     queue.native = { pending: 0, failed: 1 };
     queue.nativeFailed = [failed({ id: 'q_1' })];
@@ -162,6 +178,21 @@ describe('OfflineQueuePanel with submissions that could not be sent', () => {
     expect(button('Discard')).toBeDefined();
   });
 
+  // A sign-in page, an SPA fallback or a proxy answered instead of FormLogic every time: the
+  // person is told that, not "after several tries", since connecting elsewhere may be the fix.
+  it('says when the server answered in a way FormLogic does not recognise, and offers both actions', async () => {
+    queue.browser = { pending: 0, failed: 1 };
+    queue.browserFailed = [failed({ unrecognised: true })];
+    queue.retry.mockResolvedValue('unrecognised');
+    await show(<OfflineQueuePanel />);
+    expect(host.textContent).toContain('The server answered in a way FormLogic does not recognise');
+    expect(host.textContent).not.toContain('after several tries');
+    expect(button('Discard')).toBeDefined();
+    await click('Send again');
+    expect(host.querySelector('[role="status"]')?.textContent).toContain('does not recognise');
+    expect(host.querySelector('[role="status"]')?.textContent).not.toContain('could not be reached');
+  });
+
   it('can still discard while offline', async () => {
     queue.browser = { pending: 0, failed: 1 };
     queue.browserFailed = [failed()];
@@ -188,6 +219,24 @@ describe('SyncStatus with submissions that could not be sent', () => {
     await click('Review');
     expect(host.querySelectorAll('li')).toHaveLength(1);
     expect(button('Send again')).toBeDefined();
+  });
+
+  it('can still be closed after the last one was discarded, with what came of it', async () => {
+    queue.browser = { pending: 0, failed: 1 };
+    queue.browserFailed = [failed()];
+    queue.discard.mockImplementation(async () => {
+      queue.browser = { pending: 0, failed: 0 };
+      queue.browserFailed = [];
+      return true;
+    });
+    await show(<SyncStatus />);
+    await click('Review');
+    await click('Discard');
+    await click('Discard answers');
+    expect(host.textContent).toContain('Tea orders: discarded.');
+    await click('Hide');
+    expect(host.textContent).not.toContain('discarded');
+    expect(button('Review')).toBeUndefined();
   });
 
   it('offers nothing to review when nothing failed', async () => {

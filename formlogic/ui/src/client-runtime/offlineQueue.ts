@@ -19,8 +19,12 @@ import { discardBackgroundSyncCopies } from '../lib/swQueue';
  */
 export type QueuedStatus = 'pending' | 'syncing' | 'failed';
 
-/** Why an item is 'failed': the server holds a different submission under its key, or it ran out of attempts. */
-export type FailureKind = 'conflict' | 'gave-up';
+/**
+ * Why an item is 'failed': the server holds a different submission under its key; it ran out of
+ * attempts; or it ran out of attempts and the last one was answered 2xx in a way the submit
+ * endpoint never answers (UNRECOGNISED_REPLY).
+ */
+export type FailureKind = 'conflict' | 'gave-up' | 'unrecognised';
 
 export interface QueuedSubmission {
   id: string;
@@ -83,10 +87,27 @@ export interface FailedSubmissionSummary {
   createdAt: number;
   failedAt: number | null;
   conflict: boolean;
+  /** Its last attempt was answered in a way FormLogic does not recognise. The native queue does not say. */
+  unrecognised?: boolean;
 }
 
 /** The classified outcome of a single delivery attempt (see classifyDeliveryResult). */
-export type DeliveryOutcome = 'delivered' | 'processing' | 'retry' | 'unreachable' | 'terminal';
+export type DeliveryOutcome = 'delivered' | 'processing' | 'retry' | 'unrecognised' | 'unreachable' | 'terminal';
+
+/** The reason kept on a submission whose delivery was answered 2xx without the stored record's id. */
+export const UNRECOGNISED_REPLY = 'The server answered in a way FormLogic does not recognise.';
+
+/**
+ * True when a 2xx's `response` is what the submit endpoint answers for an accepted submission
+ * (AppPublicController::processSubmission): the stored record, or for a replay {id}, either way
+ * with its id. A captive portal, an SPA fallback serving index.html for /api, a proxy's page or
+ * some other service answering in JSON also answer 2xx, and none of them stored anything.
+ */
+export function isAcceptedSubmission(response: unknown): boolean {
+  if (!response || typeof response !== 'object' || Array.isArray(response)) return false;
+  const id = (response as { id?: unknown }).id;
+  return typeof id === 'string' && id !== '';
+}
 
 export interface DeliveryClassification {
   outcome: DeliveryOutcome;
@@ -95,7 +116,10 @@ export interface DeliveryClassification {
 
 /** The delivery-result shape classifyDeliveryResult reads (a subset of api.AppSubmitResult). */
 export interface DeliveryResultInput {
+  /** The server answered 2xx; delivered only when `response` is an accepted submission. */
   ok: boolean;
+  /** The 2xx body's `response` (see isAcceptedSubmission). */
+  response?: unknown;
   error?: string;
   /** 409: this key was already used with a different submission — a terminal conflict. */
   conflict?: boolean;
@@ -125,6 +149,8 @@ export function isUnreachableStatus(status: number | undefined): boolean {
  * it is unit-testable directly. Prefers explicit server flags (the 409 body carries {conflict}/
  * {processing}) over message-string matching:
  *   - success / idempotent replay           → 'delivered'  (remove from the queue),
+ *   - any other 2xx (see isAcceptedSubmission)
+ *                                            → 'unrecognised' (keep pending; bump attempts, as 'retry'),
  *   - server says "already being processed"  → 'processing' (keep pending; do NOT remove or fail),
  *   - server says "different submission"     → 'terminal'   (mark failed; never retry — surface it),
  *   - server not reached (0 / 408 / 429 / 502 / 503 / 504, see isUnreachableStatus)
@@ -132,7 +158,13 @@ export function isUnreachableStatus(status: number | undefined): boolean {
  *   - any other error                        → 'retry'      (keep pending; bump attempts).
  */
 export function classifyDeliveryResult(result: DeliveryResultInput): DeliveryClassification {
-  if (result.ok) return { outcome: 'delivered', error: null };
+  if (result.ok) {
+    // Something answered, and the same thing is likely to answer next time: an attempt, so a
+    // submission behind it ends as failed (with this reason) rather than waiting for ever.
+    return isAcceptedSubmission(result.response)
+      ? { outcome: 'delivered', error: null }
+      : { outcome: 'unrecognised', error: UNRECOGNISED_REPLY };
+  }
   const message = (result.error ?? '').trim();
   // Flags win over regex; the regex is a fallback for a transport that only surfaced the message.
   if (result.processing === true || /already being processed/i.test(message)) {
@@ -351,15 +383,17 @@ export async function listFailedSubmissions(): Promise<FailedSubmissionSummary[]
       createdAt: i.createdAt,
       failedAt: typeof i.failedAt === 'number' ? i.failedAt : null,
       conflict: isConflict(i),
+      unrecognised: i.failure === 'unrecognised',
     }));
 }
 
 /**
  * What became of a retried submission: sent; waiting (back in the queue, the server was not reached
- * or asked to be tried later); failed again; refused because the server holds a different submission
- * under its key; or missing (not this account's, or no longer there).
+ * or asked to be tried later); unrecognised (back in the queue, answered 2xx by something that is
+ * not the submit endpoint, see UNRECOGNISED_REPLY); failed again; refused because the server holds
+ * a different submission under its key; or missing (not this account's, or no longer there).
  */
-export type RetryOutcome = 'sent' | 'waiting' | 'failed' | 'conflict' | 'missing';
+export type RetryOutcome = 'sent' | 'waiting' | 'unrecognised' | 'failed' | 'conflict' | 'missing';
 
 /**
  * Send a failed submission again: back to 'pending' with its attempts reset, then a flush now.
@@ -373,7 +407,8 @@ export async function retrySubmission(id: string): Promise<RetryOutcome> {
   if (row.status === 'failed' && isConflict(row)) return 'conflict';
   const reset = await updateRow(id, (r) => {
     if (r.status !== 'failed') return null;
-    const next: QueuedSubmission = { ...r, status: 'pending', attempts: 0 };
+    // lastError too: what the retry is told comes from its own answer, not an earlier one.
+    const next: QueuedSubmission = { ...r, status: 'pending', attempts: 0, lastError: null };
     delete next.failedAt;
     delete next.failure;
     return next;
@@ -386,7 +421,7 @@ export async function retrySubmission(id: string): Promise<RetryOutcome> {
   const after = (await listQueue()).find((i) => i.id === id);
   if (!after) return 'sent';
   if (after.status === 'failed') return isConflict(after) ? 'conflict' : 'failed';
-  return 'waiting';
+  return after.lastError === UNRECOGNISED_REPLY ? 'unrecognised' : 'waiting';
 }
 
 /**
@@ -428,9 +463,10 @@ let currentPass: Promise<{ flushed: number; failed: number }> | null = null;
  * Flush every retryable item (oldest first). Terminal ('failed') items are skipped: only the person
  * sends one again (retrySubmission). Outcomes: delivered → removed; processing → kept pending
  * (attempt bumped, capped); conflict → marked 'failed' with failure 'conflict'; server not reached
- * → kept pending with its attempts unchanged, and the pass ends; any other error → kept pending
- * with an incremented attempt count + lastError so a later flush retries it, and 'failed' with
- * failure 'gave-up' at MAX_ATTEMPTS.
+ * → kept pending with its attempts unchanged, and the pass ends; any other error, or a 2xx that is
+ * not an accepted submission → kept pending with an incremented attempt count + lastError so a
+ * later flush retries it, and 'failed' at MAX_ATTEMPTS with failure 'gave-up' (or 'unrecognised'
+ * when the last answer was such a 2xx).
  *
  * The returned `failed` counts items that turned NEWLY TERMINAL during this flush (audit FL-25) —
  * an item kept 'pending' for a later retry is not reported as failed.
@@ -500,14 +536,16 @@ async function runPass(): Promise<{ flushed: number; failed: number }> {
         await settle({ attempts: item.attempts + 1, lastError: error, ...failure('conflict') });
         failed++;
       } else {
-        // Generic retryable error — bump attempts and go terminal at the cap so a deterministically
-        // non-deliverable item (e.g. a server-only validation reject) drains instead of retrying forever.
-        // `failed` counts only NEWLY-TERMINAL items (audit FL-25): a retryable item stored back as
-        // 'pending' is not a failure yet, and reporting it as one made sync toasts claim losses
-        // that hadn't happened.
+        // Generic retryable error, or a 2xx that was not the submit endpoint's ('unrecognised') —
+        // bump attempts and go terminal at the cap so a deterministically non-deliverable item
+        // (e.g. a server-only validation reject, an SPA fallback answering for /api) drains
+        // instead of retrying forever. `failed` counts only NEWLY-TERMINAL items (audit FL-25): a
+        // retryable item stored back as 'pending' is not a failure yet, and reporting it as one
+        // made sync toasts claim losses that hadn't happened.
         const attempts = item.attempts + 1;
         const terminal = attempts >= MAX_ATTEMPTS;
-        await settle({ status: 'pending', attempts, lastError: error, ...(terminal ? failure('gave-up') : {}) });
+        const kind: FailureKind = outcome === 'unrecognised' ? 'unrecognised' : 'gave-up';
+        await settle({ status: 'pending', attempts, lastError: error, ...(terminal ? failure(kind) : {}) });
         if (terminal) failed++;
       }
       notify();

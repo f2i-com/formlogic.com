@@ -260,6 +260,8 @@ export interface SdkFailedSubmission {
   failedAt: number | null;
   /** The server holds a different submission under this one's key: it can only be discarded. */
   conflict: boolean;
+  /** Its last try was answered in a way FormLogic does not recognise (a sign-in page, a proxy). */
+  unrecognised: boolean;
 }
 
 export type SdkRetryOutcome = RetryOutcome;
@@ -377,6 +379,7 @@ export function useOfflineQueue(): SdkOfflineQueue {
         createdAt: row.createdAt,
         failedAt: row.failedAt,
         conflict: row.conflict,
+        unrecognised: row.unrecognised === true,
       })),
     [failedRows, appSlug, forms]
   );

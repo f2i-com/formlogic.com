@@ -14,13 +14,21 @@ function queueOf(urls: string[]): ReplayQueue & { entries: Entry[] } {
   }
 }
 
-/** Answers each URL with the status it names (`.../503`), or fails to connect for `.../offline`. */
+/**
+ * Answers each URL with the status it names (`.../503`), or fails to connect for `.../offline`.
+ * A 2xx carries what the submit endpoints answer for an accepted submission, `{ response: { id } }`;
+ * `.../portal` is a Wi-Fi sign-in page answering 200 with HTML, `.../proxy` a JSON 200 without it.
+ */
 function serverAnswering(sent: string[]) {
   return vi.fn(async (request: Request) => {
     sent.push(request.url)
     const last = request.url.split('/').pop() ?? ''
     if (last === 'offline') throw new TypeError('Failed to fetch')
-    return new Response(null, { status: Number(last) })
+    if (last === 'portal') return new Response('<html>Sign in to the hotel Wi-Fi</html>', { status: 200, headers: { 'content-type': 'text/html' } })
+    if (last === 'proxy') return new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } })
+    const status = Number(last)
+    if (status >= 200 && status < 300) return Response.json({ response: { id: 'r-' + status } }, { status })
+    return new Response(null, { status })
   })
 }
 
@@ -36,7 +44,7 @@ describe('replayKeepingUnanswered', () => {
     expect(sent).toHaveLength(3)
   })
 
-  for (const unanswered of ['503', '502', '504', '408', '429', 'offline']) {
+  for (const unanswered of ['503', '502', '504', '408', '429', 'offline', 'portal', 'proxy']) {
     it(`keeps a submission the server did not take in (${unanswered}), in its place, and stops there`, async () => {
       const sent: string[] = []
       vi.stubGlobal('fetch', serverAnswering(sent))

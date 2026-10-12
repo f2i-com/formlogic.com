@@ -589,7 +589,9 @@ function queuedRunsQuery(limit?: number, logicLanguages?: readonly string[]): st
  * a single `error` string), this exposes the {conflict}/{processing} flags from the 409 body.
  */
 export interface AppSubmitResult {
+  /** The server answered 2xx. That alone is not a stored submission: see isAcceptedSubmission (offlineQueue.ts). */
   ok: boolean;
+  /** The 2xx body's `response`: the stored record (with its id) when the submit endpoint answered. */
   response?: unknown;
   error?: string;
   /** 409: this idempotency key was already used with a DIFFERENT submission — terminal conflict. */
@@ -2773,9 +2775,11 @@ class ApiClient {
       body: JSON.stringify(body),
     });
     const b = res.body ?? {};
-    // A 2xx that is not FormLogic's JSON stored nothing: reported as no answer at all (status 0),
-    // so the offline queue keeps the submission for the next flush instead of deleting it.
-    if (res.ok && !isFormLogicReply(res.body)) return { ok: false, error: NOT_FORMLOGIC_REPLY, status: 0 };
+    // A 2xx is passed on as it came, its real status and whatever `response` its body carried
+    // (none when the body is not JSON). Whether it is an accepted submission is the offline
+    // queue's to decide (classifyDeliveryResult): a captive portal, an SPA fallback serving
+    // index.html for /api, or a proxy answer 2xx too. Reported as no answer at all (status 0), a
+    // page that never changes kept the submission waiting for ever.
     if (res.ok) {
       return { ok: true, response: (b as { response?: unknown }).response, idempotent: b.idempotent === true, status: res.status };
     }

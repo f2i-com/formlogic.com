@@ -93,41 +93,142 @@ const ENTRY_CANDIDATES = ['index.tsx', 'index.ts', 'main.tsx', 'main.ts', 'app.t
 // hermetic/deterministic (check-pack-screens keeps refusing npm imports for them).
 
 /** Minimal fetch shape the resolver needs — lets tests inject an offline fake registry. `url` is
- *  where the answer came from once redirects were followed (Response.url). */
-export type EsmFetch = (url: string) => Promise<{ ok: boolean; status: number; url?: string; text(): Promise<string> }>;
+ *  where the answer came from once redirects were followed (Response.url). `body` is read as a
+ *  stream when there is one (a real Response), so an answer is never held whole before its size
+ *  is known; `text()` is for a fake without one. */
+export type EsmFetch = (url: string) => Promise<{
+  ok: boolean;
+  status: number;
+  url?: string;
+  body?: ReadableStream<Uint8Array> | null;
+  text(): Promise<string>;
+}>;
+
+/** A fetched module: its source, and its size in bytes as it came over the network. */
+interface EsmModule {
+  code: string;
+  bytes: number;
+}
 
 let esmFetchOverride: EsmFetch | null = null;
-const esmCache = new Map<string, Promise<string>>();
+
+const ESM_ORIGIN = 'https://esm.sh';
+const ESM_MAX_MODULES = 64;
+/** What one screen's npm modules may come to in all; one module alone is read no further than this. */
+const ESM_MAX_BYTES = 4 * 1024 * 1024;
+
+// Fetched modules are kept for later builds (the Studio rebuilds on every edit), least recently
+// used first in the map's order. Bounded, or a long editing session would keep every module it
+// ever fetched: a few builds' worth of modules at most.
+const ESM_CACHE_LIMITS = { modules: 256, bytes: 16 * 1024 * 1024 };
+let esmCacheLimits = ESM_CACHE_LIMITS;
+const esmCache = new Map<string, Promise<EsmModule>>();
+/** Sizes of the cached modules that have arrived; a module still on its way counts as 0. */
+const esmCacheSizes = new Map<string, number>();
+let esmCacheBytes = 0;
 
 /** Tests only: replace the network fetch for esm.sh modules (null restores; clears the cache). */
 export function __setEsmFetchForTests(impl: EsmFetch | null): void {
   esmFetchOverride = impl;
   esmCache.clear();
+  esmCacheSizes.clear();
+  esmCacheBytes = 0;
 }
 
-const ESM_ORIGIN = 'https://esm.sh';
-const ESM_MAX_MODULES = 64;
-const ESM_MAX_BYTES = 4 * 1024 * 1024;
+/** Tests only: set the cache's bounds (null restores the defaults). */
+export function __setEsmCacheLimitsForTests(limits: { modules: number; bytes: number } | null): void {
+  esmCacheLimits = limits ?? ESM_CACHE_LIMITS;
+  trimEsmCache();
+}
 
-function esmFetchText(url: string): Promise<string> {
-  let p = esmCache.get(url);
-  if (!p) {
-    // No credentials: the request is made by the host page, and nothing of the person's session
-    // belongs on it, wherever a redirect leads.
-    const f: EsmFetch = esmFetchOverride ?? ((u) => fetch(u, { credentials: 'omit' }));
-    p = f(url).then(async (res) => {
-      // fetch follows redirects, and esm.sh uses them (an unpinned version to the pinned one).
-      // toEsm checks the URL that is asked for; this checks the one that answered, so the origin
-      // rule holds without leaning on the shell's CSP, which lists other origins too (the app,
-      // the API, the desktop bridges on loopback) and is not sent by a dev server.
-      const from = res.url ? new URL(res.url).origin : ESM_ORIGIN;
-      if (from !== ESM_ORIGIN) throw new Error(`esm.sh redirected to another site, ${from}`);
-      if (!res.ok) throw new Error(`esm.sh returned ${res.status}`);
-      return res.text();
-    });
-    p.catch(() => esmCache.delete(url)); // a transient failure may retry on the next build
-    esmCache.set(url, p);
+/** Tests only: what the cache holds, and its bounds. */
+export function __esmCacheStatsForTests(): { modules: number; bytes: number; limits: { modules: number; bytes: number } } {
+  return { modules: esmCache.size, bytes: esmCacheBytes, limits: esmCacheLimits };
+}
+
+function dropEsmCacheEntry(url: string): void {
+  esmCache.delete(url);
+  const size = esmCacheSizes.get(url);
+  if (size !== undefined) {
+    esmCacheBytes -= size;
+    esmCacheSizes.delete(url);
   }
+}
+
+/** Let go of the least recently used modules until the cache is within its bounds. */
+function trimEsmCache(): void {
+  for (const url of esmCache.keys()) {
+    if (esmCache.size <= esmCacheLimits.modules && esmCacheBytes <= esmCacheLimits.bytes) return;
+    dropEsmCacheEntry(url);
+  }
+}
+
+/** A module larger than ESM_MAX_BYTES: reported as a size error, not as a network failure. */
+class EsmTooLargeError extends Error {}
+
+/**
+ * Read an answer's body, giving up as soon as it passes `cap` bytes. A body that is a stream is
+ * read chunk by chunk and cancelled at the cap, so nothing past it is downloaded or held.
+ */
+async function readCapped(res: Awaited<ReturnType<EsmFetch>>, cap: number): Promise<EsmModule> {
+  const body = res.body;
+  if (body && typeof body.getReader === 'function') {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let bytes = 0;
+    let code = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > cap) {
+        void reader.cancel().catch(() => undefined);
+        throw new EsmTooLargeError();
+      }
+      code += decoder.decode(value, { stream: true });
+    }
+    return { code: code + decoder.decode(), bytes };
+  }
+  const code = await res.text();
+  const bytes = new TextEncoder().encode(code).byteLength;
+  if (bytes > cap) throw new EsmTooLargeError();
+  return { code, bytes };
+}
+
+function esmFetchModule(url: string): Promise<EsmModule> {
+  const cached = esmCache.get(url);
+  if (cached) {
+    // Most recently used goes last.
+    esmCache.delete(url);
+    esmCache.set(url, cached);
+    return cached;
+  }
+  // No credentials: the request is made by the host page, and nothing of the person's session
+  // belongs on it, wherever a redirect leads.
+  const f: EsmFetch = esmFetchOverride ?? ((u) => fetch(u, { credentials: 'omit' }));
+  const p = f(url).then(async (res) => {
+    // fetch follows redirects, and esm.sh uses them (an unpinned version to the pinned one).
+    // toEsm checks the URL that is asked for; this checks the one that answered, so the origin
+    // rule holds without leaning on the shell's CSP, which lists other origins too (the app,
+    // the API, the desktop bridges on loopback) and is not sent by a dev server.
+    const from = res.url ? new URL(res.url).origin : ESM_ORIGIN;
+    if (from !== ESM_ORIGIN) throw new Error(`esm.sh redirected to another site, ${from}`);
+    if (!res.ok) throw new Error(`esm.sh returned ${res.status}`);
+    return readCapped(res, ESM_MAX_BYTES);
+  });
+  esmCache.set(url, p);
+  p.then(
+    (mod) => {
+      if (esmCache.get(url) !== p) return; // let go of while it was on its way
+      esmCacheSizes.set(url, mod.bytes);
+      esmCacheBytes += mod.bytes;
+      trimEsmCache();
+    },
+    () => {
+      if (esmCache.get(url) === p) dropEsmCacheEntry(url); // a transient failure may retry on the next build
+    },
+  );
+  trimEsmCache();
   return p;
 }
 
@@ -208,14 +309,14 @@ function screenVfsPlugin(map: Map<string, string>, vendors: Vendors): Plugin {
         if (++esmModules > ESM_MAX_MODULES) {
           return { errors: [{ text: `This screen pulls more than ${ESM_MAX_MODULES} npm modules — trim its dependencies.` }] };
         }
+        const tooLarge = { errors: [{ text: `This screen's npm dependencies exceed ${Math.round(ESM_MAX_BYTES / 1048576)}MB — trim its dependencies.` }] };
         try {
-          const code = await esmFetchText(args.path);
-          esmBytes += code.length;
-          if (esmBytes > ESM_MAX_BYTES) {
-            return { errors: [{ text: `This screen's npm dependencies exceed ${Math.round(ESM_MAX_BYTES / 1048576)}MB — trim its dependencies.` }] };
-          }
-          return { contents: code, loader: 'js' };
+          const mod = await esmFetchModule(args.path);
+          esmBytes += mod.bytes;
+          if (esmBytes > ESM_MAX_BYTES) return tooLarge;
+          return { contents: mod.code, loader: 'js' };
         } catch (e) {
+          if (e instanceof EsmTooLargeError) return tooLarge;
           const why = e instanceof Error ? e.message : 'network error';
           return { errors: [{ text: `Could not fetch '${args.path}' (${why}). npm imports are downloaded from esm.sh when the screen COMPILES, so the editor needs internet — and pin versions (e.g. canvas-confetti@1.9.3) for reproducible builds. Built-ins that never need network: ${vendors.VENDOR_IMPORT_HINT}.` }] };
         }

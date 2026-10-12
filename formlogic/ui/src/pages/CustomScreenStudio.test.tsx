@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
-// Opening a screen in the Studio is not adopting it. An imported screen previews with the trust the
-// server stored for it, so an untrusted one stays visual-only: its records(), submit(), currentUser()
-// and record() are refused, as they are wherever it runs. Only an edit made here previews with
-// 'owner', the trust a save produces.
+// Opening a screen in the Studio is not adopting it, and neither is typing in it. An imported
+// screen previews with the trust the server stored for it, so an untrusted one stays visual-only:
+// its records(), submit(), currentUser() and record() are refused, as they are wherever it runs.
+// The preview frame can navigate itself, so records() handed to imported code can leave the
+// browser, and submit() writes a real record. One keystroke used to give the imported code owner
+// trust in the preview. Now the preview takes the trust the server gives the screen when it is
+// saved; code the owner starts here from blank or a starter previews as the owner's at once.
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -90,15 +93,31 @@ describe('CustomScreenStudio live preview trust', () => {
     expect(isScreenSdkActionAllowed(sectionPreview()?._trust, 'records')).toBe(false);
   });
 
-  it('previews with owner trust once the screen is edited here', async () => {
+  it('keeps an imported screen visual-only while it is edited, and says why', async () => {
     await open('untrusted');
     await click('edit');
     await settle(600); // the preview rebuilds after a pause in typing
     expect(sectionPreview()?.js).toBe('void 1;');
-    expect(isScreenSdkActionAllowed(sectionPreview()?._trust, 'records')).toBe(true);
+    expect(isScreenSdkActionAllowed(sectionPreview()?._trust, 'records')).toBe(false);
+    expect(isScreenSdkActionAllowed(sectionPreview()?._trust, 'submit')).toBe(false);
+    expect(host!.textContent).toContain('until you save it');
   });
 
-  it('keeps the record widget on its stored trust when the Studio only switches to it', async () => {
+  it('previews with the trust the server gives the screen once it is saved', async () => {
+    await open('untrusted');
+    await click('edit');
+    await settle(600);
+    const update = vi.spyOn(api, 'updateForm').mockResolvedValue({
+      data: { form: { id: 'f1', customScreen: { enabled: true, _trust: 'owner' } } },
+    } as unknown as Awaited<ReturnType<typeof api.updateForm>>);
+    await click('Save');
+    await settle();
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(isScreenSdkActionAllowed(sectionPreview()?._trust, 'records')).toBe(true);
+    expect(host!.textContent).not.toContain('until you save it');
+  });
+
+  it('keeps the record widget on its stored trust when the Studio switches to it or it is edited', async () => {
     await open('untrusted');
     await click('Record widget');
     await settle(600);
@@ -106,7 +125,7 @@ describe('CustomScreenStudio live preview trust', () => {
     expect(isScreenSdkActionAllowed(recordPreview()?._trust, 'record')).toBe(false);
     await click('edit');
     await settle(600);
-    expect(isScreenSdkActionAllowed(recordPreview()?._trust, 'record')).toBe(true);
+    expect(isScreenSdkActionAllowed(recordPreview()?._trust, 'record')).toBe(false);
   });
 
   it('still previews the owner’s own saved screen with owner trust', async () => {

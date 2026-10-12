@@ -72,7 +72,7 @@ describe('opening an app with submissions waiting on the device', () => {
   it('sends them once the app has loaded', async () => {
     await enqueueSubmission({ appSlug: 'shop', formId: 'orders', answers: { item: 'tea' }, idempotencyKey: 'k1' });
     vi.mocked(api.getAppRuntime).mockResolvedValue(runtime as never);
-    vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 201 });
+    vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 201, response: { id: 'r1' } });
 
     await useAppRuntimeStore.getState().initialize('shop');
     await flushSettled();
@@ -92,5 +92,23 @@ describe('opening an app with submissions waiting on the device', () => {
     const [row] = await listQueue();
     expect(row.status).toBe('pending');
     expect(row.attempts).toBe(0);
+  });
+});
+
+// The native runtime keeps its queue per app, not per account. A submission it queued for a
+// session that then expired must wait for that account, not be sent under whoever signs in next
+// on the device: it is queued stamped with the signed-in account (enqueueNativeSubmission).
+describe('a submission made offline in the native runtime', () => {
+  it('is queued there under the signed-in account', async () => {
+    const enqueue = vi.fn(async () => ({ id: 'n1' }));
+    vi.stubGlobal('window', { FormLogicNative: { available: true, sync: { enqueueSubmission: enqueue } } });
+    vi.stubGlobal('navigator', { onLine: false });
+    useAppRuntimeStore.setState({ appSlug: 'shop' });
+
+    const result = await useAppRuntimeStore.getState().createResponse('orders', { item: 'tea' });
+
+    expect(result).toMatchObject({ id: 'n1', queued: true });
+    expect(enqueue).toHaveBeenCalledWith({ appSlug: 'shop', formId: 'orders', idempotencyKey: 'key', answers: { item: 'tea' }, ownerUserId: 'u1' });
+    expect(await listQueue()).toEqual([]);
   });
 });

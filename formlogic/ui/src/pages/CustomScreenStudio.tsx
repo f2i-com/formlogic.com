@@ -181,10 +181,13 @@ export default function CustomScreenStudio() {
   // model (a dashboard-kind section, consumesRelated on the record widget, trust metadata
   // stripped server-side anyway) survive a save instead of being clobbered.
   const storedRef = useRef<CustomScreen | null>(null);
-  // The trust each slot previews with. Opening a screen is not adopting it: an imported screen
-  // previews with the trust the server stored for it, so an untrusted one stays visual-only here
-  // as everywhere else. Only an edit made in this Studio makes it the owner's code, previewed with
-  // the trust its save produces (the server stamps 'owner' when an owner's save changes the screen).
+  // The trust each slot previews with. Opening a screen is not adopting it, and neither is typing
+  // in it: an imported screen previews with the trust the server stored for it, so an untrusted
+  // one stays visual-only here as everywhere else (its frame can navigate itself, so records()
+  // handed to it could leave the browser, and submit() writes a real record). Saving is adopting:
+  // the preview then takes the trust the server answers (it stamps 'owner' when an owner's save
+  // changes the screen). Code started here from blank, a starter, an upload or a fresh generation
+  // is the owner's from the start.
   const previewTrust = useRef<Record<Mode, CustomScreen['_trust']>>({ section: undefined, record: undefined });
   const aiAvailable = useAiAvailable();
   // Owner direction (screen-authoring centralisation): when the user's default chat AI
@@ -295,15 +298,18 @@ export default function CustomScreenStudio() {
   const onFilesChange = (nextFiles: ScreenFile[]) => {
     if (mode === 'section') setFiles(nextFiles); else setRecFiles(nextFiles);
     setDirty(true);
-    previewTrust.current[mode] = 'owner';
     rebuild(mode, nextFiles);
   };
 
-  /** An explicit starting choice (blank / starter / upload) — drops the user into the normal editor. */
-  const startWith = (next: ScreenFile[]) => {
+  /**
+   * An explicit starting choice (blank / starter / upload / generation) — drops the user into the
+   * normal editor. `derived`: the new code was made from the slot's existing code (a generation
+   * given it as context), so it keeps that code's trust until saved.
+   */
+  const startWith = (next: ScreenFile[], derived = false) => {
     if (mode === 'section') setFiles(next); else setRecFiles(next);
     setDirty(true);
-    previewTrust.current[mode] = 'owner';
+    if (!derived) previewTrust.current[mode] = 'owner';
     rebuild(mode, next);
   };
 
@@ -346,7 +352,7 @@ export default function CustomScreenStudio() {
           { path: 'styles.css', content: g.css || '' },
           { path: 'index.ts', content: g.js || '' },
         ];
-    startWith(next);
+    startWith(next, existing !== undefined);
     toast.success(mode === 'record' ? 'Record widget generated — preview on the right.' : 'Screen generated — preview on the right.');
   };
 
@@ -391,6 +397,13 @@ export default function CustomScreenStudio() {
     setSaving(false);
     if (res.error) { toast.error('Could not save the screen.', typeof res.error === 'string' ? res.error : undefined); return; }
     storedRef.current = toSave;
+    // Saved is adopted: both slots preview with the trust the server now holds for the screen
+    // (one record, one trust). A demo-local form's answer carries none; the runtime trusts those.
+    const saved = (res.data?.form?.customScreen as CustomScreen | undefined)?._trust;
+    const trust: CustomScreen['_trust'] = saved === 'owner' || saved === 'verified' || saved === 'untrusted' ? saved : 'owner';
+    previewTrust.current = { section: trust, record: trust };
+    setPreview((p) => ({ ...p, _trust: trust }));
+    setRecPreview((p) => ({ ...p, _trust: trust }));
     setCompileError(null);
     setDirty(false);
     toast.success('Custom screen saved.');
@@ -697,6 +710,11 @@ export default function CustomScreenStudio() {
               {mode === 'record' && (
                 <span className="text-[10px] text-gray-400 dark:text-slate-500">
                   {sampleRecord ? 'using this form’s latest record' : 'no records yet — record() serves a stub'}
+                </span>
+              )}
+              {activePreview._trust === 'untrusted' && (
+                <span className="min-w-0 truncate text-[10px] font-normal text-amber-700 dark:text-amber-400" title="Imported code is not given records, submit or the signed-in user until you save it as your own.">
+                  imported — no data until you save it
                 </span>
               )}
             </div>

@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
-// The live preview runs the code being edited. Saving it stamps 'owner' trust on the server, so the
-// preview runs with that trust too: otherwise records(), submit(), currentUser() and navigate() are
-// refused in the preview as if the owner's own code were an imported, unverified screen.
+// The live preview runs the code being edited. Code the owner starts here runs with the trust a
+// save gives it ('owner'): otherwise records(), submit(), currentUser() and navigate() are refused
+// in the preview as if the owner's own code were an imported, unverified screen. An imported home
+// stays on its stored trust while it is edited (one keystroke used to make it the owner's in the
+// preview, with real records and real writes), and takes the server's trust once saved.
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -12,7 +14,12 @@ const previews: CustomScreen[] = [];
 vi.mock('../components/custom-screen/AppCustomScreenRuntime', () => ({
   AppCustomScreenRuntime: ({ screen }: { screen: CustomScreen }) => { previews.push(screen); return null; },
 }));
-vi.mock('../components/custom-screen/ScreenFilesEditor', () => ({ ScreenFilesEditor: () => null }));
+// The editor, reduced to one edit: a key typed into the first file.
+vi.mock('../components/custom-screen/ScreenFilesEditor', () => ({
+  ScreenFilesEditor: ({ files, onChange }: { files: Array<{ path: string; content: string }>; onChange: (files: Array<{ path: string; content: string }>) => void }) => (
+    <button type="button" onClick={() => onChange(files.map((f, i) => (i === 0 ? { ...f, content: f.content + ' ' } : f)))}>edit</button>
+  ),
+}));
 vi.mock('../components/chat/SiteChatWidget', () => ({ SiteChatWidget: () => null }));
 vi.mock('../client-runtime/flows/aiDefault', () => ({ getAiPreferences: () => Promise.resolve({ ok: false }) }));
 vi.mock('../lib/screenCompile', () => ({
@@ -73,8 +80,29 @@ describe('AppHomeStudio live preview', () => {
   });
 
   it('keeps the stored trust of a home it has not edited yet', async () => {
-    // Opening the editor is not adopting the code: an imported screen stays visual-only until edited.
+    // Opening the editor is not adopting the code: an imported screen stays visual-only.
     await open({ enabled: true, html: '<p>hi</p>', js: 'void 0;', _trust: 'untrusted' });
     expect(previews.at(-1)?._trust).toBe('untrusted');
+  });
+
+  const click = async (label: string) => {
+    const button = Array.from(host!.querySelectorAll('button')).find((b) => b.textContent?.trim() === label);
+    if (!button) throw new Error(`no button ${label}`);
+    await act(async () => { button.click(); });
+  };
+
+  it('keeps an imported home visual-only while it is edited, until it is saved', async () => {
+    await open({ enabled: true, html: '<p>hi</p>', js: 'void 0;', _trust: 'untrusted' });
+    await click('edit');
+    await act(() => new Promise((resolve) => setTimeout(resolve, 600)));
+    expect(previews.at(-1)?.js).toBe('void 0;');
+    expect(isScreenSdkActionAllowed(previews.at(-1)?._trust, 'records')).toBe(false);
+    expect(isScreenSdkActionAllowed(previews.at(-1)?._trust, 'submit')).toBe(false);
+    expect(host!.textContent).toContain('until you save it');
+
+    vi.spyOn(api, 'updateApp').mockResolvedValue({ data: { app: { customScreen: { enabled: true, _trust: 'owner' } } } } as Awaited<ReturnType<typeof api.updateApp>>);
+    await click('Save');
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(isScreenSdkActionAllowed(previews.at(-1)?._trust, 'records')).toBe(true);
   });
 });

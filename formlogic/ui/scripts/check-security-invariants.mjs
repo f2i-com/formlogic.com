@@ -129,6 +129,8 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
 // (screenCompile.ts), never by the sandbox, whose connect-src stays 'none' above. The shell's
 // meta policy must allow that one origin, or every screen with an npm import fails to compile
 // in a production build; and nothing broader, so the allowance is that origin and no other.
+// No source may name a whole scheme or a wildcard host either: a bare `wss:` let the shell open a
+// socket to any host at all, and nothing in the shell opens one.
 {
   const compiler = readFileSync(resolve(root, 'src/lib/screenCompile.ts'), 'utf8');
   const origin = compiler.match(/const ESM_ORIGIN = '([^']+)';/)?.[1];
@@ -141,7 +143,8 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
     const sources = line.replace(/\$\{[^}]*\}/g, ' ').split(/\s+/).filter(Boolean);
     if (!sources.includes(origin)) fail(`the app shell connect-src (vite.config.ts) must allow the screen compiler's npm origin ${origin}`);
     for (const source of sources) {
-      if (source === '*' || /^https?:$/.test(source) || /^https?:\/\/\*/.test(source)) {
+      // A bare scheme (`https:`, `wss:`, `data:`, ...) allows every host on it.
+      if (source === '*' || /^[a-z][a-z0-9+.-]*:$/i.test(source) || /^[a-z][a-z0-9+.-]*:\/\/\*/i.test(source)) {
         fail(`the app shell connect-src (vite.config.ts) must not allow a wildcard source (${source})`);
       }
     }

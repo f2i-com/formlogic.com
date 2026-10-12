@@ -6,18 +6,10 @@
 import type { FormField } from '../../types/form';
 import { formatValue } from '../../components/responses/recordFormat';
 import type { OpenRowsResult } from './formCrypto';
+import { csvEscapeCell } from '../csv';
 
-/**
- * Hardened CSV cell escaping - identical rules to the responses table's
- * client-side export (and the backend's exportResponsesStreaming): quotes
- * doubled, and any leading formula trigger (incl. after whitespace/TAB/CR)
- * neutralized with a leading apostrophe.
- */
-export function csvEscapeCell(val: unknown): string {
-  let str = String(val ?? '').replace(/"/g, '""');
-  if (/^\s*[=+\-@\t\r]/.test(str)) str = "'" + str;
-  return `"${str}"`;
-}
+/** The cell rule every browser-written CSV shares (lib/csv.ts). */
+export { csvEscapeCell };
 
 export function buildCsv(headers: string[], rows: string[][]): string {
   return [

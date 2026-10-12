@@ -90,7 +90,7 @@ afterEach(() => {
 describe('coming back to the page with submissions waiting', () => {
   it('sends the browser queue', async () => {
     await enqueueSubmission({ appSlug: 'shop', formId: 'orders', answers: { item: 'tea' }, idempotencyKey: 'k1' });
-    vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 201 });
+    vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 201, response: { id: 'r1' } });
 
     await comeBackToThePage();
 
@@ -146,7 +146,7 @@ describe('coming back to the page with submissions waiting', () => {
     expect(api.createAppResponseResult).toHaveBeenCalledTimes(1);
 
     now += AUTO_FLUSH_SPACING_MS;
-    vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 200, idempotent: true });
+    vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 200, response: { id: 'r1' }, idempotent: true });
     await comeBackToThePage();
 
     expect(api.createAppResponseResult).toHaveBeenCalledTimes(2);
