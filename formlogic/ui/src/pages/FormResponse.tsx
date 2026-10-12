@@ -1486,14 +1486,10 @@ function FormResponseContent() {
           // path: a definitive server answer rejects; a network-layer failure is
           // "queued" ONLY when the SW background-sync queue provably captured the
           // request; navigator.onLine proves neither.
-          const { classifySubmitOutcome } = await import('../lib/swQueue');
-          const outcome = await classifySubmitOutcome({
-            ok: false,
-            status: result.status ?? 0,
-            networkError: result.status === undefined
-              ? (typeof result.error === 'string' ? result.error : 'network failure')
-              : undefined,
-          });
+          // A 2xx page that is not JSON (a captive portal's) is not a failed connection: the
+          // service worker queued nothing, so it is never reported as queued.
+          const { classifySubmitOutcome, submitResultFromApi } = await import('../lib/swQueue');
+          const outcome = await classifySubmitOutcome(submitResultFromApi(result));
           if (outcome === 'queued') {
             queuedForSync = true;
           } else if (result.status === 403) {

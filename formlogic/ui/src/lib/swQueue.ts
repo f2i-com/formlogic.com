@@ -37,6 +37,23 @@ export async function swBackgroundSyncActive(): Promise<boolean> {
   }
 }
 
+/**
+ * The submit result the classifier reads, from an api.request() answer. That layer gives no
+ * status for a failed connection and none for a 2xx page that is not JSON (`unreadable`); only
+ * the failed connection is a request the service worker can have queued. The other DID get an
+ * answer (a captive portal's sign-in page, say), so nothing was queued and it is rejected: the
+ * caller keeps the person's answers.
+ */
+export function submitResultFromApi(result: { error?: string; status?: number; unreadable?: true }): SubmitResultLike {
+  if (!result.error) return { ok: true, status: result.status ?? 200 };
+  const failedConnection = result.status === undefined && !result.unreadable;
+  return {
+    ok: false,
+    status: result.status ?? 0,
+    ...(failedConnection ? { networkError: result.error || 'network failure' } : {}),
+  };
+}
+
 /** Classify a submit result into the honest tri-state (see module note). */
 export async function classifySubmitOutcome(result: SubmitResultLike): Promise<SubmitOutcome> {
   if (result.ok) return 'accepted';

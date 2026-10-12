@@ -78,7 +78,17 @@ interface ApiResponse<T> {
   /** The typed `code` from an error envelope ({error:true, code, message}), when the server sent
    *  one: a status alone cannot tell engine_changed apart from any other 409. */
   code?: string;
+  /** Set when a 2xx arrived whose body is not JSON: not an answer from FormLogic (a captive
+   *  portal's sign-in page, a proxy page). Like a network error it has no `status`, but the
+   *  request DID get an answer, so the service worker queued nothing to replay. */
+  unreadable?: true;
 }
+
+/** A submit's 2xx counts only when its body is the JSON object FormLogic answers with. */
+function isFormLogicReply(body: unknown): boolean {
+  return !!body && typeof body === 'object' && !Array.isArray(body);
+}
+const NOT_FORMLOGIC_REPLY = 'Your answers were not sent: something on the network answered instead of FormLogic (a Wi-Fi sign-in page, for example). Your answers are still here. Check your connection and send them again.';
 
 /**
  * `<id>;<revision>` of the engine decision a hosted frame was mounted with, if it has one.
@@ -871,7 +881,7 @@ class ApiClient {
           }
           return { error: `Server error (${response.status})`, status: response.status };
         }
-        return { error: 'Invalid response from server' };
+        return { error: 'Invalid response from server', unreadable: true };
       }
 
       if (!response.ok) {
@@ -1617,10 +1627,14 @@ class ApiClient {
 
   /** POST /api/forms/{id}/responses with {envelope} — the only private-mode create shape (§6). */
   async submitEncryptedResponse(formId: string, envelope: ResponseEnvelope, idempotencyKey?: string): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
-    return this.requestWithMeta(`/forms/${formId}/responses`, {
+    const res = await this.requestWithMeta(`/forms/${formId}/responses`, {
       method: 'POST',
       body: JSON.stringify({ envelope, idempotencyKey: idempotencyKey ?? newIdempotencyKey() }),
     });
+    // A 2xx that is not FormLogic's JSON stored nothing and was answered, so nothing was queued
+    // either: not accepted, and the person keeps their answers to send again.
+    if (res.ok && !isFormLogicReply(res.body)) return { ok: false, status: res.status, body: { message: NOT_FORMLOGIC_REPLY } };
+    return res;
   }
 
   /** PUT /api/forms/{id}/responses/{id} with {envelope, expectedRev} — atomic rev CAS (§6). */
@@ -2759,6 +2773,9 @@ class ApiClient {
       body: JSON.stringify(body),
     });
     const b = res.body ?? {};
+    // A 2xx that is not FormLogic's JSON stored nothing: reported as no answer at all (status 0),
+    // so the offline queue keeps the submission for the next flush instead of deleting it.
+    if (res.ok && !isFormLogicReply(res.body)) return { ok: false, error: NOT_FORMLOGIC_REPLY, status: 0 };
     if (res.ok) {
       return { ok: true, response: (b as { response?: unknown }).response, idempotent: b.idempotent === true, status: res.status };
     }

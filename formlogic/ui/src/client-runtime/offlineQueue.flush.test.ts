@@ -104,3 +104,19 @@ describe('flushQueue when the server refuses', () => {
     expect(row.status).toBe('failed');
   });
 });
+
+describe('flushQueue when something other than FormLogic answers', () => {
+  // A captive portal on a plain-HTTP install answers the POST with its own 200 page. Through the
+  // real api layer that must read as "not reached", not as a delivery that removes the submission.
+  it('keeps the submission, with no attempt used, instead of deleting it as delivered', async () => {
+    const { api: real } = await vi.importActual<typeof import('../lib/api')>('../lib/api');
+    vi.stubGlobal('document', { cookie: '' });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<!doctype html><title>Sign in to the Wi-Fi</title>', { status: 200, headers: { 'Content-Type': 'text/html' } })));
+    vi.mocked(api.createAppResponseResult).mockImplementation((...args) => real.createAppResponseResult(...args));
+    await queue();
+    expect(await flushQueue()).toEqual({ flushed: 0, failed: 0 });
+    const [row] = await listQueue();
+    expect(row.status).toBe('pending');
+    expect(row.attempts).toBe(0);
+  });
+});

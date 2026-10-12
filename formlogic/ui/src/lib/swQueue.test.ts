@@ -2,7 +2,7 @@
 // accepted / queued / rejected outcome — never navigator.onLine, and a non-2xx
 // is never claimed as accepted.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { classifySubmitOutcome, swBackgroundSyncActive } from './swQueue';
+import { classifySubmitOutcome, submitResultFromApi, swBackgroundSyncActive } from './swQueue';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -70,5 +70,33 @@ describe('swBackgroundSyncActive', () => {
       },
     });
     await expect(swBackgroundSyncActive()).resolves.toBe(false);
+  });
+});
+
+// The plain form's submit goes through api.request(), which gives no status for a failed
+// connection AND for a 2xx page that is not JSON. Only the first is a request the service worker
+// can have queued: a captive portal's 200 page reached the page, so nothing was queued to replay.
+describe('submitResultFromApi', () => {
+  const syncing = () => vi.stubGlobal('navigator', {
+    serviceWorker: { controller: {}, getRegistration: async () => ({ sync: {} }) },
+  });
+
+  it('reads a failed connection as a network failure, which a syncing service worker queued', async () => {
+    syncing();
+    const input = submitResultFromApi({ error: 'Failed to fetch' });
+    expect(input).toEqual({ ok: false, status: 0, networkError: 'Failed to fetch' });
+    await expect(classifySubmitOutcome(input)).resolves.toBe('queued');
+  });
+
+  it('reads a 2xx page that is not JSON as not sent and not queued, so the answers stay', async () => {
+    syncing();
+    const input = submitResultFromApi({ error: 'Invalid response from server', unreadable: true });
+    expect(input.networkError).toBeUndefined();
+    await expect(classifySubmitOutcome(input)).resolves.toBe('rejected');
+  });
+
+  it('reads a server refusal as rejected and a stored submission as accepted', async () => {
+    await expect(classifySubmitOutcome(submitResultFromApi({ error: 'Closed', status: 403 }))).resolves.toBe('rejected');
+    await expect(classifySubmitOutcome(submitResultFromApi({}))).resolves.toBe('accepted');
   });
 });
