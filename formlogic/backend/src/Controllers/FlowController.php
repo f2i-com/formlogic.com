@@ -207,7 +207,7 @@ class FlowController
         if (!$userId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
         }
-        $run = $this->flows->createTestRun($args['id'], $args['flowId']);
+        $run = $this->flows->createTestRun($args['id'], $args['flowId'], (string) $userId);
         if (!$run) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Flow not found'], 404);
         }
@@ -1065,7 +1065,7 @@ class FlowController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Run not found'], 404);
         }
         try {
-            $run = $this->flows->claimRun($app['id'], $runId, $request->getParsedBody() ?? []);
+            $run = $this->flows->claimRun($app['id'], $runId, $request->getParsedBody() ?? [], (string) $userId);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\RuntimeException $e) {

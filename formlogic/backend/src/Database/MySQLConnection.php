@@ -865,6 +865,7 @@ class MySQLConnection
                 runtime VARCHAR(20) NULL,
                 execution_location VARCHAR(8) NULL,
                 claimed_by VARCHAR(120) NULL,
+                run_by_user_id VARCHAR(36) NULL,
                 input_snapshot_json JSON NULL,
                 result_json JSON NULL,
                 output_actions_json JSON NULL,
@@ -2423,6 +2424,13 @@ class MySQLConnection
         }
         if ($pdo->query("SHOW INDEX FROM flow_run_logs WHERE Key_name = 'idx_frl_parent'")->rowCount() === 0) {
             $pdo->exec("ALTER TABLE flow_run_logs ADD INDEX idx_frl_parent (parent_run_id)");
+        }
+        // flow_run_logs.run_by_user_id: the account a running run executes as (whoever reserved
+        // it to run at once, or claimed it), so a record write that names the run as the one
+        // that made it (flowRunId) is checked against the caller. Rows from before this column
+        // stay NULL and give a write no lineage.
+        if ($pdo->query("SHOW COLUMNS FROM flow_run_logs LIKE 'run_by_user_id'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE flow_run_logs ADD COLUMN run_by_user_id VARCHAR(36) NULL AFTER claimed_by");
         }
         // desktop_connections.api_key_id (OAuth device-link → minted flk_ key) for installs that
         // predate the OAuth linking flow. Fresh installs already carry it (createFlowTables above).

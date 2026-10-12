@@ -170,9 +170,9 @@ class CloudFlowRunner
         $this->mysql->prepare("
             INSERT INTO flow_run_logs
                 (id, app_id, flow_definition_id, flow_version_id, trigger_event, correlation_id, idempotency_key,
-                 status, runtime, execution_location, input_snapshot_json, started_at)
+                 status, runtime, execution_location, run_by_user_id, input_snapshot_json, started_at)
             VALUES
-                (:id, :app, :flow, :flow_version, 'manual', :corr, :key, 'running', 'cloud', 'cloud', :input, NOW())
+                (:id, :app, :flow, :flow_version, 'manual', :corr, :key, 'running', 'cloud', 'cloud', :run_by, :input, NOW())
         ")->execute([
             'id' => $runId,
             'app' => $flow['appId'],
@@ -180,6 +180,7 @@ class CloudFlowRunner
             'flow_version' => $flowVersionId,
             'corr' => 'cloud-run-' . $runId,
             'key' => 'cloud:' . $runId,
+            'run_by' => $userId,
             'input' => $snapshot,
         ]);
 
@@ -516,7 +517,7 @@ class CloudFlowRunner
                 return $this->runListResponses($node, $data, $scope, $flow, $userId);
 
             case 'formlogic_submit_response':
-                return $this->runSubmitResponse($node, $data, $scope, $flow, $userId);
+                return $this->runSubmitResponse($node, $data, $scope, $flow, $userId, $runCtx);
 
             case 'formlogic_update_response':
                 return $this->runUpdateResponse($node, $data, $scope, $flow, $userId);
@@ -661,7 +662,7 @@ class CloudFlowRunner
         ];
     }
 
-    private function runSubmitResponse(array $node, array $data, array $scope, array $flow, string $userId): array
+    private function runSubmitResponse(array $node, array $data, array $scope, array $flow, string $userId, array $runCtx): array
     {
         $formId = $this->resolveFormRef($node, $data, $scope);
         $this->assertFormAccessible($node, $formId, $flow, $userId);
@@ -669,7 +670,9 @@ class CloudFlowRunner
         $answers = $this->resolveDeep($data['answers'] ?? null, $scope);
         $this->requireObject($node, $answers);
         try {
-            $created = $this->responses->createResponse($formId, ['answers' => $answers]);
+            // The record carries this run: the runs it starts are this run's children, so a flow
+            // that writes into the form it is bound to stops at the lineage depth ceiling.
+            $created = $this->responses->createResponse($formId, ['answers' => $answers], null, $runCtx['runId'] ?? null);
         } catch (\RuntimeException $e) {
             throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': {$e->getMessage()}", $node['id']);
         }

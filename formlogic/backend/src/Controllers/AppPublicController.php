@@ -580,6 +580,16 @@ class AppPublicController
      */
     private function runSubmissionPipeline(array $app, string $formId, array $data, string $userId): array
     {
+        // A flow run's write names the run (flowRunId): only a running run of this member's own,
+        // and the runs the record starts become its children, so a flow writing into the form
+        // it is bound to stops at the lineage depth ceiling.
+        try {
+            $sourceRunId = $this->responseService->runForRecordWrite($data['flowRunId'] ?? null, $userId);
+        } catch (\InvalidArgumentException $e) {
+            return ['status' => 400, 'payload' => ['error' => true, 'message' => $e->getMessage(), 'code' => 'unknown_flow_run']];
+        }
+        unset($data['flowRunId']);
+
         // Get form's logic script if any
         $form = $this->formService->getForm($formId);
         $script = $form ? ($form['logicScript'] ?? null) : null;
@@ -671,7 +681,7 @@ class AppPublicController
                 }
             }
             try {
-                $result = $this->appResponseService->createResponse($app['id'], $formId, $data, $userId, $script);
+                $result = $this->appResponseService->createResponse($app['id'], $formId, $data, $userId, $script, $sourceRunId);
             } finally {
                 $this->responseService->releaseFormLock($quotaLock);
             }

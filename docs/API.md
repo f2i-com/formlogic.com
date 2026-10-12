@@ -338,6 +338,16 @@ What happens server-side, in order — identical to a browser submission:
 { "error": true, "message": "Validation failed", "errors": { "score": "This field is required" } }
 ```
 
+### A record a flow run writes
+
+A submit made by a flow run (a desktop that claimed or reserved the run) sends that run's id as
+`flowRunId`, in the body of a single submit or in each batch item. The runs the record starts are
+then that run's children, and the depth ceiling (16) stops a flow that writes into the form it is
+bound to, which otherwise starts itself again without end. The run must be one of the key owner's,
+running or finished; any other id is refused with `400 unknown_flow_run` (in a batch, that item
+fails) and nothing is stored. A submit with no `flowRunId` is a person's own and starts its runs
+afresh.
+
 ### Batch submit
 
 `POST /forms/{formId}/responses/batch` with `{ "responses": [ { "answers": {…} }, … ] }` (max 100).

@@ -222,7 +222,8 @@ export interface FlowDispatcherDeps {
   /** Sandboxed condition evaluation (ZIPP — never eval). */
   evaluateCondition(expr: string, ctx: Record<string, unknown>): Promise<boolean>;
   executorDeps: FlowExecutorDeps;
-  createResponse(formId: string, answers: Record<string, unknown>): Promise<unknown>;
+  /** `flowRunId`: the run writing the record (see FlowExecutorDeps.submitResponse). */
+  createResponse(formId: string, answers: Record<string, unknown>, options?: { flowRunId?: string }): Promise<unknown>;
   updateResponse(formId: string, responseId: string, answers: Record<string, unknown>): Promise<unknown>;
   connectorRequest(connectorId: string, command: string, payload?: unknown): Promise<unknown>;
   toast(message: string, level: 'info' | 'success' | 'warning' | 'error'): void;
@@ -378,9 +379,9 @@ export function buildDefaultExecutorDeps(): FlowExecutorDeps {
             : undefined,
       });
     },
-    submitResponse: async (formId, answers) => {
+    submitResponse: async (formId, answers, options) => {
       const { useAppRuntimeStore } = await import('../../stores/appRuntimeStore');
-      return useAppRuntimeStore.getState().createResponse(formId, answers);
+      return useAppRuntimeStore.getState().createResponse(formId, answers, options);
     },
     updateResponse: async (formId, responseId, answers) => {
       const { useAppRuntimeStore } = await import('../../stores/appRuntimeStore');
@@ -446,8 +447,8 @@ export function buildWorkspaceExecutorDeps(): FlowExecutorDeps {
       if (res.error) throw new Error(res.error);
       return res.data?.responses ?? [];
     },
-    submitResponse: async (formId, answers) => {
-      const res = await api.submitResponse(formId, { answers });
+    submitResponse: async (formId, answers, options) => {
+      const res = await api.submitResponse(formId, options?.flowRunId ? { answers, flowRunId: options.flowRunId } : { answers });
       if (res.error) throw new Error(res.error);
       return res.data?.response;
     },
@@ -1084,7 +1085,7 @@ type ExecutableFlow = Pick<RuntimeFlowDefinition, 'id' | 'slug' | 'flowJson' | '
 
 /** The write capabilities outputActions go through (app-scoped by default; workspace injects its own). */
 interface OutputActionDeps {
-  createResponse(formId: string, answers: Record<string, unknown>): Promise<unknown>;
+  createResponse(formId: string, answers: Record<string, unknown>, options?: { flowRunId?: string }): Promise<unknown>;
   updateResponse(formId: string, responseId: string, answers: Record<string, unknown>): Promise<unknown>;
   connectorRequest(connectorId: string, command: string, payload?: unknown): Promise<unknown>;
   toast(message: string, level: 'info' | 'success' | 'warning' | 'error'): void;
@@ -1163,7 +1164,7 @@ async function executeRun(opts: {
     const scope: SelectorScope = { event, app: opts.app, result: outcome.result, inputs };
     for (const action of binding.outputActions ?? []) {
       try {
-        await applyOutputAction(action, scope, opts.actionDeps, flow.slug);
+        await applyOutputAction(action, scope, opts.actionDeps, flow.slug, opts.runId);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         actionErrors.push(`${action.type}: ${msg}`);
@@ -1251,7 +1252,9 @@ async function applyOutputAction(
   action: NonNullable<RuntimeFlowBinding['outputActions']>[number],
   scope: SelectorScope,
   deps: OutputActionDeps,
-  flowSlug?: string
+  flowSlug?: string,
+  /** The run whose outputActions these are: still running (completion comes after them). */
+  runId?: string
 ): Promise<void> {
   const d = deps;
   if (!whenPasses(action.when, scope)) return;
@@ -1282,7 +1285,9 @@ async function applyOutputAction(
       if (!answers || typeof answers !== 'object' || Array.isArray(answers)) {
         throw new Error('answers did not resolve to an object');
       }
-      await d.createResponse(action.form, answers as Record<string, unknown>);
+      // The record carries the run, as one a formlogic_submit_response node writes does.
+      if (runId) await d.createResponse(action.form, answers as Record<string, unknown>, { flowRunId: runId });
+      else await d.createResponse(action.form, answers as Record<string, unknown>);
       return;
     }
     case 'formlogic.updateResponse': {
@@ -1623,7 +1628,7 @@ export function startWorkspaceClaimLoop(): () => void {
           app: {},
           executorDeps: wsDeps,
           actionDeps: {
-            createResponse: (formId, answers) => wsDeps.submitResponse(formId, answers),
+            createResponse: (formId, answers, options) => wsDeps.submitResponse(formId, answers, options),
             updateResponse: (formId, responseId, answers) => wsDeps.updateResponse(formId, responseId, answers),
             connectorRequest: (connectorId, command, payload) => wsDeps.connectorRequest(connectorId, command, payload),
             toast: d.toast,

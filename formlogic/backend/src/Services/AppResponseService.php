@@ -30,7 +30,8 @@ class AppResponseService
         $this->formService = $formService;
     }
 
-    public function createResponse(string $appId, string $formId, array $data, string $userId, ?string $script = null): array|ScriptRejection
+    /** @param string|null $sourceRunId the checked flow run writing the record (ResponseService::createResponse) */
+    public function createResponse(string $appId, string $formId, array $data, string $userId, ?string $script = null, ?string $sourceRunId = null): array|ScriptRejection
     {
         // Set the server-controlled submitter at the top level where
         // ResponseService::createResponse() reads it, preventing client spoofing.
@@ -39,7 +40,7 @@ class AppResponseService
         // ResponseService rebuilds the metadata object from scratch.)
         $data['submittedByUserId'] = $userId;
 
-        $result = $this->responseService->createResponse($formId, $data, $script);
+        $result = $this->responseService->createResponse($formId, $data, $script, $sourceRunId);
 
         // Write response links for linked_record fields ({store:false} script
         // submissions persist nothing, so there is no source row to link from)

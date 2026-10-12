@@ -686,6 +686,60 @@ describe('binding matching + output actions', () => {
     // The third action's `when` selector was falsy — sms.send never fired.
   });
 
+  it('records the run writes name the run: the submit node and a formlogic.submitResponse action alike', async () => {
+    const nodeWrites: Array<{ formId: string; options: unknown }> = [];
+    const actionWrites: Array<{ formId: string; options: unknown }> = [];
+    const executorDeps: FlowExecutorDeps = {
+      evaluateBoolean: async () => true,
+      evaluateExpression: async () => null,
+      listResponses: async () => [],
+      submitResponse: async (formId, _answers, options) => {
+        nodeWrites.push({ formId, options });
+        return { id: 'resp-node' };
+      },
+      updateResponse: async () => ({}),
+      connectorRequest: async () => ({ ok: true }),
+    };
+    const harness = installDeps({
+      executorDeps,
+      createResponse: async (formId, _answers, options) => {
+        actionWrites.push({ formId, options });
+        return { id: 'resp-action' };
+      },
+    });
+    const writer = {
+      ...passthroughGraph(),
+      slug: 'writer',
+      flowJson: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'write', type: 'formlogic_submit_response', data: { form: 'form-1', answers: { note: 'again' } } },
+          { id: 'out', type: 'output' },
+        ],
+        edges: [{ source: 'in', target: 'write' }, { source: 'write', target: 'out' }],
+      },
+    };
+    __setRuntimeFlowsForTests(
+      {
+        flows: [writer],
+        bindings: [binding({
+          flow: 'writer',
+          formId: 'form-1',
+          outputActions: [{ type: 'formlogic.submitResponse', form: 'form-2', answers: { note: 'done' } }],
+        })],
+      },
+      'my-app'
+    );
+
+    await dispatchFormEvent('form.submitted', { formId: 'form-1', responseId: 'r-loop', answers: {} });
+
+    expect(harness.completeCalls).toHaveLength(1);
+    const runId = harness.completeCalls[0].runId;
+    expect(nodeWrites).toEqual([{ formId: 'form-1', options: { flowRunId: runId } }]);
+    // Output actions run before completion, while the run is still running on the server.
+    expect(actionWrites).toEqual([{ formId: 'form-2', options: { flowRunId: runId } }]);
+  });
+
   it('formlogic.store output action persists part of the result into Flow KV', async () => {
     const kvCalls: Array<{ scope: string; key: string; value: unknown }> = [];
     const executorDeps: FlowExecutorDeps = {

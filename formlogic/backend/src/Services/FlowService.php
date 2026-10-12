@@ -898,10 +898,10 @@ class FlowService
                 INSERT INTO flow_run_logs
                     (id, app_id, form_id, response_id, binding_id, flow_definition_id, flow_version_id,
                      parent_run_id, root_run_id, call_node_id, depth, trigger_event,
-                     correlation_id, idempotency_key, status, input_snapshot_json, started_at)
+                     correlation_id, idempotency_key, status, run_by_user_id, input_snapshot_json, started_at)
                 VALUES
                     (:id, :app, :form, :resp, :binding, :flow, :flow_version,
-                     :parent_run, :root_run, :call_node, :depth, :event, :corr, :key, :status, :input, :started)
+                     :parent_run, :root_run, :call_node, :depth, :event, :corr, :key, :status, :run_by, :input, :started)
             ");
             $stmt->execute([
                 'id' => $id,
@@ -919,6 +919,8 @@ class FlowService
                 'corr' => $correlationId,
                 'key' => $idempotencyKey,
                 'status' => $queued ? 'queued' : 'running',
+                // A queued run is run by whoever claims it (claimRun stamps it then).
+                'run_by' => $queued ? null : $userId,
                 'input' => $inputSnapshot,
                 'started' => $queued ? null : date('Y-m-d H:i:s'),
             ]);
@@ -1576,19 +1578,8 @@ class FlowService
             return [null, null, 0, $callNodeId];
         }
 
-        $stmt = $this->mysql->prepare("
-            SELECT r.id, r.app_id, r.root_run_id, r.depth, f.owner_user_id AS flow_owner
-            FROM flow_run_logs r
-            LEFT JOIN flow_definitions f ON f.id = r.flow_definition_id
-            WHERE r.id = :id LIMIT 1
-        ");
-        $stmt->execute(['id' => $parentRunId]);
-        $parent = $stmt->fetch();
-        $visible = $parent && (
-            ($appId !== null && ($parent['app_id'] ?? null) === $appId)
-            || ($ownerUserId !== null && ($parent['flow_owner'] ?? null) === $ownerUserId)
-        );
-        if (!$visible) {
+        $parent = $this->runInScope($parentRunId, $appId, $ownerUserId);
+        if ($parent === null) {
             throw new \InvalidArgumentException('Unknown parent run');
         }
 
@@ -1602,6 +1593,73 @@ class FlowService
             ? $parent['root_run_id']
             : $parentRunId;
         return [$parentRunId, $rootRunId, $depth, $callNodeId];
+    }
+
+    /**
+     * A run as a parent in a scope: its row when it belongs to the same app ($appId) or to a flow
+     * of the same owner ($ownerUserId), else null.
+     *
+     * @return array<string, mixed>|null {id, app_id, root_run_id, depth, flow_owner}
+     */
+    private function runInScope(string $runId, ?string $appId, ?string $ownerUserId): ?array
+    {
+        $stmt = $this->mysql->prepare("
+            SELECT r.id, r.app_id, r.root_run_id, r.depth, f.owner_user_id AS flow_owner
+            FROM flow_run_logs r
+            LEFT JOIN flow_definitions f ON f.id = r.flow_definition_id
+            WHERE r.id = :id LIMIT 1
+        ");
+        $stmt->execute(['id' => $runId]);
+        $run = $stmt->fetch();
+        $visible = $run && (
+            ($appId !== null && ($run['app_id'] ?? null) === $appId)
+            || ($ownerUserId !== null && ($run['flow_owner'] ?? null) === $ownerUserId)
+        );
+        return $visible ? $run : null;
+    }
+
+    /**
+     * The run a record write names as the one that made it (`flowRunId` on the write), checked
+     * against the caller. The runs the write starts (form.submitted bindings, ctx.flows.run
+     * intents) become that run's children, so the lineage depth ceiling stops a flow that writes
+     * into the form it is bound to, which before started itself again without end.
+     *
+     * Naming no run is allowed: a person's own write, or a client from before this. A named run
+     * must be run by this account (run_by_user_id: whoever reserved it to run at once, or claimed
+     * it), so no one hangs a write on another account's run, nor on another member's run of a
+     * shared app. Any other run is refused with one message, whether it exists or not. A row from
+     * before run_by_user_id existed (NULL) gives the write no lineage, as every write had before.
+     *
+     * The run may have finished: a write it made can arrive after it, queued offline while the
+     * run went on and sent later, and refusing that lost the record (the service worker drops a
+     * request the server answered). It still carries the run, so its depth applies as before;
+     * a finished run lends a write nothing it did not have while running.
+     *
+     * @return string|null the run id to hand to ResponseService::createResponse, or null for none
+     * @throws \InvalidArgumentException when the named run is not one the caller may speak for
+     */
+    public function runForRecordWrite(mixed $flowRunId, ?string $userId): ?string
+    {
+        if ($flowRunId === null || $flowRunId === '') {
+            return null;
+        }
+        $refusal = 'flowRunId must name a flow run of yours';
+        if (!is_string($flowRunId) || strlen($flowRunId) > 36 || $userId === null || $userId === '') {
+            throw new \InvalidArgumentException($refusal);
+        }
+        $stmt = $this->mysql->prepare("SELECT status, run_by_user_id FROM flow_run_logs WHERE id = :id LIMIT 1");
+        $stmt->execute(['id' => $flowRunId]);
+        $run = $stmt->fetch();
+        if (!$run) {
+            throw new \InvalidArgumentException($refusal);
+        }
+        if ($run['run_by_user_id'] === null) {
+            return null;
+        }
+        if ($run['run_by_user_id'] !== $userId) {
+            throw new \InvalidArgumentException($refusal);
+        }
+        return $flowRunId;
     }
 
     /**
@@ -1902,7 +1960,7 @@ class FlowService
      * Record a 'running' test run for a flow (trigger_event 'test'); execution happens client-side
      * in the builder, which PATCHes the result in like any other run.
      */
-    public function createTestRun(string $appId, string $flowId): ?array
+    public function createTestRun(string $appId, string $flowId, ?string $userId = null): ?array
     {
         $flow = $this->getFlow($appId, $flowId);
         if (!$flow) {
@@ -1912,9 +1970,9 @@ class FlowService
         $flowVersionId = $this->ensureFlowVersion($flow['id']);
         $stmt = $this->mysql->prepare("
             INSERT INTO flow_run_logs
-                (id, app_id, flow_definition_id, flow_version_id, trigger_event, correlation_id, idempotency_key, status, started_at)
+                (id, app_id, flow_definition_id, flow_version_id, trigger_event, correlation_id, idempotency_key, status, run_by_user_id, started_at)
             VALUES
-                (:id, :app, :flow, :flow_version, 'test', :corr, :key, 'running', NOW())
+                (:id, :app, :flow, :flow_version, 'test', :corr, :key, 'running', :run_by, NOW())
         ");
         $stmt->execute([
             'id' => $id,
@@ -1923,6 +1981,7 @@ class FlowService
             'flow_version' => $flowVersionId,
             'corr' => 'test-' . $id,
             'key' => 'test:' . $id,
+            'run_by' => $userId,
         ]);
         return $this->getRun($appId, $id);
     }
@@ -2548,16 +2607,17 @@ class FlowService
      * @throws \InvalidArgumentException on an invalid payload
      * @throws LogicLanguageUnsupportedException when the caller lacks a language the flow needs (→ 409, nothing changed)
      */
-    public function claimRun(string $appId, string $runId, array $data): ?array
+    public function claimRun(string $appId, string $runId, array $data, ?string $userId = null): ?array
     {
         [$runtime, $claimedBy, $logicLanguages] = $this->sanitizeClaim($data);
         $this->assertCallerRunsClaim('r.id = :id AND r.app_id = :a', ['id' => $runId, 'a' => $appId], $logicLanguages);
+        // run_by_user_id: the member who claims it is the one whose writes it may carry.
         $stmt = $this->mysql->prepare("
             UPDATE flow_run_logs
-            SET status = 'running', runtime = :rt, claimed_by = :cb, started_at = NOW()
+            SET status = 'running', runtime = :rt, claimed_by = :cb, run_by_user_id = :u, started_at = NOW()
             WHERE id = :id AND app_id = :a AND status = 'queued'
         ");
-        $stmt->execute(['rt' => $runtime, 'cb' => $claimedBy, 'id' => $runId, 'a' => $appId]);
+        $stmt->execute(['rt' => $runtime, 'cb' => $claimedBy, 'u' => $userId, 'id' => $runId, 'a' => $appId]);
 
         if ($stmt->rowCount() === 0) {
             $existing = $this->getRun($appId, $runId);
@@ -2586,10 +2646,10 @@ class FlowService
         $stmt = $this->mysql->prepare("
             UPDATE flow_run_logs r
             JOIN flow_definitions f ON f.id = r.flow_definition_id
-            SET r.status = 'running', r.runtime = :rt, r.claimed_by = :cb, r.started_at = NOW()
+            SET r.status = 'running', r.runtime = :rt, r.claimed_by = :cb, r.run_by_user_id = :u, r.started_at = NOW()
             WHERE r.id = :id AND f.owner_user_id = :o AND r.status = 'queued'
         ");
-        $stmt->execute(['rt' => $runtime, 'cb' => $claimedBy, 'id' => $runId, 'o' => $ownerUserId]);
+        $stmt->execute(['rt' => $runtime, 'cb' => $claimedBy, 'u' => $ownerUserId, 'id' => $runId, 'o' => $ownerUserId]);
 
         if ($stmt->rowCount() === 0) {
             $existing = $this->getOwnerRun($ownerUserId, $runId);
@@ -2816,10 +2876,10 @@ class FlowService
                 INSERT INTO flow_run_logs
                     (id, app_id, form_id, response_id, binding_id, flow_definition_id, flow_version_id,
                      parent_run_id, root_run_id, call_node_id, depth, trigger_event,
-                     correlation_id, idempotency_key, status, input_snapshot_json, started_at)
+                     correlation_id, idempotency_key, status, run_by_user_id, input_snapshot_json, started_at)
                 VALUES
                     (:id, :app, :form, :resp, :binding, :flow, :flow_version,
-                     :parent_run, :root_run, :call_node, :depth, :event, :corr, :key, :status, :input, :started)
+                     :parent_run, :root_run, :call_node, :depth, :event, :corr, :key, :status, :run_by, :input, :started)
             ");
             $stmt->execute([
                 'id' => $id,
@@ -2837,6 +2897,7 @@ class FlowService
                 'corr' => $correlationId,
                 'key' => $idempotencyKey,
                 'status' => $queued ? 'queued' : 'running',
+                'run_by' => $queued ? null : $ownerUserId,
                 'input' => $inputSnapshot,
                 'started' => $queued ? null : date('Y-m-d H:i:s'),
             ]);
@@ -3056,10 +3117,20 @@ class FlowService
      * Insert a 'queued' run row for a (formatted) flow. The UNIQUE idempotency key makes this
      * safe to replay: a duplicate returns the existing run with created=false.
      *
+     * A run that a record write starts names the run that wrote the record as `sourceRunId`
+     * (verified by the caller: runForRecordWrite, or the cloud runner's own run). When that run
+     * is in this flow's scope (same app, or a flow of the same owner) it becomes the parent and
+     * the depth carries on; one level past RUN_LINEAGE_MAX_DEPTH the run is recorded as an
+     * 'error' that never ran, instead of queued, so a flow writing into the form it is bound to
+     * stops there with the reason in its run history. A run of another scope (another account
+     * writing into this owner's form) starts a chain of its own, as every write did before, so it
+     * can neither cut this owner's flows short nor appear in their history.
+     *
      * @param array $flow A formatted flow row (formatFlow shape: id/appId/ownerUserId)
      * @param array{triggerEvent: string, correlationId: string, idempotencyKey: string,
-     *              inputSnapshot?: ?array, formId?: ?string, responseId?: ?string, bindingId?: ?string} $opts
-     * @return array{run: array, created: bool}
+     *              inputSnapshot?: ?array, formId?: ?string, responseId?: ?string, bindingId?: ?string,
+     *              parentRunId?: ?string, sourceRunId?: ?string} $opts
+     * @return array{run: array, created: bool} created=false for a replay and for a run not started
      * @throws \InvalidArgumentException when the idempotency key is held by a foreign owner's run
      */
     public function enqueueRun(array $flow, array $opts): array
@@ -3074,22 +3145,43 @@ class FlowService
 
         $id = $this->uuidV4();
         $flowVersionId = $this->ensureFlowVersion($flow['id']);
+        $appScope = isset($flow['appId']) && is_string($flow['appId']) && $flow['appId'] !== '' ? $flow['appId'] : null;
+        $ownerScope = isset($flow['ownerUserId']) && is_string($flow['ownerUserId']) ? $flow['ownerUserId'] : null;
         // Lineage (plan §8.7): outcome-handler enqueues name their source run as parent so
         // event-driven chains inherit root/depth (and the depth ceiling terminates loops).
-        [$parentRunId, $rootRunId, $depth, $callNodeId] = $this->resolveRunLineage(
-            $opts,
-            isset($flow['appId']) && is_string($flow['appId']) && $flow['appId'] !== '' ? $flow['appId'] : null,
-            isset($flow['ownerUserId']) && is_string($flow['ownerUserId']) ? $flow['ownerUserId'] : null
-        );
+        [$parentRunId, $rootRunId, $depth, $callNodeId] = $this->resolveRunLineage($opts, $appScope, $ownerScope);
+        $notStarted = null;
+        $source = ($parentRunId === null && is_string($opts['sourceRunId'] ?? null) && $opts['sourceRunId'] !== '')
+            ? $this->runInScope($opts['sourceRunId'], $appScope, $ownerScope)
+            : null;
+        if ($source !== null) {
+            $parentRunId = (string) $source['id'];
+            $depth = (int) ($source['depth'] ?? 0) + 1;
+            // The root stays NULL: a record write begins a tree of its own for the §9.2 outcome
+            // guards, which fire each (root, binding, event) pair once per tree. Every run a
+            // record started was a root before; one run writing two records must still give
+            // each record's run its own flow.succeeded handler. The depth is what ends a loop.
+            $rootRunId = null;
+            if ($depth > self::RUN_LINEAGE_MAX_DEPTH) {
+                $notStarted = json_encode([
+                    'code' => 'invalid_flow',
+                    'message' => 'Not started: this run would be ' . $depth . ' levels deep in one chain of flow runs, '
+                        . 'past the limit of ' . self::RUN_LINEAGE_MAX_DEPTH . '. It was started by a record that run '
+                        . $parentRunId . ' wrote. A flow that writes into a form it is bound to starts itself again; '
+                        . 'end the chain in the flow or in its binding.',
+                ]);
+            }
+        }
         try {
             $stmt = $this->mysql->prepare("
                 INSERT INTO flow_run_logs
                     (id, app_id, form_id, response_id, binding_id, flow_definition_id, flow_version_id,
                      parent_run_id, root_run_id, call_node_id, depth, trigger_event,
-                     correlation_id, idempotency_key, status, input_snapshot_json, started_at)
+                     correlation_id, idempotency_key, status, input_snapshot_json, error_json, started_at, finished_at)
                 VALUES
                     (:id, :app, :form, :resp, :binding, :flow, :flow_version,
-                     :parent_run, :root_run, :call_node, :depth, :event, :corr, :key, 'queued', :input, NULL)
+                     :parent_run, :root_run, :call_node, :depth, :event, :corr, :key, :status, :input, :error, NULL,
+                     " . ($notStarted !== null ? 'NOW()' : 'NULL') . ")
             ");
             $stmt->execute([
                 'id' => $id,
@@ -3106,7 +3198,9 @@ class FlowService
                 'event' => $opts['triggerEvent'],
                 'corr' => substr($opts['correlationId'], 0, 150),
                 'key' => substr($opts['idempotencyKey'], 0, 255),
+                'status' => $notStarted !== null ? 'error' : 'queued',
                 'input' => $inputSnapshot,
+                'error' => $notStarted,
             ]);
         } catch (\PDOException $e) {
             if (!$this->isDuplicateKey($e)) {
@@ -3128,7 +3222,15 @@ class FlowService
             return ['run' => $this->formatRun($row), 'created' => false];
         }
 
-        return ['run' => $this->getOwnerRun($flow['ownerUserId'], $id) ?? throw new \RuntimeException('Run enqueue failed'), 'created' => true];
+        if ($notStarted !== null) {
+            // A terminal run like any other (a flow.failed handler of it would be past the
+            // ceiling too, and is refused there); never throws.
+            $this->emitRunOutcome($id);
+        }
+        return [
+            'run' => $this->getOwnerRun($flow['ownerUserId'], $id) ?? throw new \RuntimeException('Run enqueue failed'),
+            'created' => $notStarted === null,
+        ];
     }
 
     /**
@@ -3179,7 +3281,7 @@ class FlowService
         return $count;
     }
 
-    public function enqueueSubmissionBindings(string $formId, string $responseId, array $answers): int
+    public function enqueueSubmissionBindings(string $formId, string $responseId, array $answers, ?string $sourceRunId = null): int
     {
         $stmt = $this->mysql->prepare("
             SELECT b.id AS binding_id, b.app_id AS binding_app_id, f.*
@@ -3216,6 +3318,7 @@ class FlowService
                     'formId' => $formId,
                     'responseId' => $responseId,
                     'bindingId' => $bindingId,
+                    'sourceRunId' => $sourceRunId,
                 ]);
                 if ($result['created']) {
                     $enqueued++;
@@ -3236,7 +3339,7 @@ class FlowService
      * 'script:<responseId>:<slug>' dedupes replays AND repeated run() calls for the same slug.
      * Returns the number of runs enqueued.
      */
-    public function enqueueScriptFlowRuns(string $formId, string $responseId, array $intents): int
+    public function enqueueScriptFlowRuns(string $formId, string $responseId, array $intents, ?string $sourceRunId = null): int
     {
         $owner = $this->getFormOwner($formId);
         if ($owner === null) {
@@ -3280,6 +3383,7 @@ class FlowService
                     'inputSnapshot' => $input,
                     'formId' => $formId,
                     'responseId' => $responseId,
+                    'sourceRunId' => $sourceRunId,
                 ]);
                 if ($result['created']) {
                     $enqueued++;

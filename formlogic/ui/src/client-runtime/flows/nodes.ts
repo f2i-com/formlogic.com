@@ -252,8 +252,13 @@ export interface FlowExecutorDeps {
   evaluateExpression(expr: string, ctx: Record<string, unknown>, budgetMs?: number, language?: LogicLanguage): Promise<unknown>;
   /** Read a form's responses with the viewer's session/permissions. */
   listResponses(formId: string, query?: Record<string, unknown>): Promise<unknown[]>;
-  /** Submit through the normal authenticated pipeline (validation + onSubmit + idempotency). */
-  submitResponse(formId: string, answers: Record<string, unknown>): Promise<unknown>;
+  /**
+   * Submit through the normal authenticated pipeline (validation + onSubmit + idempotency).
+   * `flowRunId` names the run writing the record: the runs the record starts become its
+   * children on the server, so a flow writing into the form it is bound to stops at the
+   * lineage depth ceiling instead of starting itself again for ever.
+   */
+  submitResponse(formId: string, answers: Record<string, unknown>, options?: { flowRunId?: string }): Promise<unknown>;
   updateResponse(formId: string, responseId: string, answers: Record<string, unknown>): Promise<unknown>;
   /** Standard connector gateway (connector.<id>.<command> permission gating applies). */
   connectorRequest(connectorId: string, command: string, payload?: unknown): Promise<unknown>;
@@ -1752,7 +1757,10 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
       if (!answers || typeof answers !== 'object' || Array.isArray(answers)) {
         throw new FlowExecError('node_failed', `Node '${node.id}' answers did not resolve to an object`, node.id);
       }
-      return await deps.submitResponse(formId, answers as Record<string, unknown>);
+      // The record carries this run (absent when the execution has no run log, e.g. a Test Run).
+      return ctx.runId
+        ? await deps.submitResponse(formId, answers as Record<string, unknown>, { flowRunId: ctx.runId })
+        : await deps.submitResponse(formId, answers as Record<string, unknown>);
     }
 
     case 'formlogic_update_response': {

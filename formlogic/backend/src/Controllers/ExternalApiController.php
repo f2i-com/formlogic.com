@@ -179,6 +179,18 @@ class ExternalApiController
         }
 
         $data = $request->getParsedBody();
+        // FormLogic Desktop writes a flow run's records here: the write names the run
+        // (flowRunId), which must be a running run of the key owner's, and the runs the record
+        // starts become its children (lineage depth ceiling).
+        try {
+            $sourceRunId = $this->responseService->runForRecordWrite(
+                is_array($data) ? ($data['flowRunId'] ?? null) : null,
+                $this->callerId($request)
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonError($response, $e->getMessage(), 400, 'unknown_flow_run');
+        }
+        unset($data['flowRunId']);
         // Capture the RAW client answers for the idempotency hash BEFORE any
         // sanitize/normalize/calc mutates them — parity with ResponseController and
         // AppPublicController, which both hash the raw body so an exact replay matches
@@ -277,7 +289,7 @@ class ExternalApiController
                 }
             }
             try {
-                $result = $this->responseService->createResponse($args['formId'], $data, $script);
+                $result = $this->responseService->createResponse($args['formId'], $data, $script, $sourceRunId);
             } finally {
                 $this->responseService->releaseFormLock($quotaLock);
             }
@@ -436,8 +448,17 @@ class ExternalApiController
             // Strip client-supplied fields that must be server-controlled
             unset($item['submittedByUserId'], $item['status']);
 
+            // Each item may name the flow run writing it, as a single write does.
             try {
-                $result = $this->responseService->createResponse($args['formId'], $item, $script);
+                $sourceRunId = $this->responseService->runForRecordWrite($item['flowRunId'] ?? null, $this->callerId($request));
+            } catch (\InvalidArgumentException $e) {
+                $results[] = ['index' => $index, 'success' => false, 'message' => $e->getMessage(), 'code' => 'unknown_flow_run'];
+                continue;
+            }
+            unset($item['flowRunId']);
+
+            try {
+                $result = $this->responseService->createResponse($args['formId'], $item, $script, $sourceRunId);
                 if ($result instanceof ScriptRejection) {
                     $results[] = ['index' => $index, 'success' => false, 'message' => $result->message, 'rejected' => $result->isRejected(), 'code' => $result->code];
                 } else {
@@ -832,6 +853,13 @@ class ExternalApiController
     /**
      * Authorize form access: checks ownership + form_ids restriction.
      */
+    /** The API key's owner (set by ApiKeyMiddleware), or null. */
+    private function callerId(Request $request): ?string
+    {
+        $userId = $request->getAttribute('userId');
+        return is_string($userId) && $userId !== '' ? $userId : null;
+    }
+
     private function authorizeForm(Request $request, string $formId): ?array
     {
         $userId = $request->getAttribute('userId');

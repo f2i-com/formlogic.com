@@ -1434,7 +1434,7 @@ class ApiClient {
     return this.request(`/forms/${formId}/responses/${responseId}`);
   }
 
-  async submitResponse(formId: string, data: { answers: Record<string, unknown>; completionTime?: number; idempotencyKey?: string }): Promise<ApiResponse<{ response: FormResponse }>> {
+  async submitResponse(formId: string, data: { answers: Record<string, unknown>; completionTime?: number; idempotencyKey?: string; flowRunId?: string }): Promise<ApiResponse<{ response: FormResponse }>> {
     // Demo-local form: store the submission in the demo overlay (never the server) —
     // the mirror of the getResponses branch above, so demo custom screens can submit.
     if (this._demoMode && isDemoLocalId(formId)) {

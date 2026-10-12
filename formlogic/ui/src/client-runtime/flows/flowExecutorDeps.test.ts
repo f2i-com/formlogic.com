@@ -20,6 +20,38 @@ vi.mock('../../lib/formlogic', () => ({
 
 import { evaluateCondition, calculateValue, calculateValueForFlow } from '../../lib/formlogic';
 import { buildDefaultExecutorDeps, buildWorkspaceExecutorDeps } from './flowDispatcher';
+import { api } from '../../lib/api';
+import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
+
+// A record a flow run writes names the run (flowRunId) on the wire, in both scopes, so the
+// server makes the runs it starts that run's children (docs/FORMLOGIC_FLOWS.md §12).
+describe('a flow run write carries its run id to the server', () => {
+  it('workspace scope: in the body of POST /forms/{id}/responses', async () => {
+    const spy = vi.spyOn(api, 'submitResponse').mockResolvedValue({ data: { response: { id: 'r1' } as never } });
+    try {
+      await buildWorkspaceExecutorDeps().submitResponse('form-1', { note: 'x' }, { flowRunId: 'run-9' });
+      expect(spy).toHaveBeenLastCalledWith('form-1', { answers: { note: 'x' }, flowRunId: 'run-9' });
+      await buildWorkspaceExecutorDeps().submitResponse('form-1', { note: 'y' });
+      expect(spy).toHaveBeenLastCalledWith('form-1', { answers: { note: 'y' } });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('app runtime: through the store, in the body of the app submit', async () => {
+    useAppRuntimeStore.setState({ appSlug: 'shop' });
+    const spy = vi.spyOn(api, 'createAppResponse').mockResolvedValue({ data: { response: { id: 'r2' } } });
+    try {
+      await buildDefaultExecutorDeps().submitResponse('form-1', { note: 'x' }, { flowRunId: 'run-9' });
+      expect(spy).toHaveBeenLastCalledWith('shop', 'form-1', expect.objectContaining({ answers: { note: 'x' }, flowRunId: 'run-9' }));
+      await buildDefaultExecutorDeps().submitResponse('form-1', { note: 'y' });
+      expect(spy.mock.lastCall?.[2]).not.toHaveProperty('flowRunId');
+    } finally {
+      spy.mockRestore();
+      useAppRuntimeStore.setState({ appSlug: null });
+    }
+  });
+});
 
 describe('buildWorkspaceExecutorDeps — timeout-budget + swallow/throw wiring (docs §4)', () => {
   it('evaluateBoolean forwards a declared budgetMs straight through to evaluateCondition', async () => {

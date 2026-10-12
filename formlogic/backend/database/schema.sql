@@ -897,6 +897,7 @@ CREATE TABLE `flow_run_logs` (
   `runtime` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `execution_location` varchar(8) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `claimed_by` varchar(120) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `run_by_user_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `input_snapshot_json` json DEFAULT NULL,
   `result_json` json DEFAULT NULL,
   `output_actions_json` json DEFAULT NULL,

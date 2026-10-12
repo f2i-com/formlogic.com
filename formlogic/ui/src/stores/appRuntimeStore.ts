@@ -61,7 +61,12 @@ interface AppRuntimeState {
   fetchResponsePage: (formId: string, options: { limit: number; offset: number; search?: string; resolve?: boolean; sort?: string; sortDir?: 'asc' | 'desc' }) => Promise<{ rows: unknown[]; total: number }>;
   /** Newest rows of a form as {id, answers, submittedAt} — demo-aware; powers dashboard list/activity widgets. */
   fetchRecentRows: (formId: string, limit: number) => Promise<Array<{ id: string; answers: Record<string, unknown>; submittedAt: string }>>;
-  createResponse: (formId: string, answers: Record<string, unknown>) => Promise<unknown>;
+  /**
+   * `flowRunId` names the flow run writing the record (the flow runtime passes it): the server
+   * makes the runs the record starts that run's children, so a flow writing into the form it is
+   * bound to stops at the lineage depth ceiling. Screens never pass it.
+   */
+  createResponse: (formId: string, answers: Record<string, unknown>, options?: { flowRunId?: string }) => Promise<unknown>;
   updateResponse: (formId: string, responseId: string, data: Record<string, unknown>) => Promise<unknown>;
   deleteResponse: (formId: string, responseId: string) => Promise<boolean>;
   /** Bulk clear of one form's records — one backend operation, returns the count. */
@@ -236,7 +241,7 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         return rows.map(map);
       },
 
-      createResponse: async (formId, answers) => {
+      createResponse: async (formId, answers, options) => {
         const slug = get().appSlug;
         if (!slug) throw new Error('App not initialized');
         // Offline: queue the submission instead of losing it. It flushes to the same idempotent create
@@ -254,7 +259,7 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
               return { id: r.id, queued: true, answers, submittedAt: new Date().toISOString() };
             } catch { /* fall through to the browser queue */ }
           }
-          const q = await enqueueSubmission({ appSlug: slug, formId, answers, idempotencyKey: key });
+          const q = await enqueueSubmission({ appSlug: slug, formId, answers, idempotencyKey: key, flowRunId: options?.flowRunId });
           return { id: q.id, queued: true, answers, submittedAt: new Date(q.createdAt).toISOString() };
         }
         // ONE stable idempotency key per logical submission (audit FL-004/C-11):
@@ -264,7 +269,9 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         // original response instead of creating a duplicate. The key is only
         // rotated on success or when the answers change.
         const idempotencyKey = stableSubmitKey(formId, answers);
-        const result = await api.createAppResponse(slug, formId, { answers, idempotencyKey });
+        const result = await api.createAppResponse(slug, formId, options?.flowRunId
+          ? { answers, idempotencyKey, flowRunId: options.flowRunId }
+          : { answers, idempotencyKey });
         if (result.error) {
           // Network-layer failure with NO server answer (status undefined) while the
           // browser claims to be online — e.g. a captive portal (audit FL-12).
@@ -273,7 +280,7 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
           // The server's payload-hash ledger dedupes whichever of the queue flush /
           // Workbox replay / manual retry lands first.
           if (!api.isDemoMode() && result.status === undefined) {
-            const q = await enqueueSubmission({ appSlug: slug, formId, answers, idempotencyKey });
+            const q = await enqueueSubmission({ appSlug: slug, formId, answers, idempotencyKey, flowRunId: options?.flowRunId });
             clearSubmitKey(formId);
             return { id: q.id, queued: true, answers, submittedAt: new Date(q.createdAt).toISOString() };
           }

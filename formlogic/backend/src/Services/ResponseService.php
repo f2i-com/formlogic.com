@@ -1099,6 +1099,16 @@ class ResponseService
                         }
                     }
                     break;
+                case 'custom':
+                    // Not checked, on purpose, and not by any screen either: the public form and
+                    // the app runtime skip it, and the builder no longer offers it and marks a saved
+                    // one "not checked". Such rules never ran anywhere, under three meanings that
+                    // disagree (the editor's test ran a function body, the browser hook an
+                    // expression, FormLogicService::validateField read truthy as valid), so turning
+                    // them on now would start refusing records on stored forms by code nobody saw
+                    // run. A check that must hold belongs in the onSubmit script, which returns
+                    // { reject: true, message } to refuse.
+                    break;
             }
         }
         return null;
@@ -2074,14 +2084,29 @@ class ResponseService
     }
 
     /**
+     * The flow run a record write names (`flowRunId` in the body), checked against the signed-in
+     * caller (FlowService::runForRecordWrite): null when it names none. Without flows wired in, no
+     * write starts a run, so there is nothing to carry.
+     *
+     * @throws \InvalidArgumentException when the run is not one the caller may speak for
+     */
+    public function runForRecordWrite(mixed $flowRunId, ?string $userId): ?string
+    {
+        return $this->flowService?->runForRecordWrite($flowRunId, $userId);
+    }
+
+    /**
      * Create a new response (form submission)
      *
      * @param string $formId The form ID
      * @param array $data The submission data
      * @param string|null $script Optional FormLogic script to execute
+     * @param string|null $sourceRunId The flow run that writes this record: the cloud runner's own
+     *   run, or a client's `flowRunId` once runForRecordWrite has checked it. Never read from
+     *   $data, which carries the client's body. The runs this record starts are its children.
      * @return array|ScriptRejection The created response or a rejection
      */
-    public function createResponse(string $formId, array $data, ?string $script = null): array|ScriptRejection
+    public function createResponse(string $formId, array $data, ?string $script = null, ?string $sourceRunId = null): array|ScriptRejection
     {
         // §9.2 gate: a private form NEVER takes the plaintext pipeline — every entry
         // point (public controller, external API, app runtime, chat/MCP tools, cloud
@@ -2356,9 +2381,9 @@ class ResponseService
         // (and the UNIQUE idempotency keys make any retry-driven replay a no-op).
         if ($this->flowService !== null) {
             try {
-                $this->flowService->enqueueSubmissionBindings($formId, $id, $data['answers'] ?? []);
+                $this->flowService->enqueueSubmissionBindings($formId, $id, $data['answers'] ?? [], $sourceRunId);
                 if ($scriptResult !== null && $scriptResult->success && $scriptResult->flowRuns !== []) {
-                    $this->flowService->enqueueScriptFlowRuns($formId, $id, $scriptResult->flowRuns);
+                    $this->flowService->enqueueScriptFlowRuns($formId, $id, $scriptResult->flowRuns, $sourceRunId);
                 }
             } catch (\Throwable $flowErr) {
                 $this->logger->error('Flow enqueue failed after response create', [

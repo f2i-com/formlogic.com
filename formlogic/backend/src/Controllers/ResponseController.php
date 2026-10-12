@@ -799,6 +799,20 @@ class ResponseController
             }
         }
 
+        // A flow run's write names the run (flowRunId; the workspace runner writes here as the
+        // signed-in owner): only a running run of the caller's own, never an anonymous caller's.
+        // The runs the record starts become its children (lineage depth ceiling).
+        $callerId = $request->getAttribute('userId');
+        try {
+            $sourceRunId = $this->responseService->runForRecordWrite(
+                is_array($data) ? ($data['flowRunId'] ?? null) : null,
+                is_string($callerId) && $callerId !== '' ? $callerId : null
+            );
+        } catch (\InvalidArgumentException $e) {
+            return ['status' => 400, 'payload' => ['error' => true, 'message' => $e->getMessage(), 'code' => 'unknown_flow_run']];
+        }
+        unset($data['flowRunId']);
+
         // Sanitize answers: strip non-input fields and unknown field IDs
         $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], is_array($data['answers'] ?? null) ? $data['answers'] : []);
 
@@ -881,7 +895,7 @@ class ResponseController
                 }
             }
             try {
-                $result = $this->responseService->createResponse($formId, $data, $script);
+                $result = $this->responseService->createResponse($formId, $data, $script, $sourceRunId);
             } finally {
                 $this->responseService->releaseFormLock($quotaLock);
             }

@@ -362,6 +362,20 @@ describe('executeFlow — nodes', () => {
     expect(outcome.result).toEqual({ id: 'resp-42' }); // output passes upstream through
   });
 
+  it('formlogic_submit_response names the run it writes for, so the runs the record starts are its children', async () => {
+    const submitResponse = vi.fn(async () => ({ id: 'resp-43' }));
+    const graph: WorkflowGraph = {
+      nodes: [
+        { id: 'in', type: 'input' },
+        { id: 'submit', type: 'formlogic_submit_response', data: { form: 'form-1', answers: { note: 'again' } } },
+      ],
+      edges: [{ source: 'in', target: 'submit' }],
+    };
+    const outcome = await executeFlow(graph, { inputs: {}, deps: fakeDeps({ submitResponse }), runId: 'run-7' });
+    expect(outcome.status).toBe('done');
+    expect(submitResponse).toHaveBeenCalledWith('form-1', { note: 'again' }, { flowRunId: 'run-7' });
+  });
+
   it('an unknown node type fails the run with invalid_flow naming the node', async () => {
     const graph: WorkflowGraph = {
       nodes: [
