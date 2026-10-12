@@ -104,7 +104,10 @@ exception: `http://localhost:<port>/…` and `http://127.0.0.1:<port>/…` loopb
 - **PKCE S256 is mandatory** (OAuth 2.1): authorize requests without a code challenge are rejected, and
   `plain` is not supported.
 - Authorization codes are **one-time**, expire in ≤60 seconds, and are bound to the client, redirect URI,
-  PKCE challenge, user, scopes, and resource (plus the optional one-app narrowing).
+  PKCE challenge, user, scopes, and resource (plus the optional one-app narrowing). A code presented
+  again is refused **and the access and refresh tokens its first use issued are revoked** (RFC 6749
+  §4.1.2), since a second presentation means the code may have been intercepted. (A FormLogic Desktop
+  link's key, minted from a code too, is not yet revoked this way.)
 - **Access tokens** are opaque `flm_oauth_…` bearer tokens — real MCP sessions with an absolute expiry of
   **3600s**, **audience-bound** to `<origin>/api/mcp` (a token minted for one host is rejected on
   another), hashed at rest, and subject to the same idle timeout, revocation, and audit as manual tokens.
@@ -266,7 +269,7 @@ FormLogic in advance:
 | `create_form` | forms:write | Create a form (fields, onSubmit script, custom screen, status) |
 | `create_app_form` | forms:write + apps:write | Create a form and attach it to the target app in one call; preferred when building an app |
 | `update_form` | forms:write | Update a form |
-| `list_apps` | apps:read | List your apps (only the scoped one, if app‑scoped) |
+| `list_apps` | apps:read | List your apps (only the scoped one, if app‑scoped); another owner's app you are a member of is listed only while it is published |
 | `create_app` | apps:write | Create an app — optional `description` + `appKind` audience tag (rejected for app‑scoped tokens) |
 | `update_app` | apps:write | Rename, set description/slug, publish (`status: "published"`), unpublish (`"draft"`), or select an existing published project with `hostedDashboard: true` |
 | `add_form_to_app` | apps:write | Attach a form to an app |
@@ -426,9 +429,29 @@ A good build flow for "hand a blank app to an AI":
    `internal` | `custom` (invalid values are rejected with the list of valid kinds).
 2. `create_app_form` — create each form with its fields (creates **and** attaches in one call).
 3. `set_app_home` — give the app a **widget dashboard** home (or a custom code screen).
-4. (optional) `update_form` — add `logicScript` automation and/or form **section dashboards**.
+4. (optional) `update_form` — add `logicScript` automation (see [onSubmit scripts](#onsubmit-scripts-via-mcp)) and/or form **section dashboards**.
 5. (optional) `create_report` / `create_document` — add charts, KPIs, and PDF report pages (forms must exist first).
 6. `update_app` — `status: "published"` (`"draft"` unpublishes).
+
+### onSubmit scripts via MCP
+
+A form's `logicScript` is JavaScript defining `function onSubmit(ctx)`. It runs synchronously in the
+ZIPP sandbox on every submission, before the record is stored. `ctx` holds exactly these (the guest
+that builds it is `formlogic/runtime/guest/src/main.rs`):
+
+- `ctx.answers` (read; assigning to it stores nothing) and `ctx.meta` (`ip`, `userAgent`, `timestamp`,
+  `responseId`, `formId`);
+- `ctx.db.setField(name, value)`, `ctx.db.getField(name)`, `ctx.db.setStatus(status)`, `ctx.db.addTag(tag)`;
+- `ctx.utils.uuid / now / nowMs / hash / formatDate`;
+- `ctx.http.get / post / put / patch / delete / request` (public addresses only, at most 10 requests);
+- `ctx.flows.run(slug, input?)` (queues one of the app's flows after the record is stored).
+
+A script refuses a submission by **returning** `{ reject: true, message }`, and returns
+`{ store: false }` to accept without storing. A script that throws (for example by calling
+`ctx.setField`, which does not exist) refuses **every** submission until it is corrected: the person
+submitting is told the form's script failed, without its error, and the owner's callers
+(`add_response` over MCP, the owner's API key, the owner submitting through their own link or app)
+are told the script's error. `get_started` § onSubmit script carries a worked example that the test suite runs.
 
 ### Reports & PDF documents
 
@@ -548,6 +571,8 @@ first; documents reference them by the `id` returned from `create_report`.
   creator token, the ones it made). A creator token cannot build an existing form into its app.
 - Opening a form's answers to visitors (`customScreen.publicRecords` on `create_form`, `update_form` or
   `set_form_screen`, turning it on or adding fields) needs `responses:read`: it publishes submission data.
+  So does publishing a draft or archived form whose screen already has `publicRecords` on
+  (`update_form { status: "published" }`), since a form serves its public records only while published.
 - A flow, a binding or app logic that can command a connector (`connector.*`) needs `connector:command`
   to create, change or bind, as sending the command itself does.
 - Revoking a connection ends the whole grant, its refresh token included, and every session made from

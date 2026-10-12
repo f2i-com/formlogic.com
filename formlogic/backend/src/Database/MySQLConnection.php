@@ -92,6 +92,7 @@ class MySQLConnection
             }
             $this->initializeSchema();
             $this->runMigrations();
+            $this->repairShippedSampleScripts();
             // schema_meta is the INSTALLER'S key/value store (install.php /
             // bin/upgrade.php own its shape) — the stamp is just one more key.
             $pdo->exec(
@@ -1546,6 +1547,35 @@ class MySQLConnection
     /**
      * Run migrations for existing databases
      */
+    /**
+     * Form scripts FormLogic itself shipped wrong, each with what it ships now. Installing a
+     * sample app copies its script into the account's form, so correcting the sample file
+     * corrects new installs only.
+     *
+     * The Expense sample called `ctx.addTag`, which the sandbox does not define
+     * (`ctx.db.addTag`), so every expense over 500 was refused.
+     */
+    private const SHIPPED_SCRIPT_REPAIRS = [
+        "function onSubmit(ctx) {\n  // Flag large expenses so approvers can spot them quickly.\n  var amount = Number(ctx.answers.amount);\n  if (amount > 500) {\n    ctx.addTag('high-value');\n  }\n}\n"
+            => "function onSubmit(ctx) {\n  // Flag large expenses so approvers can spot them quickly.\n  var amount = Number(ctx.answers.amount);\n  if (amount > 500) {\n    ctx.db.addTag('high-value');\n  }\n}\n",
+    ];
+
+    /**
+     * Give a form still holding one of SHIPPED_SCRIPT_REPAIRS' scripts exactly as it shipped the
+     * corrected one. A script anyone changed, by so much as a character, is theirs and is left
+     * alone. Run with the migrations when the schema code changes (ensureSchemaCurrent), so once
+     * per deploy rather than on every request; running it again changes nothing.
+     */
+    public function repairShippedSampleScripts(): void
+    {
+        // Byte for byte: the column's collation would call a script that differs in letter case
+        // the same one.
+        $update = $this->getConnection()->prepare('UPDATE forms SET logic_script = :fixed WHERE logic_script = :broken COLLATE utf8mb4_bin');
+        foreach (self::SHIPPED_SCRIPT_REPAIRS as $broken => $fixed) {
+            $update->execute(['fixed' => $fixed, 'broken' => $broken]);
+        }
+    }
+
     public function runMigrations(): void
     {
         $pdo = $this->getConnection();

@@ -6,7 +6,7 @@ analytics, and manage webhooks.
 
 A submission made through the API goes through the **exact same pipeline as a real form fill**:
 field sanitization, server-side validation, calculated/hidden fields, and your `onSubmit(ctx)`
-script (including `reject`, `setField`, `setStatus`, `addTag`). Anything you can do by filling out
+script (a returned `reject`, `ctx.db.setField`, `ctx.db.setStatus`, `ctx.db.addTag`). Anything you can do by filling out
 the form in a browser, you can do over the API.
 
 ---
@@ -302,15 +302,21 @@ curl -X POST https://<your-api-host>/api/v1/forms/FORM_ID/responses \
 What happens server-side, in order — identical to a browser submission:
 
 1. **Sanitize** — non-input and unknown fields are dropped; client-supplied `status` is ignored.
+   An answer nested more than 16 levels deep, or holding more than 10,000 values, is then refused
+   at once → `422` with `code` `answer_too_deep` or `answer_too_many_values` and `errors` naming the
+   field (in a batch, that item fails the same way; on `PUT`, only the answers sent are checked).
 2. **Calculated / hidden fields** are computed on the server (you can't set them from the client).
 3. **Validation** — required fields, types, and your validation rules run. Failures → `400`.
-4. **`onSubmit(ctx)` script** runs — BEFORE anything is stored. It can `reject` the submission,
-   `setField`, `setStatus`, `addTag`, call `ctx.http`, etc. It can also take over storage
+4. **`onSubmit(ctx)` script** runs — BEFORE anything is stored. It can refuse the submission by
+   returning `{ reject: true, message }`, write through `ctx.db.setField`, `ctx.db.setStatus`,
+   `ctx.db.addTag`, call `ctx.http`, etc. It can also take over storage
    entirely by returning `{ store: false }`: the submission is accepted (`201`, with
    `"stored": false` on the response object) but FormLogic persists nothing — no response row,
    webhooks, flows, links or notifications — leaving the script in charge of the data
-   (typically forwarded via `ctx.http`). Only an explicit `reject`/`store:false` changes
-   storage; a script that merely throws does NOT block the save.
+   (typically forwarded via `ctx.http`). A script that does not run to a verdict (it throws, or
+   the engine stops it) refuses the submission → `503` with `code: "script_unavailable"`, and
+   nothing is stored; your key is the form owner's, so the body also carries `detail`, the
+   script's error.
 
 **Success** → `201`:
 
@@ -370,8 +376,9 @@ Each item runs the full pipeline independently; the response reports per-item su
 | `403` | Key lacks the required scope (or the form isn't accepting responses) |
 | `404` | Form / response not found, or not accessible to this key |
 | `413` | Submission too large |
-| `422` | Submission rejected by the `onSubmit` script (`rejected: true`) |
+| `422` | Submission rejected by the `onSubmit` script (`rejected: true`), or an answer nested too deeply / holding too many values (`code: "answer_too_deep"` / `"answer_too_many_values"`, `errors` names the field) |
 | `429` | Rate limit exceeded |
+| `503` | The `onSubmit` script did not run to a verdict (`code: "script_unavailable"`; `detail` says why); nothing was stored |
 
 Error bodies use a consistent shape: `{ "error": true, "message": "…", "errors"?: {…} }`.
 

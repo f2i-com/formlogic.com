@@ -847,7 +847,9 @@ $container->set(AppUserController::class, function (Container $c) {
         $c->get(AppUserService::class),
         $c->get(AppService::class),
         $c->get(AuditService::class),
-        $c->get(\FormLogic\Services\EmailService::class)
+        $c->get(\FormLogic\Services\EmailService::class),
+        // What the invitation mail limits count with (EmailService); without it every invitation is sent.
+        $c->get(\FormLogic\Services\RateLimiter::class)
     );
 });
 
@@ -1610,7 +1612,9 @@ $app->get('/api/ai/status', function ($request, $response) use ($container) {
 $aiRateLimiter = new RateLimitMiddleware($rateLimiter, 15, 60, 'ai', true);
 $aiFileRateLimiter = new RateLimitMiddleware($rateLimiter, 5, 60, 'ai_file', true);
 // Hosted chat rides its own 30/min per-user budget (plan section 7) — chattier than the generators.
-$aiChatRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'ai_chat', true);
+// The route takes an flk_ key too (the controller authenticates it, so no middleware sets userId):
+// given the key service, the limiter counts a valid key against its owner's account like a session.
+$aiChatRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'ai_chat', true, false, $container->get(ApiKeyService::class));
 
 // Protected AI routes (require authentication to prevent abuse)
 // Cloud entitlement gate (audit FL-003/C-10): ONE policy — content-creating writes

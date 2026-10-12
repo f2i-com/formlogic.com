@@ -365,4 +365,54 @@ class BlueprintMaterializeTest extends TestCase
         }
         $this->assertSame($appsBefore, self::$pdo->query('SELECT COUNT(*) FROM apps')->fetchColumn(), 'nothing was created');
     }
+
+    /**
+     * A flow element's resourceRef is whatever the diagram's author put there. One naming
+     * another account's flow must not be looked up: its slug came back in the refusal
+     * ("Unknown flow '<slug>' in this app"), or, where this app had a flow of the same slug,
+     * the trigger was bound to that one. It is skipped, and the rest of the diagram is built.
+     */
+    public function testAFlowRefOutsideTheAppIsNotLookedUp(): void
+    {
+        $otherId = 'bp-mz-other-' . bin2hex(random_bytes(6));
+        self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, 'x', 'Other')")
+            ->execute([$otherId, "{$otherId}@test.local"]);
+        $otherApp = self::$apps->createApp(['name' => 'Theirs'], $otherId);
+        $secretSlug = 'their-private-flow-' . bin2hex(random_bytes(4));
+        $theirFlow = (new FlowService(self::$mysql))->createFlow((string) $otherApp['id'], $otherId, [
+            'name' => 'Theirs', 'slug' => $secretSlug,
+            'flowJson' => ['nodes' => [['id' => 'in', 'type' => 'input', 'data' => ['inputs' => []]]], 'edges' => []],
+        ]);
+
+        $blueprint = self::$blueprints->createBlueprint($this->userId, ['name' => 'Mine']);
+        self::$blueprints->commitOperations($this->userId, $blueprint['id'], [
+            'baseSemanticRevision' => 0,
+            'operations' => [
+                $this->op('blueprint.element.create', ['targetId' => 'el-a', 'elementType' => 'form', 'properties' => ['title' => 'Intake']]),
+                $this->op('blueprint.element.create', [
+                    'targetId' => 'el-flow',
+                    'elementType' => 'flow',
+                    'resourceRef' => ['kind' => 'flow', 'id' => (string) $theirFlow['id']],
+                    'properties' => ['title' => 'Theirs'],
+                ]),
+                $this->op('blueprint.element.create', [
+                    'targetId' => 'el-trig',
+                    'elementType' => 'edge',
+                    'properties' => ['edgeType' => 'triggers', 'sourceId' => 'el-a', 'targetId' => 'el-flow'],
+                ]),
+            ],
+        ]);
+
+        try {
+            $result = self::$materializer->materialize($this->userId, $blueprint['id']);
+        } catch (\Throwable $e) {
+            $this->assertStringNotContainsString($secretSlug, $e->getMessage(), 'the refusal names their flow');
+            throw $e;
+        }
+        $this->assertSame(0, $result['bindings']);
+        $this->assertCount(1, $result['createdFormIds'], 'the rest of the diagram is built');
+        $bound = self::$pdo->prepare('SELECT COUNT(*) FROM app_flow_bindings WHERE flow_definition_id = ? OR app_id = ?');
+        $bound->execute([$theirFlow['id'], $result['appId']]);
+        $this->assertSame(0, (int) $bound->fetchColumn());
+    }
 }

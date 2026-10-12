@@ -107,10 +107,17 @@ class FormLogicRuntime
         $executionTimeMs = (int) ((microtime(true) - $startTime) * 1000);
 
         if (isset($done['error'])) {
+            $error = $this->sanitizeError((string) $done['error']);
+            // The guest's own wrapper reports the script's faults, and only those, in these two
+            // forms: a throw (its message already carries the prefix) and no onSubmit at all.
+            // Everything else is the engine stopping the script: a budget, a crash, no runtime.
+            $scriptFault = str_starts_with($error, 'Script execution error: ')
+                || $error === 'Script did not define onSubmit(ctx)';
             return ScriptResult::error(
-                'Script execution error: ' . $this->sanitizeError((string) $done['error']),
+                str_starts_with($error, 'Script execution error: ') ? $error : 'Script execution error: ' . $error,
                 0,
-                $executionTimeMs
+                $executionTimeMs,
+                $scriptFault
             );
         }
 

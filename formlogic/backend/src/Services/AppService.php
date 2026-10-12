@@ -18,6 +18,25 @@ class AppService
      */
     public const APP_KINDS = ['admin', 'client', 'staff', 'public', 'internal', 'custom'];
 
+    /** apps.name and app_forms.display_name are VARCHAR(255): characters. */
+    public const MAX_NAME_CHARS = 255;
+    /** apps.description is TEXT: bytes. */
+    public const MAX_DESCRIPTION_BYTES = 65535;
+
+    /**
+     * Text a caller supplies for a column it would not fit: refused with the limit, rather than
+     * handed to the database, whose refusal reached the caller as its own error text.
+     */
+    private static function assertFits(mixed $name, mixed $description, string $what = 'App name'): void
+    {
+        if (is_string($name) && mb_strlen($name) > self::MAX_NAME_CHARS) {
+            throw new \InvalidArgumentException($what . ' must be ' . self::MAX_NAME_CHARS . ' characters or fewer');
+        }
+        if (is_string($description) && strlen($description) > self::MAX_DESCRIPTION_BYTES) {
+            throw new \InvalidArgumentException('App description must be 65,535 bytes or fewer (a character outside plain English letters takes two to four)');
+        }
+    }
+
     /**
      * Optional createApp role presets: default permission grants for the NON-owner system roles
      * (Admin/Member). The Owner role always gets every permission regardless; an unknown preset is
@@ -259,8 +278,10 @@ class AppService
     }
 
     /**
-     * App IDs of every app that contains $formId AND in which $userId is an active member.
-     * Used to resolve the per-app, per-form permission that gates access to the form's files.
+     * App IDs of every app that contains $formId, in which $userId is an active member, and which
+     * $userId can open (isRuntimeVisible: published, or a draft of their own). Used to resolve the
+     * per-app, per-form permission that gates access to the form's files, so a member reaches no
+     * file of an app the runtime would answer 404 for.
      * @return string[]
      */
     public function activeAppIdsContainingForm(string $formId, string $userId): array
@@ -268,9 +289,11 @@ class AppService
         $stmt = $this->mysql->prepare(
             "SELECT af.app_id FROM app_forms af
              JOIN app_users au ON au.app_id = af.app_id
-             WHERE af.form_id = :fid AND au.user_id = :uid AND au.status = 'active'"
+             JOIN apps a ON a.id = af.app_id
+             WHERE af.form_id = :fid AND au.user_id = :uid AND au.status = 'active'
+               AND (a.status = 'published' OR (a.status = 'draft' AND a.owner_id = :owner))"
         );
-        $stmt->execute(['fid' => $formId, 'uid' => $userId]);
+        $stmt->execute(['fid' => $formId, 'uid' => $userId, 'owner' => $userId]);
         return $stmt->fetchAll(\PDO::FETCH_COLUMN) ?: [];
     }
 
@@ -306,6 +329,8 @@ class AppService
 
     public function createApp(array $data, string $ownerId): array
     {
+        self::assertFits($data['name'] ?? null, $data['description'] ?? null);
+
         // Optional atomic attach list (POST /api/apps { formIds }): validate shape +
         // caller ownership BEFORE any insert so an invalid id leaves no app row (or
         // app_forms rows) behind; the attaches themselves run INSIDE the same
@@ -574,6 +599,7 @@ class AppService
         if (!$existing) {
             return null;
         }
+        self::assertFits($data['name'] ?? null, $data['description'] ?? null);
 
         $updates = [];
         $params = ['id' => $appId];
@@ -1144,6 +1170,10 @@ class AppService
         $row = $stmt->fetch();
         $sortOrder = ($row['max_order'] ?? -1) + 1;
 
+        // A display name the caller gives must fit the column; the default (the form's title,
+        // VARCHAR(255) as well) always does.
+        self::assertFits($displayName, null, 'A form\'s display name');
+
         // Get form title for default display name
         if (!$displayName) {
             $form = $this->formService->getForm($formId);
@@ -1182,6 +1212,16 @@ class AppService
         $removed = $stmt->rowCount() > 0;
 
         if ($removed) {
+            // A role holds built-in grants only on the app's forms (AppUserService::setRolePermissions
+            // stores none on another form and drops those it finds), so the form's go with it. Left
+            // in place they came back with the form if it was attached again, unless a save of the
+            // role had dropped them in between. Connector grants are managed apart and stay.
+            $this->mysql->prepare(
+                "DELETE FROM app_role_permissions
+                 WHERE form_id = :form_id AND permission NOT LIKE 'connector.%'
+                   AND role_id IN (SELECT id FROM app_roles WHERE app_id = :app_id)"
+            )->execute(['form_id' => $formId, 'app_id' => $appId]);
+
             // Only purge response_links if the form no longer belongs to ANY app.
             // response_links are global (no app_id column) and the same form can be
             // shared across apps, so an unconditional delete would wipe the inverse

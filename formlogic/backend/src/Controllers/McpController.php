@@ -564,7 +564,7 @@ Build an app from scratch:
 2. create_app_form { title, fields } — create a form AND attach it to the app in one call. Repeat per form. Fields: [{ id, type, label, required, properties? }]. Common types: short_text, long_text, email, number, dropdown / multiple_choice (properties.options: [{id,label,value}]), checkbox, date, rating, scale, file_upload, hidden, statement, linked_record (properties.targetFormId = another form's id, to relate records).
 For a complete native .softn app: create_app, get_native_app_template, customize and publish_native_app_project. Read get_native_app_project before updates; update_native_app_files preserves other files and the SQLite database. Visual Builder and AI Studio are available from FormLogic hosting. Link record changes with create_flow_binding and app.record.created.TABLE events.
 For a portable connected dashboard: get_workspace_template, get_app_project, then publish_app_project. Use compose_apps to add existing app forms or move Aokie automation into a destination app. Read both apps first; preserve existing member permissions.
-3. (optional) update_form { formId, logicScript } — a sandboxed JavaScript (ZIPP) "function onSubmit(ctx) {…}" server-side script.
+3. (optional) update_form { formId, logicScript } — a sandboxed JavaScript (ZIPP) "function onSubmit(ctx) {…}" server-side script. It writes through ctx.db.setField / setStatus / addTag and refuses by returning { reject: true, message }; anything it throws refuses every submission, so read get_started § onSubmit script first.
 4. (recommended) set_app_home { appId, customScreen: { kind:"dashboard", dashboard:{ cols:12, widgets:[…] } } } — a no-code widget DASHBOARD home screen, the primary kind. Widgets: { kind:"report", layout:{x,y,w,h}, title?, spec } (spec = the same shape as create_report), { kind:"list", layout, list:{formId,limit?,titleField?,subtitleField?,metaField?} }, { kind:"text", layout, text:{body} }, { kind:"actions", layout } (new-record buttons), { kind:"activity", layout } (latest records). ALTERNATIVE: a full CODE frontend { enabled:true, files:[{path,content}] } (React-style TSX supported: entry index.tsx mounting createRoot(document.getElementById('root')!).render(<App/>); built-ins 'react'/'react-dom/client'/'preact'/'preact/hooks', no other npm; folders + relative imports fine; no index.html needed) or legacy { enabled:true, ts, html, css }; compiled/bundled automatically. Inside it window.FormLogic is the SDK: context(), forms(), submit(formId,answers), records(formId,{limit}), currentUser(), navigate(formId), toast.success/error, escapeHtml(v) — render record data as JSX text (auto-escaped), never dangerouslySetInnerHTML.
 5. (optional) AUTOMATE with flows: create_flow { appId, name, flowJson:{nodes,edges}, nodeCapabilities } then create_flow_binding { flow:<slug>, event, formId?|connectorId?, inputMap?, outputActions? } — e.g. run a flow on event "form.submitted" of a form, or on a connector event like "aokie.call.incoming". Full node reference in get_started § Flows.
 6. (optional) create_report { appId, name, spec } — add charts/KPIs/tables to the app's Reports section (bar|line|area|pie|donut|kpi|table). Then create_document { appId, name, blocks } to combine several charts + text into an exportable PDF report page.
@@ -599,7 +599,29 @@ Types: short_text, long_text, email, number, phone, url, date, time, dropdown, m
 - linked_record: properties.targetFormId = the id of another form to relate to. (Over MCP the other form must exist; use its real id.)
 
 ## onSubmit script (optional)
-logicScript is JavaScript: "function onSubmit(ctx) { /* ctx.answers, ctx.setField, ctx.reject, ctx.setStatus, ctx.addTag */ }". Runs server-side on every submission (in the ZIPP sandbox).
+logicScript is JavaScript that defines function onSubmit(ctx). It runs server-side in the ZIPP sandbox on every submission, before the record is stored, and it runs synchronously: no async/await (a Promise it returns is not waited for, so a refusal inside one is lost).
+ctx holds exactly these; calling anything else on it throws:
+- ctx.answers — the submitted answers by field id. Read them; assigning to them changes nothing that is stored.
+- ctx.meta — { ip, userAgent, timestamp, responseId, formId }.
+- ctx.db.setField(name, value) — store a computed value with the record (name: letters, digits, underscore). ctx.db.getField(name) — a value set this run, else the submitted answer. ctx.db.setStatus(status) — submitted | reviewed | approved | rejected | spam | archived. ctx.db.addTag(tag) — up to 32 characters.
+- ctx.utils.uuid(), ctx.utils.now() (unix seconds), ctx.utils.nowMs(), ctx.utils.hash(value, algo?), ctx.utils.formatDate(timestamp, format?).
+- ctx.http.get(url, options?), ctx.http.post(url, body, options?), ctx.http.put / ctx.http.patch (same as post), ctx.http.delete(url, options?), ctx.http.request({ method, url, body?, headers? }) — public addresses only, at most 10 requests; each returns { ok, status, data, body, error? } and does not throw.
+- ctx.flows.run(slug, input?) — queue one of the app's flows to run after the record is stored (at most 3).
+To refuse a submission, RETURN { reject: true, message: "what the person submitting sees" } — there is no reject function. Return { store: false } to accept it without storing anything. Any other return value is the script's result.
+A script that throws (a typo, a call ctx does not have) refuses EVERY submission to the form until it is fixed. After setting one, check it with add_response (needs the responses:write scope); its error names the problem.
+Example:
+function onSubmit(ctx) {
+  var amount = Number(ctx.answers.amount);
+  if (!(amount > 0)) {
+    return { reject: true, message: "Enter an amount above zero." };
+  }
+  ctx.db.setField("amount_with_tax", Math.round(amount * 110) / 100);
+  if (amount > 500) {
+    ctx.db.addTag("large");
+    ctx.db.setStatus("reviewed");
+  }
+  return {};
+}
 
 ## Widget dashboards (the primary home screen)
 A dashboard is DATA, not code: a grid of widgets the host renders natively (theming, drill-down, auto-refresh come free). Set it with set_app_home { appId, customScreen: { kind:"dashboard", dashboard } }.

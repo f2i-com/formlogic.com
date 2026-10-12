@@ -379,7 +379,8 @@ class McpOAuthController
                 $r['scopes'],
                 $r['resource'],
                 $client['clientId'],
-                null,
+                // The family is named after the code, so the code presented again revokes it.
+                $r['grantId'],
                 is_string($deviceId) ? $deviceId : null,
             );
             $this->audit($request, 'mcp.oauth.token', $r['userId'], ['grant' => 'authorization_code', 'clientId' => $client['clientId'], 'appId' => $r['appId']]);

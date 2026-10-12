@@ -125,7 +125,8 @@ class ResponseController
                 . ($formId !== '' ? "<p style=\"color:#888;font-size:12px\">Form ID: {$formId}</p>" : '');
             // Subject is plaintext (EmailService strips CR/LF) — use the raw title so HTML entities
             // don't show literally (e.g. "Tom &amp; Jerry").
-            $this->emailService->send($to, "New response: {$rawTitle}", $html);
+            // Within the per-account and per-address limits on mail to an address a user chose.
+            $this->emailService->sendResponseNotification($this->mysql, $form, $to, "New response: {$rawTitle}", $html);
         } catch (\Throwable $e) {
             $this->logger->warning('New-response notification failed', ['error' => $e->getMessage()]);
         }
@@ -816,6 +817,12 @@ class ResponseController
         // Sanitize answers: strip non-input fields and unknown field IDs
         $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], is_array($data['answers'] ?? null) ? $data['answers'] : []);
 
+        // An answer past ResponseService::MAX_ANSWER_DEPTH or MAX_ANSWER_VALUES is refused by name
+        // before anything evaluates it, as the app runtime does.
+        if ($refusal = $this->responseService->answerShapeRefusal($form['fields'] ?? [], $data['answers'])) {
+            return ['status' => 422, 'payload' => $refusal];
+        }
+
         // Re-derive file URLs server-side so a submitter can't store an attacker-chosen
         // link that later renders as a clickable anchor to reviewers.
         $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], $formId);
@@ -902,12 +909,18 @@ class ResponseController
 
             // Handle rejection from script
             if ($result instanceof ScriptRejection) {
-                return ['status' => $result->status, 'payload' => [
+                $payload = [
                     'error' => true,
                     'message' => $result->message,
                     'rejected' => $result->isRejected(),
                     'code' => $result->code,
-                ]];
+                ];
+                // Why the script could not run goes to the form's owner (testing their own link)
+                // and to nobody else submitting: it is the script's internals.
+                if ($result->detail !== null && is_string($callerId) && $callerId !== '' && ($form['userId'] ?? null) === $callerId) {
+                    $payload['detail'] = $result->detail;
+                }
+                return ['status' => $result->status, 'payload' => $payload];
             }
 
             // {store:false} scripts persist nothing — no links to index, no record

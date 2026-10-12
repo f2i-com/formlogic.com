@@ -431,10 +431,42 @@ class McpOAuthFlowTest extends TestCase
             'client_secret' => $client['client_secret'],
             'code_verifier' => $pkce['verifier'],
         ];
-        $this->assertSame(200, $this->token($form)['status'], 'first exchange succeeds');
+        $first = $this->token($form);
+        $this->assertSame(200, $first['status'], 'first exchange succeeds');
+        $ping = ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'tools/list'];
+        $this->assertSame(200, $this->mcpRequest($first['body']['access_token'], $ping)->getStatusCode(), 'the access token works');
+
         $again = $this->token($form);
         $this->assertSame(400, $again['status']);
         $this->assertSame('invalid_grant', $again['body']['error'], 'a code is single-use');
+
+        // RFC 6749 §4.1.2: a code presented twice may have been intercepted, so what its first
+        // use issued is revoked — the access token and the refresh token both.
+        $this->assertSame(401, $this->mcpRequest($first['body']['access_token'], $ping)->getStatusCode(), 'the access token it issued is revoked');
+        $refresh = $this->token(['grant_type' => 'refresh_token', 'refresh_token' => $first['body']['refresh_token'], 'client_id' => $client['client_id'], 'client_secret' => $client['client_secret']]);
+        $this->assertSame(400, $refresh['status'], 'and so is its refresh token: ' . json_encode($refresh['body']));
+        $this->assertSame('invalid_grant', $refresh['body']['error']);
+    }
+
+    /** A code that is never redeemed twice leaves the tokens of other codes alone. */
+    public function testOneCodesReuseRevokesOnlyItsOwnTokens(): void
+    {
+        $client = $this->register(['client_name' => 'C', 'redirect_uris' => ['https://claude.ai/api/mcp/auth_callback']]);
+        $kept = $this->fullExchange($client);
+        $this->assertSame(200, $kept['status'], json_encode($kept['body']));
+
+        $pkce = $this->pkce();
+        $params = $this->authorizeParams($client, $pkce['challenge']);
+        $minted = $this->mintCodeViaApprove($params);
+        $form = [
+            'grant_type' => 'authorization_code', 'code' => $minted['code'], 'redirect_uri' => $params['redirect_uri'],
+            'client_id' => $client['client_id'], 'client_secret' => $client['client_secret'], 'code_verifier' => $pkce['verifier'],
+        ];
+        $this->assertSame(200, $this->token($form)['status']);
+        $this->assertSame(400, $this->token($form)['status']);
+
+        $ping = ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'tools/list'];
+        $this->assertSame(200, $this->mcpRequest($kept['body']['access_token'], $ping)->getStatusCode(), 'another grant of the same client keeps working');
     }
 
     public function testBadClientSecretIs401InvalidClient(): void

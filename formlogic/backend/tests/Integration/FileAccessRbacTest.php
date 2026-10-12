@@ -236,4 +236,31 @@ class FileAccessRbacTest extends TestCase
         $this->assertFalse($this->can($fc, null, $publicForm, 'anything'), 'standalone published form files are NOT public by default');
         $this->assertTrue($this->can($fc, $owner, $publicForm, 'anything'), 'the owner still reaches standalone files');
     }
+
+    /**
+     * A member reaches an app's files only while they can open the app: the runtime answers 404
+     * for a draft or archived app, and its files were still served to a member with a view
+     * permission. The owner keeps them either way.
+     */
+    public function testAMemberLosesAnAppsFilesWhileTheAppIsNotPublished(): void
+    {
+        $owner = $this->makeUser();
+        $appId = $this->makeApp($owner);
+        $appForm = $this->makeForm($owner);
+        $this->addFormToApp($appId, $appForm);
+        $viewAllRole = $this->makeRole($appId, 'ViewAll');
+        $this->grant($viewAllRole, AppPermissions::VIEW_ALL_RESPONSES);
+        $member = $this->makeUser();
+        $this->addMember($appId, $member, $viewAllRole);
+        $fc = $this->controller($appForm, $owner, 'none', $member, 'FILEOWN');
+
+        $this->assertTrue($this->can($fc, $member, $appForm, 'FILE'), 'published: the member reaches the file');
+        foreach (['archived', 'draft'] as $status) {
+            self::$pdo->prepare('UPDATE apps SET status = ? WHERE id = ?')->execute([$status, $appId]);
+            $this->assertFalse($this->can($fc, $member, $appForm, 'FILE'), "$status: the member does not");
+            $this->assertTrue($this->can($fc, $owner, $appForm, 'FILE'), "$status: the owner still does");
+        }
+        self::$pdo->prepare("UPDATE apps SET status = 'published' WHERE id = ?")->execute([$appId]);
+        $this->assertTrue($this->can($fc, $member, $appForm, 'FILE'), 'published again: the member does again');
+    }
 }

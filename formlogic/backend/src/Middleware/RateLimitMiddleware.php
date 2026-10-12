@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Middleware;
 
 use FormLogic\Helpers\IpResolver;
+use FormLogic\Services\ApiKeyService;
 use FormLogic\Services\RateLimiter;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -27,6 +28,7 @@ class RateLimitMiddleware implements MiddlewareInterface
     private bool $failClosed;
     private IpResolver $ipResolver;
     private RateLimiter $limiter;
+    private ?ApiKeyService $apiKeys;
 
     /**
      * @param RateLimiter $limiter      Shared persistent counter store
@@ -44,6 +46,12 @@ class RateLimitMiddleware implements MiddlewareInterface
      *                                  a retryable 503 rather than opening an
      *                                  unlimited brute-force window; low-risk
      *                                  endpoints keep the fail-open default.
+     * @param ApiKeyService|null $apiKeys With keyByUser, for a route whose controller accepts an
+     *                                  flk_ key itself (no middleware sets userId for one): a
+     *                                  request with no session but a valid key is counted
+     *                                  against the key owner's account, in the same bucket as
+     *                                  that account's sessions. A key that does not validate
+     *                                  is counted by address; refusing it is the controller's.
      */
     public function __construct(
         RateLimiter $limiter,
@@ -51,7 +59,8 @@ class RateLimitMiddleware implements MiddlewareInterface
         int $windowSeconds = 60,
         string $keyPrefix = 'default',
         bool $keyByUser = false,
-        bool $failClosed = false
+        bool $failClosed = false,
+        ?ApiKeyService $apiKeys = null
     ) {
         $this->limiter = $limiter;
         $this->maxRequests = $maxRequests;
@@ -59,6 +68,7 @@ class RateLimitMiddleware implements MiddlewareInterface
         $this->keyPrefix = $keyPrefix;
         $this->keyByUser = $keyByUser;
         $this->failClosed = $failClosed;
+        $this->apiKeys = $apiKeys;
         $this->ipResolver = IpResolver::fromEnvironment();
     }
 
@@ -151,9 +161,28 @@ class RateLimitMiddleware implements MiddlewareInterface
                 }
                 return $this->keyPrefix . ':u:' . hash('sha256', $userId);
             }
+            $keyOwner = $this->apiKeyOwner($request);
+            if ($keyOwner !== null) {
+                return $this->keyPrefix . ':u:' . hash('sha256', $keyOwner);
+            }
         }
         // An IPv6 client is counted by its /64 (IpResolver::rateLimitSubject).
         $ip = IpResolver::rateLimitSubject($this->ipResolver->getClientIp($request));
         return $this->keyPrefix . ':' . hash('sha256', $ip);
+    }
+
+    /** The account of the valid flk_ key the request bears, when this limiter was given the key service. */
+    private function apiKeyOwner(Request $request): ?string
+    {
+        if ($this->apiKeys === null
+            || !preg_match('/^Bearer\s+(flk_[a-f0-9]{40})$/i', $request->getHeaderLine('Authorization'), $m)) {
+            return null;
+        }
+        try {
+            $owner = $this->apiKeys->validateKey($m[1])['userId'] ?? null;
+        } catch (\Throwable) {
+            return null; // the store failed: count by address, as for any request without an account
+        }
+        return is_string($owner) && $owner !== '' ? $owner : null;
     }
 }

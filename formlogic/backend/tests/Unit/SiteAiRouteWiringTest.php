@@ -32,9 +32,9 @@ class SiteAiRouteWiringTest extends TestCase
         $this->assertSame(1, substr_count($s, "'/api/ai/chat'"), 'chat route registered exactly once');
         $this->assertSame(2, substr_count($s, "'/api/ai/preferences'"), 'preferences registered once per method (GET + PUT)');
         $this->assertMatchesRegularExpression(
-            '/\$aiChatRateLimiter\s*=\s*new RateLimitMiddleware\(\$rateLimiter,\s*30,\s*60,\s*\'ai_chat\',\s*true\);/',
+            '/\$aiChatRateLimiter\s*=\s*new RateLimitMiddleware\(\$rateLimiter,\s*30,\s*60,\s*\'ai_chat\',\s*true,\s*false,\s*\$container->get\(ApiKeyService::class\)\);/',
             $s,
-            'hosted chat gets the plan §7 30/min per-user budget'
+            'hosted chat gets the plan §7 30/min per-user budget, an flk_ key counted against its owner like a session'
         );
         $this->assertMatchesRegularExpression(
             '/\$app->post\(\'\/api\/ai\/chat\'.*?->chat\(.*?\);\s*\}\)->add\(\$aiChatRateLimiter\)->add\(\$authOptional\);/s',

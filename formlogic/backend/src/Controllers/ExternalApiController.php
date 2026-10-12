@@ -71,7 +71,8 @@ class ExternalApiController
             $html = "<p>You've received a new response on <strong>{$title}</strong> (via the API).</p>"
                 . "<p>Sign in to FormLogic to view it in the form's responses.</p>"
                 . ($formId !== '' ? "<p style=\"color:#888;font-size:12px\">Form ID: {$formId}</p>" : '');
-            $this->emailService->send((string) $notifications['notificationEmail'], "New response: {$rawTitle}", $html);
+            // Within the per-account and per-address limits on mail to an address a user chose.
+            $this->emailService->sendResponseNotification($this->mysql, $form, (string) $notifications['notificationEmail'], "New response: {$rawTitle}", $html);
         } catch (\Throwable $e) {
             $this->logger->warning('External-API new-response notification failed', ['error' => $e->getMessage()]);
         }
@@ -198,6 +199,11 @@ class ExternalApiController
         $rawAnswersForHash = (is_array($data) && isset($data['answers'])) ? $data['answers'] : [];
         // Sanitize answers: strip non-input fields and unknown field IDs
         $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], is_array($data['answers'] ?? null) ? $data['answers'] : []);
+        // An answer past ResponseService::MAX_ANSWER_DEPTH or MAX_ANSWER_VALUES is refused by name
+        // before anything evaluates it, as the app runtime does.
+        if ($refusal = $this->responseService->answerShapeRefusal($form['fields'] ?? [], $data['answers'])) {
+            return $this->jsonResponse($response, $refusal, 422);
+        }
         $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
         $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
         // Owner programmatic write (authorizeForm above) → owner attachment rules (FILE-PRIV-001).
@@ -295,12 +301,14 @@ class ExternalApiController
             }
 
             if ($result instanceof ScriptRejection) {
-                return $this->jsonResponse($response, [
+                // The key is the form owner's (authorizeForm), so it is told why a script could not run.
+                return $this->jsonResponse($response, array_filter([
                     'error' => true,
                     'message' => $result->message,
                     'rejected' => $result->isRejected(),
                     'code' => $result->code,
-                ], $result->status);
+                    'detail' => $result->detail,
+                ], static fn ($v) => $v !== null), $result->status);
             }
 
             // {store:false} scripts persist nothing — skip link indexing + notify.
@@ -422,8 +430,18 @@ class ExternalApiController
                 continue;
             }
 
+            // Answers that are not an object fail the item (they reached the array-typed sanitizer
+            // below as they were, and the TypeError failed the whole batch).
+            if (isset($item['answers']) && !is_array($item['answers'])) {
+                $results[] = ['index' => $index, 'success' => false, 'message' => 'answers must be an object of field id → value'];
+                continue;
+            }
             // Sanitize answers: strip non-input fields and unknown field IDs
             $item['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $item['answers'] ?? []);
+            if ($refusal = $this->responseService->answerShapeRefusal($form['fields'] ?? [], $item['answers'])) {
+                $results[] = ['index' => $index, 'success' => false, 'message' => $refusal['message'], 'code' => $refusal['code'], 'errors' => $refusal['errors']];
+                continue;
+            }
             $item['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $item['answers'], (string) ($form['id'] ?? ''));
             $item['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $item['answers']);
             // Owner programmatic write → owner attachment rules (FILE-PRIV-001).
@@ -460,7 +478,7 @@ class ExternalApiController
             try {
                 $result = $this->responseService->createResponse($args['formId'], $item, $script, $sourceRunId);
                 if ($result instanceof ScriptRejection) {
-                    $results[] = ['index' => $index, 'success' => false, 'message' => $result->message, 'rejected' => $result->isRejected(), 'code' => $result->code];
+                    $results[] = array_filter(['index' => $index, 'success' => false, 'message' => $result->message, 'rejected' => $result->isRejected(), 'code' => $result->code, 'detail' => $result->detail], static fn ($v) => $v !== null);
                 } else {
                     $stored = ($result['stored'] ?? true) !== false;
                     if ($stored) {
@@ -612,6 +630,13 @@ class ExternalApiController
             if (!$existing) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
             }
+            // The answers the change sends are held to the shape a submission is, first and by
+            // name. Only those: a record stored before the limits stays editable (the merged
+            // validation below does not count its stored answer against the change).
+            $patch = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
+            if ($refusal = $this->responseService->answerShapeRefusal($form['fields'] ?? [], $patch)) {
+                return $this->jsonResponse($response, $refusal, 422);
+            }
             $existingAnswers = is_array($existing['answers'] ?? null) ? $existing['answers'] : [];
             $data['answers'] = array_merge($existingAnswers, $data['answers']);
             // Drop calculated/unknown-field answers before validating/persisting.
@@ -630,6 +655,11 @@ class ExternalApiController
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Submission is too large.'], 413);
             }
             $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers']);
+            foreach (array_keys(ResponseService::answerShapeProblems($data['answers'])) as $storedOnly) {
+                if (!array_key_exists($storedOnly, $patch)) {
+                    unset($validationErrors[$storedOnly]);
+                }
+            }
             if (!empty($validationErrors)) {
                 return $this->jsonResponse($response, [
                     'error' => true,

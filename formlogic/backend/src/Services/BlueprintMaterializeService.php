@@ -268,8 +268,10 @@ class BlueprintMaterializeService
                     }
                     $slug = $flowSlugById[$flowId] ?? null;
                     if ($slug === null || $slug === '') {
-                        $lookup = $this->mysql->prepare('SELECT slug FROM flow_definitions WHERE id = :id LIMIT 1');
-                        $lookup->execute(['id' => $flowId]);
+                        // A placed flow's id is whatever the diagram says: only a flow of THIS app
+                        // is looked up (a binding can only name one), and any other is skipped.
+                        $lookup = $this->mysql->prepare('SELECT slug FROM flow_definitions WHERE id = :id AND app_id = :app LIMIT 1');
+                        $lookup->execute(['id' => $flowId, 'app' => $appId]);
                         $slug = (string) $lookup->fetchColumn();
                     }
                     if ($slug === '') {

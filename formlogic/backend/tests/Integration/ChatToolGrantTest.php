@@ -453,6 +453,88 @@ class ChatToolGrantTest extends TestCase
     }
 
     /**
+     * Publishing is the other way a form's answers reach visitors: a draft form whose screen
+     * already has publicRecords on shows nothing to anyone until it is published.
+     */
+    public function testChatDoesNotPublishAFormWhoseAnswersAreOpenToVisitors(): void
+    {
+        $this->addConnection($this->userId, 'inst-publish');
+        $run = fn (string $tool, array $input): array => $this->execute($this->userId, ['ai:relay'], [
+            'grantToken' => $this->mint($this->userId)['body']['data']['grantToken'], 'tool' => $tool, 'input' => $input,
+        ]);
+        $formId = (string) ($run('create_form', ['title' => 'Board', 'status' => 'draft'])['body']['data']['id'] ?? '');
+        $this->assertNotSame('', $formId);
+        self::$forms->updateForm($formId, ['customScreen' => ['enabled' => false, 'publicRecords' => true, 'publicRecordFields' => ['score']]]);
+
+        $publish = $run('update_form', ['formId' => $formId, 'status' => 'published']);
+        $this->assertSame(403, $publish['status'], json_encode($publish['body']));
+        $this->assertSame('tool_denied', $publish['body']['code'] ?? null);
+        $this->assertSame('draft', self::$forms->getForm($formId)['status'] ?? null);
+
+        // A form whose answers are not open publishes as before.
+        $plain = (string) ($run('create_form', ['title' => 'Plain', 'status' => 'draft'])['body']['data']['id'] ?? '');
+        $this->assertSame(200, $run('update_form', ['formId' => $plain, 'status' => 'published'])['status']);
+        $this->assertSame('published', self::$forms->getForm($plain)['status'] ?? null);
+    }
+
+    /**
+     * list_apps runs as the person, who may be a member of other people's apps. A member sees an
+     * app only while they can open it (the runtime answers 404 for a draft or archived app, and
+     * the Apps list leaves them out), so list_apps leaves them out too.
+     */
+    public function testListAppsShowsAMemberOnlyTheAppsTheyCanOpen(): void
+    {
+        $names = [];
+        $appIds = [];
+        try {
+            $this->listAppsAsMemberAndOwner($names, $appIds);
+        } finally {
+            foreach ($appIds as $appId) {
+                self::$pdo->prepare('DELETE FROM app_users WHERE app_id = ?')->execute([$appId]);
+                self::$pdo->prepare('DELETE FROM app_roles WHERE app_id = ?')->execute([$appId]);
+                self::$pdo->prepare('DELETE FROM apps WHERE id = ?')->execute([$appId]);
+            }
+        }
+    }
+
+    /**
+     * @param array<string, string> $names
+     * @param list<string> $appIds
+     */
+    private function listAppsAsMemberAndOwner(array &$names, array &$appIds): void
+    {
+        foreach (['draft', 'published', 'archived'] as $status) {
+            $appId = 'app-' . bin2hex(random_bytes(10));
+            $appIds[] = $appId;
+            $names[$status] = 'App ' . $status . ' ' . bin2hex(random_bytes(3));
+            self::$pdo->prepare('INSERT INTO apps (id, owner_id, name, slug, status) VALUES (?, ?, ?, ?, ?)')
+                ->execute([$appId, $this->userId, $names[$status], 'la-' . bin2hex(random_bytes(6)), $status]);
+            $role = 'role-' . bin2hex(random_bytes(10));
+            self::$pdo->prepare("INSERT INTO app_roles (id, app_id, name, is_system, sort_order) VALUES (?, ?, 'Member', 1, 2)")->execute([$role, $appId]);
+            self::$pdo->prepare("INSERT INTO app_users (id, app_id, user_id, role_id, status, joined_at) VALUES (?, ?, ?, ?, 'active', NOW())")
+                ->execute(['au-' . bin2hex(random_bytes(10)), $appId, $this->otherId, $role]);
+        }
+        $listAs = function (string $userId, string $instance): array {
+            $this->addConnection($userId, $instance);
+            $out = $this->execute($userId, ['ai:relay'], [
+                'grantToken' => $this->mint($userId)['body']['data']['grantToken'], 'tool' => 'list_apps', 'input' => [],
+            ]);
+            $this->assertSame(200, $out['status'], json_encode($out['body']));
+            return array_column((array) ($out['body']['data'] ?? []), 'name');
+        };
+
+        $member = $listAs($this->otherId, 'inst-member');
+        $this->assertContains($names['published'], $member);
+        $this->assertNotContains($names['draft'], $member, 'a draft app is not listed to a member');
+        $this->assertNotContains($names['archived'], $member, 'an archived app is not listed to a member');
+
+        $owner = $listAs($this->userId, 'inst-owner');
+        foreach ($names as $name) {
+            $this->assertContains($name, $owner, 'the owner sees every app of theirs');
+        }
+    }
+
+    /**
      * App logic that holds a connector permission sends connector commands (texts, calls) when the
      * app's events fire. Chat edits app logic, but it does not give a script that reach: the model
      * can be steered by text it read, and the person never sees the permission list go by.

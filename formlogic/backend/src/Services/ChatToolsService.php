@@ -127,14 +127,22 @@ class ChatToolsService
         // Chat may build and edit, but it does not open an existing form's answers to anonymous
         // visitors: what the model does can be steered by text a stranger submitted. A new form
         // has no answers yet, and a screen that keeps or narrows its public fields is unchanged.
-        if (($name === 'update_form' || $name === 'set_form_screen') && is_array($args['customScreen'] ?? null)) {
+        // Publishing a form whose screen already shows its answers opens them as much.
+        if (($name === 'update_form' || $name === 'set_form_screen') && (is_array($args['customScreen'] ?? null) || ($args['status'] ?? null) === 'published')) {
             $stored = $this->formService->getForm((string) ($args['formId'] ?? ''));
-            if ($stored !== null && ($stored['userId'] ?? null) === $ctx->userId
-                && self::widensPublicRecords($args['customScreen'], $stored['customScreen'] ?? null)) {
-                throw new ChatToolDeniedException(
-                    'Showing a form\'s submissions to visitors is not turned on or widened from chat — tick "Let visitors read submissions on the public link" and the fields in the form\'s screen studio.',
-                    'public_records_refused'
-                );
+            if ($stored !== null && ($stored['userId'] ?? null) === $ctx->userId) {
+                if (is_array($args['customScreen'] ?? null) && self::widensPublicRecords($args['customScreen'], $stored['customScreen'] ?? null)) {
+                    throw new ChatToolDeniedException(
+                        'Showing a form\'s submissions to visitors is not turned on or widened from chat — tick "Let visitors read submissions on the public link" and the fields in the form\'s screen studio.',
+                        'public_records_refused'
+                    );
+                }
+                if ($name === 'update_form' && self::publishesPublicRecords($args, $stored)) {
+                    throw new ChatToolDeniedException(
+                        'This form lets visitors read its submissions on the public link, so it is not published from chat — publish it in the form builder.',
+                        'public_records_refused'
+                    );
+                }
             }
         }
         // The same line for app logic: a script that holds a connector permission texts and calls
@@ -257,6 +265,9 @@ class ChatToolsService
                 $current = $this->ownForm((string) ($args['formId'] ?? ''), $userId);
                 $this->validateFormInput($args);
                 $this->requireScopeToWidenPublicRecords($ctx, $args['customScreen'] ?? null, $current['customScreen'] ?? null);
+                if (self::publishesPublicRecords($args, $current)) {
+                    $ctx->requireScope('responses:read');
+                }
                 $input = $this->formInput($args);
                 if (is_array($input['customScreen'] ?? null)) {
                     $input['customScreen'] = $this->sanitizeSectionScreen($input['customScreen'], (string) $args['formId']);
@@ -265,7 +276,12 @@ class ChatToolsService
                 $ctx->audit('update_form', ['formId' => $args['formId'] ?? null]);
                 break;
             case 'list_apps':
-                $apps = $this->appService->getAllApps($userId);
+                // getAllApps includes the apps the caller is a member of. A member is shown one only
+                // while they can open it (the runtime and the Apps list hide a draft or archived app).
+                $apps = array_values(array_filter(
+                    $this->appService->getAllApps($userId),
+                    fn ($a) => ($a['ownerId'] ?? null) === $userId || $this->appService->isRuntimeVisible($a, $userId)
+                ));
                 if ($scopedApp !== null) {
                     $apps = array_values(array_filter($apps, static fn ($a) => $a['id'] === $scopedApp));
                 } elseif ($creatorMode) {
@@ -924,6 +940,15 @@ class ChatToolsService
                     $this->responseService->releaseFormLock($quotaLock);
                 }
                 if ($result instanceof ScriptRejection) {
+                    // The caller acts for the form's owner, so it is told why a script could not
+                    // run, and what to change: every submission fails the same way until then.
+                    if ($result->scriptFault) {
+                        throw new \Exception("The form's onSubmit script failed, so no record was created: " . $result->detail
+                            . '. Every submission to this form is refused until its logicScript is corrected (update_form; get_started § onSubmit script lists what ctx holds).');
+                    }
+                    if ($result->detail !== null) {
+                        throw new \Exception("The form's onSubmit script could not run, so no record was created (" . $result->detail . '). Nothing was stored; try again.');
+                    }
                     throw new \Exception("Submission rejected by the form's onSubmit script: " . $result->message);
                 }
                 // {store:false} scripts persist nothing — no source row to link from.
@@ -1248,6 +1273,23 @@ class ChatToolsService
         return array_diff($fields($screen), $fields($stored)) !== [];
     }
 
+    /**
+     * update_form input that publishes a form (from draft or archived) whose screen, as it will be
+     * stored, has publicRecords on. A form serves its public records only while published, so this
+     * opens its answers to visitors as much as turning publicRecords on does.
+     *
+     * @param array<string, mixed> $args
+     * @param array<string, mixed> $stored the form as it is
+     */
+    private static function publishesPublicRecords(array $args, array $stored): bool
+    {
+        if (($args['status'] ?? null) !== 'published' || ($stored['status'] ?? null) === 'published') {
+            return false;
+        }
+        $screen = is_array($args['customScreen'] ?? null) ? $args['customScreen'] : ($stored['customScreen'] ?? null);
+        return is_array($screen) && !empty($screen['publicRecords']);
+    }
+
     /** True if $formId belongs to any of the given apps. */
     private function formInAnyApp(array $appIds, string $formId): bool
     {
@@ -1419,6 +1461,9 @@ class ChatToolsService
         $field = ['type' => 'object', 'description' => 'A field: { id, type, label, required, properties? }'];
         $screen = ['type' => 'object', 'description' => "Custom screen — two kinds. (1) PREFERRED no-code widget DASHBOARD: { kind:'dashboard', dashboard:{ cols?:12, widgets:[{ kind:'report'|'list'|'text'|'actions'|'activity', layout:{x,y,w,h}, title?, … }] } } — 'report' embeds a chart/KPI/table via `spec` (the SAME shape as create_report's spec), 'list' shows recent records via `list`:{formId,limit?,titleField?,subtitleField?,metaField?}, 'text' a note via `text`:{body}, 'actions' new-record buttons, 'activity' a latest-records feed (both config-free, app home only). Widget specs are validated against the in-scope forms on save; out-of-scope widgets are dropped. (2) CODE screen — a sandboxed full frontend: EITHER `ts` (a single TypeScript/TSX file) OR `files` (a multi-file project: an array of { path, content } with .tsx/.ts/.css files, folders + relative imports allowed, entry index.tsx). React-style TSX components WORK: 'react', 'react-dom/client', 'preact', 'preact/hooks' are built-in (react aliases to Preact); other npm packages resolve via esm.sh at compile time (pin versions). Image assets: .svg as text files, binary images as data: URI content — importing an image file yields its data: URI. No index.html needed (a <div id=\"root\"></div> shell is automatic; entry must createRoot(...).render(<App/>)). Compiled/bundled to runnable JS automatically. Talks to the backend via window.FormLogic (submit/records/currentUser/context/toast)."];
         $obj = static fn (array $props, array $req = []) => array_filter(['type' => 'object', 'properties' => $props, 'required' => $req], static fn ($v) => $v !== []);
+        // What the sandbox puts on ctx (formlogic/runtime/guest/src/main.rs), and nothing else: a
+        // script that calls anything else throws, and a script that throws refuses every submission.
+        $logicScript = ['type' => 'string', 'description' => "The form's onSubmit script: JavaScript defining function onSubmit(ctx), run synchronously in the ZIPP sandbox on every submission before the record is stored. ctx.answers (read only), ctx.meta, ctx.db.setField(name, value) / getField(name) / setStatus(status) / addTag(tag), ctx.utils.uuid / now / nowMs / hash / formatDate, ctx.http.get / post / put / patch / delete / request, ctx.flows.run(slug, input?). Refuse by returning { reject: true, message }; { store: false } accepts without storing. Anything the script throws refuses every submission until it is fixed, so check it with a test submission."];
         $flowGraph = ['type' => 'object', 'description' => "The automation graph: { nodes:[{ id, type, data:{ …node config } }], edges:[{ source, target, sourceHandle? }] }. Node ids are unique strings; node config lives under data; every edge references existing node ids; a condition node routes downstream via sourceHandle 'true' / 'false'. condition and logic_block code (data.expr) is JavaScript unless data.language is 'python': a Python logic_block is one expression or statements setting a top-level result (no top-level return), a Python condition is one expression (Python truthiness), and Python reads the run data as dicts (inputs['from'], nodes['lookup']['found']). Node types + their config: see the get_started guide (§ Flows)."];
         $customLogic = ['type' => 'object', 'description' => "App-logic bundle: { version:1, scripts:[{ id?, hook, source, language?, permissions?, enabled? }], permissions?:[…], connector?:{ manifest, demoDriver? } }. hook ∈ onAppStart|onScreenEnter|onScreenLeave|onButtonClick|onBeforeSubmit|onAfterSubmit|onConnectorEvent|onSyncConflict|mapConnectorDataToForm|calculateDashboardState. source = a sandboxed script (≤50KB/script, ≤256KB total) in its language: 'javascript' (the default) defines function run(ctx) { … }; 'python' defines def run(ctx): … returning a dict (ctx is a dict: ctx['answers']). Either returns { effects?, ui?, reject?, message?, warnings? }. Python scripts run only in FormLogic in a browser. permissions grant what the scripts may do (e.g. 'formlogic.responses.write', 'connector.aokie.call.answer'). connector (optional) declares a pack-embedded connector: manifest { connectorId, kind, label, commands[], journalledCommands?, demoEvents?, demoCeremonies?, captions? } + demoDriver (a sandboxed JavaScript 'function run(ctx)' simulator — always JavaScript, ≤128KB) — the demo driver only activates with the reviewable grant 'connector.<id>.driver.demo' and only inside an explicit simulator session; real hardware always routes host-side via FormLogic Desktop."];
         // Ordered deliberately: the core BUILD path first (create_app → create_app_form →
@@ -1444,7 +1489,7 @@ class ChatToolsService
             ['name' => 'get_workspace_template', 'scope' => 'apps:read', 'description' => 'Get an editable Softn dashboard package connected to the current app forms, records and Aokie tools. Publish the returned package with publish_app_project. The workspaceInfo/workspaceRecords/workspaceOpen host callbacks are scoped to that app.', 'inputSchema' => $obj(['template' => ['type' => 'string', 'enum' => ['workspace', 'aokie'], 'description' => 'Choose a generic dashboard or the Aokie front desk with calls, transcripts, logs and appointments.']])],
             ['name' => 'publish_app_project', 'scope' => 'apps:write', 'description' => 'Publish a Softn client and private .logic backend actions with per-app SQLite. Also requires screens:write. Read get_app_project first; expectedVersion prevents overwriting newer work (0 for first publish). Package: {version:1,client:{"manifest.json":"...","ui/main.ui":"...","logic/main.logic":"..."},actions:{name:{source:"function onRequest(ctx) {...}",access:"owner|member",mode:"read|write"}}}. Private actions use ctx.db.get/list/put/remove. Open /app/<slug>/project after publishing.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'expectedVersion' => ['type' => 'integer', 'minimum' => 0], 'package' => ['type' => 'object']], ['appId', 'expectedVersion', 'package'])],
             ['name' => 'compose_apps', 'scope' => 'apps:write', 'description' => 'Share selected existing forms and records from sourceAppId into appId; no data copy and no change to destination branding, screens or roles. Both apps must be owned and within token scope. moveAutomation:true requires connector:command and explicitly approvedConnectorGrants: moves flows/bindings and enabled scripts to the destination, disabling source scripts to avoid duplicate writers. Includes every source form in that mode. Review destination member permissions after composition.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'sourceAppId' => ['type' => 'string'], 'formIds' => ['type' => 'array', 'items' => ['type' => 'string']], 'moveAutomation' => ['type' => 'boolean'], 'approvedConnectorGrants' => ['type' => 'array', 'items' => ['type' => 'string']]], ['appId', 'sourceAppId'])],
-            ['name' => 'create_app_form', 'scope' => 'forms:write', 'description' => "PREFERRED for building an app: create a form AND attach it to an app in one call (no orphan form). appId defaults to the token's app when app-scoped; required for account-wide tokens. Same fields as create_form + displayName.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'displayName' => ['type' => 'string'], 'title' => ['type' => 'string'], 'description' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published']]], ['title'])],
+            ['name' => 'create_app_form', 'scope' => 'forms:write', 'description' => "PREFERRED for building an app: create a form AND attach it to an app in one call (no orphan form). appId defaults to the token's app when app-scoped; required for account-wide tokens. Same fields as create_form + displayName.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'displayName' => ['type' => 'string'], 'title' => ['type' => 'string'], 'description' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => $logicScript, 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published']]], ['title'])],
             ['name' => 'set_app_home', 'scope' => 'screens:write', 'description' => "Set the app's home screen. PREFERRED: a no-code widget DASHBOARD ({ kind:'dashboard', dashboard:{ cols, widgets } } — charts/KPIs/lists the host renders natively; report widgets take the same spec as create_report). ALTERNATIVE: a full sandboxed CODE frontend (HTML/CSS/TypeScript) over the app's forms — its SDK spans all the app's forms: submit(formId,answers)/records(formId)/navigate(formId)/context()/forms()/currentUser(). Build a whole app here; you don't need a screen per form.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'customScreen' => $screen], ['appId', 'customScreen'])],
             ['name' => 'set_form_screen', 'scope' => 'screens:write', 'description' => "Set a FORM's custom screen — a sandboxed frontend rendered INSTEAD of the default field UI on the form's public link, embeds and previews when enabled:true (enabled:false keeps it a draft the owner can preview in the Studio). Same two kinds as set_app_home: a no-code widget DASHBOARD, or a CODE screen (TSX files talking to window.FormLogic: submit(answers)/records()/context()/currentUser()/toast). publicRecords + publicRecordFields opt anonymous visitors into reading the whitelisted answer fields (leaderboards). REPLACES the form's whole customScreen — send the complete screen every time (read the current one with get_form first when editing).", 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'customScreen' => $screen], ['formId', 'customScreen'])],
             ['name' => 'update_app', 'scope' => 'apps:write', 'description' => 'Update an app: rename, set description, change the URL slug, publish (status: draft|published|archived), hide the sidebar/menu (hideNav: true for a self-contained custom-home app), or set its app-logic bundle (customLogic — sandboxed JavaScript or Python event handlers, e.g. reacting to connector events).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'URL slug: lowercase letters, digits, hyphens.'], 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']], 'hideNav' => ['type' => 'boolean', 'description' => 'Render the app full-screen without the sidebar/menu.'], 'hostedDashboard' => ['type' => 'boolean', 'description' => 'Use the published Softn project as app home; false restores the previous screen.'], 'customLogic' => $customLogic], ['appId'])],
@@ -1459,8 +1504,8 @@ class ChatToolsService
             ['name' => 'list_apps', 'scope' => 'apps:read', 'description' => "List the owner's apps (only the scoped app when app-scoped).", 'inputSchema' => $obj([])],
             ['name' => 'list_forms', 'scope' => 'forms:read', 'description' => "List the owner's forms (only this app's forms when the token is app-scoped).", 'inputSchema' => $obj([])],
             ['name' => 'get_form', 'scope' => 'forms:read', 'description' => 'Get one form (fields, logicScript, customScreen).', 'inputSchema' => $obj(['formId' => ['type' => 'string']], ['formId'])],
-            ['name' => 'create_form', 'scope' => 'forms:write', 'description' => 'Create a standalone form (prefer create_app_form when building an app). Provide title and optional fields[], logicScript (a JavaScript onSubmit run in the ZIPP sandbox), customScreen, status.', 'inputSchema' => $obj(['title' => ['type' => 'string'], 'description' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published']]], ['title'])],
-            ['name' => 'update_form', 'scope' => 'forms:write', 'description' => 'Update a form (any of fields, logicScript, customScreen, title, status).', 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'title' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']]], ['formId'])],
+            ['name' => 'create_form', 'scope' => 'forms:write', 'description' => 'Create a standalone form (prefer create_app_form when building an app). Provide title and optional fields[], logicScript (a JavaScript onSubmit run in the ZIPP sandbox), customScreen, status.', 'inputSchema' => $obj(['title' => ['type' => 'string'], 'description' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => $logicScript, 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published']]], ['title'])],
+            ['name' => 'update_form', 'scope' => 'forms:write', 'description' => 'Update a form (any of fields, logicScript, customScreen, title, status).', 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'title' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => $logicScript, 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']]], ['formId'])],
             ['name' => 'add_form_to_app', 'scope' => 'apps:write', 'description' => 'Attach an existing form to an app.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'formId' => ['type' => 'string'], 'displayName' => ['type' => 'string']], ['appId', 'formId'])],
             ['name' => 'list_flows', 'scope' => 'apps:read', 'description' => "List an app's flows (automations) — id, name, slug, enabled, version. Use get_flow for a flow's graph.", 'inputSchema' => $obj(['appId' => ['type' => 'string', 'description' => "Defaults to the token's app when app-scoped."]])],
             ['name' => 'get_flow', 'scope' => 'apps:read', 'description' => 'Get one flow including its flowJson graph and nodeCapabilities.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'flowId' => ['type' => 'string']], ['flowId'])],
@@ -1504,7 +1549,7 @@ class ChatToolsService
         // than trying.
         $publicRecords = ' From chat, an existing form keeps its public records as they are: publicRecords is not turned on and publicRecordFields gains no field (the person does that in the form\'s screen studio).';
         $refusals = [
-            'update_form' => $publicRecords,
+            'update_form' => $publicRecords . ' A form whose public records are on is not published from chat either.',
             'set_form_screen' => $publicRecords,
             'update_app' => ' From chat, app logic gains no connector.* permission: the person adds it in the app\'s logic editor.',
         ];

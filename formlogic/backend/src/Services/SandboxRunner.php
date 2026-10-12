@@ -321,8 +321,8 @@ class SandboxRunner
             $message = $failure ?? 'FormLogic runtime timed out or crashed';
             // What the child wrote to stderr is the operator's account of why, so it goes to
             // the error log and not into the returned error: for an onSubmit script that error
-            // is shown to whoever submitted the form (ScriptRejection::unavailable), and a
-            // launcher's stderr names install paths and library versions.
+            // is shown to the form's owner (ScriptRejection's detail), and a launcher's stderr
+            // names install paths and library versions.
             if ($stderr !== '') {
                 error_log('FormLogic sandbox: ' . $message . '; the runtime wrote to stderr: ' . $stderr);
             }

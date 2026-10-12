@@ -335,6 +335,45 @@ class AppRbacTest extends TestCase
     }
 
     /**
+     * A role holds grants only on the app's forms: a save stores none on a form outside the app
+     * and keeps none it finds there (by design, see setRolePermissions). Taking a form out of the
+     * app left its grants in place, though, until some later save of the role dropped them, so
+     * putting the form back gave its old access back to whoever held it, or not, depending on
+     * whether anyone had saved the role in between. The grants go with the form now.
+     */
+    public function testAFormTakenOutOfTheAppTakesTheRolesGrantsOnItWithIt(): void
+    {
+        $owner = $this->makeUser();
+        $appId = $this->makeApp($owner);
+        $form = $this->makeForm($owner);
+        $other = $this->makeForm($owner);
+        $forms = new \FormLogic\Services\FormService(self::$mysql, new \FormLogic\Database\SQLiteConnection(sys_get_temp_dir() . '/fl-rbac-' . $this->uuid()));
+        $apps = new \FormLogic\Services\AppService(self::$mysql, $forms);
+        $apps->addFormToApp($appId, $form);
+        $apps->addFormToApp($appId, $other);
+        $reviewers = $this->makeRole($appId, 'Reviewers');
+        self::$svc->setRolePermissions($reviewers, [
+            ['formId' => $form, 'permission' => AppPermissions::VIEW_ALL_RESPONSES],
+            ['formId' => $form, 'permission' => AppPermissions::VIEW_ANALYTICS],
+            ['formId' => $other, 'permission' => AppPermissions::VIEW_ALL_RESPONSES],
+        ], true);
+        $member = $this->makeUser();
+        $this->addMember($appId, $member, $reviewers);
+        $this->assertTrue(self::$svc->hasPermission($appId, $member, AppPermissions::VIEW_ALL_RESPONSES, $form));
+
+        $apps->removeFormFromApp($appId, $form);
+        $held = array_map(static fn (array $p): string => $p['permission'] . '@' . ($p['formId'] ?? '*'), self::$svc->getRolePermissions($reviewers));
+        $this->assertSame([AppPermissions::VIEW_ALL_RESPONSES . '@' . $other], $held, 'the grants on the removed form are gone; the rest stay');
+
+        $apps->addFormToApp($appId, $form);
+        $this->assertFalse(
+            self::$svc->hasPermission($appId, $member, AppPermissions::VIEW_ALL_RESPONSES, $form),
+            'putting the form back does not give its old access back'
+        );
+        $this->assertTrue(self::$svc->hasPermission($appId, $member, AppPermissions::VIEW_ALL_RESPONSES, $other));
+    }
+
+    /**
      * Only the owner gives app-level permissions (grants, role assignments, invitations), so only
      * the owner takes them away: a delegated MANAGE_USERS holder may not change the role of, suspend
      * or remove a member whose role grants any app-level permission. Members below that line stay

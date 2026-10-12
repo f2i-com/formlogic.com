@@ -1535,4 +1535,34 @@ class McpTest extends TestCase
         $this->assertTrue($wider['isError'], $wider['text']);
         $this->assertSame(['ssn'], self::$forms->getForm($standalone)['customScreen']['publicRecordFields'] ?? null);
     }
+
+    /**
+     * A draft form serves no public records. Publishing one whose screen already has them on
+     * opens its answers to visitors as much as turning them on does, so it needs the same scope.
+     */
+    public function testPublishingAFormWithPublicRecordsNeedsTheResponsesReadScope(): void
+    {
+        $formId = $this->makeForm();
+        $screen = ['enabled' => false, 'publicRecords' => true, 'publicRecordFields' => ['ssn']];
+        self::$forms->updateForm($formId, ['status' => 'draft', 'customScreen' => $screen]);
+        $builder = self::$tokens->create($this->userId)['token'];
+
+        foreach ([['status' => 'published'], ['status' => 'published', 'customScreen' => $screen]] as $args) {
+            $res = $this->tool($builder, 'update_form', ['formId' => $formId] + $args);
+            $this->assertTrue($res['isError'], $res['text']);
+            $this->assertStringContainsString('responses:read', $res['text']);
+            $this->assertSame('draft', self::$forms->getForm($formId)['status'] ?? null);
+        }
+
+        // A builder token still publishes a form whose answers are not open, and still edits this one.
+        $plain = $this->makeForm();
+        self::$forms->updateForm($plain, ['status' => 'draft']);
+        $this->assertFalse($this->tool($builder, 'update_form', ['formId' => $plain, 'status' => 'published'])['isError']);
+        $this->assertFalse($this->tool($builder, 'update_form', ['formId' => $formId, 'title' => 'Renamed'])['isError']);
+
+        $reader = self::$tokens->create($this->userId, null, 3600, 900, array_merge(McpTokenService::DEFAULT_SCOPES, ['responses:read']))['token'];
+        $ok = $this->tool($reader, 'update_form', ['formId' => $formId, 'status' => 'published']);
+        $this->assertFalse($ok['isError'], $ok['text']);
+        $this->assertSame('published', self::$forms->getForm($formId)['status'] ?? null);
+    }
 }

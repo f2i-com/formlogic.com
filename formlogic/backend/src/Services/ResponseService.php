@@ -636,6 +636,32 @@ class ResponseService
     }
 
     /**
+     * The 422 body that refuses answers past MAX_ANSWER_DEPTH or MAX_ANSWER_VALUES, or null when
+     * none is: the validation shape, with the code of the first problem and its sentence (which
+     * names the field) as the message. The app runtime, the public form, the owner's record edit
+     * and the External API all refuse with it, as their first check after unknown fields are
+     * dropped, so the answer is refused by name before anything evaluates it.
+     *
+     * @param array<int, array<string, mixed>> $fields
+     * @param array<string, mixed> $answers
+     * @return array{error: true, code: string, message: string, errors: array<string, string>}|null
+     */
+    public function answerShapeRefusal(array $fields, array $answers): ?array
+    {
+        $errors = $this->answerShapeErrors($fields, $answers);
+        if ($errors === []) {
+            return null;
+        }
+        $problems = self::answerShapeProblems($answers);
+        return [
+            'error' => true,
+            'code' => (string) reset($problems),
+            'message' => (string) reset($errors),
+            'errors' => $errors,
+        ];
+    }
+
+    /**
      * Which answers are past a limit, and which limit: fieldId → ANSWER_TOO_DEEP or
      * ANSWER_TOO_MANY_VALUES.
      *
@@ -2180,7 +2206,9 @@ class ResponseService
                     'formId' => $formId,
                     'error' => $scriptResult->error,
                 ]);
-                return ScriptRejection::unavailable($scriptResult->error ?? 'script error');
+                return $scriptResult->scriptFault
+                    ? ScriptRejection::scriptFailed($scriptResult->error ?? 'script error')
+                    : ScriptRejection::unavailable($scriptResult->error ?? 'script error');
             }
 
             // Script opted out of storage ({store:false}): the submission is

@@ -19,7 +19,7 @@
       "icon": "Receipt",
       "settings": [],
       "theme": [],
-      "logicScript": "function onSubmit(ctx) {\n  // Flag large expenses so approvers can spot them quickly.\n  var amount = Number(ctx.answers.amount);\n  if (amount > 500) {\n    ctx.addTag('high-value');\n  }\n}\n",
+      "logicScript": "function onSubmit(ctx) {\n  // Flag large expenses so approvers can spot them quickly.\n  var amount = Number(ctx.answers.amount);\n  if (amount > 500) {\n    ctx.db.addTag('high-value');\n  }\n}\n",
       "fields": [
         {
           "id": "description",

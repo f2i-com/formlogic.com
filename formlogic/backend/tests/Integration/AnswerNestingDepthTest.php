@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Tests\Integration;
 
 use FormLogic\Controllers\AppPublicController;
+use FormLogic\Controllers\ExternalApiController;
 use FormLogic\Controllers\ResponseController;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
@@ -16,6 +17,7 @@ use FormLogic\Services\FormService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\SandboxRunner;
 use FormLogic\Services\ScriptRejection;
+use FormLogic\Services\WebhookService;
 use PDO;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
@@ -51,6 +53,7 @@ class AnswerNestingDepthTest extends TestCase
     private static AppService $apps;
     private static ResponseController $public;
     private static AppPublicController $runtime;
+    private static ExternalApiController $external;
 
     /** @var string[] */ private array $userIds = [];
     /** @var string[] */ private array $formIds = [];
@@ -86,6 +89,7 @@ class AnswerNestingDepthTest extends TestCase
         self::$apps = new AppService($conn, self::$forms);
         $appUsers = new AppUserService($conn);
         self::$public = new ResponseController(self::$responses, self::$forms, self::$sqlite, null, null, null, self::$apps, $conn);
+        self::$external = new ExternalApiController(self::$forms, self::$responses, new WebhookService($conn));
         self::$runtime = new AppPublicController(
             self::$apps,
             $appUsers,
@@ -252,17 +256,20 @@ class AnswerNestingDepthTest extends TestCase
         $formId = (string) $form['id'];
         $deep = self::location(130);
 
-        // "Details" is required because Kind is "other", and is not sent.
+        // "Details" is required because Kind is "other", and is not sent. The nested answer is
+        // refused first, by name, before anything is evaluated (as the app runtime does).
         $skipped = $this->submitPublicly($formId, ['kind' => 'other', 'qty' => 3, 'where' => $deep]);
-        $this->assertNotSame(201, $skipped['status'], 'the submission that skips the required-if field must not be accepted');
+        $this->assertSame(422, $skipped['status'], json_encode($skipped['body']));
+        $this->assertSame('answer_too_deep', $skipped['body']['code'] ?? null);
+        $this->assertSame(['where'], array_keys($skipped['body']['errors'] ?? []));
+        $this->assertStringContainsString('Where', (string) ($skipped['body']['message'] ?? ''), 'the message names the field');
         $this->assertSame([], $this->stored($formId), 'and nothing is stored');
-        $this->assertArrayHasKey('details', $skipped['body']['errors'] ?? [], 'the rule is still evaluated: the deep answer is kept from the sandbox');
 
         // With the rule met, the answer itself is what is refused, by name.
         $refused = $this->submitPublicly($formId, ['kind' => 'other', 'details' => 'because', 'qty' => 3, 'where' => $deep]);
         $this->assertSame(422, $refused['status'], json_encode($refused['body']));
         $this->assertSame('answer_too_deep', $refused['body']['code'] ?? null);
-        $this->assertStringContainsString('where', (string) ($refused['body']['message'] ?? ''));
+        $this->assertStringContainsStringIgnoringCase('where', (string) ($refused['body']['message'] ?? ''));
         $this->assertSame([], $this->stored($formId));
     }
 
@@ -282,14 +289,15 @@ class AnswerNestingDepthTest extends TestCase
         $this->assertLessThan(ResponseService::MAX_ANSWER_BYTES, strlen((string) json_encode(['kind' => 'other', 'details' => 'because', 'qty' => 3, 'where' => $wide])));
 
         $skipped = $this->submitPublicly($formId, ['kind' => 'other', 'qty' => 3, 'where' => $wide]);
-        $this->assertNotSame(201, $skipped['status'], 'the submission that skips the required-if field must not be accepted');
+        $this->assertSame(422, $skipped['status'], 'refused for the wide answer before anything is evaluated');
+        $this->assertSame('answer_too_many_values', $skipped['body']['code'] ?? null);
+        $this->assertSame(['where'], array_keys($skipped['body']['errors'] ?? []));
         $this->assertSame([], $this->stored($formId));
-        $this->assertArrayHasKey('details', $skipped['body']['errors'] ?? [], 'the rule is still evaluated');
 
         $refused = $this->submitPublicly($formId, ['kind' => 'other', 'details' => 'because', 'qty' => 3, 'where' => $wide]);
         $this->assertSame(422, $refused['status'], json_encode($refused['body']));
         $this->assertSame('answer_too_many_values', $refused['body']['code'] ?? null);
-        $this->assertStringContainsString('where', (string) ($refused['body']['message'] ?? ''));
+        $this->assertStringContainsStringIgnoringCase('where', (string) ($refused['body']['message'] ?? ''));
         $this->assertSame([], $this->stored($formId));
 
         // The count is of everything the answer holds, plain values and lists alike.
@@ -431,5 +439,100 @@ class AnswerNestingDepthTest extends TestCase
         ));
         $this->assertSame(400, $ruled['status']);
         $this->assertArrayHasKey('details', $ruled['body']['errors'] ?? []);
+    }
+
+    // ── the External API (the owner's key): submit, batch, update ────────────
+
+    private function apiRequest(string $method, array $body, string $ownerId): ServerRequestInterface
+    {
+        return $this->request($method, $body, $ownerId)->withAttribute('apiKeyScopes', ['responses:read', 'responses:write']);
+    }
+
+    public function testTheExternalApiRefusesTheAnswerBeforeEvaluatingAnything(): void
+    {
+        $owner = $this->makeUser();
+        $form = $this->makeForm($owner);
+        $formId = (string) $form['id'];
+        $deep = self::location(130);
+
+        // Submit: refused for the nested answer, by name, although the required-if field is
+        // missing too: the same answer the app runtime gives.
+        $submit = $this->outcome(self::$external->submitResponse(
+            $this->apiRequest('POST', ['answers' => ['kind' => 'other', 'qty' => 3, 'where' => $deep]], $owner),
+            new SlimResponse(),
+            ['formId' => $formId]
+        ));
+        $this->assertSame(422, $submit['status'], json_encode($submit['body']));
+        $this->assertSame('answer_too_deep', $submit['body']['code'] ?? null);
+        $this->assertSame(['where'], array_keys($submit['body']['errors'] ?? []));
+        $this->assertStringContainsString('Where', (string) ($submit['body']['message'] ?? ''));
+        $this->assertSame([], $this->stored($formId));
+
+        // Batch: the item is refused the same way; its neighbour is stored.
+        $batch = $this->outcome(self::$external->batchSubmitResponses(
+            $this->apiRequest('POST', ['responses' => [
+                ['answers' => ['kind' => 'other', 'qty' => 3, 'where' => $deep]],
+                ['answers' => ['kind' => 'plain', 'qty' => 4]],
+            ]], $owner),
+            new SlimResponse(),
+            ['formId' => $formId]
+        ));
+        $this->assertSame(200, $batch['status'], json_encode($batch['body']));
+        $first = $batch['body']['results'][0] ?? [];
+        $this->assertFalse($first['success'] ?? null);
+        $this->assertSame('answer_too_deep', $first['code'] ?? null, json_encode($first));
+        $this->assertStringContainsString('Where', (string) ($first['message'] ?? ''));
+        $this->assertSame(['where'], array_keys($first['errors'] ?? []));
+        $this->assertTrue($batch['body']['results'][1]['success'] ?? null);
+        $this->assertCount(1, $this->stored($formId));
+
+        // An item whose answers are not an object fails alone; it used to fail the whole batch.
+        $odd = $this->outcome(self::$external->batchSubmitResponses(
+            $this->apiRequest('POST', ['responses' => [['answers' => 'not an object'], ['answers' => ['kind' => 'plain', 'qty' => 5]]]], $owner),
+            new SlimResponse(),
+            ['formId' => $formId]
+        ));
+        $this->assertSame(200, $odd['status'], json_encode($odd['body']));
+        $this->assertFalse($odd['body']['results'][0]['success'] ?? null);
+        $this->assertStringContainsString('answers must be an object', (string) ($odd['body']['results'][0]['message'] ?? ''));
+        $this->assertTrue($odd['body']['results'][1]['success'] ?? null);
+        $this->assertCount(2, $this->stored($formId));
+        self::$sqlite->getFormDatabase($formId)->exec("DELETE FROM responses WHERE json_extract(answers, '$.qty') = 5");
+
+        // Update: the nested answer in the change is refused, the record stays as it was.
+        $recordId = (string) self::$sqlite->getFormDatabase($formId)->query('SELECT id FROM responses')->fetchColumn();
+        $edit = $this->outcome(self::$external->updateResponse(
+            $this->apiRequest('PUT', ['answers' => ['where' => $deep]], $owner),
+            new SlimResponse(),
+            ['formId' => $formId, 'id' => $recordId]
+        ));
+        $this->assertSame(422, $edit['status'], json_encode($edit['body']));
+        $this->assertSame('answer_too_deep', $edit['body']['code'] ?? null);
+        $this->assertSame(['where'], array_keys($edit['body']['errors'] ?? []));
+        $this->assertArrayNotHasKey('where', $this->stored($formId)[0]);
+    }
+
+    /**
+     * A record stored before the limits existed may hold such an answer. Only the answers a
+     * change sends are held to the limit, so the rest of that record can still be edited.
+     */
+    public function testARecordStoredBeforeTheLimitsCanStillBeEdited(): void
+    {
+        $owner = $this->makeUser();
+        $form = $this->makeForm($owner);
+        $formId = (string) $form['id'];
+        $made = self::$responses->createResponse($formId, ['answers' => ['kind' => 'plain', 'qty' => 1]]);
+        $this->assertIsArray($made);
+        $db = self::$sqlite->getFormDatabase($formId);
+        $db->prepare('UPDATE responses SET answers = ? WHERE id = ?')
+            ->execute([json_encode(['kind' => 'plain', 'qty' => 1, 'where' => self::location(130)]), $made['id']]);
+
+        $edit = $this->outcome(self::$external->updateResponse(
+            $this->apiRequest('PUT', ['answers' => ['kind' => 'changed']], $owner),
+            new SlimResponse(),
+            ['formId' => $formId, 'id' => $made['id']]
+        ));
+        $this->assertSame(200, $edit['status'], json_encode($edit['body']));
+        $this->assertSame('changed', $this->stored($formId)[0]['kind'] ?? null);
     }
 }

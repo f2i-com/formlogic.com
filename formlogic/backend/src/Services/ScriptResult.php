@@ -25,6 +25,9 @@ class ScriptResult
         /** false when the script returned {store:false}: accept the submission but
          *  persist NOTHING — the script owns the data (custom storage via ctx.http). */
         public readonly bool $store = true,
+        /** On an error: true when the script itself failed (it threw, or defines no onSubmit),
+         *  false when the engine stopped it or could not run it. */
+        public readonly bool $scriptFault = false,
     ) {}
 
     /**
@@ -85,12 +88,14 @@ class ScriptResult
         string $error,
         int $instructionCount = 0,
         int $executionTimeMs = 0,
+        bool $scriptFault = false,
     ): self {
         return new self(
             success: false,
             error: $error,
             instructionCount: $instructionCount,
             executionTimeMs: $executionTimeMs,
+            scriptFault: $scriptFault,
         );
     }
 

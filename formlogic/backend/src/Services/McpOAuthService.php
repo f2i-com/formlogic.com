@@ -571,6 +571,12 @@ class McpOAuthService
         $claim = $this->db()->prepare("UPDATE mcp_oauth_codes SET used_at = :now WHERE id = :id AND used_at IS NULL");
         $claim->execute(['now' => date('Y-m-d H:i:s'), 'id' => $row['id']]);
         if ($claim->rowCount() === 0) {
+            // A code presented twice may have been intercepted (RFC 6749 §4.1.2): the tokens its
+            // first use issued are revoked. They are the refresh family named after the code's row
+            // (issueTokenPair, given 'grantId'), so nothing else is touched. A request that races the
+            // first one and loses here may revoke before the winner has minted; that winner's tokens
+            // then stand, as they would have without this.
+            $this->revokeRefreshFamily((string) $row['id']);
             return $err('Authorization code has already been used');
         }
         if (strtotime((string) $row['expires_at']) < time()) {
@@ -596,6 +602,9 @@ class McpOAuthService
         $scopes = json_decode((string) $row['scopes'], true);
         return [
             'ok' => true,
+            // The code's own id, which the token pair takes as its refresh family, so that the
+            // code presented again revokes what it issued.
+            'grantId' => (string) $row['id'],
             // Which client redeemed this code. Needed once more than one
             // desktop runtime can link: without it the audit log falls back to
             // a constant and reports every link as the first-party one.

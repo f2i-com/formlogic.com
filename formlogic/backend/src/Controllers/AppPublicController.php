@@ -687,10 +687,16 @@ class AppPublicController
             }
 
             if ($result instanceof \FormLogic\Services\ScriptRejection) {
-                return ['status' => $result->status, 'payload' => [
+                $payload = [
                     'error' => true, 'message' => $result->message,
                     'rejected' => $result->isRejected(), 'code' => $result->code,
-                ]];
+                ];
+                // Why the script could not run goes to the app's or the form's owner and to no
+                // other member: it is the script's internals.
+                if ($result->detail !== null && ($userId === ($app['ownerId'] ?? null) || $userId === ($form['userId'] ?? null))) {
+                    $payload['detail'] = $result->detail;
+                }
+                return ['status' => $result->status, 'payload' => $payload];
             }
 
             return ['status' => 201, 'payload' => ['response' => $result]];

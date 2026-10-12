@@ -34,7 +34,7 @@ class AppDataExportController
         private ?LoggerInterface $logger = null,
     ) {
         $this->logger = $logger ?? new NullLogger();
-        $this->ipResolver = new IpResolver();
+        $this->ipResolver = IpResolver::fromEnvironment();
     }
 
     public function export(Request $request, Response $response, array $args): Response
