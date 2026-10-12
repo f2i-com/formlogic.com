@@ -436,19 +436,30 @@ class McpController
             // the BASE covers both this controller's McpDeniedException and the shared handlers'.
             $this->audit($request, 'mcp.denied', $userId, ['tool' => $name, 'reason' => $e->getReasonCode()]);
             return ['content' => [['type' => 'text', 'text' => 'Error: ' . $e->getMessage()]], 'isError' => true];
+        } catch (\PDOException $e) {
+            // A database error is an \Exception as well, but its text names tables, columns and
+            // constraints: it is an unexpected failure, not one of the safe messages below.
+            return $this->unexpectedToolFailure($request, $userId, $name, $e);
         } catch (\Exception $e) {
             // Every intentional throw in this file is a plain \Exception with a deliberately
             // user-safe message — that's the convention for "safe to show the MCP caller".
             return ['content' => [['type' => 'text', 'text' => 'Error: ' . $e->getMessage()]], 'isError' => true];
         } catch (\Throwable $e) {
-            // Anything else (TypeError, PDOException, etc.) was never crafted to be user-facing and
-            // may carry internals (SQL fragments, file paths) — log it, don't echo it to the client.
-            $this->logger?->error('MCP tool call failed unexpectedly', ['tool' => $name, 'error' => $e->getMessage()]);
-            // mb_substr (not substr): a byte-cut multibyte message would be invalid UTF-8, which makes
-            // json_encode() in AuditService::log() return false -> the whole details blob (incl. 'tool') is lost.
-            $this->audit($request, 'mcp.tool_error', $userId, ['tool' => $name, 'message' => mb_substr($e->getMessage(), 0, 200)]);
-            return ['content' => [['type' => 'text', 'text' => 'Error: an unexpected error occurred. Please try again.']], 'isError' => true];
+            return $this->unexpectedToolFailure($request, $userId, $name, $e);
         }
+    }
+
+    /**
+     * A failure that was never crafted to be user-facing (TypeError, PDOException, …) and may carry
+     * internals (SQL fragments, file paths) — log it, don't echo it to the client.
+     */
+    private function unexpectedToolFailure(Request $request, string $userId, string $name, \Throwable $e): array
+    {
+        $this->logger?->error('MCP tool call failed unexpectedly', ['tool' => $name, 'error' => $e->getMessage()]);
+        // mb_substr (not substr): a byte-cut multibyte message would be invalid UTF-8, which makes
+        // json_encode() in AuditService::log() return false -> the whole details blob (incl. 'tool') is lost.
+        $this->audit($request, 'mcp.tool_error', $userId, ['tool' => $name, 'message' => mb_substr($e->getMessage(), 0, 200)]);
+        return ['content' => [['type' => 'text', 'text' => 'Error: an unexpected error occurred. Please try again.']], 'isError' => true];
     }
 
     private function requireScope(array $session, string $scope): void
@@ -509,6 +520,7 @@ class McpController
             ip: $this->ip($request),
             userAgent: 'mcp',
             source: 'mcp',
+            createdBlueprints: is_array($session['created']['blueprints'] ?? null) ? $session['created']['blueprints'] : [],
         );
     }
 
@@ -652,6 +664,7 @@ NODE TYPES (type → config → output):
 
 nodeCapabilities (on create_flow/update_flow) must declare what the nodes use, or the runtime refuses:
 formlogic.responses.read (find records), formlogic.responses.write (submit/update records), formlogic.kv.write (storage_set), model.llm.local (llm_chat), connector.<id>.<command> per connector command (e.g. connector.aokie.call.operatorSpeak, or the wildcard connector.aokie.*).
+Anything that sends connector commands needs the connector:command scope on your token, like connector_command itself: a flow with a connector.* capability or a connector_request / aokie_speak node (to create, change or bind it), a binding with a connector.request or call.speak output action, and app logic (update_app customLogic) holding a connector.* permission. Without the scope these calls are refused; ask the owner for a link with connector access.
 
 create_flow_binding = the TRIGGER: { flow: "<flow slug>", event, formId?, connectorId?, mode?, condition?, inputMap?, outputActions?, timeoutMs? }.
 - Form trigger: event "form.submitted" + formId (must be a form of the same app). The event carries the new record: $event.data.answers.<fieldId>, $event.data.responseId.

@@ -60,6 +60,12 @@ class ChatToolsService
         'connector_command' => 'connector:command', 'desktop_status' => 'connector:command',
     ];
 
+    /** Whether a tool only reads: its scope is one of the :read scopes. */
+    public static function isReadTool(string $name): bool
+    {
+        return str_ends_with(self::TOOL_SCOPES[$name] ?? '', ':read');
+    }
+
     /** The v1 chat tool subset (plan §5.4): additive/read + guarded writes, exactly these ten. */
     public const CHAT_TOOL_NAMES = [
         'list_apps', 'list_forms', 'get_form', 'create_app', 'create_app_form',
@@ -117,6 +123,37 @@ class ChatToolsService
     {
         if (!in_array($name, self::CHAT_TOOL_NAMES, true)) {
             throw new ChatToolDeniedException("Unknown chat tool: {$name}", 'unknown_tool');
+        }
+        // Chat may build and edit, but it does not open an existing form's answers to anonymous
+        // visitors: what the model does can be steered by text a stranger submitted. A new form
+        // has no answers yet, and a screen that keeps or narrows its public fields is unchanged.
+        if (($name === 'update_form' || $name === 'set_form_screen') && is_array($args['customScreen'] ?? null)) {
+            $stored = $this->formService->getForm((string) ($args['formId'] ?? ''));
+            if ($stored !== null && ($stored['userId'] ?? null) === $ctx->userId
+                && self::widensPublicRecords($args['customScreen'], $stored['customScreen'] ?? null)) {
+                throw new ChatToolDeniedException(
+                    'Showing a form\'s submissions to visitors is not turned on or widened from chat — tick "Let visitors read submissions on the public link" and the fields in the form\'s screen studio.',
+                    'public_records_refused'
+                );
+            }
+        }
+        // The same line for app logic: a script that holds a connector permission texts and calls
+        // when the app's events fire. Chat may edit logic around a permission the person gave; it
+        // does not add one.
+        if ($name === 'update_app' && is_array($args['customLogic'] ?? null)) {
+            $wanted = self::connectorPermissionsOf($args['customLogic']);
+            if ($wanted !== []) {
+                $stored = $this->appService->getApp((string) ($args['appId'] ?? ''));
+                $held = is_array($stored) && ($stored['ownerId'] ?? null) === $ctx->userId && is_array($stored['customLogic'] ?? null)
+                    ? self::connectorPermissionsOf($stored['customLogic'])
+                    : [];
+                if (array_diff($wanted, $held) !== []) {
+                    throw new ChatToolDeniedException(
+                        'App logic is not given a connector permission from chat — add it to the script in the app\'s logic editor, then chat can edit the script.',
+                        'connector_permission_refused'
+                    );
+                }
+            }
         }
         if ($name === 'update_form' && (($args['status'] ?? null) === 'archived')) {
             throw new ChatToolDeniedException(
@@ -179,6 +216,7 @@ class ChatToolsService
             case 'create_form':
                 $this->checkFormQuota($userId);
                 $this->validateFormInput($args);
+                $this->requireScopeToWidenPublicRecords($ctx, $args['customScreen'] ?? null, null);
                 $data = $this->createFormSanitized($args, $userId);
                 // App-scoped token: auto-attach the new form to the scoped app so it's usable + stays in scope.
                 if ($scopedApp !== null && !empty($data['id'])) {
@@ -204,6 +242,7 @@ class ChatToolsService
                 $this->ownApp($target, $userId);
                 $this->checkFormQuota($userId);
                 $this->validateFormInput($args);
+                $this->requireScopeToWidenPublicRecords($ctx, $args['customScreen'] ?? null, null);
                 $form = $this->createFormSanitized($args, $userId);
                 $this->appService->addFormToApp($target, (string) $form['id'], $args['displayName'] ?? null);
                 if ($creatorMode && !empty($form['id'])) {
@@ -215,8 +254,9 @@ class ChatToolsService
             }
             case 'update_form':
                 $this->assertFormInScope($ctx, (string) ($args['formId'] ?? ''));
-                $this->ownForm((string) ($args['formId'] ?? ''), $userId);
+                $current = $this->ownForm((string) ($args['formId'] ?? ''), $userId);
                 $this->validateFormInput($args);
+                $this->requireScopeToWidenPublicRecords($ctx, $args['customScreen'] ?? null, $current['customScreen'] ?? null);
                 $input = $this->formInput($args);
                 if (is_array($input['customScreen'] ?? null)) {
                     $input['customScreen'] = $this->sanitizeSectionScreen($input['customScreen'], (string) $args['formId']);
@@ -274,6 +314,7 @@ class ChatToolsService
                     $upd['settings'] = array_merge($upd['settings'] ?? $app['settings'] ?? [], ['hostedDashboard' => $args['hostedDashboard']]);
                 }
                 if (array_key_exists('customLogic', $args) && is_array($args['customLogic'])) {
+                    $this->requireConnectorScopeIf($ctx, self::logicHoldsConnectorPermissions($args['customLogic']));
                     $bundle = \FormLogic\Helpers\CustomLogicSanitizer::sanitize($args['customLogic']);
                     if (!\FormLogic\Helpers\CustomLogicSanitizer::withinSizeCap($bundle)) {
                         throw new \Exception('customLogic exceeds the 256KB limit');
@@ -378,7 +419,11 @@ class ChatToolsService
                 try {
                     $version = $native->install($appId, NativeAppService::starterProject($appName, $appId), 0)['version'];
                 } catch (\Throwable $e) {
-                    $installError = $e instanceof \InvalidArgumentException || $e instanceof \RuntimeException ? $e->getMessage() : 'The app runtime is not available on this server yet.';
+                    // The runtime's own refusals are written for the caller; a database error (a
+                    // \RuntimeException too) names tables and columns and is not.
+                    $installError = ($e instanceof \InvalidArgumentException || $e instanceof \RuntimeException) && !$e instanceof \PDOException
+                        ? $e->getMessage()
+                        : 'The app runtime is not available on this server yet.';
                 }
                 $data = [
                     'app' => ['id' => $appId, 'name' => $app['name'] ?? $appName, 'slug' => $app['slug'] ?? null],
@@ -467,6 +512,9 @@ class ChatToolsService
             }
             case 'add_form_to_app':
                 $this->assertAppScope($ctx, (string) ($args['appId'] ?? ''));
+                // Attaching a form puts it in the app's scope, so a confined token may attach only
+                // a form it could already reach (one in its app, or one a creator token made).
+                $this->assertFormInScope($ctx, (string) ($args['formId'] ?? ''));
                 $this->ownApp((string) ($args['appId'] ?? ''), $userId);
                 $this->ownForm((string) ($args['formId'] ?? ''), $userId);
                 $data = $this->appService->addFormToApp((string) $args['appId'], (string) $args['formId'], $args['displayName'] ?? null);
@@ -491,9 +539,10 @@ class ChatToolsService
                 // Same save boundary as update_form's customScreen path — a widget dashboard
                 // is sanitized against the form's own fields before it persists.
                 $this->assertFormInScope($ctx, (string) ($args['formId'] ?? ''));
-                $this->ownForm((string) ($args['formId'] ?? ''), $userId);
+                $current = $this->ownForm((string) ($args['formId'] ?? ''), $userId);
                 $cs = is_array($args['customScreen'] ?? null) ? $args['customScreen'] : [];
                 $this->validateCustomScreen($cs);
+                $this->requireScopeToWidenPublicRecords($ctx, $cs, $current['customScreen'] ?? null);
                 $data = $this->formService->updateForm((string) $args['formId'], [
                     'customScreen' => $this->sanitizeSectionScreen($cs, (string) $args['formId']),
                 ]);
@@ -591,7 +640,10 @@ class ChatToolsService
                     'appId' => $b['appId'],
                     'semanticRevision' => $b['semanticRevision'],
                     'updatedAt' => $b['updatedAt'],
-                ], $blueprints->listBlueprints($userId))];
+                ], array_values(array_filter(
+                    $blueprints->listBlueprints($userId),
+                    fn (array $b): bool => $this->blueprintInScope($ctx, $b)
+                )))];
                 break;
             }
             case 'get_blueprint': {
@@ -603,6 +655,7 @@ class ChatToolsService
                 }
                 $data = $blueprints->getBlueprint($userId, $blueprintId)
                     ?? throw new \Exception('Blueprint not found');
+                $this->assertBlueprintInScope($ctx, $data);
                 break;
             }
             case 'blueprint_propose_elements': {
@@ -613,8 +666,19 @@ class ChatToolsService
                     ?? throw new \InvalidArgumentException('Blueprints are unavailable in this context');
                 $blueprintId = is_string($args['blueprintId'] ?? null) ? trim((string) $args['blueprintId']) : '';
                 if ($blueprintId === '' && is_string($args['createBlueprintName'] ?? null) && trim((string) $args['createBlueprintName']) !== '') {
+                    if ($scopedApp !== null) {
+                        // A new diagram is linked to no app: the token could not read it back, and
+                        // it cannot turn a diagram into an app either.
+                        throw new ChatToolDeniedException('This MCP token is scoped to a single app and cannot start a new diagram', 'app_scope');
+                    }
                     $created = $blueprints->createBlueprint($userId, ['name' => trim((string) $args['createBlueprintName'])]);
                     $blueprintId = (string) $created['id'];
+                    // Creator token: remember the diagram so the token can keep sketching and build it.
+                    if ($creatorMode) {
+                        $ctx->recordCreated('blueprints', $blueprintId);
+                    }
+                } elseif ($blueprintId !== '' && ($scopedApp !== null || $creatorMode)) {
+                    $this->assertBlueprintInScope($ctx, $blueprints->getBlueprint($userId, $blueprintId) ?? throw new \Exception('Blueprint not found'));
                 }
                 if ($blueprintId === '') {
                     throw new \InvalidArgumentException('Pass blueprintId (or createBlueprintName to start a new blueprint)');
@@ -672,6 +736,20 @@ class ChatToolsService
                     if (!empty($linked['appId'])) {
                         throw new \Exception('This token can only materialise a diagram into a new app; this diagram is already linked to an existing app');
                     }
+                    // An unlinked diagram the owner sketched is the owner's too: building it would
+                    // hand the token an app made of work it never saw.
+                    if (is_array($linked)) {
+                        $this->assertBlueprintInScope($ctx, $linked);
+                        // An element may point at an existing form, and building attaches that
+                        // form to the new app, which the token then manages: it may place only a
+                        // form it could already reach.
+                        foreach (($linked['elements'] ?? []) as $element) {
+                            $ref = is_array($element) ? ($element['resourceRef'] ?? null) : null;
+                            if (is_array($ref) && ($ref['kind'] ?? null) === 'form' && is_string($ref['id'] ?? null)) {
+                                $this->assertFormInScope($ctx, $ref['id']);
+                            }
+                        }
+                    }
                 }
                 $data = $materializer->materialize($userId, $blueprintId);
                 if ($creatorMode) {
@@ -697,6 +775,7 @@ class ChatToolsService
                         $input[$k] = $args[$k];
                     }
                 }
+                $this->requireConnectorScopeIf($ctx, self::flowSendsConnectorCommands($input));
                 $data = $this->flows()->createFlow($appId, $userId, $input);
                 $ctx->audit('create_flow', ['appId' => $appId, 'flowId' => $data['id'] ?? null]);
                 break;
@@ -711,6 +790,11 @@ class ChatToolsService
                         $input[$k] = $args[$k];
                     }
                 }
+                $stored = $this->flows()->getFlow($appId, (string) ($args['flowId'] ?? ''));
+                $this->requireConnectorScopeIf(
+                    $ctx,
+                    self::flowSendsConnectorCommands($input) || ($stored !== null && self::flowSendsConnectorCommands($stored))
+                );
                 $data = $this->flows()->updateFlow($appId, (string) ($args['flowId'] ?? ''), $input);
                 if (!$data) {
                     throw new \Exception('Flow not found in this app');
@@ -754,6 +838,7 @@ class ChatToolsService
                 if (!isset($input['mode'])) {
                     $input['mode'] = 'async'; // the forgiving default; sync/background/manual are opt-in
                 }
+                $this->requireConnectorScopeIf($ctx, $this->bindingSendsConnectorCommands($appId, $input));
                 $data = $this->flows()->createBinding($appId, $input);
                 $ctx->audit('create_flow_binding', ['appId' => $appId, 'bindingId' => $data['id'] ?? null, 'event' => $input['event'] ?? null]);
                 break;
@@ -769,6 +854,12 @@ class ChatToolsService
                         $input[$k] = $args[$k];
                     }
                 }
+                $stored = $this->flows()->getBinding($appId, (string) ($args['bindingId'] ?? ''));
+                $this->requireConnectorScopeIf(
+                    $ctx,
+                    $this->bindingSendsConnectorCommands($appId, $input)
+                        || ($stored !== null && $this->bindingSendsConnectorCommands($appId, $stored))
+                );
                 $data = $this->flows()->updateBinding($appId, (string) ($args['bindingId'] ?? ''), $input);
                 if (!$data) {
                     throw new \Exception('Flow binding not found in this app');
@@ -1010,6 +1101,151 @@ class ChatToolsService
         if ($scoped !== null && ($formId === '' || !$this->appService->formBelongsToApp($scoped, $formId))) {
             throw new ChatToolDeniedException('This MCP token is scoped to an app; that form is not part of it', 'form_scope');
         }
+    }
+
+    /**
+     * Whether a confined token may see a diagram: an app-scoped token, the diagrams linked to its
+     * app; a creator token, the diagrams it made and those linked to an app it made. An
+     * account-wide caller (and the chat) sees all of the owner's.
+     *
+     * @param array{id: string, appId: ?string} $blueprint
+     */
+    private function blueprintInScope(ChatToolsContext $ctx, array $blueprint): bool
+    {
+        $appId = is_string($blueprint['appId'] ?? null) ? $blueprint['appId'] : null;
+        if ($ctx->creatorMode) {
+            return in_array((string) ($blueprint['id'] ?? ''), $ctx->createdBlueprints, true)
+                || ($appId !== null && in_array($appId, $ctx->createdApps, true));
+        }
+        return $ctx->scopedAppId === null || $appId === $ctx->scopedAppId;
+    }
+
+    /** @param array{id: string, appId: ?string} $blueprint */
+    private function assertBlueprintInScope(ChatToolsContext $ctx, array $blueprint): void
+    {
+        if (!$this->blueprintInScope($ctx, $blueprint)) {
+            throw new ChatToolDeniedException(
+                $ctx->creatorMode
+                    ? 'This MCP link can only touch the diagrams it created (or diagrams of apps it created)'
+                    : 'This MCP token is scoped to a single app; that diagram is not linked to it',
+                'app_scope'
+            );
+        }
+    }
+
+    /**
+     * customScreen.publicRecords serves a published form's whitelisted answers to anyone
+     * (GET /api/public/forms/{id}/screen-records and the public report runs). Turning it on, or
+     * adding fields to it, therefore takes the scope that reads submissions: a caller that may not
+     * list the records may not publish them and read them from the public link. $stored is the
+     * form's current customScreen (null for a form being created). The chat surface has no scopes;
+     * callChatTool() holds its own line.
+     */
+    private function requireScopeToWidenPublicRecords(ChatToolsContext $ctx, mixed $screen, mixed $stored): void
+    {
+        if (is_array($screen) && self::widensPublicRecords($screen, $stored)) {
+            $ctx->requireScope('responses:read');
+        }
+    }
+
+    /**
+     * Automation that sends connector commands does, when it runs, what the connector_command tool
+     * does: a runner gates a connector node on the flow's own nodeCapabilities and nothing else.
+     * Storing, changing or arming it therefore takes connector_command's scope, as granting a
+     * role's connector capabilities, installing the Aokie starter's grants and compose_apps'
+     * moved automation already do. The chat surface has no scopes; its person approves or not.
+     */
+    private function requireConnectorScopeIf(ChatToolsContext $ctx, bool $sendsConnectorCommands): void
+    {
+        if ($sendsConnectorCommands) {
+            $ctx->requireScope('connector:command');
+        }
+    }
+
+    /** A flow (tool input, or a stored flow) that declares a connector capability or holds a connector node. */
+    private static function flowSendsConnectorCommands(array $flow): bool
+    {
+        foreach ((is_array($flow['nodeCapabilities'] ?? null) ? $flow['nodeCapabilities'] : []) as $capability) {
+            if (is_string($capability) && str_starts_with($capability, 'connector.')) {
+                return true;
+            }
+        }
+        $graph = is_array($flow['flowJson'] ?? null) ? $flow['flowJson'] : [];
+        foreach ((is_array($graph['nodes'] ?? null) ? $graph['nodes'] : []) as $node) {
+            if (is_array($node) && in_array($node['type'] ?? null, ['connector_request', 'aokie_speak'], true)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A binding (tool input, or a stored binding) with a connector output action, or one that
+     * wires a flow that sends connector commands to its trigger.
+     */
+    private function bindingSendsConnectorCommands(string $appId, array $binding): bool
+    {
+        foreach ((is_array($binding['outputActions'] ?? null) ? $binding['outputActions'] : []) as $action) {
+            if (is_array($action) && in_array($action['type'] ?? null, ['connector.request', 'call.speak'], true)) {
+                return true;
+            }
+        }
+        $slug = $binding['flow'] ?? null;
+        if (!is_string($slug) || $slug === '') {
+            return false;
+        }
+        foreach ($this->flows()->listFlows($appId) as $flow) {
+            if (($flow['slug'] ?? null) === $slug) {
+                return self::flowSendsConnectorCommands($flow);
+            }
+        }
+        return false;
+    }
+
+    /** An app-logic bundle in which the bundle, or one of its scripts, holds a connector.* permission. */
+    private static function logicHoldsConnectorPermissions(array $bundle): bool
+    {
+        return self::connectorPermissionsOf($bundle) !== [];
+    }
+
+    /**
+     * The connector.* permissions an app-logic bundle holds, on the bundle and on its scripts.
+     *
+     * @return string[]
+     */
+    private static function connectorPermissionsOf(array $bundle): array
+    {
+        $lists = [$bundle['permissions'] ?? null];
+        foreach ((is_array($bundle['scripts'] ?? null) ? $bundle['scripts'] : []) as $script) {
+            if (is_array($script)) {
+                $lists[] = $script['permissions'] ?? null;
+            }
+        }
+        $held = [];
+        foreach ($lists as $list) {
+            foreach ((is_array($list) ? $list : []) as $permission) {
+                if (is_string($permission) && str_starts_with($permission, 'connector.')) {
+                    $held[$permission] = true;
+                }
+            }
+        }
+        return array_keys($held);
+    }
+
+    /** Whether $screen would let anonymous visitors read more of the form's answers than $stored does. */
+    private static function widensPublicRecords(array $screen, mixed $stored): bool
+    {
+        if (empty($screen['publicRecords'])) {
+            return false;
+        }
+        if (!is_array($stored) || empty($stored['publicRecords'])) {
+            return true;
+        }
+        $fields = static fn (array $s): array => array_values(array_filter(
+            is_array($s['publicRecordFields'] ?? null) ? $s['publicRecordFields'] : [],
+            'is_string'
+        ));
+        return array_diff($fields($screen), $fields($stored)) !== [];
     }
 
     /** True if $formId belongs to any of the given apps. */
@@ -1264,6 +1500,14 @@ class ChatToolsService
             'update_app' => "Update an app: rename, set description, change the URL slug, publish (status: draft|published), hide the sidebar/menu (hideNav: true for a self-contained custom-home app), or set its app-logic bundle (customLogic). Non-destructive from chat: archiving (status:'archived') is refused — unpublish with status:'draft' instead.",
             'create_flow' => "Create a FLOW (automation) in an app: a graph of nodes — LLM chat, find/submit/update records, condition, template, sandboxed JavaScript or Python logic, HTTP, connector commands, speech — that runs when a bound trigger event fires. Set nodeCapabilities to the union of the capabilities your nodes need, e.g. ['formlogic.responses.read','formlogic.responses.write'].",
         ];
+        // What callChatTool() refuses, said where the model reads it, so it tells the person rather
+        // than trying.
+        $publicRecords = ' From chat, an existing form keeps its public records as they are: publicRecords is not turned on and publicRecordFields gains no field (the person does that in the form\'s screen studio).';
+        $refusals = [
+            'update_form' => $publicRecords,
+            'set_form_screen' => $publicRecords,
+            'update_app' => ' From chat, app logic gains no connector.* permission: the person adds it in the app\'s logic editor.',
+        ];
         $out = [];
         foreach (self::CHAT_TOOL_NAMES as $name) {
             $def = $byName[$name];
@@ -1279,7 +1523,7 @@ class ChatToolsService
             }
             $out[] = [
                 'name' => $name,
-                'description' => $overrides[$name] ?? $def['description'],
+                'description' => ($overrides[$name] ?? $def['description']) . ($refusals[$name] ?? ''),
                 'inputSchema' => $schema,
             ];
         }

@@ -49,6 +49,10 @@ class ApiKeyController
         $userId = $request->getAttribute('userId');
         $data = $request->getParsedBody();
 
+        if (!is_array($data)) {
+            $data = [];
+        }
+
         $name = $data['name'] ?? '';
         $scopes = $data['scopes'] ?? [];
         $formIds = $data['formIds'] ?? null;
@@ -58,6 +62,21 @@ class ApiKeyController
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'Scopes must be an array',
+            ], 400);
+        }
+        // The service's parameters are typed: a field of the wrong JSON type must be refused
+        // here, or it reaches createKey() as a TypeError and the caller gets a 500.
+        $typeError = match (true) {
+            !is_string($name) => 'Key name must be text',
+            array_filter($scopes, static fn ($scope) => !is_string($scope)) !== [] => 'Each scope must be text',
+            $formIds !== null && !is_array($formIds) => 'formIds must be an array of form IDs',
+            $expiresAt !== null && !is_string($expiresAt) => 'Expiration date must be text',
+            default => null,
+        };
+        if ($typeError !== null) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => $typeError,
             ], 400);
         }
 

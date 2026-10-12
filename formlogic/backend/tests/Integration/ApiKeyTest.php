@@ -4,10 +4,14 @@ declare(strict_types=1);
 
 namespace FormLogic\Tests\Integration;
 
+use FormLogic\Controllers\ApiKeyController;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Services\ApiKeyService;
+use FormLogic\Services\FormService;
 use PDO;
 use PHPUnit\Framework\TestCase;
+use Slim\Psr7\Factory\ResponseFactory;
+use Slim\Psr7\Factory\ServerRequestFactory;
 
 /**
  * External-API key lifecycle + scope/expiry/revocation against a real MySQL DB. The per-route
@@ -151,5 +155,46 @@ class ApiKeyTest extends TestCase
         $created = self::$svc->createKey($this->userId, 'Scoped', ['responses:read'], [$formId]);
         $validated = self::$svc->validateKey($created['key']);
         $this->assertSame([$formId], $validated['formIds']);
+    }
+
+    /**
+     * POST /api/api-keys with a field of the wrong JSON type is a bad request. The service's typed
+     * parameters turned a list for `name`, or text for `formIds`, into a TypeError and a 500.
+     *
+     * @dataProvider wrongTypedBodies
+     */
+    public function testCreateAnswersAWrongTypeWithA400(array $body): void
+    {
+        $ctrl = new ApiKeyController(self::$svc, $this->createMock(FormService::class));
+        $req = (new ServerRequestFactory())->createServerRequest('POST', 'http://localhost/api/api-keys')
+            ->withParsedBody($body)
+            ->withAttribute('userId', $this->userId);
+
+        $resp = $ctrl->create($req, (new ResponseFactory())->createResponse());
+
+        $this->assertSame(400, $resp->getStatusCode());
+        $this->assertSame([], self::$svc->listKeys($this->userId), 'no key was created');
+    }
+
+    public static function wrongTypedBodies(): iterable
+    {
+        yield 'name is a list' => [['name' => ['k'], 'scopes' => ['forms:read']]];
+        yield 'expiresAt is a list' => [['name' => 'k', 'scopes' => ['forms:read'], 'expiresAt' => ['2030-01-01']]];
+        yield 'expiresAt is a number' => [['name' => 'k', 'scopes' => ['forms:read'], 'expiresAt' => 1893456000]];
+        yield 'formIds is text' => [['name' => 'k', 'scopes' => ['forms:read'], 'formIds' => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']];
+        yield 'a scope is a list' => [['name' => 'k', 'scopes' => [['forms:read']]]];
+    }
+
+    public function testCreateStillMakesAKeyFromAWellFormedBody(): void
+    {
+        $ctrl = new ApiKeyController(self::$svc, $this->createMock(FormService::class));
+        $req = (new ServerRequestFactory())->createServerRequest('POST', 'http://localhost/api/api-keys')
+            ->withParsedBody(['name' => 'CI', 'scopes' => ['forms:read'], 'expiresAt' => '2030-01-01 00:00:00'])
+            ->withAttribute('userId', $this->userId);
+
+        $resp = $ctrl->create($req, (new ResponseFactory())->createResponse());
+
+        $this->assertSame(201, $resp->getStatusCode());
+        $this->assertCount(1, self::$svc->listKeys($this->userId));
     }
 }

@@ -382,6 +382,114 @@ class ChatToolGrantTest extends TestCase
 
     // ── catalog ──
 
+    /**
+     * The desktop is sent what a failed tool says. A database error is an \Exception, and used to
+     * take the path for safe messages, so its text (tables, columns) went out in the response.
+     */
+    public function testExecuteDoesNotEchoADatabaseError(): void
+    {
+        $this->addConnection($this->userId, 'inst-db');
+        $forms = $this->createMock(FormService::class);
+        $forms->method('getAllForms')->willThrowException(
+            new \PDOException("SQLSTATE[42S22]: Column not found: 1054 Unknown column 'secret_marker' in 'field list'")
+        );
+        $ctrl = new ChatToolsController(
+            self::$grants,
+            new ChatToolsService($forms, $this->createMock(AppService::class), $this->createMock(ResponseService::class)),
+            self::$commands,
+            self::$apiKeys,
+        );
+        $req = (new ServerRequestFactory())->createServerRequest('POST', self::BASE . '/api/ai/chat-tools/execute')
+            ->withParsedBody(['grantToken' => $this->mint($this->userId)['body']['data']['grantToken'], 'tool' => 'list_forms', 'input' => []])
+            ->withAttribute('userId', $this->userId)
+            ->withAttribute('apiKeyScopes', ['ai:relay']);
+        $resp = $ctrl->execute($req, (new ResponseFactory())->createResponse());
+        $resp->getBody()->rewind();
+        $raw = (string) $resp->getBody();
+
+        $this->assertSame(500, $resp->getStatusCode());
+        $this->assertStringNotContainsString('secret_marker', $raw);
+        $this->assertStringNotContainsString('SQLSTATE', $raw);
+        $this->assertSame('tool_failed', self::decode($resp)['code'] ?? null);
+    }
+
+    /**
+     * Chat builds and edits, but it does not open an existing form's answers to anonymous visitors
+     * (customScreen.publicRecords): the model can be steered by text a stranger submitted to that
+     * very form. The person turns it on in the screen studio.
+     */
+    public function testChatDoesNotOpenAFormsAnswersToVisitors(): void
+    {
+        $this->addConnection($this->userId, 'inst-public');
+        $run = fn (string $tool, array $input): array => $this->execute($this->userId, ['ai:relay'], [
+            'grantToken' => $this->mint($this->userId)['body']['data']['grantToken'], 'tool' => $tool, 'input' => $input,
+        ]);
+        $formId = (string) ($run('create_form', ['title' => 'Intake', 'status' => 'published'])['body']['data']['id'] ?? '');
+        $this->assertNotSame('', $formId);
+        $open = ['enabled' => false, 'publicRecords' => true, 'publicRecordFields' => ['ssn']];
+
+        foreach (['set_form_screen', 'update_form'] as $tool) {
+            $out = $run($tool, ['formId' => $formId, 'customScreen' => $open]);
+            $this->assertSame(403, $out['status'], $tool);
+            $this->assertSame('tool_denied', $out['body']['code'] ?? null);
+            $this->assertStringContainsString('submissions', (string) ($out['body']['message'] ?? ''));
+            $this->assertEmpty(self::$forms->getForm($formId)['customScreen']['publicRecords'] ?? null, $tool . ' left public records off');
+        }
+
+        // Once the person has turned it on, chat may edit the screen and keep or narrow the fields…
+        self::$forms->updateForm($formId, ['customScreen' => ['enabled' => false, 'publicRecords' => true, 'publicRecordFields' => ['score', 'nickname']]]);
+        $keep = $run('set_form_screen', ['formId' => $formId, 'customScreen' => ['enabled' => true, 'html' => '<b>board</b>', 'publicRecords' => true, 'publicRecordFields' => ['score']]]);
+        $this->assertSame(200, $keep['status'], json_encode($keep['body']));
+        $this->assertSame(['score'], self::$forms->getForm($formId)['customScreen']['publicRecordFields'] ?? null);
+        // …but not add one.
+        $widen = $run('update_form', ['formId' => $formId, 'customScreen' => ['publicRecords' => true, 'publicRecordFields' => ['score', 'email']]]);
+        $this->assertSame(403, $widen['status']);
+        $this->assertSame(['score'], self::$forms->getForm($formId)['customScreen']['publicRecordFields'] ?? null);
+
+        // A form made in chat has no answers yet: a leaderboard can be built in one step.
+        $board = $run('create_form', ['title' => 'Game', 'customScreen' => ['enabled' => true, 'html' => '<b>x</b>', 'publicRecords' => true, 'publicRecordFields' => ['score']]]);
+        $this->assertSame(200, $board['status'], json_encode($board['body']));
+        $this->assertTrue((bool) ($board['body']['data']['customScreen']['publicRecords'] ?? false));
+    }
+
+    /**
+     * App logic that holds a connector permission sends connector commands (texts, calls) when the
+     * app's events fire. Chat edits app logic, but it does not give a script that reach: the model
+     * can be steered by text it read, and the person never sees the permission list go by.
+     */
+    public function testChatDoesNotGiveAppLogicConnectorReach(): void
+    {
+        $this->addConnection($this->userId, 'inst-logic');
+        $run = fn (string $tool, array $input): array => $this->execute($this->userId, ['ai:relay'], [
+            'grantToken' => $this->mint($this->userId)['body']['data']['grantToken'], 'tool' => $tool, 'input' => $input,
+        ]);
+        $appId = (string) ($run('create_app', ['name' => 'Leads'])['body']['data']['id'] ?? '');
+        $this->assertNotSame('', $appId);
+        $apps = new AppService(self::$mysql, self::$forms);
+        $logic = fn (array $permissions): array => [
+            'version' => 1,
+            'scripts' => [['hook' => 'onAfterSubmit', 'source' => 'function run(ctx) { return {}; }', 'permissions' => $permissions]],
+        ];
+
+        $out = $run('update_app', ['appId' => $appId, 'customLogic' => $logic(['connector.aokie.sms.send'])]);
+        $this->assertSame(403, $out['status'], json_encode($out['body']));
+        $this->assertSame('tool_denied', $out['body']['code'] ?? null);
+        $this->assertStringContainsString('connector', (string) ($out['body']['message'] ?? ''));
+        $this->assertEmpty($apps->getApp($appId)['customLogic'] ?? null, 'no app logic was stored');
+
+        // Logic that stays inside FormLogic is chat's to write.
+        $plain = $run('update_app', ['appId' => $appId, 'customLogic' => $logic(['formlogic.responses.write'])]);
+        $this->assertSame(200, $plain['status'], json_encode($plain['body']));
+
+        // Once the person has given a script the permission, chat may edit around it…
+        $apps->updateApp($appId, ['customLogic' => \FormLogic\Helpers\CustomLogicSanitizer::sanitize($logic(['connector.aokie.sms.send']))]);
+        $kept = $run('update_app', ['appId' => $appId, 'customLogic' => $logic(['connector.aokie.sms.send', 'formlogic.responses.write'])]);
+        $this->assertSame(200, $kept['status'], json_encode($kept['body']));
+        // …but not add another.
+        $more = $run('update_app', ['appId' => $appId, 'customLogic' => $logic(['connector.aokie.sms.send', 'connector.aokie.call.answer'])]);
+        $this->assertSame(403, $more['status']);
+    }
+
     public function testCatalogIncludesTheSupportedChatToolsAtTopLevel(): void
     {
         // Session-authed.

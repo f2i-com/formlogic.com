@@ -542,8 +542,19 @@ first; documents reference them by the `id` returned from `create_report`.
   tools (`add_response`/`update_response`/`delete_response`) need the separately opt‑in `responses:write`
   scope — and every write runs the same validated pipeline as the external API (field validation,
   calculated fields, the form's onSubmit script).
-- App‑scoped tokens are enforced on every call.
-- Per‑call size caps (fields 500KB, script 100KB, custom screen 512KB) and a JSON‑RPC batch cap (20).
+- App‑scoped tokens are enforced on every call, the diagram tools included: `add_form_to_app` attaches only a
+  form already inside the token's app (for a creator token, a form that token made), and
+  `list_blueprints` / `get_blueprint` / `blueprint_propose_elements` see only that app's diagrams (for a
+  creator token, the ones it made). A creator token cannot build an existing form into its app.
+- Opening a form's answers to visitors (`customScreen.publicRecords` on `create_form`, `update_form` or
+  `set_form_screen`, turning it on or adding fields) needs `responses:read`: it publishes submission data.
+- A flow, a binding or app logic that can command a connector (`connector.*`) needs `connector:command`
+  to create, change or bind, as sending the command itself does.
+- Revoking a connection ends the whole grant, its refresh token included, and every session made from
+  it. `GET /api/mcp/tokens` also lists a grant with no live session (`id: grant-<family>`, `idle: true`),
+  so a connection that has not been used for an hour can still be seen and revoked.
+- A database error is never sent to the client: the tool answers a generic failure.
+- Per‑call size caps (fields 500KB, script 100KB, custom screen 2MB) and a JSON‑RPC batch cap (20).
 - Widget‑dashboard and report specs are sanitized server‑side against the target app/form on save (the
   same `AppReportService` boundary as the UI): out‑of‑scope forms, joins, and field refs are dropped.
 - Every action is audited (`mcp.*`) with the owner's user id.

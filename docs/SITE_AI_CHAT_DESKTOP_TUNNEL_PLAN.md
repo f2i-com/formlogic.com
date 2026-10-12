@@ -124,7 +124,7 @@ Standing principles: credentials never cross the backend; explicit source/locati
 - **Grant**: browser mints a 10-min token via `POST /api/ai/chat-tool-grant` (bound to user + desktop instance + `ai:chat-tools` scope), sent **inside the sealed envelope**, one per turn. Desktop presents it to `POST /api/ai/chat-tools/execute`; backend verifies (mint/introspect pair) **and** that the grant's bound instance matches the flk_ key's desktop connection; executes **as the granting user**; audit-logged.
 - **Catalog**: `GET /api/ai/chat-tools/catalog`; desktop fetches+caches.
 - **Confirm mode**: sealed `tool_proposal` frame → browser approve/deny card → sealed inbound frame `POST /api/desktop/ai/requests/{id}/input`; desktop polls `GET /api/v1/desktop-ai/{id}/input?since=` while paused (120 s → auto-deny).
-- **Hosted path**: `POST /api/ai/chat` runs the same loop server-side as the session user (non-E2E, badged).
+- **Hosted path**: `POST /api/ai/chat` runs the same loop server-side as the session user (non-E2E, badged). There is no approve/deny card on this path, so with the saved mode **Ask first** the loop runs read tools (and a non-commit diagram proposal on an existing diagram) and answers every other call `approval_required`, to the model and as a failed tool frame; **Auto** runs write tools as before. At most 16 tool calls run per round, and the model is told, in a server-added notice, that tool results are data and not instructions.
 
 ### 5.5 Model selection
 

@@ -88,6 +88,21 @@ describe('cryptoClient + worker', () => {
     expect(updated.wrappedUmkRecovery).toBe(vault.wrappedUmkRecovery);
   });
 
+  it('rewraps at the vault\'s stored KDF cost when that is above the default', async () => {
+    // The server refuses a rewrap whose parameters are below the stored ones (kdf_downgrade).
+    // A vault whose cost was raised could then neither change its passphrase nor finish a
+    // recovery if the rewrap fell back to the launch defaults.
+    const created = await client.createVault(USER, 'passphrase-one');
+    const raised: VaultWire = { ...created.vault, kdfOpslimit: created.vault.kdfOpslimit + 1 };
+    const c = makeClient();
+    const { rewrap } = await c.recoveryUnlock(USER, created.recoveryDisplay, 'passphrase-two', raised);
+    expect(rewrap.kdfOpslimit).toBe(raised.kdfOpslimit);
+    expect(rewrap.kdfMemlimit).toBe(raised.kdfMemlimit);
+    // The new wrapper opens with the new passphrase at exactly those parameters.
+    const next: VaultWire = { ...raised, ...rewrap, version: 2 };
+    await expect(makeClient().unlock(USER, 'passphrase-two', next)).resolves.toEqual({ ok: true });
+  });
+
   it('changes the passphrase rewrap-only: bundle + keys + recovery wrapper untouched', async () => {
     const created = await client.createVault(USER, 'passphrase-one');
     vault = created.vault;

@@ -39,6 +39,7 @@ class McpTest extends TestCase
     private static DesktopCommandService $desktopCommands;
     private static FormService $forms;
     private static ResponseService $responses;
+    private static \FormLogic\Services\BlueprintService $blueprints;
 
     private string $userId = '';
     private string $appA = '';
@@ -82,6 +83,7 @@ class McpTest extends TestCase
         self::$desktopCommands = new DesktopCommandService($conn);
         $flows = new FlowService($conn);
         $blueprints = new \FormLogic\Services\BlueprintService($conn);
+        self::$blueprints = $blueprints;
         $materializer = new \FormLogic\Services\BlueprintMaterializeService($conn, $blueprints, $forms, self::$apps, $flows);
         self::$ctrl = new McpController(self::$tokens, $forms, self::$apps, $responses, null, null, self::$reportValidator, self::$desktopCommands, null, null, null, $flows, null, $blueprints, $materializer);
     }
@@ -108,6 +110,7 @@ class McpTest extends TestCase
             return;
         }
         self::$pdo->prepare('DELETE FROM mcp_sessions WHERE user_id = ?')->execute([$this->userId]);
+        self::$pdo->prepare('DELETE FROM blueprints WHERE owner_user_id = ?')->execute([$this->userId]);
         self::$pdo->prepare('DELETE FROM desktop_commands WHERE owner_user_id = ?')->execute([$this->userId]);
         self::$pdo->prepare('DELETE FROM audit_log WHERE user_id = ?')->execute([$this->userId]);
         // Clean children for EVERY app the user owns (incl. apps a creator token made during a test).
@@ -1300,5 +1303,236 @@ class McpTest extends TestCase
         $this->assertSame($sorted, $positions, 'core build tools must keep their build-path order');
         $firstList = array_search('list_forms', $names, true);
         $this->assertGreaterThan(max($positions), $firstList, 'build tools must precede the list_* tools');
+    }
+
+    // ── a token is held to its scopes and to its app ──
+
+    /**
+     * A database error is an internal detail. PDOException is an \Exception, so the branch for
+     * deliberately safe messages used to send its text (column and table names) to the client.
+     */
+    public function testDatabaseErrorTextIsNotSentToTheMcpClient(): void
+    {
+        $formService = $this->createMock(FormService::class);
+        $formService->method('getAllForms')->willThrowException(
+            new \PDOException("SQLSTATE[42S22]: Column not found: 1054 Unknown column 'secret_marker' in 'field list'")
+        );
+        $ctrl = new McpController(self::$tokens, $formService, self::$apps, self::$responses, null, null, self::$reportValidator, self::$desktopCommands);
+        $tok = self::$tokens->create($this->userId)['token'];
+
+        $res = $this->tool($tok, 'list_forms', [], $ctrl);
+        $this->assertTrue($res['isError']);
+        $this->assertStringNotContainsString('secret_marker', $res['text']);
+        $this->assertStringNotContainsString('SQLSTATE', $res['text']);
+        $this->assertSame('Error: an unexpected error occurred. Please try again.', $res['text']);
+    }
+
+    /** Attaching a form brings it into the app's scope, so an app-scoped token may attach only what is already in scope. */
+    public function testAppScopedTokenCannotPullAnOutsideFormIntoItsApp(): void
+    {
+        $tok = self::$tokens->create($this->userId, $this->appA, 3600, 900, ['apps:read', 'apps:write', 'forms:read', 'forms:write', 'responses:read'])['token'];
+
+        $pull = $this->tool($tok, 'add_form_to_app', ['appId' => $this->appA, 'formId' => $this->formB]);
+        $this->assertTrue($pull['isError'], $pull['text']);
+        $this->assertFalse(self::$apps->formBelongsToApp($this->appA, $this->formB), 'the other app\'s form was not attached');
+        $this->assertTrue($this->tool($tok, 'get_form', ['formId' => $this->formB])['isError']);
+        $this->assertTrue($this->tool($tok, 'list_responses', ['formId' => $this->formB])['isError']);
+    }
+
+    public function testCreatorTokenAttachesOnlyFormsItMade(): void
+    {
+        $tok = self::$tokens->create($this->userId, null, 3600, 900, null, true)['token'];
+        $appId = (string) ($this->tool($tok, 'create_app', ['name' => 'AI Built'])['data']['id'] ?? '');
+        $this->assertNotSame('', $appId);
+
+        $pull = $this->tool($tok, 'add_form_to_app', ['appId' => $appId, 'formId' => $this->formB]);
+        $this->assertTrue($pull['isError'], $pull['text']);
+        $this->assertFalse(self::$apps->formBelongsToApp($appId, $this->formB));
+        $this->assertTrue($this->tool($tok, 'get_form', ['formId' => $this->formB])['isError']);
+
+        // A form the token created is its own to attach.
+        $own = (string) ($this->tool($tok, 'create_form', ['title' => 'Mine'])['data']['id'] ?? '');
+        $attached = $this->tool($tok, 'add_form_to_app', ['appId' => $appId, 'formId' => $own]);
+        $this->assertFalse($attached['isError'], $attached['text']);
+        $this->assertTrue(self::$apps->formBelongsToApp($appId, $own));
+    }
+
+    /** Diagrams describe apps, so an app-scoped token reads and changes only the diagrams linked to its app. */
+    public function testAppScopedTokenIsHeldToItsAppsDiagrams(): void
+    {
+        $mine = self::$blueprints->createBlueprint($this->userId, ['name' => 'App A plan', 'appId' => $this->appA])['id'];
+        $other = self::$blueprints->createBlueprint($this->userId, ['name' => 'App B plan', 'appId' => $this->appB])['id'];
+        $loose = self::$blueprints->createBlueprint($this->userId, ['name' => 'Unlinked sketch'])['id'];
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+
+        $listed = array_column($this->tool($tok, 'list_blueprints')['data']['blueprints'] ?? [], 'blueprintId');
+        $this->assertSame([$mine], $listed);
+        $this->assertFalse($this->tool($tok, 'get_blueprint', ['blueprintId' => $mine])['isError']);
+        $this->assertTrue($this->tool($tok, 'get_blueprint', ['blueprintId' => $other])['isError']);
+        $this->assertTrue($this->tool($tok, 'get_blueprint', ['blueprintId' => $loose])['isError']);
+
+        $note = [['operationId' => 'op-1', 'type' => 'blueprint.element.create', 'targetId' => 'el-note', 'elementType' => 'note', 'properties' => ['title' => 'x']]];
+        foreach ([$other, $loose] as $outside) {
+            $write = $this->tool($tok, 'blueprint_propose_elements', ['blueprintId' => $outside, 'commit' => true, 'baseSemanticRevision' => 0, 'operations' => $note]);
+            $this->assertTrue($write['isError'], $write['text']);
+            $this->assertCount(0, self::$blueprints->getBlueprint($this->userId, $outside)['elements'] ?? [], 'a diagram outside the app is unchanged');
+        }
+        $own = $this->tool($tok, 'blueprint_propose_elements', ['blueprintId' => $mine, 'commit' => true, 'baseSemanticRevision' => 0, 'operations' => $note]);
+        $this->assertFalse($own['isError'], $own['text']);
+
+        // A new diagram would be linked to no app, so the token could neither read nor build it.
+        $fresh = $this->tool($tok, 'blueprint_propose_elements', ['createBlueprintName' => 'Side sketch', 'commit' => true, 'baseSemanticRevision' => 0, 'operations' => $note]);
+        $this->assertTrue($fresh['isError'], $fresh['text']);
+        $this->assertCount(3, self::$blueprints->listBlueprints($this->userId), 'no diagram was created');
+    }
+
+    /** A creator token never sees the owner's existing work; that holds for diagrams as for apps and forms. */
+    public function testCreatorTokenIsHeldToTheDiagramsItMade(): void
+    {
+        $other = self::$blueprints->createBlueprint($this->userId, ['name' => 'App B plan', 'appId' => $this->appB])['id'];
+        $loose = self::$blueprints->createBlueprint($this->userId, ['name' => 'Unlinked sketch'])['id'];
+        $link = self::$tokens->create($this->userId, null, 3600, 900, null, true);
+        $tok = $link['token'];
+        // A link minted before diagrams were tracked has no list for them; it gains one on first use.
+        self::$pdo->prepare('UPDATE mcp_sessions SET created_ids = ? WHERE id = ?')->execute(['{"apps":[],"forms":[]}', $link['id']]);
+
+        $this->assertSame([], $this->tool($tok, 'list_blueprints')['data']['blueprints'] ?? null);
+        $form = [['operationId' => 'op-1', 'type' => 'blueprint.element.create', 'targetId' => 'el-tasks', 'elementType' => 'form',
+            'properties' => ['title' => 'Tasks', 'fields' => [['name' => 'Title', 'type' => 'short_text']]]]];
+        foreach ([$other, $loose] as $outside) {
+            $this->assertTrue($this->tool($tok, 'get_blueprint', ['blueprintId' => $outside])['isError']);
+            $write = $this->tool($tok, 'blueprint_propose_elements', ['blueprintId' => $outside, 'commit' => true, 'baseSemanticRevision' => 0, 'operations' => $form]);
+            $this->assertTrue($write['isError'], $write['text']);
+            $this->assertCount(0, self::$blueprints->getBlueprint($this->userId, $outside)['elements'] ?? []);
+        }
+        // An unlinked diagram of the owner's cannot be turned into an app the token then owns.
+        $this->assertTrue($this->tool($tok, 'materialize_blueprint', ['blueprintId' => $loose])['isError']);
+
+        // Its own sketch-to-app path still works, across separate requests.
+        $sketch = $this->tool($tok, 'blueprint_propose_elements', ['createBlueprintName' => 'AI sketch', 'commit' => true, 'baseSemanticRevision' => 0, 'operations' => $form]);
+        $this->assertFalse($sketch['isError'], $sketch['text']);
+        $made = (string) ($sketch['data']['blueprintId'] ?? '');
+        $this->assertSame([$made], array_column($this->tool($tok, 'list_blueprints')['data']['blueprints'] ?? [], 'blueprintId'));
+        $this->assertFalse($this->tool($tok, 'get_blueprint', ['blueprintId' => $made])['isError']);
+        $built = $this->tool($tok, 'materialize_blueprint', ['blueprintId' => $made]);
+        $this->assertFalse($built['isError'], $built['text']);
+        $this->assertFalse($this->tool($tok, 'update_app', ['appId' => (string) $built['data']['appId'], 'hideNav' => true])['isError']);
+    }
+
+    /**
+     * A diagram element can point at an existing form, and building the diagram attaches that form
+     * to the new app. For a creator token that would bring one of the owner's forms into the app
+     * it then manages, so it may place only the forms it could already reach.
+     */
+    public function testCreatorTokenCannotBuildAnExistingFormIntoItsApp(): void
+    {
+        $tok = self::$tokens->create($this->userId, null, 3600, 900, null, true)['token'];
+        $sketch = $this->tool($tok, 'blueprint_propose_elements', [
+            'createBlueprintName' => 'Borrowed form',
+            'commit' => true,
+            'baseSemanticRevision' => 0,
+            'operations' => [[
+                'operationId' => 'op-1', 'type' => 'blueprint.element.create', 'targetId' => 'el-borrowed', 'elementType' => 'form',
+                'properties' => ['title' => 'Borrowed'], 'resourceRef' => ['kind' => 'form', 'id' => $this->formB],
+            ]],
+        ]);
+        $appsBefore = count(self::$apps->getAllApps($this->userId));
+
+        if (!$sketch['isError']) {
+            $built = $this->tool($tok, 'materialize_blueprint', ['blueprintId' => (string) ($sketch['data']['blueprintId'] ?? '')]);
+            $this->assertTrue($built['isError'], $built['text']);
+        }
+        $this->assertCount($appsBefore, self::$apps->getAllApps($this->userId), 'no app was built around the owner\'s form');
+        $this->assertTrue($this->tool($tok, 'get_form', ['formId' => $this->formB])['isError'], 'the form stays out of the token\'s reach');
+    }
+
+    /**
+     * A flow's connector node, a binding's connector output action and an app-logic script that
+     * holds a connector permission each do, when they run, what connector_command does: the
+     * runners gate a connector node on the flow's own nodeCapabilities and nothing else. Storing,
+     * changing or arming one therefore takes the scope connector_command takes.
+     */
+    public function testConnectorAutomationNeedsTheConnectorCommandScope(): void
+    {
+        $builder = self::$tokens->create($this->userId)['token']; // the default scopes: no connector:command
+        $flows = new FlowService(self::$mysql);
+        $sms = ['nodes' => [
+            ['id' => 'in', 'type' => 'input', 'data' => ['inputs' => [['name' => 'phone']]]],
+            ['id' => 'sms', 'type' => 'connector_request', 'data' => ['connectorId' => 'aokie', 'command' => 'sms.send', 'payload' => ['to' => '+15550100', 'body' => 'x']]],
+        ], 'edges' => [['source' => 'in', 'target' => 'sms']]];
+        $speak = [['type' => 'connector.request', 'connectorId' => 'aokie', 'command' => 'call.operatorSpeak', 'payload' => ['text' => 'hello']]];
+
+        $denied = function (array $res): void {
+            $this->assertTrue($res['isError'], $res['text']);
+            $this->assertStringContainsString('connector:command', $res['text']);
+        };
+        $denied($this->tool($builder, 'create_flow', ['appId' => $this->appA, 'name' => 'Text out', 'nodeCapabilities' => ['connector.aokie.sms.send'], 'flowJson' => $sms]));
+        // The node alone is refused too: the capability could be added by a later, smaller edit.
+        $denied($this->tool($builder, 'create_flow', ['appId' => $this->appA, 'name' => 'Text out', 'flowJson' => $sms]));
+        $this->assertSame([], $flows->listFlows($this->appA), 'no connector flow was stored');
+
+        // Automation that stays inside FormLogic is the builder scopes' own, as before.
+        $plain = $this->tool($builder, 'create_flow', ['appId' => $this->appA, 'name' => 'Plain', 'slug' => 'plain', 'nodeCapabilities' => ['formlogic.responses.read']]);
+        $this->assertFalse($plain['isError'], $plain['text']);
+        $bound = $this->tool($builder, 'create_flow_binding', ['appId' => $this->appA, 'flow' => 'plain', 'event' => 'form.submitted', 'formId' => $this->formA]);
+        $this->assertFalse($bound['isError'], $bound['text']);
+
+        $denied($this->tool($builder, 'create_flow_binding', ['appId' => $this->appA, 'flow' => 'plain', 'event' => 'form.submitted', 'formId' => $this->formA, 'outputActions' => $speak]));
+        $denied($this->tool($builder, 'update_flow_binding', ['appId' => $this->appA, 'bindingId' => (string) $bound['data']['id'], 'outputActions' => $speak]));
+        $denied($this->tool($builder, 'update_flow', ['appId' => $this->appA, 'flowId' => (string) $plain['data']['id'], 'nodeCapabilities' => ['connector.aokie.*']]));
+        $denied($this->tool($builder, 'update_app', ['appId' => $this->appA, 'customLogic' => [
+            'version' => 1,
+            'scripts' => [['hook' => 'onAfterSubmit', 'source' => 'function run(ctx) { return {}; }', 'permissions' => ['connector.aokie.sms.send']]],
+        ]]));
+        $this->assertEmpty(self::$apps->getApp($this->appA)['customLogic'] ?? null, 'no app logic was stored');
+
+        // With the scope, all of it is allowed.
+        $driver = self::$tokens->create($this->userId, null, 3600, 900, array_merge(McpTokenService::DEFAULT_SCOPES, ['connector:command']))['token'];
+        $made = $this->tool($driver, 'create_flow', ['appId' => $this->appA, 'name' => 'Text out', 'slug' => 'text-out', 'enabled' => false, 'nodeCapabilities' => ['connector.aokie.sms.send'], 'flowJson' => $sms]);
+        $this->assertFalse($made['isError'], $made['text']);
+
+        // A flow that sends connector commands is not switched on, changed or wired to a trigger without it.
+        $denied($this->tool($builder, 'update_flow', ['appId' => $this->appA, 'flowId' => (string) $made['data']['id'], 'enabled' => true]));
+        $denied($this->tool($builder, 'create_flow_binding', ['appId' => $this->appA, 'flow' => 'text-out', 'event' => 'form.submitted', 'formId' => $this->formA]));
+        $this->assertFalse((bool) ($flows->getFlow($this->appA, (string) $made['data']['id'])['enabled'] ?? true));
+        $armed = $this->tool($driver, 'create_flow_binding', ['appId' => $this->appA, 'flow' => 'text-out', 'event' => 'form.submitted', 'formId' => $this->formA, 'outputActions' => $speak]);
+        $this->assertFalse($armed['isError'], $armed['text']);
+        $denied($this->tool($builder, 'update_flow_binding', ['appId' => $this->appA, 'bindingId' => (string) $armed['data']['id'], 'formId' => $this->formA, 'enabled' => true]));
+    }
+
+    /**
+     * customScreen.publicRecords serves the whitelisted answers to anyone
+     * (GET /api/public/forms/{id}/screen-records). A token that may not read submissions may not
+     * switch that on, or add fields to it, and then read them from the public link.
+     */
+    public function testPublicRecordsNeedTheResponsesReadScope(): void
+    {
+        $standalone = $this->makeForm(); // published, in no app: the public link serves it
+        $builder = self::$tokens->create($this->userId)['token'];
+        $screen = ['enabled' => false, 'publicRecords' => true, 'publicRecordFields' => ['ssn']];
+
+        foreach (['update_form', 'set_form_screen'] as $toolName) {
+            $res = $this->tool($builder, $toolName, ['formId' => $standalone, 'customScreen' => $screen]);
+            $this->assertTrue($res['isError'], $toolName . ': ' . $res['text']);
+            $this->assertStringContainsString('responses:read', $res['text']);
+            $this->assertEmpty(self::$forms->getForm($standalone)['customScreen']['publicRecords'] ?? null, $toolName . ' left public records off');
+        }
+        $before = count(self::$forms->getAllForms($this->userId));
+        $created = $this->tool($builder, 'create_form', ['title' => 'Board', 'status' => 'published', 'customScreen' => $screen]);
+        $this->assertTrue($created['isError'], $created['text']);
+        $this->assertCount($before, self::$forms->getAllForms($this->userId), 'no form was created');
+
+        // With the scope the token could list the records anyway, so it may publish them.
+        $reader = self::$tokens->create($this->userId, null, 3600, 900, array_merge(McpTokenService::DEFAULT_SCOPES, ['responses:read']))['token'];
+        $on = $this->tool($reader, 'set_form_screen', ['formId' => $standalone, 'customScreen' => $screen]);
+        $this->assertFalse($on['isError'], $on['text']);
+
+        // A builder token may still edit a screen whose public fields it leaves alone or narrows…
+        $same = $this->tool($builder, 'set_form_screen', ['formId' => $standalone, 'customScreen' => $screen + ['html' => '<b>board</b>']]);
+        $this->assertFalse($same['isError'], $same['text']);
+        // …but not widen the whitelist.
+        $wider = $this->tool($builder, 'set_form_screen', ['formId' => $standalone, 'customScreen' => ['publicRecordFields' => ['ssn', 'email']] + $screen]);
+        $this->assertTrue($wider['isError'], $wider['text']);
+        $this->assertSame(['ssn'], self::$forms->getForm($standalone)['customScreen']['publicRecordFields'] ?? null);
     }
 }

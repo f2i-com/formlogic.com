@@ -192,18 +192,24 @@ async function adoptSecrets(userId: string, umk: Uint8Array, wire: ReturnType<ty
   };
 }
 
-/** Rewrap the in-memory UMK under a new passphrase (fresh salt, launch-floor params). */
+/**
+ * Rewrap the in-memory UMK under a new passphrase: fresh salt, and KDF parameters never below
+ * the vault's stored ones. The server refuses a rewrap that lowers either (kdf_downgrade), so
+ * falling back to the launch floor would leave a vault whose cost was raised unable to change
+ * its passphrase or to finish a recovery.
+ */
 async function rewrapUmkForNewPassphrase(
   userId: string,
   umk: Uint8Array,
   newPassphrase: string,
+  stored: { opslimit: number; memlimit: number },
 ): Promise<Pick<VaultWire, 'kdf' | 'kdfSalt' | 'kdfMemlimit' | 'kdfOpslimit' | 'wrappedUmk'>> {
   const sodium = await getSodium();
   const kdf = {
     kdf: KDF_SUITE,
     salt: sodium.randombytes_buf(16),
-    opslimit: DEFAULT_KDF_OPSLIMIT,
-    memlimit: DEFAULT_KDF_MEMLIMIT,
+    opslimit: Math.max(DEFAULT_KDF_OPSLIMIT, stored.opslimit),
+    memlimit: Math.max(DEFAULT_KDF_MEMLIMIT, stored.memlimit),
   };
   const puk = await derivePuk(newPassphrase, kdf);
   try {
@@ -329,7 +335,7 @@ async function handleRecoveryUnlock(payload: {
     await adoptSecrets(userId, umk, wire);
     // Recovery replaces the passphrase: rewrap the UMK under the new one (the recovery
     // wrapper itself is untouched — the recovery kit stays valid).
-    const rewrap = await rewrapUmkForNewPassphrase(userId, umk, newPassphrase);
+    const rewrap = await rewrapUmkForNewPassphrase(userId, umk, newPassphrase, wire.kdf);
     return { rewrap };
   } finally {
     sodium.memzero(recoveryKey);
@@ -357,7 +363,7 @@ async function handleChangePassphrase(payload: {
   }
   // Rewrap-only by construction (§11): only the passphrase-side wrapper changes; the
   // recovery wrapper, key bundle, grants, and data are untouched.
-  const rewrap = await rewrapUmkForNewPassphrase(userId, secrets.umk, newPassphrase);
+  const rewrap = await rewrapUmkForNewPassphrase(userId, secrets.umk, newPassphrase, wire.kdf);
   return { rewrap };
 }
 

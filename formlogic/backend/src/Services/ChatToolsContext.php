@@ -39,6 +39,8 @@ final class ChatToolsContext
         public readonly ?string $ip = null,
         public readonly string $userAgent = 'chat',
         public readonly string $source = 'chat',
+        /** @var string[] Diagram (blueprint) ids a creator token has made (empty otherwise). */
+        public readonly array $createdBlueprints = [],
     ) {}
 
     /** Enforce the surface's scope model; throws the surface's denial exception on refusal. */
@@ -62,7 +64,7 @@ final class ChatToolsContext
         }
     }
 
-    /** Creator-token bookkeeping ($kind is 'apps'|'forms'); a no-op outside creator mode. */
+    /** Creator-token bookkeeping ($kind is 'apps'|'forms'|'blueprints'); a no-op outside creator mode. */
     public function recordCreated(string $kind, string $id): void
     {
         if ($this->recordCreated !== null) {

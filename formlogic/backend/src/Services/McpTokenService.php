@@ -20,6 +20,8 @@ class McpTokenService
     private const DEFAULT_TTL = 3600;           // 1h — short by default (paste into an AI, build, done)
     private const DEFAULT_IDLE = 900;           // 15m idle timeout
     private const MAX_TTL = 86400;              // 24h hard ceiling
+    /** listActive() names an OAuth connection that holds no live access token by its grant: this prefix + the refresh family id. */
+    private const GRANT_ID_PREFIX = 'grant-';
 
     /** Builder scopes granted by default — deliberately EXCLUDES responses:* (submission data). */
     public const DEFAULT_SCOPES = ['apps:read', 'apps:write', 'forms:read', 'forms:write', 'screens:write'];
@@ -72,7 +74,7 @@ class McpTokenService
             'app_id' => $appId,
             'hash' => $hash,
             'scopes' => json_encode($scopes),
-            'created_ids' => $creator ? json_encode(['apps' => [], 'forms' => []]) : null,
+            'created_ids' => $creator ? json_encode(['apps' => [], 'forms' => [], 'blueprints' => []]) : null,
             'expires_at' => $expiresAt,
             'idle' => $idle,
             'created_at' => date('Y-m-d H:i:s'),
@@ -144,20 +146,27 @@ class McpTokenService
     }
 
     /**
-     * Record an app/form a creator token just created, so the token can keep managing it on later calls.
-     * No-op for non-creator tokens (created_ids is null). $kind is internal ('apps' | 'forms').
+     * Record an app, form or diagram a creator token just created, so the token can keep managing it
+     * on later calls. No-op for non-creator tokens (created_ids is null). $kind is internal
+     * ('apps' | 'forms' | 'blueprints').
      */
     public function recordCreated(string $sessionId, string $kind, string $resourceId): void
     {
-        if ($kind !== 'apps' && $kind !== 'forms') {
+        if (!in_array($kind, ['apps', 'forms', 'blueprints'], true)) {
             return;
         }
+        // $kind is one of the three literals above, so the path is safe to write into the statement.
+        // A session minted before a kind existed has no list for it, and JSON_ARRAY_APPEND leaves
+        // the document unchanged when the path is missing: add the empty list first.
+        $path = '$.' . $kind;
         $stmt = $this->db()->prepare(
             "UPDATE mcp_sessions
-             SET created_ids = JSON_ARRAY_APPEND(COALESCE(created_ids, '{\"apps\":[],\"forms\":[]}'), :path, :id)
+             SET created_ids = JSON_ARRAY_APPEND(
+                 IF(JSON_CONTAINS_PATH(created_ids, 'one', '{$path}'), created_ids, JSON_SET(created_ids, '{$path}', JSON_ARRAY())),
+                 '{$path}', :id)
              WHERE id = :sid AND created_ids IS NOT NULL"
         );
-        $stmt->execute(['path' => '$.' . $kind, 'id' => $resourceId, 'sid' => $sessionId]);
+        $stmt->execute(['id' => $resourceId, 'sid' => $sessionId]);
     }
 
     /**
@@ -192,11 +201,15 @@ class McpTokenService
         $upd->execute(['ts' => date('Y-m-d H:i:s', $now), 'ip' => $ip, 'id' => $row['id']]);
 
         $scopes = is_string($row['scopes'] ?? null) ? (json_decode($row['scopes'], true) ?: self::DEFAULT_SCOPES) : self::DEFAULT_SCOPES;
-        // created_ids present => a creator token; normalize to {apps:[],forms:[]}, else null.
+        // created_ids present => a creator token; normalize to {apps:[],forms:[],blueprints:[]}, else null.
         $created = null;
         if (is_string($row['created_ids'] ?? null)) {
             $decoded = json_decode($row['created_ids'], true);
-            $created = ['apps' => array_values((array) ($decoded['apps'] ?? [])), 'forms' => array_values((array) ($decoded['forms'] ?? []))];
+            $created = [
+                'apps' => array_values((array) ($decoded['apps'] ?? [])),
+                'forms' => array_values((array) ($decoded['forms'] ?? [])),
+                'blueprints' => array_values((array) ($decoded['blueprints'] ?? [])),
+            ];
         }
         return [
             'id' => $row['id'],
@@ -219,7 +232,13 @@ class McpTokenService
         ];
     }
 
-    /** Active (non-revoked, non-expired) sessions for a user — for the "Connect an AI" UI. */
+    /**
+     * Active (non-revoked, non-expired) sessions for a user — for the "Connect an AI" UI.
+     *
+     * An OAuth connection outlives its access tokens: an hour after its last use it has no session
+     * row left, while its refresh token lets the client back in for 30 days. Such a connection is
+     * listed too, as one entry whose id revoke() takes, or it could be neither seen nor ended.
+     */
     public function listActive(string $userId, ?string $appId = null): array
     {
         $this->purgeExpired(); // tidy dead sessions whenever the Connect UI lists them
@@ -233,7 +252,7 @@ class McpTokenService
         $sql .= " ORDER BY created_at DESC";
         $stmt = $this->db()->prepare($sql);
         $stmt->execute($params);
-        return array_map(static fn ($r) => [
+        $sessions = array_map(static fn ($r) => [
             'id' => $r['id'],
             'appId' => $r['app_id'],
             'creator' => ($r['created_ids'] ?? null) !== null,
@@ -243,6 +262,54 @@ class McpTokenService
             'lastUsedAt' => $r['last_used_at'],
             'createdAt' => $r['created_at'],
         ], $stmt->fetchAll(PDO::FETCH_ASSOC));
+        return array_merge($sessions, $this->idleOAuthGrants($userId, $appId));
+    }
+
+    /**
+     * OAuth connections of the user that can still refresh but hold no live access token, in
+     * listActive()'s shape. The Aokie Companion's grants are left out: they are devices, listed
+     * and revoked where the devices are.
+     */
+    private function idleOAuthGrants(string $userId, ?string $appId): array
+    {
+        $sql = "SELECT rt.family_id, rt.app_id, rt.scopes, rt.expires_at, rt.created_at
+                FROM mcp_oauth_refresh_tokens rt
+                WHERE rt.user_id = :uid AND rt.revoked_at IS NULL AND rt.rotated_at IS NULL AND rt.expires_at > NOW()
+                  AND rt.client_id <> :companion
+                  AND NOT EXISTS (
+                      SELECT 1 FROM mcp_sessions s
+                      WHERE s.refresh_family_id = rt.family_id AND s.revoked_at IS NULL AND s.expires_at > NOW()
+                  )";
+        $params = ['uid' => $userId, 'companion' => McpOAuthService::AOKIE_COMPANION_CLIENT_ID];
+        if ($appId !== null) {
+            $sql .= " AND rt.app_id = :app";
+            $params['app'] = $appId;
+        }
+        $sql .= " ORDER BY rt.created_at DESC";
+        try {
+            $stmt = $this->db()->prepare($sql);
+            $stmt->execute($params);
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (\PDOException) {
+            return []; // a database without the OAuth tables has no such connections
+        }
+        $grants = [];
+        foreach ($rows as $r) {
+            // One entry per grant: a confidential client keeps one refresh token, a public one the
+            // newest of its rotation.
+            $grants[(string) $r['family_id']] ??= [
+                'id' => self::GRANT_ID_PREFIX . $r['family_id'],
+                'appId' => $r['app_id'],
+                'creator' => false,
+                'scopes' => is_string($r['scopes'] ?? null) ? (json_decode($r['scopes'], true) ?: []) : [],
+                'expiresAt' => $r['expires_at'],
+                'idleTimeout' => McpOAuthService::ACCESS_TOKEN_TTL,
+                'lastUsedAt' => null,
+                'createdAt' => $r['created_at'],
+                'idle' => true,
+            ];
+        }
+        return array_values($grants);
     }
 
     /**
@@ -265,12 +332,44 @@ class McpTokenService
         }
     }
 
-    /** Revoke a session the user owns. Returns true if a row was revoked. */
+    /**
+     * Revoke a session the user owns. Returns true if a row was revoked.
+     *
+     * An OAuth-minted session is one access token of a grant. The grant's refresh tokens and its
+     * other access tokens are revoked with it: otherwise the client is back on its next refresh,
+     * for as long as the refresh token lives, and "revoke" would end an hour-long token only.
+     */
     public function revoke(string $id, string $userId): bool
     {
+        if (str_starts_with($id, self::GRANT_ID_PREFIX)) {
+            // An idle OAuth connection, named by its grant (listActive()).
+            return $this->revokeGrant(substr($id, strlen(self::GRANT_ID_PREFIX)), $userId);
+        }
+        $family = $this->db()->prepare("SELECT refresh_family_id FROM mcp_sessions WHERE id = :id AND user_id = :uid");
+        $family->execute(['id' => $id, 'uid' => $userId]);
+        $familyId = $family->fetchColumn();
+
         $stmt = $this->db()->prepare("UPDATE mcp_sessions SET revoked_at = NOW() WHERE id = :id AND user_id = :uid AND revoked_at IS NULL");
         $stmt->execute(['id' => $id, 'uid' => $userId]);
-        return $stmt->rowCount() > 0;
+        $revoked = $stmt->rowCount() > 0;
+
+        if ($revoked && is_string($familyId) && $familyId !== '') {
+            $this->revokeGrant($familyId, $userId);
+        }
+        return $revoked;
+    }
+
+    /** Revoke every refresh token and access token of one of the user's OAuth grants. True if a refresh token was revoked. */
+    private function revokeGrant(string $familyId, string $userId): bool
+    {
+        if ($familyId === '') {
+            return false;
+        }
+        $refresh = $this->db()->prepare("UPDATE mcp_oauth_refresh_tokens SET revoked_at = NOW() WHERE family_id = :f AND user_id = :uid AND revoked_at IS NULL");
+        $refresh->execute(['f' => $familyId, 'uid' => $userId]);
+        $this->db()->prepare("UPDATE mcp_sessions SET revoked_at = NOW() WHERE refresh_family_id = :f AND user_id = :uid AND revoked_at IS NULL")
+            ->execute(['f' => $familyId, 'uid' => $userId]);
+        return $refresh->rowCount() > 0;
     }
 
     private function uuid(): string

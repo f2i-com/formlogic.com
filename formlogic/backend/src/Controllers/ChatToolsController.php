@@ -172,12 +172,14 @@ class ChatToolsController
                 return $this->jsonError($response, $e->getMessage(), 400, 'unknown_tool');
             }
             return $this->jsonError($response, $e->getMessage(), 403, 'tool_denied');
-        } catch (\Exception $e) {
-            // The handlers' validation throws are deliberately user-safe (the MCP convention).
-            $this->audit('chat.tool_execute', $grantUserId, $request, ['tool' => $tool, 'ok' => false, 'message' => mb_substr($e->getMessage(), 0, 200)]);
-            return $this->jsonError($response, $e->getMessage(), 400, 'tool_failed');
         } catch (\Throwable $e) {
-            // Anything else (TypeError, PDOException, …) may carry internals — log, don't echo.
+            // The handlers' validation throws are deliberately user-safe (the MCP convention): a
+            // plain \Exception is shown. A database error is an \Exception too, but its text names
+            // tables and columns, so it goes with everything else (TypeError, …) — log, don't echo.
+            if ($e instanceof \Exception && !$e instanceof \PDOException) {
+                $this->audit('chat.tool_execute', $grantUserId, $request, ['tool' => $tool, 'ok' => false, 'message' => mb_substr($e->getMessage(), 0, 200)]);
+                return $this->jsonError($response, $e->getMessage(), 400, 'tool_failed');
+            }
             $this->logger?->error('Chat tool execution failed unexpectedly', ['tool' => $tool, 'error' => $e->getMessage()]);
             $this->audit('chat.tool_execute', $grantUserId, $request, ['tool' => $tool, 'ok' => false, 'message' => 'unexpected']);
             return $this->jsonError($response, 'The tool failed unexpectedly. Please try again.', 500, 'tool_failed');

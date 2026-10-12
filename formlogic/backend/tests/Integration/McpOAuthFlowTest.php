@@ -492,6 +492,94 @@ class McpOAuthFlowTest extends TestCase
         $this->assertSame($rt, $refreshed['body']['refresh_token'], 'confidential clients may keep the same refresh token');
     }
 
+    /**
+     * "Revoke" in Connect an AI ends the connection. The session row is one hour-long access token;
+     * the refresh token minted with it (30 days) has to stop working too, or the client is back on
+     * its next refresh.
+     */
+    public function testRevokingAnOAuthSessionEndsItsRefreshGrant(): void
+    {
+        $client = $this->register(['client_name' => 'C', 'redirect_uris' => ['https://claude.ai/api/mcp/auth_callback']]);
+        $first = $this->fullExchange($client);
+        $this->assertSame(200, $first['status'], json_encode($first['body']));
+        $sessions = self::$tokens->listActive($this->userId);
+        $this->assertCount(1, $sessions);
+
+        $this->assertTrue(self::$tokens->revoke($sessions[0]['id'], $this->userId));
+
+        $this->assertSame(401, $this->mcpRequest($first['body']['access_token'], ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'tools/list'])->getStatusCode());
+        $refreshed = $this->token(['grant_type' => 'refresh_token', 'refresh_token' => $first['body']['refresh_token'], 'client_id' => $client['client_id'], 'client_secret' => $client['client_secret']]);
+        $this->assertSame(400, $refreshed['status'], 'the refresh token of a revoked connection must not mint a new access token');
+        $this->assertSame('invalid_grant', $refreshed['body']['error']);
+    }
+
+    /** A grant that has refreshed holds several access tokens; revoking one of them ends them all. */
+    public function testRevokingOneSessionOfAGrantRevokesItsSiblings(): void
+    {
+        $client = $this->register(['client_name' => 'CLI', 'token_endpoint_auth_method' => 'none', 'redirect_uris' => ['http://127.0.0.1:33418/callback']]);
+        $first = $this->fullExchange($client);
+        $this->assertSame(200, $first['status'], json_encode($first['body']));
+        $second = $this->token(['grant_type' => 'refresh_token', 'refresh_token' => $first['body']['refresh_token'], 'client_id' => $client['client_id']]);
+        $this->assertSame(200, $second['status'], json_encode($second['body']));
+
+        // A separate grant of the same user is left alone.
+        $otherClient = $this->register(['client_name' => 'Other', 'redirect_uris' => ['https://claude.ai/api/mcp/auth_callback']]);
+        $other = $this->fullExchange($otherClient);
+        $this->assertSame(200, $other['status'], json_encode($other['body']));
+
+        $find = self::$pdo->prepare('SELECT id FROM mcp_sessions WHERE token_hash = ?');
+        $find->execute([hash('sha256', $first['body']['access_token'])]);
+        $this->assertTrue(self::$tokens->revoke((string) $find->fetchColumn(), $this->userId));
+
+        $list = ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'tools/list'];
+        $this->assertSame(401, $this->mcpRequest($second['body']['access_token'], $list)->getStatusCode(), 'the refreshed access token dies with the grant');
+        $again = $this->token(['grant_type' => 'refresh_token', 'refresh_token' => $second['body']['refresh_token'], 'client_id' => $client['client_id']]);
+        $this->assertSame(400, $again['status']);
+        $this->assertSame(200, $this->mcpRequest($other['body']['access_token'], $list)->getStatusCode(), 'another grant keeps working');
+        $otherRefresh = $this->token(['grant_type' => 'refresh_token', 'refresh_token' => $other['body']['refresh_token'], 'client_id' => $otherClient['client_id'], 'client_secret' => $otherClient['client_secret']]);
+        $this->assertSame(200, $otherRefresh['status'], json_encode($otherRefresh['body']));
+    }
+
+    /**
+     * An hour after its last use an OAuth connection has no access token left, and so no session
+     * row, but its refresh token is good for 30 days. It must still be in the list, and "revoke"
+     * must end it; it used to be invisible, with nothing to revoke.
+     */
+    public function testAnIdleOAuthConnectionIsListedAndCanBeRevoked(): void
+    {
+        $client = $this->register(['client_name' => 'C', 'redirect_uris' => ['https://claude.ai/api/mcp/auth_callback']]);
+        $first = $this->fullExchange($client);
+        $this->assertSame(200, $first['status'], json_encode($first['body']));
+        // The access token has run out.
+        self::$pdo->prepare('UPDATE mcp_sessions SET expires_at = ? WHERE user_id = ?')->execute([date('Y-m-d H:i:s', time() - 60), $this->userId]);
+
+        $listed = self::$tokens->listActive($this->userId);
+        $this->assertCount(1, $listed, 'the connection is still listed while it can refresh');
+        $this->assertTrue($listed[0]['idle'] ?? false);
+        $this->assertContains('apps:write', $listed[0]['scopes']);
+
+        // Another account cannot revoke it.
+        $this->assertFalse(self::$tokens->revoke($listed[0]['id'], 'u-someone-else'));
+        $this->assertTrue(self::$tokens->revoke($listed[0]['id'], $this->userId));
+
+        $refreshed = $this->token(['grant_type' => 'refresh_token', 'refresh_token' => $first['body']['refresh_token'], 'client_id' => $client['client_id'], 'client_secret' => $client['client_secret']]);
+        $this->assertSame(400, $refreshed['status']);
+        $this->assertSame('invalid_grant', $refreshed['body']['error']);
+        $this->assertSame([], self::$tokens->listActive($this->userId));
+    }
+
+    /** A connection in use is listed once, by its session, not a second time by its grant. */
+    public function testALiveOAuthConnectionIsListedOnce(): void
+    {
+        $client = $this->register(['client_name' => 'C', 'redirect_uris' => ['https://claude.ai/api/mcp/auth_callback']]);
+        $first = $this->fullExchange($client);
+        $this->assertSame(200, $first['status'], json_encode($first['body']));
+
+        $listed = self::$tokens->listActive($this->userId);
+        $this->assertCount(1, $listed);
+        $this->assertArrayNotHasKey('idle', $listed[0]);
+    }
+
     // ── the 401 discovery trigger ──
 
     public function testMcp401CarriesExactWwwAuthenticateHeader(): void
