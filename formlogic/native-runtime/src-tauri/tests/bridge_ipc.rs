@@ -11,15 +11,21 @@ use serde_json::{json, Value};
 use tauri::test::MockRuntime;
 
 const PLATFORM_APP: &str = "https://formlogic.com/app/demo";
+/// Another app on the same server, which the platform's single-page app can move to without
+/// loading a page.
+const BETA_APP: &str = "https://formlogic.com/app/beta";
 const SUBDOMAIN_APP: &str = "https://eu.formlogic.com/app/demo";
 const UNLISTED_APP: &str = "https://apps.example.org/app/demo";
+/// The local development servers. Cleartext, and `.local` names are answered by whichever device
+/// on the network claims them, so only a debug build lists them.
+const CLEARTEXT_APPS: [&str; 2] = ["http://formlogic.local/app/demo", "http://api.formlogic.local/app/demo"];
 const SHELL_PAGE: &str = if cfg!(any(windows, target_os = "android")) {
     "http://tauri.localhost/index.html"
 } else {
     "tauri://localhost/index.html"
 };
 
-const EVERY_COMMAND: [&str; 11] = [
+const EVERY_COMMAND: [&str; 12] = [
     "runtime_info",
     "runtime_ready",
     "connector_list",
@@ -31,6 +37,7 @@ const EVERY_COMMAND: [&str; 11] = [
     "sync_ack",
     "sync_fail",
     "pending_deep_link",
+    "app_may_be_remembered",
 ];
 
 struct Runtime {
@@ -161,6 +168,35 @@ fn a_page_on_an_unlisted_origin_reaches_no_command() {
 }
 
 #[test]
+fn a_cleartext_origin_reaches_no_command_in_the_capabilities_every_build_has() {
+    // The mock app holds exactly what tauri-build compiles in from capabilities/, which is all a
+    // release build has: run() adds the local development servers only under debug_assertions.
+    let runtime = Runtime::open("cleartext");
+    for page in CLEARTEXT_APPS {
+        let origin = page.trim_end_matches("/app/demo");
+        test_support::mark_verified(&runtime.app, origin, "demo", "app-demo", &["vehicle.status.read"]);
+        for command in EVERY_COMMAND {
+            let result = runtime.call(page, command, json!({}));
+            assert!(refused_by_the_allowlist(&result), "{command} from {page}: {result:?}");
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_debug_build_lets_the_local_development_servers_reach_the_bridge() {
+    let runtime = Runtime::open("debug-capability");
+    test_support::add_debug_capability(&runtime.app);
+    for page in CLEARTEXT_APPS {
+        let info = runtime.call(page, "runtime_info", json!({})).expect("runtime_info");
+        assert_eq!(info["name"], "FormLogic Native Runtime");
+    }
+    // It names those two servers and nothing else.
+    assert!(refused_by_the_allowlist(&runtime.call(UNLISTED_APP, "runtime_info", json!({}))));
+    assert!(refused_by_the_allowlist(&runtime.call("http://formlogic.com/app/demo", "runtime_info", json!({}))));
+}
+
+#[test]
 fn the_shell_page_reads_runtime_info_and_takes_the_pending_deep_link() {
     let runtime = Runtime::open("shell");
     let info = runtime.call(SHELL_PAGE, "runtime_info", json!({})).expect("runtime_info");
@@ -176,4 +212,89 @@ fn the_shell_page_reads_runtime_info_and_takes_the_pending_deep_link() {
     // The shell is no hosted app, so the connector and queue commands refuse it themselves.
     let shell = runtime.call(SHELL_PAGE, "sync_flush", json!({})).unwrap_err();
     assert_eq!(code(&shell), "origin_denied");
+}
+
+#[test]
+fn the_shell_remembers_an_app_to_reopen_only_on_a_server_this_runtime_knows() {
+    let runtime = Runtime::open("remember");
+    let may = |url: &str| runtime.call(SHELL_PAGE, "app_may_be_remembered", json!({ "url": url })).unwrap();
+    assert_eq!(may(PLATFORM_APP), json!(true));
+    assert_eq!(may(SUBDOMAIN_APP), json!(true));
+    // What any formlogic://open?url= link could name, remembered, would be reopened at every
+    // launch in a window with no address bar.
+    assert_eq!(may(UNLISTED_APP), json!(false));
+    assert_eq!(may("http://localhost:8090/app/demo"), json!(false));
+    assert_eq!(may("javascript:alert(1)"), json!(false));
+    // A hosted page cannot ask.
+    let hosted = runtime.call(PLATFORM_APP, "app_may_be_remembered", json!({ "url": PLATFORM_APP }));
+    assert!(refused_by_the_allowlist(&hosted), "{hosted:?}");
+}
+
+#[test]
+fn a_page_that_moved_to_another_app_is_never_answered_with_the_first_apps_grants() {
+    // Each command reads the app from the page the window shows when it is called. A move to
+    // another app inside the platform's single-page app loads no page (history.pushState), so
+    // the page-load verifier never saw app B: B's commands were refused as unverified until a
+    // reload. They were never answered under app A's verification.
+    let runtime = Runtime::open("spa-identity");
+    test_support::mark_verified(&runtime.app, "https://formlogic.com", "demo", "app-demo", &["vehicle.status.read"]);
+    let status = json!({ "connectorId": "vehicle", "command": "status.read" });
+    runtime.call(PLATFORM_APP, "connector_request", status.clone()).expect("app A reads");
+    let refused = runtime.call(BETA_APP, "connector_request", status).unwrap_err();
+    assert_eq!(code(&refused), "origin_denied");
+    let refused = runtime.call(BETA_APP, "sync_get_queue", json!({})).unwrap_err();
+    assert_eq!(code(&refused), "origin_denied");
+}
+
+#[test]
+fn an_app_reached_without_loading_a_page_is_verified_as_itself() {
+    let runtime = Runtime::open("spa");
+    let checked = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let log = checked.clone();
+    test_support::install_verifier(&runtime.app, move |origin, slug| {
+        log.lock().unwrap().push(format!("{origin} {slug}"));
+        match slug {
+            "beta" => Ok(vec!["vehicle.gps.read".to_string()]),
+            _ => Err("no signed manifest".to_string()),
+        }
+    });
+    test_support::mark_verified(&runtime.app, "https://formlogic.com", "demo", "app-demo", &["vehicle.status.read"]);
+    let status = json!({ "connectorId": "vehicle", "command": "status.read" });
+    let gps = json!({ "connectorId": "vehicle", "command": "gps.read" });
+    runtime.call(PLATFORM_APP, "connector_request", status.clone()).expect("app A reads");
+
+    // The window moves to app B with no page load (navigate() on the mock runtime loads none,
+    // as history.pushState loads none in a real window). B's first call to the bridge (the web
+    // runtime awaits ready() before its first read of each app) has B's manifest checked.
+    let started = std::time::Instant::now();
+    assert_eq!(runtime.call(BETA_APP, "runtime_ready", json!({})).unwrap(), json!({ "verified": true }));
+    assert!(started.elapsed() < std::time::Duration::from_secs(5), "ready() waited {:?}", started.elapsed());
+    // B is answered with its own grants, never A's.
+    let refused = runtime.call(BETA_APP, "connector_request", status.clone()).unwrap_err();
+    assert_eq!(code(&refused), "capability_denied");
+    runtime.call(BETA_APP, "connector_request", gps).expect("app B's own grant");
+    let queued = runtime.call(BETA_APP, "sync_enqueue", json!({ "item": { "formId": "f", "answers": {} } }));
+    assert!(queued.is_ok(), "{queued:?}");
+    // Back on A (no page load either), A is as it was, and was not checked again.
+    runtime.call(PLATFORM_APP, "connector_request", status).expect("app A reads");
+    assert_eq!(*checked.lock().unwrap(), vec!["https://formlogic.com beta".to_string()]);
+}
+
+#[test]
+fn an_app_reached_without_loading_a_page_that_fails_its_check_is_refused_without_a_long_wait() {
+    let runtime = Runtime::open("spa-failed");
+    let checks = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = checks.clone();
+    test_support::install_verifier(&runtime.app, move |_, _| {
+        count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err("the person kept it display-only".to_string())
+    });
+    let started = std::time::Instant::now();
+    assert_eq!(runtime.call(BETA_APP, "runtime_ready", json!({})).unwrap(), json!({ "verified": false }));
+    assert!(started.elapsed() < std::time::Duration::from_secs(5), "ready() waited {:?}", started.elapsed());
+    let refused = runtime.call(BETA_APP, "connector_status", json!({ "connectorId": "vehicle" })).unwrap_err();
+    assert_eq!(code(&refused), "origin_denied");
+    // A failed app is checked again on the next page load, not on every call.
+    runtime.call(BETA_APP, "runtime_ready", json!({})).unwrap();
+    assert_eq!(checks.load(std::sync::atomic::Ordering::SeqCst), 1);
 }

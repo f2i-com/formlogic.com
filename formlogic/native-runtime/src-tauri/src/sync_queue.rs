@@ -38,7 +38,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const MAX_SYNC_ATTEMPTS: u32 = 5;
+/// Retryable failures an item is given before it is "failed": the same as the browser
+/// queue's MAX_ATTEMPTS (offlineQueue.ts), so a submission is tried as often whichever queue
+/// holds it. (It was 5; an item already "failed" stays so, a waiting one gets the rest.)
+pub const MAX_SYNC_ATTEMPTS: u32 = 8;
 /// Per-partition caps: a runaway app can fill its own budget, not the disk.
 pub const MAX_ITEMS_PER_PARTITION: usize = 500;
 pub const MAX_BYTES_PER_PARTITION: usize = 10 * 1024 * 1024;
@@ -117,6 +120,28 @@ pub struct SyncItem {
     /// stamps those with the time it first sees them.
     #[serde(default)]
     pub failed_at: u64,
+    /// The account the page was signed in as when it queued the item, as the page gave it
+    /// (`ownerUserId`, as in the browser queue): an account id, or null for a submission
+    /// made signed out. The runtime cannot see the session, so the page stamps it and the
+    /// page sends an item only while that account is signed in (nativeOfflineQueue.ts).
+    /// Absent on items queued before this was recorded, or by a page that does not give
+    /// it: those are sent by whichever account is signed in, as before.
+    #[serde(
+        default,
+        rename = "ownerUserId",
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub owner_user_id: Option<Option<String>>,
+}
+
+/// Read a field that is there, null included, as `Some`, so a missing field (None, by
+/// `default`) and a null one (`Some(None)`) stay apart.
+fn present<'de, D>(d: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(d).map(Some)
 }
 
 impl SyncItem {
@@ -144,6 +169,12 @@ impl SyncItem {
             partition: p.key(),
             manifest_version: p.manifest_version.clone(),
             failed_at: 0,
+            owner_user_id: match v.get("ownerUserId") {
+                None => None,
+                Some(Value::Null) => Some(None),
+                Some(Value::String(owner)) => Some(Some(owner.clone())),
+                Some(other) => Some(Some(other.to_string())),
+            },
             id,
         }
     }
@@ -211,6 +242,30 @@ fn hex_decode(s: &str) -> Option<Vec<u8>> {
 
 const KEY_FILE: &str = "sync-queue.key";
 
+/// Write the queue key so that only its owner can read it from the moment the file exists:
+/// created with mode 0600 on unix, never written first and narrowed after. A file already
+/// there (a malformed key being replaced) is removed first, because a mode given when
+/// opening applies only to a file being created. On Windows the file takes the app data
+/// folder's permissions, which are the user's own.
+fn write_key_file(path: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(text.as_bytes())?;
+    file.sync_all()
+}
+
 pub struct QueueCrypto {
     cipher: XChaCha20Poly1305,
 }
@@ -238,13 +293,9 @@ impl QueueCrypto {
         let mut key = [0u8; 32];
         getrandom::fill(&mut key).ok()?;
         let _ = std::fs::create_dir_all(dir);
-        if std::fs::write(&path, hex_encode(&key)).is_err() {
+        if let Err(e) = write_key_file(&path, &hex_encode(&key)) {
+            eprintln!("[formlogic] sync-queue.key could not be written: {e}");
             return None;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
         }
         Some(Self::from_key(key))
     }
@@ -958,6 +1009,101 @@ mod tests {
         assert_eq!(items[0].failed_at, 0);
         assert_eq!(items[0].idempotency_key, "k1");
         assert_eq!(items[0].created_at, "2026-10-01T09:30:00Z");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_item_keeps_the_account_the_page_stamped_on_it_and_an_older_item_keeps_having_none() {
+        // The browser queue's three shapes (offlineQueue.ts QueuedSubmission.ownerUserId): an
+        // account, null for a submission made signed out, and absent on items from before
+        // items carried an owner, which any account may send, as today.
+        let dir = tmp("owner");
+        let legacy = json!([
+            { "id": "L1", "appSlug": "slug", "formId": "f", "idempotencyKey": "k0",
+              "answers": { "a": 1 }, "status": "pending", "attempts": 0,
+              "lastError": null, "createdAt": "2026-01-01T00:00:00Z" }
+        ]);
+        std::fs::write(dir.join("sync-queue.json"), legacy.to_string()).unwrap();
+        let q = load(&dir);
+        let p = part("https://x.example", "acct", "app", "slug");
+        let mine = q.enqueue(&p, &json!({ "formId": "f", "answers": {}, "ownerUserId": "u1" })).unwrap();
+        let anonymous = q.enqueue(&p, &json!({ "formId": "f", "answers": {}, "ownerUserId": null })).unwrap();
+        let unstamped = q.enqueue(&p, &json!({ "formId": "f", "answers": {} })).unwrap();
+        drop(q);
+        let reopened = load(&dir);
+        let shapes: BTreeMap<String, Value> = reopened
+            .get_queue(&p)
+            .into_iter()
+            .map(|i| {
+                let v = serde_json::to_value(&i).unwrap();
+                (i.id.clone(), v.get("ownerUserId").cloned().unwrap_or(json!("(absent)")))
+            })
+            .collect();
+        assert_eq!(shapes[&mine], json!("u1"));
+        assert_eq!(shapes[&anonymous], Value::Null);
+        assert_eq!(shapes[&unstamped], json!("(absent)"));
+        assert_eq!(shapes["L1"], json!("(absent)"));
+        // flush() hands the owner to the page with the item, which sends it only under that account.
+        let flushed = reopened.flush(&p);
+        let owners: Vec<Value> = flushed["pending"][0]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i.get("ownerUserId").cloned().unwrap_or(json!("(absent)")))
+            .collect();
+        assert!(owners.contains(&json!("u1")) && owners.contains(&Value::Null));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_item_is_given_as_many_attempts_as_the_browser_queue_gives_one() {
+        // offlineQueue.ts MAX_ATTEMPTS: 8.
+        let dir = tmp("attempts-8");
+        let q = load(&dir);
+        let p = part("https://x.example", "a", "app", "slug");
+        let id = q.enqueue(&p, &json!({ "formId": "f", "answers": {} })).unwrap();
+        for _ in 0..7 {
+            q.fail(&p, &[id.clone()], "HTTP 500", false).unwrap();
+        }
+        assert_eq!(q.get_queue(&p)[0].status, "pending", "seven failures leave it waiting");
+        q.fail(&p, &[id], "HTTP 500", false).unwrap();
+        assert_eq!(q.get_queue(&p)[0].status, "failed");
+        assert_eq!(q.get_queue(&p)[0].attempts, 8);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_queue_key_is_only_ever_readable_by_its_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tmp("key-mode");
+        let path = dir.join(KEY_FILE);
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        // Created owner-only: the file is never there with wider permissions to be narrowed later.
+        write_key_file(&path, "00").unwrap();
+        assert_eq!(mode(&path), 0o600);
+        // A malformed key left readable by others is replaced by a new owner-only file: a mode
+        // given when opening applies only to a file being created.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::write(&path, "not a key").unwrap();
+        assert!(QueueCrypto::open(&dir).is_some());
+        assert_eq!(mode(&path), 0o600);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_malformed_queue_key_is_replaced_by_a_working_one() {
+        let dir = tmp("key-rotate");
+        std::fs::write(dir.join(KEY_FILE), "not a key").unwrap();
+        assert!(QueueCrypto::open(&dir).is_some());
+        let text = std::fs::read_to_string(dir.join(KEY_FILE)).unwrap();
+        assert_eq!(hex_decode(text.trim()).map(|k| k.len()), Some(32));
+        // And it is the key the next start reads.
+        let q = load(&dir);
+        let p = part("https://x.example", "a", "app", "slug");
+        q.enqueue(&p, &json!({ "formId": "f", "answers": {} })).unwrap();
+        drop(q);
+        assert_eq!(load(&dir).get_queue(&p).len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

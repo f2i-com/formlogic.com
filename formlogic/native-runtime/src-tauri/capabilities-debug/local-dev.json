@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "local-dev",
+  "description": "Debug builds only: the local development servers. They are cleartext http, and a .local name is answered by whichever device on the network claims it, so a release build must not list them. Kept outside capabilities/ (which tauri-build compiles into every build) and added by run() under cfg(debug_assertions).",
+  "windows": ["main"],
+  "remote": {
+    "urls": [
+      "http://formlogic.local",
+      "http://api.formlogic.local"
+    ]
+  },
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "deep-link:default",
+    "allow-bridge"
+  ]
+}

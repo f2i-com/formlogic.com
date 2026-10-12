@@ -1,12 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window: local shell + approved FormLogic origins.",
+  "description": "Capability for the main window: local shell + approved FormLogic origins, over https only. Every build has it; the local development servers (http) are in capabilities-debug/, which only a debug build adds.",
   "windows": ["main"],
   "remote": {
     "urls": [
-      "http://formlogic.local",
-      "http://api.formlogic.local",
       "https://formlogic.com",
       "https://*.formlogic.com"
     ]

@@ -4,12 +4,18 @@
 // placeholder. Apps arrive via a deep link / the app's domain and open automatically.
 // The runtime remembers the last app and reopens it on launch, so it behaves like a
 // dedicated app. There is intentionally no URL entry — links drive everything.
+//
+// Only an app on a server the runtime knows is remembered and reopened (Rust decides:
+// app_may_be_remembered). A link to any other site opens once, after the person agrees in
+// a native dialog, and is not reopened at the next launch.
 
 interface NativeBridge {
   available: boolean;
   runtime: {
     getInfo(): Promise<{ name: string; version: string; platform: string }>;
     pendingDeepLink(): Promise<string | null>;
+    /** Absent on a bridge that predates it: then nothing is remembered. */
+    mayRemember?(url: string): Promise<boolean>;
   };
 }
 
@@ -45,6 +51,17 @@ function isOpenable(url: string): boolean {
   return /^https?:\/\//i.test(url.trim());
 }
 
+/** Whether the runtime knows the server `url` is on, so the app may be remembered and
+ *  reopened at launch. No answer is a no. */
+async function mayRemember(b: NativeBridge | undefined, url: string): Promise<boolean> {
+  if (!b?.runtime.mayRemember) return false;
+  try {
+    return (await b.runtime.mayRemember(url)) === true;
+  } catch {
+    return false;
+  }
+}
+
 function rememberApp(url: string) {
   try {
     localStorage.setItem(LAST_APP_KEY, url);
@@ -68,8 +85,9 @@ function forgetApp() {
 }
 
 /** Open a hosted app in this window. Keeps the loader up through the (blocking)
- *  navigation; the destination page shows a matching loader until it paints. */
-function openApp(url: string, label = "Opening app…") {
+ *  navigation; the destination page shows a matching loader until it paints. `remember`:
+ *  reopen it at the next launch (only for an app on a server the runtime knows). */
+function openApp(url: string, remember: boolean, label = "Opening app…") {
   if (!isOpenable(url)) {
     // Refuse anything that isn't a plain web URL; recover to the placeholder.
     forgetApp();
@@ -80,7 +98,7 @@ function openApp(url: string, label = "Opening app…") {
   $("loading-sub").textContent = hostOf(url);
   $("loading").classList.remove("out");
   $("loading").removeAttribute("hidden");
-  rememberApp(url); // persist BEFORE navigating so next launch reopens this app
+  if (remember) rememberApp(url); // persist BEFORE navigating so next launch reopens this app
   requestAnimationFrame(() => {
     window.location.href = url;
   });
@@ -135,7 +153,9 @@ async function boot() {
     return;
   }
   if (target) {
-    openApp(target);
+    // A link to a server the runtime does not know was opened only after the person agreed
+    // (lib.rs), and is not remembered: the last known app stays the one reopened.
+    openApp(target, await mayRemember(b, target));
     return;
   }
 
@@ -152,8 +172,13 @@ async function boot() {
     /* ignore */
   }
   if (last && !bootedRecently) {
-    openApp(last, "Reopening app…");
-    return;
+    if (await mayRemember(b, last)) {
+      openApp(last, true, "Reopening app…");
+      return;
+    }
+    // Remembered before the runtime checked what it remembers (any site a link named), or
+    // on a server it no longer knows: not reopened.
+    forgetApp();
   }
   if (last && bootedRecently) forgetApp(); // double-launch → drop the stuck app
 

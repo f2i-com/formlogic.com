@@ -27,3 +27,8 @@ commands.allow = [
 identifier = "allow-pending-deep-link"
 description = "The deep link the runtime was started with, taken once by the bundled shell page."
 commands.allow = ["pending_deep_link"]
+
+[[permission]]
+identifier = "allow-app-memory"
+description = "Whether an app may be remembered as the one to reopen at launch (and a remembered one reopened): asked by the bundled shell page alone."
+commands.allow = ["app_may_be_remembered"]
