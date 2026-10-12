@@ -510,3 +510,18 @@ describe('a remount on the server’s new decision', () => {
     expect(initOf(post).appId).toBe('hosted-notes-4');
   });
 });
+
+describe('an action whose input cannot be measured', () => {
+  // A structured clone carries what JSON cannot: a BigInt, or an object that contains itself.
+  it('is answered as invalid input, rather than left without a reply', async () => {
+    const { iframe } = await mount();
+    await act(async () => sendReady(iframe));
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    await act(async () => channels[0].port1.onmessage?.({ data: { type: 'call', id: 7, action: 'save', input: { count: 1n } } }));
+    await act(async () => channels[0].port1.onmessage?.({ data: { type: 'call', id: 8, action: 'save', input: cyclic } }));
+    expect(channels[0].port1.postMessage).toHaveBeenCalledWith({ id: 7, result: { error: 'Invalid action input.' } });
+    expect(channels[0].port1.postMessage).toHaveBeenCalledWith({ id: 8, result: { error: 'Invalid action input.' } });
+    expect(api.runHostedAction).not.toHaveBeenCalled();
+  });
+});

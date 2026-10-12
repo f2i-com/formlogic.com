@@ -204,11 +204,14 @@ export function HostedAppFrame({
         const reply = (result: unknown) => {
           if (active) channel?.port1.postMessage({ id, result });
         };
+        // A structured clone can carry what JSON cannot (a BigInt, an object that contains
+        // itself): that input is refused like an oversized one rather than left unanswered.
+        const measure = (value: object) => { try { return JSON.stringify(value).length; } catch { return Infinity; } };
         if (
           !input ||
           typeof input !== "object" ||
           Array.isArray(input) ||
-          JSON.stringify(input).length > 32768
+          measure(input) > 32768
         ) {
           reply({ error: "Invalid action input." });
           return;
