@@ -349,9 +349,6 @@ class WebhookService
         // SSRF protection: re-resolve + re-validate at delivery time (same authority as
         // create/update), then pin curl to the validated IP below. Re-checking here closes
         // the store-time -> send-time TOCTOU window (DNS could have changed).
-        $parsedUrl = parse_url($webhook['url']);
-        $host = $parsedUrl['host'] ?? '';
-        $port = $parsedUrl['port'] ?? (($parsedUrl['scheme'] ?? 'https') === 'https' ? 443 : 80);
         $resolvedIp = $this->validateWebhookUrl($webhook['url']);
 
         $ch = curl_init($webhook['url']);
@@ -379,8 +376,9 @@ class WebhookService
             ],
         ];
         // DNS pinning: connect to the resolved IP to prevent TOCTOU DNS rebinding
-        if ($resolvedIp !== null) {
-            $curlOpts[CURLOPT_RESOLVE] = ["{$host}:{$port}:{$resolvedIp}"];
+        $pin = $resolvedIp !== null ? IpSafety::curlResolveEntry($webhook['url'], $resolvedIp) : null;
+        if ($pin !== null) {
+            $curlOpts[CURLOPT_RESOLVE] = [$pin];
         }
         // Vendored CA bundle fallback (only when the operator hasn't configured
         // their own curl.cainfo / CURL_CA_BUNDLE — don't override a private CA).

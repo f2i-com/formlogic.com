@@ -54,6 +54,17 @@ class SandboxHttpAddressClassificationTest extends TestCase
         yield 'CGNAT upper edge' => ['100.127.255.255'];
         yield 'protocol assignments 192.0.0/24' => ['192.0.0.8'];
         yield 'benchmarking 198.18/15' => ['198.19.0.1'];
+        // IPv4-translated ::ffff:0:a.b.c.d (RFC 2765), the spelling BLOCKED_HOSTS
+        // listed but the byte classifier let through as public.
+        yield 'loopback, ipv4-translated' => ['::ffff:0:7f00:1'];
+        yield 'metadata, ipv4-translated' => ['::ffff:0:a9fe:a9fe'];
+        yield 'metadata, ipv4-translated dotted' => ['::ffff:0:169.254.169.254'];
+        yield 'any other address with a zero upper half' => ['::1:0:0:1'];
+        yield 'ipv4 multicast 224/4' => ['224.0.0.1'];
+        yield 'ipv4 multicast, SSDP' => ['239.255.255.250'];
+        yield 'documentation 192.0.2/24' => ['192.0.2.10'];
+        yield 'documentation 198.51.100/24' => ['198.51.100.7'];
+        yield 'documentation 203.0.113/24' => ['203.0.113.200'];
         yield 'garbage' => ['not an address'];
     }
 

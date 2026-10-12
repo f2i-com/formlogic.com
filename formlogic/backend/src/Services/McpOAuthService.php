@@ -954,9 +954,9 @@ class McpOAuthService
         // DNS pinning: connect to the address the check above approved. Without it
         // the check-then-fetch is a rebinding window — a name that resolved public
         // a moment ago can resolve to an internal host when curl looks it up.
-        if (is_string($approvedIp) && $approvedIp !== '') {
-            $port = (int) (parse_url($url, PHP_URL_PORT) ?: (parse_url($url, PHP_URL_SCHEME) === 'https' ? 443 : 80));
-            $curlOpts[CURLOPT_RESOLVE] = ["{$host}:{$port}:{$approvedIp}"];
+        $pin = is_string($approvedIp) && $approvedIp !== '' ? IpSafety::curlResolveEntry($url, $approvedIp) : null;
+        if ($pin !== null) {
+            $curlOpts[CURLOPT_RESOLVE] = [$pin];
         }
         curl_setopt_array($ch, $curlOpts);
         curl_exec($ch);

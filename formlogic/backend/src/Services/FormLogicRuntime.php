@@ -320,7 +320,6 @@ class FormLogicRuntime
         // Parse URL components
         $parsedUrl = parse_url($url);
         $host = $parsedUrl['host'] ?? null;
-        $port = $parsedUrl['port'] ?? (($parsedUrl['scheme'] ?? 'https') === 'https' ? 443 : 80);
 
         if ($host === null) {
             return $this->httpErrorResponse('Invalid URL');
@@ -445,8 +444,9 @@ class FormLogicRuntime
         ];
 
         // DNS pinning: Force cURL to use our pre-resolved IP to prevent DNS rebinding
-        if ($resolvedIp !== null) {
-            $curlOptions[CURLOPT_RESOLVE] = ["{$host}:{$port}:{$resolvedIp}"];
+        $pin = $resolvedIp !== null ? IpSafety::curlResolveEntry($url, $resolvedIp) : null;
+        if ($pin !== null) {
+            $curlOptions[CURLOPT_RESOLVE] = [$pin];
         }
 
         // Fall back to the vendored Mozilla CA bundle so outbound HTTPS works on
@@ -530,11 +530,13 @@ class FormLogicRuntime
             }
 
             // Follow the redirect with DNS pinning
-            $redirectPort = $redirectParsed['port'] ?? (($redirectParsed['scheme'] ?? 'https') === 'https' ? 443 : 80);
             $ch = curl_init();
             $redirectOptions[CURLOPT_URL] = $redirectUrl;
-            if ($redirectCheck['resolvedIp'] !== null) {
-                $redirectOptions[CURLOPT_RESOLVE] = ["{$redirectHost}:{$redirectPort}:{$redirectCheck['resolvedIp']}"];
+            $redirectPin = $redirectCheck['resolvedIp'] !== null
+                ? IpSafety::curlResolveEntry($redirectUrl, $redirectCheck['resolvedIp'])
+                : null;
+            if ($redirectPin !== null) {
+                $redirectOptions[CURLOPT_RESOLVE] = [$redirectPin];
             }
             // Enforce the remaining shared HTTP budget on each redirect hop too,
             // so a redirect chain can't extend total blocking time past the deadline.

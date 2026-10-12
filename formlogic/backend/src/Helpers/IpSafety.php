@@ -46,14 +46,18 @@ class IpSafety
             // Ranges PHP's filter does not treat as reserved but that are never a
             // legitimate outbound target: carrier-grade NAT 100.64.0.0/10 (where some
             // cloud metadata services live, e.g. 100.100.100.200), the IETF
-            // protocol-assignments block 192.0.0.0/24, and benchmarking 198.18.0.0/15.
+            // protocol-assignments block 192.0.0.0/24, benchmarking 198.18.0.0/15,
+            // multicast 224.0.0.0/4 (blocked for IPv6 below too) and the three
+            // documentation blocks (as 2001:db8::/32 is for IPv6).
             $n = ip2long($ip);
             if ($n === false) {
                 return true;
             }
             $inCidr = static fn (string $base, int $bits): bool =>
                 ($n >> (32 - $bits)) === (ip2long($base) >> (32 - $bits));
-            return $inCidr('100.64.0.0', 10) || $inCidr('192.0.0.0', 24) || $inCidr('198.18.0.0', 15);
+            return $inCidr('100.64.0.0', 10) || $inCidr('192.0.0.0', 24) || $inCidr('198.18.0.0', 15)
+                || $inCidr('224.0.0.0', 4)
+                || $inCidr('192.0.2.0', 24) || $inCidr('198.51.100.0', 24) || $inCidr('203.0.113.0', 24);
         }
 
         if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) === false) {
@@ -83,8 +87,13 @@ class IpSafety
         if ($zeroThrough(10) && $b[10] === 0xff && $b[11] === 0xff) {
             return self::isPrivateAddress($v4At(12));
         }
-        // IPv4-compatible ::a.b.c.d (deprecated; nothing legitimate is reached this way).
-        if ($zeroThrough(12)) {
+        // IPv4-translated ::ffff:0:0:0/96 (RFC 2765) — the embedded IPv4 decides, as for mapped.
+        if ($zeroThrough(8) && $b[8] === 0xff && $b[9] === 0xff && $b[10] === 0 && $b[11] === 0) {
+            return self::isPrivateAddress($v4At(12));
+        }
+        // Everything else with a zero upper half, IPv4-compatible ::a.b.c.d among it:
+        // no global unicast address lives in ::/64, and nothing legitimate is reached this way.
+        if ($zeroThrough(8)) {
             return true;
         }
         // NAT64 64:ff9b::/96 — the embedded IPv4 decides.
@@ -124,6 +133,24 @@ class IpSafety
             return true;
         }
         return false;
+    }
+
+    /**
+     * The CURLOPT_RESOLVE entry ("host:port:address") that pins a fetch of $url to $ip, the
+     * address a check approved. curl uses an entry only when its host and port both match the
+     * request; otherwise it looks the name up again itself, which reopens the rebinding window
+     * the pin closes. URL schemes are case-insensitive ("HTTPS://host/" connects on 443), so the
+     * default port comes from the lowercased scheme. Null when $url has no host.
+     */
+    public static function curlResolveEntry(string $url, string $ip): ?string
+    {
+        $parts = parse_url($url);
+        $host = is_array($parts) ? ($parts['host'] ?? '') : '';
+        if (!is_string($host) || $host === '') {
+            return null;
+        }
+        $port = $parts['port'] ?? (strtolower($parts['scheme'] ?? 'https') === 'https' ? 443 : 80);
+        return "{$host}:{$port}:{$ip}";
     }
 
     /**
