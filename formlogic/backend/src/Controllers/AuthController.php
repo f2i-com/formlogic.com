@@ -34,7 +34,7 @@ class AuthController
     private ?ApiKeyService $apiKeyService;
     private ?\FormLogic\Database\MySQLConnection $db;
 
-    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null, string $csrfSecret = '', ?FormService $formService = null, ?AppService $appService = null, ?ApiKeyService $apiKeyService = null, ?\FormLogic\Database\MySQLConnection $db = null, private ?\FormLogic\Services\TrashService $trashService = null, private ?\FormLogic\Services\MfaService $mfaService = null)
+    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null, string $csrfSecret = '', ?FormService $formService = null, ?AppService $appService = null, ?ApiKeyService $apiKeyService = null, ?\FormLogic\Database\MySQLConnection $db = null, private ?\FormLogic\Services\TrashService $trashService = null, private ?\FormLogic\Services\MfaService $mfaService = null, private ?\FormLogic\Services\AppUserService $appUserService = null)
     {
         $this->db = $db;
         $this->authService = $authService;
@@ -567,8 +567,19 @@ class AuthController
             } while (count($batch) === 1000);
         }
         // Apps the user owns or belongs to, and API-key metadata (never the secret). Both are
-        // small, bounded sets — no need to stream.
-        $apps = $this->appService ? $this->appService->getAllApps($userId) : [];
+        // small, bounded sets — no need to stream. An app the user is a member of comes as the
+        // app list gives it to them (AppMemberView): only one they can open, narrowed to the
+        // forms they can use. Its owner's config is not the member's data.
+        $apps = [];
+        foreach ($this->appService ? $this->appService->getAllApps($userId) : [] as $app) {
+            if (($app['ownerId'] ?? null) !== $userId) {
+                $app = \FormLogic\Helpers\AppMemberView::forMember($app, (string) $userId, $this->appService, $this->appUserService);
+                if ($app === null) {
+                    continue;
+                }
+            }
+            $apps[] = $app;
+        }
         $apiKeys = $this->apiKeyService ? $this->apiKeyService->listKeys($userId) : [];
 
         $payload = [

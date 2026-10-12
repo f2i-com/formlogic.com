@@ -336,7 +336,8 @@ $container->set(AuthController::class, function (Container $c) {
         $c->get(MySQLConnection::class),
         // Erasure wipes the user's recycle bin (fail-closed) — it never trashes.
         $c->get(\FormLogic\Services\TrashService::class),
-        $c->get(\FormLogic\Services\MfaService::class)
+        $c->get(\FormLogic\Services\MfaService::class),
+        $c->get(AppUserService::class)
     );
 });
 

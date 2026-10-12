@@ -978,7 +978,7 @@ class AppPublicController
         $filename = trim($safeTitle, '-') . '-responses.csv';
         $stream = fopen('php://temp', 'r+');
         try {
-            $this->responseService->exportResponsesStreaming($formId, $form['fields'] ?? [], $stream, $canViewAll ? null : $userId);
+            $this->responseService->exportResponsesStreaming($formId, $form['fields'] ?? [], $stream, $canViewAll ? null : $userId, $this->readableLinkTargets($app, $form, (string) $userId));
         } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
             // §9.2: server-side CSV assembly is impossible over ciphertext.
             fclose($stream);
@@ -990,6 +990,35 @@ class AppPublicController
             ->withBody(new \Slim\Psr7\Stream($stream))
             ->withHeader('Content-Type', 'text/csv; charset=utf-8')
             ->withHeader('Content-Disposition', 'attachment; filename="' . $filename . '"');
+    }
+
+    /**
+     * The linked-record targets whose labels a member's export may read, as the record list
+     * resolves them (resolveLinkedRecords): forms of this app they may view, every record with
+     * view-all, their own with view-own (mapped to their user id). Null for the app owner, whose
+     * export resolves their own forms as before.
+     *
+     * @return array<string, ?string>|null
+     */
+    private function readableLinkTargets(array $app, array $form, string $userId): ?array
+    {
+        if (($app['ownerId'] ?? null) === $userId) {
+            return null;
+        }
+        $appFormIds = array_column($this->appService->getAppForms($app['id']), 'formId');
+        $readable = [];
+        foreach ($form['fields'] ?? [] as $field) {
+            $target = (string) ($field['properties']['targetFormId'] ?? '');
+            if (($field['type'] ?? '') !== 'linked_record' || $target === '' || array_key_exists($target, $readable) || !in_array($target, $appFormIds, true)) {
+                continue;
+            }
+            if ($this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_ALL_RESPONSES, $target)) {
+                $readable[$target] = null;
+            } elseif ($this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_OWN_RESPONSES, $target)) {
+                $readable[$target] = $userId;
+            }
+        }
+        return $readable;
     }
 
     /**

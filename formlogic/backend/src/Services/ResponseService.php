@@ -3238,8 +3238,12 @@ class ResponseService
      * @param resource $outputStream A writable stream (e.g. php://output)
      * @param ?string $submittedByUserId only this user's own rows (a view-own caller), as the
      *   record list filters them
+     * @param array<string, ?string>|null $readableTargets for a caller other than the owner: the
+     *   linked-record target forms whose labels they may read, each mapped to null (any record)
+     *   or the user id whose own records only (view-own); a target not in the map gives no label.
+     *   Null: the owner, whose own forms all resolve.
      */
-    public function exportResponsesStreaming(string $formId, array $fields, $outputStream, ?string $submittedByUserId = null): int
+    public function exportResponsesStreaming(string $formId, array $fields, $outputStream, ?string $submittedByUserId = null, ?array $readableTargets = null): int
     {
         // §9.2 gate: CSV assembly interprets answers per field — refuse for private
         // forms (client-side decrypt-and-export replaces it; sqlite-bundle and
@@ -3316,7 +3320,7 @@ class ResponseService
             // Resolve linked record display values for this batch
             $linkedDisplayCache = [];
             if (!empty($linkedFields)) {
-                $linkedDisplayCache = $this->resolveLinkedRecordDisplayValues($batch, $linkedFields, $exportOwnerId);
+                $linkedDisplayCache = $this->resolveLinkedRecordDisplayValues($batch, $linkedFields, $exportOwnerId, $readableTargets);
             }
 
             foreach ($batch as $response) {
@@ -3393,7 +3397,7 @@ class ResponseService
      * Resolve linked record IDs to display text for a batch of responses.
      * Returns: [targetFormId => [responseId => displayText]]
      */
-    private function resolveLinkedRecordDisplayValues(array $responses, array $linkedFields, ?string $ownerId = null): array
+    private function resolveLinkedRecordDisplayValues(array $responses, array $linkedFields, ?string $ownerId = null, ?array $readableTargets = null): array
     {
         // Collect all referenced IDs grouped by target form
         $refsByForm = []; // targetFormId => [id => true]
@@ -3437,12 +3441,20 @@ class ResponseService
                 $refsByForm = array_intersect_key($refsByForm, $allowed);
             }
         }
+        // A caller other than the owner: only the targets they may read (see exportResponsesStreaming).
+        if ($readableTargets !== null) {
+            $refsByForm = array_intersect_key($refsByForm, $readableTargets);
+        }
 
         // Batch-fetch and build display text
         $cache = []; // targetFormId => [responseId => displayText]
         foreach ($refsByForm as $targetFormId => $idMap) {
             $cache[$targetFormId] = [];
             $targetResponses = $this->getResponsesByIds($targetFormId, array_keys($idMap));
+            $onlyOwnOf = $readableTargets[$targetFormId] ?? null;
+            if ($onlyOwnOf !== null) {
+                $targetResponses = array_filter($targetResponses, static fn (array $r): bool => ($r['metadata']['submittedByUserId'] ?? null) === $onlyOwnOf);
+            }
 
             // Determine display field IDs from the linked field config
             $displayFieldIds = [];

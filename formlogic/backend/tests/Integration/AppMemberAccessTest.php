@@ -298,4 +298,117 @@ class AppMemberAccessTest extends TestCase
 
         $this->assertSame(403, $export($exportOnly)->getStatusCode(), 'a member who may read no rows exports none');
     }
+
+    /**
+     * A member cannot open a draft or archived app (the runtime and the detail answer 404), so the
+     * app list and the form-usage list do not offer it either; the owner still sees every one.
+     */
+    public function testAMemberIsNotListedAnAppTheyCannotOpen(): void
+    {
+        $owner = $this->makeUser();
+        $member = $this->makeUser();
+        $formA = $this->makeForm($owner);
+        $formB = $this->makeForm($owner);
+        $apps = [];
+        foreach (['published', 'draft', 'archived'] as $status) {
+            $apps[$status] = $this->makeApp($owner, $formA, $formB, $status);
+            $this->addMember($apps[$status]['id'], $member, [[null, AppPermissions::VIEW_ALL_RESPONSES]], 'active');
+        }
+
+        $listed = array_column($this->json(self::$apps->index($this->request($member), new SlimResponse()))['body']['apps'] ?? [], 'id');
+        $usage = array_column($this->json(self::$apps->formUsage($this->request($member), new SlimResponse()))['body']['apps'] ?? [], 'appId');
+        $this->assertContains($apps['published']['id'], $listed);
+        $this->assertContains($apps['published']['id'], $usage);
+        foreach (['draft', 'archived'] as $status) {
+            $this->assertNotContains($apps[$status]['id'], $listed, "a $status app in the member's app list");
+            $this->assertNotContains($apps[$status]['id'], $usage, "a $status app in the member's form usage");
+        }
+        $ownerList = array_column($this->json(self::$apps->index($this->request($owner), new SlimResponse()))['body']['apps'] ?? [], 'id');
+        $this->assertContains($apps['draft']['id'], $ownerList);
+    }
+
+    /** Form usage lists a member the forms they can open, as the runtime does; the owner all of them. */
+    public function testFormUsageListsAMemberOnlyTheFormsTheyCanOpen(): void
+    {
+        $owner = $this->makeUser();
+        $member = $this->makeUser();
+        $formA = $this->makeForm($owner);
+        $formB = $this->makeForm($owner);
+        $app = $this->makeApp($owner, $formA, $formB);
+        $this->addMember($app['id'], $member, [[$formA, AppPermissions::VIEW_ALL_RESPONSES]], 'active');
+
+        $entry = fn (string $userId) => array_column($this->json(self::$apps->formUsage($this->request($userId), new SlimResponse()))['body']['apps'] ?? [], null, 'appId')[$app['id']] ?? [];
+        $this->assertSame([$formA], array_column($entry($member)['forms'] ?? [], 'formId'));
+        $this->assertSame([$formA, $formB], array_column($entry($owner)['forms'] ?? [], 'formId'));
+    }
+
+    /** The "my data" export gives a member's apps as the app list does: narrowed, and only those they can open. */
+    public function testMyDataExportCarriesTheMembersViewOfAnApp(): void
+    {
+        $owner = $this->makeUser();
+        $member = $this->makeUser();
+        $formA = $this->makeForm($owner);
+        $formB = $this->makeForm($owner);
+        $app = $this->makeApp($owner, $formA, $formB);
+        $draft = $this->makeApp($owner, $formA, $formB, 'draft');
+        $this->addMember($app['id'], $member, [[$formA, AppPermissions::VIEW_ALL_RESPONSES]], 'active');
+        $this->addMember($draft['id'], $member, [[$formA, AppPermissions::VIEW_ALL_RESPONSES]], 'active');
+
+        $auth = new \FormLogic\Services\AuthService(self::$mysql, ['secret' => 'member-access-test-secret-0123456789abcdef', 'algorithm' => 'HS256']);
+        $controller = new \FormLogic\Controllers\AuthController(
+            $auth, [], 3600, null, null, '', null,
+            new AppService(self::$mysql, new FormService(self::$mysql, self::$sqlite)),
+            null, null, null, null,
+            new AppUserService(self::$mysql)
+        );
+        $req = $this->createMock(ServerRequestInterface::class);
+        $req->method('getAttribute')->willReturnCallback(fn ($n) => match ($n) {
+            'userId' => $member,
+            'user' => $auth->getUserById($member),
+            default => null,
+        });
+        $exported = json_decode((string) $controller->exportData($req, new SlimResponse())->getBody(), true);
+        $apps = array_column($exported['apps'] ?? [], null, 'id');
+        $this->assertArrayHasKey($app['id'], $apps);
+        $this->assertArrayNotHasKey($draft['id'], $apps, 'an app the member cannot open');
+        $this->assertFalse($this->mentions($apps[$app['id']], $formB), 'the form the member cannot use');
+    }
+
+    /**
+     * A linked record's label in a member's export is read from the target form only when the
+     * member may read that record there, as in the record list: another form of the app they have
+     * no permission on gives no label, and view-own gives labels for their own records only.
+     */
+    public function testAMembersExportLabelsComeOnlyFromRecordsTheyMayRead(): void
+    {
+        $owner = $this->makeUser();
+        $member = $this->makeUser();
+        $target = $this->makeForm($owner);
+        $base = $this->makeForm($owner);
+        self::$sqlite->getFormDatabase($base)
+            ->prepare("INSERT INTO fields (id, type, label, field_order, properties) VALUES ('link', 'linked_record', 'Link', 1, ?)")
+            ->execute([json_encode(['targetFormId' => $target, 'displayFieldIds' => ['note']])]);
+        $app = $this->makeApp($owner, $base, $target);
+        foreach (['t-secret' => ['secret label', $owner], 't-own' => ['own label', $member]] as $id => [$note, $by]) {
+            self::$sqlite->getFormDatabase($target)
+                ->prepare("INSERT INTO responses (id, answers, metadata, status, submitted_at) VALUES (?, ?, ?, 'submitted', datetime('now'))")
+                ->execute([$id, json_encode(['note' => $note]), json_encode(['submittedByUserId' => $by])]);
+        }
+        self::$sqlite->getFormDatabase($base)
+            ->prepare("INSERT INTO responses (id, answers, metadata, status, submitted_at) VALUES ('b1', ?, ?, 'submitted', datetime('now'))")
+            ->execute([json_encode(['note' => 'row', 'link' => ['t-secret', 't-own']]), json_encode(['submittedByUserId' => $member])]);
+        $grants = [[$base, AppPermissions::VIEW_ALL_RESPONSES], [$base, AppPermissions::EXPORT_RESPONSES]];
+        $export = fn () => (string) self::$runtime->exportResponses($this->request($member), new SlimResponse(), ['slug' => $app['slug'], 'formId' => $base])->getBody();
+
+        $this->addMember($app['id'], $member, $grants, 'active');
+        $csv = $export();
+        $this->assertStringNotContainsString('secret label', $csv, 'no permission on the target form: no label');
+        $this->assertStringNotContainsString('own label', $csv);
+
+        self::$pdo->prepare('DELETE FROM app_users WHERE app_id = ? AND user_id = ?')->execute([$app['id'], $member]);
+        $this->addMember($app['id'], $member, [...$grants, [$target, AppPermissions::VIEW_OWN_RESPONSES]], 'active');
+        $csv = $export();
+        $this->assertStringContainsString('own label', $csv, 'view-own on the target: their own record is labelled');
+        $this->assertStringNotContainsString('secret label', $csv, "but not another member's");
+    }
 }

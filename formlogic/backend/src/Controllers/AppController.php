@@ -75,19 +75,6 @@ class AppController
         return null;
     }
 
-    /**
-     * A non-owner member's view of an app: what the runtime gives them (AppPublicController::getApp),
-     * the config narrowed to the forms they can open, without the owner's id. Without the
-     * permission service (a bare construction) nothing counts as openable.
-     */
-    private function memberView(array $app, string $userId): array
-    {
-        $permissions = $this->appUserService?->getUserPermissions((string) $app['id'], $userId) ?? ['appLevel' => [], 'formLevel' => []];
-        $navigable = AppMemberView::navigableFormIds($this->appService->getAppForms((string) $app['id']), $permissions);
-        unset($app['ownerId']);
-        return AppMemberView::narrow($app, $navigable);
-    }
-
     public function index(Request $request, Response $response): Response
     {
         $userId = $request->getAttribute('userId');
@@ -97,20 +84,26 @@ class AppController
 
         $apps = $this->appService->getAllApps($userId);
         // canManage / canCreateCompanion: server-authoritative flags for list UIs —
-        // owner-only for now. Don't expose the owner's platform UUID to non-owner
-        // members (mirrors the runtime AppPublicController::getApp stripping).
-        foreach ($apps as &$a) {
-            if (is_array($a)) {
-                $isOwner = ($a['ownerId'] ?? null) === $userId;
-                if (!$isOwner) {
-                    $a = $this->memberView($a, $userId);
-                }
-                $a['canManage'] = $isOwner;
-                $a['canCreateCompanion'] = $isOwner;
+        // owner-only for now. A non-owner member gets the runtime's view of an app
+        // (AppMemberView::forMember): only apps they can open, narrowed, without the
+        // owner's platform UUID.
+        $listed = [];
+        foreach ($apps as $a) {
+            if (!is_array($a)) {
+                continue;
             }
+            $isOwner = ($a['ownerId'] ?? null) === $userId;
+            if (!$isOwner) {
+                $a = AppMemberView::forMember($a, $userId, $this->appService, $this->appUserService);
+                if ($a === null) {
+                    continue;
+                }
+            }
+            $a['canManage'] = $isOwner;
+            $a['canCreateCompanion'] = $isOwner;
+            $listed[] = $a;
         }
-        unset($a);
-        return $this->jsonResponse($response, ['apps' => $apps, 'count' => count($apps)]);
+        return $this->jsonResponse($response, ['apps' => $listed, 'count' => count($listed)]);
     }
 
     public function create(Request $request, Response $response): Response
@@ -152,7 +145,21 @@ class AppController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
         }
 
-        return $this->jsonResponse($response, ['apps' => $this->appService->getFormUsageForUser($userId)]);
+        // A non-owner member is listed the apps they can open and, in each, the forms they can
+        // open (AppMemberView), as the runtime gives them.
+        $apps = [];
+        foreach ($this->appService->getFormUsageForUser($userId) as $entry) {
+            if (!$entry['canManage']) {
+                $app = $this->appService->getApp($entry['appId']);
+                $openable = $app !== null ? AppMemberView::openableFormIds($app, $userId, $this->appService, $this->appUserService) : null;
+                if ($openable === null) {
+                    continue;
+                }
+                $entry['forms'] = array_values(array_filter($entry['forms'], static fn (array $f): bool => in_array($f['formId'], $openable, true)));
+            }
+            $apps[] = $entry;
+        }
+        return $this->jsonResponse($response, ['apps' => $apps]);
     }
 
     /**
@@ -188,10 +195,10 @@ class AppController
         // not the owner's platform UUID.
         $userId = (string) $request->getAttribute('userId');
         if (($app['ownerId'] ?? null) !== $userId) {
-            if (!$this->appService->isRuntimeVisible($app, $userId)) {
+            $app = AppMemberView::forMember($app, $userId, $this->appService, $this->appUserService);
+            if ($app === null) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
             }
-            $app = $this->memberView($app, $userId);
         }
 
         return $this->jsonResponse($response, ['app' => $app]);

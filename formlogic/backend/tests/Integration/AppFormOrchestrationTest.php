@@ -8,6 +8,7 @@ use FormLogic\Controllers\AppController;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AppService;
+use FormLogic\Services\AppUserService;
 use FormLogic\Services\FormService;
 use PDO;
 use PHPUnit\Framework\TestCase;
@@ -75,7 +76,7 @@ class AppFormOrchestrationTest extends TestCase
         $sqlite = new SQLiteConnection(sys_get_temp_dir() . '/fl-orch-' . bin2hex(random_bytes(5)));
         $formService = new FormService($conn, $sqlite);
         self::$apps = new AppService($conn, $formService);
-        self::$ctrl = new AppController(self::$apps);
+        self::$ctrl = new AppController(self::$apps, null, null, null, null, new AppUserService($conn));
     }
 
     protected function setUp(): void
@@ -302,7 +303,8 @@ class AppFormOrchestrationTest extends TestCase
     {
         $owner = $this->makeUser();
         $member = $this->makeUser();
-        $app = $this->makeApp($owner, 'Shared App');
+        // Published: a draft is not listed to a member at all (they cannot open it).
+        $app = $this->makeApp($owner, 'Shared App', ['status' => 'published']);
         $this->addMember($app['id'], $member);
 
         $ownerList = $this->call(fn () => self::$ctrl->index($this->request($owner), new SlimResponse()));
@@ -342,7 +344,10 @@ class AppFormOrchestrationTest extends TestCase
         $member = $this->makeUser();
         $formA = $this->makeForm($owner, 'Jobs');
         $formB = $this->makeForm($owner, 'Vehicles');
-        $appWithForms = $this->makeApp($owner, 'Ops App');
+        // Published, with a Member role that may submit and view its own records on every form:
+        // a member is listed only apps they can open (a draft answers them 404), and in each
+        // only the forms they can open.
+        $appWithForms = $this->makeApp($owner, 'Ops App', ['status' => 'published', 'rolePreset' => 'client-portal']);
         $emptyApp = $this->makeApp($owner, 'Empty App');
 
         self::$apps->addFormToApp($appWithForms['id'], $formA, 'Job Sheet');
@@ -375,14 +380,16 @@ class AppFormOrchestrationTest extends TestCase
         $this->assertSame([0, 1], array_column($forms, 'sortOrder'));
         $this->assertSame([true, false], array_column($forms, 'isVisible'));
 
-        // Member: sees the shared app (same visibility as GET /api/apps) with canManage=false.
+        // Member: sees the shared app (same visibility as GET /api/apps) with canManage=false, and
+        // in it only the forms they can open, as the runtime gives them (AppMemberView): the
+        // invisible formB is not offered to a member, whose runtime config leaves it out too.
         $r = $this->call(fn () => self::$ctrl->formUsage($this->request($member), new SlimResponse()));
         $this->assertSame(200, $r['status']);
         $memberApps = array_column($r['body']['apps'], null, 'appId');
         $this->assertArrayHasKey($appWithForms['id'], $memberApps);
         $this->assertArrayNotHasKey($emptyApp['id'], $memberApps, 'apps the member is not in must not appear');
         $this->assertFalse($memberApps[$appWithForms['id']]['canManage']);
-        $this->assertCount(2, $memberApps[$appWithForms['id']]['forms']);
+        $this->assertSame([$formA], array_column($memberApps[$appWithForms['id']]['forms'], 'formId'));
     }
 
     // -------------------------------------------------------------------------

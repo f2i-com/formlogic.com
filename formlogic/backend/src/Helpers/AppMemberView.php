@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace FormLogic\Helpers;
 
 use FormLogic\Constants\AppPermissions;
+use FormLogic\Services\AppService;
+use FormLogic\Services\AppUserService;
 
 /**
  * What a non-owner member may see of an app's config: the runtime (AppPublicController::getApp)
@@ -132,6 +134,46 @@ final class AppMemberView
         }
 
         return $safeApp;
+    }
+
+    /**
+     * A non-owner member's view of an app outside the runtime (the app list and detail, form usage,
+     * the "my data" export): null while they cannot open it (the runtime answers 404 for a draft or
+     * archived app), else the config narrowed to the forms they can open, without the owner's id.
+     * Without the permission service nothing counts as openable.
+     *
+     * @param array<string, mixed> $app
+     * @return array<string, mixed>|null
+     */
+    public static function forMember(array $app, string $userId, AppService $apps, ?AppUserService $users): ?array
+    {
+        if (!$apps->isRuntimeVisible($app, $userId)) {
+            return null;
+        }
+        $navigable = self::navigableFormIds($apps->getAppForms((string) $app['id']), self::permissions($app, $userId, $users));
+        unset($app['ownerId']);
+        return self::narrow($app, $navigable);
+    }
+
+    /**
+     * The ids of the app's forms a non-owner member can open (navigableFormIds), or null while
+     * they cannot open the app at all.
+     *
+     * @param array<string, mixed> $app
+     * @return string[]|null
+     */
+    public static function openableFormIds(array $app, string $userId, AppService $apps, ?AppUserService $users): ?array
+    {
+        if (!$apps->isRuntimeVisible($app, $userId)) {
+            return null;
+        }
+        return self::navigableFormIds($apps->getAppForms((string) $app['id']), self::permissions($app, $userId, $users));
+    }
+
+    /** @param array<string, mixed> $app */
+    private static function permissions(array $app, string $userId, ?AppUserService $users): array
+    {
+        return $users?->getUserPermissions((string) $app['id'], $userId) ?? ['appLevel' => [], 'formLevel' => []];
     }
 
     /**

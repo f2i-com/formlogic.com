@@ -395,11 +395,16 @@ class AppUserService
         $stmt->execute(['app_id' => $appId]);
 
         $users = [];
+        $appLevelRoles = [];
         while ($row = $stmt->fetch()) {
             $user = AppUser::fromArray($row)->toArray();
             $user['email'] = $row['email'];
             $user['name'] = $row['user_name'];
             $user['roleName'] = $row['role_name'];
+            // Whether the role grants any app-level permission: such a member's role, status and
+            // membership are the owner's alone to change (updateAppUser / removeAppUser).
+            $roleId = (string) $row['role_id'];
+            $user['holdsAppLevelRole'] = $appLevelRoles[$roleId] ??= $this->roleGrantsAppLevel($roleId);
             $users[] = $user;
         }
         return $users;
@@ -540,6 +545,11 @@ class AppUserService
                 throw new \RuntimeException('Only the app owner can assign roles with app-level permissions');
             }
         }
+        // ...and only the owner takes app-level permissions away: a member who holds them is not a
+        // delegated manager's to re-role or suspend.
+        if ((isset($data['roleId']) || isset($data['status'])) && $actorUserId !== null && $appId !== null) {
+            $this->assertActorMayManageMember($appUserId, $actorUserId, $appId);
+        }
 
         $updates = [];
         $params = ['id' => $appUserId];
@@ -564,8 +574,34 @@ class AppUserService
         return $stmt->rowCount() > 0;
     }
 
-    public function removeAppUser(string $appUserId): bool
+    /**
+     * Whether a member holds a role that grants any app-level permission (the same test as the
+     * privilege ceiling on assigning roles).
+     */
+    public function memberHoldsAppLevelRole(string $appUserId): bool
     {
+        $stmt = $this->mysql->prepare("SELECT role_id FROM app_users WHERE id = :id");
+        $stmt->execute(['id' => $appUserId]);
+        $roleId = $stmt->fetchColumn();
+        return is_string($roleId) && $roleId !== '' && $this->roleGrantsAppLevel($roleId);
+    }
+
+    /**
+     * Only the app owner gives app-level permissions, so only the owner changes the role of,
+     * suspends or removes a member who holds them.
+     */
+    private function assertActorMayManageMember(string $appUserId, string $actorUserId, string $appId): void
+    {
+        if (!$this->isAppOwner($appId, $actorUserId) && $this->memberHoldsAppLevelRole($appUserId)) {
+            throw new \RuntimeException('Only the app owner can change a member whose role has app-level permissions');
+        }
+    }
+
+    public function removeAppUser(string $appUserId, ?string $actorUserId = null, ?string $appId = null): bool
+    {
+        if ($actorUserId !== null && $appId !== null) {
+            $this->assertActorMayManageMember($appUserId, $actorUserId, $appId);
+        }
         // Check if user is the app owner (by owner_id, not role name)
         $stmt = $this->mysql->prepare("
             SELECT au.*, a.owner_id

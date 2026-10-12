@@ -270,6 +270,61 @@ class AppRbacTest extends TestCase
         $this->assertSame([AppPermissions::VIEW_ALL_RESPONSES . '@' . $form], $current());
     }
 
+    /**
+     * Only the owner gives app-level permissions (grants, role assignments, invitations), so only
+     * the owner takes them away: a delegated MANAGE_USERS holder may not change the role of, suspend
+     * or remove a member whose role grants any app-level permission. Members below that line stay
+     * theirs to manage.
+     */
+    public function testOnlyTheOwnerChangesAMemberWhoHoldsAnAppLevelRole(): void
+    {
+        $owner = $this->makeUser();
+        $appId = $this->makeApp($owner);
+        $adminRole = $this->makeRole($appId, 'Admin');
+        $this->grant($adminRole, AppPermissions::MANAGE_APP);
+        $managerRole = $this->makeRole($appId, 'People manager');
+        $this->grant($managerRole, AppPermissions::MANAGE_USERS);
+        $memberRole = $this->makeRole($appId, 'Member');
+        $this->grant($memberRole, AppPermissions::VIEW_OWN_RESPONSES);
+
+        $manager = $this->makeUser();
+        $this->addMember($appId, $manager, $managerRole);
+        $admin = $this->makeUser();
+        $this->addMember($appId, $admin, $adminRole);
+        $member = $this->makeUser();
+        $this->addMember($appId, $member, $memberRole);
+        $appUserId = function (string $userId) use ($appId): string {
+            $stmt = self::$pdo->prepare('SELECT id FROM app_users WHERE app_id = ? AND user_id = ?');
+            $stmt->execute([$appId, $userId]);
+            return (string) $stmt->fetchColumn();
+        };
+        $refusedBy = function (callable $action): ?string {
+            try {
+                $action();
+            } catch (\RuntimeException $e) {
+                return $e->getMessage();
+            }
+            return null;
+        };
+
+        foreach ([
+            'change their role' => fn () => self::$svc->updateAppUser($appUserId($admin), ['roleId' => $memberRole], $manager, $appId),
+            'suspend them' => fn () => self::$svc->updateAppUser($appUserId($admin), ['status' => 'suspended'], $manager, $appId),
+            'remove them' => fn () => self::$svc->removeAppUser($appUserId($admin), $manager, $appId),
+        ] as $label => $action) {
+            $this->assertNotNull($refusedBy($action), "a delegated manager must not $label");
+        }
+        $this->assertTrue(self::$svc->hasPermission($appId, $admin, AppPermissions::MANAGE_APP), 'the admin keeps their role and status');
+
+        // A member below the line is still the delegated manager's to manage.
+        $this->assertNull($refusedBy(fn () => self::$svc->updateAppUser($appUserId($member), ['status' => 'suspended'], $manager, $appId)));
+        $this->assertNull($refusedBy(fn () => self::$svc->removeAppUser($appUserId($member), $manager, $appId)));
+
+        // The owner may change the admin.
+        $this->assertNull($refusedBy(fn () => self::$svc->updateAppUser($appUserId($admin), ['roleId' => $memberRole], $owner, $appId)));
+        $this->assertFalse(self::$svc->hasPermission($appId, $admin, AppPermissions::MANAGE_APP));
+    }
+
     public function testNonMemberDenied(): void
     {
         $owner = $this->makeUser();

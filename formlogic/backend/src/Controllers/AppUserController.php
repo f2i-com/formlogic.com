@@ -266,7 +266,7 @@ class AppUserController
         }
 
         try {
-            $this->appUserService->removeAppUser($args['id']);
+            $this->appUserService->removeAppUser($args['id'], $userId, $appId);
             $this->audit($request, 'user.remove', 'app', $appId, ['appUserId' => $args['id']]);
             return $this->jsonResponse($response, ['success' => true, 'message' => 'User removed']);
         } catch (\RuntimeException $e) {
