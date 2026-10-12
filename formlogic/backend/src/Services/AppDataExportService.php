@@ -103,6 +103,16 @@ class AppDataExportService
         return substr($s, 0, 60);
     }
 
+    /**
+     * A constraint name within MySQL's 64-character identifier limit: a name built from a long
+     * table and column name keeps its first 51 characters and gains a hash of the whole name, so
+     * it stays distinct from its neighbours and is the same on every export.
+     */
+    private static function constraintName(string $name): string
+    {
+        return strlen($name) <= 64 ? $name : substr($name, 0, 51) . '_' . substr(hash('sha256', $name), 0, 12);
+    }
+
     /** @param array<string, true> $used */
     private function uniqueName(string $base, array &$used, int $maxLen = 60): string
     {
@@ -476,7 +486,7 @@ TXT;
             $target = $c['link']['targetTable'];
             if (!$c['link']['multi']) {
                 $fkAlters[] = $dialect === 'mysql'
-                    ? "ALTER TABLE {$tq($table)} ADD CONSTRAINT `fk_{$table}_{$c['column']}` FOREIGN KEY ({$q($c['column'])}) REFERENCES {$tq($target)} (`id`)"
+                    ? "ALTER TABLE {$tq($table)} ADD CONSTRAINT `" . self::constraintName("fk_{$table}_{$c['column']}") . "` FOREIGN KEY ({$q($c['column'])}) REFERENCES {$tq($target)} (`id`)"
                     : "ALTER TABLE {$tq($table)} WITH NOCHECK ADD CONSTRAINT [fk_{$table}_{$c['column']}] FOREIGN KEY ({$q($c['column'])}) REFERENCES {$tq($target)} ([id])";
                 continue;
             }
@@ -485,8 +495,8 @@ TXT;
             if ($dialect === 'mysql') {
                 $sink("DROP TABLE IF EXISTS {$q($jt)}", true);
                 $sink("CREATE TABLE {$q($jt)} (\n  `source_id` VARCHAR(36) NOT NULL,\n  `target_id` VARCHAR(36) NOT NULL,\n  `position` INT NOT NULL,\n  PRIMARY KEY (`source_id`, `position`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci", true);
-                $fkAlters[] = "ALTER TABLE {$q($jt)} ADD CONSTRAINT `fk_{$jt}_source` FOREIGN KEY (`source_id`) REFERENCES {$tq($table)} (`id`)";
-                $fkAlters[] = "ALTER TABLE {$q($jt)} ADD CONSTRAINT `fk_{$jt}_target` FOREIGN KEY (`target_id`) REFERENCES {$tq($target)} (`id`)";
+                $fkAlters[] = "ALTER TABLE {$q($jt)} ADD CONSTRAINT `" . self::constraintName("fk_{$jt}_source") . "` FOREIGN KEY (`source_id`) REFERENCES {$tq($table)} (`id`)";
+                $fkAlters[] = "ALTER TABLE {$q($jt)} ADD CONSTRAINT `" . self::constraintName("fk_{$jt}_target") . "` FOREIGN KEY (`target_id`) REFERENCES {$tq($target)} (`id`)";
             } else {
                 $sink("IF OBJECT_ID(N'dbo.{$jt}', N'U') IS NOT NULL DROP TABLE [dbo].[{$jt}]", true);
                 $sink("CREATE TABLE [dbo].[{$jt}] (\n  [source_id] NVARCHAR(36) NOT NULL,\n  [target_id] NVARCHAR(36) NOT NULL,\n  [position] INT NOT NULL,\n  PRIMARY KEY ([source_id], [position])\n)", true);
@@ -751,7 +761,25 @@ TXT;
     {
         // N'…' (unicode); the only escape is doubling quotes. NULs can't live in
         // a T-SQL literal — strip them.
-        return "N'" . str_replace("'", "''", str_replace("\0", '', $s)) . "'";
+        $s = str_replace("\0", '', $s);
+        if (!preg_match('/[\r\n]|\$\(/', $s)) {
+            return "N'" . str_replace("'", "''", $s) . "'";
+        }
+        // sqlcmd and SSMS read the script line by line before SQL Server sees it: a line that is
+        // just GO ends the batch and a `:!!` line runs a command, inside a literal or not, and
+        // "$(name)" is replaced anywhere. So a line break is written as NCHAR(13) / NCHAR(10) and
+        // "$(" is split across two literals. The NVARCHAR(MAX) start keeps the concatenation from
+        // being cut at 4000 characters.
+        $out = "CAST(N'' AS NVARCHAR(MAX))";
+        foreach (preg_split('/(\r|\n|\$(?=\())/', $s, -1, PREG_SPLIT_DELIM_CAPTURE | PREG_SPLIT_NO_EMPTY) ?: [] as $piece) {
+            $out .= '+' . match ($piece) {
+                "\r" => 'NCHAR(13)',
+                "\n" => 'NCHAR(10)',
+                '$' => "N'\$'",
+                default => "N'" . str_replace("'", "''", $piece) . "'",
+            };
+        }
+        return $out;
     }
 
     // ─────────────────────────────────────────────────────────────────────────

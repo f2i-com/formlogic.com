@@ -757,6 +757,42 @@ class AdminPanelTest extends TestCase
         }
     }
 
+    /**
+     * An uploaded release is judged before any of it is written: its manifest signature, and every
+     * entry against that manifest, are checked inside the ZIP, and only then is it extracted. Proved
+     * with an archive that cannot be extracted (a file "x" and a file "x/y"): signed by an unknown
+     * key it must be refused for its signature, not fail at extraction, which would mean the
+     * extraction ran first.
+     */
+    public function testAnUploadedReleaseIsVerifiedBeforeAnythingIsExtracted(): void
+    {
+        [, $apiRoot] = $this->buildFakeInstall();
+        $svc = $this->upgradeService($apiRoot, new MaintenanceService($apiRoot . '/storage/maintenance.json'));
+        $mallory = sodium_crypto_sign_keypair();
+        $unextractable = ['x' => 'a file', 'x/y' => 'a file inside the file'];
+
+        $refused = null;
+        try {
+            $svc->stageUploadedPackage($this->buildFakePackage('2.0.0', extraFiles: $unextractable, signSk: sodium_crypto_sign_secretkey($mallory)));
+        } catch (\RuntimeException $e) {
+            $refused = $e;
+        }
+        $this->assertNotNull($refused);
+        $this->assertStringContainsString('unknown release key', $refused->getMessage());
+
+        // Correctly signed, but carrying an entry the manifest does not list: refused for that,
+        // still before extraction.
+        $refused = null;
+        try {
+            $svc->stageUploadedPackage($this->buildFakePackage('2.0.0', extraFiles: $unextractable, listExtras: false));
+        } catch (\RuntimeException $e) {
+            $refused = $e;
+        }
+        $this->assertNotNull($refused);
+        $this->assertStringContainsString('not listed in the manifest', $refused->getMessage());
+        $this->assertSame([], $svc->listBackups());
+    }
+
     public function testApplyIsBoundToTheReviewedImmutablePackage(): void
     {
         // Review FL-008: apply(packageId, digest) + tamper re-verification.

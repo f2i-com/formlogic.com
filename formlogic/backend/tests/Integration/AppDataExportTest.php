@@ -346,6 +346,79 @@ class AppDataExportTest extends TestCase
         $this->assertNull($row['amount'], 'an infinite number loads as NULL');
     }
 
+    /**
+     * A constraint is named after its table and column, each up to 55-60 characters, and MySQL
+     * refuses identifiers over 64: the dump of a long form name linking through a long field id
+     * stopped loading at its first ALTER TABLE. Long names are shortened to a readable prefix plus
+     * a hash of the full name, so they stay distinct and the same on every export.
+     */
+    public function testLongConstraintNamesStayWithinMysqlsLimit(): void
+    {
+        $longField = 'customer_record_' . str_repeat('x', 40); // field ids stop at 64
+        $long = self::$forms->createForm([
+            'title' => str_repeat('Quarterly maintenance visit ', 3), 'userId' => $this->userId, 'status' => 'published',
+            'fields' => [
+                ['id' => $longField, 'type' => 'linked_record', 'label' => 'Customer', 'required' => false,
+                 'properties' => ['targetFormId' => $this->f1]],
+                ['id' => $longField . '_many', 'type' => 'linked_record', 'label' => 'Customers', 'required' => false,
+                 'properties' => ['targetFormId' => $this->f1, 'allowMultiple' => true]],
+            ],
+        ]);
+        self::$apps->addFormToApp($this->appId, (string) $long['id']);
+
+        $statements = [];
+        self::$export->generateSqlDump($this->app(), 'mysql', function (string $text, bool $isStatement) use (&$statements): void {
+            if ($isStatement) {
+                $statements[] = $text;
+            }
+        });
+        $created = [];
+        foreach ($statements as $sql) {
+            if (preg_match('/^CREATE TABLE `([^`]+)`/', $sql, $m)) {
+                $created[] = $m[1];
+            }
+        }
+        $this->createdTables = $created;
+        foreach ($statements as $sql) {
+            self::$pdo->exec($sql);
+        }
+
+        $names = self::$pdo->query(
+            "SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
+             WHERE TABLE_SCHEMA = DATABASE() AND CONSTRAINT_TYPE = 'FOREIGN KEY' AND TABLE_NAME LIKE 'quarterly_maintenance%'"
+        )->fetchAll(PDO::FETCH_COLUMN);
+        $this->assertCount(3, $names, 'the single link and both junction keys were created');
+        foreach ($names as $name) {
+            $this->assertLessThanOrEqual(64, strlen((string) $name));
+        }
+    }
+
+    /**
+     * sqlcmd (and SSMS) split batches on a line that is just GO, and run `:!!` / `!!` lines as
+     * commands, wherever the line is, string literals included. So no line of the dump may come
+     * from a value: a newline inside a value is written as NCHAR(10) (and a CR as NCHAR(13)),
+     * which also keeps "$(" from reaching sqlcmd's variable substitution as one piece.
+     */
+    public function testMssqlDumpKeepsEveryValueOnItsOwnLine(): void
+    {
+        $value = "first line\nGO\n:!! calc.exe\r\n!! calc.exe\ngo 5\n\$(SECRET) end";
+        self::$responses->createResponse($this->f1, ['answers' => ['customer' => $value, 'hours' => 1]], null);
+
+        $path = self::$export->exportSqlDump($this->app(), 'mssql');
+        try {
+            $dump = (string) file_get_contents($path);
+        } finally {
+            @unlink($path);
+        }
+        foreach (preg_split('/\r\n|\r|\n/', $dump) ?: [] as $line) {
+            $this->assertDoesNotMatchRegularExpression('/^\s*go(\s+\d+)?\s*$/i', $line, 'a GO line would end the batch inside a value');
+            $this->assertDoesNotMatchRegularExpression('/^\s*(:|!!)/', $line, 'a sqlcmd command line');
+        }
+        $this->assertStringNotContainsString('$(SECRET)', $dump, 'a value must not hand sqlcmd a variable reference');
+        // The value still loads whole: CAST(... AS NVARCHAR(MAX)) keeps concatenation past 4000 chars.
+        $this->assertStringContainsString("CAST(N'' AS NVARCHAR(MAX))+N'first line'+NCHAR(10)+N'GO'+NCHAR(10)+N':!! calc.exe'+NCHAR(13)+NCHAR(10)+N'!! calc.exe'+NCHAR(10)+N'go 5'+NCHAR(10)+N'\$'+N'(SECRET) end'", $dump);
+    }
+
     public function testMssqlDumpHasTSqlShape(): void
     {
         $chunks = '';

@@ -36,6 +36,8 @@ class UpgradeService
     /** Package files that live OUTSIDE the manifest inventory (the manifest
      *  cannot list itself; the signature envelope signs the manifest bytes). */
     private const MANIFEST_EXEMPT_FILES = ['manifest.json', 'manifest.sig.json', '.staged-info.json'];
+    /** What every FormLogic release carries (a single-domain package). */
+    private const REQUIRED_RELEASE_FILES = ['index.html', 'api/public/index.php', 'api/vendor/autoload.php', 'api/database/schema.sql'];
 
     private PDO $pdo;
     /** Raw pinned Ed25519 release public key, or null when none is configured. */
@@ -218,6 +220,9 @@ class UpgradeService
                         throw new \RuntimeException("Unsafe path in archive: {$name}");
                     }
                 }
+                if ($trustedManifest === null) {
+                    $this->verifyArchiveBeforeExtraction($zip, null);
+                }
                 if (!$zip->extractTo($dir)) {
                     throw new \RuntimeException('Could not extract the archive (disk full or permissions?)');
                 }
@@ -279,7 +284,7 @@ class UpgradeService
      */
     private function verifyPackageTree(string $dir, ?string $trustedManifest = null): array
     {
-        foreach (['index.html', 'api/public/index.php', 'api/vendor/autoload.php', 'api/database/schema.sql'] as $required) {
+        foreach (self::REQUIRED_RELEASE_FILES as $required) {
             if (!is_file("{$dir}/{$required}")) {
                 throw new \RuntimeException("Not a FormLogic release package — missing {$required}");
             }
@@ -302,41 +307,8 @@ class UpgradeService
             throw new \RuntimeException('manifest.json is present but malformed');
         }
 
-        if ($trustedManifest !== null) {
-            if (!hash_equals($trustedManifest, hash('sha256', $manifestBytes))) {
-                throw new \RuntimeException('The staged manifest no longer matches the verified GitHub release.');
-            }
-            $integrity = 'github-release';
-        } elseif ($this->releasePublicKeyRaw !== null) {
-            $sigPath = "{$dir}/manifest.sig.json";
-            if (!is_file($sigPath)) {
-                throw new \RuntimeException('This package is unsigned (manifest.sig.json is missing) — refused');
-            }
-            $sig = json_decode((string) file_get_contents($sigPath), true);
-            if (!is_array($sig) || ($sig['algorithm'] ?? null) !== 'ed25519' || !is_string($sig['signature'] ?? null)) {
-                throw new \RuntimeException('manifest.sig.json is malformed');
-            }
-            $pinnedKeyId = substr(hash('sha256', $this->releasePublicKeyRaw), 0, 16);
-            if (($sig['keyId'] ?? null) !== $pinnedKeyId) {
-                throw new \RuntimeException('This package is signed by an unknown release key — refused');
-            }
-            $sigRaw = base64_decode((string) $sig['signature'], true);
-            if (
-                !is_string($sigRaw) || strlen($sigRaw) !== SODIUM_CRYPTO_SIGN_BYTES
-                || !sodium_crypto_sign_verify_detached($sigRaw, $manifestBytes, $this->releasePublicKeyRaw)
-            ) {
-                throw new \RuntimeException('Package signature verification FAILED — refused');
-            }
-            $integrity = 'signed';
-        } elseif ($this->allowUnsignedDev) {
-            $integrity = 'unsigned-dev-override';
-        } else {
-            throw new \RuntimeException(
-                $this->production
-                    ? 'Production refuses unverifiable uploaded ZIPs. Use Download and verify for an official GitHub release, or pin UPGRADE_RELEASE_PUBKEY to verify uploaded ZIPs'
-                    : 'No release signing key is pinned — set UPGRADE_RELEASE_PUBKEY, or UPGRADE_ALLOW_UNSIGNED=true on a development install'
-            );
-        }
+        $sigPath = "{$dir}/manifest.sig.json";
+        $integrity = $this->manifestIntegrity($manifestBytes, is_file($sigPath) ? (string) file_get_contents($sigPath) : null, $trustedManifest);
 
         // Inventory: complete, exact, and exclusive.
         $verified = 0;
@@ -374,6 +346,119 @@ class UpgradeService
         }
 
         return ['integrity' => $integrity, 'verifiedFiles' => $verified, 'version' => (string) $manifest['version']];
+    }
+
+    /**
+     * Whether manifest.json is the one a release vouches for: it matches the manifest of an archive
+     * independently matched to GitHub's digest, or carries an Ed25519 signature by the PINNED
+     * release key (unknown key IDs and bad signatures are refused), or the explicit development
+     * override applies. Returns the integrity label; throws when none holds.
+     */
+    private function manifestIntegrity(string $manifestBytes, ?string $sigBytes, ?string $trustedManifest): string
+    {
+        if ($trustedManifest !== null) {
+            if (!hash_equals($trustedManifest, hash('sha256', $manifestBytes))) {
+                throw new \RuntimeException('The staged manifest no longer matches the verified GitHub release.');
+            }
+            $integrity = 'github-release';
+        } elseif ($this->releasePublicKeyRaw !== null) {
+            if ($sigBytes === null) {
+                throw new \RuntimeException('This package is unsigned (manifest.sig.json is missing) — refused');
+            }
+            $sig = json_decode($sigBytes, true);
+            if (!is_array($sig) || ($sig['algorithm'] ?? null) !== 'ed25519' || !is_string($sig['signature'] ?? null)) {
+                throw new \RuntimeException('manifest.sig.json is malformed');
+            }
+            $pinnedKeyId = substr(hash('sha256', $this->releasePublicKeyRaw), 0, 16);
+            if (($sig['keyId'] ?? null) !== $pinnedKeyId) {
+                throw new \RuntimeException('This package is signed by an unknown release key — refused');
+            }
+            $sigRaw = base64_decode((string) $sig['signature'], true);
+            if (
+                !is_string($sigRaw) || strlen($sigRaw) !== SODIUM_CRYPTO_SIGN_BYTES
+                || !sodium_crypto_sign_verify_detached($sigRaw, $manifestBytes, $this->releasePublicKeyRaw)
+            ) {
+                throw new \RuntimeException('Package signature verification FAILED — refused');
+            }
+            $integrity = 'signed';
+        } elseif ($this->allowUnsignedDev) {
+            $integrity = 'unsigned-dev-override';
+        } else {
+            throw new \RuntimeException(
+                $this->production
+                    ? 'Production refuses unverifiable uploaded ZIPs. Use Download and verify for an official GitHub release, or pin UPGRADE_RELEASE_PUBKEY to verify uploaded ZIPs'
+                    : 'No release signing key is pinned — set UPGRADE_RELEASE_PUBKEY, or UPGRADE_ALLOW_UNSIGNED=true on a development install'
+            );
+        }
+        return $integrity;
+    }
+
+    /**
+     * Judge an uploaded release inside the ZIP before any of it is written: the manifest must
+     * pass manifestIntegrity(), every entry must be listed in it (bar the manifest files
+     * themselves), and every entry's bytes, read no further than the size its headers declare,
+     * must match the listed checksum. A refused archive leaves nothing on disk; the extracted
+     * tree is verified again afterwards (verifyPackageTree), and once more before apply.
+     */
+    private function verifyArchiveBeforeExtraction(\ZipArchive $zip, ?string $trustedManifest): void
+    {
+        foreach (self::REQUIRED_RELEASE_FILES as $required) {
+            if ($zip->locateName($required) === false) {
+                throw new \RuntimeException("Not a FormLogic release package — missing {$required}");
+            }
+        }
+        $manifestBytes = $zip->getFromName('manifest.json');
+        if ($manifestBytes === false) {
+            if ($this->allowUnsignedDev) {
+                return; // the development override stages manifest-less trees; verifyPackageTree decides
+            }
+            throw new \RuntimeException('This package has no manifest.json — unverifiable releases are refused (development installs may set UPGRADE_ALLOW_UNSIGNED=true)');
+        }
+        $manifest = json_decode($manifestBytes, true);
+        if (!is_array($manifest) || !is_string($manifest['version'] ?? null) || !is_array($manifest['files'] ?? null)) {
+            throw new \RuntimeException('manifest.json is present but malformed');
+        }
+        $sigBytes = $zip->getFromName('manifest.sig.json');
+        $this->manifestIntegrity($manifestBytes, $sigBytes === false ? null : $sigBytes, $trustedManifest);
+
+        $listed = [];
+        foreach ($manifest['files'] as $rel => $sha) {
+            $listed[strtolower(str_replace('\\', '/', (string) $rel))] = (string) $sha;
+        }
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $stat = $zip->statIndex($i);
+            $name = str_replace('\\', '/', (string) ($stat['name'] ?? ''));
+            if ($name === '' || str_ends_with($name, '/') || in_array($name, self::MANIFEST_EXEMPT_FILES, true)) {
+                continue;
+            }
+            $expected = $listed[strtolower($name)] ?? null;
+            if ($expected === null) {
+                throw new \RuntimeException("Package integrity failure: {$name} is not listed in the manifest — refused");
+            }
+            $stream = $zip->getStream((string) $stat['name']);
+            if ($stream === false) {
+                throw new \RuntimeException("Package integrity failure: {$name} could not be read");
+            }
+            $declared = (int) ($stat['size'] ?? 0);
+            $ctx = hash_init('sha256');
+            $read = 0;
+            while (!feof($stream)) {
+                $chunk = fread($stream, 1024 * 1024);
+                if ($chunk === false) {
+                    break;
+                }
+                $read += strlen($chunk);
+                if ($read > $declared) {
+                    fclose($stream);
+                    throw new \RuntimeException("Package integrity failure: {$name} is larger than the archive declares");
+                }
+                hash_update($ctx, $chunk);
+            }
+            fclose($stream);
+            if (!hash_equals($expected, hash_final($ctx))) {
+                throw new \RuntimeException("Package integrity failure: {$name} does not match its manifest checksum");
+            }
+        }
     }
 
     public function stagedInfo(): ?array
