@@ -127,6 +127,10 @@ final class AppMemberView
                     if ($kind === 'list') {
                         return $ok($w['list']['formId'] ?? null);
                     }
+                    // A records grid names its form and the columns it shows, as a list does.
+                    if ($kind === 'grid') {
+                        return $ok($w['grid']['formId'] ?? null);
+                    }
                     return true; // text/actions/activity derive only from accessible forms
                 }));
                 $safeApp['customScreen'] = $cs;

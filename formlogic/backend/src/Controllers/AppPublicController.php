@@ -602,6 +602,13 @@ class AppPublicController
             // Drop answers for non-input/unknown fields (e.g. forged calculated
             // values or arbitrary field IDs) before validating and persisting.
             $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], is_array($data['answers'] ?? null) ? $data['answers'] : []);
+            // An answer past ResponseService::MAX_ANSWER_DEPTH or MAX_ANSWER_VALUES is refused
+            // by name before anything is evaluated: the sandbox refuses a whole batch for one
+            // such value, which read as "no rule could be evaluated" and let the submission
+            // past its conditional rules.
+            if ($refusal = $this->answerShapeRefusal($form['fields'] ?? [], $data['answers'])) {
+                return ['status' => 422, 'payload' => $refusal];
+            }
             // Re-derive file URLs server-side (don't trust client-supplied url) — parity
             // with the standalone path; prevents stored reviewer-facing phishing links.
             $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
@@ -1167,6 +1174,12 @@ class AppPublicController
                 // isn't rejected for omitting an unrelated required field. Required fields
                 // can still only be cleared by an explicit empty value, never by omission.
                 if (is_array($data['answers'])) {
+                    // The answers being changed are held to the shape a submission is (see
+                    // runSubmissionPipeline). Only those: a record stored before the limits
+                    // must stay editable, and the evaluation below withholds what it holds.
+                    if ($refusal = $this->answerShapeRefusal($form['fields'] ?? [], $data['answers'])) {
+                        return $this->jsonResponse($response, $refusal, 422);
+                    }
                     $existingAnswers = is_array($existingResp['answers'] ?? null) ? $existingResp['answers'] : [];
                     $data['answers'] = array_merge($existingAnswers, $data['answers']);
                 }
@@ -2111,6 +2124,28 @@ class AppPublicController
         unset($resp);
 
         return $responses;
+    }
+
+    /**
+     * The refusal for answers past ResponseService::MAX_ANSWER_DEPTH or MAX_ANSWER_VALUES (a
+     * 422 body: the usual validation shape, the first field's sentence as the message, so an
+     * offline batch's per-item error names the field too), or null when none is.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function answerShapeRefusal(array $fields, array $answers): ?array
+    {
+        $errors = $this->responseService->answerShapeErrors($fields, $answers);
+        if ($errors === []) {
+            return null;
+        }
+        $problems = ResponseService::answerShapeProblems($answers);
+        return [
+            'error' => true,
+            'code' => (string) reset($problems),
+            'message' => (string) reset($errors),
+            'errors' => $errors,
+        ];
     }
 
     /**

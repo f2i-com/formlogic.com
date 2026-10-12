@@ -194,12 +194,19 @@ class AppController
         // app only while it is published, its config narrowed to the forms they can open, and
         // not the owner's platform UUID.
         $userId = (string) $request->getAttribute('userId');
-        if (($app['ownerId'] ?? null) !== $userId) {
+        $isOwner = ($app['ownerId'] ?? null) === $userId;
+        if (!$isOwner) {
             $app = AppMemberView::forMember($app, $userId, $this->appService, $this->appUserService);
             if ($app === null) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
             }
         }
+        // The same server-authoritative flags the list carries. A platform admin acting as the
+        // owner (AdminActAsMiddleware) reads the owner's ownerId here, which is not their own id,
+        // so a screen that compared ids took them for a member: canManage is what says the
+        // viewer acts as the owner.
+        $app['canManage'] = $isOwner;
+        $app['canCreateCompanion'] = $isOwner;
 
         return $this->jsonResponse($response, ['app' => $app]);
     }
@@ -306,15 +313,30 @@ class AppController
         }
     }
 
-    /** Publish history (newest first). Visible to the owner and app members. */
+    /**
+     * Publish history (newest first). Visible to the owner and app members. A member reads it as
+     * they read the app (show): not at all while they cannot open the app, and without
+     * `publishedBy`, which is the owner's platform user id.
+     */
     public function versions(Request $request, Response $response, array $args): Response
     {
         $app = $this->authorizeAppAccess($request, $args['id']);
         if (!$app) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
         }
+        $userId = (string) $request->getAttribute('userId');
+        $isOwner = ($app['ownerId'] ?? null) === $userId;
+        if (!$isOwner && !$this->appService->isRuntimeVisible($app, $userId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
+        }
 
         $versions = $this->appService->listAppVersions($args['id']);
+        if (!$isOwner) {
+            foreach ($versions as &$version) {
+                unset($version['publishedBy']);
+            }
+            unset($version);
+        }
         return $this->jsonResponse($response, ['versions' => $versions]);
     }
 

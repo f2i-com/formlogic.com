@@ -14,7 +14,8 @@ use PHPUnit\Framework\TestCase;
  *    there blocked until the watchdog killed it, and a finished job was lost;
  *  - a protocol line is read whole, so one huge line was a memory-limit fatal in the request;
  *  - when the child dies without a "done" line, what it wrote to stderr is the only account of
- *    why, and belongs in the error.
+ *    why, and belongs in the operator's error log (not in the error handed back, which a form's
+ *    respondent is shown).
  */
 class SandboxRunnerChildIoTest extends TestCase
 {
@@ -87,9 +88,27 @@ PHP);
         $this->assertStringContainsString('over 16 MiB', (string) ($done['error'] ?? ''));
     }
 
-    public function testTheChildsStderrExplainsAFailure(): void
+    /**
+     * The account of a failure is for the operator: it goes to PHP's error log. The error a
+     * caller gets back stays the plain sentence, because for an onSubmit script that error is
+     * shown to whoever submitted the form (ScriptRejection::unavailable), and a launcher's
+     * stderr names install paths and library versions (a loader error is one line of both).
+     */
+    public function testTheChildsStderrExplainsAFailureToTheOperatorOnly(): void
     {
-        $done = $this->runner('crash')->runScript('x', [], static fn () => null, 3000);
-        $this->assertStringContainsString('the sandbox engine could not be built', (string) ($done['error'] ?? ''));
+        $log = $this->dir . '/php-error.log';
+        file_put_contents($log, '');
+        $previous = ini_set('error_log', $log);
+        try {
+            $done = $this->runner('crash')->runScript('x', [], static fn () => null, 3000);
+            $forRespondent = (new \FormLogic\Services\FormLogicRuntime([], $this->runner('crash')))->execute('x', ['answers' => []]);
+        } finally {
+            ini_set('error_log', $previous === false ? '' : $previous);
+        }
+        $this->assertFalse($forRespondent->success);
+        $this->assertStringNotContainsString('could not be built', (string) $forRespondent->error, "the launcher's stderr must not reach the person submitting the form");
+        $this->assertSame('FormLogic runtime timed out or crashed', $done['error'] ?? null);
+
+        $this->assertStringContainsString('the sandbox engine could not be built', (string) file_get_contents($log), 'the operator reads why');
     }
 }

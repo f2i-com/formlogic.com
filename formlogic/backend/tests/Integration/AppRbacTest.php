@@ -271,6 +271,70 @@ class AppRbacTest extends TestCase
     }
 
     /**
+     * The non-owner check has to judge what the save would STORE, not what the request says.
+     * An app-level grant sent with a formId the save then skips (an empty string, false, a form
+     * of another app) read as "unchanged" and was dropped by the rewrite: a delegated
+     * MANAGE_ROLES holder stripped the Admin role with one request.
+     */
+    public function testANonOwnerCannotDropAppLevelGrantsByNamingAFormTheSaveSkips(): void
+    {
+        $owner = $this->makeUser();
+        $appId = $this->makeApp($owner);
+        $form = $this->makeForm($owner);
+        self::$pdo->prepare("INSERT INTO app_forms (id, app_id, form_id, display_name, sort_order, is_visible, settings) VALUES (?, ?, ?, 'T', 0, 1, '{}')")
+            ->execute(['af-' . $this->uuid(), $appId, $form]);
+        $admin = $this->makeRole($appId, 'Admin');
+        $this->grant($admin, AppPermissions::MANAGE_APP);
+        $this->grant($admin, AppPermissions::MANAGE_USERS);
+        $this->grant($admin, AppPermissions::VIEW_ANALYTICS, $form);
+        $kept = [AppPermissions::MANAGE_APP . '@*', AppPermissions::MANAGE_USERS . '@*', AppPermissions::VIEW_ANALYTICS . '@' . $form];
+        $current = static fn (): array => array_map(
+            static fn (array $p): string => $p['permission'] . '@' . ($p['formId'] ?? '*'),
+            self::$svc->getRolePermissions($admin)
+        );
+
+        foreach (['an empty string' => '', 'false' => false, 'a form of no app' => 'no-such-form'] as $label => $skipped) {
+            $refused = null;
+            try {
+                self::$svc->setRolePermissions($admin, [
+                    ['formId' => $skipped, 'permission' => AppPermissions::MANAGE_APP],
+                    ['formId' => $skipped, 'permission' => AppPermissions::MANAGE_USERS],
+                    ['formId' => $form, 'permission' => AppPermissions::VIEW_ANALYTICS],
+                ], false);
+            } catch (\RuntimeException $e) {
+                $refused = $e;
+            }
+            $this->assertEqualsCanonicalizing($kept, $current(), "formId $label must not drop the role's app-level grants");
+            $this->assertNotNull($refused, "a non-owner save with formId $label is refused, not half applied");
+        }
+
+        // Nor may the same trick move a form-scoped grant app-wide, or the other way round.
+        foreach ([
+            [['formId' => null, 'permission' => AppPermissions::MANAGE_APP], ['formId' => null, 'permission' => AppPermissions::MANAGE_USERS], ['formId' => null, 'permission' => AppPermissions::VIEW_ANALYTICS]],
+            [['formId' => $form, 'permission' => AppPermissions::MANAGE_APP], ['formId' => null, 'permission' => AppPermissions::MANAGE_USERS], ['formId' => $form, 'permission' => AppPermissions::VIEW_ANALYTICS]],
+        ] as $attempt) {
+            $refused = null;
+            try {
+                self::$svc->setRolePermissions($admin, $attempt, false);
+            } catch (\RuntimeException $e) {
+                $refused = $e;
+            }
+            $this->assertNotNull($refused);
+            $this->assertEqualsCanonicalizing($kept, $current());
+        }
+
+        // The editor's own save (every app-level grant back as it is, listed twice by a slow
+        // double click) still goes through, and stores each grant once.
+        $asIs = [
+            ['formId' => null, 'permission' => AppPermissions::MANAGE_APP],
+            ['formId' => null, 'permission' => AppPermissions::MANAGE_USERS],
+            ['formId' => $form, 'permission' => AppPermissions::VIEW_ANALYTICS],
+        ];
+        self::$svc->setRolePermissions($admin, array_merge($asIs, $asIs, [['formId' => $form, 'permission' => AppPermissions::SUBMIT_RESPONSES]]), false);
+        $this->assertEqualsCanonicalizing(array_merge($kept, [AppPermissions::SUBMIT_RESPONSES . '@' . $form]), $current());
+    }
+
+    /**
      * Only the owner gives app-level permissions (grants, role assignments, invitations), so only
      * the owner takes them away: a delegated MANAGE_USERS holder may not change the role of, suspend
      * or remove a member whose role grants any app-level permission. Members below that line stay

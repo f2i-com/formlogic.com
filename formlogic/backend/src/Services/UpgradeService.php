@@ -396,9 +396,10 @@ class UpgradeService
     /**
      * Judge an uploaded release inside the ZIP before any of it is written: the manifest must
      * pass manifestIntegrity(), every entry must be listed in it (bar the manifest files
-     * themselves), and every entry's bytes, read no further than the size its headers declare,
-     * must match the listed checksum. A refused archive leaves nothing on disk; the extracted
-     * tree is verified again afterwards (verifyPackageTree), and once more before apply.
+     * themselves) and be there once, and every entry's bytes, the manifest files' too, read no
+     * further than the size its headers declare, must match the listed checksum. A refused
+     * archive leaves nothing on disk; the extracted tree is verified again afterwards
+     * (verifyPackageTree), and once more before apply.
      */
     private function verifyArchiveBeforeExtraction(\ZipArchive $zip, ?string $trustedManifest): void
     {
@@ -425,17 +426,30 @@ class UpgradeService
         foreach ($manifest['files'] as $rel => $sha) {
             $listed[strtolower(str_replace('\\', '/', (string) $rel))] = (string) $sha;
         }
+        // A ZIP may hold two entries with one name. A read by name returns the first and
+        // extractTo() writes them in order, so the last is what lands on disk: each entry is
+        // read by its position, and a name used twice (the manifest files' included, which
+        // are read by name above) is refused. No release carries one.
+        $seen = [];
         for ($i = 0; $i < $zip->numFiles; $i++) {
             $stat = $zip->statIndex($i);
             $name = str_replace('\\', '/', (string) ($stat['name'] ?? ''));
-            if ($name === '' || str_ends_with($name, '/') || in_array($name, self::MANIFEST_EXEMPT_FILES, true)) {
+            if ($name === '' || str_ends_with($name, '/')) {
                 continue;
             }
+            if (isset($seen[strtolower($name)])) {
+                throw new \RuntimeException("Package integrity failure: {$name} is in the archive more than once — refused");
+            }
+            $seen[strtolower($name)] = true;
+            // The manifest files are not listed in the manifest, so they have no checksum to
+            // meet, but they are extracted like the rest and so are held to their declared
+            // size like the rest (read by name above, they were read only that far).
+            $exempt = in_array($name, self::MANIFEST_EXEMPT_FILES, true);
             $expected = $listed[strtolower($name)] ?? null;
-            if ($expected === null) {
+            if ($expected === null && !$exempt) {
                 throw new \RuntimeException("Package integrity failure: {$name} is not listed in the manifest — refused");
             }
-            $stream = $zip->getStream((string) $stat['name']);
+            $stream = $zip->getStreamIndex($i);
             if ($stream === false) {
                 throw new \RuntimeException("Package integrity failure: {$name} could not be read");
             }
@@ -455,7 +469,7 @@ class UpgradeService
                 hash_update($ctx, $chunk);
             }
             fclose($stream);
-            if (!hash_equals($expected, hash_final($ctx))) {
+            if (!$exempt && !hash_equals((string) $expected, hash_final($ctx))) {
                 throw new \RuntimeException("Package integrity failure: {$name} does not match its manifest checksum");
             }
         }
@@ -585,6 +599,17 @@ class UpgradeService
                 $journal[] = "Backend files applied ({$counts} files)";
                 $removed = $this->deleteStale($this->apiRoot, "{$staging}/api", self::PROTECTED_API_PATHS);
                 $journal[] = "Stale backend files removed ({$removed})";
+                // The one file under api/storage a release owns: storage/.htaccess, which keeps
+                // the directory from being served over HTTP. Nothing is copied into storage/
+                // (above), so an install from before that file existed would never get it. It
+                // is laid down where there is none; an operator's own is left alone.
+                $storageRules = "{$staging}/api/storage/.htaccess";
+                $installedRules = $this->apiRoot . '/storage/.htaccess';
+                if (is_file($storageRules) && !file_exists($installedRules) && is_dir(dirname($installedRules))) {
+                    $journal[] = @copy($storageRules, $installedRules)
+                        ? 'storage/.htaccess added (nothing under storage/ is served over HTTP)'
+                        : 'storage/.htaccess could NOT be written: copy it from the release into api/storage';
+                }
                 $webExclude = array_merge(self::PROTECTED_WEB_PATHS, ['.staged-info.json']);
                 $counts = $this->copyTree($staging, $layout['webRoot'], $webExclude);
                 $journal[] = "Frontend files applied ({$counts} files)";

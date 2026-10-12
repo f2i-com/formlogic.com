@@ -198,6 +198,37 @@ class AuthEndpointsRateLimitTest extends TestCase
         $this->assertStringStartsWith('Too many login attempts for this account', $refused->getMessage(), 'a missing account must lock the same way');
     }
 
+    /**
+     * The limit's key is a weight the database computes from the submitted address, before
+     * the gate. users.email holds 255 characters, so an address longer than that (in bytes,
+     * 255 four-byte characters) is nobody's and is answered without asking the database to
+     * weigh it: at the 2 MB body limit that was ~8 MB of weight and ~70 ms of the database
+     * per attempt. Padded with characters the collation ignores it used to select the account.
+     */
+    public function testAnAddressLongerThanAnyAccountsIsRefusedWithoutBeingWeighed(): void
+    {
+        $email = $this->uniqueEmail('overlong');
+        $password = 'a-strong-password-123';
+        self::$authService->register($email, $password);
+
+        foreach ([
+            'no-break spaces after it' => $email . str_repeat(mb_chr(0x00A0, 'UTF-8'), 600),
+            'megabytes of them' => $email . str_repeat(mb_chr(0x00A0, 'UTF-8'), 600000),
+        ] as $label => $padded) {
+            $refused = null;
+            try {
+                self::$authService->login($padded, $password, '198.51.100.77');
+            } catch (\RuntimeException $e) {
+                $refused = $e;
+            }
+            $this->assertNotNull($refused, "an address with $label is no account's address");
+            $this->assertSame('Invalid email or password', $refused->getMessage(), $label);
+        }
+
+        // The address itself, at any length an account can have, still signs in.
+        $this->assertSame($email, self::$authService->login($email . mb_chr(0x00A0, 'UTF-8'), $password, '198.51.100.77')['user']['email']);
+    }
+
     // ---------------------------------------------------------------------
     // (c) Gap 1 — PUT/DELETE /me per-user rate limiter returns 429
     // ---------------------------------------------------------------------

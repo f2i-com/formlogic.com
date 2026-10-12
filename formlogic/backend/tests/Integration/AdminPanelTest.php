@@ -793,6 +793,88 @@ class AdminPanelTest extends TestCase
         $this->assertSame([], $svc->listBackups());
     }
 
+    /**
+     * A ZIP may hold two entries with one name. Looked up by name, the first is the only one
+     * ever read, so the check before extraction verified it twice and never saw the second;
+     * extraction then wrote the second over it, at whatever size it inflates to. Every entry is
+     * read by its position, and a release that names a file twice is refused before extraction.
+     */
+    public function testAnEntryNamedTwiceIsRefusedBeforeExtraction(): void
+    {
+        [, $apiRoot] = $this->buildFakeInstall();
+        $svc = $this->upgradeService($apiRoot, new MaintenanceService($apiRoot . '/storage/maintenance.json'));
+
+        // A correctly signed release plus one unlisted entry whose name is one letter off a
+        // listed file's, then renamed in place (local header and central directory) to that file.
+        $zipPath = $this->buildFakePackage('2.0.0', extraFiles: ['api/src/NewFeaturX.php' => '<?php // NOT WHAT WAS SIGNED'], listExtras: false);
+        $bytes = (string) file_get_contents($zipPath);
+        $this->assertSame(2, substr_count($bytes, 'api/src/NewFeaturX.php'));
+        file_put_contents($zipPath, str_replace('api/src/NewFeaturX.php', 'api/src/NewFeature.php', $bytes));
+        $zip = new \ZipArchive();
+        $this->assertTrue($zip->open($zipPath), 'the archive with a repeated name still opens');
+        $names = [];
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $names[] = $zip->getNameIndex($i);
+        }
+        $zip->close();
+        $this->assertSame(2, count(array_keys($names, 'api/src/NewFeature.php', true)));
+
+        $refused = null;
+        try {
+            $svc->stageUploadedPackage($zipPath);
+        } catch (\RuntimeException $e) {
+            $refused = $e;
+        }
+        $this->assertNotNull($refused);
+        $this->assertStringContainsString('more than once', $refused->getMessage(), 'refused for the repeated name, before anything is extracted');
+        $this->assertNull($svc->stagedInfo());
+    }
+
+    /**
+     * The manifest files are not in the manifest, so the check before extraction skipped them,
+     * and with them the one bound on what an entry may inflate to: its declared size, which is
+     * what the 2 GiB cap adds up. A signature file that is the real signature followed by
+     * megabytes of spaces, declared at the signature's length, read back as a valid signature
+     * and was then extracted whole. Every entry is held to its declared size, listed or not.
+     */
+    public function testAManifestFileLargerThanItDeclaresIsRefusedBeforeExtraction(): void
+    {
+        [, $apiRoot] = $this->buildFakeInstall();
+        $svc = $this->upgradeService($apiRoot, new MaintenanceService($apiRoot . '/storage/maintenance.json'));
+
+        $zipPath = $this->buildFakePackage('2.0.0');
+        $zip = new \ZipArchive();
+        $this->assertTrue($zip->open($zipPath));
+        $signature = (string) $zip->getFromName('manifest.sig.json');
+        $zip->addFromString('manifest.sig.json', $signature . str_repeat(' ', 4 * 1024 * 1024));
+        $zip->close();
+        // Both headers of the entry now declare the signature's own length.
+        $bin = (string) file_get_contents($zipPath);
+        $patched = 0;
+        foreach ([["PK\x03\x04", 26, 30, 22], ["PK\x01\x02", 28, 46, 24]] as [$magic, $lengthAt, $nameAt, $sizeAt]) {
+            for ($o = strpos($bin, $magic); $o !== false; $o = strpos($bin, $magic, $o + 4)) {
+                $nameLength = unpack('v', substr($bin, $o + $lengthAt, 2))[1];
+                if (substr($bin, $o + $nameAt, $nameLength) === 'manifest.sig.json') {
+                    $bin = substr_replace($bin, pack('V', strlen($signature)), $o + $sizeAt, 4);
+                    $patched++;
+                }
+            }
+        }
+        $this->assertSame(2, $patched, 'the local and the central header of the entry');
+        file_put_contents($zipPath, $bin);
+        $this->assertLessThan(64 * 1024, filesize($zipPath), 'a small upload');
+
+        $refused = null;
+        try {
+            $svc->stageUploadedPackage($zipPath);
+        } catch (\RuntimeException $e) {
+            $refused = $e;
+        }
+        $this->assertNotNull($refused, 'a release whose signature file inflates past its declared size must not be staged');
+        $this->assertStringContainsString('larger than the archive declares', $refused->getMessage());
+        $this->assertNull($svc->stagedInfo());
+    }
+
     public function testApplyIsBoundToTheReviewedImmutablePackage(): void
     {
         // Review FL-008: apply(packageId, digest) + tamper re-verification.
@@ -861,6 +943,36 @@ class AdminPanelTest extends TestCase
         }
         $svc->discardStagedPackage();
         $this->assertNull($svc->stagedInfo());
+    }
+
+    /**
+     * storage/.htaccess (nothing under storage/ is served over HTTP) ships in a release, but an
+     * upgrade copies nothing into api/storage, the directory it must never touch. So an install
+     * from before the file existed kept upgrading without it, and the layer the file is there to
+     * be was missing on every site that was not a fresh install. It is the one file under
+     * storage/ a release owns: an upgrade lays it down where there is none, and leaves an
+     * operator's own alone, with everything else in storage/ as it was.
+     */
+    public function testAnUpgradeLaysDownTheStorageAccessFileWhereThereIsNone(): void
+    {
+        $rules = "Require all denied\n";
+        foreach ([null, "# the operator's own rules\nRequire all denied\n"] as $existing) {
+            [, $apiRoot] = $this->buildFakeInstall();
+            if ($existing !== null) {
+                file_put_contents($apiRoot . '/storage/.htaccess', $existing);
+            }
+            $svc = $this->upgradeService($apiRoot, new MaintenanceService($apiRoot . '/storage/maintenance.json'));
+            $staged = $svc->stageUploadedPackage($this->buildFakePackage('2.0.0', extraFiles: [
+                'api/storage/.htaccess' => $rules,
+                'api/storage/forms/planted.sqlite' => 'a release never writes here',
+            ]));
+            $this->assertTrue($svc->apply($this->adminId, false, $staged['packageId'], $staged['digest'])['ok']);
+
+            $this->assertFileExists($apiRoot . '/storage/.htaccess', 'an upgraded install must have the storage access file');
+            $this->assertSame($existing ?? $rules, (string) file_get_contents($apiRoot . '/storage/.htaccess'));
+            $this->assertSame('PRECIOUS-USER-RECORDS', (string) file_get_contents($apiRoot . '/storage/forms/user-data.sqlite'));
+            $this->assertFileDoesNotExist($apiRoot . '/storage/forms/planted.sqlite', 'nothing else under storage/ comes from a release');
+        }
     }
 
     public function testUpgradeApplyProtectsUserDataAndBacksUpFirst(): void

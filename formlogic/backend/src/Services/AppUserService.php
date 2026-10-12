@@ -234,33 +234,6 @@ class AppUserService
             throw new \RuntimeException('The Owner role cannot be modified');
         }
 
-        // App-level grants are the owner's to manage. A non-owner may not add one (a delegated
-        // MANAGE_ROLES holder could grant itself MANAGE_APP / MANAGE_USERS / MANAGE_ROLES and
-        // escalate to full app admin), nor drop one (the delete-and-reinsert below would strip
-        // the Admin role of what the owner gave it). The role editor shows them disabled to a
-        // non-owner and sends them back as they are, which is what passes here.
-        if (!$actorIsOwner) {
-            $appLevelPlaceholders = implode(',', array_fill(0, count(AppPermissions::APP_LEVEL), '?'));
-            $cur = $this->mysql->prepare("SELECT permission, form_id FROM app_role_permissions WHERE role_id = ? AND permission IN ($appLevelPlaceholders)");
-            $cur->execute(array_merge([$roleId], AppPermissions::APP_LEVEL));
-            $currentAppLevel = [];
-            foreach ($cur->fetchAll() as $row) {
-                $currentAppLevel[$row['permission'] . '|' . ($row['form_id'] ?? '')] = true;
-            }
-            $requestedAppLevel = [];
-            foreach ($permissions as $perm) {
-                if (in_array($perm['permission'] ?? null, AppPermissions::APP_LEVEL, true)) {
-                    $requestedAppLevel[$perm['permission'] . '|' . ($perm['formId'] ?? '')] = true;
-                }
-            }
-            if (array_diff_key($requestedAppLevel, $currentAppLevel) !== []) {
-                throw new \RuntimeException('Only the app owner can grant app-level permissions');
-            }
-            if (array_diff_key($currentAppLevel, $requestedAppLevel) !== []) {
-                throw new \RuntimeException('Only the app owner can remove app-level permissions');
-            }
-        }
-
         // Build set of valid form IDs for this app (to validate formId in permissions)
         $appId = $role['appId'];
         $validFormIds = [];
@@ -268,6 +241,49 @@ class AppUserService
         $fStmt->execute(['app_id' => $appId]);
         foreach ($fStmt->fetchAll() as $row) {
             $validFormIds[$row['form_id']] = true;
+        }
+
+        // What this save stores: each known permission once, app-wide (formId null) or on a form
+        // of this app. Anything else in the request is skipped, as it always was.
+        $rows = [];
+        foreach ($permissions as $perm) {
+            if (!is_array($perm) || !in_array($perm['permission'] ?? null, AppPermissions::ALL, true)) {
+                continue;
+            }
+            $formId = $perm['formId'] ?? null;
+            // Skip permissions referencing forms not in this app
+            if ($formId !== null && (!is_string($formId) || !isset($validFormIds[$formId]))) {
+                continue;
+            }
+            $rows[$perm['permission'] . '|' . ($formId ?? '')] = ['permission' => $perm['permission'], 'formId' => $formId];
+        }
+
+        // App-level grants are the owner's to manage. A non-owner may not add one (a delegated
+        // MANAGE_ROLES holder could grant itself MANAGE_APP / MANAGE_USERS / MANAGE_ROLES and
+        // escalate to full app admin), nor drop one (the delete-and-reinsert below would strip
+        // the Admin role of what the owner gave it). The role editor shows them disabled to a
+        // non-owner and sends them back as they are, which is what passes here. Judged on what
+        // would be stored ($rows), not on the request: a grant sent with a formId the save skips
+        // ("" for one) is a grant dropped, however unchanged the request made it look.
+        if (!$actorIsOwner) {
+            $appLevelPlaceholders = implode(',', array_fill(0, count(AppPermissions::APP_LEVEL), '?'));
+            $cur = $this->mysql->prepare("SELECT permission, form_id FROM app_role_permissions WHERE role_id = ? AND permission IN ($appLevelPlaceholders)");
+            $cur->execute(array_merge([$roleId], AppPermissions::APP_LEVEL));
+            $currentAppLevel = [];
+            foreach ($cur->fetchAll() as $row) {
+                // A grant left on a form since taken out of the app cannot be stored again by
+                // anyone, so it is not one this save can be said to drop.
+                if ($row['form_id'] === null || isset($validFormIds[$row['form_id']])) {
+                    $currentAppLevel[$row['permission'] . '|' . ($row['form_id'] ?? '')] = true;
+                }
+            }
+            $storedAppLevel = array_filter($rows, static fn (array $r): bool => in_array($r['permission'], AppPermissions::APP_LEVEL, true));
+            if (array_diff_key($storedAppLevel, $currentAppLevel) !== []) {
+                throw new \RuntimeException('Only the app owner can grant app-level permissions');
+            }
+            if (array_diff_key($currentAppLevel, $storedAppLevel) !== []) {
+                throw new \RuntimeException('Only the app owner can remove app-level permissions');
+            }
         }
 
         $inTransaction = $this->mysql->inTransaction();
@@ -287,21 +303,13 @@ class AppUserService
                 VALUES (:id, :role_id, :form_id, :permission)
             ");
 
-            foreach ($permissions as $perm) {
-                if (!in_array($perm['permission'], AppPermissions::ALL, true)) {
-                    continue;
-                }
-                // (A non-owner's app-level grants were checked above to equal the role's own.)
-                $formId = $perm['formId'] ?? null;
-                // Skip permissions referencing forms not in this app
-                if ($formId !== null && !isset($validFormIds[$formId])) {
-                    continue;
-                }
+            // (A non-owner's app-level grants were checked above to equal the role's own.)
+            foreach ($rows as $row) {
                 $stmt->execute([
                     'id' => $this->generateUuid(),
                     'role_id' => $roleId,
-                    'form_id' => $formId,
-                    'permission' => $perm['permission'],
+                    'form_id' => $row['formId'],
+                    'permission' => $row['permission'],
                 ]);
             }
 

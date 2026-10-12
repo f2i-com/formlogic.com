@@ -71,6 +71,52 @@ class CsrfMiddlewareTest extends TestCase
         }
     }
 
+    /**
+     * Slim's router matches the percent-DECODED path (RouteResolver::computeRoutingResults), so
+     * /api/auth/logi%6E runs the login route. Judged on the raw path it was not "a cookie-setting
+     * route", carried no auth cookie, and so passed with no check at all: a cross-site
+     * <form action=".../api/auth/logi%6E"> signed a visitor in to the attacker's account. The
+     * path judged is the one the router will run. Through a real Slim app, body parsing included.
+     */
+    public function testAPercentEncodedPathIsJudgedAsTheRouteItRuns(): void
+    {
+        $reached = [];
+        $app = \Slim\Factory\AppFactory::create();
+        foreach (['/api/auth/login', '/api/auth/register', '/api/auth/mfa/verify', '/api/demo/start'] as $route) {
+            $app->post($route, function (ServerRequestInterface $request, ResponseInterface $response) use (&$reached, $route) {
+                $reached[] = [$route, (array) $request->getParsedBody()];
+                return $response;
+            });
+        }
+        $app->addBodyParsingMiddleware();
+        $app->add(new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', 'formlogic_auth', self::SECRET));
+        $app->addRoutingMiddleware();
+
+        $form = static function (string $path): ServerRequestInterface {
+            $request = (new ServerRequestFactory())->createServerRequest('POST', 'http://api.test' . $path)
+                ->withHeader('Content-Type', 'application/x-www-form-urlencoded');
+            $request->getBody()->write('email=attacker%40evil.example&password=the-attackers-password');
+            $request->getBody()->rewind();
+            return $request;
+        };
+
+        foreach (['/api/auth/logi%6E', '/api/auth/%6cogin', '/api%2Fauth%2Flogin', '/api/auth/regi%73ter', '/api/auth/mfa/verif%79', '/api/demo/st%61rt'] as $path) {
+            $reached = [];
+            $response = $app->handle($form($path));
+            $this->assertSame([], $reached, "a cross-site form posted to $path must not reach the route");
+            $this->assertSame(403, $response->getStatusCode(), $path);
+        }
+
+        // The same spelling with a JSON body is the SPA's own request, and still served.
+        $json = (new ServerRequestFactory())->createServerRequest('POST', 'http://api.test/api/auth/logi%6E')
+            ->withHeader('Content-Type', 'application/json');
+        $json->getBody()->write('{"email":"a@b.example","password":"x"}');
+        $json->getBody()->rewind();
+        $reached = [];
+        $this->assertSame(200, $app->handle($json)->getStatusCode());
+        $this->assertSame('/api/auth/login', $reached[0][0] ?? null);
+    }
+
     public function testStateChangeWithAuthCookieNeedsTheTokenBoundToThatSession(): void
     {
         $auth = 'header.payload.signature';

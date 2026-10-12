@@ -49,7 +49,15 @@ class CsrfMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         }
 
-        $path = $request->getUri()->getPath();
+        // The path is judged as the router will match it: percent-decoded
+        // (Slim\Routing\RouteResolver::computeRoutingResults). On the raw path,
+        // /api/auth/logi%6E was not one of the cookie-setting routes below, though it
+        // runs the login route, and a signed-out visitor carries no auth cookie, so a
+        // cross-site form posted there passed with no check at all.
+        $path = rawurldecode($request->getUri()->getPath());
+        if ($path === '' || $path[0] !== '/') {
+            $path = '/' . $path;
+        }
 
         // Cookie-SETTING auth routes (login/register) can't use the double-submit
         // token because they MINT it — but a blanket exemption made them a login-CSRF

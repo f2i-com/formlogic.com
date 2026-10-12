@@ -602,6 +602,11 @@ final class NativeAppControllerTest extends TestCase
         $this->assertStringStartsWith("The app's backend could not start", NativeAppService::startupFailure('application_source'));
         $this->assertStringEndsWith('(application_source)', NativeAppService::startupFailure('application_source'));
         $this->assertStringContainsString('check its SQL', NativeAppService::startupFailure('database_migrations'));
+        // A newer app host's own label for a migration it stopped at its deadline and no longer
+        // retries: the SQL is sound, so "check its SQL" and "ask your administrator" both
+        // send the author the wrong way.
+        $this->assertStringContainsString('smaller migrations', NativeAppService::startupFailure('migration_stopped'));
+        $this->assertStringNotContainsString('administrator', NativeAppService::startupFailure('migration_stopped'));
         $this->assertStringContainsString('matched exactly', NativeAppService::startupFailure('route_configuration'));
         $this->assertStringContainsString('Ask your administrator', NativeAppService::startupFailure('wasm_initialization'));
         $this->assertStringNotContainsString('()', NativeAppService::startupFailure(''));

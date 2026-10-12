@@ -456,7 +456,10 @@ class ResponseService
                 $ctx[$field['id']] = null;
             }
         }
-        $ctx = array_merge($ctx, $answers);
+        // An answer past MAX_ANSWER_DEPTH or MAX_ANSWER_VALUES is withheld: the sandbox would
+        // refuse the whole batch for it, and every rule below would then be read as "could not
+        // be evaluated".
+        $ctx = array_merge($ctx, self::answersForEvaluation($answers));
 
         // Evaluate ALL conditional expressions in a single sandbox round-trip.
         try {
@@ -550,9 +553,13 @@ class ResponseService
         // fields (was one process spawn per field per pass). Best-effort — a
         // broken expression is skipped.
         $passes = count($jobs);
+        // An answer past MAX_ANSWER_DEPTH or MAX_ANSWER_VALUES is withheld, as in
+        // computeFieldVisibility. Which ones is settled once: the passes add calculated values,
+        // never a submitted one.
+        $withheld = array_keys(self::answerShapeProblems($answers));
         for ($pass = 0; $pass < $passes; $pass++) {
             try {
-                $results = $this->getFormLogic()->evaluateBatch($jobs, $answers);
+                $results = $this->getFormLogic()->evaluateBatch($jobs, self::answersForEvaluation($answers, $withheld));
             } catch (\Throwable $e) {
                 break;
             }
@@ -572,6 +579,125 @@ class ResponseService
             if (!$changed) {
                 break;
             }
+        }
+        return $answers;
+    }
+
+    /**
+     * How many levels of lists and objects an answer may have. No field type stores more than
+     * two (a file upload is a list of objects of plain values; a location is one object), so
+     * this is several times what a form produces and far below what the sandbox will parse:
+     * its launcher refuses a job whose JSON nests past its own limit (63 levels in an answer
+     * with the launcher of ZIPP v0.0.22), and it refuses the WHOLE batch, which the callers
+     * below read as "no rule could be evaluated". One answer nested that deep, in a type whose
+     * value carries keys nobody checks (a location, a signature, a file item), switched a
+     * form's conditional validation off for whoever sent it.
+     */
+    public const MAX_ANSWER_DEPTH = 16;
+
+    /**
+     * How many values (plain values, lists and objects, counted together) one answer may hold.
+     * A field stores a few hundred at most (the options ticked, the files attached with their
+     * handful of properties, the records linked). Width fails a batch as depth does: 650,000
+     * empty lists are under the 2 MB answer cap and exhaust the sandbox's memory budget.
+     */
+    public const MAX_ANSWER_VALUES = 10000;
+
+    /** The codes of the refusals for an answer past MAX_ANSWER_DEPTH / MAX_ANSWER_VALUES. */
+    public const ANSWER_TOO_DEEP = 'answer_too_deep';
+    public const ANSWER_TOO_MANY_VALUES = 'answer_too_many_values';
+
+    /**
+     * The answers past MAX_ANSWER_DEPTH or MAX_ANSWER_VALUES, as fieldId → a message naming the
+     * field (empty when there is none). Every path that takes answers refuses on this before
+     * it evaluates anything: the app runtime as its first check, the shared validation
+     * (validateSubmittedAnswers) and createResponse for the rest.
+     *
+     * @param array<int, array<string, mixed>> $fields the form's field definitions, for the labels
+     * @param array<string, mixed> $answers
+     * @return array<string, string>
+     */
+    public function answerShapeErrors(array $fields, array $answers): array
+    {
+        $errors = [];
+        foreach (self::answerShapeProblems($answers) as $fieldId => $code) {
+            $label = (string) $fieldId;
+            foreach ($fields as $field) {
+                if (is_array($field) && (string) ($field['id'] ?? '') === (string) $fieldId && is_string($field['label'] ?? null) && $field['label'] !== '') {
+                    $label = $field['label'];
+                    break;
+                }
+            }
+            $errors[(string) $fieldId] = $code === self::ANSWER_TOO_DEEP
+                ? "$label: this answer is nested too deeply (more than " . self::MAX_ANSWER_DEPTH . ' levels)'
+                : "$label: this answer holds too many values (more than " . self::MAX_ANSWER_VALUES . ')';
+        }
+        return $errors;
+    }
+
+    /**
+     * Which answers are past a limit, and which limit: fieldId → ANSWER_TOO_DEEP or
+     * ANSWER_TOO_MANY_VALUES.
+     *
+     * @param array<string, mixed> $answers
+     * @return array<int|string, string>
+     */
+    public static function answerShapeProblems(array $answers): array
+    {
+        $problems = [];
+        foreach ($answers as $fieldId => $value) {
+            if (!is_array($value)) {
+                continue;
+            }
+            $budget = self::MAX_ANSWER_VALUES;
+            $problem = self::shapeProblem($value, self::MAX_ANSWER_DEPTH, $budget);
+            if ($problem !== null) {
+                $problems[$fieldId] = $problem;
+            }
+        }
+        return $problems;
+    }
+
+    /**
+     * Walks a list or object until it is known to fit ($levels levels, $budget values) or not.
+     * It stops at the first level or value past a limit, so it is never more than
+     * MAX_ANSWER_DEPTH + 1 calls deep nor more than MAX_ANSWER_VALUES + 1 steps long whatever
+     * it is given, and it keeps nothing per value: this runs on every submission.
+     */
+    private static function shapeProblem(array $node, int $levels, int &$budget): ?string
+    {
+        if ($levels <= 0) {
+            return self::ANSWER_TOO_DEEP;
+        }
+        foreach ($node as $child) {
+            if (--$budget < 0) {
+                return self::ANSWER_TOO_MANY_VALUES;
+            }
+            if (is_array($child)) {
+                $problem = self::shapeProblem($child, $levels - 1, $budget);
+                if ($problem !== null) {
+                    return $problem;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The answers as an expression may see them: one past MAX_ANSWER_DEPTH or MAX_ANSWER_VALUES
+     * is withheld (null), so it can fail neither the batch nor the rules about the other
+     * answers. Such an answer is refused before it is stored; this is for the evaluations that
+     * run before that refusal, and for a record stored before there was one.
+     *
+     * @param array<string, mixed> $answers
+     * @param list<int|string>|null $withheld the ids to withhold, when the caller has them
+     *   (array_keys of answerShapeProblems) and evaluates more than once
+     * @return array<string, mixed>
+     */
+    private static function answersForEvaluation(array $answers, ?array $withheld = null): array
+    {
+        foreach ($withheld ?? array_keys(self::answerShapeProblems($answers)) as $fieldId) {
+            $answers[$fieldId] = null;
         }
         return $answers;
     }
@@ -685,7 +811,9 @@ class ResponseService
      */
     public function validateSubmittedAnswers(array $fields, array $answers): array
     {
-        $errors = [];
+        // An answer past MAX_ANSWER_DEPTH or MAX_ANSWER_VALUES is refused by name, before
+        // anything is evaluated (the evaluation below does not see it either).
+        $errors = $this->answerShapeErrors($fields, $answers);
 
         // Honor conditional visibility (same as the public path) so a
         // conditionally-hidden required field doesn't reject a valid submission.
@@ -694,6 +822,7 @@ class ResponseService
         foreach ($fields as $field) {
             $fieldId = $field['id'] ?? null;
             if (!$fieldId) continue;
+            if (isset($errors[$fieldId])) continue;
 
             $fieldType = $field['type'] ?? 'short_text';
             if (in_array($fieldType, ['statement', 'welcome_screen', 'thank_you', 'calculated', 'hidden'], true)) continue;
@@ -1965,6 +2094,25 @@ class ResponseService
         // a form that no longer exists (orphaned file + a guaranteed MySQL FK 500).
         if (!$this->formExists($formId)) {
             throw new \RuntimeException('Form not found');
+        }
+
+        // No record is made with an answer past MAX_ANSWER_DEPTH or MAX_ANSWER_VALUES, whichever
+        // path led here (the app runtime and the shared validation refuse it earlier, with the
+        // field's label): it is not handed to the onSubmit script's job below, nor stored for
+        // the next evaluation to trip over. Refused as a rejection is, so every caller already
+        // passes the status, the code and the sentence on.
+        if (is_array($data['answers'] ?? null)) {
+            $problems = self::answerShapeProblems($data['answers']);
+            if ($problems !== []) {
+                $fieldId = array_key_first($problems);
+                return new ScriptRejection(
+                    $problems[$fieldId] === self::ANSWER_TOO_DEEP
+                        ? 'The answer to "' . $fieldId . '" is nested too deeply to be stored (more than ' . self::MAX_ANSWER_DEPTH . ' levels).'
+                        : 'The answer to "' . $fieldId . '" holds too many values to be stored (more than ' . self::MAX_ANSWER_VALUES . ').',
+                    $problems[$fieldId],
+                    422
+                );
+            }
         }
 
         $db = $this->sqlite->getFormDatabase($formId);

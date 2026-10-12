@@ -1290,7 +1290,16 @@ $container->set(\FormLogic\Controllers\HealthController::class, function (Contai
     );
 });
 $app->get('/api/health/deep', function ($request, $response) use ($container) {
-    return $container->get(\FormLogic\Controllers\HealthController::class)->deep($request, $response);
+    $response = $container->get(\FormLogic\Controllers\HealthController::class)->deep($request, $response);
+    // Client addresses (TRUSTED_PROXIES / TRUSTED_PROXY_HEADER): a value that cannot be used is
+    // read as unset rather than failing requests, so this report is where the operator learns of
+    // it. Never critical, so the status and its HTTP code stand as the controller computed them.
+    $report = json_decode((string) $response->getBody(), true);
+    if (is_array($report) && is_array($report['checks'] ?? null)) {
+        $report['checks']['client_addresses'] = \FormLogic\Helpers\IpResolver::healthCheck();
+        $response = $response->withBody((new \Slim\Psr7\Factory\StreamFactory())->createStream((string) json_encode($report, JSON_PRETTY_PRINT)));
+    }
+    return $response;
 })->add($adminGate)->add($authRequired);
 
 // Broadcast notices for signed-in dashboards: the SPA polls this (cheap, indexed)

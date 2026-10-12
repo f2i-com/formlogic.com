@@ -57,32 +57,56 @@ class IpResolver
     /** @var list<string> the forwarding headers read from a trusted proxy, in order */
     private array $forwardedHeaders;
 
+    /** @var array<string, int> when each set of configuration problems was last logged by this process */
+    private static array $problemsLoggedAt = [];
+
     /**
      * @param ?string $forwardedHeader the one header the trusted proxies write (x-forwarded-for,
-     *   x-real-ip or client-ip; case-insensitive). A client can send every one of them and a
-     *   proxy passes on those it does not set, so naming it means the others are never read: a
-     *   proxy that sets only X-Real-IP would otherwise hand on a client's own X-Forwarded-For,
-     *   which is read first. Null keeps the order X-Forwarded-For, X-Real-IP, Client-IP. A name
-     *   outside those three trusts no header.
+     *   x-real-ip or client-ip, however written: see forwardedHeaderName). A client can send every
+     *   one of them and a proxy passes on those it does not set, so naming it means the others
+     *   are never read: a proxy that sets only X-Real-IP would otherwise hand on a client's own
+     *   X-Forwarded-For, which is read first. Null keeps the order X-Forwarded-For, X-Real-IP,
+     *   Client-IP, and so does a name outside those three: read as "trust no header", one typo
+     *   made every client the proxy's own address, which is one rate-limit budget for the whole
+     *   site. forwardedHeaderProblem() is what tells the operator about the typo.
      */
     public function __construct(array $trustedProxies = [], ?string $forwardedHeader = null)
     {
         $this->trustedProxies = $trustedProxies;
-        if ($forwardedHeader === null || trim($forwardedHeader) === '') {
-            $this->forwardedHeaders = self::FORWARDED_HEADERS;
-        } else {
-            $key = self::HEADER_NAMES[strtolower(trim($forwardedHeader))] ?? null;
-            $this->forwardedHeaders = $key !== null ? [$key] : [];
-        }
+        $name = self::forwardedHeaderName($forwardedHeader);
+        $this->forwardedHeaders = $name !== null ? [self::HEADER_NAMES[$name]] : self::FORWARDED_HEADERS;
     }
 
     /**
-     * Create an instance with trusted proxies from environment variable.
-     *
-     * Set TRUSTED_PROXIES env var to a comma-separated list of IPs/CIDRs.
-     * Example: TRUSTED_PROXIES=10.0.0.0/8,172.16.0.1
+     * Which of the three headers a TRUSTED_PROXY_HEADER value names (a HEADER_NAMES key), or
+     * null when it names none of them (or nothing). A header name is read however an operator
+     * writes one: any case, "_" for "-", PHP's own "HTTP_" spelling, a trailing colon.
      */
-    public static function fromEnvironment(): self
+    private static function forwardedHeaderName(?string $value): ?string
+    {
+        $name = str_replace('_', '-', strtolower(rtrim(trim((string) $value), ':')));
+        if (str_starts_with($name, 'http-')) {
+            $name = substr($name, 5);
+        }
+        return isset(self::HEADER_NAMES[$name]) ? $name : null;
+    }
+
+    /**
+     * What is wrong with a TRUSTED_PROXY_HEADER value, in a sentence for the operator, or null
+     * when it is unset or names a header this resolver reads.
+     */
+    public static function forwardedHeaderProblem(?string $value): ?string
+    {
+        if ($value === null || trim($value) === '' || self::forwardedHeaderName($value) !== null) {
+            return null;
+        }
+        return 'TRUSTED_PROXY_HEADER is "' . self::printable($value) . '", which is not a header this server reads: set '
+            . implode(', ', array_keys(self::HEADER_NAMES)) . ', or leave it unset. It is being read as unset ('
+            . 'X-Forwarded-For, then X-Real-IP, then Client-IP), so a header your proxy does not write is taken from the client.';
+    }
+
+    /** The two settings as the environment has them: [TRUSTED_PROXIES entries, TRUSTED_PROXY_HEADER]. */
+    private static function environment(): array
     {
         $trustedProxies = [];
         $envValue = getenv('TRUSTED_PROXIES') ?: ($_ENV['TRUSTED_PROXIES'] ?? '');
@@ -93,7 +117,139 @@ class IpResolver
         }
         $header = getenv('TRUSTED_PROXY_HEADER') ?: ($_ENV['TRUSTED_PROXY_HEADER'] ?? null);
 
-        return new self($trustedProxies, is_string($header) ? $header : null);
+        return [array_values($trustedProxies), is_string($header) ? $header : null];
+    }
+
+    /**
+     * Create an instance with trusted proxies from environment variable.
+     *
+     * Set TRUSTED_PROXIES env var to a comma-separated list of IPs/CIDRs.
+     * Example: TRUSTED_PROXIES=10.0.0.0/8,172.16.0.1
+     */
+    public static function fromEnvironment(): self
+    {
+        [$trustedProxies, $header] = self::environment();
+        self::logProblems(self::problems($trustedProxies, $header));
+
+        return new self($trustedProxies, $header);
+    }
+
+    /**
+     * What is wrong with the two settings, one sentence each, for the operator.
+     *
+     * @param list<string> $trustedProxies
+     * @return list<string>
+     */
+    private static function problems(array $trustedProxies, ?string $header): array
+    {
+        $problems = [];
+        foreach ($trustedProxies as $entry) {
+            if (!self::usableRange($entry)) {
+                $problems[] = 'TRUSTED_PROXIES entry "' . self::printable($entry) . '" is not an IP address or a CIDR range, so it matches no proxy'
+                    . ' (a proxy that is not matched is counted as the client, for every request it forwards).';
+            } elseif (!self::isAddressOrRange($entry)) {
+                $problems[] = 'TRUSTED_PROXIES entry "' . self::printable($entry) . '" has more than one "/": only the first prefix length is read.';
+            }
+        }
+        $headerProblem = self::forwardedHeaderProblem($header);
+        if ($headerProblem !== null) {
+            $problems[] = $headerProblem;
+        } elseif ($header !== null && trim($header) !== '' && $trustedProxies === []) {
+            $problems[] = 'TRUSTED_PROXY_HEADER is set but TRUSTED_PROXIES is empty, so no forwarding header is read at all.';
+        }
+        return $problems;
+    }
+
+    /**
+     * Say what is wrong in PHP's error log, for the operator who does not open the Doctor page.
+     * PHP has no start-up to log at, and this runs on every request, so the same problems are
+     * written at most once an hour (a marker file in the temp directory keeps the time).
+     *
+     * @param list<string> $problems
+     */
+    private static function logProblems(array $problems): void
+    {
+        if ($problems === []) {
+            return;
+        }
+        $marker = self::problemMarker($problems);
+        // Where the marker cannot be kept, at least once per request, not once per resolver.
+        $last = @filemtime($marker);
+        if ($last === false) {
+            $last = self::$problemsLoggedAt[$marker] ?? false;
+        }
+        if ($last !== false && time() - $last < 3600) {
+            return;
+        }
+        self::$problemsLoggedAt[$marker] = time();
+        @touch($marker);
+        error_log('FormLogic client addresses: ' . implode(' ', $problems) . ' (Admin > Doctor shows this as the client_addresses check.)');
+    }
+
+    /** @param list<string> $problems */
+    private static function problemMarker(array $problems): string
+    {
+        return sys_get_temp_dir() . '/formlogic-client-addresses-' . substr(hash('sha256', implode("\n", $problems)), 0, 16) . '.warned';
+    }
+
+    /**
+     * The client-address settings as the operator's health report shows them (the
+     * `client_addresses` check of GET /api/health/deep, drawn by the admin Doctor page): ok
+     * while TRUSTED_PROXIES and TRUSTED_PROXY_HEADER can be used as written, otherwise not ok
+     * with a warning naming each problem. Never critical: a setting that cannot be used is
+     * read as unset, so the site still serves. What it costs is that clients may no longer be
+     * told apart (an unusable TRUSTED_PROXIES entry leaves the proxy untrusted, and every
+     * client is then counted as the proxy) or may choose their own address.
+     *
+     * @return array{ok: bool, critical: bool, detail: string, warning?: string}
+     */
+    public static function healthCheck(): array
+    {
+        [$trustedProxies, $header] = self::environment();
+        $problems = self::problems($trustedProxies, $header);
+
+        $check = [
+            'ok' => $problems === [],
+            'critical' => false,
+            'detail' => $trustedProxies === []
+                ? 'no trusted proxy: every client is its connecting address'
+                : count($trustedProxies) . ' trusted proxy entr' . (count($trustedProxies) === 1 ? 'y' : 'ies') . ', reading '
+                    . (self::forwardedHeaderName($header) ?? 'x-forwarded-for, x-real-ip, client-ip (in that order)'),
+        ];
+        if ($problems !== []) {
+            $check['warning'] = implode(' ', $problems);
+        }
+        return $check;
+    }
+
+    /** Whether a TRUSTED_PROXIES entry is written as it should be: an address, or address/bits. */
+    private static function isAddressOrRange(string $entry): bool
+    {
+        return substr_count($entry, '/') <= 1 && self::usableRange($entry);
+    }
+
+    /**
+     * Whether ipMatchesCidr can match an entry at all: a valid address, and after a "/" a prefix
+     * length that is a number within the address's size. (Anything after a second "/" is
+     * ignored, as it always was: "10.0.0.0/8/2" keeps matching as 10.0.0.0/8.)
+     */
+    private static function usableRange(string $entry): bool
+    {
+        $parts = explode('/', $entry);
+        if (filter_var($parts[0], FILTER_VALIDATE_IP) === false) {
+            return false;
+        }
+        if (count($parts) === 1) {
+            return true;
+        }
+        $max = filter_var($parts[0], FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false ? 128 : 32;
+        return ctype_digit($parts[1]) && (int) $parts[1] <= $max;
+    }
+
+    /** A configured value as it can be shown in a message: printable ASCII, not too long. */
+    private static function printable(string $value): string
+    {
+        return substr((string) preg_replace('/[^\x20-\x7E]/', '?', trim($value)), 0, 80);
     }
 
     /**
@@ -104,6 +260,7 @@ class IpResolver
      */
     public static function rateLimitSubject(string $ip): string
     {
+        $ip = self::unmapped($ip);
         if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) === false) {
             return $ip;
         }
@@ -111,10 +268,23 @@ class IpResolver
         if ($bytes === false || strlen($bytes) !== 16) {
             return $ip;
         }
-        if (substr($bytes, 0, 12) === str_repeat("\0", 10) . "\xff\xff") {
+        return inet_ntop(substr($bytes, 0, 8) . str_repeat("\0", 8)) . '/64';
+    }
+
+    /**
+     * An IPv4 address written as IPv4-mapped IPv6 (::ffff:a.b.c.d, how a dual-stack listener
+     * reports an IPv4 peer) as that IPv4 address; anything else unchanged.
+     */
+    private static function unmapped(string $ip): string
+    {
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) === false) {
+            return $ip;
+        }
+        $bytes = inet_pton($ip);
+        if ($bytes !== false && strlen($bytes) === 16 && substr($bytes, 0, 12) === str_repeat("\0", 10) . "\xff\xff") {
             return (string) inet_ntop(substr($bytes, 12));
         }
-        return inet_ntop(substr($bytes, 0, 8) . str_repeat("\0", 8)) . '/64';
+        return $ip;
     }
 
     /**
@@ -202,14 +372,28 @@ class IpResolver
      */
     private function ipMatchesCidr(string $ip, string $cidr): bool
     {
-        // Handle exact IP match
+        // An entry with no usable address or prefix length matches nothing (healthCheck reports
+        // it). Read loosely, "10.0.0.0/" was a /0 that trusted every peer, and "10.0.0.0/33" a
+        // negative shift that threw on every request.
+        if (!self::usableRange($cidr)) {
+            return false;
+        }
+        // ::ffff:a.b.c.d is the IPv4 address a.b.c.d, on either side.
+        $ip = self::unmapped($ip);
+
+        // Handle exact IP match: the same address, however either side spells it
         if (strpos($cidr, '/') === false) {
-            return $ip === $cidr;
+            $address = filter_var($ip, FILTER_VALIDATE_IP) !== false ? inet_pton($ip) : false;
+            return $address !== false && $address === inet_pton(self::unmapped($cidr));
         }
 
         // Handle CIDR notation
         [$subnet, $bits] = explode('/', $cidr);
         $bits = (int) $bits;
+        if ($bits >= 96 && self::unmapped($subnet) !== $subnet) {
+            $subnet = self::unmapped($subnet);
+            $bits -= 96;
+        }
 
         // Handle IPv6
         if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {

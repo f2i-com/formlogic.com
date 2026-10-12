@@ -22,6 +22,8 @@ class AuthService
 
     /** Maximum length for a user-supplied display name (users.name is VARCHAR(255)). */
     private const MAX_NAME_LENGTH = 255;
+    /** The most bytes an account's address can take: users.email is VARCHAR(255) in utf8mb4. */
+    private const MAX_EMAIL_BYTES = 255 * 4;
     public const MIN_PASSWORD_LENGTH = 10;
 
     /**
@@ -207,6 +209,15 @@ class AuthService
      */
     public function login(string $email, string $password, ?string $ipAddress = null): array
     {
+        // users.email holds 255 characters, so an address longer than 255 four-byte characters is
+        // nobody's. It is answered here, as a missing account is below, before the weight query:
+        // the request body may be megabytes, and the database would weigh all of it ahead of the
+        // gate (with characters the collation ignores, such an address even selected an account).
+        if (strlen($email) > self::MAX_EMAIL_BYTES) {
+            password_verify($password, self::DUMMY_PASSWORD_HASH);
+            throw new \RuntimeException('Invalid email or password');
+        }
+
         $limitEmail = $this->loginLimitIdentity($email);
         $rateLimitKey = $this->getRateLimitKey($limitEmail, $ipAddress);
         $emailKey = $this->getEmailRateLimitKey($limitEmail);

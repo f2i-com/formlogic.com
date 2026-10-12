@@ -269,6 +269,72 @@ class AppMemberAccessTest extends TestCase
         $this->assertSame(200, self::$apps->show($this->request($owner), new SlimResponse(), ['id' => $draft['id']])->getStatusCode());
     }
 
+    /**
+     * A dashboard's records grid names its form and the columns it shows (grid.formId,
+     * grid.columnFieldIds), as a list widget names its form. Only report and list widgets were
+     * dropped for a form the member cannot use, so a grid over such a form came through with
+     * its form id and field ids, in the runtime config, the list, the detail and the export.
+     */
+    public function testAGridWidgetOverAFormTheMemberCannotUseIsDropped(): void
+    {
+        $owner = $this->makeUser();
+        $formA = $this->makeForm($owner);
+        $formB = $this->makeForm($owner);
+        $app = $this->makeApp($owner, $formA, $formB);
+        self::$pdo->prepare('UPDATE apps SET custom_screen = ? WHERE id = ?')->execute([json_encode([
+            'enabled' => true, 'kind' => 'dashboard', 'dashboard' => ['version' => 1, 'widgets' => [
+                ['id' => 'gA', 'kind' => 'grid', 'grid' => ['formId' => $formA, 'columnFieldIds' => ['note']], 'layout' => []],
+                ['id' => 'gB', 'kind' => 'grid', 'grid' => ['formId' => $formB, 'columnFieldIds' => ['note']], 'layout' => []],
+                ['id' => 't', 'kind' => 'text', 'text' => ['body' => 'Welcome'], 'layout' => []],
+            ]],
+        ]), $app['id']]);
+        $member = $this->makeUser();
+        $this->addMember($app['id'], $member, [[$formA, AppPermissions::VIEW_ALL_RESPONSES]], 'active');
+
+        $widgets = static fn (array $payload): array => array_column($payload['customScreen']['dashboard']['widgets'] ?? [], 'id');
+        $shown = $this->json(self::$apps->show($this->request($member), new SlimResponse(), ['id' => $app['id']]))['body']['app'] ?? [];
+        $this->assertSame(['gA', 't'], $widgets($shown), 'GET /api/apps/{id}');
+        $runtime = $this->json(self::$runtime->getApp($this->request($member), new SlimResponse(), ['slug' => $app['slug']]))['body']['app'] ?? [];
+        $this->assertSame(['gA', 't'], $widgets($runtime), 'the app runtime');
+        $this->assertFalse($this->mentions($runtime['customScreen'] ?? [], $formB));
+
+        $ownerView = $this->json(self::$apps->show($this->request($owner), new SlimResponse(), ['id' => $app['id']]))['body']['app'] ?? [];
+        $this->assertSame(['gA', 'gB', 't'], $widgets($ownerView), 'the owner keeps the whole dashboard');
+    }
+
+    /**
+     * The publish history (GET /api/apps/{id}/versions) is the member's view too: nothing of an
+     * app they cannot open (the detail answers 404 for a draft or archived one, and so must its
+     * history), and no `publishedBy`, which is the owner's platform user id, the id the list and
+     * the detail strip as `ownerId`.
+     */
+    public function testPublishHistoryIsHeldToTheMembersView(): void
+    {
+        $owner = $this->makeUser();
+        $formA = $this->makeForm($owner);
+        $formB = $this->makeForm($owner);
+        $app = $this->makeApp($owner, $formA, $formB);
+        $archived = $this->makeApp($owner, $formA, $formB, 'archived');
+        $member = $this->makeUser();
+        foreach ([$app, $archived] as $a) {
+            $this->addMember($a['id'], $member, [[$formA, AppPermissions::VIEW_ALL_RESPONSES]], 'active');
+            self::$pdo->prepare("INSERT INTO app_versions (id, app_id, version, label, published_by) VALUES (?, ?, 1, 'First release', ?)")
+                ->execute(['av' . $this->uuid(), $a['id'], $owner]);
+        }
+
+        $history = $this->json(self::$apps->versions($this->request($member), new SlimResponse(), ['id' => $app['id']]));
+        $this->assertSame(200, $history['status']);
+        $this->assertSame('First release', $history['body']['versions'][0]['label'] ?? null);
+        $this->assertStringNotContainsString($owner, (string) json_encode($history['body']), "a member must not read the owner's user id from the publish history");
+
+        $this->assertSame(404, self::$apps->versions($this->request($member), new SlimResponse(), ['id' => $archived['id']])->getStatusCode(), 'an app the member cannot open has no history for them');
+
+        // The owner reads both, with who published.
+        $ownerHistory = $this->json(self::$apps->versions($this->request($owner), new SlimResponse(), ['id' => $archived['id']]));
+        $this->assertSame(200, $ownerHistory['status']);
+        $this->assertSame($owner, $ownerHistory['body']['versions'][0]['publishedBy'] ?? null);
+    }
+
     public function testAnExportHoldsTheCallerToTheRowsTheyMayRead(): void
     {
         $owner = $this->makeUser();

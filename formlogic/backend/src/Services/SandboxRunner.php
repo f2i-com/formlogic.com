@@ -51,7 +51,7 @@ class SandboxRunner
      */
     private const MAX_LINE_BYTES = 16 * 1024 * 1024;
 
-    /** How much of the end of the child's stderr an error message carries. */
+    /** How much of the end of the child's stderr the error log is given. */
     private const STDERR_TAIL_BYTES = 2048;
 
     private string $binary;
@@ -203,7 +203,8 @@ class SandboxRunner
 
         // stderr goes to a file, not a pipe: the loop below reads only stdout (Windows pipes
         // allow no select), so a child that filled a stderr pipe would stall there until the
-        // watchdog killed it. The file's tail explains a run that ends without a result.
+        // watchdog killed it. The file's tail explains a run that ends without a result (to
+        // the operator, in the error log).
         $stderrFile = tempnam(sys_get_temp_dir(), 'flsbx');
         $descriptors = [
             0 => ['pipe', 'r'],
@@ -318,7 +319,14 @@ class SandboxRunner
         if ($done === null) {
             // EOF without a "done" — watchdog kill or crash — or a line over the cap.
             $message = $failure ?? 'FormLogic runtime timed out or crashed';
-            return ['error' => $stderr !== '' ? $message . ': ' . $stderr : $message];
+            // What the child wrote to stderr is the operator's account of why, so it goes to
+            // the error log and not into the returned error: for an onSubmit script that error
+            // is shown to whoever submitted the form (ScriptRejection::unavailable), and a
+            // launcher's stderr names install paths and library versions.
+            if ($stderr !== '') {
+                error_log('FormLogic sandbox: ' . $message . '; the runtime wrote to stderr: ' . $stderr);
+            }
+            return ['error' => $message];
         }
         return $done;
     }

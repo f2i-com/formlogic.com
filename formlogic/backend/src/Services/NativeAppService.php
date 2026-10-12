@@ -1240,6 +1240,7 @@ class NativeAppService
             'application_source' => "The app's backend could not start: its code (server/main.logic) has an error, or a route names a function it does not define. Fix it in the source editor, or ask AI Studio to.",
             'route_configuration' => "A route in manifest.json is not one the app host serves: paths are under /api/ and matched exactly, methods are GET, POST, PUT or DELETE, and each route names a function in the backend.",
             'database_migrations' => "A database migration could not run: check its SQL. Migrations may create and alter tables and indexes and insert rows; triggers, views and PRAGMAs are not supported.",
+            'migration_stopped' => "A database migration did not finish within the app host's time limit and is no longer retried. Split it into smaller migrations (one large INSERT or index build to a file) and publish again.",
             'application_capabilities' => "The backend asks for a capability this server does not offer. Remove it from manifest.json's server.requires.capabilities, or ask your administrator.",
             'manifest_read', 'application_identity' => "manifest.json's server block could not be read: check its entry, requires, database and routes.",
             '' => 'The app host did not start and gave no reason. Ask your administrator to check the native app runtime.',
