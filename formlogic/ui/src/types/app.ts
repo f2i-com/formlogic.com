@@ -496,6 +496,21 @@ export const APP_LEVEL_PERMISSIONS: PermissionAction[] = [
   'manage_aokie_companion',
 ];
 
+/**
+ * The app-level permissions only the app's Owner may hand out, and whose holders only the Owner
+ * may re-role, suspend or remove: the server's AppPermissions::APP_LEVEL, which is every app-level
+ * permission above except execute_flows (running flows is not an admin-style grant).
+ */
+export const OWNER_GUARDED_PERMISSIONS: PermissionAction[] = APP_LEVEL_PERMISSIONS.filter((p) => p !== 'execute_flows');
+
+/** Why a manager who is not the Owner cannot act on such a member or hand out such a role. */
+export const OWNER_ONLY_MEMBER_REASON = 'Only the app owner can change the role of, suspend or remove a member whose role has app-level permissions.';
+
+/** Does this role grant a permission only the Owner may manage (see OWNER_GUARDED_PERMISSIONS)? */
+export function roleGrantsOwnerGuarded(role: Pick<AppRole, 'permissions'> | undefined): boolean {
+  return !!role?.permissions?.some((p) => OWNER_GUARDED_PERMISSIONS.includes(p.permission));
+}
+
 export const FORM_LEVEL_PERMISSIONS: PermissionAction[] = [
   'submit_responses',
   'view_own_responses',

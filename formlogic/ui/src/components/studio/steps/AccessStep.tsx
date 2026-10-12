@@ -34,7 +34,8 @@ import { useAppUserStore } from '../../../stores/appUserStore';
 import { returnToState } from '../../../hooks/useReturnTo';
 import { trackStudioSave } from '../studioSaveState';
 import { cn, copyToClipboard, formatRelativeTime } from '../../../lib/utils';
-import { APP_LEVEL_PERMISSIONS, APP_PERMISSION_LABELS } from '../../../types/app';
+import { useAuthStore } from '../../../stores/authStore';
+import { APP_LEVEL_PERMISSIONS, APP_PERMISSION_LABELS, OWNER_ONLY_MEMBER_REASON, roleGrantsOwnerGuarded } from '../../../types/app';
 import type { App, AppForm, AppRole, PermissionAction } from '../../../types/app';
 import type { Form } from '../../../types/form';
 
@@ -157,6 +158,10 @@ function RolesView({
 
   const selected = roles.find((r) => r.id === selectedRoleId) ?? roles[0] ?? null;
   const isOwnerRole = selected?.isSystem === true && selected?.name === 'Owner';
+  // App-level grants are the Owner's to give or take away (the server refuses anyone else), so
+  // a manager who is not the Owner sees them as the role editor shows them: disabled, "Owner only".
+  const userId = useAuthStore((s) => s.user?.id);
+  const isActorOwner = !userId || !app.ownerId || app.ownerId === userId;
   const selectedId = selected?.id ?? null;
   const draft = selectedId ? draftsByRole[selectedId] ?? null : null;
   const error = selectedId ? loadError[selectedId] ?? null : null;
@@ -432,6 +437,7 @@ function RolesView({
                     <PermissionMatrix
                       permissions={permissions}
                       forms={matrixForms}
+                      appLevelDisabled={!isActorOwner}
                       onChange={(next) => {
                         setDraftsByRole((s) => {
                           const current = s[selected.id];
@@ -507,6 +513,12 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
   // ("Cannot invite users to the Owner role" / "Cannot assign the Owner role"), so
   // offering it here is a choice that can only ever fail.
   const assignableRoles = roles.filter((r) => !(r.isSystem && r.name === 'Owner'));
+  // Only the Owner may change the role of, suspend or remove a member whose role grants an
+  // app-level permission, or give a member such a role; the server refuses anyone else, so those
+  // controls are disabled with the reason for a manager who is not the Owner.
+  const userId = useAuthStore((s) => s.user?.id);
+  const isActorOwner = !userId || !app.ownerId || app.ownerId === userId;
+  const ownerOnlyRole = (role: AppRole | undefined) => !isActorOwner && roleGrantsOwnerGuarded(role);
   const navigate = useNavigate();
   const location = useLocation();
   const { fetchUsers, fetchInvitations, inviteUser, revokeInvitation, removeUser, updateUser } = useAppUserStore();
@@ -642,6 +654,10 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
       <div className="divide-y divide-gray-100 dark:divide-white/[0.06]">
         {users.map((member) => {
           const name = member.name || member.email || 'This member';
+          const memberRole = roles.find((r) => r.id === member.roleId);
+          // The Owner's role and membership never change here; the server refuses both.
+          const isOwnerMember = (!!memberRole?.isSystem && memberRole.name === 'Owner') || (!!app.ownerId && member.userId === app.ownerId);
+          const ownerOnly = ownerOnlyRole(memberRole);
           return (
             <div key={member.id} className="flex flex-wrap items-center gap-3 px-4 py-3.5">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-xs font-bold text-primary-700 dark:bg-primary-500/10 dark:text-primary-300">
@@ -654,13 +670,14 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
                 </span>
               </span>
               {/* Role is changed here rather than only in a separate manager page. */}
-              {roles.length > 0 && !browserOnlyDemo ? (
+              {roles.length > 0 && !browserOnlyDemo && !isOwnerMember ? (
                 <select
                   value={roles.some((r) => r.id === member.roleId) ? member.roleId : ''}
                   onChange={(e) => void changeRole(member.id, e.target.value, name)}
-                  disabled={busyId === member.id}
+                  disabled={busyId === member.id || ownerOnly}
                   aria-label={`Role for ${name}`}
-                  className="h-8 min-w-0 max-w-[9rem] cursor-pointer rounded-lg border border-gray-200 bg-white px-2 text-[11px] font-semibold text-gray-700 outline-none max-sm:h-11 max-sm:max-w-none max-sm:flex-1 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200"
+                  title={ownerOnly ? OWNER_ONLY_MEMBER_REASON : undefined}
+                  className="h-8 min-w-0 max-w-[9rem] cursor-pointer rounded-lg border border-gray-200 bg-white px-2 text-[11px] font-semibold text-gray-700 outline-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:h-11 max-sm:max-w-none max-sm:flex-1 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200"
                 >
                   {/* A role the studio can't see (e.g. still loading) stays selected rather
                       than silently re-assigning the member to the first one in the list. */}
@@ -668,14 +685,15 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
                     <option value="">{member.roleName ?? 'No role'}</option>
                   )}
                   {assignableRoles.map((role) => (
-                    <option key={role.id} value={role.id}>{role.name}</option>
+                    <option key={role.id} value={role.id} disabled={ownerOnlyRole(role)}>{ownerOnlyRole(role) ? `${role.name} (Owner only)` : role.name}</option>
                   ))}
                 </select>
               ) : (
-                <Badge size="sm">{member.roleName ?? 'Member'}</Badge>
+                <Badge size="sm">{member.roleName ?? memberRole?.name ?? 'Member'}</Badge>
               )}
+              {ownerOnly && <span className="text-[10px] text-gray-500 dark:text-slate-400" title={OWNER_ONLY_MEMBER_REASON}>Owner only</span>}
               {member.status === 'pending' ? (
-                <Button size="sm" variant="secondary" onClick={() => void approve(member.id, name)} isLoading={busyId === member.id}>
+                <Button size="sm" variant="secondary" onClick={() => void approve(member.id, name)} isLoading={busyId === member.id} disabled={ownerOnly} title={ownerOnly ? OWNER_ONLY_MEMBER_REASON : undefined}>
                   Approve
                 </Button>
               ) : (
@@ -683,15 +701,18 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
                   {member.status}
                 </Badge>
               )}
-              <button
-                type="button"
-                onClick={() => setConfirm({ kind: 'member', id: member.id, label: name })}
-                aria-label={`Remove ${name}`}
-                title="Remove from app"
-                className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 max-sm:ml-auto max-sm:h-11 max-sm:w-11 dark:text-slate-400 dark:hover:bg-red-500/10 dark:hover:text-red-400"
-              >
-                <X className="h-4 w-4" />
-              </button>
+              {!isOwnerMember && (
+                <button
+                  type="button"
+                  onClick={() => setConfirm({ kind: 'member', id: member.id, label: name })}
+                  disabled={ownerOnly}
+                  aria-label={ownerOnly ? `Remove ${name}. ${OWNER_ONLY_MEMBER_REASON}` : `Remove ${name}`}
+                  title={ownerOnly ? OWNER_ONLY_MEMBER_REASON : 'Remove from app'}
+                  className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-500 max-sm:ml-auto max-sm:h-11 max-sm:w-11 dark:text-slate-400 dark:hover:bg-red-500/10 dark:hover:text-red-400"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
             </div>
           );
         })}

@@ -4,6 +4,7 @@ import { useReturnTo } from '../../hooks/useReturnTo';
 import { UserPlus, Trash2, Pencil, Users, Check, Copy } from 'lucide-react';
 import { useAppUserStore } from '../../stores/appUserStore';
 import { useAppStore } from '../../stores/appStore';
+import { useAuthStore } from '../../stores/authStore';
 import { useResourcePaths } from '../../components/admin/AdminActingContext';
 import { toast } from '../../stores/toastStore';
 import { api } from '../../lib/api';
@@ -15,7 +16,7 @@ import { DataTable, type Column } from '../../components/ui/DataTable';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
 import { statusBadgeVariant, formatStatusLabel, formatDate, parseServerDate, copyToClipboard } from '../../lib/utils';
 import { Badge } from '../../components/ui/Badge';
-import type { AppUser, AppInvitation, AppRole, AppUserGroup } from '../../types/app';
+import { OWNER_ONLY_MEMBER_REASON as OWNER_ONLY_REASON, roleGrantsOwnerGuarded, type AppUser, type AppInvitation, type AppRole, type AppUserGroup } from '../../types/app';
 
 // User groups have full CRUD but group membership is not yet consumed by permission
 // resolution, so the tab is hidden until group-based authorization ships (flip to
@@ -30,8 +31,16 @@ export function AppUserManager() {
   const backTo = useReturnTo(paths.appSub(`${appId}`, 'settings?tab=access'));
   const [loading, setLoading] = useState(true);
   const { users, invitations, groups, fetchUsers, fetchInvitations, fetchGroups, inviteUser, revokeInvitation, removeUser, updateUser, createGroup, deleteGroup, addGroupMember, removeGroupMember } = useAppUserStore();
-  const { fetchRoles } = useAppStore();
+  const { fetchRoles, getApp } = useAppStore();
+  const userId = useAuthStore((s) => s.user?.id);
+  // Only the Owner may re-role, suspend or remove a member whose role grants an app-level
+  // permission, or give a member such a role; the server refuses anyone else. Those controls are
+  // disabled only when we're SURE the viewer isn't the owner (app loaded + ids differ), as in the
+  // role editor, so an owner is never locked out on a direct visit before apps load.
+  const app = appId ? getApp(appId) : undefined;
+  const isActorOwner = !app || !userId || app.ownerId === userId;
   const [roles, setRoles] = useState<AppRole[]>([]);
+  const ownerOnlyRole = (role: AppRole) => !isActorOwner && roleGrantsOwnerGuarded(role);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRoleId, setInviteRoleId] = useState('');
@@ -238,19 +247,21 @@ export function AppUserManager() {
               // "Owner" (e.g. franchise operators), with no explanation.
               const ownerRole = roles.find((r) => r.id === u.roleId);
               const isOwner = !!ownerRole?.isSystem && ownerRole.name === 'Owner';
+              const ownerOnly = !!ownerRole && ownerOnlyRole(ownerRole);
               return (
               <div className="flex items-center justify-end gap-1">
                 {u.status === 'pending' && (
-                  <button onClick={() => handleApprove(u)}
-                    className="p-1.5 text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-500/10 transition-colors cursor-pointer" aria-label="Approve member"><Check className="h-4 w-4" /></button>
+                  <button onClick={() => handleApprove(u)} disabled={ownerOnly} title={ownerOnly ? OWNER_ONLY_REASON : undefined}
+                    className="p-1.5 text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-500/10 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-400" aria-label={ownerOnly ? `Approve member. ${OWNER_ONLY_REASON}` : 'Approve member'}><Check className="h-4 w-4" /></button>
+                )}
+                {ownerOnly && <span className="text-xs text-gray-400 dark:text-slate-500" title={OWNER_ONLY_REASON}>Owner only</span>}
+                {!isOwner && (
+                  <button onClick={() => openEditUser(u)} disabled={ownerOnly} title={ownerOnly ? OWNER_ONLY_REASON : undefined}
+                    className="p-1.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-400" aria-label={ownerOnly ? `Edit member role and status. ${OWNER_ONLY_REASON}` : 'Edit member role and status'}><Pencil className="h-4 w-4" /></button>
                 )}
                 {!isOwner && (
-                  <button onClick={() => openEditUser(u)}
-                    className="p-1.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors cursor-pointer" aria-label="Edit member role and status"><Pencil className="h-4 w-4" /></button>
-                )}
-                {!isOwner && (
-                  <button onClick={() => setConfirmAction({ type: 'removeUser', id: u.id, label: String(u.name || u.email) })}
-                    className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer" aria-label="Remove user"><Trash2 className="h-4 w-4" /></button>
+                  <button onClick={() => setConfirmAction({ type: 'removeUser', id: u.id, label: String(u.name || u.email) })} disabled={ownerOnly} title={ownerOnly ? OWNER_ONLY_REASON : undefined}
+                    className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-400" aria-label={ownerOnly ? `Remove user. ${OWNER_ONLY_REASON}` : 'Remove user'}><Trash2 className="h-4 w-4" /></button>
                 )}
               </div>
               );
@@ -365,7 +376,7 @@ export function AppUserManager() {
             <select value={inviteRoleId} onChange={(e) => setInviteRoleId(e.target.value)}
               className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200">
               <option value="">Select role...</option>
-              {roles.filter((r) => !(r.isSystem && r.name === 'Owner')).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              {roles.filter((r) => !(r.isSystem && r.name === 'Owner')).map((r) => <option key={r.id} value={r.id} disabled={ownerOnlyRole(r)}>{ownerOnlyRole(r) ? `${r.name} (Owner only)` : r.name}</option>)}
             </select>
           </div>
           <div className="flex justify-end gap-2 pt-2">
@@ -425,7 +436,7 @@ export function AppUserManager() {
             <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Role</label>
             <select value={editRoleId} onChange={(e) => setEditRoleId(e.target.value)}
               className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200">
-              {roles.filter((r) => !(r.isSystem && r.name === 'Owner')).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              {roles.filter((r) => !(r.isSystem && r.name === 'Owner')).map((r) => <option key={r.id} value={r.id} disabled={ownerOnlyRole(r)}>{ownerOnlyRole(r) ? `${r.name} (Owner only)` : r.name}</option>)}
             </select>
           </div>
           <div>
