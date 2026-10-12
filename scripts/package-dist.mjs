@@ -500,6 +500,10 @@ for (const dir of BACKEND_SKELETON_DIRS) {
   writeFileSync(path.join(abs, '.gitkeep'), '');
   info(`created empty ${path.join('api', dir)}/`);
 }
+// storage/.htaccess denies the whole of storage/ over HTTP: the layer that holds when the
+// web-root .htaccess (which funnels /api/* to the front controller) is missing or ignored.
+copyFileSync(path.join(backendDir, 'storage/.htaccess'), path.join(apiDst, 'storage/.htaccess'));
+info('copied backend/storage/.htaccess');
 
 // [4] Fresh production vendor/ -------------------------------------------------
 step('Installing production composer dependencies into staging (never touches the dev vendor/)');
@@ -568,6 +572,7 @@ const mustExist = [
   'zipp-licenses.txt',
   'engine-identity.json',
   ...BACKEND_SKELETON_DIRS.map((d) => path.join('api', d)),
+  'api/storage/.htaccess',
 ];
 const mustNotExist = ['api/.env', 'api/tests', 'api/scripts', 'api/phpunit.xml', 'api/.phpunit.cache'];
 for (const p of mustExist) {

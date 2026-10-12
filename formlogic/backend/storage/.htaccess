@@ -1,0 +1,17 @@
+# Nothing under storage/ is served over HTTP. It holds every form's records and uploads,
+# backups (scheduled ones include the whole site's SQL with password hashes) and signing
+# keys, and the API reads all of it from disk: uploads through /api/files, pack
+# screenshots through their own route.
+#
+# The deployed bundle's web-root .htaccess already sends every /api/* request to the
+# front controller, so this file is the layer that holds when that one is missing. In a
+# source checkout served under a generic docroot it is the only one: backend/.htaccess
+# blocks a few extensions (.env, .sqlite, .log ...), not backups, uploads or keys.
+
+<IfModule mod_authz_core.c>
+  Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+  Order allow,deny
+  Deny from all
+</IfModule>
