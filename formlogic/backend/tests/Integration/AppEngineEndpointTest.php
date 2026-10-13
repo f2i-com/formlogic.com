@@ -19,12 +19,13 @@ use FormLogic\Services\NativeAppService;
 use FormLogic\Services\RuntimeEngineService;
 use FormLogic\Services\SandboxRunner;
 use FormLogic\Services\TotpService;
+use FormLogic\Tests\Support\HostedControllerRequest;
+use FormLogic\Tests\Support\RecordsHostedControllerCalls;
 use PDO;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Slim\Psr7\Factory\ResponseFactory;
-use Slim\Psr7\Factory\ServerRequestFactory;
 
 /**
  * The owner's engine choice end to end: its own endpoint and its own column (never apps.settings,
@@ -34,6 +35,7 @@ use Slim\Psr7\Factory\ServerRequestFactory;
  */
 class AppEngineEndpointTest extends TestCase
 {
+    use RecordsHostedControllerCalls;
     private static ?MySQLConnection $mysql = null;
     private static ?PDO $pdo = null;
     private static AppService $apps;
@@ -139,8 +141,8 @@ class AppEngineEndpointTest extends TestCase
         return new HostedAppController(
             self::$apps,
             self::$appUsers,
-            new HostedAppService(new SandboxRunner(), self::$tmpRoot . '/hosted'),
-            $engines ?? $this->engines(),
+            $this->observeHostedService(HostedAppService::class, new HostedAppService(new SandboxRunner(), self::$tmpRoot . '/hosted')),
+            $this->observeHostedService(RuntimeEngineService::class, $engines ?? $this->engines()),
             new AuditService(self::$mysql, null, 'app-engine-test-audit-key'),
             new NativeAppService(self::$tmpRoot . '/native')
         );
@@ -165,13 +167,10 @@ class AppEngineEndpointTest extends TestCase
     {
         $userId ??= $this->ownerId;
         $email = $userId === $this->ownerId ? $this->ownerId . '@test.local' : $this->otherId . '@test.local';
-        $request = (new ServerRequestFactory())->createServerRequest($method, $path, ['REMOTE_ADDR' => '203.0.113.11'])
-            ->withAttribute('userId', $userId)
-            ->withAttribute('user', new User(id: $userId, email: $email));
-        foreach ($headers as $name => $value) {
-            $request = $request->withHeader($name, $value);
-        }
-        return $body === null ? $request : $request->withParsedBody($body);
+        $app = self::$apps->getApp($this->appId);
+        $this->assertNotNull($app);
+        $membership = $app['ownerId'] === $userId ? null : self::$appUsers->getAppUser($this->appId, $userId);
+        return HostedControllerRequest::create($method, $path, $userId, $app, $membership, $body, $headers, $email);
     }
 
     private function jsonBody(ResponseInterface $response): array
@@ -322,6 +321,10 @@ class AppEngineEndpointTest extends TestCase
         // installed the release's web variant tree), so the expectation is read from the same record.
         $this->assertSame($this->engines()->installedEngines(), $body['enginePolicy']['installed']);
         $this->assertContains('host-js', $body['enginePolicy']['installed']);
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'effective', 1);
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'ownerPolicy', 1);
+        $this->assertHostedServiceCalls(HostedAppService::class, 'get', 1);
+        $this->assertHostedServiceCalls(HostedAppService::class, 'run', 0);
     }
 
     public function testTheRuntimeGetCarriesTheEngineAndItsRevisionAndStaysNoStore(): void
@@ -337,6 +340,10 @@ class AppEngineEndpointTest extends TestCase
         $this->assertSame(['id', 'revision'], array_keys($body['engine']));
         $this->assertSame('zipp-web-python', $body['engine']['id']);
         $this->assertSame($this->engines()->effective($this->appId)['revision'], $body['engine']['revision']);
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'effective', 1);
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'assertInstalledRuns', 1);
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'assertTorchAllowed', 1);
+        $this->assertHostedServiceCalls(HostedAppService::class, 'run', 0);
     }
 
     public function testAnActionWithNoEngineHeaderIsAnsweredAsBefore(): void
@@ -349,6 +356,8 @@ class AppEngineEndpointTest extends TestCase
         );
         $this->assertSame(200, $response->getStatusCode());
         $this->assertSame(1, $this->jsonBody($response)['result']);
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'effective', 0);
+        $this->assertHostedServiceCalls(HostedAppService::class, 'run', 1);
     }
 
     public function testAMatchingEngineHeaderIsAccepted(): void
@@ -361,6 +370,9 @@ class AppEngineEndpointTest extends TestCase
             ['slug' => $this->slug, 'action' => 'noop']
         );
         $this->assertSame(200, $response->getStatusCode());
+        $this->assertSame(1, $this->jsonBody($response)['result']);
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'effective', 1);
+        $this->assertHostedServiceCalls(HostedAppService::class, 'run', 1);
     }
 
     public function testAStaleEngineHeaderAnswers409EngineChanged(): void
@@ -377,6 +389,8 @@ class AppEngineEndpointTest extends TestCase
             $this->assertSame(409, $response->getStatusCode(), $header);
             $this->assertSame('engine_changed', $this->jsonBody($response)['code'], $header);
         }
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'effective', 2);
+        $this->assertHostedServiceCalls(HostedAppService::class, 'run', 0);
     }
 
     public function testAPolicyChangeMovesTheRevisionSoAPageIsToldToRemount(): void
@@ -393,6 +407,8 @@ class AppEngineEndpointTest extends TestCase
         );
         $this->assertSame(409, $response->getStatusCode());
         $this->assertSame('engine_changed', $this->jsonBody($response)['code']);
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'effective', 1);
+        $this->assertHostedServiceCalls(HostedAppService::class, 'run', 0);
     }
 
     // ── an app whose logic is Python ─────────────────────────────────────────
@@ -457,6 +473,9 @@ class AppEngineEndpointTest extends TestCase
         $clamped = $installed->effective($this->appId, ['javascript', 'python']);
         $this->assertSame('zipp-web-python', $clamped['id']);
         $this->assertSame('python-required', $clamped['reason']);
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'effective', 2);
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'ownerPolicy', 1);
+        $this->assertHostedServiceCalls(HostedAppService::class, 'run', 0);
     }
 
     public function testAPythonAppRunsOnWebPythonEvenWhereTheSiteDefaultIsTheJavaScriptOnlyBuild(): void
@@ -483,6 +502,9 @@ class AppEngineEndpointTest extends TestCase
             ['slug' => $this->slug]
         ))['engine']['id'], 'zipp-web cannot run Python at all, whatever the site prefers');
         $this->assertSame('python-required', $this->everyEngine()->effective($this->appId, ['javascript', 'python'])['reason']);
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'effective', 2);
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'assertInstalledRuns', 2);
+        $this->assertHostedServiceCalls(HostedAppService::class, 'run', 0);
     }
 
     /**
@@ -545,6 +567,9 @@ class AppEngineEndpointTest extends TestCase
         $this->assertSame('python-required', $clampedForOwner['reason'] ?? null, json_encode($clampedForOwner));
         $this->assertSame('zipp-web', $clampedForOwner['requested'], 'the site default was asked for; the app\'s own .py file is what overrode it');
         $this->assertNull($clampedForOwner['stored'], 'no owner choice was involved');
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'effective', 5);
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'ownerPolicy', 3);
+        $this->assertHostedServiceCalls(HostedAppService::class, 'run', 0);
     }
 
     public function testAnActionFromAClampedPythonFrameIsNotToldTheEngineChanged(): void
@@ -570,6 +595,8 @@ class AppEngineEndpointTest extends TestCase
         );
         $this->assertSame(200, $action->getStatusCode(), (string) ($this->jsonBody($action)['code'] ?? ''));
         $this->assertSame(1, $this->jsonBody($action)['result']);
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'effective', 2);
+        $this->assertHostedServiceCalls(HostedAppService::class, 'run', 1);
     }
 
     /**
@@ -668,6 +695,11 @@ class AppEngineEndpointTest extends TestCase
         );
         $this->assertSame(503, $refused->getStatusCode());
         $this->assertArrayNotHasKey('deployment', $this->jsonBody($refused));
+        $this->assertSame('App hosting is temporarily unavailable', $this->jsonBody($refused)['message']);
+        $this->assertArrayNotHasKey('code', $this->jsonBody($refused));
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'assertInstalledRuns', 2);
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'effective', 1);
+        $this->assertHostedServiceCalls(HostedAppService::class, 'run', 0);
     }
 
     // ── the revoke ↔ owner-choice race ───────────────────────────────────────
@@ -813,6 +845,9 @@ class AppEngineEndpointTest extends TestCase
             ['id' => $this->appId]
         ));
         $this->assertSame($get['engine'], $body['engine']);
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'effective', 2);
+        $this->assertHostedServiceCalls(HostedAppService::class, 'publish', 1);
+        $this->assertHostedServiceCalls(HostedAppService::class, 'run', 0);
     }
 
     // ── a resolver that cannot answer ────────────────────────────────────────
@@ -821,7 +856,7 @@ class AppEngineEndpointTest extends TestCase
     {
         $this->publish();
         $engines = $this->createMock(RuntimeEngineService::class);
-        $engines->method('effective')->willThrowException(new \PDOException('SQLSTATE[HY000] [2002] Connection refused'));
+        $engines->expects($this->once())->method('effective')->willThrowException(new \PDOException('SQLSTATE[HY000] [2002] Connection refused'));
         $response = $this->controller($engines)->runtime(
             $this->request('POST', '/api/app/' . $this->slug . '/actions/noop', [], null, ['X-FormLogic-Client-Engine' => 'zipp-web-python;' . str_repeat('0', 16)]),
             (new ResponseFactory())->createResponse(),
@@ -830,6 +865,8 @@ class AppEngineEndpointTest extends TestCase
         $this->assertSame(503, $response->getStatusCode());
         $this->assertSame('App hosting is temporarily unavailable', $this->jsonBody($response)['message']);
         $this->assertArrayNotHasKey('code', $this->jsonBody($response));
+        $this->assertHostedServiceCalls(RuntimeEngineService::class, 'effective', 1);
+        $this->assertHostedServiceCalls(HostedAppService::class, 'run', 0);
     }
 }
 

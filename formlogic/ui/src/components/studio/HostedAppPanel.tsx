@@ -1,5 +1,7 @@
 import { hostedPackageFromArchive } from '../../lib/hostedActionArchive';
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { currentSessionGeneration, subscribeSessionGeneration } from '../../lib/sessionGeneration';
+import { admitHostedActor, captureHostedRequest, HOSTED_ACTOR_ERROR, isHostedAdmissionCurrent, isHostedRequestCurrent, sameHostedActor, type HostedAdmission } from '../../lib/hostedActor';
 import {
   ArrowUpRight,
   Check,
@@ -37,6 +39,7 @@ export function HostedAppPanel({
   app: { id: string; slug: string; name: string };
 }) {
   const [open, setOpen] = useState(false);
+  const generation = useSyncExternalStore(subscribeSessionGeneration, currentSessionGeneration);
   return (
     <section className="overflow-hidden rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-5 dark:border-indigo-900 dark:from-indigo-950/50 dark:via-slate-900 dark:to-slate-900">
       <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 text-white">
@@ -64,7 +67,7 @@ export function HostedAppPanel({
         App hosting <ArrowUpRight size={16} />
       </Button>
       {open && (
-        <HostingEditor key={app.id} app={app} onClose={() => setOpen(false)} />
+        <HostingEditor key={`${app.id}:${generation}`} app={app} onClose={() => setOpen(false)} />
       )}
     </section>
   );
@@ -82,6 +85,7 @@ function HostingEditor({
   const ai = useAiReady({ withRecheck: true });
   const aiReady = ai.ready;
   const [deployment, setDeployment] = useState<HostedDeployment | null>(null);
+  const [admission, setAdmission] = useState<HostedAdmission | null>(null);
   // The server's engine decision for this app, and what this site lets the owner choose between.
   const [engine, setEngine] = useState<AppEngine | undefined>(undefined);
   const [enginePolicy, setEnginePolicy] = useState<OwnerEnginePolicy | undefined>(undefined);
@@ -105,13 +109,17 @@ function HostingEditor({
     "min-h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 text-base sm:text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white";
   useEffect(() => {
     alive.current = true;
+    const request = captureHostedRequest();
     void api.getAppHosting(app.id).then((result) => {
-      if (!alive.current) return;
+      if (!alive.current || !isHostedRequestCurrent(request)) return;
       setLoading(false);
+      const admitted = admitHostedActor(result.error ? result.actor : result.data?.actor, request, app.slug, app.id);
+      if (!admitted || !admitted.actor.isOwner) { refuseActor(); return; }
       if (result.error) {
         setError(result.error);
         return;
       }
+      setAdmission(admitted);
       setLoaded(true);
       setEngine(result.data?.engine);
       setEnginePolicy(result.data?.enginePolicy);
@@ -129,7 +137,12 @@ function HostingEditor({
     return () => {
       alive.current = false;
     };
-  }, [app.id]);
+  }, [app.id, app.slug]);
+  function refuseActor() {
+    setAdmission(null); setDeployment(null); setLoaded(false);
+    setPkg({ version: 1, client: {}, actions: {} });
+    setEditor(null); setError(HOSTED_ACTOR_ERROR);
+  }
   function change(next: HostedPackage) {
     setPkg(next);
     setDirty(true);
@@ -146,12 +159,16 @@ function HostingEditor({
   // from the PUT's answer: the PUT answers for the whole column (hosted and native bundles merged),
   // while this panel and the preview it mounts are about the hosted bundle alone.
   async function refreshEngine() {
+    const request = captureHostedRequest();
     const result = await api.getAppHosting(app.id);
-    if (!alive.current || result.error || !result.data) return;
+    if (!alive.current || !isHostedRequestCurrent(request)) return;
+    if (!admission || !sameHostedActor(admission.actor, result.error ? result.actor : result.data?.actor)) { refuseActor(); return; }
+    if (result.error || !result.data) return;
     takeEngine(result.data);
   }
   async function publish() {
-    if (lock.current || !loaded || importReview) return;
+    if (lock.current || !loaded || importReview || !isHostedAdmissionCurrent(admission, app.slug)) return;
+    const request = captureHostedRequest();
     lock.current = true;
     setSaving(true);
     setError("");
@@ -162,7 +179,9 @@ function HostingEditor({
         pkg,
         deployment?.version ?? 0,
       );
-      if (!alive.current) return;
+      if (!alive.current || !isHostedRequestCurrent(request)) return;
+      if (result.transportFailure) { setError('Publishing could not be confirmed. Your draft is still here.'); return; }
+      if (!sameHostedActor(admission.actor, result.error ? result.actor : result.data?.actor)) { refuseActor(); return; }
       if (result.error || !result.data) {
         setError(
           result.error || "Publishing failed. Your draft is still here.",
@@ -760,6 +779,7 @@ function HostingEditor({
                     client={deployment.client}
                     version={deployment.version}
                     engine={engine ? { id: engine.id, revision: engine.revision } : undefined}
+                    hostedAdmission={admission || undefined}
                   />
                 </div>
               </div>

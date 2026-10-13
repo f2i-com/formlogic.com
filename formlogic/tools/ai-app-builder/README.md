@@ -54,6 +54,7 @@ node selftest.mjs
 
 | Var | Default | Purpose |
 |---|---|---|
+| `FL_FRONTEND_BASE` | `http://formlogic.local` | Explicit SPA base URL for session Origin; must match the server's configured trusted frontend origin. Separate from `FL_API_BASE`. |
 | `FL_API_BASE` | `http://api.formlogic.local` | FormLogic API host |
 | `FL_EMAIL` / `FL_PASSWORD` | `test@example.com` / `password123` | account the app is created under |
 | `AI_BASE_URL` | `http://localhost:8001/v1` | OpenAI-compatible `/v1` root (same convention as the app) |

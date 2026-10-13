@@ -29,6 +29,8 @@ const pickInt = (k, d, lo, hi) => {
 export const config = {
   // FormLogic API (authed endpoints: generate-form, generate-script, packs/import, forms/apps).
   apiBase: pick('FL_API_BASE', 'http://api.formlogic.local'),
+  // Explicit SPA URL for the session-Origin contract; never inferred from the API host.
+  frontendBase: pick('FL_FRONTEND_BASE', 'http://formlogic.local'),
   email: pick('FL_EMAIL', 'test@example.com'),
   password: pick('FL_PASSWORD', 'password123'),
   // AI provider (OpenAI-compatible) — used directly for the multi-form PLAN and the dashboard

@@ -1,3 +1,4 @@
+import { sessionHeaders } from './session-request';
 import { test, expect, type Page } from '@playwright/test';
 
 /**
@@ -20,7 +21,7 @@ const DEMO_PACK = 'repairbench-device-repair';
 /** Mint the shared Demo session (no signup) and return the slug of DEMO_PACK's demo app. */
 async function startDemo(page: Page): Promise<string> {
   const r = await page.context().request.post(`${API}/api/demo/start`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: sessionHeaders(),
     data: {},
   });
   expect(r.ok(), 'demo/start should succeed (is the demo provisioned?)').toBeTruthy();

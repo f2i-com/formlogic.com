@@ -6,6 +6,8 @@
 // so the client has to see the typed code — a status alone cannot tell it from any other conflict.
 import { afterEach, expect, it, vi } from 'vitest';
 import { api } from './api';
+const actor = { version: 1 as const, appId: 'app-a', userId: 'alice', roleId: 'member', isOwner: false, sessionId: 'a'.repeat(64) };
+
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -19,7 +21,7 @@ const headersOf = (fetchMock: ReturnType<typeof vi.fn>): Record<string, string> 
 
 it('a hosted action carries the engine decision its frame was mounted with', async () => {
   const fetchMock = stubFetch({ result: 1 });
-  await api.runHostedAction('notes', 'save', {}, undefined, 'zipp-web-python;r1');
+  await api.runHostedAction('notes', 'save', {}, undefined, 'zipp-web-python;r1', actor);
   expect(headersOf(fetchMock)['X-FormLogic-Client-Engine']).toBe('zipp-web-python;r1');
 });
 
@@ -31,13 +33,13 @@ it('a native request carries it too', async () => {
 
 it('a frame with no decision claims none, exactly as every page did before', async () => {
   const fetchMock = stubFetch({ result: 1 });
-  await api.runHostedAction('notes', 'save', {});
+  await api.runHostedAction('notes', 'save', {}, undefined, undefined, actor);
   expect(Object.keys(headersOf(fetchMock))).not.toContain('X-FormLogic-Client-Engine');
 });
 
 it('surfaces the typed code of a refusal, so engine_changed is not read as a lost edit', async () => {
   stubFetch({ error: true, code: 'engine_changed', message: 'This app is now set to run on a different engine. Reload to continue.' }, 409);
-  const result = await api.runHostedAction('notes', 'save', {}, undefined, 'host-js;r1');
+  const result = await api.runHostedAction('notes', 'save', {}, undefined, 'host-js;r1', actor);
   expect(result.status).toBe(409);
   expect(result.code).toBe('engine_changed');
   expect(result.error).toContain('different engine');
@@ -45,7 +47,7 @@ it('surfaces the typed code of a refusal, so engine_changed is not read as a los
 
 it('leaves an untyped failure untyped', async () => {
   stubFetch({ error: true, message: 'Someone else saved first' }, 409);
-  const result = await api.runHostedAction('notes', 'save', {});
+  const result = await api.runHostedAction('notes', 'save', {}, undefined, undefined, actor);
   expect(result.status).toBe(409);
   expect(result.code).toBeUndefined();
 });

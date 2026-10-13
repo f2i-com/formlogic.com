@@ -61,6 +61,7 @@ import {
   updateDemoAppRole,
 } from './demoLocalApps';
 import { API_BASE_URL } from './apiBase';
+import { copyHostedActor, HOSTED_ACTOR_ERROR, type HostedActor } from './hostedActor';
 import type { ResponseEnvelope } from './crypto/envelope';
 import type {
   EnableEncryptionPayload,
@@ -79,6 +80,10 @@ interface ApiResponse<T> {
   /** The typed `code` from an error envelope ({error:true, code, message}), when the server sent
    *  one: a status alone cannot tell engine_changed apart from any other 409. */
   code?: string;
+  /** Trusted hosted-action error identity, outside script-owned result data. */
+  actor?: unknown;
+  /** No HTTP response was received; callers may offer a same-admission retry. */
+  transportFailure?: true;
   /** Set when a 2xx arrived whose body is not JSON: not an answer from FormLogic (a captive
    *  portal's sign-in page, a proxy page). Like a network error it has no `status`, but the
    *  request DID get an answer, so the service worker queued nothing to replay. */
@@ -903,13 +908,13 @@ class ApiClient {
           const fieldMsgs = Object.values(d.errors as Record<string, unknown>).filter((v): v is string => typeof v === 'string');
           if (fieldMsgs.length > 0) message = `${message}: ${fieldMsgs.join('; ')}`;
         }
-        return { error: message, status: response.status, ...(typeof d?.code === 'string' ? { code: d.code } : {}) };
+        return { error: message, status: response.status, ...(typeof d?.code === 'string' ? { code: d.code } : {}), ...(d && Object.hasOwn(d, 'actor') ? { actor: d.actor } : {}) };
       }
 
       return { data };
     } catch (error) {
       logger.error('API request failed:', error);
-      return { error: error instanceof Error ? error.message : 'Network error' };
+      return { error: error instanceof Error ? error.message : 'Network error', transportFailure: true };
     }
   }
 
@@ -2031,7 +2036,7 @@ class ApiClient {
     return this.request(`/app/${encodeURIComponent(slug)}/native/request`, { method: 'POST', body: JSON.stringify(input), signal, ...clientEngineHeader(clientEngine) });
   }
 
-  async getAppHosting(id: string): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment | null; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
+  async getAppHosting(id: string): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment | null; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy; actor?: unknown }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/hosting`);
   }
 
@@ -2044,14 +2049,17 @@ class ApiClient {
   async putAppEngine(id: string, engine: ClientEngineId | null): Promise<ApiResponse<{ engine: AppEngine; policy: OwnerEnginePolicy }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/engine`, { method: 'PUT', body: JSON.stringify({ engine }) });
   }
-  async publishAppHosting(id: string, pkg: import('./hosting').HostedPackage, expectedVersion: number): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
+  async publishAppHosting(id: string, pkg: import('./hosting').HostedPackage, expectedVersion: number): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy; actor?: unknown }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/hosting`, { method: 'PUT', body: JSON.stringify({ package: pkg, expectedVersion }) });
   }
-  async getHostedRuntime(slug: string): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment; name: string; engine?: { id: ClientEngineId; revision: string } }>> {
+  async getHostedRuntime(slug: string): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment; name: string; engine?: { id: ClientEngineId; revision: string }; actor?: unknown }>> {
     return this.request(`/app/${encodeURIComponent(slug)}/hosting`);
   }
-  async runHostedAction(slug: string, action: string, input: Record<string, unknown>, signal?: AbortSignal, clientEngine?: string): Promise<ApiResponse<{ result: unknown }>> {
-    return this.request(`/app/${encodeURIComponent(slug)}/actions/${encodeURIComponent(action)}`, { method: 'POST', body: JSON.stringify(input), signal, ...clientEngineHeader(clientEngine) });
+  async runHostedAction(slug: string, action: string, input: Record<string, unknown>, signal?: AbortSignal, clientEngine?: string, actor?: HostedActor): Promise<ApiResponse<{ result: unknown; actor?: unknown }>> {
+    const initiating = copyHostedActor(actor);
+    if (!initiating) return { error: HOSTED_ACTOR_ERROR, status: 409, code: 'actor_context_required' };
+    return this.request(`/app/${encodeURIComponent(slug)}/actions/${encodeURIComponent(action)}`, { method: 'POST', body: JSON.stringify(input), signal,
+      headers: { ...clientEngineHeader(clientEngine).headers, 'X-FormLogic-Hosted-Actor': JSON.stringify(initiating) } });
   }
 
   async getApp(id: string): Promise<ApiResponse<{ app: unknown }>> {

@@ -1,3 +1,4 @@
+import { sessionHeaders } from './session-request';
 import { expect, test } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { openStudioAiPanel } from './studio-panel';
@@ -21,7 +22,7 @@ test('Builder and Studio return an editable native app without losing its backen
   page.on('pageerror', e => console.log('PAGE ERROR', e.message));
   page.on('console', m => { if (m.type() === 'error') console.log('CONSOLE ERROR', m.text().slice(0,400)); });
   test.skip(!process.env.FORMLOGIC_REVIEW_PASSWORD, 'Local review account required.');
-  await context.request.post('/api/auth/login', { data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
+  await context.request.post('/api/auth/login', { headers: sessionHeaders(), data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
   const headers = { 'X-CSRF-Token': (await context.cookies()).find(c => c.name === 'formlogic_csrf')!.value };
   const app = (await (await context.request.post('/api/apps', { headers, data: { name: 'Editor integration review' } })).json()).app;
   created.push(app.id);
@@ -109,7 +110,7 @@ test('Builder and Studio return an editable native app without losing its backen
 test('Existing hosted apps keep private actions when edited in Builder and Studio', async ({ page, context }) => {
   test.setTimeout(90000);
   test.skip(!process.env.FORMLOGIC_REVIEW_PASSWORD, 'Local review account required.');
-  await context.request.post('/api/auth/login', { data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
+  await context.request.post('/api/auth/login', { headers: sessionHeaders(), data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
   const headers = { 'X-CSRF-Token': (await context.cookies()).find(c => c.name === 'formlogic_csrf')!.value };
   const app = (await (await context.request.post('/api/apps', { headers, data: { name: 'Hosted editor review' } })).json()).app;
   created.push(app.id);
@@ -142,7 +143,7 @@ test('Existing hosted apps keep private actions when edited in Builder and Studi
 test('Coffee.Dating media and private backend survive both editor round trips', async ({ page, context }) => {
   test.setTimeout(150000);
   test.skip(!process.env.FORMLOGIC_REVIEW_PASSWORD, 'Local review account required.');
-  await context.request.post('/api/auth/login', { data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
+  await context.request.post('/api/auth/login', { headers: sessionHeaders(), data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
   const headers = { 'X-CSRF-Token': (await context.cookies()).find(c => c.name === 'formlogic_csrf')!.value };
   const apps = (await (await context.request.get('/api/apps')).json()).apps;
   const sourceApp = apps.find((a: {slug: string}) => a.slug === 'coffee-dating-native-review');

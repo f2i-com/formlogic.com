@@ -1,3 +1,4 @@
+import { sessionHeaders } from './session-request';
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -7,7 +8,7 @@ test('Coffee.Dating native import, ZIPP backend and database administration', as
   test.skip(!process.env.FORMLOGIC_REVIEW_PASSWORD, 'Use the isolated local review account.');
   test.setTimeout(120000);
   const app = JSON.parse(await readFile(resolve('../../../ecosystem-audit/native-coffee-app.json'), 'utf8'));
-  const login = await context.request.post('/api/auth/login', { data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
+  const login = await context.request.post('/api/auth/login', { headers: sessionHeaders(), data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
   expect(login.ok()).toBe(true);
   await page.goto(`/apps/${app.id}/studio/screens`);
   await page.getByText('Hosting & app tools', { exact: true }).click();

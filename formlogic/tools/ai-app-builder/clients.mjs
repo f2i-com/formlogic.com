@@ -1,6 +1,7 @@
 // Thin clients the harness depends on. Kept I/O-only so the pure engine (assemble.mjs) stays
 // portable to the frontend (ui/src/lib/ai-app-builder/ hosts the in-app port of the same engine).
 import { config } from './config.mjs';
+import { createApiClient as createConfiguredApiClient } from './api-client.mjs';
 
 // ── AI (OpenAI-compatible chat) — used directly for the multi-form PLAN and the dashboard design.
 // (The backend also exposes POST /api/ai/generate-app-plan for the in-app flow; the harness keeps
@@ -99,62 +100,5 @@ export async function aiJson(system, user, opts = {}) {
 // ── FormLogic API (cookie-jar session + double-submit CSRF) ──
 
 export function createApiClient() {
-  let cookies = {};       // name -> value
-  let csrf = '';
-
-  const cookieHeader = () => Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join('; ');
-
-  function captureCookies(res) {
-    // Node fetch exposes combined Set-Cookie via getSetCookie() (Node 18.14+) or the raw header.
-    const raw = typeof res.headers.getSetCookie === 'function'
-      ? res.headers.getSetCookie()
-      : (res.headers.get('set-cookie') ? [res.headers.get('set-cookie')] : []);
-    for (const line of raw) {
-      const m = line.match(/^([^=]+)=([^;]*)/);
-      if (m) cookies[m[1].trim()] = m[2];
-    }
-    if (cookies.formlogic_csrf) csrf = cookies.formlogic_csrf;
-  }
-
-  async function request(method, path, body) {
-    const headers = { 'Content-Type': 'application/json' };
-    if (Object.keys(cookies).length) headers.Cookie = cookieHeader();
-    if (method !== 'GET' && csrf) headers['X-CSRF-Token'] = csrf;
-    let res;
-    try {
-      res = await fetch(`${config.apiBase}${path}`, {
-        method, headers, body: body !== undefined ? JSON.stringify(body) : undefined,
-      });
-    } catch (e) {
-      throw connectionError(e, `the FormLogic API at ${config.apiBase}`,
-        'is the backend up? Set FL_API_BASE to the API host (dev default http://api.formlogic.local).');
-    }
-    captureCookies(res);
-    const text = await res.text();
-    let json; try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
-    if (!res.ok) {
-      let msg = json?.message || json?.error || text.slice(0, 300);
-      if (json?.code === 'unverified_package') {
-        msg += ' (this workspace has REQUIRE_VERIFIED_PACKAGES=true, which blocks flat JSON pack '
-          + 'imports — unset it in the backend .env for dev, or import a signed .formlogic package)';
-      }
-      const err = new Error(`${method} ${path} → HTTP ${res.status}: ${msg}`);
-      err.status = res.status; err.body = json;
-      throw err;
-    }
-    return json;
-  }
-
-  return {
-    async login() { await request('POST', '/api/auth/login', { email: config.email, password: config.password }); },
-    aiStatus: () => request('GET', '/api/ai/status'),
-    generateForm: (prompt) => request('POST', '/api/ai/generate-form', { prompt }),
-    generateScript: (prompt, fields) => request('POST', '/api/ai/generate-script', { prompt, fields }),
-    // SAFE-001: the import API requires the reviewed grant array. Builder-generated packs carry
-    // no connector grants, so an explicit empty approval is exact (and fails closed if that changes).
-    importPack: (pack) => request('POST', '/api/packs/import', { pack, approvedConnectorGrants: [] }),
-    publishForm: (id) => request('PUT', `/api/forms/${id}`, { status: 'published' }),
-    publishApp: (id) => request('PUT', `/api/apps/${id}`, { status: 'published' }),
-    request,
-  };
+  return createConfiguredApiClient(config);
 }

@@ -1,3 +1,4 @@
+import { sessionJsonHeaders } from '../../../scripts/session-request.mjs';
 /**
  * Auto-capture marketplace thumbnails for every catalog pack.
  *
@@ -62,7 +63,7 @@ async function main() {
   // invalidated MID-RUN (a burst of ~19 dashboards can trip per-user rate limits, which the SPA
   // treats as expiry and purges) — so re-minting is available to the retry loop below.
   const mintSession = async () => {
-    const r = await context.request.post(`${API_BASE}/demo/start`, { headers: { 'Content-Type': 'application/json' }, data: {} });
+    const r = await context.request.post(`${API_BASE}/demo/start`, { headers: sessionJsonHeaders(APP_BASE), data: {} });
     return r.ok();
   };
   if (!(await mintSession())) { log('demo/start failed'); await browser.close(); process.exit(1); }

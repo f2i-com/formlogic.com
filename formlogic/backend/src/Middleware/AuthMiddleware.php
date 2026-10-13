@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Middleware;
 
 use FormLogic\Services\AuthService;
+use FormLogic\Support\HostedActorContext;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Http\Server\MiddlewareInterface;
@@ -26,6 +27,10 @@ class AuthMiddleware implements MiddlewareInterface
 
     public function process(Request $request, RequestHandler $handler): Response
     {
+        // Optional authentication must not preserve authority left on a reused
+        // request when this invocation did not validate a credential.
+        $request = $request->withoutAttribute('user')->withoutAttribute('userId')
+            ->withoutAttribute(HostedActorContext::SESSION_ATTRIBUTE);
         $token = $this->extractToken($request);
 
         if ($token === null) {
@@ -51,6 +56,9 @@ class AuthMiddleware implements MiddlewareInterface
         // Add user to request attributes
         $request = $request->withAttribute('user', $user);
         $request = $request->withAttribute('userId', $user->id);
+        // This comparison-only identity is computed after validation. Do not use
+        // a client header, decoded unverified claims or raw token in its place.
+        $request = $request->withAttribute(HostedActorContext::SESSION_ATTRIBUTE, HostedActorContext::sessionId($token));
 
         return $handler->handle($request);
     }

@@ -1,10 +1,11 @@
+import { sessionHeaders } from './session-request';
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
 test('Native source highlighting and full-record CRUD work on desktop and mobile', async ({ page, context }) => {
   test.setTimeout(150000);
   test.skip(!process.env.FORMLOGIC_REVIEW_PASSWORD, 'Requires the local review account.');
-  const login = await context.request.post('/api/auth/login', { data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
+  const login = await context.request.post('/api/auth/login', { headers: sessionHeaders(), data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
   expect(login.ok()).toBe(true);
   const headers = { 'X-CSRF-Token': (await context.cookies()).find(cookie => cookie.name === 'formlogic_csrf')!.value };
   const listed = await (await context.request.get('/api/apps')).json();

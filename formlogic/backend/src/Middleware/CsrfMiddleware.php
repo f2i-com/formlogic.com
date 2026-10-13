@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Middleware;
 
+use FormLogic\Support\SessionOriginPolicy;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Http\Server\MiddlewareInterface;
@@ -11,15 +12,15 @@ use Psr\Http\Server\RequestHandlerInterface as RequestHandler;
 use Slim\Psr7\Response as SlimResponse;
 
 /**
- * CSRF protection using the Double Submit Cookie pattern.
+ * CSRF protection bound to the authenticated session.
  *
  * How it works:
- * - On login/register, a random CSRF token is set as a non-HttpOnly cookie
- *   (so the frontend JS can read it).
- * - On every state-changing request (POST/PUT/DELETE), this middleware
- *   checks that the X-CSRF-Token header matches the csrf cookie value.
- * - An attacker on a different origin cannot read the cookie (same-origin policy)
- *   and therefore cannot forge the header.
+ * - Cookie-setting routes require JSON and an explicitly trusted request origin.
+ * - On login/register, the host sets a readable CSRF cookie derived by HMAC from
+ *   that session's auth token and the configured signing context.
+ * - Authenticated state-changing requests must send that derived value in the
+ *   X-CSRF-Token header. A caller-controlled cookie/header pair is not sufficient,
+ *   and a CSRF value from another session cannot authorize the current one.
  */
 class CsrfMiddleware implements MiddlewareInterface
 {
@@ -27,17 +28,20 @@ class CsrfMiddleware implements MiddlewareInterface
     private string $headerName;
     private string $authCookieName;
     private string $secret;
+    private SessionOriginPolicy $sessionOriginPolicy;
 
     public function __construct(
         string $cookieName = 'formlogic_csrf',
         string $headerName = 'X-CSRF-Token',
         string $authCookieName = 'formlogic_auth',
-        string $secret = ''
+        string $secret = '',
+        array $trustedSessionOrigins = []
     ) {
         $this->cookieName = $cookieName;
         $this->headerName = $headerName;
         $this->authCookieName = $authCookieName;
         $this->secret = $secret;
+        $this->sessionOriginPolicy = new SessionOriginPolicy($trustedSessionOrigins);
     }
 
     public function process(Request $request, RequestHandler $handler): Response
@@ -59,20 +63,22 @@ class CsrfMiddleware implements MiddlewareInterface
             $path = '/' . $path;
         }
 
-        // Cookie-SETTING auth routes (login/register) can't use the double-submit
-        // token because they MINT it — but a blanket exemption made them a login-CSRF
-        // hole. Guard them by requiring a JSON content-type: a cross-site
-        // auto-submitting <form> can only send simple content-types
-        // (form-urlencoded / multipart / text-plain) without a CORS preflight, so
-        // this blocks the form vector; a JSON fetch from another origin triggers a
-        // preflight the CORS allowlist rejects. The SPA already sends JSON.
-        // The media type (before any ';') is what must be JSON: a no-cors fetch may send
-        // "application/x-www-form-urlencoded; application/json" without a preflight, and
-        // Slim parses that body as a form by its media type.
+        // Cookie-setting routes mint the session and cannot validate its token yet.
+        // Require one JSON content type and an explicitly configured browser origin
+        // before invoking them. CORS alone only controls response readability: it
+        // does not reject non-OPTIONS requests before the handler's effects.
         if ($this->isAuthCookieSettingRoute($path)) {
-            $mediaType = strtolower(trim(explode(';', $request->getHeaderLine('Content-Type'))[0]));
-            if ($mediaType !== 'application/json') {
+            $contentTypes = $request->getHeader('Content-Type');
+            $contentType = $contentTypes[0] ?? '';
+            $mediaType = strtolower(trim(explode(';', $contentType, 2)[0]));
+            if (count($contentTypes) !== 1 || str_contains($contentType, ',') || $mediaType !== 'application/json') {
                 return $this->forbidden('Login and registration require a JSON request');
+            }
+            if ($this->secret === '') {
+                return $this->forbidden('CSRF protection is misconfigured (no signing secret) - set JWT_SECRET');
+            }
+            if (!$this->sessionOriginPolicy->allows($request)) {
+                return $this->forbidden('Session creation requires an explicitly trusted request origin');
             }
             return $handler->handle($request);
         }
@@ -132,7 +138,7 @@ class CsrfMiddleware implements MiddlewareInterface
 
     /**
      * Cookie-setting auth routes that mint the CSRF token (so they can't validate
-     * it). Handled with a JSON-content-type guard instead of a blanket exemption.
+     * it). Require JSON and explicit origin admission instead of an exemption.
      */
     private function isAuthCookieSettingRoute(string $path): bool
     {
@@ -160,6 +166,12 @@ class CsrfMiddleware implements MiddlewareInterface
     public static function tokenForAuth(string $authToken, string $secret): string
     {
         return hash_hmac('sha256', $authToken, $secret);
+    }
+
+    /** Keep missing signing configuration missing, rather than hashing an empty fallback. */
+    public static function secretForJwt(string $jwtSecret): string
+    {
+        return $jwtSecret === '' ? '' : hash('sha256', 'formlogic-csrf:' . $jwtSecret);
     }
 
     private function forbidden(string $message): Response

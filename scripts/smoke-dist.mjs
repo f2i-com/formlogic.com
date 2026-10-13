@@ -30,6 +30,7 @@
  * DROPPED and recreated — never point it at real data.
  */
 
+import { sessionJsonHeaders } from './session-request.mjs';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -321,7 +322,7 @@ return true;
     const password = 'smoke-Password-123';
     const reg = await req(`${BASE}/api/auth/register`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: sessionJsonHeaders(BASE),
       body: JSON.stringify({ email, password, name: 'Dist Smoke' }),
     }, jar);
     if (reg.status !== 201) fail(`registration failed: HTTP ${reg.status} ${await reg.text()}`);
@@ -329,7 +330,7 @@ return true;
 
     const login = await req(`${BASE}/api/auth/login`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: sessionJsonHeaders(BASE),
       body: JSON.stringify({ email, password }),
     }, jar);
     if (!login.ok) fail(`login failed: HTTP ${login.status} ${await login.text()}`);

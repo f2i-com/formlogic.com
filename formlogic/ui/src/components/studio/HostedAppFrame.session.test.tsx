@@ -13,6 +13,8 @@ vi.mock('../../lib/nativeAppStorage', () => ({
 }));
 import { HostedAppFrame } from './HostedAppFrame';
 import { bumpSessionGeneration, setSessionOwner } from '../../lib/sessionGeneration';
+import { admitHostedActor, captureHostedRequest } from '../../lib/hostedActor';
+const actor = { version: 1 as const, appId: 'app-a', userId: 'alice', roleId: 'member', isOwner: false, sessionId: 'a'.repeat(64) };
 import { NATIVE_PROTOCOL } from '../../lib/softn/protocol';
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 type Channel = { port1: { postMessage: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn>; onmessage: ((event: { data: unknown }) => Promise<void>) | null }; port2: object };
@@ -25,7 +27,7 @@ const native = { assets: {}, access: 'members' as const, storageScope: scope };
 const engine = { id: 'zipp-web-python', revision: 'r1' };
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 async function mount(config: { native?: typeof native; engine?: typeof engine } = { native, engine }) {
-  await act(async () => root.render(<HostedAppFrame slug="notes" client={client} version={1} {...config} />));
+  await act(async () => root.render(<HostedAppFrame slug="notes" client={client} version={1} hostedAdmission={config.native ? undefined : admitHostedActor(actor, captureHostedRequest(), "notes")!} {...config} />));
   const iframe = container.querySelector('iframe');
   const post = iframe ? vi.spyOn(iframe.contentWindow!, 'postMessage').mockImplementation(() => undefined) : vi.fn();
   return { iframe, post };
@@ -36,7 +38,7 @@ const button = (label: string) => [...container.querySelectorAll('button')].find
 beforeEach(() => {
   vi.resetAllMocks(); channels.length = 0; setSessionOwner('alice'); bumpSessionGeneration();
   mocks.bytes.mockResolvedValue(new ArrayBuffer(8)); mocks.read.mockReturnValue({ token: 'alice-synthetic' }); mocks.raw.mockReturnValue('{damaged'); mocks.mutate.mockReturnValue({ saved: true });
-  mocks.native.mockResolvedValue({ data: { ok: true } }); mocks.hosted.mockResolvedValue({ data: { ok: true } });
+  mocks.native.mockResolvedValue({ data: { ok: true } }); mocks.hosted.mockResolvedValue({ data: { actor, result: { ok: true } } });
   vi.stubGlobal('MessageChannel', class { port1 = { postMessage: vi.fn(), close: vi.fn(), onmessage: null }; port2 = {}; constructor() { channels.push(this); } });
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
 });

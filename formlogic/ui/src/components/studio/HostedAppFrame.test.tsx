@@ -18,7 +18,13 @@ vi.mock('../../lib/formlogic/zipp-bytes', () => ({
 }));
 vi.mock('../../lib/api', () => ({ api: { runHostedAction: vi.fn(), runNativeRequest: vi.fn(), getHostedRuntime: vi.fn(), getNativeRuntime: vi.fn() } }));
 vi.mock('../../lib/softn/workspaceBridge', () => ({ workspaceBridge: vi.fn() }));
-import { HostedAppFrame } from './HostedAppFrame';
+import { HostedAppFrame as ActualHostedAppFrame } from './HostedAppFrame';
+import { admitHostedActor, captureHostedRequest } from '../../lib/hostedActor';
+import { setSessionOwner } from '../../lib/sessionGeneration';
+const actor = { version: 1 as const, appId: 'app-a', userId: 'alice', roleId: 'member', isOwner: false, sessionId: 'a'.repeat(64) };
+function HostedAppFrame(props: React.ComponentProps<typeof ActualHostedAppFrame>) {
+  return <ActualHostedAppFrame hostedAdmission={props.native ? undefined : admitHostedActor(actor, captureHostedRequest(), props.slug)!} {...props} />;
+}
 import { chooseFrameEngine, frameSource } from '../../lib/formlogic/frameEngine';
 import { api } from '../../lib/api';
 import { NATIVE_PROTOCOL } from '../../lib/softn/protocol';
@@ -37,6 +43,7 @@ const channels: StubChannel[] = [];
 
 beforeEach(() => {
   vi.clearAllMocks();
+  setSessionOwner(actor.userId);
   localStorage.clear();
   channels.length = 0;
   getBytes.mockResolvedValue(new ArrayBuffer(8));
@@ -324,42 +331,42 @@ describe('chooseFrameEngine', () => {
 
 describe('the engine an action claims', () => {
   const answer = (engine: { id: string; revision: string }) =>
-    ({ data: { engine } }) as unknown as Awaited<ReturnType<typeof api.getHostedRuntime>>;
+    ({ data: { actor, engine } }) as unknown as Awaited<ReturnType<typeof api.getHostedRuntime>>;
 
   it('claims the decision the SERVER made, not the engine this frame fell back to', async () => {
-    vi.mocked(api.runHostedAction).mockResolvedValue({ data: { result: 1 } });
+    vi.mocked(api.runHostedAction).mockResolvedValue({ data: { actor, result: 1 } });
     const { iframe } = await mount({ id: 'zipp-web', revision: 'r7' });
     await act(async () => sendReady(iframe));
     await callAction(channels[0]);
-    expect(api.runHostedAction).toHaveBeenCalledWith('notes', 'save', {}, expect.anything(), 'zipp-web;r7');
+    expect(api.runHostedAction).toHaveBeenCalledWith('notes', 'save', {}, expect.anything(), 'zipp-web;r7', actor);
   });
 
   it('claims host JavaScript when that is what the server decided and the shell served it', async () => {
-    vi.mocked(api.runHostedAction).mockResolvedValue({ data: { result: 1 } });
+    vi.mocked(api.runHostedAction).mockResolvedValue({ data: { actor, result: 1 } });
     const { iframe } = await mount({ id: 'host-js', revision: 'r7' });
     await act(async () => sendReady(iframe, identity, iframe.contentWindow!, { 'host-js': true }));
     await callAction(channels[0]);
-    expect(api.runHostedAction).toHaveBeenCalledWith('notes', 'save', {}, expect.anything(), 'host-js;r7');
+    expect(api.runHostedAction).toHaveBeenCalledWith('notes', 'save', {}, expect.anything(), 'host-js;r7', actor);
   });
 
   it('claims nothing when no server decision was given, so an older page is answered as before', async () => {
-    vi.mocked(api.runHostedAction).mockResolvedValue({ data: { result: 1 } });
+    vi.mocked(api.runHostedAction).mockResolvedValue({ data: { actor, result: 1 } });
     const { iframe } = await mount();
     await act(async () => sendReady(iframe));
     await callAction(channels[0]);
-    expect(api.runHostedAction).toHaveBeenCalledWith('notes', 'save', {}, expect.anything(), undefined);
+    expect(api.runHostedAction).toHaveBeenCalledWith('notes', 'save', {}, expect.anything(), undefined, actor);
   });
 
   it('claims nothing for a pinned id that carries no revision (AokieWorkspace)', async () => {
-    vi.mocked(api.runHostedAction).mockResolvedValue({ data: { result: 1 } });
+    vi.mocked(api.runHostedAction).mockResolvedValue({ data: { actor, result: 1 } });
     const { iframe } = await mount({ id: 'zipp-web-python', revision: '' });
     await act(async () => sendReady(iframe));
     await callAction(channels[0]);
-    expect(api.runHostedAction).toHaveBeenCalledWith('notes', 'save', {}, expect.anything(), undefined);
+    expect(api.runHostedAction).toHaveBeenCalledWith('notes', 'save', {}, expect.anything(), undefined, actor);
   });
 
   it('remounts on the server’s new decision when an action is refused as engine_changed', async () => {
-    vi.mocked(api.runHostedAction).mockResolvedValue({ error: 'This app is now set to run on a different engine. Reload to continue.', status: 409, code: 'engine_changed' });
+    vi.mocked(api.runHostedAction).mockResolvedValue({ actor, error: 'This app is now set to run on a different engine. Reload to continue.', status: 409, code: 'engine_changed' });
     vi.mocked(api.getHostedRuntime).mockResolvedValue(answer({ id: 'zipp-web-python', revision: 'r2' }));
     const { iframe } = await mount({ id: 'zipp-web-python', revision: 'r1' });
     await act(async () => sendReady(iframe));
@@ -369,15 +376,15 @@ describe('the engine an action claims', () => {
     expect(channels[0].port1.close).toHaveBeenCalledTimes(1);
     // A remount, not a message: the person is not told about an engine.
     expect(container.querySelector('[role="alert"]')).toBeNull();
-    vi.mocked(api.runHostedAction).mockResolvedValue({ data: { result: 1 } });
+    vi.mocked(api.runHostedAction).mockResolvedValue({ data: { actor, result: 1 } });
     vi.spyOn(next.contentWindow!, 'postMessage').mockImplementation(() => undefined);
     await act(async () => sendReady(next));
     await callAction(channels[1], 2);
-    expect(api.runHostedAction).toHaveBeenLastCalledWith('notes', 'save', {}, expect.anything(), 'zipp-web-python;r2');
+    expect(api.runHostedAction).toHaveBeenLastCalledWith('notes', 'save', {}, expect.anything(), 'zipp-web-python;r2', actor);
   });
 
   it('refetches once however many actions are refused at the same time', async () => {
-    vi.mocked(api.runHostedAction).mockResolvedValue({ error: 'changed', status: 409, code: 'engine_changed' });
+    vi.mocked(api.runHostedAction).mockResolvedValue({ actor, error: 'changed', status: 409, code: 'engine_changed' });
     vi.mocked(api.getHostedRuntime).mockResolvedValue(answer({ id: 'zipp-web-python', revision: 'r2' }));
     const { iframe } = await mount({ id: 'zipp-web-python', revision: 'r1' });
     await act(async () => sendReady(iframe));
@@ -389,7 +396,7 @@ describe('the engine an action claims', () => {
   });
 
   it('says so rather than remounting onto the decision that was just refused', async () => {
-    vi.mocked(api.runHostedAction).mockResolvedValue({ error: 'changed', status: 409, code: 'engine_changed' });
+    vi.mocked(api.runHostedAction).mockResolvedValue({ actor, error: 'changed', status: 409, code: 'engine_changed' });
     vi.mocked(api.getHostedRuntime).mockResolvedValue(answer({ id: 'zipp-web-python', revision: 'r1' }));
     const { iframe } = await mount({ id: 'zipp-web-python', revision: 'r1' });
     await act(async () => sendReady(iframe));
@@ -399,7 +406,7 @@ describe('the engine an action claims', () => {
   });
 
   it('leaves a 409 that is not engine_changed to the app, and the frame alone', async () => {
-    vi.mocked(api.runHostedAction).mockResolvedValue({ error: 'Someone else saved first', status: 409 });
+    vi.mocked(api.runHostedAction).mockResolvedValue({ actor, error: 'Someone else saved first', status: 409 });
     const { iframe } = await mount({ id: 'zipp-web-python', revision: 'r1' });
     await act(async () => sendReady(iframe));
     await callAction(channels[0]);
@@ -451,9 +458,9 @@ describe('a remount on the server’s new decision', () => {
     // The owner removed the .py; the server now decides host-js. The old client still carries the
     // .py, and a host shell handed it refuses by name — so the remount must take the client the
     // refetched decision was made FOR, and the version that goes with it.
-    vi.mocked(api.runHostedAction).mockResolvedValue({ error: 'changed', status: 409, code: 'engine_changed' });
+    vi.mocked(api.runHostedAction).mockResolvedValue({ actor, error: 'changed', status: 409, code: 'engine_changed' });
     vi.mocked(api.getHostedRuntime).mockResolvedValue({
-      data: { name: 'Notes', engine: { id: 'host-js', revision: 'r2' }, deployment: { version: 2, updatedAt: '', client: fresh } },
+      data: { actor, name: 'Notes', engine: { id: 'host-js', revision: 'r2' }, deployment: { version: 2, updatedAt: '', client: fresh } },
     } as unknown as Awaited<ReturnType<typeof api.getHostedRuntime>>);
     root = createRoot(container);
     await act(async () => root!.render(<HostedAppFrame slug="notes" client={stale} version={1} engine={{ id: 'zipp-web-python', revision: 'r1' }} />));
@@ -498,8 +505,8 @@ describe('a remount on the server’s new decision', () => {
   it('keeps this mount’s client when the refetched answer carries none', async () => {
     // An answer from a server that decided a new engine but sent no bundle: the engine is taken,
     // the props stand — the same fallback every older test in this file relies on.
-    vi.mocked(api.runHostedAction).mockResolvedValue({ error: 'changed', status: 409, code: 'engine_changed' });
-    vi.mocked(api.getHostedRuntime).mockResolvedValue({ data: { engine: { id: 'zipp-web-python', revision: 'r2' } } } as unknown as Awaited<ReturnType<typeof api.getHostedRuntime>>);
+    vi.mocked(api.runHostedAction).mockResolvedValue({ actor, error: 'changed', status: 409, code: 'engine_changed' });
+    vi.mocked(api.getHostedRuntime).mockResolvedValue({ data: { actor, engine: { id: 'zipp-web-python', revision: 'r2' } } } as unknown as Awaited<ReturnType<typeof api.getHostedRuntime>>);
     root = createRoot(container);
     await act(async () => root!.render(<HostedAppFrame slug="notes" client={fresh} version={4} engine={{ id: 'zipp-web-python', revision: 'r1' }} />));
     const { iframe } = spyOnFrame();

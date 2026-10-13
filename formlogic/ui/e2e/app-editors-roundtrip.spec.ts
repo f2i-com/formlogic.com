@@ -1,3 +1,4 @@
+import { sessionHeaders } from './session-request';
 /**
  * The embedded-editor round trip, end to end in a real browser (FL-S09 lane 5b):
  *
@@ -45,7 +46,7 @@ function clientOnlyBundle(): Buffer {
 }
 
 async function login(context: BrowserContext) {
-  const r = await context.request.post('/api/auth/login', { data: { email: EMAIL, password: PASSWORD } });
+  const r = await context.request.post('/api/auth/login', { headers: sessionHeaders(), data: { email: EMAIL, password: PASSWORD } });
   expect(r.ok(), await r.text()).toBe(true);
   const csrf = (await context.cookies()).find(c => c.name === 'formlogic_csrf')!.value;
   return { 'X-CSRF-Token': csrf };

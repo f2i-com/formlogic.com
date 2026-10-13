@@ -32,7 +32,7 @@ export function AokieWorkspace({ listen = true }: { listen?: boolean }) {
     {error && <p role="alert">{error}</p>}
     {/* FormLogic's own template, not owner code, and it has no runtime GET: it always runs on
         the ZIPP web-python engine rather than following an app's engine choice. */}
-    <div className="h-[calc(100dvh-13rem)] min-h-[560px]"><HostedAppFrame slug={slug} client={template.client} version={1} engine={AOKIE_ENGINE} /></div>
+    <div className="h-[calc(100dvh-13rem)] min-h-[560px]"><HostedAppFrame slug={slug} client={template.client} version={1} engine={AOKIE_ENGINE} workspaceOnly /></div>
     {config?.app.canManage && <p className="mt-3 text-xs text-slate-500">Customise the downloaded project in App hosting, or share these forms with another app in App Studio.</p>}
   </div>;
 }

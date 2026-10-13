@@ -18,7 +18,7 @@ class CsrfMiddlewareTest extends TestCase
 
     private function process(ServerRequestInterface $request): ResponseInterface
     {
-        $mw = new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', 'formlogic_auth', self::SECRET);
+        $mw = new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', 'formlogic_auth', self::SECRET, ['http://api.test']);
         $handler = new class implements RequestHandlerInterface {
             public function handle(ServerRequestInterface $request): ResponseInterface
             {
@@ -30,7 +30,8 @@ class CsrfMiddlewareTest extends TestCase
 
     private function request(string $method, string $path): ServerRequestInterface
     {
-        return (new ServerRequestFactory())->createServerRequest($method, 'http://api.test' . $path);
+        return (new ServerRequestFactory())->createServerRequest($method, 'http://api.test' . $path)
+            ->withHeader('Origin', 'http://api.test');
     }
 
     public function testCookieSettingRoutesAcceptJson(): void
@@ -89,13 +90,14 @@ class CsrfMiddlewareTest extends TestCase
             });
         }
         $app->addBodyParsingMiddleware();
-        $app->add(new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', 'formlogic_auth', self::SECRET));
+        $app->add(new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', 'formlogic_auth', self::SECRET, ['http://api.test']));
         $app->addRoutingMiddleware();
 
         $form = static function (string $path): ServerRequestInterface {
             $request = (new ServerRequestFactory())->createServerRequest('POST', 'http://api.test' . $path)
+                ->withHeader('Origin', 'http://api.test')
                 ->withHeader('Content-Type', 'application/x-www-form-urlencoded');
-            $request->getBody()->write('email=attacker%40evil.example&password=the-attackers-password');
+            $request->getBody()->write('fixture=inert');
             $request->getBody()->rewind();
             return $request;
         };
@@ -109,8 +111,9 @@ class CsrfMiddlewareTest extends TestCase
 
         // The same spelling with a JSON body is the SPA's own request, and still served.
         $json = (new ServerRequestFactory())->createServerRequest('POST', 'http://api.test/api/auth/logi%6E')
+            ->withHeader('Origin', 'http://api.test')
             ->withHeader('Content-Type', 'application/json');
-        $json->getBody()->write('{"email":"a@b.example","password":"x"}');
+        $json->getBody()->write('{"fixture":"inert"}');
         $json->getBody()->rewind();
         $reached = [];
         $this->assertSame(200, $app->handle($json)->getStatusCode());

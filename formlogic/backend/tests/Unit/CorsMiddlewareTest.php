@@ -78,7 +78,7 @@ class CorsMiddlewareTest extends TestCase
         $request = (new ServerRequestFactory())->createServerRequest('OPTIONS', 'http://api.test/api/app/notes/actions/save')
             ->withHeader('Origin', 'https://app.example.com')
             ->withHeader('Access-Control-Request-Method', 'POST')
-            ->withHeader('Access-Control-Request-Headers', 'content-type, x-formlogic-client-engine');
+            ->withHeader('Access-Control-Request-Headers', 'content-type, x-formlogic-client-engine, x-formlogic-hosted-actor');
         $handler = new class implements RequestHandlerInterface {
             public function handle(ServerRequestInterface $request): ResponseInterface
             {
@@ -88,6 +88,7 @@ class CorsMiddlewareTest extends TestCase
         $res = $mw->process($request, $handler);
         $allowed = array_map('trim', explode(',', $res->getHeaderLine('Access-Control-Allow-Headers')));
         $this->assertContains('X-FormLogic-Client-Engine', $allowed, $res->getHeaderLine('Access-Control-Allow-Headers'));
+        $this->assertContains('X-FormLogic-Hosted-Actor', $allowed, 'trusted initiating context can be compared on split-origin requests');
         $this->assertContains('Authorization', $allowed, 'the headers every request already needed are still listed');
         $this->assertSame('https://app.example.com', $res->getHeaderLine('Access-Control-Allow-Origin'));
     }

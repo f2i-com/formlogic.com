@@ -1,3 +1,4 @@
+import { sessionHeaders } from './session-request';
 import { test, expect } from '@playwright/test';
 
 /**
@@ -10,7 +11,7 @@ const API = process.env.E2E_API_URL || 'http://api.formlogic.local';
 
 test('demo session is server-read-only: an app write is rejected', async ({ page }) => {
   const req = page.context().request;
-  const start = await req.post(`${API}/api/demo/start`, { headers: { 'Content-Type': 'application/json' }, data: {} });
+  const start = await req.post(`${API}/api/demo/start`, { headers: sessionHeaders(), data: {} });
   expect(start.ok(), 'demo/start should succeed (is the demo provisioned?)').toBeTruthy();
 
   const csrf = (await page.context().cookies()).find((c) => c.name === 'formlogic_csrf')?.value ?? '';

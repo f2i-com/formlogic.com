@@ -322,7 +322,7 @@ $container->set(\FormLogic\Services\DataOperationLogService::class, function (Co
 $container->set(AuthController::class, function (Container $c) {
     $settings = $c->get('settings');
     // Same derivation as the CsrfMiddleware wiring, so issued + validated tokens match.
-    $csrfSecret = hash('sha256', 'formlogic-csrf:' . ($settings['jwt']['secret'] ?? ''));
+    $csrfSecret = CsrfMiddleware::secretForJwt((string) ($settings['jwt']['secret'] ?? ''));
     return new AuthController(
         $c->get(AuthService::class),
         $settings['cookie'] ?? [],
@@ -1134,10 +1134,18 @@ $cookieName = $settings['settings']['cookie']['name'] ?? 'formlogic_auth';
 // Secret used to bind CSRF tokens to the auth session (HMAC). Derived from the
 // JWT secret so it's stable and needs no extra config. Must match the value the
 // AuthController uses when issuing the CSRF cookie.
-$csrfSecret = hash('sha256', 'formlogic-csrf:' . ($settings['settings']['jwt']['secret'] ?? ''));
+$csrfSecret = CsrfMiddleware::secretForJwt((string) ($settings['settings']['jwt']['secret'] ?? ''));
 
-// Add CSRF middleware (validates tokens on state-changing requests)
-$app->add(new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', $cookieName, $csrfSecret));
+// Session creation requires explicit exact frontend origins. Do not turn the
+// development CORS default into implicit credential-minting permission. Like
+// CorsMiddleware, a configured multi-origin list takes precedence over single
+// origin configuration. Wildcard/malformed lists fail closed for sessions.
+$sessionOriginConfig = \FormLogic\Support\Environment::nonEmpty('CORS_ALLOWED_ORIGINS')
+    ?? \FormLogic\Support\Environment::nonEmpty('CORS_ORIGIN');
+$sessionOrigins = $sessionOriginConfig === null ? [] : array_map('trim', explode(',', $sessionOriginConfig));
+
+// Add CSRF middleware (validates tokens on state-changing requests).
+$app->add(new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', $cookieName, $csrfSecret, $sessionOrigins));
 
 // Make the shared public "Demo" account read-only on the server (its visitors' data lives in their
 // browser via the client overlay). Self-contained token check, so global placement is fine.

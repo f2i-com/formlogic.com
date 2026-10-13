@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { api } from "../../lib/api";
 import { workspaceBridge } from "../../lib/softn/workspaceBridge";
 import { NATIVE_PROTOCOL } from "../../lib/softn/protocol";
@@ -7,6 +7,7 @@ import { announcedIdentity, chooseFrameEngine, frameSource, sameIdentity } from 
 
 import { nativeAppStorage, NativeStorageError, isNativeStorageScope, type NativeStorageScope } from "../../lib/nativeAppStorage";
 import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent, subscribeSessionGeneration } from "../../lib/sessionGeneration";
+import { copyHostedActor, HOSTED_ACTOR_ERROR, isHostedAdmissionCurrent, sameHostedActor, type HostedAdmission } from '../../lib/hostedActor';
 
 const navigate = (path: string) => window.location.assign(path);
 
@@ -35,11 +36,16 @@ export function HostedAppFrame({
   version,
   native,
   engine,
+  hostedAdmission,
+  workspaceOnly = false,
 }: {
   slug: string;
   client: Record<string, string>;
   version: number;
   native?: NativeFrame;
+  hostedAdmission?: HostedAdmission;
+  /** Only trusted built-in clients may use the workspace bridge without hosted actions. */
+  workspaceOnly?: boolean;
   /**
    * The engine the SERVER decided this app runs on, from the runtime GET, with the revision every
    * action sends back in X-FormLogic-Client-Engine. Absent (a server from before the decision, or
@@ -50,14 +56,19 @@ export function HostedAppFrame({
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const generation = useSyncExternalStore(subscribeSessionGeneration, currentSessionGeneration);
+  const hosted = useMemo(() => {
+    const actor = copyHostedActor(hostedAdmission?.actor);
+    return actor && hostedAdmission ? Object.freeze({ actor, slug: hostedAdmission.slug, generation: hostedAdmission.generation }) : null;
+  }, [hostedAdmission]);
+  const hostedAdmissionId = hostedAdmission ? clientIdentity(hostedAdmission) : 0;
   // Props identify an admitted server GET. A later session may not reuse that admission,
   // even if it belongs to the same user; NativeAppPage must fetch a fresh project first.
   const sourceKey = JSON.stringify([slug, version, clientIdentity(client), native ? clientIdentity(native) : 0,
     native?.access, native?.storageScope?.access, native?.storageScope?.appId,
-    native?.storageScope?.access === 'members' ? native.storageScope.userId : null, engine?.id, engine?.revision]);
+    native?.storageScope?.access === 'members' ? native.storageScope.userId : null, engine?.id, engine?.revision, hosted, hostedAdmissionId, workspaceOnly]);
   const [admitted, setAdmitted] = useState(() => ({ key: sourceKey, generation }));
   if (admitted.key !== sourceKey) setAdmitted({ key: sourceKey, generation });
-  const admission = admitted.key === sourceKey ? admitted.generation : generation;
+  const admission = native || workspaceOnly ? (admitted.key === sourceKey ? admitted.generation : generation) : (hosted?.generation ?? -1);
 
   const [error, setError] = useState("");
   // Audit FL-S07: damaged saved browser data stops the app before it starts,
@@ -85,10 +96,15 @@ export function HostedAppFrame({
   const mountClient = override?.client ?? client;
   const mountVersion = override?.version ?? version;
   const mountNative = native ? (override?.native ?? native) : undefined;
-  const blocked = generation !== admission || (!!mountNative && !scopeAllowed(mountNative));
+  const blocked = generation !== admission || (!!mountNative && !scopeAllowed(mountNative)) ||
+    (!mountNative && !workspaceOnly && !isHostedAdmissionCurrent(hosted, slug));
   const engineId = current?.id ?? "";
   const engineRevision = current?.revision ?? "";
   const frameKey = `${decided}/${mountVersion}/${clientIdentity(mountClient)}/${mountNative ? clientIdentity(mountNative) : 0}/${storageEpoch}/${engineId}/${engineRevision}`;
+  // Source/engine props cannot revive rejected authority. Only a fresh server
+  // admission object can release this quarantine, even for the same actor.
+  const [quarantined, setQuarantined] = useState(-1);
+  const actorRefused = quarantined === hostedAdmissionId;
   // The frame navigated itself (b3/b1: a sandboxed frame may replace its own document). Nothing
   // here can prevent that, so it is detected after the fact and the frame is taken away.
   const [tripped, setTripped] = useState("");
@@ -105,14 +121,15 @@ export function HostedAppFrame({
   // engine replacement, before an old port callback can mutate parent storage.
   useLayoutEffect(() => {
     // In particular, do not even create a storage helper for an older server response.
-    if (blocked) return;
+    if (blocked || actorRefused) return;
     let channel: MessageChannel | undefined;
     let active = true;
     let mountValid = true;
     let recoveryValid = true;
     let channelClosed = false;
     const sessionGeneration = admission;
-    const sameSession = () => active && isSessionGenerationCurrent(sessionGeneration) && (!mountNative || scopeAllowed(mountNative));
+    const sameSession = () => active && isSessionGenerationCurrent(sessionGeneration) && (!mountNative || scopeAllowed(mountNative)) &&
+      (!!mountNative || workspaceOnly || isHostedAdmissionCurrent(hosted, slug));
     const isCurrentMount = () => sameSession() && mountValid;
     let initializing = false;
     let expired = false;
@@ -142,8 +159,12 @@ export function HostedAppFrame({
       try { result = mountNative ? await api.getNativeRuntime(slug) : await api.getHostedRuntime(slug); }
       catch { if (sameSession()) setError("This app could not be reopened. Please reload to continue."); return; }
       if (!sameSession()) return;
-      if (result.error) { setError(result.error); return; }
       const data = result.data;
+      // A new engine cannot re-admit a different actor or revive the rejected action.
+      if (!mountNative && (!hosted || !sameHostedActor(hosted.actor, result.error ? result.actor : data && 'actor' in data ? data.actor : undefined))) {
+        quarantine(); return;
+      }
+      if (result.error) { setError(result.error); return; }
       const nextNative = data && "project" in data && data.project ? {
         assets: data.project.assets, origins: data.project.origins, access: data.project.access, storageScope: data.project.storageScope,
       } : undefined;
@@ -183,6 +204,11 @@ export function HostedAppFrame({
     function invalidate() {
       recoveryValid = false;
       retireGuest();
+    }
+    function quarantine() {
+      invalidate();
+      setQuarantined(hostedAdmissionId);
+      setError(HOSTED_ACTOR_ERROR);
     }
     // A failed reset must leave the owner's recovery controls usable without
     // reviving the guest. Lifecycle invalidation still revokes both lifetimes.
@@ -320,15 +346,29 @@ export function HostedAppFrame({
             }, isCurrentMount) });
             return;
           }
+          // The guest cannot supply or replace admission; built-in workspace and native
+          // bridges have no implicit permission to call private hosted actions.
+          if (workspaceOnly || !isHostedAdmissionCurrent(hosted, slug)) {
+            reply({ error: HOSTED_ACTOR_ERROR }); return;
+          }
           const result = await api.runHostedAction(
             slug,
             action,
             input,
             controller.signal,
             clientEngine,
+            hosted.actor,
           );
+          if (!isCurrentMount()) return;
+          if (result.transportFailure) {
+            reply({ error: 'The request could not be completed. Try again.' }); return;
+          }
+          if (!sameHostedActor(hosted.actor, result.error ? result.actor : result.data?.actor) ||
+              ['actor_changed', 'actor_context_required', 'actor_context_unavailable'].includes(result.code || '')) {
+            quarantine(); return;
+          }
           if (isCurrentMount() && engineChanged(result)) void remountOnNewEngine();
-          reply(result.error ? { error: result.error } : result.data);
+          reply(result.error ? { error: result.error } : { result: result.data?.result });
         } catch (reason) {
           if (action === "nativeStorage" && reason instanceof NativeStorageError && ["corrupt", "too-large", "unavailable"].includes(reason.code) && isCurrentMount()) {
             const exportable = (() => { try { return reason.code !== "unavailable" && !!storage?.exportRaw(); } catch { return false; } })();
@@ -374,7 +414,7 @@ export function HostedAppFrame({
       if (invalidateMount.current === invalidate) invalidateMount.current = null;
       if (recovery.current?.key === frameKey) recovery.current = null;
     };
-  }, [slug, mountClient, mountVersion, mountNative, storageEpoch, engineId, engineRevision, admission, blocked, decided, frameKey]);
+  }, [slug, mountClient, mountVersion, mountNative, storageEpoch, engineId, engineRevision, admission, blocked, decided, frameKey, hosted, workspaceOnly, actorRefused, hostedAdmissionId]);
   // Every engine: the first load is the frame starting, a second is the document being replaced
   // under it. Counted per frame, so a remount (new source, reset data, a new engine) starts over.
   const countLoad = () => {
@@ -435,7 +475,7 @@ export function HostedAppFrame({
           )}
         </div>
       )}
-      {blocked ? <p role="alert" className="p-4 text-sm">This app's browser storage access could not be verified. Please reload or sign in again.</p> : navigated ? (
+      {blocked ? <p role="alert" className="p-4 text-sm">{mountNative ? "This app's browser storage access could not be verified. Please reload or sign in again." : HOSTED_ACTOR_ERROR}</p> : actorRefused ? null : navigated ? (
         <div role="alert" className="bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
           <p>This app tried to navigate away and was stopped</p>
         </div>

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Middleware;
 
+use FormLogic\Support\SessionOriginPolicy;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Http\Server\MiddlewareInterface;
@@ -37,7 +38,8 @@ class CorsMiddleware implements MiddlewareInterface
     {
         $this->defaultOrigin = $defaultOrigin;
         $this->allowedOrigins = $allowedOrigins;
-        $this->isWildcardMode = ($defaultOrigin === '*');
+        // An explicit allowlist takes precedence over the single-origin default.
+        $this->isWildcardMode = ($allowedOrigins === null && $defaultOrigin === '*');
     }
 
     public function process(Request $request, RequestHandler $handler): Response
@@ -77,7 +79,7 @@ class CorsMiddleware implements MiddlewareInterface
 
         // Never allow wildcard origins when credentials are enabled
         // This is a security requirement per CORS spec
-        if ($this->defaultOrigin === '*') {
+        if ($this->isWildcardMode) {
             // In wildcard mode, return literal '*' — don't reflect the origin
             // as reflection could allow targeted cross-origin reads
             return '*';
@@ -142,15 +144,19 @@ class CorsMiddleware implements MiddlewareInterface
      */
     private function originMatches(string $origin, string $pattern): bool
     {
-        // Exact match
-        if ($origin === $pattern) {
+        // CORS and session creation must agree on exact HTTP(S) origins, including
+        // case and explicit default ports, or split-origin login succeeds server-
+        // side while the browser is denied access to its response.
+        $normalizedOrigin = SessionOriginPolicy::normalizeOrigin($origin);
+        $normalizedPattern = SessionOriginPolicy::normalizeOrigin($pattern);
+        if ($normalizedOrigin !== null && $normalizedOrigin === $normalizedPattern) {
             return true;
         }
 
         // Wildcard subdomain match (e.g., *.example.com)
-        if (str_starts_with($pattern, '*.')) {
-            $domain = substr($pattern, 2);
-            $parsed = parse_url($origin);
+        if ($normalizedOrigin !== null && str_starts_with($pattern, '*.')) {
+            $domain = strtolower(substr($pattern, 2));
+            $parsed = parse_url($normalizedOrigin);
             if ($parsed && isset($parsed['host'])) {
                 $host = $parsed['host'];
                 // Check if host ends with .domain or is exactly domain
@@ -185,7 +191,7 @@ class CorsMiddleware implements MiddlewareInterface
             ->withHeader('Access-Control-Allow-Origin', $allowedOrigin)
             // X-FormLogic-Client-Engine: what a hosted app frame's actions claim (HostedAppFrame); on
             // a split-origin deployment every such action preflights, and the preflight must list it.
-            ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization, X-CSRF-Token, X-FormLogic-Client-Engine')
+            ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization, X-CSRF-Token, X-FormLogic-Client-Engine, X-FormLogic-Hosted-Actor')
             ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
             ->withHeader('Access-Control-Max-Age', '3600');
 

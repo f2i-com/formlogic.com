@@ -1,3 +1,4 @@
+import { sessionJsonHeaders } from '../../../scripts/session-request.mjs';
 /**
  * Perf sanity check for the demo dashboards. Opens the first N demo apps and measures how long until
  * the dashboard's charts have painted (batched report run + recharts animation settled). Reports each
@@ -16,7 +17,7 @@ const COUNT = Number(process.argv[2] || 8);
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
-await ctx.request.post(`${API_BASE}/demo/start`, { headers: { 'Content-Type': 'application/json' }, data: {} });
+await ctx.request.post(`${API_BASE}/demo/start`, { headers: sessionJsonHeaders(APP_BASE), data: {} });
 
 // Discover demo apps.
 const res = await ctx.request.get(`${API_BASE}/demo/apps`);

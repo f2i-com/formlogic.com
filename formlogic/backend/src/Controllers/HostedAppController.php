@@ -6,6 +6,7 @@ namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Services\{AppService, AppUserService, AuditService, HostedAppService, NativeAppService, RuntimeEngineService};
+use FormLogic\Support\HostedActorContext;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -34,8 +35,10 @@ class HostedAppController
     {
         $app = $this->apps->getApp((string) $args['id']);
         $userId = $request->getAttribute('userId');
-        if (!$userId || !$app || $app['ownerId'] !== $userId) return $this->jsonError($response, 'App not found or access denied', 404);
-        if ($blocked = $this->blockIfDemo($request, $response, 'App hosting is unavailable in the shared demo.')) return $blocked;
+        if (!$userId || !$app || $app['ownerId'] !== $userId) return $this->actorError($response, null, 'App not found or access denied', 404);
+        $actor = HostedActorContext::fromRequest($request, $app, null);
+        if ($actor === null) return $this->actorError($response, null, 'Hosted app identity could not be verified', 503, 'actor_context_unavailable');
+        if ($blocked = $this->blockIfDemo($request, $response, 'App hosting is unavailable in the shared demo.')) return $this->bindActor($blocked, $actor);
         if (($args['download'] ?? '') === 'database') {
             try {
                 $path = $this->hosting->snapshot($app['id']);
@@ -51,7 +54,7 @@ class HostedAppController
                     ->withHeader('Cache-Control', 'no-store')->withHeader('X-Content-Type-Options', 'nosniff');
             } catch (\Throwable $e) {
                 error_log('Hosted database download failed: ' . $e->getMessage());
-                return $this->jsonError($response, 'Database download is unavailable', 503);
+                return $this->actorError($response, $actor, 'Database download is unavailable', 503);
             }
         }
         return $this->respond($response, function () use ($request, $app) {
@@ -69,7 +72,7 @@ class HostedAppController
             if ($torch !== null) throw new \InvalidArgumentException($torch);
             $published = ['deployment' => $this->hosting->publish($app['id'], $body['package'], $body['expectedVersion'])];
             return $published + $this->engineAfterPublish($app['id']);
-        });
+        }, $actor);
     }
 
     /**
@@ -91,10 +94,22 @@ class HostedAppController
     {
         $userId = $request->getAttribute('userId');
         $app = $this->apps->getAppBySlug((string) $args['slug']);
-        if (!$userId || !$app || !$this->apps->isRuntimeVisible($app, $userId)) return $this->jsonError($response, 'App not found or access denied', 404);
+        if (!is_string($userId) || $userId === '' || !$app || !$this->apps->isRuntimeVisible($app, $userId)) return $this->actorError($response, null, 'App not found or access denied', 404);
         $owner = $app['ownerId'] === $userId;
-        if (!$owner && ($this->users->getAppUser($app['id'], $userId)['status'] ?? null) !== 'active') return $this->jsonError($response, 'Active app membership required', 403);
-        if ($blocked = $this->blockIfDemo($request, $response, 'App hosting is unavailable in the shared demo.')) return $blocked;
+        $membership = $owner ? null : $this->users->getAppUser($app['id'], $userId);
+        if (!$owner && ($membership['status'] ?? null) !== 'active') return $this->actorError($response, null, 'Active app membership required', 403);
+        $actor = HostedActorContext::fromRequest($request, $app, $membership);
+        if ($actor === null) return $this->actorError($response, null, 'Hosted app identity could not be verified', 503, 'actor_context_unavailable');
+        if ($blocked = $this->blockIfDemo($request, $response, 'App hosting is unavailable in the shared demo.')) return $this->bindActor($blocked, $actor);
+        // Apply to EVERY named action, including reads: getWallet initializes
+        // records, and read/replay endpoints can disclose private earlier results.
+        // A matching claim grants nothing. Current server rows above supply the
+        // user/owner passed into run(); guest input never selects either one.
+        if ($request->getMethod() !== 'GET') {
+            $initiator = HostedActorContext::initiatingActor($request);
+            if ($initiator === null) return $this->actorError($response, $actor, 'Reopen this app to verify its identity', 409, 'actor_context_required');
+            if ($initiator !== $actor) return $this->actorError($response, $actor, 'This app identity has changed. Reopen it to continue.', 409, 'actor_changed');
+        }
         return $this->respond($response, function () use ($request, $response, $app, $args, $userId, $owner) {
             // The page was loaded on one engine; the server may have decided otherwise since (a
             // revocation, a policy edit). Inside respond(), so a resolver that cannot answer is the
@@ -117,7 +132,7 @@ class HostedAppController
             $input = $request->getParsedBody();
             if (!is_array($input) || (array_is_list($input) && $input !== [])) throw new \InvalidArgumentException('Action input must be a JSON object');
             return ['result' => $this->hosting->run($app['id'], (string) $args['action'], $input, $userId, $owner)];
-        });
+        }, $actor);
     }
 
     /**
@@ -224,22 +239,38 @@ class HostedAppController
     }
 
     /** $operation answers with an array to encode, or with a finished Response (a typed refusal). */
-    private function respond(Response $response, callable $operation): Response
+    private function respond(Response $response, callable $operation, array $actor): Response
     {
         $response = $response->withHeader('Cache-Control', 'no-store')->withHeader('X-Content-Type-Options', 'nosniff');
         try {
             $result = $operation();
-            return $result instanceof Response ? $result : $this->jsonResponse($response, $result);
+            return $result instanceof Response ? $this->bindActor($result, $actor) : $this->jsonResponse($response, array_merge($result, ['actor' => $actor]));
         }
-        catch (\InvalidArgumentException $e) { return $this->jsonError($response, $e->getMessage(), 400); }
+        catch (\InvalidArgumentException $e) { return $this->actorError($response, $actor, $e->getMessage(), 400); }
         catch (\RuntimeException $e) {
-            if (in_array($e->getCode(), [404, 409, 422], true)) return $this->jsonError($response, $e->getMessage(), $e->getCode());
+            if (in_array($e->getCode(), [404, 409, 422], true)) return $this->actorError($response, $actor, $e->getMessage(), $e->getCode());
             error_log('Hosted app failure: ' . $e->getMessage());
-            return $this->jsonError($response, 'App hosting is temporarily unavailable', 503);
+            return $this->actorError($response, $actor, 'App hosting is temporarily unavailable', 503);
         }
         catch (\Throwable $e) {
             error_log('Hosted app failure: ' . $e->getMessage());
-            return $this->jsonError($response, 'App hosting is temporarily unavailable', 503);
+            return $this->actorError($response, $actor, 'App hosting is temporarily unavailable', 503);
         }
+    }
+
+    private function actorError(Response $response, ?array $actor, string $message, int $status, ?string $code = null): Response
+    {
+        $body = ['error' => true, 'message' => $message, 'actor' => $actor];
+        if ($code !== null) $body['code'] = $code;
+        return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store')->withHeader('X-Content-Type-Options', 'nosniff'), $body, $status);
+    }
+
+    /** Preserve typed refusals while attaching authority outside script output. */
+    private function bindActor(Response $response, array $actor): Response
+    {
+        $body = json_decode((string) $response->getBody(), true, 64, JSON_THROW_ON_ERROR);
+        $body['actor'] = $actor;
+        $stream = (new \Slim\Psr7\Factory\StreamFactory())->createStream(json_encode($body, JSON_THROW_ON_ERROR));
+        return $response->withBody($stream)->withHeader('Cache-Control', 'no-store')->withHeader('X-Content-Type-Options', 'nosniff');
     }
 }

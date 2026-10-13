@@ -1,10 +1,11 @@
+import { sessionHeaders } from './session-request';
 import { expect, test } from '@playwright/test';
 import { mkdir, writeFile, unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 test('The form picker discovers a new template file and creates its fields', async ({ page, context }) => {
   test.skip(!process.env.FORMLOGIC_REVIEW_PASSWORD, 'Requires the isolated local review account.');
-  const login = await context.request.post('/api/auth/login', { data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
+  const login = await context.request.post('/api/auth/login', { headers: sessionHeaders(), data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
   expect(login.ok()).toBe(true);
   await page.goto('/forms');
   const open = () => page.getByRole('button', { name: 'New form', exact: true }).click();

@@ -1,3 +1,4 @@
+import { sessionHeaders } from './session-request';
 /**
  * Hosted SoftN apps, end to end in a real browser against the real backend:
  *
@@ -32,7 +33,7 @@ let created: string[] = [];
 let headers: Record<string, string> = {};
 
 async function login(context: BrowserContext) {
-  const r = await context.request.post('/api/auth/login', { data: { email: EMAIL, password: PASSWORD } });
+  const r = await context.request.post('/api/auth/login', { headers: sessionHeaders(), data: { email: EMAIL, password: PASSWORD } });
   expect(r.ok(), await r.text()).toBe(true);
   const csrf = (await context.cookies()).find(c => c.name === 'formlogic_csrf')!.value;
   headers = { 'X-CSRF-Token': csrf };

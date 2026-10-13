@@ -1,3 +1,4 @@
+import { sessionJsonHeaders } from '../../../scripts/session-request.mjs';
 // Real local UI captures with a dedicated fictional project; never uses real customer data.
 // Run from ui with FORMLOGIC_REVIEW_PASSWORD set and the local API/native runtime running.
 import { chromium, expect } from '@playwright/test';
@@ -15,7 +16,7 @@ await mkdir(readme, { recursive: true });
 const browser = await chromium.launch({ channel: 'chrome' });
 try {
   const context = await browser.newContext({ baseURL: origin, viewport: { width: 1440, height: 1100 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
-  const login = await context.request.post('/api/auth/login', { data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
+  const login = await context.request.post('/api/auth/login', { headers: sessionJsonHeaders(origin), data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
   assert(login.ok(), 'The review account must be available.');
   const headers = { 'X-CSRF-Token': (await context.cookies()).find(cookie => cookie.name === 'formlogic_csrf').value };
   const apps = (await (await context.request.get('/api/apps')).json()).apps;

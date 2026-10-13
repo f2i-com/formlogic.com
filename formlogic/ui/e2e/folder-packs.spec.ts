@@ -1,3 +1,4 @@
+import { sessionHeaders } from './session-request';
 import { expect, test } from '@playwright/test';
 import { readFileSync, cpSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -55,7 +56,7 @@ test('folder pack installs an editable workspace connected to its real forms', a
     rmSync(sourceFolder, { recursive: true, force: true });
   }
 
-  await context.request.post('/api/auth/login', { data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
+  await context.request.post('/api/auth/login', { headers: sessionHeaders(), data: { email: 'admin@formlogic.local', password: process.env.FORMLOGIC_REVIEW_PASSWORD } });
   const headers = { 'X-CSRF-Token': (await context.cookies()).find(c => c.name === 'formlogic_csrf')!.value };
   const previous = (await (await context.request.get('/api/packs/installed')).json()).installations ?? [];
   for (const item of previous) if (item.packId?.startsWith('folder-pack-review-')) await context.request.delete(`/api/packs/${item.id}`, { headers });

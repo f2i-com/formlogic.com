@@ -1,4 +1,5 @@
 import { defineConfig, devices, type Project } from '@playwright/test';
+import { E2E_FRONTEND_BASE_URL } from './e2e/session-request';
 
 // E2E tests run against the live WAMP-served app (no webServer is started here).
 //
@@ -59,7 +60,7 @@ export default defineConfig({
   retries: 0,
   reporter: [['list']],
   use: {
-    baseURL: process.env.E2E_BASE_URL || 'http://formlogic.local',
+    baseURL: E2E_FRONTEND_BASE_URL,
     headless: true,
     ignoreHTTPSErrors: true,
     actionTimeout: 15_000,
