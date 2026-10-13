@@ -19,6 +19,24 @@ const API = process.env.E2E_API_URL || 'http://api.formlogic.local';
 const EMAIL = process.env.E2E_EMAIL || 'test@example.com';
 const PASSWORD = process.env.E2E_PASSWORD || 'password123';
 
+type ApiResult<TBody> = { status: number; body: TBody | null };
+
+// Only the fields inspected by this scenario; the existing fallbacks also
+// accept missing fields and legacy flow-run identifiers.
+interface FlowRunsBody {
+  runs?: {
+    flowSlug?: string | null;
+    flow_definition_id?: string | null;
+    status?: string | null;
+  }[];
+}
+
+interface CallResponsesBody {
+  responses?: {
+    answers?: { status?: unknown } | null;
+  }[];
+}
+
 async function login(page: Page) {
   await page.goto('/login');
   await page.locator('input[type="email"]').fill(EMAIL);
@@ -151,7 +169,7 @@ test.describe('aokie receptionist (mock desktop path)', () => {
       expect((turns.body?.responses ?? []).length, 'transcript turns should exist').toBeGreaterThanOrEqual(2);
 
       // Flow bindings fired: run logs exist and the sync caller-lookup completed.
-      const runs = await pollUntil(
+      const runs = await pollUntil<ApiResult<FlowRunsBody>>(
         () => apiFetch(page, 'GET', `/api/apps/${appId}/flow-runs`),
         (r) => {
           const list = r.body?.runs ?? [];
@@ -168,7 +186,7 @@ test.describe('aokie receptionist (mock desktop path)', () => {
 
       // call.ended must UPDATE the same Calls record (formlogic.updateResponse
       // match-by-call_id): terminal status + duration, not a second row.
-      const ended = await pollUntil(
+      const ended = await pollUntil<ApiResult<CallResponsesBody>>(
         () => apiFetch(page, 'GET', `/api/forms/${callsFormId}/responses`),
         (r) => {
           const rows = r.body?.responses ?? [];
