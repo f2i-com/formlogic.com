@@ -34,7 +34,7 @@ namespace FormLogic\Services;
  * IO model: stdio pipes are left BLOCKING. The NDJSON protocol is strictly
  * turn-based (the child writes exactly one line then blocks reading our reply), so
  * blocking fgets cannot deadlock. A runaway/looping guest is hard-killed by an
- * EXTERNAL watchdog process (ping+taskkill on Windows / sleep+kill on POSIX, see
+ * EXTERNAL watchdog process (retained-handle helper on Windows / sleep+kill on POSIX, see
  * spawnWatchdog) when a single compute window overruns the CPU budget; that
  * closes the pipes and unblocks fgets. proc_terminate() in run() is only a
  * post-loop cleanup fallback. Windows proc_open pipes don't support non-blocking
@@ -100,12 +100,19 @@ class SandboxRunner
         if (!is_file($this->binary) || !is_file($this->prelude)) {
             return false;
         }
+        // A shell wrapper introduces descendants that this exact-process watchdog
+        // does not own. Windows overrides must be direct native launcher builds.
+        if (PHP_OS_FAMILY === 'Windows' && preg_match('/\.(?:bat|cmd)\z/i', $this->binary)) {
+            return false;
+        }
         // Present is not the same as runnable. Zip extraction and `git clone` on
         // a box with core.filemode=false both hand out the Linux launcher without
         // its execute bit; proc_open then starts a child that dies at exec, and
         // every evaluation reports "failed to start" while a presence-only check
         // keeps the health endpoint green. Windows has no execute bit to lose.
-        return PHP_OS_FAMILY === 'Windows' || is_executable($this->binary);
+        return PHP_OS_FAMILY === 'Windows'
+            ? $this->windowsWatchdogCommand() !== null
+            : is_executable($this->binary);
     }
 
     /**
@@ -195,11 +202,15 @@ class SandboxRunner
             return ['error' => 'FormLogic runtime is not available'];
         }
 
-        $cmd = [
-            $this->binary,
-            '--prelude', $this->prelude,
-            '--heap-mb', (string) max(1, intdiv($this->memoryLimitKb, 1024)),
-        ];
+        // Serialization can invoke application JsonSerializable code. Refuse a
+        // throwing input before acquiring a runtime, helper or temporary file.
+        try {
+            $payloadLine = $this->encodeLine($payload);
+        } catch (\Throwable) {
+            return ['error' => 'FormLogic runtime input could not be encoded'];
+        }
+
+        $cmd = $this->command();
 
         // stderr goes to a file, not a pipe: the loop below reads only stdout (Windows pipes
         // allow no select), so a child that filled a stderr pipe would stall there until the
@@ -220,100 +231,122 @@ class SandboxRunner
             return ['error' => 'Failed to start FormLogic runtime'];
         }
 
-        $pid = (int) (proc_get_status($proc)['pid'] ?? 0);
+        $watchdog = null;
+        $done = null;
+        $failure = null;
+        try {
+            $pid = (int) (proc_get_status($proc)['pid'] ?? 0);
 
-        // See the class docblock for the blocking-lockstep + external-watchdog IO
-        // model (and why non-blocking pipes can't be used on Windows).
-        $cpuSecs = max(1, (int) ceil($cpuBudgetMs / 1000));
-        // CUMULATIVE guest-compute budget that host calls cannot reset. The watchdog
-        // is paused/re-armed around every host call; re-arming with the FULL window
-        // each time let a guest emitting cheap host calls in a loop run forever
-        // (pinning this PHP worker — a cross-tenant DoS that defeated the runaway
-        // kill). We cap total guest-compute time across all windows, and cap the
-        // host-call COUNT (a tight fast-host-call loop consumes ~0 compute per window
-        // but churns proc_open and still pins the worker).
-        $budgetSecs = max(1.0, $cpuBudgetMs / 1000);
-        $consumedSecs = 0.0;
-        $hostCalls = 0;
-        // Generous vs any legit onSubmit (ctx.db caps at 50 fields/20 tags, ctx.http
-        // is separately capped), but bounds a tight fast-host-call loop that consumes
-        // ~0 compute per window yet churns proc_open and pins the worker.
-        // A legit onSubmit caps at 50 fields + 20 tags via ctx.db (plus
-        // separately-capped ctx.http) — well under ~100 host calls — so 256 keeps
-        // generous headroom while tightly bounding a fast-host-call loop's
-        // proc_open(watchdog) churn.
-        $maxHostCalls = 256;
-        $watchdog = $this->spawnWatchdog($pid, $cpuSecs);
-        // Fail closed: without an armed watchdog a runaway guest would wedge this
-        // worker forever on the blocking read. Callers degrade like any error.
-        if ($watchdog === null) {
-            $this->cleanup($proc, $pipes);
+            // See the class docblock for the blocking-lockstep + external-watchdog IO
+            // model (and why non-blocking pipes can't be used on Windows).
+            $cpuSecs = max(1, (int) ceil($cpuBudgetMs / 1000));
+            // CUMULATIVE guest-compute budget that host calls cannot reset. The watchdog
+            // is paused/re-armed around every host call; re-arming with the FULL window
+            // each time let a guest emitting cheap host calls in a loop run forever
+            // (pinning this PHP worker — a cross-tenant DoS that defeated the runaway
+            // kill). We cap total guest-compute time across all windows, and cap the
+            // host-call COUNT (a tight fast-host-call loop consumes ~0 compute per window
+            // but churns proc_open and still pins the worker).
+            $budgetSecs = max(1.0, $cpuBudgetMs / 1000);
+            $consumedSecs = 0.0;
+            $hostCalls = 0;
+            // Generous vs any legit onSubmit (ctx.db caps at 50 fields/20 tags, ctx.http
+            // is separately capped), but bounds a tight fast-host-call loop that consumes
+            // ~0 compute per window yet churns proc_open and pins the worker.
+            // A legit onSubmit caps at 50 fields + 20 tags via ctx.db (plus
+            // separately-capped ctx.http) — well under ~100 host calls — so 256 keeps
+            // generous headroom while tightly bounding a fast-host-call loop's
+            // proc_open(watchdog) churn.
+            $maxHostCalls = 256;
+            $watchdog = $this->spawnWatchdog($pid, $cpuSecs);
+            // Fail closed: without an armed watchdog a runaway guest would wedge this
+            // worker forever on the blocking read. Callers degrade like any error.
+            if ($watchdog === null || !$this->watchdogAlive($watchdog)) {
+                $failure = 'FormLogic runtime watchdog could not be started';
+            } else {
+                // Send the job (single line of JSON).
+                @fwrite($pipes[0], $payloadLine);
+                @fflush($pipes[0]);
+                $windowStart = microtime(true);
+
+                while (($line = $this->readLine($pipes[1])) !== null) {
+                    if ($line === false) {
+                        $failure = 'FormLogic runtime sent a protocol line over ' . (self::MAX_LINE_BYTES >> 20) . ' MiB';
+                        break; // cleanup() kills the guest
+                    }
+                    $line = trim($line);
+                    if ($line === '') {
+                        continue;
+                    }
+                    $msg = json_decode($line, true);
+                    if (!is_array($msg)) {
+                        continue;
+                    }
+                    $type = $msg['type'] ?? null;
+                    if ($type === 'call') {
+                        // Account the guest-compute time of the window that just ended, then
+                        // enforce the cumulative budget + host-call cap BEFORE more work —
+                        // neither can be reset by the guest.
+                        $consumedSecs += microtime(true) - $windowStart;
+                        if (++$hostCalls > $maxHostCalls || $consumedSecs >= $budgetSecs) {
+                            break; // budget / host-call cap exhausted — cleanup() kills the guest
+                        }
+                        // Pause the compute watchdog around EVERY host call: the handler
+                        // runs on the trusted PHP side while the guest sits idle waiting
+                        // for the reply, so it must not burn the compute budget — and this
+                        // also closes the kill-mid-dispatch race for db/utils calls.
+                        if (!$this->pauseWatchdog($watchdog)) {
+                            $failure = 'FormLogic runtime watchdog could not be paused';
+                            break;
+                        }
+                        if ((proc_get_status($proc)['running'] ?? null) !== true) {
+                            break;
+                        }
+                        $reply = $this->dispatchHostCall($hostHandler, $msg);
+                        // A host result may run JsonSerializable code too. Keep its
+                        // serialization inside the paused host window, before rearming.
+                        try {
+                            $replyLine = $this->encodeLine($reply);
+                        } catch (\Throwable) {
+                            $failure = 'FormLogic runtime host reply could not be encoded';
+                            break;
+                        }
+                        // Keep the guest waiting while its remaining compute window is armed.
+                        $st = proc_get_status($proc);
+                        if (empty($st['running'])) {
+                            break;
+                        }
+                        $remainingSecs = max(1, (int) ceil($budgetSecs - $consumedSecs));
+                        if (!$this->resumeWatchdog($watchdog, $pid, $remainingSecs)) {
+                            $failure = 'FormLogic runtime watchdog could not be armed';
+                            break;
+                        }
+                        $windowStart = microtime(true);
+                        if (@fwrite($pipes[0], $replyLine) === false) {
+                            break;
+                        }
+                        @fflush($pipes[0]);
+                    } elseif ($type === 'done') {
+                        $done = $msg;
+                        break;
+                    }
+                }
+            }
+        } catch (\Throwable) {
+            // Never expose exception text from protocol or application objects.
+            $failure = 'FormLogic runtime communication failed';
+            $done = null;
+        } finally {
+            // Every acquired runtime reaches the same bounded cancellation/join,
+            // including exceptions during payload delivery or reply processing.
+            if (!$this->finish($watchdog, $proc, $pipes)) {
+                $failure = 'FormLogic runtime cleanup could not be confirmed';
+                $done = null; // never return success after an unconfirmed cleanup
+            }
+            $stderr = $stderrFile !== false ? $this->stderrTail($stderrFile) : '';
             if ($stderrFile !== false) {
                 @unlink($stderrFile);
             }
-            return ['error' => 'FormLogic runtime watchdog could not be started'];
-        }
-
-        // Send the job (single line of JSON).
-        @fwrite($pipes[0], $this->encodeLine($payload));
-        @fflush($pipes[0]);
-        $windowStart = microtime(true);
-
-        $done = null;
-        $failure = null;
-        while (($line = $this->readLine($pipes[1])) !== null) {
-            if ($line === false) {
-                $failure = 'FormLogic runtime sent a protocol line over ' . (self::MAX_LINE_BYTES >> 20) . ' MiB';
-                break; // cleanup() kills the guest
-            }
-            $line = trim($line);
-            if ($line === '') {
-                continue;
-            }
-            $msg = json_decode($line, true);
-            if (!is_array($msg)) {
-                continue;
-            }
-            $type = $msg['type'] ?? null;
-            if ($type === 'call') {
-                // Account the guest-compute time of the window that just ended, then
-                // enforce the cumulative budget + host-call cap BEFORE more work —
-                // neither can be reset by the guest.
-                $consumedSecs += microtime(true) - $windowStart;
-                if (++$hostCalls > $maxHostCalls || $consumedSecs >= $budgetSecs) {
-                    break; // budget / host-call cap exhausted — cleanup() kills the guest
-                }
-                // Pause the compute watchdog around EVERY host call: the handler
-                // runs on the trusted PHP side while the guest sits idle waiting
-                // for the reply, so it must not burn the compute budget — and this
-                // also closes the kill-mid-dispatch race for db/utils calls.
-                $this->stopWatchdog($watchdog);
-                $reply = $this->dispatchHostCall($hostHandler, $msg);
-                // the child may have been killed (or the pipe broken) meanwhile; stop if so.
-                $st = proc_get_status($proc);
-                if (empty($st['running']) || @fwrite($pipes[0], $this->encodeLine($reply)) === false) {
-                    break;
-                }
-                @fflush($pipes[0]);
-                // Re-arm with only the REMAINING compute budget (never the full
-                // window again) so cumulative guest compute stays bounded.
-                $remainingSecs = max(1, (int) ceil($budgetSecs - $consumedSecs));
-                $windowStart = microtime(true);
-                $watchdog = $this->spawnWatchdog($pid, $remainingSecs);
-                if ($watchdog === null) {
-                    break; // can't re-arm — don't enter another unbounded read
-                }
-            } elseif ($type === 'done') {
-                $done = $msg;
-                break;
-            }
-        }
-
-        $this->stopWatchdog($watchdog);
-        $this->cleanup($proc, $pipes);
-        $stderr = $stderrFile !== false ? $this->stderrTail($stderrFile) : '';
-        if ($stderrFile !== false) {
-            @unlink($stderrFile);
         }
 
         if ($done === null) {
@@ -329,6 +362,13 @@ class SandboxRunner
             return ['error' => $message];
         }
         return $done;
+    }
+
+    /** Direct argv, also allowing child-protocol tests to use a native fixture executable. */
+    protected function command(): array
+    {
+        return [$this->binary, '--prelude', $this->prelude,
+            '--heap-mb', (string) max(1, intdiv($this->memoryLimitKb, 1024))];
     }
 
     /**
@@ -393,14 +433,15 @@ class SandboxRunner
      * Terminate (if still running) and fully release the child process and its pipes.
      *
      * @param resource $proc
+     * @param-out resource|null $proc
      * @param array<int, resource> $pipes
      */
-    private function cleanup($proc, array $pipes): void
+    private function cleanup(&$proc, array $pipes): bool
     {
         if (is_resource($proc)) {
             $st = proc_get_status($proc);
-            if (!empty($st['running'])) {
-                proc_terminate($proc);
+            if (($st['running'] ?? null) !== false) {
+                @proc_terminate($proc);
             }
         }
         foreach ($pipes as $p) {
@@ -409,8 +450,49 @@ class SandboxRunner
             }
         }
         if (is_resource($proc)) {
+            if (PHP_OS_FAMILY === 'Windows' && !$this->waitForExit($proc, 2000)) {
+                // Resource GC closes the stored Windows handle without waiting.
+                // Explicit proc_close would wait indefinitely for a live process.
+                $proc = null;
+                return false;
+            }
             proc_close($proc);
+            $proc = null;
         }
+        return true;
+    }
+
+    /** Cancel/join before releasing the runtime; a failed join never becomes success. */
+    private function finish(mixed &$watchdog, mixed &$proc, array $pipes): bool
+    {
+        $joined = $this->stopWatchdog($watchdog);
+        $runtimeExited = $this->cleanup($proc, $pipes);
+        if (!$joined && is_array($watchdog)) {
+            // A helper that remains alive can only own its retained original target.
+            // Killing/closing PHP's original target cannot retarget that handle.
+            $helper = $watchdog['process'];
+            if ($runtimeExited && is_resource($helper)) {
+                // Never remove the owner-loss guard while its target may still live.
+                @proc_terminate($helper);
+                if ($this->waitForExit($helper, 250)) {
+                    proc_close($helper);
+                    $this->removeWatchdogFiles($watchdog);
+                }
+            }
+            $watchdog = null; // no explicit blocking close on an unconfirmed helper
+        }
+        return $joined && $runtimeExited;
+    }
+
+    private function waitForExit(mixed $process, int $milliseconds): bool
+    {
+        $until = hrtime(true) + $milliseconds * 1_000_000;
+        do {
+            $status = proc_get_status($process);
+            if (($status['running'] ?? null) === false) { return true; }
+            usleep(10_000);
+        } while (hrtime(true) < $until);
+        return false;
     }
 
     /**
@@ -422,17 +504,11 @@ class SandboxRunner
         if ($pid <= 0) {
             return null;
         }
-        $null = PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null';
-        // String command form on purpose: it routes through cmd/sh so the shell
-        // operators (`&`, `>`, `;`) are parsed. The array+bypass_shell form mangles
-        // them via Windows arg-escaping and the kill never runs.
         if (PHP_OS_FAMILY === 'Windows') {
-            // `ping -n` is the portable Windows sleep; then taskkill the tree.
-            $cmd = 'ping -n ' . ($secs + 1) . ' 127.0.0.1 >NUL & taskkill /F /T /PID ' . $pid . ' >NUL 2>&1';
-        } else {
-            $cmd = 'sleep ' . $secs . '; kill -9 ' . $pid . ' 2>/dev/null';
+            return $this->spawnWindowsWatchdog($pid, $secs);
         }
-        $spec = [0 => ['pipe', 'r'], 1 => ['file', $null, 'w'], 2 => ['file', $null, 'w']];
+        $cmd = 'sleep ' . $secs . '; kill -9 ' . $pid . ' 2>/dev/null';
+        $spec = [0 => ['pipe', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']];
         $wd = @proc_open($cmd, $spec, $wpipes);
         if (!is_resource($wd)) {
             return null;
@@ -443,19 +519,122 @@ class SandboxRunner
         return $wd;
     }
 
-    /**
-     * Cancel a watchdog (used when the guest finished within budget).
-     */
-    private function stopWatchdog(mixed $watchdog): void
+    /** @return list<string>|null Side-effect-free prerequisite check; policy is checked at startup. */
+    private function windowsWatchdogCommand(): ?array
     {
-        if (!is_resource($watchdog)) {
-            return;
+        $systemRoot = getenv('SystemRoot') ?: getenv('WINDIR');
+        if (!is_string($systemRoot) || !preg_match('/\A[A-Za-z]:[\\\\\/]/D', $systemRoot)) { return null; }
+        $powershell = rtrim($systemRoot, '/\\') . '/System32/WindowsPowerShell/v1.0/powershell.exe';
+        $helper = __DIR__ . '/windows-watchdog.ps1';
+        if (!is_file($powershell) || !is_file($helper)) { return null; }
+        return [$powershell, '-NoLogo', '-NoProfile', '-NonInteractive', '-File', $helper];
+    }
+
+    private function spawnWindowsWatchdog(int $pid, int $secs): mixed
+    {
+        $cmd = $this->windowsWatchdogCommand();
+        if ($cmd === null || $secs < 1) { return null; }
+        $marker = tempnam(sys_get_temp_dir(), 'flwd');
+        if ($marker === false) { return null; }
+        $directory = $marker . '.d';
+        if (!@mkdir($directory, 0700)) { @unlink($marker); return null; }
+        $ack = $directory . '/ack';
+        // This challenge travels only over the exact helper's stdin. A fixed PID
+        // or sequence marker in temp storage is not proof that helper acquired it.
+        try { $nonce = bin2hex(random_bytes(32)); }
+        catch (\Throwable) { @rmdir($directory); @unlink($marker); return null; }
+        array_push($cmd, '-TargetPid', (string) $pid, '-AckPath', $ack);
+        $spec = [0 => ['pipe', 'r'], 1 => ['file', 'NUL', 'w'], 2 => ['file', 'NUL', 'w']];
+        $process = @proc_open($cmd, $spec, $pipes, null, null, ['bypass_shell' => true]);
+        if (!is_resource($process)) { @rmdir($directory); @unlink($marker); return null; }
+        $state = ['process' => $process, 'input' => $pipes[0] ?? null,
+            'marker' => $marker, 'directory' => $directory, 'ack' => $ack, 'nonce' => $nonce,
+            'pid' => $pid, 'sequence' => 0, 'ready' => false];
+        $hello = 'HELLO ' . $nonce . "\n";
+        if (is_resource($state['input']) && @fwrite($state['input'], $hello) === strlen($hello)
+            && @fflush($state['input'])
+            && $this->awaitAcknowledgment($state, '0 READY ' . $pid, 8000)
+            && $this->windowsCommand($state, 'ARM ' . $secs, 'ARMED')) {
+            $state['ready'] = true;
         }
+        // Even failed startup returns the exact owned helper for bounded cleanup.
+        return $state;
+    }
+
+    private function awaitAcknowledgment(array $watchdog, string $expected, int $milliseconds): bool
+    {
+        $until = hrtime(true) + $milliseconds * 1_000_000;
+        do {
+            if ((proc_get_status($watchdog['process'])['running'] ?? null) !== true) { return false; }
+            clearstatcache(true, $watchdog['ack']);
+            if (is_file($watchdog['ack']) && @file_get_contents($watchdog['ack'], false, null, 0, 128) === $watchdog['nonce'] . ' ' . $expected . "\n") {
+                return (proc_get_status($watchdog['process'])['running'] ?? null) === true;
+            }
+            usleep(10_000);
+        } while (hrtime(true) < $until);
+        return false;
+    }
+
+    private function windowsCommand(array &$watchdog, string $command, string $ack): bool
+    {
+        $sequence = ++$watchdog['sequence'];
+        $line = $sequence . ' ' . $command . "\n";
+        if (!is_resource($watchdog['input']) || @fwrite($watchdog['input'], $line) !== strlen($line)
+            || !@fflush($watchdog['input'])) { return false; }
+        return $this->awaitAcknowledgment($watchdog, $sequence . ' ' . $ack . ' ' . $watchdog['pid'], 2000);
+    }
+
+    private function watchdogAlive(mixed $watchdog): bool
+    {
+        if (!is_array($watchdog)) { return is_resource($watchdog); }
+        return $watchdog['ready'] && (proc_get_status($watchdog['process'])['running'] ?? null) === true;
+    }
+
+    private function pauseWatchdog(mixed &$watchdog): bool
+    {
+        if (is_array($watchdog)) { return $this->windowsCommand($watchdog, 'PAUSE', 'PAUSED'); }
+        return $this->stopWatchdog($watchdog);
+    }
+
+    private function resumeWatchdog(mixed &$watchdog, int $pid, int $seconds): bool
+    {
+        if (is_array($watchdog)) {
+            return $this->windowsCommand($watchdog, 'ARM ' . $seconds, 'ARMED');
+        }
+        $watchdog = $this->spawnWatchdog($pid, $seconds);
+        return $watchdog !== null && $this->watchdogAlive($watchdog);
+    }
+
+    /** Final CANCEL also stops the original target, closing the PHP-owner-death gap. */
+    private function stopWatchdog(mixed &$watchdog): bool
+    {
+        if (is_array($watchdog)) {
+            $process = $watchdog['process'];
+            if (is_resource($watchdog['input'])) {
+                @fwrite($watchdog['input'], (++$watchdog['sequence']) . " CANCEL\n");
+                @fflush($watchdog['input']);
+                fclose($watchdog['input']);
+                $watchdog['input'] = null;
+            }
+            if (!$this->waitForExit($process, 2000)) { return false; }
+            proc_close($process); // observed exit only; no descendant killer exists
+            $this->removeWatchdogFiles($watchdog);
+            $watchdog = null;
+            return true;
+        }
+        if (!is_resource($watchdog)) { return true; }
         $st = proc_get_status($watchdog);
-        if (!empty($st['running'])) {
-            proc_terminate($watchdog);
-        }
+        if (!empty($st['running'])) { proc_terminate($watchdog); }
         proc_close($watchdog);
+        $watchdog = null;
+        return true;
+    }
+
+    private function removeWatchdogFiles(array $watchdog): void
+    {
+        @unlink($watchdog['ack']);
+        @rmdir($watchdog['directory']);
+        @unlink($watchdog['marker']);
     }
 
     /**

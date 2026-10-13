@@ -9,7 +9,7 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * How SandboxRunner treats its child's output, checked against a scripted child (a PHP script
- * behind a .bat or sh wrapper, standing in for the launcher):
+ * invoked directly with PHP_BINARY, standing in for the launcher):
  *  - stderr is never read by the protocol loop, so a child that writes more than a pipe holds
  *    there blocked until the watchdog killed it, and a finished job was lost;
  *  - a protocol line is read whole, so one huge line was a memory-limit fatal in the request;
@@ -60,15 +60,13 @@ PHP);
     private function runner(string $mode): SandboxRunner
     {
         putenv('FL_SANDBOX_CHILD_MODE=' . $mode);
-        if (PHP_OS_FAMILY === 'Windows') {
-            $bin = $this->dir . '/child.bat';
-            file_put_contents($bin, '@"' . PHP_BINARY . '" "' . $this->dir . '/child.php"' . "\r\n");
-        } else {
-            $bin = $this->dir . '/child.sh';
-            file_put_contents($bin, "#!/bin/sh\nexec '" . PHP_BINARY . "' '" . $this->dir . "/child.php'\n");
-            chmod($bin, 0700);
-        }
-        $runner = new SandboxRunner($bin);
+        $runner = new class($this->dir . '/child.php') extends SandboxRunner {
+            public function __construct(private string $script) { parent::__construct(PHP_BINARY); }
+            protected function command(): array
+            {
+                return [PHP_BINARY, '-d', 'xdebug.mode=off', $this->script];
+            }
+        };
         $this->assertTrue($runner->isAvailable());
         return $runner;
     }
