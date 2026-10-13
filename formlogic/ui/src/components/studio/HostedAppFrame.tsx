@@ -96,7 +96,10 @@ export function HostedAppFrame({
   const loads = useRef({ key: "", count: 0 });
   const port = useRef<MessagePort | null>(null);
   const invalidateMount = useRef<(() => void) | null>(null);
-  const recovery = useRef<{ key: string; storage: ReturnType<typeof nativeAppStorage>; isCurrent: () => boolean } | null>(null);
+  const recovery = useRef<{
+    key: string; storage: ReturnType<typeof nativeAppStorage>; isCurrent: () => boolean;
+    retireGuest: () => void; invalidate: () => void;
+  } | null>(null);
   const booting = useRef(0);
   // Layout cleanup fences the previous document synchronously at a source/app/
   // engine replacement, before an old port callback can mutate parent storage.
@@ -106,6 +109,7 @@ export function HostedAppFrame({
     let channel: MessageChannel | undefined;
     let active = true;
     let mountValid = true;
+    let recoveryValid = true;
     let channelClosed = false;
     const sessionGeneration = admission;
     const sameSession = () => active && isSessionGenerationCurrent(sessionGeneration) && (!mountNative || scopeAllowed(mountNative));
@@ -115,7 +119,10 @@ export function HostedAppFrame({
     let inFlight = 0;
     let remounting = false;
     const storage = mountNative ? nativeAppStorage(slug, mountNative.storageScope) : undefined;
-    if (storage) recovery.current = { key: frameKey, storage, isCurrent: isCurrentMount };
+    if (storage) recovery.current = {
+      key: frameKey, storage, isCurrent: () => sameSession() && recoveryValid,
+      retireGuest, invalidate,
+    };
     const controller = new AbortController();
     // What this mount claims on every action. A revision this frame was not given by a runtime GET
     // (AokieWorkspace pins an id, not a decision) claims nothing, so it sends nothing — and an
@@ -174,6 +181,12 @@ export function HostedAppFrame({
     );
     booting.current = timeout;
     function invalidate() {
+      recoveryValid = false;
+      retireGuest();
+    }
+    // A failed reset must leave the owner's recovery controls usable without
+    // reviving the guest. Lifecycle invalidation still revokes both lifetimes.
+    function retireGuest() {
       mountValid = false;
       controller.abort();
       clearTimeout(timeout);
@@ -243,7 +256,7 @@ export function HostedAppFrame({
       channel = new MessageChannel();
       channel.port1.onmessage = async (event) => {
         if (!isCurrentMount()) {
-          invalidate();
+          retireGuest();
           return;
         }
         if (event.data?.type === "error") {
@@ -285,7 +298,7 @@ export function HostedAppFrame({
             if (input.operation === "batch" && !acknowledgedStorage) throw new Error("This app runtime does not support acknowledged storage batches.");
             // The trusted auth generation and mount are checked BEFORE the
             // mutation, rather than only when replying to the app afterward.
-            if (!isCurrentMount()) { invalidate(); return; }
+            if (!isCurrentMount()) { retireGuest(); return; }
             reply({ result: storage.mutate(input) });
             return;
           }
@@ -390,8 +403,9 @@ export function HostedAppFrame({
     if (blocked || current?.key !== frameKey || !current.isCurrent()) return;
     if (!window.confirm("Reset this app’s saved browser data on this device? Export it first if you may need it.")) return;
     if (!current.isCurrent()) return;
-    invalidateMount.current?.();
+    current.retireGuest();
     try { current.storage.reset(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Browser storage is not available."); return; }
+    current.invalidate();
     setStorageIssue(null);
     setError("");
     setStorageEpoch((epoch) => epoch + 1);
