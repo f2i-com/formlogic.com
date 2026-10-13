@@ -1,6 +1,6 @@
 # Runtime candidate qualification status
 
-Status recorded **2026-10-13**: the paired source candidates have passed the scoped checks below. The local credentialed fixture **failed during startup before application tests**. These results do not establish release or deployment readiness, and this document does not waive the gates in [CONTRIBUTING.md](../CONTRIBUTING.md).
+Status recorded **2026-10-13**: FormLogic's full frontend suite and dependency audits passed within the limits below; complete backend and paired-platform gates remain open. The local credentialed fixture **failed during startup before application tests**. These results do not establish release or deployment readiness, and this document does not waive the gates in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Exact source pair
 
@@ -11,21 +11,33 @@ Status recorded **2026-10-13**: the paired source candidates have passed the sco
 
 Documentation-only descendants do not change these product identities. The backend admission descriptor and frontend consumer must ship together; acknowledged guest storage also requires the paired SoftN runtime. Published SoftN v0.0.20 does not contain that repair. See [session isolation and rollback limits](NATIVE_RUNTIME_SESSION_ISOLATION.md) and the paired [SoftN repair notes](https://github.com/f2i-com/softn.com/blob/75d2ab09a23cbeabd38c09d4830c285ab199b4a2/docs/FORMLOGIC_RUNTIME_REPAIR.md).
 
-## Recorded successful checks
+The reviewed candidate artifacts remain identified by SHA-256:
 
-These are prior execution results, not tests rerun for this documentation commit. Overlapping suites and independent repetitions must not be summed as unique coverage.
+| Artifact | SHA-256 |
+| --- | --- |
+| FormLogic UI-only ZIP | `2297bdec538108c99bf8bcdf926e583e0140fcad77384b7c73ac9c450af565de` |
+| Paired SoftN runtime ZIP | `318302c7db8a8c1d7c37d233c6271a7eb1093b96c1cefdff036dd95a9505673c` |
+
+## Recorded checks
+
+Entries marked fresh ran on unchanged FormLogic product source at `809f80a1`, through its documentation-only descendant. Other entries retain earlier scoped evidence. No tests were rerun for this documentation commit. Overlapping suites and independent repetitions must not be summed as unique coverage.
 
 | Scope | Result and boundary |
 | --- | --- |
-| Exact FormLogic recovery candidate | 177 targeted/boundary tests passed, including 18 recovery tests. Independent review repeated 177 and passed five additional recovery cases. Lint, test TypeScript, security and pack-screen checks passed. |
-| FormLogic frontend build | Passed; the UI-only archive's 976 payloads and 124 paired hosted-runtime entries were verified. This is not a full installer or release build. |
-| Earlier full FormLogic frontend | 3,453 passed, 227 skipped, zero failed on bytes committed as `a53b62f267bd8bd76249b253065a35040da14e46`. The full suite was not rerun at `809f80a1`. |
-| Unchanged FormLogic backend | Targeted PHPUnit passed 133 tests / 805 assertions. The declared PHPStan gate passed over 206 production files with zero errors. Backend bytes are identical from `311b6a8390b2c0672616d5d69c08e08601d5be6c` through the product candidate, so these remain valid unchanged-source results. |
+| Full FormLogic frontend, fresh | **PASS:** 3,471 passed, 227 optional `OAIY_CLI` parity cases skipped, zero failed; 289 test files passed and one skipped. The successful normal-permission run took 83.453 seconds after retained failed sandbox attempts. The skipped optional parity lane remains unqualified. |
+| Frontend checks, fresh | Lint, test TypeScript, pack-screen, security, bundle-budget and engine-provenance checks passed. Script-profile tests: ten passed. Engine-sourcing tests: 152 passed, two skipped. |
+| Dependency audits, fresh | npm audit: zero advisories across 694 dependencies. Composer audit: zero advisories or abandoned packages across 53 installed packages, all matching lockfile versions. |
+| Browser runtime sharing, fresh | All 12 credential-free ZIPP browser-sharing orders/scenarios passed. This exercises runtime sharing and frame behavior; it does not qualify authentication, import/upgrade or restart. |
+| Backend unit coverage, fresh | Broad run: 1,073 tests / 6,583 assertions, zero errors, **one failure** requiring the absent legacy ZIPP sandbox launcher; a six-method expression-parity suite was skipped. Separately executed mail-capture and curl-pin cases passed one test / seven assertions and one test / one assertion. Full MySQL integration was **not run** without a safe authorized test database. |
+| Earlier backend evidence | Targeted PHPUnit passed 133 tests / 805 assertions. The declared PHPStan gate passed over 206 production files with zero errors. Backend bytes are identical from `311b6a8390b2c0672616d5d69c08e08601d5be6c` through the product candidate, so these remain valid unchanged-source results. |
+| Earlier recovery and build evidence | 177 targeted/boundary tests passed, including 18 recovery tests; independent review repeated 177 and passed five additional cases. The frontend build passed, with 976 UI-only archive payloads and 124 paired hosted-runtime entries verified. This is not a full installer or release build. |
 | Paired SoftN source/offline checks | Independent host 58, hosted XDB 23, migration/SQL 26, selected runner/deadline seven, copied-source native runtime nine and exact Coffee migration four checks passed. Source-copy checks did not execute the candidate ZIP. |
 | Paired SoftN package | Packaging passed; 603 members / 602 manifest digests were verified. Independent checks passed: 40 byte/source, 43 compiled/function and six packaged-helper SQLite checks. |
 | Windows fixture containment harness | The no-secret v5 native probe passed single-owner closure, inherited orphan closure and both same-handle reuse rounds, including verified console exits and empty Jobs. This qualifies the harness containment behavior, not the product runtime. |
 
 Post-fixture integrity checks confirmed both product heads and all 47 changed-file hashes unchanged. This document includes no private fixture material.
+
+The first broad backend unit attempt used an overly long Windows Temp path and reported 55 native errors/failures. An unchanged single-test control and the broad repeat with a short owned Temp path cleared all 55. The remaining launcher failure and parity skip are separate prerequisites; no product code or assertions were changed to obtain the repeated result.
 
 ## Failed local fixture
 
@@ -37,8 +49,9 @@ The surviving process-identity error may have come from cleanup masking the orig
 
 ## Remaining qualification
 
-- Full backend `composer test` (unit plus DB integration) and `composer audit` remain outstanding. The unchanged-backend PHPStan gate already passed.
-- Rerun the complete frontend suite on the final product source; the earlier full-suite pass and exact-candidate targeted tests have different coverage.
+- Complete backend `composer test` with a reviewed ZIPP sandbox launcher and an authorized disposable MySQL test database. The unchanged-backend PHPStan gate and fresh Composer audit already passed.
+- The paired SoftN full typecheck currently fails with `TS2345` in `packages/@softn/core/test/xdb-hosted-storage.test.ts`; complete paired-platform qualification remains on hold. FormLogic's frontend pass does not close that cross-repository gate.
+- Optional frontend `OAIY_CLI` parity, the two skipped engine-sourcing cases and backend expression parity remain outside the passed coverage.
 - Complete exact-pair live authentication, import/upgrade, cross-tab/session transitions and restart qualification with verified cleanup. Preserve the primary startup error separately from cleanup errors before another authorized fixture attempt.
 - Full-store/replay and broader timing races, physical IME, PWA, real SMS/phone ownership, production hosting and all-in-one release packaging remain outside this evidence. Tagged releases still require the complete local-stack Playwright and release gates.
 
