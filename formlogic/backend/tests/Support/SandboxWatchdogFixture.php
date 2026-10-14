@@ -100,6 +100,11 @@ final class State
     }
 }
 
+function function_exists(string $name): bool
+{
+    return !($name === 'proc_open' && State::$startupFault === 'process-launch-disabled') && \function_exists($name);
+}
+
 function getenv(string $name): string|false
 {
     if (State::$startupFault === 'system-root-relative') { return 'relative-windows'; }

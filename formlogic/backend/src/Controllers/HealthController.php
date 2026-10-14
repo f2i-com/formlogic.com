@@ -122,8 +122,8 @@ class HealthController
             'critical' => true,
             'name' => 'sandboxRuntime',
             'detail' => $sandboxOk
-                ? 'ZIPP runtime launcher, shared prelude and platform watchdog prerequisites present'
-                : 'ZIPP runtime launcher missing or not executable, shared prelude missing, or platform watchdog prerequisites missing',
+                ? 'ZIPP runtime launcher, shared prelude, process launching and platform watchdog prerequisites present'
+                : 'ZIPP runtime launcher missing or not executable, shared prelude missing, process launching disabled, or platform watchdog prerequisites missing',
         ];
 
         // Billing — only critical when plan enforcement is on.

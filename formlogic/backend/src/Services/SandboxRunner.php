@@ -97,6 +97,9 @@ class SandboxRunner
      */
     public function isAvailable(): bool
     {
+        if (!function_exists('proc_open')) {
+            return false;
+        }
         if (!is_file($this->binary) || !is_file($this->prelude)) {
             return false;
         }

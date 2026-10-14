@@ -371,7 +371,8 @@ final class SandboxWatchdogProtocolTest extends TestCase
     public static function unavailableWatchdogs(): array
     {
         return ['helper absent' => ['helper-missing'], 'PowerShell absent' => ['powershell-missing'],
-            'SystemRoot absent' => ['system-root'], 'SystemRoot relative' => ['system-root-relative']];
+            'SystemRoot absent' => ['system-root'], 'SystemRoot relative' => ['system-root-relative'],
+            'process launch disabled' => ['process-launch-disabled']];
     }
 
     #[DataProvider('unavailableWatchdogs')]
