@@ -47,7 +47,7 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
   }
   const save = () => draft.save();
   const manifest = (() => { try { return project ? JSON.parse(project.files['manifest.json']) : null; } catch { return null; } })();
-  const screenFiles = Object.keys(project?.files ?? {}).filter(path => /\.(ui|logic)$/.test(path) && !path.startsWith('server/'));
+  const screenFiles = Object.keys(project?.files ?? {}).filter(path => /\.(ui|logic|py)$/.test(path) && !/^(server|backend|private)\//i.test(path));
   const activeScreen = screenFiles.includes(screenFile) ? screenFile : screenFiles[0] || '';
   const backendFiles = Object.keys(project?.files ?? {}).filter(path => path.startsWith('server/'));
   if (editor && project) return <AppEditorDialog kind={editor.kind} name={app.name} bundle={editor.bundle} onClose={() => setEditor(null)} onApply={async bytes => {

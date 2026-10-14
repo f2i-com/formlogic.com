@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
+import { editorBundle } from '../../lib/appEditorArchive';
 import { resolveDefaultLlm, resolveDefaultLlmTools, TOOLS_UNSUPPORTED } from '../../client-runtime/flows/aiDefault';
 import { EDITOR_AI_LIMITS, EDITOR_AI_TOOLS_VERSION, validateEditorAiToolRequest } from '../../client-runtime/flows/aiToolCalls';
 import { EDITOR_BRIDGE_PROTOCOL } from '../../lib/softn/protocol';
@@ -9,20 +9,6 @@ import { Button } from '../ui/Button';
 import { EDITOR_AGENT_RUNS_VERSION, readAgentStatus, type EditorAgentStatus, type EditorBrief } from './editorAgent';
 
 export type AppEditorKind = 'builder' | 'studio';
-
-/** Older hosted manifests omit the file inventory required by the visual editor. */
-function editorBundle(bundle: Uint8Array): Uint8Array {
-  const files = unzipSync(bundle);
-  const manifest = JSON.parse(strFromU8(files['manifest.json']));
-  const client = Object.keys(files).filter(path => !/^(server|backend|private)\//.test(path));
-  const inventory = { ui: client.filter(path => path.endsWith('.ui')), logic: client.filter(path => path.endsWith('.logic')), assets: client.filter(path => path.startsWith('assets/')), xdb: client.filter(path => path.endsWith('.xdb')) };
-  manifest.files = { ...manifest.files };
-  for (const [group, paths] of Object.entries(inventory)) {
-    manifest.files[group] = [...new Set([...(Array.isArray(manifest.files[group]) ? manifest.files[group] : []), ...paths])];
-  }
-  files['manifest.json'] = strToU8(JSON.stringify(manifest, null, 2));
-  return zipSync(files);
-}
 
 /** Editor changes return to the owner's draft. Publishing still uses version-checked hosting APIs. */
 export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, applyLabel = 'Review changes' }: {

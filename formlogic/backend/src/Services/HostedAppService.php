@@ -88,7 +88,7 @@ class HostedAppService
         foreach ($logic as $path) {
             if (!is_string($path) || (!str_ends_with($path, '.logic') && !str_ends_with($path, '.py')) || !isset($files[$path])) throw new InvalidArgumentException('Missing client logic file');
         }
-        $files['manifest.json'] = json_encode([
+        $publicManifest = [
             'name' => mb_substr((string) ($manifest['name'] ?? 'App'), 0, 120),
             'version' => '1.0.0', 'main' => $manifest['main'],
             // Keep module discovery intact when the exported archive becomes a source folder.
@@ -97,7 +97,26 @@ class HostedAppService
                 'logic' => $logic,
                 'json' => array_values(array_filter(array_keys($files), static fn($path) => str_ends_with($path, '.json') && !in_array($path, ['manifest.json', 'permission.json'], true))),
             ],
-        ], JSON_THROW_ON_ERROR);
+        ];
+        // Python package names are public runtime declarations. Dropping them
+        // breaks imports and hides them from the policy check on later loads.
+        // Keep only this client field; never copy server configuration or an
+        // engine selection from the uploaded manifest into the public bundle.
+        $config = json_decode($files['manifest.json'])->config ?? null;
+        if ($config instanceof \stdClass && property_exists($config, 'python')) {
+            $python = $config->python;
+            if (!$python instanceof \stdClass) throw new InvalidArgumentException('config.python must be an object');
+            if (property_exists($python, 'packages')) {
+                if (!is_array($python->packages)) throw new InvalidArgumentException('config.python.packages must be a list of package names');
+                // Match SoftN's supported client package declaration. These are
+                // bundled capabilities, never URLs or server-side dependencies.
+                foreach ($python->packages as $name) {
+                    if ($name !== RuntimeEngineService::TORCH_PACKAGE) throw new InvalidArgumentException('Unsupported Python package; the runtime offers torch');
+                }
+                $publicManifest['config'] = ['python' => ['packages' => array_values(array_unique($python->packages))]];
+            }
+        }
+        $files['manifest.json'] = json_encode($publicManifest, JSON_THROW_ON_ERROR);
         $files['permission.json'] = '{"permissions":{}}';
         if (count($package['actions']) > 30) throw new InvalidArgumentException('An app can have at most 30 backend actions');
         $actions = [];

@@ -21,7 +21,8 @@ export async function importNativeProject(file: File): Promise<NativeProject> {
   const source: Record<string,string> = {};
   const assets: Record<string,string> = {};
   for (const [path, bytes] of Object.entries(files)) {
-    if (/\.(ui|logic|json|sql)$/.test(path)) source[path] = strFromU8(bytes);
+    if (path.endsWith('.py') && /^(server|backend|private)\//i.test(path)) throw new Error('Python is a client logic language; the app backend stays JavaScript.');
+    if (/\.(ui|logic|py|json|sql)$/.test(path)) source[path] = strFromU8(bytes);
     else if (path.startsWith('assets/')) {
       let binary = '';
       for (let offset=0;offset<bytes.length;offset+=8192) binary += String.fromCharCode(...bytes.subarray(offset,offset+8192));

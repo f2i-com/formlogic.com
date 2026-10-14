@@ -238,10 +238,10 @@ function HostingEditor({
             throw new Error(
               "Upload a client-only app bundle. Add private scripts in the Backend tab.",
             );
-          if (!/\.(ui|logic|json)$/.test(path)) {
+          if (!/\.(ui|logic|py|json)$/.test(path)) {
             if (/^(README|LICENSE|NOTICE)(\.|$)/i.test(path)) continue;
             throw new Error(
-              "This hosting version accepts text app bundles (.ui, .logic and .json).",
+              "This hosting version accepts text app bundles (.ui, .logic, .py and .json).",
             );
           }
           client[path] = strFromU8(bytes);
@@ -316,7 +316,7 @@ function HostingEditor({
     const client: Record<string, string> = {};
     for (const [path, content] of Object.entries(files)) {
       if (/^(README|LICENSE|NOTICE)(\.|$)/i.test(path)) continue;
-      if (/^(server|backend|private)\//i.test(path) || !/\.(ui|logic|json)$/.test(path)) throw new Error('This hosted client accepts text interface files. Use native app hosting for a complete backend or media project.');
+      if (/^(server|backend|private)\//i.test(path) || !/\.(ui|logic|py|json)$/.test(path)) throw new Error('This hosted client accepts text interface files. Use native app hosting for a complete backend or media project.');
       client[path] = strFromU8(content);
     }
     if (!client['manifest.json'] || !client[JSON.parse(client['manifest.json']).main]) throw new Error('The main interface file is missing.');

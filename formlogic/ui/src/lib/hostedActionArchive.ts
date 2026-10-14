@@ -28,7 +28,7 @@ export function hostedPackageFromArchive(files: Record<string, Uint8Array>): Hos
   for (const [path, bytes] of Object.entries(files)) {
     if (path === 'formlogic.json' || sources.has(path) || /^(README|LICENSE|NOTICE)(\.|$)/i.test(path)) continue;
     if (/^(server|backend|private)\//i.test(path)) throw new Error('Undeclared private files must be added to the action configuration.');
-    if (!/\.(ui|logic|json)$/.test(path)) throw new Error('This project needs native asset hosting.');
+    if (!/\.(ui|logic|py|json)$/.test(path)) throw new Error('This project needs native asset hosting.');
     client[path] = strFromU8(bytes);
   }
   return { version: 1, client, actions };

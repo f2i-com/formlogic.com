@@ -17,6 +17,8 @@ export interface AppImportReview {
 const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const list = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
 const textExtensions = /\.(ui|logic|json)$/i;
+// Python client logic is lower-case only, matching the backend and runtime.
+const isTextSource = (path: string) => textExtensions.test(path) || path.endsWith('.py');
 const metadata = /^(README|LICENSE|NOTICE)(\.|$)/i;
 const privatePath = /^(server|backend|private)\//i;
 
@@ -52,16 +54,16 @@ export function reviewAppArchive(bytes: Uint8Array): { review: AppImportReview; 
   const namedActions = hasHostedActions(files) && Object.keys(server).length === 0;
   if (namedActions) hostedPackageFromArchive(files);
   const native = Object.keys(server).length > 0 || (!namedActions && names.some(path => privatePath.test(path)));
-  const assets = names.filter(path => !textExtensions.test(path) && !metadata.test(path) && !privatePath.test(path));
+  const assets = names.filter(path => !isTextSource(path) && !metadata.test(path) && !privatePath.test(path));
   const expandedBytes = Object.values(files).reduce((sum, value) => sum + value.length, 0);
   let permissions: Record<string, unknown> = {};
   try { permissions = object(object(JSON.parse(strFromU8(files['permission.json'] ?? new Uint8Array()))).permissions); } catch { /* backend validation reports malformed source if imported */ }
   const enabledPermissions = Object.entries(permissions).filter(([, value]) => value === true || object(value).enabled === true).map(([name]) => name);
   const blockers: string[] = [];
   if (native) blockers.push('This app uses a native private backend. Use Native app hosting in Hosting & app tools to preserve its routes, application sign-in and SQLite migrations. This editor accepts named FormLogic backend actions.');
-  if (assets.length) blockers.push(`${assets.length} media or other asset files need asset hosting. The current host accepts .ui, .logic and .json client files.`);
+  if (assets.length) blockers.push(`${assets.length} media or other asset files need asset hosting. The current host accepts .ui, .logic, .py and .json client files.`);
   if (enabledPermissions.length) blockers.push(`The app requests ${enabledPermissions.join(', ')} access. The current hosted runtime grants only its FormLogic backend bridge; these permissions need an explicit host integration.`);
-  if (expandedBytes > 2 * 1024 * 1024 || names.length > 100 || names.some(path => textExtensions.test(path) && files[path].length > 200000)) blockers.push('This app exceeds the current hosting limits (2 MB total, 100 files, 200 KB per text file).');
+  if (expandedBytes > 2 * 1024 * 1024 || names.length > 100 || names.some(path => isTextSource(path) && files[path].length > 200000)) blockers.push('This app exceeds the current hosting limits (2 MB total, 100 files, 200 KB per text file).');
   return { files, review: {
     name: typeof manifest.name === 'string' ? manifest.name.slice(0, 120) : 'Imported app', root, fileCount: names.length, expandedBytes,
     assets: assets.length, backend: native ? 'native' : namedActions ? 'actions' : 'client', routes: list(server.routes).length,

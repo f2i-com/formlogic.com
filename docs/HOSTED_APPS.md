@@ -66,12 +66,13 @@ For authenticated backend actions and shared SQLite storage, use App hosting bel
 ### Publish your first project
 
 1. Create or open the parent app, then open **App Studio → Screens → App hosting**.
-2. On **Interface**, edit the `.ui`, `.logic` and `.json` client files, or use
+2. On **Interface**, edit the `.ui`, `.logic`, `.py` and `.json` client files, or use
    **Import project** for a compatible `.softn`, ZIP or `hosting-project.json`.
-   A published project's client logic may also be Python (`.py`, below); this
-   version's import and editor round-trip still accept only `.ui`, `.logic` and
-   `.json`, so a Python bundle arrives through the hosting API or the AI/MCP
-   native app tools and is edited in place afterwards.
+   Python client logic uses lower-case `.py` files and runs on the ZIPP Python
+   engine (below). Uploads and the Visual Builder/AI Studio return path preserve
+   those files, including native projects with a private JavaScript backend.
+   Python files in `server/`, `backend/` or `private/` remain unsupported; backend
+   actions and native handlers stay JavaScript `.logic` files.
 3. On **Backend**, define the action names called by the client. Give each action
    the required `owner`/`member` access and `read`/`write` database mode.
 4. Choose **Publish app project**, then open **Preview**. The preview uses your
