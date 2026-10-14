@@ -429,6 +429,33 @@ function flRenderEnvContent(string $template, array $values): string
 // ---------------------------------------------------------------------------
 // Requirement checks
 // ---------------------------------------------------------------------------
+/** The source-build toolchain range in ui/package.json; unrelated to a packaged native runtime's minimum. */
+function flSourceNodeVersionSupported(string $version): bool
+{
+    if (!preg_match('/^v?(\d+)\.(\d+)\.(\d+)$/D', $version, $parts)) return false;
+    $normalized = $parts[1] . '.' . $parts[2] . '.' . $parts[3];
+    return ((int) $parts[1] === 22 && version_compare($normalized, '22.22.2', '>='))
+        || ((int) $parts[1] === 24 && version_compare($normalized, '24.15.0', '>='))
+        || (int) $parts[1] >= 26;
+}
+
+/** A version check, not a substitute for the native panel's worker/capability/storage preflight. */
+function flNativeNodeRequirement(?string $version, ?array $protocol, bool $canStart): array
+{
+    $minimum = $protocol['minimumNode'] ?? null;
+    $knownMinimum = is_string($minimum) && preg_match('/^\d+\.\d+\.\d+$/D', $minimum) === 1;
+    $validVersion = is_string($version) && preg_match('/^v?\d+\.\d+\.\d+$/D', $version) === 1;
+    return [
+        'label' => 'Node.js (native app hosting; optional for forms)',
+        'required' => $knownMinimum ? '>= ' . $minimum . ' (bundled runtime)' : 'Prepared native runtime and compatible Node.js',
+        'current' => !$canStart ? 'PHP proc_open is disabled' : ($validVersion ? $version : 'Not found or could not be executed'),
+        'pass' => $canStart && $knownMinimum && $validVersion && version_compare(ltrim($version, 'v'), $minimum, '>='),
+        'help' => (!$knownMinimum ? 'The prepared runtime must include host-protocol.json with minimumNode. ' : '')
+            . 'Native apps need Node.js on the server, including a prebuilt release install. Set FORMLOGIC_NODE_BIN for the web server if Node is not in PATH. '
+            . 'This checks the version only; run the native app panel preflight before publishing to verify Node options, SQLite, worker startup and storage. Forms and named hosted actions use the bundled sandbox without Node.',
+    ];
+}
+
 function checkRequirements(): array
 {
     $checks = [];
@@ -443,7 +470,7 @@ function checkRequirements(): array
     ];
 
     // Extensions
-    $requiredExtensions = ['pdo_mysql', 'pdo_sqlite', 'mbstring', 'json', 'openssl', 'fileinfo'];
+    $requiredExtensions = ['pdo_mysql', 'pdo_sqlite', 'mbstring', 'json', 'openssl', 'fileinfo', 'sodium'];
     foreach ($requiredExtensions as $ext) {
         $checks['ext_' . $ext] = [
             'label' => "PHP Extension: $ext",
@@ -481,6 +508,7 @@ function checkRequirements(): array
     $dirsToCheck = [
         $backendRel . '/storage/forms',
         $backendRel . '/storage/hosted-apps',
+        $backendRel . '/storage/native-apps',
         $backendRel . '/storage/packs',
         $backendRel . '/storage/uploads',
         $backendRel . '/storage/pack-screenshots',
@@ -541,8 +569,21 @@ function checkRequirements(): array
             : ($qjsOk ? '' : 'Zip extraction drops the execute bit — run on the server: chmod +x "' . $qjsBin . '"'),
     ];
 
-    // Node.js / npm are ONLY needed to BUILD the frontend from source — the deployed bundle ships a
-    // prebuilt SPA, so skip these checks entirely there (no Node required on the server).
+    // Native hosting needs Node even when the frontend is prebuilt. Take its minimum from the
+    // runtime being installed, just as NativeAppService does; do not apply the UI build floor.
+    $protocolPath = flBackendDir() . '/resources/softn-native/host-protocol.json';
+    $protocol = is_file($protocolPath) ? json_decode((string) file_get_contents($protocolPath), true) : null;
+    $nativeNodeVersion = null;
+    if (is_array($protocol) && function_exists('proc_open')) {
+        $nodeBinary = $_ENV['FORMLOGIC_NODE_BIN'] ?? (getenv('FORMLOGIC_NODE_BIN') ?: 'node');
+        $probe = flRunInstallerCommand([$nodeBinary, '--version'], flBackendDir(), 3.0);
+        if ($probe['exitCode'] === 0 && preg_match('/^v?(\d+\.\d+\.\d+)$/D', trim($probe['output']), $match)) {
+            $nativeNodeVersion = $match[1];
+        }
+    }
+    $checks['node_native'] = flNativeNodeRequirement($nativeNodeVersion, is_array($protocol) ? $protocol : null, function_exists('proc_open'));
+
+    // npm and the source-build Node range apply only to a source checkout, not the prebuilt SPA.
     if (flUiDir() !== null) {
         $nodeVersion = '';
         $npmVersion = '';
@@ -562,16 +603,14 @@ function checkRequirements(): array
         }
         if ($nodeRc === 0 && !empty($nodeOut[0])) {
             $nodeVersion = trim($nodeOut[0]);
-            $major = (int) ltrim($nodeVersion, 'v');
-            // Vite 7 requires Node 20.19+ or 22.12+ (major 20+ covers the common case).
-            $nodeOk = $major >= 20;
+            $nodeOk = flSourceNodeVersionSupported($nodeVersion);
         }
         $checks['node'] = [
             'label' => 'Node.js (only to build the frontend)',
-            'required' => '>= 20.19 / 22.12',
+            'required' => '22.22.2+ (22.x), 24.15.0+ (24.x), or 26+',
             'current' => $nodeVersion ?: 'Not found in PATH',
             'pass' => $nodeOk,
-            'help' => $nodeOk ? '' : 'Only needed to build the UI from source. Install Node 20.19+/22.12+ from nodejs.org, or with nvm: `nvm install 22 && nvm use 22`. (The deploy bundle ships a prebuilt UI and needs no Node.)',
+            'help' => $nodeOk ? '' : 'Use the Node version pinned in .node-version to build the UI from source. A release bundle already includes the UI; native app hosting has its own server Node requirement above.',
         ];
         $checks['npm'] = [
             'label' => 'npm',
@@ -666,6 +705,7 @@ function runInstall(array $data): array
     $dirs = [
         $backendDir . '/storage/forms',
         $backendDir . '/storage/hosted-apps',
+        $backendDir . '/storage/native-apps',
         $backendDir . '/storage/packs',
         $backendDir . '/storage/uploads',
         $backendDir . '/storage/pack-screenshots',

@@ -175,6 +175,7 @@ async function main() {
       'index.html', '.htaccess', 'install.php', 'INSTALL.txt', 'UPGRADE.txt', 'VERSION',
       'manifest.json', 'hosted-runtime/index.html', 'hosted-runtime/runtime-manifest.json',
       'api/storage/hosted-apps/.gitkeep',
+      'api/storage/native-apps/.gitkeep',
       'api/public/index.php', 'api/public/.htaccess', 'api/config/settings.php',
       'api/database/schema.sql', 'api/database/migrate.php', 'api/composer.json',
       'api/vendor/autoload.php', 'api/.env.example', 'api/bin/upgrade.php', 'api/bin/provision-demo.php', 'api/VERSION',

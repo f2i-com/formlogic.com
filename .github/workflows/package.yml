@@ -261,7 +261,7 @@ jobs:
         run: php scripts/test-installer-marketplace.php
 
       - name: Test release contracts and PHP signature interoperability
-        run: node --test scripts/release-signing.test.mjs scripts/installer-browser.test.mjs
+        run: node --test scripts/release-signing.test.mjs scripts/installer-browser.test.mjs scripts/installer-shell.test.mjs
 
       # A release carries no committed engine: static, over git ls-files.
       - name: Engine provenance guard

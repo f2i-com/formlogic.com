@@ -79,6 +79,75 @@ final class InstallerReliabilityTest extends TestCase
         return array_map(static fn (array $s): string => $s['status'] . ':' . $s['label'], $result['steps'] ?? []);
     }
 
+    public function testSourceNodeVersionsMatchTheUiToolchainRange(): void
+    {
+        $package = json_decode((string) file_get_contents(dirname(__DIR__, 3) . '/ui/package.json'), true);
+        self::assertSame('^22.22.2 || ^24.15.0 || >=26.0.0', $package['engines']['node'], 'Update the installer boundary cases when the UI toolchain changes.');
+        foreach (['20.19.0', '22.22.1', '23.0.0', '24.14.99', '25.0.0', '', 'not-node', '24.19.0-rc.1'] as $version) {
+            self::assertFalse(\flSourceNodeVersionSupported($version), $version);
+        }
+        foreach (['v22.22.2', '22.23.0', '24.15.0', 'v24.19.0', '26.0.0', '27.0.0'] as $version) {
+            self::assertTrue(\flSourceNodeVersionSupported($version), $version);
+        }
+    }
+
+    public function testNativeNodeRequirementUsesTheBundledMinimumInsteadOfTheSourceBuildRange(): void
+    {
+        $protocol = ['minimumNode' => '24.19.0'];
+        self::assertTrue(\flSourceNodeVersionSupported('24.15.0'));
+        self::assertFalse(\flNativeNodeRequirement('24.15.0', $protocol, true)['pass']);
+        $matching = \flNativeNodeRequirement('24.19.0', $protocol, true);
+        self::assertTrue($matching['pass']);
+        self::assertSame('>= 24.19.0 (bundled runtime)', $matching['required']);
+        self::assertStringContainsString('optional for forms', $matching['label']);
+        self::assertStringContainsString('version only', $matching['help']);
+        self::assertStringContainsString('preflight before publishing', $matching['help']);
+        // A different prepared runtime supplies its own floor, without an installer release.
+        self::assertTrue(\flNativeNodeRequirement('25.1.0', ['minimumNode' => '25.0.0'], true)['pass']);
+        self::assertFalse(\flNativeNodeRequirement('24.19.0', ['minimumNode' => '25.0.0'], true)['pass']);
+    }
+
+    public function testNativeNodeRequirementNeverReportsReadinessWithoutAnExecutableAndValidRuntimeMetadata(): void
+    {
+        foreach ([null, [], ['minimumNode' => null], ['minimumNode' => '24.19'], ['minimumNode' => ['24.19.0']]] as $protocol) {
+            self::assertFalse(\flNativeNodeRequirement('24.19.0', $protocol, true)['pass']);
+        }
+        foreach ([null, '', 'not-node', '24.19.0-rc.1'] as $version) {
+            self::assertFalse(\flNativeNodeRequirement($version, ['minimumNode' => '24.19.0'], true)['pass']);
+        }
+        self::assertFalse(\flNativeNodeRequirement('24.19.0', ['minimumNode' => '24.19.0'], false)['pass']);
+    }
+
+    public function testCopiedInstallerPreparesNativeStorageAndReportsOptionalNodeInBothLayouts(): void
+    {
+        foreach ([false, true] as $sourceLayout) {
+            $root = $this->installerCopy();
+            if ($sourceLayout) {
+                rename($root . '/api', $root . '/backend');
+                mkdir($root . '/ui', 0700);
+            }
+            $backend = $sourceLayout ? 'backend' : 'api';
+            mkdir($root . '/' . $backend . '/resources/softn-native', 0700, true);
+            file_put_contents($root . '/' . $backend . '/resources/softn-native/host-protocol.json', '{"minimumNode":"24.19.0"}');
+            // The child cannot launch Node/npm, connect to a database or load a runtime. Only
+            // checkRequirements runs in the owned copy; it must still report native prerequisites.
+            $code = 'define("FORMLOGIC_INSTALL_NO_RUN", true); require $argv[1]; echo json_encode(checkRequirements());';
+            $run = \flRunInstallerCommand([PHP_BINARY, '-n', '-d', 'disable_functions=proc_open,exec', '-r', $code, $root . '/install.php'], $root);
+            self::assertSame(0, $run['exitCode'], $run['output']);
+            $result = json_decode($run['output'], true);
+            self::assertIsArray($result, $run['output']);
+            self::assertDirectoryExists($root . '/' . $backend . '/storage/native-apps');
+            self::assertTrue($result['checks']['dir_' . $backend . '_storage_native-apps']['pass']);
+            self::assertFalse($result['checks']['node_native']['pass']);
+            self::assertSame('PHP proc_open is disabled', $result['checks']['node_native']['current']);
+            self::assertStringContainsString('optional for forms', $result['checks']['node_native']['label']);
+            self::assertArrayHasKey('ext_sodium', $result['checks'], 'The installed backend requires ext-sodium in composer.json.');
+            self::assertSame($sourceLayout, array_key_exists('node', $result['checks']));
+            self::assertSame($sourceLayout, array_key_exists('npm', $result['checks']));
+            self::assertFileDoesNotExist($root . '/' . $backend . '/.env');
+        }
+    }
+
     public function testProvisioningPreservesOutputAndExitCode(): void
     {
         $result = \flRunInstallerCommand([PHP_BINARY, '-r', 'fwrite(STDERR, "catalog failed"); exit(3);'], sys_get_temp_dir());

@@ -284,7 +284,7 @@ FormLogic defaults to **free access**. Payments are **off by default**. Administ
 
 Node.js builds the web client and is also required on servers using native app hosting: its trusted Node host runs the ZIPP VM and SQLite migrations. Standard form scripts and named hosted actions use their packaged sandbox launcher. Native hosting also needs PDO SQLite, prepared backend modules and the generated Softn browser runtime and editor assets. Updating an installed native app also needs the `sqlite3` PHP extension: a failed update restores the app's database through SQLite's backup API, and an update is refused, with nothing changed, on a host without it. A first install, serving an app and restoring an account backup do not need it. The native preflight reports a missing `sqlite3` as a warning, shown in the app's native panel, and does not block publishing.
 
-The frontend test suite uses jsdom 30. Node 20 and older Node 22/24 releases cannot run it. Check `node --version` before `npm ci`; use the version in `.node-version` for the same environment as the manual build and release checks.
+The frontend test suite uses jsdom 30. Node 20 and older Node 22/24 releases cannot run it. Check `node --version` before `npm ci`; use the version in `.node-version` for the same environment as the manual build and release checks. The release installer separately reports the server Node minimum from `api/resources/softn-native/host-protocol.json` and prepares `api/storage/native-apps`. Native hosting remains optional for forms-only installations; before publishing a native app, run its native panel preflight to verify the actual worker, SQLite and storage capabilities.
 
 ### Assisted CLI install
 

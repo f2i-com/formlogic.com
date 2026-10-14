@@ -12,10 +12,10 @@
 #   ./install.sh
 #
 # Prerequisites:
-#   - PHP >= 8.2 with extensions: pdo_mysql, pdo_sqlite, sqlite3, mbstring, json, openssl
+#   - PHP >= 8.2 with extensions: pdo_mysql, pdo_sqlite, sqlite3, sodium, mbstring, json, openssl
 #     (sqlite3 restores a native app's database when an update of it fails)
 #   - Composer (https://getcomposer.org)
-#   - Node.js >= 20.19 (or 22.12+) and npm
+#   - Node.js 22.22.2+ (22.x), 24.15.0+ (24.x), or 26+, and npm
 #   - MySQL 8.0+
 #   - Git
 #   - Rust via rustup (https://rustup.rs), to build the server sandbox launcher
@@ -76,13 +76,15 @@ if [[ "$(php -r 'echo version_compare(PHP_VERSION, "8.2.0", ">=") ? "1" : "0";')
     exit 1
 fi
 
-NODE_MAJOR=$(node -v | sed 's/v//' | cut -d. -f1)
-if [[ "$NODE_MAJOR" -lt 20 ]]; then
-    error "Node.js >= 20.19 (or 22.12+) is required by Vite 7 (found $(node -v))"
+NODE_VERSION=$(node -v)
+# Share the wizard's exact ui/package.json toolchain range. Loading definitions only
+# cannot start the browser installer; native hosting has its own runtime minimum.
+if ! php -r 'define("FORMLOGIC_INSTALL_NO_RUN", true); require $argv[1]; exit(flSourceNodeVersionSupported($argv[2]) ? 0 : 1);' "$SCRIPT_DIR/install.php" "$NODE_VERSION"; then
+    error "Node.js 22.22.2+ (22.x), 24.15.0+ (24.x), or 26+ is required to build the UI (found $NODE_VERSION)"
     exit 1
 fi
 
-ok "All prerequisites met (PHP $PHP_VERSION, Node $(node -v))"
+ok "All prerequisites met (PHP $PHP_VERSION, Node $NODE_VERSION)"
 
 # -----------------------------------------------------------------------------
 # 2. Backend setup
@@ -92,7 +94,7 @@ info "Setting up backend..."
 cd "$BACKEND_DIR"
 
 # Create storage directories
-mkdir -p storage/forms storage/packs storage/uploads logs
+mkdir -p storage/forms storage/hosted-apps storage/native-apps storage/packs storage/uploads storage/pack-screenshots logs
 
 # Install PHP dependencies
 info "Installing Composer dependencies..."
@@ -207,9 +209,9 @@ info "Setting up frontend..."
 
 cd "$UI_DIR"
 
-# Install Node.js dependencies
+# Install the exact frontend dependency tree reviewed in package-lock.json.
 info "Installing npm dependencies..."
-npm install
+npm ci
 
 # Create .env if it doesn't exist
 if [[ ! -f .env ]]; then
