@@ -81,7 +81,7 @@ jobs:
           php-preflight: 'false'
 
       - name: Upload the guest
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sandbox-guest
           path: |
@@ -93,7 +93,7 @@ jobs:
           retention-days: 7
 
       - name: Upload the Linux launcher
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sandbox-linux
           path: |
@@ -152,7 +152,7 @@ jobs:
         run: bash scripts/build-runtime.sh windows smoke
 
       - name: Upload the Windows launcher
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sandbox-windows
           path: |
@@ -435,7 +435,7 @@ jobs:
       # Always keep the zip as a workflow artifact (this is the only output for
       # workflow_dispatch runs on untagged commits).
       - name: Upload zip as workflow artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: formlogic-dist
           path: dist-package/*.zip
