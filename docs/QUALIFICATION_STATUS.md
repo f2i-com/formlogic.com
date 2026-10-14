@@ -1,5 +1,11 @@
 # Runtime candidate qualification status
 
+## Source-review publication checkpoint: 2026-10-14
+
+The user explicitly requested publication to `main` with `[skip ci]` after being told final tests and packaging are incomplete. The reviewed source now extends through `08a3e71e722162a484bc4843360919b736f3480e`. This is a source-review checkpoint, not release or deployment qualification. See the [current scoped results, retained failures and remaining gates](qualification/2026-10-14-source-review.md). Release gates and security/integrity checks remain unchanged.
+
+## Historical checkpoint retained below
+
 Status recorded **2026-10-13**: FormLogic's full frontend suite and dependency audits passed within the limits below; complete backend and paired-platform gates remain open. The local credentialed fixture **failed during startup before application tests**. These results do not establish release or deployment readiness, and this document does not waive the gates in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Exact source pair
