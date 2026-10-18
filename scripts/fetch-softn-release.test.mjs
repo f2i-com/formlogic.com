@@ -26,7 +26,7 @@ import { createHash } from 'node:crypto';
 import { writeArchive, readArchive } from './lib/archive.mjs';
 import { fetchSoftnRelease, checkInstalled, resolveRelease, resolveOnly, recoverPromotion, loadFrozen, parseSidecar, verifyArchive, ReleaseError, SimulatedCrash, FROZEN_FORMAT } from './fetch-softn-release.mjs';
 import { assertNoInterruptedPromotion } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
-import { zippReleaseFixture, zippEngineWasm, zippTorchWasm, wasmModule } from '../formlogic/ui/scripts/zipp-release-fixture.mjs';
+import { zippModuleReleaseFixture, zippReleaseFixture, zippEngineWasm, zippTorchWasm, wasmModule } from '../formlogic/ui/scripts/zipp-release-fixture.mjs';
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 /** The ZIPP release the fixture Softn releases ship, unless a test names another. */
@@ -36,6 +36,8 @@ const ZIPP_NEXT = zippReleaseFixture({ version: '0.0.19', revision: 'd'.repeat(4
 const ZIPP_WITH_WEB = zippReleaseFixture({ webVariant: true });
 /** The same release as Softn v0.0.16 ships ZIPP v0.0.21: the web variant, and the torch package in zipp-torch/ and beside each runtime's core chunk. */
 const ZIPP_WITH_TORCH = zippReleaseFixture({ webVariant: true, torch: true });
+/** A Softn release on ZIPP 0.0.26 on, which publishes plain modules: the trees Softn installs from it, web variant and torch package included. */
+const ZIPP_MODULES = zippModuleReleaseFixture();
 /** What Softn's hosted runtime advertises since it serves the variant: every engine, UNCONDITIONALLY (a shared constant, not a per-archive fact). */
 const EVERY_ENGINE = { engines: ['host-js', 'zipp-web', 'zipp-web-python'], features: ['python-logic/1'] };
 const PROTOCOLS = { nativeProtocol: 1, recordEvents: 1, editorBridge: 1, hostedEngines: 1, logicLanguages: 1 };
@@ -280,6 +282,32 @@ test('a release with a new ZIPP installs with no change to this tree, and --chec
   current.generation.inventory['zipp-wasm'] = Object.fromEntries(Object.entries(ZIPP_RELEASE.files).map(([name, data]) => [name, sha256(data)]));
   await writeFile(currentFile, JSON.stringify(current));
   await assert.rejects(checkInstalled({ root, ...quiet }), /browser engine tree .* is not the ZIPP v0\.0\.19 Softn v0\.0\.16 records: .*version is "0\.0\.18"; the release records "0\.0\.19"/);
+});
+
+test('a Softn release on a ZIPP published as plain modules (0.0.26 on) installs with no change to this tree, after one on zip bundles and before one again', async (t) => {
+  const root = await formlogicRoot(t);
+  const bundled = await writeFixtureArchive(resolve(root, 'a'), { tag: 'v0.0.22', zippRelease: ZIPP_WITH_TORCH, advertised: EVERY_ENGINE });
+  const modular = await writeFixtureArchive(resolve(root, 'b'), { tag: 'v0.0.23', commit: OTHER_COMMIT, zippRelease: ZIPP_MODULES, advertised: EVERY_ENGINE });
+  await fetchSoftnRelease({ root, archivePath: bundled.path, ...quiet });
+  const record = await fetchSoftnRelease({ root, archivePath: modular.path, ...quiet });
+  assert.deepEqual(record.zipp, ZIPP_MODULES.record);
+  // The engine tree is the module-format install, byte for byte: no BUILD-INFO.txt, PROFILE.json or bundle SHA256SUMS.
+  assert.deepEqual((await readdir(paths(root).zippWasm)).sort(), Object.keys(ZIPP_MODULES.files).sort());
+  assert.ok((await readFile(engineFile(root))).equals(ZIPP_MODULES.wasm));
+  assert.deepEqual((await readdir(resolve(root, 'formlogic/ui/vendor/zipp-wasm-web'))).sort(), ['SOURCE.json', 'zipp_wasm_bg.wasm']);
+  await checkInstalled({ root, ...quiet });
+  // A module whose record names another commit, though every digest is rewritten to match, fails --check.
+  const other = zippModuleReleaseFixture({ meta: (m) => ({ ...m, commit: 'e'.repeat(40) }) });
+  const currentFile = resolve(root, '.runtime-source/softn-release/current.json');
+  const current = JSON.parse(await readFile(currentFile, 'utf8'));
+  await writeFile(engineFile(root), other.wasm);
+  current.generation.inventory['zipp-wasm']['zipp_wasm_bg.wasm'] = sha256(other.wasm);
+  await writeFile(currentFile, JSON.stringify(current));
+  await assert.rejects(checkInstalled({ root, ...quiet }), /zipp_wasm_bg\.wasm differs from SOURCE\.json sha256/);
+  // And back to a zip-bundle release.
+  await fetchSoftnRelease({ root, archivePath: bundled.path, ...quiet });
+  await checkInstalled({ root, ...quiet });
+  assert.ok((await readdir(paths(root).zippWasm)).includes('BUILD-INFO.txt'));
 });
 
 test('a Softn release without a zipp/ tree or a ZIPP release record is refused and names the first release that has them', async (t) => {

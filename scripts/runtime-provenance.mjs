@@ -127,6 +127,18 @@ export function buildInfoRustc(text) {
   return /^rustc=(.+)$/m.exec(String(text ?? '').replace(/\r\n/g, '\n'))?.[1]?.trim() || null;
 }
 
+/** ZIPP's release workflow, in its source, where the toolchain of a release published as plain modules is pinned. */
+export const ZIPP_RELEASE_WORKFLOW = '.github/workflows/release-build.yml';
+
+/**
+ * The toolchain a ZIPP release workflow pins for its builds: every `RUSTUP_TOOLCHAIN: "X.Y.Z"`
+ * in it, which must be one version; null when there is none or they disagree.
+ */
+export function workflowToolchain(text) {
+  const pins = new Set([...String(text ?? '').replace(/\r\n/g, '\n').matchAll(/^\s*RUSTUP_TOOLCHAIN:\s*["']?(\d+\.\d+\.\d+)["']?\s*$/gm)].map((match) => match[1]));
+  return pins.size === 1 ? [...pins][0] : null;
+}
+
 export function guestFragment({ stamp, guestBytes, guestLockText, guestTomlText, rustcVerbose, env = process.env }) {
   if (!stamp || !/^[0-9a-f]{40}$/.test(stamp.revision ?? '')) throw new Error('No verified ZIPP source is recorded (.runtime-source/zipp/source.json): run node scripts/zipp-source.mjs first.');
   const context = buildContext(env);
@@ -270,17 +282,30 @@ function readFragment(root, kind) {
 /**
  * The toolchain the installed ZIPP release was built with: the rustc its
  * bundle's BUILD-INFO names, which the Softn release's ZIPP record must repeat
- * (a record that does not is no evidence of the release toolchain). With no
- * Softn release installed (CI's Windows job), the one the guest was built with.
+ * (a record that does not is no evidence of the release toolchain). A release
+ * ZIPP published as plain modules (0.0.26 on) states no rustc, so for one the
+ * toolchain is the one its release workflow pins, read from the ZIPP source
+ * scripts/zipp-source.mjs fetched and proved to be the recorded commit (its
+ * stamp says so). With no Softn release installed (CI's Windows job), the one
+ * the guest was built with.
  */
 export function toolchain(root) {
-  const { current, buildInfo } = runtimePaths(root);
-  const recorded = existsSync(current) ? readJson(current).zipp?.rustc ?? null : null;
+  const { current, buildInfo, stamp } = runtimePaths(root);
+  const zipp = existsSync(current) ? readJson(current).zipp ?? null : null;
+  const recorded = zipp?.rustc ?? null;
   const built = existsSync(buildInfo) ? buildInfoRustc(readFileSync(buildInfo, 'utf8')) : null;
   if (built && recorded && built !== recorded) {
     throw new Error(`The installed ZIPP bundle's BUILD-INFO.txt names ${built}, but the Softn release's ZIPP record says ${recorded}: the record is not the bundle's, so ZIPP's release toolchain is not known. Fetch the Softn release again (node scripts/fetch-softn-release.mjs); if it persists, the release is at fault.`);
   }
   if (built ?? recorded) return toolchainOf(built ?? recorded);
+  if (typeof zipp?.bundle === 'string' && zipp.bundle.endsWith('.wasm')) {
+    const proved = existsSync(stamp) ? readJson(stamp) : null;
+    if (proved?.revision !== zipp.revision) throw new Error(`ZIPP ${zipp.release} states no rustc; its toolchain is the one its release workflow pins, read from its source, and .runtime-source/zipp/src is not proved to be ${String(zipp.revision).slice(0, 12)} yet. Run node scripts/zipp-source.mjs (or --verify on a checkout) first.`);
+    const workflow = resolve(dirname(stamp), 'src', ZIPP_RELEASE_WORKFLOW);
+    const pinned = existsSync(workflow) ? workflowToolchain(readFileSync(workflow, 'utf8')) : null;
+    if (!pinned) throw new Error(`ZIPP ${zipp.release} states no rustc, and its source's ${ZIPP_RELEASE_WORKFLOW} does not pin one RUSTUP_TOOLCHAIN, so the toolchain that built it is not known.`);
+    return pinned;
+  }
   const guest = readFragment(root, 'guest');
   if (guest?.guest?.rustc) return toolchainOf(guest.guest.rustc);
   throw new Error('Cannot tell which Rust toolchain to build with: install the Softn release (node scripts/fetch-softn-release.mjs), whose ZIPP record names it, or the sandbox-guest artifact.');

@@ -4,7 +4,8 @@
 // The sandbox guest (formlogic/runtime/guest) takes zipp-vm by path from
 // .runtime-source/zipp/src: the source of the ZIPP release the installed Softn
 // release names (.runtime-source/softn-release/current.json `zipp`, whose
-// revision Softn read from the BUILD-INFO of the SHA256SUMS-verified bundle).
+// revision Softn read from the SHA256SUMS-verified release: a zip bundle's
+// BUILD-INFO up to ZIPP 0.0.25, the module's own zipp.meta record from 0.0.26).
 // Nothing in this tree names a ZIPP release, so the server engine follows the
 // browser engine with no FormLogic commit.
 //

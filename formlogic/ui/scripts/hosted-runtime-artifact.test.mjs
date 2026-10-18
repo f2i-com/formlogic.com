@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { resolve, dirname, basename } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { artifactFiles, assertNoInterruptedPromotion, checkEntryDocuments, checkRuntimeArtifact, checkZippTree, checkZippVariantTree, installRuntimeArtifact, isZippEngineWasm, LINKED_ASSET, writeRuntimeManifest, zippReleaseIdentity, zippVariantIdentity } from './hosted-runtime-artifact.mjs';
-import { wasmModule, writeZippTree, zippEngineWasm, zippReleaseFixture, zippTreeMap } from './zipp-release-fixture.mjs';
+import { artifactFiles, assertNoInterruptedPromotion, checkEntryDocuments, checkRuntimeArtifact, checkZippTorchTree, checkZippTree, checkZippVariantTree, installRuntimeArtifact, isZippEngineWasm, isZippModuleRecord, LINKED_ASSET, wasmCustomSections, wasmStackBytes, writeRuntimeManifest, ZIPP_MODULE_TREE_REQUIRED, ZIPP_TREE_REQUIRED, zippReleaseIdentity, zippTorchIdentity, zippTreeRequired, zippVariantIdentity } from './hosted-runtime-artifact.mjs';
+import { wasmModule, writeZippTree, zippEngineWasm, zippModuleReleaseFixture, zippReleaseFixture, zippTreeMap } from './zipp-release-fixture.mjs';
 
 const identity = { version: '0.0.17', sha256: 'a'.repeat(64) };
 
@@ -368,4 +368,114 @@ test('checkZippVariantTree refuses a variant identical to the primary, one that 
   await assert.rejects(checkZippVariantTree(zippTreeMap(release.webFiles), release.variant, release.record, { releaseSums: otherSums }), /RELEASE-SHA256SUMS is not the ZIPP v0\.0\.18 SHA256SUMS the release records/);
   const primaryRecordWithOtherSums = { ...release.record, sumsSha256: sha256(otherSums) };
   await assert.rejects(checkZippVariantTree(editedWeb(release, {}, s => ({ ...s, sumsSha256: sha256(otherSums) })), release.variant, primaryRecordWithOtherSums, { releaseSums: otherSums }), /SHA256SUMS does not list zipp-wasm-0\.0\.18-web\.zip with the digest the variant record says/);
+});
+
+// ── ZIPP releases published as plain modules (0.0.26 on) ────────────────────
+// Softn installs each module as published, writes the engine's zipp.glue section out as
+// zipp_wasm.js, takes the declarations and licence from the release's embed kit and generates the
+// torch loader; there is no BUILD-INFO.txt, PROFILE.json or bundle SHA256SUMS in any tree.
+
+/** A module-format tree with files replaced or removed (null), SOURCE.json optionally rewritten. */
+function editedTree(files, changes = {}, source = null) {
+  const next = { ...files, ...changes };
+  for (const [path, bytes] of Object.entries(changes)) if (bytes === null) delete next[path];
+  if (source) next['SOURCE.json'] = Buffer.from(JSON.stringify(source(JSON.parse(files['SOURCE.json'].toString('utf8')))));
+  return zippTreeMap(next);
+}
+
+test('wasmCustomSections reads every custom section of a name and wasmStackBytes a module\'s first global, and neither reads what is not a module', () => {
+  const module = wasmModule(['run'], 'sections', { stackBytes: 1048576, custom: [['zipp.meta', '{"format":1}'], ['other', 'x'], ['zipp.meta', '{}']] });
+  assert.ok(WebAssembly.validate(module), 'the fixture is a real module');
+  assert.deepEqual(wasmCustomSections(module, 'zipp.meta').map(b => b.toString('utf8')), ['{"format":1}', '{}']);
+  assert.deepEqual(wasmCustomSections(module, 'zipp.glue'), []);
+  assert.equal(wasmStackBytes(module), 1048576);
+  assert.equal(wasmStackBytes(wasmModule(['run'], 'big', { stackBytes: 16777216 })), 16777216);
+  assert.equal(wasmStackBytes(wasmModule(['run'], 'none')), null, 'no global, no stack');
+  assert.equal(wasmCustomSections(Buffer.from('not wasm'), 'zipp.meta'), null);
+  assert.equal(wasmStackBytes(Buffer.from('not wasm')), null);
+});
+
+test('a module-format release: the engine, web variant and torch package trees Softn installs pass, from maps or directories', async t => {
+  const release = zippModuleReleaseFixture();
+  assert.equal(isZippModuleRecord(release.record), true);
+  assert.equal(isZippModuleRecord(zippReleaseFixture().record), false, 'a zip-bundle record is not one');
+  assert.deepEqual(Object.keys(release.files).sort(), ['LICENSE-APACHE', 'RELEASE-SHA256SUMS', 'SOURCE.json', 'THIRD_PARTY_LICENSES.txt', 'zipp_wasm.d.ts', 'zipp_wasm.js', 'zipp_wasm_bg.wasm']);
+  for (const bytes of [release.wasm, release.webWasm, release.torchWasm]) assert.ok(WebAssembly.validate(bytes));
+  assert.deepEqual(zippTreeRequired(release.record), ZIPP_MODULE_TREE_REQUIRED);
+  assert.deepEqual(zippTreeRequired(zippReleaseFixture().record), ZIPP_TREE_REQUIRED);
+  assert.deepEqual(await checkZippTree(zippTreeMap(release.files), release.record), release.source);
+  assert.deepEqual(await checkZippTree(zippTreeMap(release.files)), release.source, 'with no record, by the tree\'s own SOURCE.json');
+  assert.deepEqual(await checkZippVariantTree(zippTreeMap(release.webFiles), release.variant, release.record, { releaseSums: release.releaseSums }), release.webSource);
+  assert.deepEqual(zippTorchIdentity(release.torchRecord, release.record), release.torchRecord);
+  assert.deepEqual(await checkZippTorchTree(zippTreeMap(release.torchFiles), release.torchRecord, release.record, { releaseSums: release.releaseSums }), release.torchSource);
+  const directory = await mkdtemp(resolve(tmpdir(), 'formlogic-zipp-module-tree-test-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  for (const [name, files] of [['zipp', release.files], ['zipp-web', release.webFiles], ['zipp-torch', release.torchFiles]]) await writeZippTree(resolve(directory, name), files);
+  assert.deepEqual(await checkZippTree(resolve(directory, 'zipp'), release.record), release.source);
+  assert.deepEqual(await checkZippVariantTree(resolve(directory, 'zipp-web'), release.variant, release.record), release.webSource);
+  assert.deepEqual(await checkZippTorchTree(resolve(directory, 'zipp-torch'), release.torchRecord, release.record), release.torchSource);
+  // A Softn release that names no kit, or whose module is not the published file, is not a module-format record.
+  assert.throws(() => zippReleaseIdentity({ ...release.record, kit: undefined }), /no embed kit/);
+  assert.throws(() => zippReleaseIdentity({ ...release.record, bundleSha256: 'e'.repeat(64) }), /bundleSha256 is not sha256, though the engine is the published module itself/);
+});
+
+test('checkZippTree holds a module-format engine tree to what Softn installs: its files, the release sums, the module\'s record, bindings and stack, and the kit\'s files', async () => {
+  const release = zippModuleReleaseFixture();
+  const refuses = (tree, pattern) => assert.rejects(checkZippTree(tree, release.record), pattern);
+  await refuses(editedTree(release.files, { 'zipp_wasm.d.ts': null }), /The ZIPP engine tree is missing zipp_wasm\.d\.ts\./);
+  // What a zip-bundle install had, and anything else, is not part of this one.
+  await refuses(editedTree(release.files, { 'BUILD-INFO.txt': Buffer.from('version=0.0.26\n') }), /ships BUILD-INFO\.txt, which is not part of a ZIPP v0\.0\.26 install/);
+  await refuses(editedTree(release.files, { 'zipp.mjs': Buffer.from('export {};\n') }), /ships zipp\.mjs, which is not part of/);
+  await refuses(editedTree(release.files, { 'RELEASE-SHA256SUMS': Buffer.from(release.releaseSums.toString() + '\n') }), /RELEASE-SHA256SUMS is not the ZIPP v0\.0\.26 SHA256SUMS SOURCE\.json records/);
+  // Another module: its digest, then its record, then its bindings, then its stack.
+  const other = zippModuleReleaseFixture({ label: 'another build' });
+  await refuses(editedTree(release.files, { 'zipp_wasm_bg.wasm': other.wasm }), /zipp_wasm_bg\.wasm differs from SOURCE\.json sha256/);
+  const recordedAs = (fixture) => editedTree(fixture.files, {}, (s) => s);
+  const commit = zippModuleReleaseFixture({ meta: m => ({ ...m, commit: 'c'.repeat(40) }) });
+  await assert.rejects(checkZippTree(recordedAs(commit), commit.record), /zipp_wasm_bg\.wasm's zipp\.meta commit is "c{40}"; the release records "b{40}"/);
+  const variant = zippModuleReleaseFixture({ meta: m => ({ ...m, variant: 'javascript-python' }) });
+  await assert.rejects(checkZippTree(recordedAs(variant), variant.record), /zipp\.meta variant is "javascript-python"; the release records "javascript-python-base"/);
+  const format = zippModuleReleaseFixture({ meta: m => ({ ...m, format: 2 }) });
+  await assert.rejects(checkZippTree(recordedAs(format), format.record), /zipp\.meta format is 2; the release records 1/);
+  const named = zippModuleReleaseFixture({ meta: m => ({ ...m, glueSha256: 'e'.repeat(64) }) });
+  await assert.rejects(checkZippTree(recordedAs(named), named.record), /zipp\.meta glueSha256 is "e{64}"; the release records "[0-9a-f]{64}"/);
+  const stack = zippModuleReleaseFixture({ stackBytes: 1048576 });
+  await assert.rejects(checkZippTree(recordedAs(stack), { ...stack.record, stackBytes: 16777216 }), /SOURCE\.json stackBytes is 1048576; the release records 16777216/);
+  await assert.rejects(checkZippTree(editedTree(stack.files, {}, s => ({ ...s, stackBytes: 16777216 })), { ...stack.record, stackBytes: 16777216 }), /was linked with a 1048576-byte stack; the release records 16777216/);
+  // zipp_wasm.js must be the module's own zipp.glue section.
+  const otherGlue = Buffer.from('export default async function init() { /* another */ }\n');
+  await refuses(editedTree(release.files, { 'zipp_wasm.js': otherGlue }), /zipp_wasm\.js is not the bindings zipp_wasm_bg\.wasm carries/);
+  // The kit's declarations and licence are the digests recorded, and the kit is listed in the release sums.
+  await refuses(editedTree(release.files, { 'LICENSE-APACHE': Buffer.from('another licence\n') }), /LICENSE-APACHE is not the embed kit's LICENSE-APACHE Softn recorded/);
+  const unlistedKit = { ...release.record, kit: { ...release.record.kit, bundleSha256: 'e'.repeat(64) } };
+  await assert.rejects(checkZippTree(editedTree(release.files, {}, s => ({ ...s, kit: unlistedKit.kit })), unlistedKit), /does not list zipp-0\.0\.26-wasm-embed-kit\.zip with the digest SOURCE\.json records for the embed kit/);
+});
+
+test('checkZippVariantTree and checkZippTorchTree hold module-format trees to their files, records and the release, and refuse mixing formats', async () => {
+  const release = zippModuleReleaseFixture();
+  const variant = (files, record = release.variant, primary = release.record) => checkZippVariantTree(zippTreeMap(files), record, primary, { releaseSums: release.releaseSums });
+  await assert.rejects(variant({ ...release.webFiles, 'zipp_wasm.js': release.webGlue }), /ships zipp_wasm\.js, which Softn does not ship for a variant/);
+  await assert.rejects(variant({ ...release.webFiles, 'PROFILE.json': Buffer.from('{}') }), /ships PROFILE\.json, which is not part of a ZIPP v0\.0\.26 variant install/);
+  // A variant linked with the engine's stack, recorded everywhere as the web build's.
+  const stack = zippModuleReleaseFixture({ webStackBytes: 16777216 });
+  await assert.rejects(checkZippVariantTree(editedTree(stack.webFiles, {}, s => ({ ...s, stackBytes: 1048576 })), { ...stack.variant, stackBytes: 1048576 }, stack.record), /zipp_wasm_bg\.wasm was linked with a 16777216-byte stack; the release records 1048576\./);
+  const meta = zippModuleReleaseFixture({ webMeta: m => ({ ...m, languages: ['javascript', 'python'] }) });
+  await assert.rejects(checkZippVariantTree(zippTreeMap(meta.webFiles), meta.variant, meta.record), /zipp\.meta languages is \["javascript","python"\]; the release records \["javascript"\]/);
+  // Release sums that do not list the variant's module, recorded as the release's on both sides.
+  const unlisted = Buffer.from(release.releaseSums.toString().replace(release.variant.sha256, 'e'.repeat(64)));
+  const unlistedTree = editedTree(release.webFiles, {}, s => ({ ...s, sumsSha256: sha256(unlisted) }));
+  await assert.rejects(checkZippVariantTree(unlistedTree, release.variant, { ...release.record, sumsSha256: sha256(unlisted) }, { releaseSums: unlisted }), /ZIPP v0\.0\.26's SHA256SUMS does not list zipp-0\.0\.26-javascript\.wasm with the digest the variant record says\./);
+  // A zip-bundle engine with a module variant, or the reverse, is not one release.
+  const bundled = zippReleaseFixture({ webVariant: true });
+  await assert.rejects(checkZippVariantTree(zippTreeMap(release.webFiles), release.variant, bundled.record), /one is a module and the other a zip bundle, so they are not one release/);
+
+  const torch = (files, record = release.torchRecord, primary = release.record) => checkZippTorchTree(zippTreeMap(files), record, primary, { releaseSums: release.releaseSums });
+  await assert.rejects(torch({ ...release.torchFiles, 'BUILD-INFO.txt': Buffer.from('variant=torch\n') }), /ships BUILD-INFO\.txt, which is not part of a ZIPP v0\.0\.26 torch package install/);
+  await assert.rejects(torch(release.torchFiles, { ...release.torchRecord, variant: 'torch' }), /variant is "torch", not "torch-package"/);
+  const editedTorch = change => ({ ...release.torchFiles, 'SOURCE.json': Buffer.from(JSON.stringify(change(structuredClone(release.torchSource)))) });
+  await assert.rejects(torch(editedTorch(s => ({ ...s, loaderSource: 'zipp-release' }))), /loaderSource is "zipp-release"; ZIPP v0\.0\.26 publishes no loader/);
+  await assert.rejects(torch({ ...release.torchFiles, 'zipp_torch.js': Buffer.from('export const other = 1;\n') }), /zipp_torch\.js differs from the recorded torch loaderSha256/);
+  const torchMeta = zippModuleReleaseFixture({ torchMeta: m => ({ ...m, glueSha256: 'e'.repeat(64) }) });
+  await assert.rejects(checkZippTorchTree(zippTreeMap(torchMeta.torchFiles), torchMeta.torchRecord, torchMeta.record), /zipp_torch\.wasm's zipp\.meta glueSha256 is "e{64}"; the release records \(none\)/);
+  assert.throws(() => zippTorchIdentity(release.torchRecord, zippReleaseFixture().record), /variant is "torch-package", not "torch"/);
 });

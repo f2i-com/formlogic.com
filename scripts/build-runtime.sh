@@ -23,7 +23,9 @@
 # current.json names the ZIPP release, and nothing in this tree does. The ZIPP
 # source is cloned at that release's tag, or taken read-only from a local
 # checkout with ZIPP_SOURCE_DIR=../zipp.org. The Rust toolchain is the one
-# ZIPP's release was built with (its BUILD-INFO rustc, in the same record).
+# ZIPP's release was built with: its BUILD-INFO rustc, in the same record, or,
+# for a release ZIPP published as plain modules (0.0.26 on), the toolchain its
+# release workflow pins in that source (scripts/runtime-provenance.mjs).
 #
 # The guest is the zipp JavaScript engine compiled for WASI (formlogic/runtime/guest).
 # The launcher (formlogic/runtime/host) embeds a wasmtime-precompiled copy of it,

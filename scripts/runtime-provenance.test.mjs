@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync } from 'node:fs';
-import { LAUNCHERS, buildContext, buildInfoRustc, checkSandbox, elfLinkage, guestFeatures, mergeProvenance, pruneLauncher, runtimePaths, rustcInfo, toolchain, toolchainOf, wasmtimeVersion, writeFragment, writeProvenance } from './runtime-provenance.mjs';
+import { LAUNCHERS, ZIPP_RELEASE_WORKFLOW, buildContext, buildInfoRustc, checkSandbox, elfLinkage, guestFeatures, mergeProvenance, pruneLauncher, runtimePaths, rustcInfo, toolchain, toolchainOf, wasmtimeVersion, workflowToolchain, writeFragment, writeProvenance } from './runtime-provenance.mjs';
 import { smokeValue } from './runtime-smoke.mjs';
 import { zippReleaseFixture } from '../formlogic/ui/scripts/zipp-release-fixture.mjs';
 
@@ -252,6 +252,28 @@ test('the toolchain is ZIPP\'s release toolchain (its bundle\'s BUILD-INFO, whic
   await rm(runtimePaths(root).fragments, { recursive: true });
   assert.throws(() => toolchain(root), /Cannot tell which Rust toolchain to build with/);
   assert.throws(() => toolchainOf('cargo 1.92.0'), /No rustc version/);
+});
+
+test('a ZIPP release published as plain modules states no rustc: its toolchain is the one its release workflow pins, in the source proved to be its commit', async (t) => {
+  const root = await tree(t);
+  const { current, stamp } = runtimePaths(root);
+  const installed = JSON.parse(await readFile(current, 'utf8'));
+  const revision = 'b'.repeat(40);
+  // What Softn records for 0.0.26: a .wasm bundle, a kit, and no rustc.
+  await writeFile(current, JSON.stringify({ ...installed, zipp: { ...installed.zipp, release: 'v0.0.26', version: '0.0.26', revision, bundle: 'zipp-0.0.26-javascript-python-base.wasm', rustc: undefined, wasmBindgen: undefined } }));
+  assert.throws(() => toolchain(root), /ZIPP v0\.0\.26 states no rustc; .* \.runtime-source\/zipp\/src is not proved to be bbbbbbbbbbbb yet\. Run node scripts\/zipp-source\.mjs/);
+  await mkdir(dirname(stamp), { recursive: true });
+  await writeFile(stamp, JSON.stringify({ release: 'v0.0.26', version: '0.0.26', revision: 'c'.repeat(40) }));
+  assert.throws(() => toolchain(root), /is not proved to be bbbbbbbbbbbb yet/, 'a stamp of another commit proves nothing');
+  await writeFile(stamp, JSON.stringify({ release: 'v0.0.26', version: '0.0.26', revision }));
+  assert.throws(() => toolchain(root), /does not pin one RUSTUP_TOOLCHAIN/, 'no workflow in the source');
+  const workflow = resolve(dirname(stamp), 'src', ZIPP_RELEASE_WORKFLOW);
+  await mkdir(dirname(workflow), { recursive: true });
+  await writeFile(workflow, 'jobs:\r\n  wasm:\r\n    env:\r\n      RUSTUP_TOOLCHAIN: "1.92.0"\r\n  cli:\r\n    env:\r\n      RUSTUP_TOOLCHAIN: "1.92.0"\r\n');
+  assert.equal(toolchain(root), '1.92.0');
+  await writeFile(workflow, 'jobs:\n  wasm:\n    env:\n      RUSTUP_TOOLCHAIN: "1.92.0"\n  cli:\n    env:\n      RUSTUP_TOOLCHAIN: 1.93.0\n');
+  assert.throws(() => toolchain(root), /does not pin one RUSTUP_TOOLCHAIN/, 'two pins are no answer');
+  assert.equal(workflowToolchain('RUSTUP_TOOLCHAIN: stable\n'), null);
 });
 
 test('the Linux launcher must be a static x86-64 ELF, read from its own headers', async (t) => {

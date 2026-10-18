@@ -100,6 +100,41 @@ repository at the commit this record names (the commit the verified bundle's
 `BUILD-INFO.txt` names), which `scripts/zipp-source.mjs` proves the checkout is,
 at the release's workspace version, before anything builds from it.
 
+### ZIPP 0.0.26 on: plain modules
+
+ZIPP stopped publishing zip bundles with 0.0.26. Each engine is now one `.wasm`
+file carrying its wasm-bindgen bindings in a `zipp.glue` custom section and a
+`zipp.meta` record (format, variant, version, commit, languages, the bindings'
+digest); the torch package is a `.wasm` with a record and no bindings; and the
+declarations and licence come in an embed kit. A Softn release built on such a
+ZIPP (Softn v0.0.23 on) installs the modules as published, so its record's
+`bundle` names the `.wasm` file (`isZippModuleRecord`), whose digest is both
+`bundleSha256` and `sha256`; the record gains `kit` (the kit's file name and
+digest, and the digest of each file Softn took from it) and has no `rustc` or
+`wasmBindgen`. For such a record:
+
+- `checkZippTree` holds `zipp/` to exactly the seven files Softn installs: the
+  module, `zipp_wasm.js`, `zipp_wasm.d.ts`, `LICENSE-APACHE`,
+  `RELEASE-SHA256SUMS`, the notices and `SOURCE.json`. `RELEASE-SHA256SUMS` is
+  the recorded sums and lists the module and the kit with their recorded
+  digests. The module has its recorded digest, one `zipp.meta` naming the
+  recorded release, commit, variant, languages and bindings, and the recorded
+  stack (its first global, Rust's stack pointer). `zipp_wasm.js` is the
+  module's own `zipp.glue` section, and the kit's two files have the digests
+  Softn recorded.
+- The variant and torch trees are held the same way (below).
+- A record and a tree of different formats are refused, and so is a variant
+  or package of another format than its engine.
+- The sandbox's toolchain is the `RUSTUP_TOOLCHAIN` ZIPP's release workflow
+  (`.github/workflows/release-build.yml`) pins, since the release no longer
+  names its rustc. `scripts/runtime-provenance.mjs toolchain` reads it from
+  the source `scripts/zipp-source.mjs` proved to be the recorded commit, and
+  `prepare-sandbox-runtime` asks for the toolchain only after that source is
+  checked out and verified.
+
+A release built on a zip-bundle ZIPP (Softn v0.0.22 and before) is checked as
+it always was.
+
 `zipp/` installs as `formlogic/ui/vendor/zipp-wasm/`, the path
 `zipp-host.ts` and `zipp-bytes.ts` import, so no source names a generated
 location. `check-hosted-runtime.mjs` and `check-app-editors.mjs` both run
@@ -167,6 +202,12 @@ fifth tree, `formlogic/ui/vendor/zipp-wasm-web/`, and:
   when the tree is installed — the runtime manifest lists it unconditionally,
   and the server reads the stamp as "installed".
 
+On ZIPP 0.0.26 or later the tree is two files, the javascript module as ZIPP
+published it and `SOURCE.json`. The module is held to its record (variant
+`javascript`, the release's commit, the bindings recorded for it), to the 1 MiB
+stack the record says, and to its line in the primary tree's
+`RELEASE-SHA256SUMS`.
+
 A release without the variant installs the four trees exactly as before, and
 retires a web tree an earlier generation left (below). The UI build picks the
 variant up through a glob (`src/lib/formlogic/zipp-bytes.ts`) that emits
@@ -200,6 +241,11 @@ already installs, and the fetcher:
   primary tree's `RELEASE-SHA256SUMS`; the module the recorded digest and a
   torch module by its exports (`zipp_package_ptr`, `zipp_package_len`,
   `zipp_kernel`), and the loader the recorded digest;
+- on ZIPP 0.0.26 or later, where ZIPP publishes no loader, holds `zipp-torch/`
+  to exactly the module as published, Softn's generated `zipp_torch.js` (the
+  record's `loaderSource` is `softn-generated`), its declarations and
+  `SOURCE.json`. The record's variant is `torch-package`, and the module's own
+  record names the release's commit and no bindings;
 - scans every file by content for a torch module: each must carry the recorded
   digest, at `zipp-torch/zipp_torch.wasm` or a runtime's
   `assets/core-runtime/zipp_torch.wasm` and nowhere else, and all four are

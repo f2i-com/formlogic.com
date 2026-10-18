@@ -57,7 +57,7 @@ runs:
 
     # ── Build mode ──────────────────────────────────────────────────────────
     # Which ZIPP: the release the installed Softn release names (Softn read its
-    # commit from the BUILD-INFO of the SHA256SUMS-verified bundle). Nothing in
+    # commit from the SHA256SUMS-verified release's own record). Nothing in
     # this tree names one, so a new ZIPP release reaches the sandbox with no commit.
     - name: The ZIPP release the installed Softn release names
       id: zipp
@@ -67,11 +67,6 @@ runs:
       run: |
         identity="$(node scripts/zipp-source.mjs --identity)"
         printf '%s\n' "$identity" >> "$GITHUB_OUTPUT"
-        revision="$(printf '%s\n' "$identity" | sed -n 's/^revision=//p')"
-        toolchain="$(node scripts/runtime-provenance.mjs toolchain)"
-        echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
-        lock="$(sha256sum formlogic/runtime/host/Cargo.lock | cut -c1-16)"
-        echo "cache-key=sandbox-deps-${ImageOS:-unknown}-${ImageVersion:-unknown}-rust${toolchain}-zipp${revision}-host${lock}" >> "$GITHUB_OUTPUT"
     - name: Check out ZIPP's source at that release
       if: inputs.mode == 'build'
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -88,11 +83,26 @@ runs:
       shell: bash
       working-directory: ${{ github.workspace }}
       run: node scripts/zipp-source.mjs --verify
+    # After the source is proved: a ZIPP release published as plain modules
+    # (0.0.26 on) states no rustc, and its toolchain is the one its release
+    # workflow pins in that source.
+    - name: ZIPP's release toolchain
+      id: toolchain
+      if: inputs.mode == 'build'
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        REVISION: ${{ steps.zipp.outputs.revision }}
+      run: |
+        toolchain="$(node scripts/runtime-provenance.mjs toolchain)"
+        echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
+        lock="$(sha256sum formlogic/runtime/host/Cargo.lock | cut -c1-16)"
+        echo "cache-key=sandbox-deps-${ImageOS:-unknown}-${ImageVersion:-unknown}-rust${toolchain}-zipp${REVISION}-host${lock}" >> "$GITHUB_OUTPUT"
     - name: Rust toolchain (ZIPP's release toolchain) and musl-gcc
       if: inputs.mode == 'build'
       shell: bash
       env:
-        TOOLCHAIN: ${{ steps.zipp.outputs.toolchain }}
+        TOOLCHAIN: ${{ steps.toolchain.outputs.toolchain }}
       run: |
         rustup toolchain install "$TOOLCHAIN" --profile minimal --no-self-update --target wasm32-wasip1,x86_64-unknown-linux-musl
         sudo apt-get update -qq
@@ -110,7 +120,7 @@ runs:
           ~/.cargo/git/db
           formlogic/runtime/guest/target
           formlogic/runtime/host/target
-        key: ${{ steps.zipp.outputs.cache-key }}
+        key: ${{ steps.toolchain.outputs.cache-key }}
     - name: Build the guest and the Linux launcher, smoke-test it and record them
       if: inputs.mode == 'build'
       shell: bash

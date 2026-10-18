@@ -12,15 +12,24 @@ const leb = n => { const out = []; do { let byte = n & 0x7f; n >>>= 7; if (n) by
 const section = (id, body) => [id, ...leb(body.length), ...body];
 const name = text => { const bytes = [...Buffer.from(text, 'utf8')]; return [...leb(bytes.length), ...bytes]; };
 
-/** A valid wasm module exporting one no-op function under every name given; `label` goes in a custom section so modules differ. */
-export function wasmModule(exportNames, label = '') {
+/** Signed LEB128, as an i32.const operand is written. */
+const sleb = n => { const out = []; for (;;) { const byte = n & 0x7f; n >>= 7; if ((n === 0 && !(byte & 0x40)) || (n === -1 && byte & 0x40)) return [...out, byte]; out.push(byte | 0x80); } };
+
+/**
+ * A valid wasm module exporting one no-op function under every name given; `label` goes in a
+ * custom section so modules differ. `stackBytes` gives it a first global as rustc's stack pointer
+ * starts (a mutable i32 at the top of the stack), and `custom` more custom sections, [name, payload].
+ */
+export function wasmModule(exportNames, label = '', { stackBytes, custom = [] } = {}) {
   return Buffer.from([
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
     ...section(1, [1, 0x60, 0, 0]),
     ...section(3, [1, 0]),
+    ...(stackBytes === undefined ? [] : section(6, [1, 0x7f, 0x01, 0x41, ...sleb(stackBytes), 0x0b])),
     ...section(7, [...leb(exportNames.length), ...exportNames.flatMap(n => [...name(n), 0x00, 0])]),
     ...section(10, [1, 2, 0, 0x0b]),
     ...section(0, [...name('fixture'), ...Buffer.from(label, 'utf8')]),
+    ...custom.flatMap(([n, payload]) => section(0, [...name(n), ...Buffer.from(payload)])),
   ]);
 }
 
@@ -142,6 +151,71 @@ export function zippReleaseFixture({ version = '0.0.18', revision = 'a'.repeat(4
   const files = { ...shipped, [noticesFile]: thirdParty, SHA256SUMS: Buffer.from(inner), 'RELEASE-SHA256SUMS': Buffer.from(releaseSums), 'SOURCE.json': Buffer.from(JSON.stringify(source, null, 2) + '\n') };
   const record = Object.fromEntries([...RECORD_FIELDS, ...(webVariant ? ['variants'] : []), ...(torch ? ['packages'] : [])].map(key => [key, source[key]]));
   return { files, source, record, wasm, glue, ...web, ...packaged };
+}
+
+/**
+ * One ZIPP release published as plain modules (0.0.26 on) as Softn installs it: `files` the zipp/
+ * tree (the engine module as published, its bindings, the embed kit's declarations and licence,
+ * ZIPP's SHA256SUMS, the notices, SOURCE.json), `webFiles` the zipp-web/ tree (the javascript
+ * module and SOURCE.json) and `torchFiles` the zipp-torch/ tree (the torch-package module, Softn's
+ * generated loader and declarations, SOURCE.json); `record` is softn-release.json `zipp`, the whole
+ * SOURCE.json, as Softn writes it. Every module carries its zipp.meta record (and an engine its
+ * zipp.glue bindings and a stack); `meta`, `webMeta` and `torchMeta` edit a record before the
+ * module is built, so the digests that follow it still agree and only the record says otherwise.
+ */
+export function zippModuleReleaseFixture({ version = '0.0.26', revision = 'b'.repeat(40), label = `engine ${version}`, notices = 'softn-curated', noticesFile = 'THIRD_PARTY_LICENSES.txt', meta = m => m, webMeta = m => m, torchMeta = m => m, stackBytes = 16777216, webStackBytes = 1048576 } = {}) {
+  const release = `v${version}`;
+  const bundle = `zipp-${version}-javascript-python-base.wasm`;
+  const glue = Buffer.from(`// zipp.glue fixture for ${label}\nexport default async function init() {}\nexport class Engine {}\n`);
+  const wasm = wasmModule([...ZIPP_ENGINE_EXPORTS, 'memory_usage'], label, { stackBytes, custom: [['zipp.meta', JSON.stringify(meta({ format: 1, variant: 'javascript-python-base', version, commit: revision, languages: ['javascript', 'python'], glueSha256: sha256(glue) }))], ['zipp.glue', glue]] });
+  const webBundle = `zipp-${version}-javascript.wasm`;
+  const webGlue = Buffer.from(`// zipp.glue fixture for ${label} web\nexport default async function init() {}\n`);
+  const webWasm = wasmModule([...ZIPP_ENGINE_EXPORTS], `${label} web`, { stackBytes: webStackBytes, custom: [['zipp.meta', JSON.stringify(webMeta({ format: 1, variant: 'javascript', version, commit: revision, languages: ['javascript'], glueSha256: sha256(webGlue) }))], ['zipp.glue', webGlue]] });
+  const torchBundle = `zipp-${version}-torch-package.wasm`;
+  const torchWasm = wasmModule(['zipp_alloc', 'zipp_free', 'memory', ...ZIPP_TORCH_EXPORTS], `${label} torch`, { custom: [['zipp.meta', JSON.stringify(torchMeta({ format: 1, variant: 'torch-package', version, commit: revision, languages: ['python'] }))]] });
+  const kitBundle = `zipp-${version}-wasm-embed-kit.zip`;
+  const kitBundleSha256 = sha256(`kit ${label}`);
+  const declarations = Buffer.from('export default function init(): Promise<void>;\nexport class Engine {}\n');
+  const license = Buffer.from('Apache License, Version 2.0 (fixture)\n');
+  const thirdParty = Buffer.from('Unicode data (Unicode-3.0) notices, fixture\n');
+  const releaseSums = [
+    `${sha256(`windows ${label}`)}  zipp-${version}-windows-x86_64-portable.exe`,
+    `${sha256(webWasm)}  ${webBundle}`,
+    `${sha256(wasm)}  ${bundle}`,
+    `${sha256(torchWasm)}  ${torchBundle}`,
+    `${kitBundleSha256}  ${kitBundle}`,
+  ].join('\n') + '\n';
+  const repository = 'https://github.com/f2i-com/zipp.org';
+  const source = {
+    repository, release, version, revision, build: 'release',
+    bundle, bundleSha256: sha256(wasm), sumsSha256: sha256(releaseSums),
+    variant: 'javascript-python-base', languages: ['javascript', 'python'], stackBytes,
+    license: 'Apache-2.0', artifact: 'zipp_wasm_bg.wasm', sha256: sha256(wasm), glueSha256: sha256(glue),
+    kit: { bundle: kitBundle, bundleSha256: kitBundleSha256, files: { 'zipp_wasm.d.ts': { from: 'zipp-engine.d.ts', sha256: sha256(declarations) }, 'LICENSE-APACHE': { from: 'LICENSE-APACHE', sha256: sha256(license) } } },
+    notices: { file: noticesFile, source: notices, sha256: sha256(thirdParty) },
+  };
+  const primary = { bundle, sha256: source.sha256, glueSha256: source.glueSha256 };
+  const variant = { bundle: webBundle, bundleSha256: sha256(webWasm), sha256: sha256(webWasm), glueSha256: sha256(webGlue), variant: 'javascript', languages: ['javascript'], stackBytes: webStackBytes, commit: revision };
+  const webSource = { repository, release, version, revision, build: 'release', ...variant, sumsSha256: source.sumsSha256, license: 'Apache-2.0', artifact: 'zipp_wasm_bg.wasm', primary };
+  const loader = Buffer.from(`// zipp_torch.js fixture for ${label}\nexport async function addTorch() {}\nexport function addTorchSync() {}\n`);
+  const torchDeclarations = Buffer.from('export function addTorch(zipp: unknown, source: unknown): Promise<unknown>;\n');
+  const torchRecord = { bundle: torchBundle, bundleSha256: sha256(torchWasm), sha256: sha256(torchWasm), loaderSha256: sha256(loader), variant: 'torch-package', pairsWith: bundle, commit: revision, engineAbi: '0123456789abcdef' };
+  const torchSource = {
+    repository, release, version, revision, build: 'release', bundle: torchBundle, bundleSha256: torchRecord.bundleSha256, sumsSha256: source.sumsSha256,
+    variant: 'torch-package', languages: ['python'], pairsWith: bundle, license: 'Apache-2.0', artifact: 'zipp_torch.wasm', sha256: torchRecord.sha256,
+    loader: 'zipp_torch.js', loaderSha256: torchRecord.loaderSha256, loaderSource: 'softn-generated',
+    declarations: { file: 'zipp_torch.d.ts', source: 'softn-generated', sha256: sha256(torchDeclarations) },
+    commit: revision, engineAbi: torchRecord.engineAbi, primary,
+  };
+  source.variants = { web: variant };
+  source.packages = { torch: torchRecord };
+  const json = value => Buffer.from(JSON.stringify(value, null, 2) + '\n');
+  const files = { 'zipp_wasm.js': glue, 'zipp_wasm.d.ts': declarations, 'zipp_wasm_bg.wasm': wasm, 'LICENSE-APACHE': license, [noticesFile]: thirdParty, 'RELEASE-SHA256SUMS': Buffer.from(releaseSums), 'SOURCE.json': json(source) };
+  return {
+    files, source, record: JSON.parse(JSON.stringify(source)), wasm, glue, releaseSums: Buffer.from(releaseSums),
+    webFiles: { 'zipp_wasm_bg.wasm': webWasm, 'SOURCE.json': json(webSource) }, webSource, webWasm, webGlue, variant,
+    torchFiles: { 'zipp_torch.wasm': torchWasm, 'zipp_torch.js': loader, 'zipp_torch.d.ts': torchDeclarations, 'SOURCE.json': json(torchSource) }, torchSource, torchWasm, torchLoader: loader, torchRecord,
+  };
 }
 
 /** The tree as a Map, the form checkZippTree takes for archive entries. */

@@ -16,7 +16,7 @@ import { existsSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkZippTree, checkZippVariantTree, ZIPP_TREE_REQUIRED } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
+import { checkZippTree, checkZippVariantTree, zippTreeRequired } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REFUSED = new Set(['EPERM', 'EACCES', 'EBUSY']);
@@ -89,7 +89,7 @@ export async function syncZippFromSoftn({
   try { record = JSON.parse(await readFile(resolve(sourceDir, 'SOURCE.json'), 'utf8')); }
   catch (error) { throw new Error(`${hint} Its wasm-zipp/SOURCE.json is missing or unreadable: ${error.message}`); }
   // The notices go by the name SOURCE.json records, as Softn's packager and checkZippTree take them.
-  const required = [...ZIPP_TREE_REQUIRED, ...(typeof record.notices?.file === 'string' ? [record.notices.file] : [])];
+  const required = [...zippTreeRequired(record), ...(typeof record.notices?.file === 'string' ? [record.notices.file] : [])];
   const missing = required.filter((name) => !existsSync(resolve(sourceDir, name)));
   if (missing.length) throw new Error(`${hint} Its wasm-zipp/ lacks ${missing.join(', ')}.`);
   // The web variant, when the install records one: the checkout's wasm-zipp-web/, which Softn's
