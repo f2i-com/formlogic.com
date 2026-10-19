@@ -29,7 +29,9 @@
 //
 // Sources (all existing controls):
 //   .runtime-source/softn-release/current.json               the installed Softn release (tag, commit, archive digest)
-//   <softn>/.github/scripts/checkout-xdb.sh                   Softn -> XDB revision (source mode)
+//   <softn>/crates/softn-xdb/Cargo.toml                       XDB as part of Softn, at Softn's revision (source mode,
+//                                                             from the Softn after v0.0.24 that took the crate in)
+//   <softn>/.github/scripts/checkout-xdb.sh                   Softn -> XDB revision (source mode, Softn v0.0.24 and before)
 //   formlogic/ui/vendor/zipp-wasm/SOURCE.json                 the installed ZIPP release + digest (generated: the release's zipp/)
 //   <softn>/packages/@softn/core/wasm-zipp/SOURCE.json        the ZIPP release a Softn checkout installed (source mode;
 //                                                             --check then ignores the pinnedBy texts, which name the mode)
@@ -86,6 +88,8 @@ const gitHead = (repo) => {
 // Release mode: what scripts/fetch-softn-release.mjs installed. Source mode:
 // the developer's checkout (SOFTN_REPO), whose HEAD is what is described.
 let xdbPin = null;
+// Whether the Softn checkout carries XDB itself rather than pinning xdb.org.
+let xdbInSoftn = false;
 let softnHead = null;
 let softnProtocol = null;
 let softnZipp = null;
@@ -97,9 +101,18 @@ if (sourceMode) {
   if (existsSync(softnRepo)) {
     softnHead = gitHead(softnRepo);
     softnPin = softnHead;
-    const checkout = read(resolve(softnRepo, '.github/scripts/checkout-xdb.sh'));
-    xdbPin = /XDB_COMMIT="([0-9a-f]{40})"/.exec(checkout)?.[1] ?? null;
-    must(xdbPin, 'softn checkout-xdb.sh does not pin a 40-hex XDB revision');
+    // XDB is part of Softn once Softn carries the crate (crates/softn-xdb),
+    // and is then described by Softn's own revision. A Softn from before
+    // pinned a commit of the xdb.org repository in its checkout script.
+    xdbInSoftn = existsSync(resolve(softnRepo, 'crates/softn-xdb/Cargo.toml'));
+    if (xdbInSoftn) {
+      xdbPin = softnHead;
+    } else {
+      const script = resolve(softnRepo, '.github/scripts/checkout-xdb.sh');
+      const checkout = existsSync(script) ? read(script) : '';
+      xdbPin = /XDB_COMMIT="([0-9a-f]{40})"/.exec(checkout)?.[1] ?? null;
+      must(xdbPin, 'the Softn checkout neither carries XDB (crates/softn-xdb) nor pins a 40-hex XDB revision (.github/scripts/checkout-xdb.sh)');
+    }
     softnProtocol = json(resolve(softnRepo, 'apps/softn-host-php/runtime/host-protocol.json'));
     softnZipp = json(resolve(softnRepo, 'packages/@softn/core/wasm-zipp/SOURCE.json'));
     const loaderCargo = read(resolve(softnRepo, 'apps/softn-loader/src-tauri/Cargo.toml'));
@@ -146,7 +159,7 @@ if (exact) {
   }
 }
 let xdbHead = null;
-if (sourceMode && existsSync(xdbRepo)) {
+if (sourceMode && !xdbInSoftn && existsSync(xdbRepo)) {
   xdbHead = gitHead(xdbRepo);
   if (xdbHead && xdbPin && xdbHead !== xdbPin) problems.push(`the XDB checkout at ${xdbRepo} is ${xdbHead}, but Softn pins ${xdbPin}`);
 }
@@ -235,7 +248,7 @@ const manifest = {
     softn: sourceMode
       ? { pinnedBy: 'SOFTN_REPO source checkout (developer mode); releases come from scripts/fetch-softn-release.mjs', revision: softnPin, checkoutRevision: softnHead, nativeProtocol: softnProtocol?.nativeProtocol ?? null, recordEvents: softnProtocol?.recordEvents ?? null, minimumNode: softnProtocol?.minimumNode ?? null, formlogicAdapter: { vendoredAt: 'formlogic/ui/src/lib/softn/project.ts', source: adapterProvenance.source ?? null, sha256: adapterProvenance.sha256 ?? null } }
       : { pinnedBy: 'latest GitHub release of f2i-com/softn.com (scripts/fetch-softn-release.mjs); SOFTN_RELEASE pins a tag; a release run freezes one record (--resolve-only) that every job installs (--frozen) and the release gate checks with --exact', release: softnRelease?.tag ?? null, revision: softnPin, archiveSha256: softnRelease?.sha256 ?? null, frozen: softnRelease?.frozen ?? null, nativeProtocol: softnProtocol?.nativeProtocol ?? null, recordEvents: softnProtocol?.recordEvents ?? null, minimumNode: softnProtocol?.minimumNode ?? null, formlogicAdapter: { vendoredAt: 'formlogic/ui/src/lib/softn/project.ts', source: adapterProvenance.source ?? null, sha256: adapterProvenance.sha256 ?? null } },
-    xdb: { pinnedBy: sourceMode ? 'softn/.github/scripts/checkout-xdb.sh' : 'the installed Softn release (softn-release.json xdb.revision, when it records one)', revision: xdbPin, checkoutRevision: xdbHead, consumedAs: loaderXdbDependency, note: 'Native peer networking is opt-in and local-only by default at this revision; see xdb docs/networking-and-restore-policy.md' },
+    xdb: { pinnedBy: sourceMode ? (xdbInSoftn ? 'part of the Softn checkout (crates/softn-xdb), at its revision' : 'softn/.github/scripts/checkout-xdb.sh') : 'the installed Softn release (softn-release.json xdb.revision, when it records one)', revision: xdbPin, checkoutRevision: xdbHead, consumedAs: loaderXdbDependency, note: 'Native peer networking is opt-in and local-only by default at this revision; see xdb docs/networking-and-restore-policy.md' },
     zipp: { pinnedBy: sourceMode ? 'the SOFTN_REPO checkout\'s packages/@softn/core/wasm-zipp (npm run fetch:zipp there), synced to formlogic/ui/vendor/zipp-wasm (generated)' : 'the installed Softn release (softn-release.json zipp), installed at formlogic/ui/vendor/zipp-wasm (generated)', release: flZipp.release ?? null, version: flZipp.version, revision: flZipp.revision, build: flZipp.build ?? null, bundle: flZipp.bundle ?? null, bundleSha256: flZipp.bundleSha256 ?? null, sumsSha256: flZipp.sumsSha256 ?? null, variant: flZipp.variant, languages: flZipp.languages, artifact: flZipp.artifact, sha256: flZipp.sha256, rustc: flZipp.rustc ?? null, wasmBindgen: flZipp.wasmBindgen ?? null, variants: flZipp.variants ?? null, packages: flZipp.packages ?? null },
     aokie: aokieContract ?? { note: 'connector contract copy not present in this tree' },
   },

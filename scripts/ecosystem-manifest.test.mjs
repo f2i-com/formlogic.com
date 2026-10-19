@@ -162,6 +162,31 @@ test('a SOFTN_REPO source checkout that installed the same ZIPP release passes -
   assert.match(released.stderr, /components\.zipp\.pinnedBy: committed "something else"/);
 });
 
+test('a Softn checkout that carries XDB itself, with no xdb.org pin, passes --check, and one with neither says so', async (t) => {
+  const { root, run, runWith } = await manifestRoot(t);
+  const release = zippReleaseFixture();
+  await install(root, release);
+  assert.equal(run().status, 0, 'the committed manifest describes the release install');
+  const softn = await softnCheckout(root, release);
+  await rm(resolve(softn, '.github/scripts/checkout-xdb.sh'));
+  await put(softn, 'crates/softn-xdb/Cargo.toml', '[package]\nname = "softn-xdb"\n');
+  await put(softn, 'apps/softn-loader/src-tauri/Cargo.toml', '[dependencies]\nxdb = { package = "softn-xdb", path = "../../../crates/softn-xdb" }\n');
+  // No xdb.org beside it either: a Softn that carries the crate needs none.
+  const checked = runWith({ SOFTN_REPO: softn, XDB_REPO: resolve(root, 'xdb.org-repurposed') }, '--check');
+  assert.equal(checked.status, 0, checked.stderr);
+  const written = runWith({ SOFTN_REPO: softn });
+  assert.equal(written.status, 0, written.stderr);
+  const manifest = JSON.parse(await readFile(resolve(root, 'docs/ecosystem/compatibility-manifest.json'), 'utf8'));
+  assert.equal(manifest.components.xdb.pinnedBy, 'part of the Softn checkout (crates/softn-xdb), at its revision');
+  assert.equal(manifest.components.xdb.consumedAs, '../../../crates/softn-xdb');
+  assert.deepEqual(manifest.problems, []);
+
+  await rm(resolve(softn, 'crates/softn-xdb'), { recursive: true });
+  const neither = runWith({ SOFTN_REPO: softn }, '--check');
+  assert.notEqual(neither.status, 0);
+  assert.match(neither.stderr, /neither carries XDB \(crates\/softn-xdb\) nor pins a 40-hex XDB revision/);
+});
+
 test('the web variant a release ships is recorded, never pinned: a manifest written without one passes --check with one installed, and the reverse', async (t) => {
   const { root, run } = await manifestRoot(t);
   const plain = zippReleaseFixture();

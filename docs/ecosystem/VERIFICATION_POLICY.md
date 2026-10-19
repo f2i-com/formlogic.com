@@ -13,7 +13,7 @@ Every release path runs the repository's **reusable verification workflow at the
 | Aokie | `ci.yml` jobs in the same run | `plugin-release` needs `[plugin, plugin-voice, clippy, supply-chain, managed-beta, companion]` |
 | Softn | `.github/workflows/verify.yml` (`workflow_call`, input `ref`) | `release.yml` passes the tag |
 | ZIPP | `.github/workflows/ci.yml` (`workflow_call`, input `ref`) + `security.yml` | `release.yml` passes the validated commit |
-| XDB | `cargo test -p xdb` (both feature sets), `cargo clippy`, `npm run typecheck -w @xdb/react`, `npm test -w @xdb/react` | manual (README "Manual checks"); consumed through Softn's release |
+| XDB | part of Softn since the release after v0.0.24 (`crates/softn-xdb`): Softn's `verify.yml` runs `cargo test --no-default-features --manifest-path crates/softn-xdb/Cargo.toml`; the default features are tested by hand | consumed through Softn's release. Softn v0.0.24 and before built against a pinned commit of the separate xdb.org repository |
 
 A later commit cannot inherit a previous commit's status: the reusable gates check out the requested `ref`, and OAIY's release additionally refuses to publish evidence that names any other revision than the tagged commit.
 
