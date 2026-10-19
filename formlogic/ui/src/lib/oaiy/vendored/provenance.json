@@ -27,14 +27,14 @@
   ],
   "vendoredFrom": {
     "repo": "oaiy.com (sibling checkout; formlogic.com does not depend on it)",
-    "readAt": "903e0a10",
-    "note": "Taken at the commit that widened the schema with `python.modes` (\"A profile can describe how to wrap a leaf script...\"). The previous copy was read at 224cb83; the schema changed in this commit, and `scriptEnvelopeGlobals` grew by three names in aeadafe (the commit between them), which is why the lists below are re-read and not only the schema."
+    "readAt": "763db78c",
+    "note": "Re-read at OAIY v0.1.7 (763db78c, 2026-10-18), the release FormLogic's oaiy-parity job runs. OAIY's history was rewritten after the previous read: the commit that widened the schema with `python.modes`, 903e0a10, is cd1097df on OAIY's main, and every path below moved under `platform/`. The schema is the same blob. zipp-executor.ts and zipp-script.ts changed (a `__system.finish_part` call kind; the envelope declares `var print` instead of assigning `globalThis.print`), and none of the three name lists or the guest shims changed. The copy before 903e0a10 was read at 224cb83; `scriptEnvelopeGlobals` grew by three names in aeadafe, between the two, which is why the lists are re-read and not only the schema."
   },
   "schema": {
     "file": "script-profile.schema.json",
-    "path": "protocol/v1/script-profile.schema.json",
+    "path": "platform/protocol/v1/script-profile.schema.json",
     "blobSha1": "c5a58bd2d80aa168aaad4545285beed633e95e44",
-    "lastChangedIn": "903e0a10a0b3915991388f8ed9e055af1f1bbf83",
+    "lastChangedIn": "cd1097df0f9edce2fc60cda315025a0bad6c51b4",
     "lastChangedSubject": "A profile can describe how to wrap a leaf script, and the runner does the wrapping — including subtracting its own lines from whatever line the engine blames"
   },
   "reservedPreambleNames": {
@@ -54,17 +54,17 @@
     ],
     "vendoredFrom": {
       "zippPreambleGlobals": {
-        "path": "ui/vendor/oaiy-core/src/zipp-executor.ts",
+        "path": "platform/ui/vendor/oaiy-core/src/zipp-executor.ts",
         "symbol": "ZIPP_PREAMBLE_GLOBALS",
-        "blobSha1": "2353a0ec0d64fc5ace28c923b8f3945e6182d364"
+        "blobSha1": "4640b49a137e7738aea8e1a6598b1586a0000bdf"
       },
       "scriptEnvelopeGlobals": {
-        "path": "ui/vendor/oaiy-core/src/zipp-script.ts",
+        "path": "platform/ui/vendor/oaiy-core/src/zipp-script.ts",
         "symbol": "SCRIPT_ENVELOPE_GLOBALS",
-        "blobSha1": "eeb659194ea2604e73c2df317d292ced46a21bd8"
+        "blobSha1": "03c12c969696574027cbfe782e06580f5063364e"
       },
       "wrapperGlobals": {
-        "path": "cli/src/zipp/profile.ts",
+        "path": "platform/cli/src/zipp/profile.ts",
         "symbol": "WRAPPER_GLOBALS",
         "blobSha1": "f25d13f2601b108693a3856e19460548115dcd9d"
       }
@@ -108,9 +108,9 @@
       "are checked against this list."
     ],
     "vendoredFrom": {
-      "path": "ui/vendor/oaiy-core/src/zipp-executor.ts",
+      "path": "platform/ui/vendor/oaiy-core/src/zipp-executor.ts",
       "symbol": "ZIPP_GUEST_SHIMS",
-      "blobSha1": "2353a0ec0d64fc5ace28c923b8f3945e6182d364"
+      "blobSha1": "4640b49a137e7738aea8e1a6598b1586a0000bdf"
     },
     "names": [
       "__oaiyUnavailable",
