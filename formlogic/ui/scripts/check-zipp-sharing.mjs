@@ -36,7 +36,11 @@ try {
       let input = '';
       for await (const chunk of request) input += chunk;
       response.setHeader('Content-Type', 'application/json');
-      response.end(JSON.stringify({ result: { message: JSON.parse(input).message } }));
+      // The server answers an action with the actor it ran it for; the frame drops the app
+      // when that is not the actor it was admitted with. The fixture admits one actor per app,
+      // and the request carries it, so it is named back as the server would name its session.
+      const actor = JSON.parse(request.headers['x-formlogic-hosted-actor'] ?? 'null');
+      response.end(JSON.stringify({ result: { message: JSON.parse(input).message }, actor }));
       return;
     }
     const isHosted = path.startsWith('/hosted-runtime/');

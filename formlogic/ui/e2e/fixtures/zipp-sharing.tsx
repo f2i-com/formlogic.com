@@ -2,9 +2,26 @@ import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { HostedAppFrame } from '../../src/components/studio/HostedAppFrame';
 import { calculateValueForFlow } from '../../src/lib/formlogic/engine';
+import { admitHostedActor, captureHostedRequest, type HostedAdmission } from '../../src/lib/hostedActor';
+import { setSessionOwner } from '../../src/lib/sessionGeneration';
 
 // Exercise the real parent bridge, expression worker and production Softn shell.
 // All data and backend responses belong to this isolated local test fixture.
+
+// A hosted frame mounts only for an admitted actor: the signed-in user the server named when it
+// served the app. This is the fixture's stand-in for that answer, one admission per app, kept
+// so a re-render passes the same one (the frame keys on its identity). The stand-in backend in
+// scripts/check-zipp-sharing.mjs names the same actor back on every action, as the server does.
+const FIXTURE_USER = 'fixture-user';
+setSessionOwner(FIXTURE_USER);
+const admissions = new Map<string, HostedAdmission | undefined>();
+function admissionFor(slug: string) {
+  if (!admissions.has(slug)) {
+    const actor = { version: 1, appId: slug, userId: FIXTURE_USER, roleId: null, isOwner: true, sessionId: 'f'.repeat(64) };
+    admissions.set(slug, admitHostedActor(actor, captureHostedRequest(), slug) ?? undefined);
+  }
+  return admissions.get(slug);
+}
 const client = {
   'manifest.json': JSON.stringify({ main: 'ui/main.ui', files: { logic: ['logic/main.logic'] } }),
   'ui/main.ui': `<logic src="../logic/main.logic" />
@@ -89,7 +106,7 @@ function Fixture() {
     <button onClick={() => setApps([])}>Close apps</button>
     <button onClick={() => setCurrentClient({ ...client, 'logic/main.logic': client['logic/main.logic'].replace('let count = 0;', 'let count = 10;') })}>Replace app source</button>
     {apps.map(id => <section key={id} data-testid={`app-${id}`}>
-      <HostedAppFrame slug={`sharing-test-${id}`} version={1} client={currentClient} engine={engine} />
+      <HostedAppFrame slug={`sharing-test-${id}`} version={1} client={currentClient} engine={engine} hostedAdmission={admissionFor(`sharing-test-${id}`)} />
     </section>)}
   </main>;
 }
