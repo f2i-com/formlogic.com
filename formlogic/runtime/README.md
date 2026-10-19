@@ -131,10 +131,14 @@ scripts/build-runtime.sh check
   running backend needs (the recorded launchers, of the installed release's ZIPP),
   which is what `install.sh` asks of a launcher it finds already in place.
 
-The toolchain is the one ZIPP's release was built with: the `rustc` line of the
-installed ZIPP bundle's `BUILD-INFO.txt` (`ui/vendor/zipp-wasm/`), which the Softn
-release's ZIPP record must repeat; the script installs that rustup toolchain's
-targets when they are missing.
+The toolchain is the one ZIPP's release was built with. For a ZIPP published as
+zip bundles (up to 0.0.25) that is the `rustc` line of the installed bundle's
+`BUILD-INFO.txt` (`ui/vendor/zipp-wasm/`), which the Softn release's ZIPP record
+must repeat. A ZIPP published as plain modules (0.0.26 on) names no rustc, so it
+is the `RUSTUP_TOOLCHAIN` ZIPP's release workflow
+(`.github/workflows/release-build.yml`) pins, read from the source `zipp-source`
+proved (`node scripts/runtime-provenance.mjs toolchain` prints it). The script
+installs that rustup toolchain's targets when they are missing.
 
 Without Rust, take a built sandbox instead. It must be built from the ZIPP
 release the installed Softn release names (`node scripts/zipp-source.mjs
@@ -166,9 +170,9 @@ both CI launchers embed the one Linux-built guest, and a local build records
 
 wasmtime is FormLogic's own choice, fixed by the committed `host/Cargo.toml`
 (`"44"`) and `host/Cargo.lock` (44.0.3); the toolchain is not. The toolchain
-follows the installed ZIPP release's BUILD-INFO `rustc` with no commit here, and
-a newer rustc builds wasmtime 44 unchanged. 44 is the newest line whose minimum
-Rust (`rust-version` 1.92.0) the toolchain ZIPP v0.0.18 through v0.0.22 were built with (1.92.0)
-meets. Moving to a newer line (wasmtime 48 needs 1.95.0) is a FormLogic commit to
+follows the installed ZIPP release (above) with no commit here, and a newer
+rustc builds wasmtime 44 unchanged. 44 is the newest line whose minimum Rust
+(`rust-version` 1.92.0) the toolchain ZIPP v0.0.18 through v0.0.27 were built
+with (1.92.0) meets. Moving to a newer line (wasmtime 48 needs 1.95.0) is a FormLogic commit to
 `host/Cargo.toml` and `host/Cargo.lock`, and builds only once the installed ZIPP
 release's toolchain reaches that line's minimum.
