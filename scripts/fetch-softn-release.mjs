@@ -143,18 +143,22 @@ const WEB_ENGINE_PATH = 'zipp-web/zipp_wasm_bg.wasm';
 /**
  * Where a release's engine copies live, as Softn's packager requires them: the
  * browser engine tree, the native runtime, and in the hosted runtime and each
- * editor the hashed app asset and the core-runtime copy — and, when the
- * release records a web variant, that variant's engine at WEB_ENGINE_PATH.
- * Each must yield one to the content scan, so an engine whose exports changed,
- * or a copy a Softn packaging change dropped, fails the fetch instead of a
- * later build or package.
+ * editor the hashed app asset — and, when the release records a web variant,
+ * that variant's engine at WEB_ENGINE_PATH. Each must yield one to the content
+ * scan, so an engine whose exports changed, or a copy a Softn packaging change
+ * dropped, fails the fetch instead of a later build or package.
+ *
+ * Not the copy at assets/core-runtime/zipp_wasm_bg.wasm, which releases
+ * through v0.0.24 carry and later ones need not: a Softn page posts the engine
+ * it compiled to every worker it starts, so no worker reads that copy. Where a
+ * release has one, the content scan still holds it to the release's digest.
  */
 function knownEngineCopies(withWebVariant) {
   return [
     'zipp/zipp_wasm_bg.wasm',
     ...(withWebVariant ? [WEB_ENGINE_PATH] : []),
     'native-runtime/wasm/zipp_wasm_bg.wasm',
-    ...['hosted-runtime', 'app-editors/builder', 'app-editors/studio'].flatMap((prefix) => [`${prefix}/assets/zipp_wasm_bg-*.wasm`, `${prefix}/assets/core-runtime/zipp_wasm_bg.wasm`]),
+    ...['hosted-runtime', 'app-editors/builder', 'app-editors/studio'].map((prefix) => `${prefix}/assets/zipp_wasm_bg-*.wasm`),
   ].map((where) => ({ where, pattern: new RegExp(`^${where.replace(/[.]/g, '\\.').replace('*', '[^/]+')}$`) }));
 }
 /**

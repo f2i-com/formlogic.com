@@ -91,8 +91,11 @@ The expected identity is derived from the release, never from this tree:
 - Every engine copy in the archive, found by its exports (`zippProfile`,
   `zipp_start`, `engine_evalInContext`) rather than its file name, has the
   recorded digest, and every copy Softn's packager places is found: `zipp/`,
-  `native-runtime/wasm/`, and in `hosted-runtime/` and each editor both
-  `assets/zipp_wasm_bg-*.wasm` and `assets/core-runtime/zipp_wasm_bg.wasm`.
+  `native-runtime/wasm/`, and in `hosted-runtime/` and each editor
+  `assets/zipp_wasm_bg-*.wasm`. A copy at `assets/core-runtime/zipp_wasm_bg.wasm`,
+  which releases through v0.0.24 carry, is held to the digest where it is
+  present and not required: a Softn page posts the engine it compiled to every
+  worker it starts, so no worker reads that copy.
 
 This proves consistency, not authenticity: checking the bytes against ZIPP's
 published `SHA256SUMS` is Softn's job (at install, and again online when it

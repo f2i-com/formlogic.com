@@ -131,6 +131,16 @@ test('release runtime requires real JavaScript and matching ZIPP bytes, even wit
   writeFileSync(join(directory, 'assets/core-runtime/zipp_wasm_bg.wasm'), 'wasm fixture');
   await writeRuntimeManifest(directory, expected);
   await checkReleaseRuntime(directory, expected);
+  // A Softn release after v0.0.24 carries the app's hashed engine alone, and every engine there must match.
+  rmSync(join(directory, 'assets/core-runtime/zipp_wasm_bg.wasm'));
+  writeFileSync(join(directory, 'assets/zipp_wasm_bg-CAyqw9Mx.wasm'), 'wasm fixture');
+  await writeRuntimeManifest(directory, expected);
+  await checkReleaseRuntime(directory, expected);
+  writeFileSync(join(directory, 'assets/zipp_wasm_bg-other.wasm'), 'another engine');
+  await writeRuntimeManifest(directory, expected);
+  await assert.rejects(checkReleaseRuntime(directory, expected), /ZIPP binary/);
+  rmSync(join(directory, 'assets/zipp_wasm_bg-other.wasm'));
+  await writeRuntimeManifest(directory, expected);
   writeFileSync(join(directory, 'assets/main.js'), 'changed');
   await assert.rejects(checkReleaseRuntime(directory, expected), /asset has changed/);
   writeFileSync(join(directory, 'assets/main.js.map'), '{}');

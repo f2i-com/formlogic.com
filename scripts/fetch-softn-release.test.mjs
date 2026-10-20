@@ -60,7 +60,7 @@ function runtimeManifest(files, zipp, advertised = {}) {
 // `advertised` is what hosted-runtime/runtime-manifest.json says this runtime serves. The default
 // carries `python-logic/1` because the default `protocols` speak logicLanguages: the fetcher
 // refuses an archive that declares the protocol without advertising the feature.
-function archiveEntries({ tag = 'v0.0.13', commit = COMMIT, zippRelease = ZIPP_RELEASE, protocols = PROTOCOLS, adapter = ADAPTER, hostedCode = 'export const hosted = true;', advertised = { features: ['python-logic/1'] } } = {}) {
+function archiveEntries({ tag = 'v0.0.13', commit = COMMIT, zippRelease = ZIPP_RELEASE, protocols = PROTOCOLS, adapter = ADAPTER, hostedCode = 'export const hosted = true;', advertised = { features: ['python-logic/1'] }, coreRuntimeEngine = true } = {}) {
   const entries = {};
   const put = (name, data) => { entries[name] = Buffer.isBuffer(data) ? data : Buffer.from(data); };
   const { wasm, source, record: zipp } = zippRelease;
@@ -71,18 +71,20 @@ function archiveEntries({ tag = 'v0.0.13', commit = COMMIT, zippRelease = ZIPP_R
   if (zippRelease.torchFiles) for (const [n, d] of Object.entries(zippRelease.torchFiles)) put(`zipp-torch/${n}`, d);
   // Each runtime and editor fetches the torch module from beside its core chunk, when the release carries one.
   const torchCopy = zippRelease.torchWasm ? { 'assets/core-runtime/zipp_torch.wasm': zippRelease.torchWasm } : {};
+  // The engine's copy beside the core chunk, which Softn releases through v0.0.24 carry and later ones need not.
+  const coreCopy = coreRuntimeEngine ? { 'assets/core-runtime/zipp_wasm_bg.wasm': wasm } : {};
   // hosted runtime
   // Two entry documents, as `protocols.hostedEngines` declares: host.html is index.html with the
   // one attribute that selects the host-JavaScript engine and its weaker policy.
   // Two entry documents, as `protocols.hostedEngines` declares, shaped like the real ones: the
   // same shell script, and one attribute on <html> that is the whole difference between them.
-  const hosted = { 'index.html': Buffer.from('<!doctype html><html><body><script src="./assets/app.js"></script></body></html>'), 'host.html': Buffer.from('<!doctype html><html data-softn-logic-engine="host-js"><body><script src="./assets/app.js"></script></body></html>'), 'assets/app.js': Buffer.from(hostedCode), 'assets/zipp_wasm_bg-hosted.wasm': wasm, 'assets/core-runtime/zipp_wasm_bg.wasm': wasm, ...torchCopy, 'README.txt': Buffer.from('fixture') };
+  const hosted = { 'index.html': Buffer.from('<!doctype html><html><body><script src="./assets/app.js"></script></body></html>'), 'host.html': Buffer.from('<!doctype html><html data-softn-logic-engine="host-js"><body><script src="./assets/app.js"></script></body></html>'), 'assets/app.js': Buffer.from(hostedCode), 'assets/zipp_wasm_bg-hosted.wasm': wasm, ...coreCopy, ...torchCopy, 'README.txt': Buffer.from('fixture') };
   for (const [n, d] of Object.entries(hosted)) put(`hosted-runtime/${n}`, d);
   put('hosted-runtime/runtime-manifest.json', runtimeManifest(hosted, zipp, advertised));
   // app editors
   const editors = {};
   for (const editor of ['builder', 'studio']) {
-    const files = { 'index.html': Buffer.from(`<script src="./assets/${editor}.js"></script>`), [`assets/${editor}.js`]: Buffer.from(`export const ${editor} = 1;`), 'assets/zipp_wasm_bg-abc.wasm': wasm, 'assets/core-runtime/zipp_wasm_bg.wasm': wasm, ...torchCopy };
+    const files = { 'index.html': Buffer.from(`<script src="./assets/${editor}.js"></script>`), [`assets/${editor}.js`]: Buffer.from(`export const ${editor} = 1;`), 'assets/zipp_wasm_bg-abc.wasm': wasm, ...coreCopy, ...torchCopy };
     for (const [n, d] of Object.entries(files)) editors[`${editor}/${n}`] = d;
     editors[`${editor}/runtime-manifest.json`] = runtimeManifest(files, zipp);
   }
@@ -354,12 +356,15 @@ test('every ZIPP engine in the archive is found by its content: a stray engine u
     for (const editor of ['builder', 'studio']) entries[`app-editors/${editor}/assets/zipp_wasm_bg-abc.wasm`] = Buffer.from('not a module');
   });
   await assert.rejects(fetchSoftnRelease({ root, archivePath: missingCopy.path, ...quiet }), /No ZIPP engine copy matches app-editors\/builder\/assets\/zipp_wasm_bg-\*\.wasm, app-editors\/studio\/assets\/zipp_wasm_bg-\*\.wasm in/);
-  // Every known copy is required, not one per folder: a release without the hosted runtime's core-runtime engine
+  // Every known copy is required, not one per folder: a release without the hosted runtime's own engine
   // would install here and fail only at packaging (checkReleaseRuntime).
-  const noCoreRuntime = await writeFixtureArchive(resolve(root, 'no-core-runtime'), {}, null, (entries) => { delete entries['hosted-runtime/assets/core-runtime/zipp_wasm_bg.wasm']; });
-  await assert.rejects(fetchSoftnRelease({ root, archivePath: noCoreRuntime.path, ...quiet }), (e) => e instanceof ReleaseError && /No ZIPP engine copy matches hosted-runtime\/assets\/core-runtime\/zipp_wasm_bg\.wasm in Softn v0\.0\.13 \(found: .*hosted-runtime\/assets\/zipp_wasm_bg-hosted\.wasm/.test(e.message));
-  const noEditorCore = await writeFixtureArchive(resolve(root, 'no-editor-core'), {}, null, (entries) => { delete entries['app-editors/studio/assets/core-runtime/zipp_wasm_bg.wasm']; });
-  await assert.rejects(fetchSoftnRelease({ root, archivePath: noEditorCore.path, ...quiet }), /No ZIPP engine copy matches app-editors\/studio\/assets\/core-runtime\/zipp_wasm_bg\.wasm in/);
+  const noHosted = await writeFixtureArchive(resolve(root, 'no-hosted'), {}, null, (entries) => { delete entries['hosted-runtime/assets/zipp_wasm_bg-hosted.wasm']; });
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: noHosted.path, ...quiet }), (e) => e instanceof ReleaseError && /No ZIPP engine copy matches hosted-runtime\/assets\/zipp_wasm_bg-\*\.wasm in Softn v0\.0\.13 \(found: .*hosted-runtime\/assets\/core-runtime\/zipp_wasm_bg\.wasm/.test(e.message));
+  // The copy at assets/core-runtime/ is not one of them: a Softn page posts its engine to every worker it starts,
+  // and a release after v0.0.24 need not carry it. Without it, the release installs.
+  const noCoreRuntime = await writeFixtureArchive(resolve(root, 'no-core-runtime'), { coreRuntimeEngine: false });
+  await fetchSoftnRelease({ root, archivePath: noCoreRuntime.path, ...quiet });
+  await checkInstalled({ root, ...quiet });
   const noLicense = await writeFixtureArchive(resolve(root, 'no-license'), {}, null, (entries) => { delete entries['zipp/LICENSE-APACHE']; });
   await assert.rejects(fetchSoftnRelease({ root, archivePath: noLicense.path, ...quiet }), /zipp\/ in Softn v0\.0\.13 .*missing LICENSE-APACHE/);
 });
