@@ -173,6 +173,10 @@ class IpResolver
             return;
         }
         $marker = self::problemMarker($problems);
+        // The marker's time as it is on disk now: PHP caches a file's status, and before 8.3
+        // touch() leaves that cache as it was, so a process that stats the marker again after
+        // anything else set its time would read the old one.
+        clearstatcache(true, $marker);
         // Where the marker cannot be kept, at least once per request, not once per resolver.
         $last = @filemtime($marker);
         if ($last === false) {
