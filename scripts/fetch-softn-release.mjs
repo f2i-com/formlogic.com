@@ -149,7 +149,7 @@ const WEB_ENGINE_PATH = 'zipp-web/zipp_wasm_bg.wasm';
  * dropped, fails the fetch instead of a later build or package.
  *
  * Not the copy at assets/core-runtime/zipp_wasm_bg.wasm, which releases
- * through v0.0.24 carry and later ones need not: a Softn page posts the engine
+ * through v0.0.25 carry and later ones need not: a Softn page posts the engine
  * it compiled to every worker it starts, so no worker reads that copy. Where a
  * release has one, the content scan still holds it to the release's digest.
  */

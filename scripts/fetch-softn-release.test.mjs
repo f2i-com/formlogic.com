@@ -71,7 +71,7 @@ function archiveEntries({ tag = 'v0.0.13', commit = COMMIT, zippRelease = ZIPP_R
   if (zippRelease.torchFiles) for (const [n, d] of Object.entries(zippRelease.torchFiles)) put(`zipp-torch/${n}`, d);
   // Each runtime and editor fetches the torch module from beside its core chunk, when the release carries one.
   const torchCopy = zippRelease.torchWasm ? { 'assets/core-runtime/zipp_torch.wasm': zippRelease.torchWasm } : {};
-  // The engine's copy beside the core chunk, which Softn releases through v0.0.24 carry and later ones need not.
+  // The engine's copy beside the core chunk, which Softn releases through v0.0.25 carry and later ones need not.
   const coreCopy = coreRuntimeEngine ? { 'assets/core-runtime/zipp_wasm_bg.wasm': wasm } : {};
   // hosted runtime
   // Two entry documents, as `protocols.hostedEngines` declares: host.html is index.html with the
@@ -361,7 +361,7 @@ test('every ZIPP engine in the archive is found by its content: a stray engine u
   const noHosted = await writeFixtureArchive(resolve(root, 'no-hosted'), {}, null, (entries) => { delete entries['hosted-runtime/assets/zipp_wasm_bg-hosted.wasm']; });
   await assert.rejects(fetchSoftnRelease({ root, archivePath: noHosted.path, ...quiet }), (e) => e instanceof ReleaseError && /No ZIPP engine copy matches hosted-runtime\/assets\/zipp_wasm_bg-\*\.wasm in Softn v0\.0\.13 \(found: .*hosted-runtime\/assets\/core-runtime\/zipp_wasm_bg\.wasm/.test(e.message));
   // The copy at assets/core-runtime/ is not one of them: a Softn page posts its engine to every worker it starts,
-  // and a release after v0.0.24 need not carry it. Without it, the release installs.
+  // and a release after v0.0.25 need not carry it. Without it, the release installs.
   const noCoreRuntime = await writeFixtureArchive(resolve(root, 'no-core-runtime'), { coreRuntimeEngine: false });
   await fetchSoftnRelease({ root, archivePath: noCoreRuntime.path, ...quiet });
   await checkInstalled({ root, ...quiet });

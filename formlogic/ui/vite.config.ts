@@ -155,7 +155,7 @@ export default defineConfig(({ mode }) => {
         // screen-host.html stays out too: its FRESH response headers (frame-ancestors scope in
         // .htaccess) are load-bearing, and a precached copy would pin stale ones.
         // The zipp expression engine (ZIPP's javascript-python-base module, installed from
-        // the Softn release) is 6.41 MB at ZIPP v0.0.27 and is only needed by a form that
+        // the Softn release) is 6.57 MB at ZIPP v0.0.29 and is only needed by a form that
         // actually HAS logic (a calculated field, a conditional rule, a validation
         // expression). Precaching it would make every visitor pay for it at
         // service-worker install — including the majority who never open such a
@@ -163,7 +163,7 @@ export default defineConfig(({ mode }) => {
         //   TRADE-OFF, stated plainly: a visitor who has never loaded the engine and
         //   is ALREADY offline cannot evaluate form logic. Previously the engine was
         //   0.79 MB and fit inside the precache, so that case worked. Buying it back
-        //   would cost every visitor 6.41 MB up front, which is the worse trade.
+        //   would cost every visitor 6.57 MB up front, which is the worse trade.
         globIgnores: [
           'hosted-runtime/**',
           'app-editors/**',
