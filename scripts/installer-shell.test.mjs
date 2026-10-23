@@ -18,7 +18,7 @@ const php = process.env.FORMLOGIC_TEST_PHP || 'php';
 function check(version) {
   const script = `set -euo pipefail
 node() { printf '%s\\n' "$TEST_NODE_VERSION"; }
-php() { "$TEST_PHP_BIN" -n "$@"; }
+php() { command "$TEST_PHP_BIN" -n "$@"; }
 error() { printf '%s\\n' "$1" >&2; }
 ${guard}
 printf 'NODE-GUARD-PASSED\\n'
