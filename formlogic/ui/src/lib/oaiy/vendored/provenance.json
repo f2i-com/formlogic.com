@@ -27,8 +27,8 @@
   ],
   "vendoredFrom": {
     "repo": "oaiy.com (sibling checkout; formlogic.com does not depend on it)",
-    "readAt": "763db78c",
-    "note": "Re-read at OAIY v0.1.7 (763db78c, 2026-10-18), the release FormLogic's oaiy-parity job runs. OAIY's history was rewritten after the previous read: the commit that widened the schema with `python.modes`, 903e0a10, is cd1097df on OAIY's main, and every path below moved under `platform/`. The schema is the same blob. zipp-executor.ts and zipp-script.ts changed (a `__system.finish_part` call kind; the envelope declares `var print` instead of assigning `globalThis.print`), and none of the three name lists or the guest shims changed. The copy before 903e0a10 was read at 224cb83; `scriptEnvelopeGlobals` grew by three names in aeadafe, between the two, which is why the lists are re-read and not only the schema."
+    "readAt": "e8a13d39",
+    "note": "Re-read at OAIY v0.1.9 (e8a13d39, 2026-10-23), the release FormLogic's oaiy-parity job runs. Since v0.1.7 only zipp-executor.ts changed (19f6d290): a flow's program now opens with a `var __oaiyStepAt` that marks which step is running, through the one sync host operation OAIY grants (`app.oaiy.step`); ZIPP_PREAMBLE_GLOBALS and ZIPP_GUEST_SHIMS are as they were, the schema, zipp-script.ts and profile.ts are the same blobs, and FormLogic's preamble declares no `__oaiyStepAt`. Read before that at OAIY v0.1.7 (763db78c, 2026-10-18), after OAIY's history was rewritten: the commit that widened the schema with `python.modes`, 903e0a10, is cd1097df on OAIY's main, and every path below moved under `platform/`. The schema is the same blob. zipp-executor.ts and zipp-script.ts changed (a `__system.finish_part` call kind; the envelope declares `var print` instead of assigning `globalThis.print`), and none of the three name lists or the guest shims changed. The copy before 903e0a10 was read at 224cb83; `scriptEnvelopeGlobals` grew by three names in aeadafe, between the two, which is why the lists are re-read and not only the schema."
   },
   "schema": {
     "file": "script-profile.schema.json",
@@ -56,7 +56,7 @@
       "zippPreambleGlobals": {
         "path": "platform/ui/vendor/oaiy-core/src/zipp-executor.ts",
         "symbol": "ZIPP_PREAMBLE_GLOBALS",
-        "blobSha1": "4640b49a137e7738aea8e1a6598b1586a0000bdf"
+        "blobSha1": "9e953a539f040e23a46109650873ffe7fe088c53"
       },
       "scriptEnvelopeGlobals": {
         "path": "platform/ui/vendor/oaiy-core/src/zipp-script.ts",
@@ -110,7 +110,7 @@
     "vendoredFrom": {
       "path": "platform/ui/vendor/oaiy-core/src/zipp-executor.ts",
       "symbol": "ZIPP_GUEST_SHIMS",
-      "blobSha1": "4640b49a137e7738aea8e1a6598b1586a0000bdf"
+      "blobSha1": "9e953a539f040e23a46109650873ffe7fe088c53"
     },
     "names": [
       "__oaiyUnavailable",
