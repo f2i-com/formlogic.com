@@ -337,8 +337,9 @@ mode, this context is absent and the app implements its own sessions and authori
 
 ### Native runtime and request bridge
 
-Private code runs in the safe-sandbox ZIPP WASM VM through SoftN's trusted Node host, using
-`softn.sql`, `softn.crypto` and `softn.time`. Top-level source declares functions and data;
+Private code runs in the safe-sandbox ZIPP WASM VM, using `softn.sql`, `softn.crypto` and
+`softn.time`: under wasmtime in `softn-runner` where the installed Softn release carries it for
+the server (v0.0.26 on, Linux or Windows x86-64), otherwise through SoftN's trusted Node host. Top-level source declares functions and data;
 perform host operations inside request handlers so declaration validation can run before
 migrations. The operator supplies the runtime; uploaded
 projects cannot supply Node modules, provider hooks or a different VM. The parent routes
@@ -502,9 +503,11 @@ support requires the prepared host's `recordEvents:1` protocol capability.
 
 ### Preparing the optional native runtime
 
-The local preview requires PHP 8.2+, PDO SQLite, `proc_open` and Node 24.19+ with `node:sqlite`
-and its authorizer API. Updating an installed app also needs the `sqlite3` PHP extension (it
-restores the database if the update fails). Set `FORMLOGIC_NODE_BIN` to the absolute Node
+The local preview requires PHP 8.2+, PDO SQLite and `proc_open`, and, unless the installed
+Softn release carries `softn-runner` for this machine (v0.0.26 on, Linux or Windows x86-64),
+Node 24.19+ with `node:sqlite` and its authorizer API. Updating an installed app also needs the
+`sqlite3` PHP extension (it restores the database if the update fails). For Node, set
+`FORMLOGIC_NODE_BIN` to the absolute Node
 executable in the backend operator environment. From the FormLogic repository root, run:
 
 ```sh

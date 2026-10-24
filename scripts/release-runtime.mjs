@@ -171,6 +171,24 @@ export async function checkNativeRuntime(directory, expected) {
   }
   await readFile(resolve(directory, 'wasm/zipp_wasm.mjs'));
   const present = new Set(await artifactFiles(directory, { includeManifest: true }));
+  // softn-runner (Softn v0.0.26 on): the runner without Node, one per platform under bin/, each at
+  // the digest provenance.json `runner.files` records. NativeAppService starts the one for its
+  // server, so nothing under bin/ may be other than a recorded runner.
+  const runners = provenance.runner?.files ?? {};
+  for (const [name, digest] of Object.entries(runners)) {
+    if (!/^softn-runner-[a-z0-9_-]+(\.exe)?$/.test(name)) throw new Error(`The native app runtime's provenance records a runner it may not name: ${name}`);
+    const hash = createHash('sha256').update(await readFile(resolve(directory, 'bin', name)).catch(() => Buffer.from(''))).digest('hex');
+    if (hash !== digest) throw new Error(`Native runtime runner is missing or changed: bin/${name}`);
+  }
+  const unrecorded = [...present].filter(name => name.startsWith('bin/') && !Object.hasOwn(runners, name.slice('bin/'.length)));
+  if (unrecorded.length) throw new Error(`The native app runtime carries files under bin/ its provenance does not record: ${unrecorded.join(', ')}`);
+  // The runners' third-party licences go wherever the runners go (runner.notices).
+  if (Object.keys(runners).length) {
+    const notices = provenance.runner.notices;
+    if (notices?.file !== 'SOFTN-RUNNER-THIRD-PARTY-LICENSES.txt') throw new Error('The native app runtime carries softn-runner without its third-party licences (provenance.json runner.notices)');
+    const hash = createHash('sha256').update(await readFile(resolve(directory, notices.file)).catch(() => Buffer.from(''))).digest('hex');
+    if (hash !== notices.sha256) throw new Error(`Native runtime runner licences are missing or changed: ${notices.file}`);
+  }
   const texts = new Map();
   for (const name of present) if (name.endsWith('.mjs')) texts.set(name, await readFile(resolve(directory, name), 'utf8'));
   const problems = nativeImportProblems(texts, present);

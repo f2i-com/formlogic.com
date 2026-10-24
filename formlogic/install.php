@@ -569,19 +569,44 @@ function checkRequirements(): array
             : ($qjsOk ? '' : 'Zip extraction drops the execute bit — run on the server: chmod +x "' . $qjsBin . '"'),
     ];
 
-    // Native hosting needs Node even when the frontend is prebuilt. Take its minimum from the
-    // runtime being installed, just as NativeAppService does; do not apply the UI build floor.
-    $protocolPath = flBackendDir() . '/resources/softn-native/host-protocol.json';
-    $protocol = is_file($protocolPath) ? json_decode((string) file_get_contents($protocolPath), true) : null;
-    $nativeNodeVersion = null;
-    if (is_array($protocol) && function_exists('proc_open')) {
-        $nodeBinary = $_ENV['FORMLOGIC_NODE_BIN'] ?? (getenv('FORMLOGIC_NODE_BIN') ?: 'node');
-        $probe = flRunInstallerCommand([$nodeBinary, '--version'], flBackendDir(), 3.0);
-        if ($probe['exitCode'] === 0 && preg_match('/^v?(\d+\.\d+\.\d+)$/D', trim($probe['output']), $match)) {
-            $nativeNodeVersion = $match[1];
+    // Native hosting: softn-runner, where the runtime carries it for this server (Softn v0.0.26
+    // on; Linux or Windows, x86-64), which needs no Node, as NativeAppService decides; otherwise
+    // Node, even when the frontend is prebuilt, with its minimum from the runtime being installed
+    // (not the UI build floor). The runner's execute bit is lost to zip extraction like the
+    // sandbox launcher's above, and restored the same way.
+    $runnerName = $isWin ? 'softn-runner-windows-x86_64.exe' : (PHP_OS_FAMILY === 'Linux' ? 'softn-runner-linux-x86_64' : null);
+    $runnerBin = $runnerName !== null && in_array(strtolower(php_uname('m')), ['x86_64', 'amd64'], true)
+        ? flBackendDir() . '/resources/softn-native/bin/' . $runnerName : null;
+    $nativeChoice = strtolower(trim((string) ($_ENV['FORMLOGIC_NATIVE_RUNNER'] ?? (getenv('FORMLOGIC_NATIVE_RUNNER') ?: 'auto'))));
+    if ($runnerBin !== null && is_file($runnerBin) && $nativeChoice !== 'node') {
+        $runnerFixed = false;
+        if (!$isWin && !is_executable($runnerBin)) {
+            @chmod($runnerBin, 0755);
+            $runnerFixed = is_executable($runnerBin);
         }
+        $runnerOk = $isWin || is_executable($runnerBin);
+        $checks['node_native'] = [
+            'label' => 'Native app runtime (softn-runner; optional for forms)',
+            'required' => $isWin ? 'Present' : 'Present & executable',
+            'current' => $runnerOk ? ($runnerFixed ? 'Executable (execute bit restored by the wizard)' : 'Present') : 'Present but NOT executable',
+            'pass' => $runnerOk,
+            'help' => $runnerOk
+                ? 'Native apps run on the bundled softn-runner: the server needs no Node.js for them. Run the native app panel preflight before publishing.'
+                : 'Zip extraction drops the execute bit — run on the server: chmod +x "' . $runnerBin . '"',
+        ];
+    } else {
+        $protocolPath = flBackendDir() . '/resources/softn-native/host-protocol.json';
+        $protocol = is_file($protocolPath) ? json_decode((string) file_get_contents($protocolPath), true) : null;
+        $nativeNodeVersion = null;
+        if (is_array($protocol) && function_exists('proc_open')) {
+            $nodeBinary = $_ENV['FORMLOGIC_NODE_BIN'] ?? (getenv('FORMLOGIC_NODE_BIN') ?: 'node');
+            $probe = flRunInstallerCommand([$nodeBinary, '--version'], flBackendDir(), 3.0);
+            if ($probe['exitCode'] === 0 && preg_match('/^v?(\d+\.\d+\.\d+)$/D', trim($probe['output']), $match)) {
+                $nativeNodeVersion = $match[1];
+            }
+        }
+        $checks['node_native'] = flNativeNodeRequirement($nativeNodeVersion, is_array($protocol) ? $protocol : null, function_exists('proc_open'));
     }
-    $checks['node_native'] = flNativeNodeRequirement($nativeNodeVersion, is_array($protocol) ? $protocol : null, function_exists('proc_open'));
 
     // npm and the source-build Node range apply only to a source checkout, not the prebuilt SPA.
     if (flUiDir() !== null) {

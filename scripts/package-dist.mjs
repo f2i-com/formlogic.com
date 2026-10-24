@@ -215,10 +215,13 @@ Requirements
   (the shipped .htaccess does the /api routing AND the security hardening —
   it must be honoured).
 - PHP 8.2+ (8.3 recommended) with pdo_mysql, pdo_sqlite, sodium, mbstring, curl, gd, zip.
-- Native apps also need Node.js on the server (the minimum is recorded in
-  api/resources/softn-native/host-protocol.json). Set FORMLOGIC_NODE_BIN if
-  Node is not in the web server's PATH, then run the app's native preflight
-  before publishing. Native app updates additionally need PHP sqlite3.
+- Native apps run on softn-runner (api/resources/softn-native/bin/) when this
+  zip carries it for the server (Softn v0.0.26 on, Linux or Windows x86-64):
+  no Node needed. Otherwise they need Node.js on the server (the minimum is
+  recorded in api/resources/softn-native/host-protocol.json); set
+  FORMLOGIC_NODE_BIN if Node is not in the web server's PATH. Either way, run
+  the app's native preflight before publishing. Native app updates
+  additionally need PHP sqlite3.
   Forms and named hosted actions use the bundled sandbox without Node.
 - MySQL 8.
 - HTTPS in production: auth uses Secure cookies, so login FAILS over plain HTTP.

@@ -14,10 +14,16 @@ use PDO;
  *
  * Three different questions, answered by three different methods (audit FL-03):
  *  - available()  — are the runtime ARTIFACTS prepared on this host? Cheap file/extension checks only.
- *  - preflight()  — can the runtime actually RUN here? Executes the configured Node binary, loads the
- *                   engine, starts a throw-away app in a temporary root and proves private storage is
- *                   writable. Bounded, non-destructive, briefly cached.
+ *  - preflight()  — can the runtime actually RUN here? Checks the runner (softn-runner, or the
+ *                   configured Node binary and its engine), starts a throw-away app in a temporary
+ *                   root and proves private storage is writable. Bounded, non-destructive, briefly
+ *                   cached.
  *  - install()'s /api/meta health call — is THIS app's source and migration state usable?
+ *
+ * The runner: a Softn release from v0.0.26 carries softn-runner (native-runtime/bin), which answers
+ * the same requests as Softn's runner.mjs without Node, the app's logic in ZIPP under wasmtime. On a
+ * server it is built for (Linux or Windows, x86-64) it is the runner; elsewhere, with an older
+ * release, or with FORMLOGIC_NATIVE_RUNNER=node, Node runs runner.mjs as before.
  *
  * Storage layout under root(appId) (audit FL-02 inventory):
  *  - app/                          active source (restorable, portable)
@@ -86,7 +92,15 @@ class NativeAppService
      */
     private const NODE_ENV_ALLOWLIST = ['PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'LANG', 'LC_ALL', 'NODE_OPTIONS', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE'];
 
-    public function __construct(private ?string $storagePath = null, private ?string $runtimePath = null, private ?string $nodeBinary = null) {}
+    /** softn-runner as a Softn release carries it in native-runtime/bin, by the server it runs on (x86-64). */
+    private const RUNNER_BINARIES = ['Linux' => 'softn-runner-linux-x86_64', 'Windows' => 'softn-runner-windows-x86_64.exe'];
+
+    /**
+     * $runner: 'auto' starts softn-runner where the runtime carries it for this server, and Node
+     * otherwise; 'node' runs runner.mjs under Node whatever the runtime carries; null reads
+     * FORMLOGIC_NATIVE_RUNNER (`auto`, the default, or `node`).
+     */
+    public function __construct(private ?string $storagePath = null, private ?string $runtimePath = null, private ?string $nodeBinary = null, private ?string $runner = null) {}
 
     private function root(string $appId): string
     {
@@ -482,10 +496,29 @@ class NativeAppService
         return $this->nodeBinary ?? ($_ENV['FORMLOGIC_NODE_BIN'] ?? getenv('FORMLOGIC_NODE_BIN') ?: 'node');
     }
 
+    /**
+     * The softn-runner binary that runs the runtime on this server, or null when Node runs it: the
+     * runtime carries none for this server (an older release, or not Linux/Windows on x86-64), or
+     * Node was asked for. Zip extraction and the release fetch drop the execute bit; it is put back
+     * here, as install.php does for the sandbox launcher, and preflight says when it cannot be.
+     */
+    private function runnerBinary(): ?string
+    {
+        $choice = $this->runner ?? ($_ENV['FORMLOGIC_NATIVE_RUNNER'] ?? getenv('FORMLOGIC_NATIVE_RUNNER') ?: 'auto');
+        if (strtolower(trim((string) $choice)) === 'node') return null;
+        $name = self::RUNNER_BINARIES[PHP_OS_FAMILY] ?? null;
+        if ($name === null || !in_array(strtolower(php_uname('m')), ['x86_64', 'amd64'], true)) return null;
+        $path = $this->runtime() . '/bin/' . $name;
+        if (!is_file($path)) return null;
+        if (PHP_OS_FAMILY !== 'Windows' && !is_executable($path)) @chmod($path, 0755);
+        return $path;
+    }
+
     private function preflightKey(): string
     {
-        $parts = [$this->runtime(), $this->storageRoot(), $this->nodeBinary()];
-        foreach (['host-protocol.json', 'runner.mjs', 'request-worker.mjs', 'provenance.json', 'wasm/zipp_wasm_bg.wasm'] as $file) {
+        $runner = $this->runnerBinary();
+        $parts = [$this->runtime(), $this->storageRoot(), $runner ?? $this->nodeBinary()];
+        foreach (['host-protocol.json', 'runner.mjs', 'request-worker.mjs', 'provenance.json', 'wasm/zipp_wasm_bg.wasm', ...($runner !== null ? ['bin/' . basename($runner)] : [])] as $file) {
             $path = $this->runtime() . '/' . $file;
             $parts[] = is_file($path) ? $file . ':' . filemtime($path) . ':' . filesize($path) : $file . ':missing';
         }
@@ -526,8 +559,14 @@ class NativeAppService
         if (is_array($provenance)) $runtime['zipp'] = ['version' => $provenance['zipp']['version'] ?? null, 'sha256' => $provenance['zipp']['sha256'] ?? null];
 
         $node = $this->nodeBinary();
-        $version = $this->runBounded([$node, '--version'], 8);
-        if ($version === null || $version['exit'] !== 0 || !preg_match('/^v?(\d+\.\d+\.\d+)/', trim($version['stdout']), $m)) {
+        $runner = $this->runnerBinary();
+        $version = $runner !== null ? null : $this->runBounded([$node, '--version'], 8);
+        if ($runner !== null) {
+            // softn-runner needs no Node: whether it can start is the worker probe below.
+            $runtime['runner'] = basename($runner);
+            if (PHP_OS_FAMILY === 'Windows' || is_executable($runner)) $pass('runner.executable', 'The native runtime runs on softn-runner, without Node.js');
+            else $fail('runner.executable', 'Zip extraction drops the execute bit and it could not be restored: run chmod +x on resources/softn-native/bin/' . basename($runner) . ' in the API folder');
+        } elseif ($version === null || $version['exit'] !== 0 || !preg_match('/^v?(\d+\.\d+\.\d+)/', trim($version['stdout']), $m)) {
             $fail('node.executable', 'The configured Node.js binary could not be executed (set FORMLOGIC_NODE_BIN to a working Node.js install)');
         } else {
             $runtime['node'] = $m[1];
@@ -1435,7 +1474,8 @@ class NativeAppService
     {
         $protocol = json_decode((string) file_get_contents($this->runtime() . '/host-protocol.json'), true);
         if ($subscriptions && (!is_file($this->runtime() . '/record-events.mjs') || ($protocol['recordEvents'] ?? null) !== self::RECORD_EVENTS_PROTOCOL)) throw new RuntimeException('Update the native runtime to enable record automations');
-        $this->assertNodeMeetsMinimum(is_array($protocol) ? $protocol : null);
+        $runner = $this->runnerBinary();
+        if ($runner === null) $this->assertNodeMeetsMinimum(is_array($protocol) ? $protocol : null);
         $base = $root . '/private/request-' . bin2hex(random_bytes(12));
         $input = json_encode($request, JSON_THROW_ON_ERROR);
         if (strlen($input) > 6000000) throw new InvalidArgumentException('Request exceeds the native host limit');
@@ -1456,7 +1496,8 @@ class NativeAppService
             // Only the allowlisted variables reach the runtime (see NODE_ENV_ALLOWLIST); the
             // three SOFTN_* values are the whole host context the worker reads.
             $env = self::nodeEnvironment(getenv(), ['SOFTN_BACKEND_ROOT' => $root, 'SOFTN_HOST_CONTEXT' => json_encode($identity, JSON_THROW_ON_ERROR), 'SOFTN_RECORD_EVENTS' => json_encode($subscriptions, JSON_THROW_ON_ERROR)]);
-            $process = proc_open(self::runnerCommand($node, $this->runtime()), [0 => ['file', $base . '.in', 'r'], 1 => ['file', $base . '.out', 'w'], 2 => ['file', $base . '.err', 'w']], $pipes, $root, $env, ['bypass_shell' => true]);
+            $command = $runner !== null ? [$runner] : self::runnerCommand($node, $this->runtime());
+            $process = proc_open($command, [0 => ['file', $base . '.in', 'r'], 1 => ['file', $base . '.out', 'w'], 2 => ['file', $base . '.err', 'w']], $pipes, $root, $env, ['bypass_shell' => true]);
             if (!is_resource($process)) throw new RuntimeException('Native runtime could not start');
             $deadline = microtime(true) + 25;
             do {

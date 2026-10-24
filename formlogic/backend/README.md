@@ -154,7 +154,9 @@ composer test
 Native app tests need the installed runtime (`resources/softn-native/`, from
 `node scripts/fetch-softn-release.mjs` at the repository root, or
 `scripts/prepare-native-runtime.mjs` from a Softn source checkout) and `FORMLOGIC_NODE_BIN` pointing at a
-Node.js binary; they are skipped otherwise. Integration tests use the MySQL
+Node.js binary; they are skipped otherwise. When the installed runtime carries `softn-runner` for
+this machine (Softn v0.0.26 on), the native apps in those tests run on it, and the tests of what
+the service does with Node ask for Node. Integration tests use the MySQL
 database named in `.env`.
 
 `composer test` runs PHPUnit with Xdebug off (`php -d xdebug.mode=off

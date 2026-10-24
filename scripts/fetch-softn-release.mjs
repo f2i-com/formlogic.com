@@ -88,7 +88,7 @@
  * A local archive (SOFTN_RELEASE_ARCHIVE) is the same path CI takes.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile, cp } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile, cp } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, resolve, basename, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -751,6 +751,14 @@ function generationTrees(paths, expected, releaseInfo, hostedRuntime = null, { r
       prepare: async (dir) => {
         for (const name of [...NATIVE_MODULES, ...NATIVE_EXTRA]) if (!existsSync(resolve(dir, name))) throw new ReleaseError(`native-runtime/${name} is missing from the archive.`);
         const provenance = JSON.parse(await readFile(resolve(dir, 'provenance.json'), 'utf8'));
+        // softn-runner (Softn v0.0.26 on) is a program: executable where files have modes. The
+        // archive's modes are not carried over by extraction; NativeAppService and install.php
+        // put the bit back as well, for a copy that lost it on the way to the server.
+        if (process.platform !== 'win32') {
+          for (const name of Object.keys(provenance.runner?.files ?? {})) {
+            if (!name.endsWith('.exe') && existsSync(resolve(dir, 'bin', name))) await chmod(resolve(dir, 'bin', name), 0o755);
+          }
+        }
         provenance.release = { tag: releaseInfo.tag, commit: releaseInfo.commit };
         if (hostedRuntime) provenance.hostedRuntime = hostedRuntime;
         await writeFile(resolve(dir, 'provenance.json'), JSON.stringify(provenance, null, 2) + '\n');

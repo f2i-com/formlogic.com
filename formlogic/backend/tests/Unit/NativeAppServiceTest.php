@@ -55,6 +55,16 @@ final class NativeAppServiceTest extends TestCase
     }
 
     /**
+     * The installed runtime run by Node, whatever else it carries: for the tests of what this
+     * service does with Node (a runtime from Softn v0.0.26 also carries softn-runner, which the
+     * default service starts instead).
+     */
+    private function nodeService(): NativeAppService
+    {
+        return new NativeAppService($this->storage, dirname(__DIR__, 2) . '/resources/softn-native', getenv('FORMLOGIC_NODE_BIN'), 'node');
+    }
+
+    /**
      * Python as a client logic language. The file NAME is the whole declaration — it is what
      * RuntimeEngineService::languagesOf reads to clamp the app onto the ZIPP web-python engine, and
      * what Softn's shell reads to hold the engine to the same answer.
@@ -135,6 +145,7 @@ final class NativeAppServiceTest extends TestCase
 
     public function testPreflightStartsARealWorkerAndCachesBriefly(): void
     {
+        $this->service = $this->nodeService();
         $first = $this->service->preflight(true);
         $this->assertTrue($first['ok'], json_encode($first['checks']));
         $this->assertFalse($first['cached']);
@@ -162,7 +173,7 @@ final class NativeAppServiceTest extends TestCase
         $failing = static fn (array $result): array => array_column(array_filter($result['checks'], static fn ($c) => !$c['ok']), 'message', 'id');
 
         // Missing executable: distinct from missing artifacts.
-        $badNode = new NativeAppService($this->storage, $runtime, $this->storage . '/no-such-node.exe');
+        $badNode = new NativeAppService($this->storage, $runtime, $this->storage . '/no-such-node.exe', 'node');
         $result = $badNode->preflight(true);
         $this->assertFalse($result['ok']);
         $this->assertArrayHasKey('node.executable', $failing($result));
@@ -218,6 +229,7 @@ final class NativeAppServiceTest extends TestCase
         $this->assertCount(6, $command);
 
         // The real Node takes them, and says so in preflight.
+        $this->service = $this->nodeService();
         $checks = array_column($this->service->preflight(true)['checks'], null, 'id');
         $this->assertTrue($checks['node.options']['ok'], $checks['node.options']['message']);
         $this->assertStringNotContainsString($this->storage, $checks['node.options']['message']);
@@ -225,6 +237,38 @@ final class NativeAppServiceTest extends TestCase
         // And a request is still answered when started that way.
         $this->service->install('notes', $this->project(), 0);
         $this->assertSame(201, $this->createNote('Started lean')['status']);
+    }
+
+    /**
+     * A runtime that carries softn-runner for this server (Softn v0.0.26 on) runs on it: preflight
+     * asks for no Node and starts a worker, and a request is answered with no Node to start, here
+     * one that does not exist. Asked for Node, the same runtime is run by Node again.
+     */
+    public function testARuntimeThatCarriesTheRunnerRunsWithoutNode(): void
+    {
+        $runtime = dirname(__DIR__, 2) . '/resources/softn-native';
+        $name = ['Linux' => 'softn-runner-linux-x86_64', 'Windows' => 'softn-runner-windows-x86_64.exe'][PHP_OS_FAMILY] ?? null;
+        if ($name === null || !in_array(strtolower(php_uname('m')), ['x86_64', 'amd64'], true) || !is_file($runtime . '/bin/' . $name)) {
+            $this->markTestSkipped('The installed Softn runtime carries no softn-runner for this server (Softn v0.0.26 on, Linux or Windows x86-64).');
+        }
+        $failing = static fn (array $result): array => array_column(array_filter($result['checks'], static fn ($c) => !$c['ok']), 'message', 'id');
+
+        // 'auto' whatever FORMLOGIC_NATIVE_RUNNER says: this is the runner's own test.
+        $this->service = new NativeAppService($this->storage, $runtime, $this->storage . '/no-such-node.exe', 'auto');
+        $result = $this->service->preflight(true);
+        $this->assertTrue($result['ok'], json_encode($result['checks']));
+        $ids = array_column($result['checks'], 'id');
+        $this->assertContains('runner.executable', $ids);
+        $this->assertContains('worker.startup', $ids);
+        $this->assertSame([], array_values(array_filter($ids, static fn ($id) => str_starts_with($id, 'node.'))), 'no Node is asked for');
+        $this->assertSame($name, $result['runtime']['runner']);
+        foreach ($result['checks'] as $check) $this->assertStringNotContainsString($this->storage, $check['message']);
+
+        $this->service->install('notes', $this->project(), 0);
+        $this->assertSame(201, $this->createNote('No Node')['status']);
+
+        $node = new NativeAppService($this->storage, $runtime, $this->storage . '/no-such-node.exe', 'node');
+        $this->assertArrayHasKey('node.executable', $failing($node->preflight(true)));
     }
 
     // ── integration audit M2/M3/L3: request-time guards and the shared protocol ──

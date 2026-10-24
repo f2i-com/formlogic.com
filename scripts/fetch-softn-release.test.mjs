@@ -60,7 +60,7 @@ function runtimeManifest(files, zipp, advertised = {}) {
 // `advertised` is what hosted-runtime/runtime-manifest.json says this runtime serves. The default
 // carries `python-logic/1` because the default `protocols` speak logicLanguages: the fetcher
 // refuses an archive that declares the protocol without advertising the feature.
-function archiveEntries({ tag = 'v0.0.13', commit = COMMIT, zippRelease = ZIPP_RELEASE, protocols = PROTOCOLS, adapter = ADAPTER, hostedCode = 'export const hosted = true;', advertised = { features: ['python-logic/1'] }, coreRuntimeEngine = true } = {}) {
+function archiveEntries({ tag = 'v0.0.13', commit = COMMIT, zippRelease = ZIPP_RELEASE, protocols = PROTOCOLS, adapter = ADAPTER, hostedCode = 'export const hosted = true;', advertised = { features: ['python-logic/1'] }, coreRuntimeEngine = true, runners = null } = {}) {
   const entries = {};
   const put = (name, data) => { entries[name] = Buffer.isBuffer(data) ? data : Buffer.from(data); };
   const { wasm, source, record: zipp } = zippRelease;
@@ -103,7 +103,14 @@ function archiveEntries({ tag = 'v0.0.13', commit = COMMIT, zippRelease = ZIPP_R
   put('native-runtime/LICENSE', 'Apache-2.0 fixture licence');
   put('native-runtime/NOTICE', 'fixture notice');
   put('native-runtime/ZIPP-THIRD-PARTY-LICENSES.txt', zippRelease.files['THIRD_PARTY_LICENSES.txt']);
-  put('native-runtime/provenance.json', JSON.stringify({ source: 'softn.com/apps/softn-host-php/runtime', nativeProtocol: protocols.nativeProtocol, zipp: source, modules: moduleDigests }, null, 2));
+  // softn-runner (Softn v0.0.26 on): one binary per platform under bin/, and their licences beside
+  // ZIPP's, recorded in provenance.json `runner`.
+  const runnerDigests = {};
+  for (const [n, d] of Object.entries(runners ?? {})) { put(`native-runtime/bin/${n}`, d); runnerDigests[n] = sha256(d); }
+  const runnerNotices = 'runner licences fixture';
+  if (runners) put('native-runtime/SOFTN-RUNNER-THIRD-PARTY-LICENSES.txt', runnerNotices);
+  const runner = runners ? { runner: { source: 'softn.com/apps/softn-runner', zipp: { release: source.release, revision: source.revision }, files: runnerDigests, notices: { file: 'SOFTN-RUNNER-THIRD-PARTY-LICENSES.txt', sha256: sha256(runnerNotices) } } } : {};
+  put('native-runtime/provenance.json', JSON.stringify({ source: 'softn.com/apps/softn-host-php/runtime', nativeProtocol: protocols.nativeProtocol, zipp: source, modules: moduleDigests, ...runner }, null, 2));
   // adapter
   put('adapter/formlogic.ts', adapter);
   put('adapter/provenance.json', JSON.stringify({ source: 'softn.com/packages/@softn/core/src/integrations/formlogic.ts', license: 'Apache-2.0', sha256: sha256(adapter.replace(/\r\n/g, '\n')) }));
@@ -1329,4 +1336,31 @@ test('a native runtime whose modules import one the archive does not ship is ref
   // --check holds it too: the module removed after the install is named, as a release error.
   await rm(resolve(paths(root).nativeRuntime, 'sql.mjs'));
   await assert.rejects(checkInstalled({ root, ...quiet }), (e) => e instanceof ReleaseError && /native-runtime is not the generation .*missing: sql\.mjs/.test(e.message));
+});
+
+test('a release that carries softn-runner installs it beside the runtime, executable, and holds it to its digest', async (t) => {
+  // Softn v0.0.26 on: the runner without Node, one binary per platform under native-runtime/bin,
+  // recorded in provenance.json `runner`. NativeAppService starts the one for its server, so a
+  // binary that is not the recorded one, or one the record does not name, is not installed.
+  const root = await formlogicRoot(t);
+  const runners = { 'softn-runner-linux-x86_64': Buffer.from('\x7fELF runner fixture'), 'softn-runner-windows-x86_64.exe': Buffer.from('MZ runner fixture') };
+  const archive = await writeFixtureArchive(resolve(root, 'with-runner'), { runners });
+  await fetchSoftnRelease({ root, archivePath: archive.path, ...quiet });
+  await checkInstalled({ root, ...quiet });
+  const bin = resolve(paths(root).nativeRuntime, 'bin');
+  assert.deepEqual((await readdir(bin)).sort(), Object.keys(runners).sort());
+  if (process.platform !== 'win32') assert.ok((statSync(resolve(bin, 'softn-runner-linux-x86_64')).mode & 0o111) !== 0, 'the Linux runner is executable');
+  const provenance = JSON.parse(await readFile(resolve(paths(root).nativeRuntime, 'provenance.json'), 'utf8'));
+  assert.deepEqual(Object.keys(provenance.runner.files).sort(), Object.keys(runners).sort());
+
+  const unrecorded = await writeFixtureArchive(resolve(root, 'unrecorded'), { runners }, null, (entries) => { entries['native-runtime/bin/softn-runner-extra'] = Buffer.from('not recorded'); });
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: unrecorded.path, ...quiet }), /under bin\/ its provenance does not record: bin\/softn-runner-extra/);
+  const changed = await writeFixtureArchive(resolve(root, 'changed'), { runners }, null, (entries) => { entries['native-runtime/bin/softn-runner-linux-x86_64'] = Buffer.from('other bytes'); });
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: changed.path, ...quiet }), /runner is missing or changed: bin\/softn-runner-linux-x86_64/);
+  // Its licences go with it, at the digest recorded.
+  assert.equal(await readFile(resolve(paths(root).nativeRuntime, 'SOFTN-RUNNER-THIRD-PARTY-LICENSES.txt'), 'utf8'), 'runner licences fixture');
+  const licences = await writeFixtureArchive(resolve(root, 'licences'), { runners }, null, (entries) => { entries['native-runtime/SOFTN-RUNNER-THIRD-PARTY-LICENSES.txt'] = Buffer.from('other licences'); });
+  await assert.rejects(fetchSoftnRelease({ root, archivePath: licences.path, ...quiet }), /runner licences are missing or changed: SOFTN-RUNNER-THIRD-PARTY-LICENSES\.txt/);
+  // The installed generation is the one that was good.
+  await checkInstalled({ root, ...quiet });
 });

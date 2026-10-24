@@ -26,8 +26,11 @@ verifies it and installs the hosted runtime, the embedded editors and the native
 runtime (`SOFTN_RELEASE=<tag>` picks one release). Deploy the generated `hosted-runtime/`
 and `app-editors/` assets with the UI, and the installed `backend/resources/softn-native/`
 modules with the API. The release preparation action installs these the same way for
-packaged releases. Native backend execution requires PHP 8.2+, PDO SQLite,
-`proc_open` and a compatible Node runtime (use the repository's pinned version); configure
+packaged releases. Native backend execution requires PHP 8.2+, PDO SQLite and
+`proc_open`. With a Softn release from v0.0.26 on Linux or Windows x86-64 that is all: the
+release carries `softn-runner` (`resources/softn-native/bin/`), which runs native apps without
+Node. Otherwise (an older release, another platform, or `FORMLOGIC_NATIVE_RUNNER=node`) it also
+needs a compatible Node runtime (use the repository's pinned version); configure
 `FORMLOGIC_NODE_BIN` for the PHP worker environment. Updating an installed native app also
 needs the `sqlite3` PHP extension, which restores its database if the update fails
 ([details](docs/NATIVE_ROLLBACK_SAFETY.md)). OAIY is a separate optional desktop host.
