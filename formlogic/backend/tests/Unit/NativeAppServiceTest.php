@@ -440,6 +440,39 @@ final class NativeAppServiceTest extends TestCase
         $this->assertCount(2, $this->service->records('notes', 'notes')['rows']);
     }
 
+    /**
+     * An app's database is the file in its own data folder. A link in its place (one the app's
+     * server logic left there, were it ever out of its sandbox) is refused by the records,
+     * management, backup and event paths, where PHP followed it into another app's database.
+     */
+    public function testALinkInPlaceOfTheAppDatabaseIsRefused(): void
+    {
+        $this->service->install('mine', $this->project(), 0);
+        $this->service->install('theirs', $this->project(), 0);
+        $this->service->request('theirs', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'Theirs'], 'client_ip' => '127.0.0.1'], [], [['event' => 'app.record.created.notes', 'bindings' => ['b']]]);
+        $database = $this->storage . '/' . hash('sha256', 'mine') . '/private/data/application.sqlite';
+        $theirs = $this->storage . '/' . hash('sha256', 'theirs') . '/private/data/application.sqlite';
+        unlink($database);
+        if (!@symlink($theirs, $database)) $this->markTestSkipped('This system does not let this account make a symbolic link.');
+        foreach ([
+            'records' => fn() => $this->service->records('mine', 'notes'),
+            'manageRecord' => fn() => $this->service->manageRecord('mine', ['operation' => 'list', 'table' => 'notes']),
+            'captureForBackup' => fn() => $this->service->captureForBackup('mine', $this->storage . '/backup.sqlite'),
+        ] as $path => $call) {
+            try {
+                $call();
+                $this->fail($path . ' opened the database a link pointed at');
+            } catch (\RuntimeException $refused) {
+                $this->assertSame(409, $refused->getCode(), $path . ': ' . $refused->getMessage());
+                $this->assertStringContainsString('is a link', $refused->getMessage(), $path);
+            }
+        }
+        $this->assertSame(0, $this->service->dispatchRecordEvents('mine', fn() => $this->fail('An event was read through the link')));
+        $this->assertFileDoesNotExist($this->storage . '/backup.sqlite');
+        // Theirs is untouched, and its own paths still work.
+        $this->assertSame([['id' => 1, 'title' => 'Theirs']], $this->service->records('theirs', 'notes')['rows']);
+    }
+
     public function testCommittedRecordEventsSurviveDeliveryFailureAndAreAcknowledged(): void
     {
         $this->service->install('notes', $this->project(), 0);

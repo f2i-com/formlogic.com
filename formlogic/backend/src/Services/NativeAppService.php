@@ -245,7 +245,26 @@ class NativeAppService
     {
         $path = $root . '/private/data/application.sqlite';
         if (!is_file($path)) return null;
+        self::assertOwnDatabase($path);
         return ($snapshotter ?? new SqliteSnapshot())->snapshot($path, $destination);
+    }
+
+    /**
+     * An app's database is the file in its own data folder, never a link. PHP follows a link when
+     * it opens, snapshots or vacuums the database, so one left there (by the app's own server
+     * logic, were it ever to get out of its sandbox) would hand the app's owner another app's
+     * records, or any SQLite file this account can read, through the records, backup and update
+     * paths. The runner refuses such a database too and, locked down on Linux, cannot make a link
+     * at all; this is FormLogic's own side of that boundary.
+     */
+    private static function linkedDatabase(string $path): bool
+    {
+        return is_link($path) || is_link(dirname($path)) || is_link(dirname($path, 2));
+    }
+
+    private static function assertOwnDatabase(string $path): void
+    {
+        if (self::linkedDatabase($path)) throw new RuntimeException('The app\'s database is a link, not its own file', 409);
     }
 
     /**
@@ -1381,6 +1400,7 @@ class NativeAppService
             $this->writeHostConfig($configPath, json_encode($config, JSON_THROW_ON_ERROR));
             if ($hadDatabase) {
                 $snapshot = $root . '/private/' . $journal['snapshot'];
+                self::assertOwnDatabase($database);
                 $db = new PDO('sqlite:' . $database, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
                 $db->exec('PRAGMA busy_timeout=1500');
                 $db->exec('VACUUM INTO ' . $db->quote($snapshot));
@@ -1454,7 +1474,7 @@ class NativeAppService
         try {
             // The database is checked again under the lock: settling an unfinished first install
             // removes it, and opening it here would create an empty one in its place.
-            if (!$dispatch || !flock($dispatch, LOCK_EX | LOCK_NB) || !is_file($path)) return 0;
+            if (!$dispatch || !flock($dispatch, LOCK_EX | LOCK_NB) || !is_file($path) || self::linkedDatabase($path)) return 0;
             $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
             $db->exec('PRAGMA busy_timeout=1500');
             if (!$db->query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='_formlogic_record_events'")->fetchColumn()) return 0;
@@ -1531,6 +1551,7 @@ class NativeAppService
         try {
             $path = $root . '/private/data/application.sqlite';
             if (!is_file($path)) throw new RuntimeException('App database not found', 404);
+            self::assertOwnDatabase($path);
             $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
             return (new NativeRecordStore($db))->operate($input, $subscriptions);
         } finally { flock($lock, LOCK_UN); fclose($lock); }
@@ -1541,6 +1562,7 @@ class NativeAppService
     {
         $path = $root . '/private/data/application.sqlite';
         if (!is_file($path)) throw new RuntimeException('App database not found', 404);
+        self::assertOwnDatabase($path);
         $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
         $db->exec('PRAGMA query_only=ON; PRAGMA busy_timeout=1500; BEGIN');
         $tables = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND substr(name,1,1) != '_' ORDER BY name")->fetchAll(PDO::FETCH_COLUMN);
