@@ -1,11 +1,11 @@
 {
   "kind": "formlogic.ecosystemCompatibilityManifest",
   "formatVersion": 1,
-  "generatedAt": "2026-10-23T12:01:39.494Z",
+  "generatedAt": "2026-10-29T20:45:51.845Z",
   "note": "Source revisions and digests of files present in the tree at generation time. Release workflows must recompute digests of the artifacts they actually ship; provenance is not verification of downloaded bytes.",
   "components": {
     "formlogic": {
-      "revision": "d478b099cf72a50cafaaab67cbfbed402382d6ad",
+      "revision": "a3a922381a39f451fae4a08719aa6a10fb487c69",
       "backupFormat": {
         "current": 2,
         "importable": [
@@ -17,9 +17,9 @@
     },
     "softn": {
       "pinnedBy": "latest GitHub release of f2i-com/softn.com (scripts/fetch-softn-release.mjs); SOFTN_RELEASE pins a tag; a release run freezes one record (--resolve-only) that every job installs (--frozen) and the release gate checks with --exact",
-      "release": "v0.0.25",
-      "revision": "517b265bbad53e087d8d492b6f6aec9b1cc8e9ad",
-      "archiveSha256": "33eaec354a7da489a643d619b5873f7eba87cf1492c0a82e2d78a287bafbc325",
+      "release": "v0.0.27",
+      "revision": "0ab587db2c0971b30f89dcfc6d69494e9b159eae",
+      "archiveSha256": "29bf8cf1f2e7e49bebe89071a464002dbb0f7e39ad9c16799e22a7a68de072c6",
       "frozen": null,
       "nativeProtocol": 1,
       "recordEvents": 1,
@@ -39,45 +39,45 @@
     },
     "zipp": {
       "pinnedBy": "the installed Softn release (softn-release.json zipp), installed at formlogic/ui/vendor/zipp-wasm (generated)",
-      "release": "v0.0.29",
-      "version": "0.0.29",
-      "revision": "58c92a59b991b29f80fc7aa5d0d91e9dc119b17a",
+      "release": "v0.0.32",
+      "version": "0.0.32",
+      "revision": "e312cf40afe5f02e3cdebbadcfd30c9ead889384",
       "build": "release",
-      "bundle": "zipp-0.0.29-javascript-python-base.wasm",
-      "bundleSha256": "c5c0d77b2db8e2f1cd05e4f1b7856c914c7218bd38fa5ad70471a63520e24483",
-      "sumsSha256": "d92c1d763caf703143a52291fee3723f2d486745640adc2db3aa3812f521f4a7",
+      "bundle": "zipp-0.0.32-javascript-python-base.wasm",
+      "bundleSha256": "14a576d4a8035a6736ad13cb6de525f4b57fdc15dc109f60a31674793a6bcff6",
+      "sumsSha256": "2f54dcc6d32729814483d4d7967aa16dd2d80a37f6aa9fee6af2f4f278469876",
       "variant": "javascript-python-base",
       "languages": [
         "javascript",
         "python"
       ],
       "artifact": "zipp_wasm_bg.wasm",
-      "sha256": "c5c0d77b2db8e2f1cd05e4f1b7856c914c7218bd38fa5ad70471a63520e24483",
+      "sha256": "14a576d4a8035a6736ad13cb6de525f4b57fdc15dc109f60a31674793a6bcff6",
       "rustc": null,
       "wasmBindgen": null,
       "variants": {
         "web": {
-          "bundle": "zipp-0.0.29-javascript.wasm",
-          "bundleSha256": "406bf8bc75feff6a9cf6e5f5a5d8b524380dda8e352303a3227896ec0be45b2a",
-          "sha256": "406bf8bc75feff6a9cf6e5f5a5d8b524380dda8e352303a3227896ec0be45b2a",
-          "glueSha256": "939b769d9804b071f679435fa2cb8b1f79d067cf967e21fcdcad451ed3f8ed4f",
+          "bundle": "zipp-0.0.32-javascript.wasm",
+          "bundleSha256": "907e64c9d995bc7c7d29620ee251a019ebb8f4e7bd5dfaf8ada352e27509c45a",
+          "sha256": "907e64c9d995bc7c7d29620ee251a019ebb8f4e7bd5dfaf8ada352e27509c45a",
+          "glueSha256": "0ebc4911e8dc5f988e5843d40c1f83d3a0b7a2d2f50ba5d09c4d29d39abe4c85",
           "variant": "javascript",
           "languages": [
             "javascript"
           ],
           "stackBytes": 1048576,
-          "commit": "58c92a59b991b29f80fc7aa5d0d91e9dc119b17a"
+          "commit": "e312cf40afe5f02e3cdebbadcfd30c9ead889384"
         }
       },
       "packages": {
         "torch": {
-          "bundle": "zipp-0.0.29-torch-package.wasm",
-          "bundleSha256": "01b768481157b49ed80e539c4ece44106393fc9c3a647a50e321cd68894e27bf",
-          "sha256": "01b768481157b49ed80e539c4ece44106393fc9c3a647a50e321cd68894e27bf",
+          "bundle": "zipp-0.0.32-torch-package.wasm",
+          "bundleSha256": "758f951d1fa8791f8292269e2a6e4d172437d0be976c4c30a851053826407813",
+          "sha256": "758f951d1fa8791f8292269e2a6e4d172437d0be976c4c30a851053826407813",
           "loaderSha256": "cbb4c7d0109506f3d837e62c9ac2cd60ad90570ff4e32df025777ae73621b22c",
           "variant": "torch-package",
-          "pairsWith": "zipp-0.0.29-javascript-python-base.wasm",
-          "commit": "58c92a59b991b29f80fc7aa5d0d91e9dc119b17a",
+          "pairsWith": "zipp-0.0.32-javascript-python-base.wasm",
+          "commit": "e312cf40afe5f02e3cdebbadcfd30c9ead889384",
           "engineAbi": "aadbc3d1920e2d6c"
         }
       }
@@ -92,13 +92,13 @@
     "nativeProtocol": 1,
     "zipp": {
       "repository": "https://github.com/f2i-com/zipp.org",
-      "release": "v0.0.29",
-      "version": "0.0.29",
-      "revision": "58c92a59b991b29f80fc7aa5d0d91e9dc119b17a",
+      "release": "v0.0.32",
+      "version": "0.0.32",
+      "revision": "e312cf40afe5f02e3cdebbadcfd30c9ead889384",
       "build": "release",
-      "bundle": "zipp-0.0.29-javascript-python-base.wasm",
-      "bundleSha256": "c5c0d77b2db8e2f1cd05e4f1b7856c914c7218bd38fa5ad70471a63520e24483",
-      "sumsSha256": "d92c1d763caf703143a52291fee3723f2d486745640adc2db3aa3812f521f4a7",
+      "bundle": "zipp-0.0.32-javascript-python-base.wasm",
+      "bundleSha256": "14a576d4a8035a6736ad13cb6de525f4b57fdc15dc109f60a31674793a6bcff6",
+      "sumsSha256": "2f54dcc6d32729814483d4d7967aa16dd2d80a37f6aa9fee6af2f4f278469876",
       "variant": "javascript-python-base",
       "languages": [
         "javascript",
@@ -107,15 +107,15 @@
       "stackBytes": 16777216,
       "license": "Apache-2.0",
       "artifact": "zipp_wasm_bg.wasm",
-      "sha256": "c5c0d77b2db8e2f1cd05e4f1b7856c914c7218bd38fa5ad70471a63520e24483",
-      "glueSha256": "c20a0c50396782f3ebfe9880a76bc1fd2718dea03bb6c04cf75c846af05de6f0",
+      "sha256": "14a576d4a8035a6736ad13cb6de525f4b57fdc15dc109f60a31674793a6bcff6",
+      "glueSha256": "dd1aa3c3d0f79ff9feb650bdeb36f43ad522905db71d501fcb63ead5e8ea9cf6",
       "kit": {
-        "bundle": "zipp-0.0.29-wasm-embed-kit.zip",
-        "bundleSha256": "b0bf0ab1d82d0742d1eb764fc1534325c220ac4585bd443ce5bf687173f27005",
+        "bundle": "zipp-0.0.32-wasm-embed-kit.zip",
+        "bundleSha256": "4282f1c1503d22149426d4cc9c372ce775771e08d6bda66f09f8102fae6985a5",
         "files": {
           "zipp_wasm.d.ts": {
             "from": "zipp-engine.d.ts",
-            "sha256": "4c3dcb0ac736405e0746aed9207bb8dca9d3d633496261ecc1e3317f761fc193"
+            "sha256": "34733c83f8379c226c18f4fbf410d0f0690fa3afa72f6a7a09779175c44c4aae"
           },
           "LICENSE-APACHE": {
             "from": "LICENSE-APACHE",
@@ -130,40 +130,40 @@
       },
       "variants": {
         "web": {
-          "bundle": "zipp-0.0.29-javascript.wasm",
-          "bundleSha256": "406bf8bc75feff6a9cf6e5f5a5d8b524380dda8e352303a3227896ec0be45b2a",
-          "sha256": "406bf8bc75feff6a9cf6e5f5a5d8b524380dda8e352303a3227896ec0be45b2a",
-          "glueSha256": "939b769d9804b071f679435fa2cb8b1f79d067cf967e21fcdcad451ed3f8ed4f",
+          "bundle": "zipp-0.0.32-javascript.wasm",
+          "bundleSha256": "907e64c9d995bc7c7d29620ee251a019ebb8f4e7bd5dfaf8ada352e27509c45a",
+          "sha256": "907e64c9d995bc7c7d29620ee251a019ebb8f4e7bd5dfaf8ada352e27509c45a",
+          "glueSha256": "0ebc4911e8dc5f988e5843d40c1f83d3a0b7a2d2f50ba5d09c4d29d39abe4c85",
           "variant": "javascript",
           "languages": [
             "javascript"
           ],
           "stackBytes": 1048576,
-          "commit": "58c92a59b991b29f80fc7aa5d0d91e9dc119b17a"
+          "commit": "e312cf40afe5f02e3cdebbadcfd30c9ead889384"
         }
       },
       "packages": {
         "torch": {
-          "bundle": "zipp-0.0.29-torch-package.wasm",
-          "bundleSha256": "01b768481157b49ed80e539c4ece44106393fc9c3a647a50e321cd68894e27bf",
-          "sha256": "01b768481157b49ed80e539c4ece44106393fc9c3a647a50e321cd68894e27bf",
+          "bundle": "zipp-0.0.32-torch-package.wasm",
+          "bundleSha256": "758f951d1fa8791f8292269e2a6e4d172437d0be976c4c30a851053826407813",
+          "sha256": "758f951d1fa8791f8292269e2a6e4d172437d0be976c4c30a851053826407813",
           "loaderSha256": "cbb4c7d0109506f3d837e62c9ac2cd60ad90570ff4e32df025777ae73621b22c",
           "variant": "torch-package",
-          "pairsWith": "zipp-0.0.29-javascript-python-base.wasm",
-          "commit": "58c92a59b991b29f80fc7aa5d0d91e9dc119b17a",
+          "pairsWith": "zipp-0.0.32-javascript-python-base.wasm",
+          "commit": "e312cf40afe5f02e3cdebbadcfd30c9ead889384",
           "engineAbi": "aadbc3d1920e2d6c"
         }
       }
     },
     "modules": {
       "runner.mjs": "a06525e985cc75d750868871b1bcfbf6d14a3bda7dab69c9cb68fe6d4ad2fa4d",
-      "request-worker.mjs": "3ee9f1cf34f1adf5dcf52fd25c6def1129f8af2fa0efc423140457ea09cdff8c",
+      "request-worker.mjs": "7245fdff2f7f6a029b73cb7ab6319bcc9d3ab291a961a4f43b6e2e431e279478",
       "request-hook.mjs": "a697c6bd8be7d9333b1b95d1d6ff0c31d0b9e056a4b9e80c4314737e742c8da0",
-      "wasm-host.mjs": "d5b4c0bde85b6578784203ef7fc500d26099663901a9f8f867cfce9a67f1a661",
+      "wasm-host.mjs": "0b263503678e1f0aab22f4b219b0e031ffaf2a91d48003472c4fbc94d5b69ddc",
       "migrations.mjs": "a85a59b04c7b61420ddfc4b11144d015ae3cf1207818b3551473b06b2f1b856e",
-      "sql.mjs": "79d69d2173a4507a9dbff56f74251482c3c20aa596fec53702550345ad1b88b9",
+      "sql.mjs": "9677949ed95553bf20b212d0223062f605e171f2c2ef7a8c8a311ccbabe509e4",
       "crypto.mjs": "67ad9af301365e6538873a7a873b9d5284dcddcc3409de9ebe054f5f6a87e66b",
-      "time.mjs": "b4e0f26e2f5f62dc46ee0ce9e6c4c3a758e2fa48f71b255ec993572397eac6be",
+      "time.mjs": "50d07ffb4502a1a434cdf23902aa081e93b07f9d9bc373680f37b048c400e7c1",
       "host-protocol.json": "74bb077291ce87f84268a9cb0372025d3758165a08e137a14d0b58307bf6c2af",
       "record-events.mjs": "0062f0aceac3a965c4e7ef27b897ddc23bf0ae8b6c08ed53d2f265a5c7c6581e",
       "directive-prologue.mjs": "bc1689392701b25788a45a03c3a7be62e19b40d13fc5d84f158a634c60f77540"

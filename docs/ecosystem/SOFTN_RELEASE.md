@@ -12,8 +12,8 @@ browser engine does too from Softn v0.0.15, and none of the four is in git.
 The engine follows releases, ZIPP to Softn to FormLogic: Softn takes it from a
 ZIPP release (its JavaScript and Python engine without torch: the `web-python-base`
 bundle from Softn v0.0.16 and ZIPP v0.0.21, the `javascript-python-base` module
-from Softn v0.0.23 and ZIPP v0.0.26; 6.57 MB at ZIPP v0.0.29, 6.41 MB at v0.0.27,
-6.52 MB at v0.0.22, 7.46 MB at v0.0.21; `web-python` before — checked against ZIPP's top-level
+from Softn v0.0.23 and ZIPP v0.0.26; 7.34 MB at ZIPP v0.0.32, 6.57 MB at v0.0.29,
+6.41 MB at v0.0.27, 6.52 MB at v0.0.22, 7.46 MB at v0.0.21; `web-python` before — checked against ZIPP's top-level
 `SHA256SUMS`, and a bundle against its own as well) and ships it in the
 archive as `zipp/`, with the ZIPP
 release it came from recorded in `softn-release.json` `zipp`. FormLogic names no
@@ -93,7 +93,7 @@ The expected identity is derived from the release, never from this tree:
   recorded digest, and every copy Softn's packager places is found: `zipp/`,
   `native-runtime/wasm/`, and in `hosted-runtime/` and each editor
   `assets/zipp_wasm_bg-*.wasm`. A copy at `assets/core-runtime/zipp_wasm_bg.wasm`,
-  which releases through v0.0.25 carry, is held to the digest where it is
+  which releases through v0.0.27 carry, is held to the digest where it is
   present and not required: a Softn page posts the engine it compiled to every
   worker it starts, so no worker reads that copy.
 
