@@ -43,13 +43,21 @@ export function uploadName(project: NativeProject, file: File): string {
   return file.name.replace(/\.(softn|zip)$/i, '').replace(/[-_]+/g, ' ').trim().slice(0, 120) || 'SoftN app';
 }
 
-/**
- * Create a SoftN app and install its first version. A .softn file is read before the app is
- * created, so a file that is not a SoftN project with a backend creates nothing.
- */
+/** Whether a project brings a backend of its own (a `server` block); an app without one runs in the browser alone. */
+export function projectHasBackend(project: NativeProject): boolean {
+  try {
+    const manifest = JSON.parse(project.files['manifest.json'] ?? '{}') as Record<string, unknown>;
+    return manifest !== null && typeof manifest === 'object' && 'server' in manifest;
+  } catch { return false; }
+}
+
 /** Why the shared demo cannot add a SoftN app. */
 export const SOFTN_NEEDS_ACCOUNT = 'SoftN apps are hosted on the server, so they are available after sign-up.';
 
+/**
+ * Create a SoftN app and install its first version. A .softn file (with a backend of its own or
+ * none) is read before the app is created, so a file this host cannot take creates nothing.
+ */
 export async function createSoftnApp(input: { name: string; description?: string; start: SoftnStart }): Promise<CreatedSoftnApp> {
   // The demo keeps its apps in this browser; a SoftN app runs on the server, so nothing is created.
   if (api.isDemoMode()) throw new Error(SOFTN_NEEDS_ACCOUNT);

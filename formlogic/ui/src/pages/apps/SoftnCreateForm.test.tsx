@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 /**
  * "Create app" → SoftN app: each way to start lands in the new app's workspace — AI Studio
- * opening on the description, the Visual Builder on the starter, or the uploaded file running.
+ * opening on the description, the Visual Builder on the starter, or the uploaded file running,
+ * whether or not that file brings a backend of its own.
  */
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { strToU8, zipSync } from 'fflate';
 import { SoftnCreateForm } from './SoftnCreateForm';
 import { useUIStore } from '../../stores/uiStore';
 
@@ -122,23 +124,62 @@ describe('SoftnCreateForm', () => {
     expect(mocks.recheck).toHaveBeenCalledTimes(1);
   });
 
-  it('uploads a .softn file as the first version, and shows why a file was refused', async () => {
-    await render(true);
-    await choose('upload');
-    await type(container.querySelector('#softn-app-name') as HTMLInputElement, 'Coffee');
-    expect(button(/Create from this file/).disabled).toBe(true);
-    const file = new File([new Uint8Array([1])], 'coffee.softn');
+  /** A .softn file: a manifest, its page, and any other files given. */
+  const softn = (manifest: Record<string, unknown>, extra: Record<string, string> = {}, name = 'coffee.softn') =>
+    new File([zipSync(Object.fromEntries(Object.entries({ 'manifest.json': JSON.stringify(manifest), 'ui/main.ui': '<Text>Hi</Text>', ...extra }).map(([path, text]) => [path, strToU8(text)])))], name);
+  const pick = async (file: File) => {
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     Object.defineProperty(input, 'files', { value: [file], configurable: true });
     await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
-    expect(container.textContent).toContain('coffee.softn');
-    mocks.createSoftnApp.mockRejectedValueOnce(new Error('This app has no native server entry.'));
+  };
+
+  it('uploads a .softn file as the first version, named after the app it carries unless renamed', async () => {
+    await render(true);
+    await choose('upload');
+    expect(button(/Create from this file/).disabled).toBe(true);
+    const file = softn({ name: 'Coffee Corner', main: 'ui/main.ui' });
+    await pick(file);
+    // An app with no backend is one this host takes: it runs in the member's browser.
+    expect(container.textContent).toContain('coffee.softn · Coffee Corner · runs in the browser, no backend');
+    expect((container.querySelector('#softn-app-name') as HTMLInputElement).placeholder).toBe('Coffee Corner');
+    expect(button(/Create from this file/).disabled).toBe(false);
+    mocks.createSoftnApp.mockRejectedValueOnce(new Error('Native project exceeds 16 MB'));
     await act(async () => button(/Create from this file/).click());
-    expect(mocks.createSoftnApp).toHaveBeenCalledWith({ name: 'Coffee', description: undefined, start: { kind: 'upload', file } });
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('no native server entry');
+    expect(mocks.createSoftnApp).toHaveBeenCalledWith({ name: '', description: undefined, start: { kind: 'upload', file } });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('exceeds 16 MB');
     expect(path.current).toBe('/apps/new');
     await act(async () => button(/Create from this file/).click());
     expect(useUIStore.getState().softnOpen).toBeNull();
     expect(path.current).toBe('/apps/app-1/softn');
+  });
+
+  it('says what is wrong with a file as soon as it is chosen, and creates nothing from it', async () => {
+    await render(true);
+    await choose('upload');
+    await pick(new File([new Uint8Array([1])], 'broken.softn'));
+    expect(container.querySelector('[role="alert"]')?.textContent).toBeTruthy();
+    expect(button(/Create from this file/).disabled).toBe(true);
+    await pick(softn({ name: 'Shaders', main: 'ui/main.ui' }, { 'assets/add.wgsl': 'fn main() {}' }));
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('assets/add.wgsl cannot be hosted with this app');
+    expect(button(/Create from this file/).disabled).toBe(true);
+    // A backend written for another SoftN host is refused before any app is made for it...
+    await pick(softn({ name: 'Notes', main: 'ui/main.ui', server: { entry: 'server/main.logic', routes: [] } }, { 'server/main.logic': 'function list() {}' }));
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('This app\'s backend is not one FormLogic runs: it was written for another SoftN host.');
+    expect(button(/Create from this file/).disabled).toBe(true);
+    // ...and one this host runs says so.
+    await pick(softn({ name: 'Notes', main: 'ui/main.ui', server: { entry: 'server/main.logic', requires: { apiVersion: 1, capabilities: ['sql'] }, database: { kind: 'private-sqlite', migrations: [] } } }, { 'server/main.logic': 'function list() {}' }));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.textContent).toContain('Notes · with its own backend and database');
+    expect(mocks.createSoftnApp).not.toHaveBeenCalled();
+  });
+
+  it('takes a .softn file dropped anywhere on the form as the start', async () => {
+    await render(true);
+    const drop = new Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, 'dataTransfer', { value: { types: ['Files'], files: [softn({ name: 'Dropped', main: 'ui/main.ui' })] } });
+    await act(async () => { (container.firstElementChild as HTMLElement).dispatchEvent(drop); });
+    expect(drop.defaultPrevented).toBe(true);
+    expect((container.querySelector('input[value="upload"]') as HTMLInputElement).checked).toBe(true);
+    expect(container.textContent).toContain('Dropped · runs in the browser, no backend');
   });
 });

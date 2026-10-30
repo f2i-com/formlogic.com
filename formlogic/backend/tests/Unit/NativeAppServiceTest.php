@@ -440,6 +440,139 @@ final class NativeAppServiceTest extends TestCase
         $this->assertCount(2, $this->service->records('notes', 'notes')['rows']);
     }
 
+    /** A SoftN app with no backend: its pages, logic, seed data and a picture, and no id, as most declare none. */
+    private function clientProject(): array
+    {
+        return ['access' => 'application', 'assets' => ['assets/dot.png' => 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='], 'files' => [
+            'manifest.json' => json_encode(['name' => 'Field notes', 'version' => '1.0.0', 'main' => 'ui/main.ui', 'files' => ['ui' => ['ui/main.ui'], 'xdb' => ['xdb/tasks.xdb']]]),
+            'ui/main.ui' => '<logic>var count = 0;</logic><Text>Field notes {count}</Text>',
+            'xdb/tasks.xdb' => '{"collection":"tasks","records":[]}',
+        ]];
+    }
+
+    /**
+     * A SoftN app with no server block is all client: it installs, keeps every file it came with,
+     * and has no backend and no database. Nothing starts a runner for it, which this service
+     * shows: the Node it would start is a path that does not exist.
+     */
+    public function testAClientOnlyAppInstallsWithNoBackendAndKeepsItsFiles(): void
+    {
+        $service = new NativeAppService($this->storage, dirname(__DIR__, 2) . '/resources/softn-native', $this->storage . '/no-such-node', 'node');
+        $project = $this->clientProject();
+        $saved = $service->install('fieldnotes', $project, 0);
+        $this->assertSame(1, $saved['version']);
+        $this->assertSame($project['files'], $service->get('fieldnotes')['files']);
+        $this->assertSame($project['assets'], $service->get('fieldnotes')['assets']);
+        $this->assertFalse(NativeAppService::hasBackend($saved));
+        $this->assertFileDoesNotExist($this->storage . '/' . hash('sha256', 'fieldnotes') . '/private/data/application.sqlite');
+        $this->assertSame(['installed' => true, 'tables' => [], 'backend' => false], $service->records('fieldnotes'));
+        foreach ([
+            'request' => fn() => $service->request('fieldnotes', ['method' => 'GET', 'path' => '/api/notes', 'client_ip' => '127.0.0.1']),
+            'records of a table' => fn() => $service->records('fieldnotes', 'tasks'),
+        ] as $call => $run) {
+            try { $run(); $this->fail("{$call} answered for a client-only app"); }
+            catch (\RuntimeException $refused) { $this->assertSame(404, $refused->getCode(), $call . ': ' . $refused->getMessage()); }
+        }
+        $described = $service->describe('fieldnotes');
+        $this->assertSame([], $described['capabilities']);
+        $this->assertFalse($described['hasDatabase']);
+        $this->assertSame(0, $service->dispatchRecordEvents('fieldnotes', fn() => $this->fail('A client-only app has no events')));
+        $this->assertNull($service->captureForBackup('fieldnotes', $this->storage . '/backup.sqlite')['databasePath']);
+        // An update installs the same way, and so does a restore.
+        $project['files']['ui/main.ui'] = '<Text>Field notes, again</Text>';
+        $this->assertSame(2, $service->install('fieldnotes', $project, 1)['version']);
+        $service->remove('fieldnotes');
+        $this->assertSame('none', $service->restore('fieldnotes', $project, null, null)['database']);
+        $this->assertSame($project['files'], $service->get('fieldnotes')['files']);
+    }
+
+    /**
+     * Client-only is a manifest with no server block at all. An empty or partial block is a backend
+     * that does not meet the rules, and backend code with no block to run it is refused by name.
+     */
+    public function testOnlyAManifestWithNoServerBlockIsClientOnly(): void
+    {
+        $project = $this->clientProject();
+        $manifest = json_decode($project['files']['manifest.json'], true);
+        foreach ([[], ['entry' => 'server/main.logic']] as $server) {
+            $partial = $project;
+            $partial['files']['manifest.json'] = json_encode($manifest + ['id' => 'test.fieldnotes', 'server' => $server]);
+            try { NativeAppService::validateProject($partial); $this->fail('A partial server block was taken for client-only'); }
+            catch (\InvalidArgumentException $refused) { $this->assertSame('Include a server API v1 .logic entry', $refused->getMessage()); }
+        }
+        $stray = $project;
+        $stray['files']['server/main.logic'] = 'function createNote() {}';
+        try { NativeAppService::validateProject($stray); $this->fail('Backend code with no server block was accepted'); }
+        catch (\InvalidArgumentException $refused) { $this->assertStringContainsString('server/main.logic is backend code', $refused->getMessage()); }
+        $this->assertSame([], NativeAppService::validateProject($project)[3]);
+        $this->assertTrue(NativeAppService::hasBackend($this->project()));
+    }
+
+    /**
+     * Most SoftN apps declare no id, those with a backend too. Such an app runs under the
+     * identity named after this app: the runner's copy of the manifest carries it, and the
+     * project as stored, and downloaded, stays exactly as it was uploaded.
+     */
+    public function testABackendThatDeclaresNoIdRunsUnderTheAppsOwnIdentity(): void
+    {
+        $nameless = $this->project();
+        $nameless['files']['manifest.json'] = json_encode(array_diff_key(json_decode($nameless['files']['manifest.json'], true), ['id' => true]));
+        $this->service->install('nameless', $nameless, 0);
+        $this->assertSame($nameless['files'], $this->service->get('nameless')['files']);
+        $root = $this->storage . '/' . hash('sha256', 'nameless');
+        $this->assertSame('formlogic.app.nameless', json_decode((string) file_get_contents($root . '/private/config.json'), true)['appId']);
+        $this->assertSame('formlogic.app.nameless', json_decode((string) file_get_contents($root . '/app/manifest.json'), true)['id']);
+        $this->assertSame(201, $this->service->request('nameless', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'No id'], 'client_ip' => '127.0.0.1'])['status']);
+        // The same file again is an update of the same app.
+        $this->assertSame(2, $this->service->install('nameless', $nameless, 1)['version']);
+        $this->assertCount(1, $this->service->records('nameless', 'notes')['rows']);
+    }
+
+    /**
+     * An account backup restores each app under a NEW app id. One that declares no id keeps the
+     * identity its keys were made under (the captured configuration names it): the key-preserving
+     * restore is accepted, its backend runs on its records, and a later update keeps that identity
+     * rather than taking one named after the new app.
+     */
+    public function testAnAppThatDeclaresNoIdKeepsItsIdentityThroughARestoreUnderANewAppId(): void
+    {
+        $nameless = $this->project();
+        $nameless['files']['manifest.json'] = json_encode(array_diff_key(json_decode($nameless['files']['manifest.json'], true), ['id' => true]));
+        $this->service->install('before', $nameless, 0);
+        $this->assertSame(201, $this->service->request('before', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'Kept'], 'client_ip' => '127.0.0.1'])['status']);
+        $captured = $this->service->captureForBackup('before', $this->storage . '/before.sqlite', null, true);
+        $this->assertSame('formlogic.app.before', $captured['hostConfig']['appId']);
+        $restored = $this->service->restore('after', $captured['project'], $captured['databasePath'], $captured['hostConfig']);
+        $this->assertSame(NativeAppService::CRYPTO_RESTORED, $restored['cryptoMaterial']);
+        $config = $this->storage . '/' . hash('sha256', 'after') . '/private/config.json';
+        $this->assertSame('formlogic.app.before', json_decode((string) file_get_contents($config), true)['appId']);
+        $this->assertSame(201, $this->service->request('after', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'After the restore'], 'client_ip' => '127.0.0.1'])['status']);
+        $this->assertCount(2, $this->service->records('after', 'notes')['rows']);
+        $this->service->install('after', $nameless, $restored['version']);
+        $this->assertSame('formlogic.app.before', json_decode((string) file_get_contents($config), true)['appId']);
+        $this->assertCount(2, $this->service->records('after', 'notes')['rows']);
+    }
+
+    /**
+     * A client-only app that declares no id runs under one named after the app. When a later
+     * version brings a backend and an id of its own, the installation takes it (nothing was kept
+     * under the old one), and the backend then runs. From there its identity is fixed.
+     */
+    public function testAClientOnlyAppCanGainABackendAndThenKeepsItsIdentity(): void
+    {
+        $this->service->install('grows', $this->clientProject(), 0);
+        $config = $this->storage . '/' . hash('sha256', 'grows') . '/private/config.json';
+        $this->assertSame('formlogic.app.grows', json_decode((string) file_get_contents($config), true)['appId']);
+        $backend = $this->project();
+        $this->assertSame(2, $this->service->install('grows', $backend, 1)['version']);
+        $this->assertSame('test.notes', json_decode((string) file_get_contents($config), true)['appId']);
+        $this->assertSame(201, $this->service->request('grows', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'Now with a backend'], 'client_ip' => '127.0.0.1'])['status']);
+        $renamed = $backend;
+        $renamed['files']['manifest.json'] = str_replace('"test.notes"', '"test.other"', $renamed['files']['manifest.json']);
+        try { $this->service->install('grows', $renamed, 2); $this->fail('An app with a database took another identity'); }
+        catch (\InvalidArgumentException $refused) { $this->assertStringContainsString('same app identity', $refused->getMessage()); }
+    }
+
     /**
      * An app's database is the file in its own data folder. A link in its place (one the app's
      * server logic left there, were it ever out of its sandbox) is refused by the records,

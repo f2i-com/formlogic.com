@@ -8,12 +8,17 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Textarea } from '../../components/ui/Textarea';
 import { AiConnectNotice } from '../../components/ai/AiConnectNotice';
-import { createSoftnApp, softnWorkspacePath, type SoftnStart } from '../../lib/softnApps';
+import { createSoftnApp, projectFromUpload, projectHasBackend, softnWorkspacePath, uploadName, type SoftnStart } from '../../lib/softnApps';
 import { cn } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
 import { useUIStore } from '../../stores/uiStore';
 
 type Method = 'ai' | 'builder' | 'upload';
+
+/** What a chosen .softn file holds, read as soon as it is chosen: its app's name, and whether it brings a backend. */
+interface FileReview { name: string; backend: boolean }
+
+const isFileDrag = (event: React.DragEvent) => [...(event.dataTransfer?.types ?? [])].includes('Files');
 
 export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disabled = false }: {
   aiReady: boolean | null;
@@ -36,14 +41,35 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
   }
   const [request, setRequest] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [review, setReview] = useState<FileReview | null>(null);
+  const [fileError, setFileError] = useState('');
+  const [dragging, setDragging] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const lock = useRef(false);
   const input = useRef<HTMLInputElement>(null);
+  // The file most recently chosen: a slower read of an earlier one never replaces its review.
+  const latest = useRef<File | null>(null);
   // Building with AI waits for the readiness check: an unknown answer is not a yes.
   const aiBlocked = method === 'ai' && aiReady !== true;
-  const canCreate = !!name.trim() && !creating && !disabled && !aiBlocked
-    && (method !== 'ai' || !!request.trim()) && (method !== 'upload' || !!file);
+  // An uploaded app is named after itself unless the person names it.
+  const named = !!name.trim() || (method === 'upload' && !!review);
+  const canCreate = named && !creating && !disabled && !aiBlocked
+    && (method !== 'ai' || !!request.trim()) && (method !== 'upload' || (!!file && !!review && !fileError));
+
+  /** Take a chosen or dropped file: the start becomes the upload, and the file is read at once, so a problem shows before anything is created. */
+  const takeFile = async (picked: File | null) => {
+    latest.current = picked;
+    setFile(picked); setReview(null); setFileError(''); setError('');
+    if (!picked) return;
+    setChosen(true); setMethod('upload');
+    try {
+      const project = await projectFromUpload(picked);
+      if (latest.current === picked) setReview({ name: uploadName(project, picked), backend: projectHasBackend(project) });
+    } catch (reason) {
+      if (latest.current === picked) setFileError(reason instanceof Error ? reason.message : 'That file could not be read as a SoftN app.');
+    }
+  };
 
   const create = async () => {
     if (!canCreate || lock.current) return;
@@ -75,17 +101,27 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
       </span>
     </label>;
 
-  return <div className="space-y-5">
+  // A .softn file dropped anywhere on the form is the start: no need to find the option first.
+  return <div className="space-y-5"
+    onDragOver={event => { if (!isFileDrag(event) || creating || disabled) return; event.preventDefault(); setDragging(true); }}
+    onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); }}
+    onDrop={event => {
+      if (!isFileDrag(event) || creating || disabled) return;
+      event.preventDefault(); setDragging(false);
+      void takeFile(event.dataTransfer.files?.[0] ?? null);
+    }}>
     <div>
-      <label htmlFor="softn-app-name" className="mb-1.5 block text-xs font-semibold text-gray-600 dark:text-slate-300">App name</label>
-      <Input id="softn-app-name" value={name} onChange={event => setName(event.target.value)} placeholder="e.g. Recipe Box, Team Directory, Booking Site" maxLength={120} disabled={creating || disabled} autoFocus />
+      <label htmlFor="softn-app-name" className="mb-1.5 block text-xs font-semibold text-gray-600 dark:text-slate-300">
+        App name{method === 'upload' && <span className="font-normal text-gray-400 dark:text-slate-500"> (optional: an uploaded app keeps its own)</span>}
+      </label>
+      <Input id="softn-app-name" value={name} onChange={event => setName(event.target.value)} placeholder={method === 'upload' && review ? review.name : 'e.g. Recipe Box, Team Directory, Booking Site'} maxLength={120} disabled={creating || disabled} autoFocus />
     </div>
     <fieldset>
       <legend className="mb-2 block text-xs font-semibold text-gray-600 dark:text-slate-300">How do you want to start?</legend>
       <div className="grid gap-3">
         {option('ai', <Sparkles className="h-4 w-4" />, 'Describe it, and AI builds it', 'AI Studio builds your app from your description while you watch: its pages, its database and how it looks.', aiReady === false ? 'Needs an AI connection first.' : undefined)}
         {option('builder', <PencilRuler className="h-4 w-4" />, 'Start from a working app and edit it visually', 'A small app with a page, a backend and a database table, opened in the Visual Builder. No AI needed.')}
-        {option('upload', <FileUp className="h-4 w-4" />, 'Upload a .softn file', 'An app you already have. Its interface, backend and migrations become the first version.')}
+        {option('upload', <FileUp className="h-4 w-4" />, 'Upload a .softn file', 'An app you already have, with or without a backend of its own. It becomes the first version, and you can edit it here.')}
       </div>
     </fieldset>
     {method === 'ai' && <div>
@@ -94,12 +130,15 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
         placeholder="e.g. A recipe box: add recipes with ingredients and steps, mark favourites, search by ingredient, and a shopping list. Warm, friendly style." />
       {aiReady === false && <AiConnectNotice lead="Building with AI needs an AI connection" reason={aiReason} onConnected={onAiRecheck} />}
     </div>}
-    {method === 'upload' && <div>
-      <input ref={input} type="file" accept=".softn,.zip" className="hidden" aria-label="Choose a .softn file" onChange={event => { setFile(event.target.files?.[0] ?? null); event.target.value = ''; }} />
-      <div className="flex flex-wrap items-center gap-3">
-        <Button variant="secondary" size="sm" disabled={creating || disabled} onClick={() => input.current?.click()} leftIcon={<FileUp className="h-4 w-4" />}>{file ? 'Choose another file' : 'Choose a file'}</Button>
-        {file && <span className="min-w-0 truncate text-sm text-gray-700 dark:text-slate-300">{file.name}</span>}
-      </div>
+    {method === 'upload' && <div data-testid="softn-drop-zone" className={cn('rounded-xl border-2 border-dashed p-5 text-center transition-colors', dragging ? 'border-primary-400 bg-primary-50/70 dark:border-primary-500/60 dark:bg-primary-500/10' : 'border-gray-300 dark:border-white/15')}>
+      <input ref={input} type="file" accept=".softn,.zip" className="hidden" aria-label="Choose a .softn file" onChange={event => { void takeFile(event.target.files?.[0] ?? null); event.target.value = ''; }} />
+      <p className="text-sm text-gray-600 dark:text-slate-300">{dragging ? 'Drop it to use it' : 'Drop a .softn file here, or'}</p>
+      <Button className="mt-2" variant="secondary" size="sm" disabled={creating || disabled} onClick={() => input.current?.click()} leftIcon={<FileUp className="h-4 w-4" />}>{file ? 'Choose another file' : 'Choose a file'}</Button>
+      {file && <p className="mt-3 break-words text-sm text-gray-700 dark:text-slate-300">
+        <span className="font-medium">{file.name}</span>
+        {review && <span className="text-gray-500 dark:text-slate-400"> · {review.name} · {review.backend ? 'with its own backend and database' : 'runs in the browser, no backend'}</span>}
+      </p>}
+      {fileError && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-left text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{fileError}</p>}
     </div>}
     {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
     <div className="flex items-center justify-end">

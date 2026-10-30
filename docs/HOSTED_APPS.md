@@ -17,6 +17,29 @@ version is the working starter (`POST /api/apps/{id}/native/starter`, refused on
 installed) or the uploaded file; both are for members only and open at the app's address until
 the owner changes that.
 
+Any SoftN app can be uploaded, with a backend of its own or none:
+
+- **No backend** (no `server` block in `manifest.json`, which is most SoftN apps): it runs in the
+  member's browser alone. Nothing starts a runner for it and it has no database here, so what it
+  saves stays in each visitor's browser and the **Data** tab says so. Its media are served to its
+  page. Its seed data (`.xdb` files) is kept with it and downloaded with it, but the SoftN runtime
+  FormLogic embeds (v0.0.27) does not load seed data yet, so the app starts with no records. A
+  later version may add a backend.
+- **A backend of its own**: a `server` block with `"requires": {"apiVersion": 1, "capabilities":
+  [...]}`, an `entry` under `server/` ending in `.logic`, and `"database": {"kind":
+  "private-sqlite"}`. A backend written for another SoftN host (routes and an entry, nothing
+  more) is refused as the file is chosen, before any app is made, with what it needs.
+- **No `id`** in the manifest (SoftN makes it optional): the app runs under one named after it,
+  `formlogic.app.<app id>`, as the starter does. The runner's copy of the manifest carries it; the
+  project as stored and downloaded is exactly what was uploaded, so uploading the same file again
+  is an update of the same app.
+
+The name is optional: an uploaded app keeps its own (the manifest's `name`, else the file's).
+The file is read as soon as it is chosen, or dropped anywhere on the form, so what it is (and any
+reason it cannot be hosted, file by file) shows before anything is created. Media can be pictures
+(PNG, JPEG, WebP, GIF, SVG), sound (WAV, MP3, Ogg) and fonts (WOFF, WOFF2): those are what the app's
+page is served.
+
 The owner manages it at `/apps/<id>/softn`: **App** previews it at desktop or phone width and
 changes it with AI Studio, the Visual Builder, a new `.softn` file or the source editor; **Data**
 browses and edits the tables in its database; **Settings** chooses who can use it and whether it
@@ -291,8 +314,9 @@ and other record creation. Do not treat request IDs as idempotency keys.
 ## Native app hosting (local preview)
 
 Use **App Studio → Screens → Hosting & app tools → Native app hosting** for an existing
-`.softn` project with a `server` manifest, private `.logic` handlers and numbered SQLite
-migrations. This is separate from the named-action editor described above.
+`.softn` project, with a `server` manifest, private `.logic` handlers and numbered SQLite
+migrations or with no backend at all (see [SoftN apps](#softn-apps)). This is separate from the
+named-action editor described above.
 
 1. Import the `.softn` file (or a ZIP containing exactly one app). Review its route count
    and files before installing. The imported project is an unsaved draft.

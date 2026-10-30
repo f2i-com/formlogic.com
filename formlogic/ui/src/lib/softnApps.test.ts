@@ -11,7 +11,7 @@ vi.mock('./api', () => ({ api: { installNativeStarter: mocks.installNativeStarte
 vi.mock('./nativeHosting', () => ({ importNativeProject: mocks.importNativeProject }));
 vi.mock('../stores/appStore', () => ({ useAppStore: { getState: () => ({ createApp: mocks.createApp, error: null }) } }));
 
-const { createSoftnApp, isSoftnApp, softnWorkspacePath } = await import('./softnApps');
+const { createSoftnApp, isSoftnApp, projectHasBackend, softnWorkspacePath } = await import('./softnApps');
 
 const app = { id: 'app-1', name: 'Recipes', slug: 'recipes', settings: { softnApp: true } };
 const project = { version: 1, files: { 'manifest.json': '{}' }, assets: {}, access: 'members', home: true };
@@ -39,10 +39,17 @@ describe('createSoftnApp', () => {
     expect(mocks.saveNativeProject).toHaveBeenCalledWith('app-1', { version: 0, files: { 'manifest.json': '{}' }, assets: {}, access: 'members', home: true }, 0);
   });
 
-  it('creates nothing for a file that is not a SoftN app with a backend', async () => {
-    mocks.importNativeProject.mockRejectedValue(new Error('This app has no native server entry.'));
-    await expect(createSoftnApp({ name: 'Coffee', start: { kind: 'upload', file: new File([], 'x.softn') } })).rejects.toThrow('no native server entry');
+  it('creates nothing for a file this host cannot take', async () => {
+    mocks.importNativeProject.mockRejectedValue(new Error('This file is a FormLogic app project with backend actions, not a SoftN app.'));
+    await expect(createSoftnApp({ name: 'Coffee', start: { kind: 'upload', file: new File([], 'x.softn') } })).rejects.toThrow('backend actions');
     expect(mocks.createApp).not.toHaveBeenCalled();
+  });
+
+  it('names an uploaded app after the app it carries when no name is given', async () => {
+    mocks.importNativeProject.mockResolvedValue({ version: 0, files: { 'manifest.json': JSON.stringify({ name: 'Field notes', main: 'ui/main.ui' }) }, assets: {}, access: 'application' });
+    mocks.saveNativeProject.mockResolvedValue({ data: { project } });
+    await createSoftnApp({ name: '  ', start: { kind: 'upload', file: new File([new Uint8Array([1])], 'fieldnotes.softn') } });
+    expect(mocks.createApp).toHaveBeenCalledWith({ name: 'Field notes', description: undefined, settings: { softnApp: true } });
   });
 
   it('creates nothing in the shared demo, whose apps stay in the browser', async () => {
@@ -65,5 +72,12 @@ describe('isSoftnApp and its workspace', () => {
     expect(isSoftnApp({ settings: { appKind: 'custom' } as never })).toBe(false);
     expect(isSoftnApp(null)).toBe(false);
     expect(softnWorkspacePath('a-1')).toBe('/apps/a-1/softn');
+  });
+
+  it('reads a backend from the manifest\'s server block, and nothing else', () => {
+    const withManifest = (manifest: string) => ({ version: 0, files: { 'manifest.json': manifest }, assets: {}, access: 'application' as const });
+    expect(projectHasBackend(withManifest(JSON.stringify({ main: 'ui/main.ui', server: { entry: 'server/main.logic' } })))).toBe(true);
+    expect(projectHasBackend(withManifest(JSON.stringify({ main: 'ui/main.ui' })))).toBe(false);
+    expect(projectHasBackend(withManifest('not json'))).toBe(false);
   });
 });

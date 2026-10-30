@@ -21,7 +21,7 @@ import { useAiReady } from '../../hooks/useAiReady';
 import { AiConnectNotice } from '../../components/ai/AiConnectNotice';
 import { api } from '../../lib/api';
 import { exportNativeProject, importNativeProject, type NativeProject } from '../../lib/nativeHosting';
-import { isSoftnApp, projectFromUpload } from '../../lib/softnApps';
+import { isSoftnApp, projectFromUpload, projectHasBackend } from '../../lib/softnApps';
 import { cn } from '../../lib/utils';
 import { useAppStore } from '../../stores/appStore';
 import { toast } from '../../stores/toastStore';
@@ -47,9 +47,9 @@ export function SoftnAppWorkspace() {
   if (!app) {
     return <div className="min-h-screen">
       <Header title="SoftN app" back={{ onClick: () => navigate('/apps'), label: 'Back to apps' }} />
-      <main className="mx-auto max-w-3xl px-4 py-10 text-sm text-slate-600 dark:text-slate-400">
+      <div className="mx-auto max-w-3xl px-4 py-10 text-sm text-slate-600 dark:text-slate-400">
         {looked ? <p role="alert">This app was not found, or it is not yours to manage.</p> : <p role="status">Loading your app…</p>}
-      </main>
+      </div>
     </div>;
   }
   // A forms app is managed in its App Studio; this page would install a SoftN starter over it.
@@ -79,6 +79,8 @@ function Workspace({ app }: { app: App }) {
   const upload = useRef<HTMLInputElement>(null);
   const published = app.status === 'published';
   const liveUrl = `${window.location.origin}/app/${encodeURIComponent(app.slug)}${project?.home ? '' : '/native'}`;
+  // An app without a backend of its own runs in the browser alone: it has no database here.
+  const backend = project ? projectHasBackend(project) : true;
 
   const openEditor = (kind: AppEditorKind, brief?: EditorBrief, from: NativeProject | null = project) => {
     if (!from) return;
@@ -188,7 +190,7 @@ function Workspace({ app }: { app: App }) {
 
   return <div className="min-h-screen">
     <Header title={app.name} back={{ onClick: () => leave('/apps'), label: 'Back to apps' }} actions={actions} />
-    <main className="mx-auto max-w-6xl px-4 pb-24 pt-5 sm:px-6">
+    <div className="mx-auto max-w-6xl px-4 pb-24 pt-5 sm:px-6">
       <div className="flex flex-wrap items-center gap-3">
         <StatusPill live={published} />
         {project && <span className="text-xs text-slate-500 dark:text-slate-400">Version {version}{dirty ? ` · unpublished changes${draft.keeping ? ` (${DRAFT_KEEPING[draft.keeping][0]})` : ''}` : ''}</span>}
@@ -250,14 +252,21 @@ function Workspace({ app }: { app: App }) {
                 <Button size="sm" variant="secondary" className="justify-start" leftIcon={<Download className="h-4 w-4" />} onClick={download}>Download as .softn</Button>
                 <Button size="sm" variant="ghost" className="justify-start" leftIcon={<Code2 className="h-4 w-4" />} onClick={() => setAdvanced('backend')}>Edit the source code</Button>
               </div>
-              <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">Records stay in the app&apos;s database when you upload a new version. Downloads hold the source only.</p>
+              <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">{backend
+                ? <>Records stay in the app&apos;s database when you upload a new version. Downloads hold the source only.</>
+                : <>This app has no backend: what it saves stays in each visitor&apos;s browser. Downloads hold the source only.</>}</p>
             </Panel>
           </aside>}
         </div>}
 
         {tab === 'data' && <section role="tabpanel" id="softn-panel-data" aria-labelledby="softn-tab-data" className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:p-5">
-          <p className="mb-4 text-sm leading-6 text-slate-600 dark:text-slate-400">Everything your app stores, table by table. Add, edit and delete records here; your app sees the changes at once. To add a table or a column, ask AI Studio.</p>
-          <NativeRecordsBrowser key={`${app.id}:${version}`} appId={app.id} version={version} readOnly={readOnly} openFirstTable />
+          {backend ? <>
+            <p className="mb-4 text-sm leading-6 text-slate-600 dark:text-slate-400">Everything your app stores, table by table. Add, edit and delete records here; your app sees the changes at once. To add a table or a column, ask AI Studio.</p>
+            <NativeRecordsBrowser key={`${app.id}:${version}`} appId={app.id} version={version} readOnly={readOnly} openFirstTable />
+          </> : <div className="flex items-start gap-3 text-sm leading-6 text-slate-600 dark:text-slate-400">
+            <Database className="mt-0.5 h-5 w-5 shrink-0 text-slate-400" aria-hidden="true" />
+            <p><span className="font-semibold text-slate-900 dark:text-white">This app has no database on the server.</span> It has no backend of its own, so what it saves stays in each visitor&apos;s browser. To keep data here and see it in this tab, give the app a backend: AI Studio can add one.</p>
+          </div>}
         </section>}
 
         {tab === 'settings' && <div role="tabpanel" id="softn-panel-settings" aria-labelledby="softn-tab-settings" className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -291,7 +300,7 @@ function Workspace({ app }: { app: App }) {
           </Panel>
         </div>}
       </>}
-    </main>
+    </div>
     <ConfirmDialog isOpen={confirmUnpublish} onClose={() => setConfirmUnpublish(false)} onConfirm={() => void unpublish()}
       title="Unpublish this app?" message="Nobody but you can open it until you publish again. Its data is kept." confirmLabel="Unpublish" />
   </div>;

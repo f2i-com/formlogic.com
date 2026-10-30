@@ -320,6 +320,9 @@ class NativeAppService
     {
         if (!$this->available()) throw new RuntimeException('Prepare the native app runtime before restoring native apps');
         [$files, $decoded, $manifest, $capabilities] = self::validateProject($project);
+        // Restored under a new app id: an app that declares no id keeps the identity its keys were
+        // made under, which the captured configuration names.
+        $identity = self::identity($manifest, $appId, is_string($hostConfig['appId'] ?? null) ? $hostConfig['appId'] : null);
         $root = $this->root($appId);
         if (is_dir($root) && (is_file($root . '/project.json') || is_dir($root . '/app') || is_file($root . '/private/data/application.sqlite'))) {
             throw new RuntimeException('A native installation already exists for this app; remove it before restoring');
@@ -329,7 +332,7 @@ class NativeAppService
             $this->assertSnapshotHealthy($databaseSnapshot);
         }
         if ($hostConfig !== null) {
-            if (!is_string($hostConfig['keyHex'] ?? null) || !preg_match('/^[0-9a-f]{64}$/', $hostConfig['keyHex']) || ($hostConfig['appId'] ?? null) !== $manifest['id']) {
+            if (!is_string($hostConfig['keyHex'] ?? null) || !preg_match('/^[0-9a-f]{64}$/', $hostConfig['keyHex']) || ($hostConfig['appId'] ?? null) !== $identity || (!is_string($manifest['id'] ?? null) && !str_starts_with($identity, 'formlogic.app.'))) {
                 throw new InvalidArgumentException('The native host configuration does not belong to this app');
             }
         }
@@ -349,7 +352,7 @@ class NativeAppService
                 throw new RuntimeException('A native installation already exists for this app; remove it before restoring');
             }
             $writing = true;
-            $config = $hostConfig ?? ['appId' => $manifest['id'], 'development' => false, 'keyHex' => bin2hex(random_bytes(32)), 'cryptoDomains' => ['hmac' => $manifest['id'] . ':hmac:v1', 'seal' => $manifest['id'] . ':seal:v1']];
+            $config = $hostConfig ?? ['appId' => $identity, 'development' => false, 'keyHex' => bin2hex(random_bytes(32)), 'cryptoDomains' => ['hmac' => $identity . ':hmac:v1', 'seal' => $identity . ':seal:v1']];
             $config['capabilities'] = $capabilities;
             $config['enableHostContext'] = true;
             $this->writeHostConfig($root . '/private/config.json', json_encode($config, JSON_THROW_ON_ERROR));
@@ -359,10 +362,13 @@ class NativeAppService
                 if (!copy($databaseSnapshot, $target) || !$this->sameSize($target, $databaseSnapshot)) throw new RuntimeException('Could not place the restored app database');
                 $database = 'restored';
             }
-            $this->stageProject($staging, array_merge($files, $decoded));
+            $this->stageProject($staging, array_merge(self::runnerFiles($files, $identity), $decoded));
             if (!rename($staging, $root . '/app')) throw new RuntimeException('Could not activate restored app source');
-            $health = $this->invoke($root, ['method' => 'GET', 'path' => '/api/meta', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false]);
-            if (($health['status'] ?? 500) !== 200) throw new RuntimeException('Restored native app failed validation: ' . ($health['body']['diagnostic'] ?? 'runtime unavailable'), 422);
+            // A client-only app has no backend to start, so there is nothing for the runner to check.
+            if (array_key_exists('server', $manifest)) {
+                $health = $this->invoke($root, ['method' => 'GET', 'path' => '/api/meta', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false]);
+                if (($health['status'] ?? 500) !== 200) throw new RuntimeException('Restored native app failed validation: ' . ($health['body']['diagnostic'] ?? 'runtime unavailable'), 422);
+            }
             $version = max(1, (int) ($project['version'] ?? 1));
             $saved = ['home' => ($project['home'] ?? false) === true, 'version' => $version, 'updatedAt' => gmdate('c'), 'files' => $files, 'assets' => is_array($project['assets'] ?? null) ? $project['assets'] : [], 'access' => ($project['access'] ?? '') === 'members' ? 'members' : 'application'];
             $this->writeExact($root . '/project.json', json_encode($saved, JSON_THROW_ON_ERROR), 0600);
@@ -808,6 +814,23 @@ class NativeAppService
         return $total;
     }
 
+    /**
+     * The files the runner is given: the project's own, except that a manifest declaring no id
+     * names the identity the installation runs under, which the runner holds its configuration
+     * to. The project as stored (and as its owner downloads it) is left exactly as uploaded.
+     *
+     * @param array<string, string> $files
+     * @return array<string, string>
+     */
+    private static function runnerFiles(array $files, string $identity): array
+    {
+        $manifest = json_decode($files['manifest.json'], false, 64, JSON_THROW_ON_ERROR);
+        if (!$manifest instanceof \stdClass || isset($manifest->id)) return $files;
+        $manifest->id = $identity;
+        $files['manifest.json'] = json_encode($manifest, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        return $files;
+    }
+
     /** Stage every source and media file of a project into $staging, each written completely or not at all. */
     private function stageProject(string $staging, array $entries): void
     {
@@ -1198,14 +1221,51 @@ class NativeAppService
         return $project;
     }
 
-    /** Source/schema validation only; never starts a VM, applies migrations or writes storage. */
+    /**
+     * Whether a project has a backend: a `server` block in its manifest. A SoftN app without one is
+     * all client (its pages, logic, local data and media) and runs in the member's frame alone:
+     * nothing starts a runner for it, and it has no database.
+     */
+    public static function hasBackend(array $project): bool
+    {
+        $manifest = json_decode((string) ($project['files']['manifest.json'] ?? ''), true);
+        return is_array($manifest) && array_key_exists('server', $manifest);
+    }
+
+    /**
+     * The identity an installation runs under: its manifest's id. SoftN makes the id optional and
+     * most apps declare none; such an app keeps the one its installation already has ($configured,
+     * from its host configuration, which a restore under a new app id carries over), and a new
+     * installation takes one named after this app, as the starter's is. The runner is told it
+     * through its copy of the manifest (runnerFiles).
+     */
+    private static function identity(array $manifest, string $appId, ?string $configured = null): string
+    {
+        if (is_string($manifest['id'] ?? null)) return $manifest['id'];
+        return $configured ?? 'formlogic.app.' . preg_replace('/[^a-zA-Z0-9._-]/', '', $appId);
+    }
+
+    /** The identity the installation's host configuration names, or null before it has one. */
+    private static function configuredIdentity(string $configPath): ?string
+    {
+        if (!is_file($configPath)) return null;
+        $config = json_decode((string) file_get_contents($configPath), true);
+        return is_array($config) && is_string($config['appId'] ?? null) ? $config['appId'] : null;
+    }
+
+    /**
+     * Source/schema validation only; never starts a VM, applies migrations or writes storage.
+     * A manifest with no `server` block is a client-only app (capabilities: none); one with a
+     * `server` block is held to every rule a backend must meet.
+     */
     public static function validateProject(array $project): array
     {
         $files = $project['files'] ?? null;
         if (!is_array($files) || count($files) > 200 || !is_string($files['manifest.json'] ?? null)) throw new InvalidArgumentException('Include the app manifest and at most 200 source files');
         $bytes = 0;
         foreach ($files as $path => $source) {
-            if (!is_string($path) || !preg_match('~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:ui|logic|py|json|sql)$~D', $path) || str_contains($path, '..') || !is_string($source) || strlen($source) > 1000000) throw new InvalidArgumentException('Invalid app source file');
+            // `.xdb` is an app's seed data (its local collections), JSON text the app is shipped with.
+            if (!is_string($path) || !preg_match('~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:ui|logic|py|json|sql|xdb)$~D', $path) || str_contains($path, '..') || !is_string($source) || strlen($source) > 1000000) throw new InvalidArgumentException(is_string($path) && preg_match('~^[\w./-]{1,200}$~', $path) ? "Invalid app source file: {$path}" : 'Invalid app source file');
             // `.py` is CLIENT logic written in Python, which runs in the member's frame on the ZIPP
             // web-python engine. The private tree is the native backend: it is executed by the Node
             // runner as JavaScript, which would read a Python file as a syntax error at best, and
@@ -1226,8 +1286,16 @@ class NativeAppService
         }
         if ($bytes > 16 * 1024 * 1024) throw new InvalidArgumentException('Native project exceeds 16 MB');
         $manifest = json_decode($files['manifest.json'], true, 64, JSON_THROW_ON_ERROR);
-        $server = $manifest['server'] ?? [];
-        if (!is_string($manifest['id'] ?? null) || !preg_match('/^[a-zA-Z0-9._-]{1,120}$/D', $manifest['id']) || !is_string($manifest['main'] ?? null) || !isset($files[$manifest['main']]) || !str_ends_with($manifest['main'], '.ui')) throw new InvalidArgumentException('Invalid native app manifest');
+        if (!is_array($manifest) || (isset($manifest['id']) && (!is_string($manifest['id']) || !preg_match('/^[a-zA-Z0-9._-]{1,120}$/D', $manifest['id']))) || !is_string($manifest['main'] ?? null) || !isset($files[$manifest['main']]) || !str_ends_with($manifest['main'], '.ui')) throw new InvalidArgumentException('Invalid native app manifest');
+        if (!array_key_exists('server', $manifest)) {
+            // Client only. A private tree with no server block to run it would be source no runtime
+            // ever starts, kept as if it were a backend: refused, so the owner adds the block.
+            foreach (array_keys($files) as $path) {
+                if (preg_match('~^(?:server|backend|private)/~i', $path)) throw new InvalidArgumentException("{$path} is backend code, but manifest.json has no server block to run it. Add one, or remove the file.");
+            }
+            return [$files, $decoded, $manifest, []];
+        }
+        $server =is_array($manifest['server']) ? $manifest['server'] : [];
         if (($server['requires']['apiVersion'] ?? null) !== 1 || !is_string($server['entry'] ?? null) || !isset($files[$server['entry']]) || !str_starts_with($server['entry'], 'server/') || !str_ends_with($server['entry'], '.logic')) throw new InvalidArgumentException('Include a server API v1 .logic entry');
         $capabilities = $server['requires']['capabilities'] ?? null;
         if (!is_array($capabilities) || array_diff($capabilities, ['sql', 'crypto', 'time', 'trusted-client-ip', 'transaction-scope', 'photos']) || ($server['sync']['enabled'] ?? false)) throw new InvalidArgumentException('Unsupported native capabilities');
@@ -1362,9 +1430,14 @@ class NativeAppService
             $this->assertCanRestoreDatabase($database);
             $old = $this->get($appId);
             if (($old['version'] ?? 0) !== $expectedVersion) throw new RuntimeException('The project changed. Reload before importing.', 409);
-            if ($old && json_decode($old['files']['manifest.json'], true)['id'] !== $manifest['id']) throw new InvalidArgumentException('Import updates with the same app identity to preserve its database');
+            // An app that had a backend or a database keeps its identity: its data and keys are
+            // held to it. One that had neither kept nothing under it, so it may take a new one.
+            $configured = self::configuredIdentity($configPath);
+            $identity = self::identity($manifest, $appId, $configured);
+            $identityFree = $old !== null && !self::hasBackend($old) && !is_file($database);
+            if ($old && self::identity(json_decode($old['files']['manifest.json'], true) ?: [], $appId, $configured) !== $identity && !$identityFree) throw new InvalidArgumentException('Import updates with the same app identity to preserve its database');
             if ($old) self::assertMigrationsKept($old['files'], $files);
-            $this->stageProject($staging, array_merge($files, $decoded));
+            $this->stageProject($staging, array_merge(self::runnerFiles($files, $identity), $decoded));
             // The journal is the durable intent (FL-S03): written before anything active changes,
             // advanced before each phase, so a process that dies leaves a record of how far it got.
             // It names every file the update may create before that file exists, so whichever way
@@ -1376,7 +1449,7 @@ class NativeAppService
             $this->writeJournal($root, $journal);
             $this->afterPhase($root, 'staged');
             if (!$hadConfig) {
-                $config = ['appId' => $manifest['id'], 'development' => false, 'keyHex' => bin2hex(random_bytes(32)), 'capabilities' => $capabilities, 'cryptoDomains' => ['hmac' => $manifest['id'] . ':hmac:v1', 'seal' => $manifest['id'] . ':seal:v1']];
+                $config = ['appId' => $identity, 'development' => false, 'keyHex' => bin2hex(random_bytes(32)), 'capabilities' => $capabilities, 'cryptoDomains' => ['hmac' => $identity . ':hmac:v1', 'seal' => $identity . ':seal:v1']];
                 $this->writeHostConfig($configPath, json_encode($config, JSON_THROW_ON_ERROR));
                 $this->afterStep($root, 'config-created');
             }
@@ -1394,9 +1467,15 @@ class NativeAppService
             $this->advance($root, $journal, 'config-changed');
             $config = json_decode($originalConfig, true, 64, JSON_THROW_ON_ERROR);
             // Owner-authorized updates use the same validated capabilities as a new install.
-            // Retain the app identity and cryptographic keys across source updates.
+            // Retain the app identity and cryptographic keys across source updates. The check above
+            // lets the identity change only where nothing is held to it (no backend, no database):
+            // then the configuration takes the new one, which the runner requires to match.
             $config['capabilities'] = $capabilities;
             $config['enableHostContext'] = true;
+            if ($identityFree && ($config['appId'] ?? null) !== $identity) {
+                $config['appId'] = $identity;
+                $config['cryptoDomains'] = ['hmac' => $identity . ':hmac:v1', 'seal' => $identity . ':seal:v1'];
+            }
             $this->writeHostConfig($configPath, json_encode($config, JSON_THROW_ON_ERROR));
             if ($hadDatabase) {
                 $snapshot = $root . '/private/' . $journal['snapshot'];
@@ -1415,9 +1494,12 @@ class NativeAppService
             if ($journal['previous'] !== null && !rename($root . '/app', $root . '/' . $journal['previous'])) throw new RuntimeException('Could not stage the update');
             if (!rename($staging, $root . '/app')) throw new RuntimeException('Could not activate app source');
             $this->advance($root, $journal, 'source-activated');
-            // This runs the native host's manifest and migration validation, using its real SQLite database.
-            $health = $this->invoke($root, ['method' => 'GET', 'path' => '/api/meta', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false]);
-            if (($health['status'] ?? 500) !== 200) throw new RuntimeException(self::startupFailure((string) ($health['body']['diagnostic'] ?? '')), 422);
+            // This runs the native host's manifest and migration validation, using its real SQLite
+            // database. A client-only app has no backend to start, so nothing runs for it.
+            if (array_key_exists('server', $manifest)) {
+                $health = $this->invoke($root, ['method' => 'GET', 'path' => '/api/meta', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false]);
+                if (($health['status'] ?? 500) !== 200) throw new RuntimeException(self::startupFailure((string) ($health['body']['diagnostic'] ?? '')), 422);
+            }
             $this->advance($root, $journal, 'migrated');
             $saved = ['home' => ($project['home'] ?? false) === true, 'version' => $expectedVersion + 1, 'updatedAt' => gmdate('c'), 'files' => $files, 'assets' => $assets, 'access' => ($project['access'] ?? '') === 'members' ? 'members' : 'application'];
             $this->writeExact($root . '/project.json', json_encode($saved, JSON_THROW_ON_ERROR), 0600);
@@ -1457,8 +1539,11 @@ class NativeAppService
      */
     public function request(string $appId, array $request, array $identity = [], array $subscriptions = [], ?int $generation = null): array
     {
-        [$root, $lock] = $this->openShared($appId, $generation);
-        try { return $this->invoke($root, $request, $identity, $subscriptions); }
+        [$root, $lock, $project] = $this->openShared($appId, $generation);
+        try {
+            if (!self::hasBackend($project ?? [])) throw new RuntimeException('This app has no backend', 404);
+            return $this->invoke($root, $request, $identity, $subscriptions);
+        }
         finally { flock($lock, LOCK_UN); fclose($lock); }
     }
 
@@ -1540,8 +1625,16 @@ class NativeAppService
     /** Browse the same database used by ZIPP; host metadata and auth secrets are excluded from the table view. */
     public function records(string $appId, ?string $table = null, int $offset = 0, ?int $generation = null): array
     {
-        [$root, $lock] = $this->openShared($appId, $generation);
-        try { return $this->readRecords($root, $table, $offset); }
+        [$root, $lock, $project] = $this->openShared($appId, $generation);
+        try {
+            // A client-only app keeps its data in its members' browsers: there is no database here
+            // (unless an earlier version with a backend left one, which is still shown).
+            if (!self::hasBackend($project ?? []) && !is_file($root . '/private/data/application.sqlite')) {
+                if ($table !== null) throw new RuntimeException('This app has no database', 404);
+                return ['installed' => true, 'tables' => [], 'backend' => false];
+            }
+            return $this->readRecords($root, $table, $offset);
+        }
         finally { flock($lock, LOCK_UN); fclose($lock); }
     }
 

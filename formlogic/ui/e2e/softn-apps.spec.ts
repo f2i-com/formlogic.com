@@ -7,7 +7,8 @@ import { sessionHeaders } from './session-request';
  *     tab shows the record, and Publish makes it live.
  *   - Built with AI: AI Studio builds the app from the description while FormLogic shows it
  *     working, and the change is installed when the owner keeps it.
- *   - Uploaded: a .softn file becomes the app's first version.
+ *   - Uploaded: a .softn file becomes the app's first version, with a backend of its own or
+ *     none (an app that runs in the browser alone, named after itself, downloads as it came).
  *   - From the chat: a create_softn_app result takes the person to the new app, where AI Studio
  *     builds it from their request.
  *
@@ -22,7 +23,7 @@ import { expect, test, type BrowserContext, type Page, type Route } from '@playw
 import { readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { strToU8, zipSync } from 'fflate';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { openStudioAiPanel } from './studio-panel';
 
 const EMAIL = process.env.E2E_EMAIL || 'test@example.com';
@@ -204,6 +205,44 @@ test.describe('hosted SoftN apps', () => {
     expect(project).toMatchObject({ version: 1, access: 'members', home: true });
     expect(project.files['ui/main.ui']).toContain('Uploaded app');
     await expect(preview(page).getByText('Uploaded app', { exact: true })).toBeVisible({ timeout: 60000 });
+  });
+
+  test('uploaded without a backend: a browser-only app is added under its own name, runs, and downloads as it came', async ({ page, context }) => {
+    test.setTimeout(180000);
+    // Most SoftN apps are like this one: no server block, no id, and seed data of their own.
+    const name = `Field notes ${Date.now()}`;
+    const files: Record<string, string> = {
+      'manifest.json': JSON.stringify({ name, version: '1.0.0', main: 'ui/main.ui', files: { xdb: ['xdb/notes.xdb'] } }),
+      'ui/main.ui': '<logic>\nvar count = 0;\nfunction add() { count = count + 1; }\n</logic>\n<Stack padding="24" gap="12"><Text>Browser-only app</Text><Button onClick={add}>Add one</Button><Text>Count: {count}</Text></Stack>',
+      'xdb/notes.xdb': JSON.stringify({ collection: 'notes', records: [] }),
+    };
+    const path = join(tmpdir(), `softn-client-${Date.now()}.softn`);
+    writeFileSync(path, Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([p, source]) => [p, strToU8(source)])))));
+    await page.goto('/apps/new?type=softn');
+    await page.getByText('Upload a .softn file', { exact: true }).click();
+    await page.getByLabel('Choose a .softn file').setInputFiles(path);
+    // Read at once: what it is, and that no name has to be typed.
+    await expect(page.getByTestId('softn-drop-zone')).toContainText(`${name} · runs in the browser, no backend`);
+    await expect(page.locator('#softn-app-name')).toHaveAttribute('placeholder', name);
+    await page.getByRole('button', { name: 'Create from this file', exact: true }).click();
+    const appId = await workspaceAppId(page);
+    const apps = (await (await context.request.get('/api/apps')).json()).apps as Array<{ id: string; name: string }>;
+    expect(apps.find(app => app.id === appId)?.name).toBe(name);
+    expect((await nativeProject(context, appId))!.files).toEqual(files);
+    // It runs in the preview, its logic answering a click.
+    await expect(preview(page).getByText('Browser-only app', { exact: true })).toBeVisible({ timeout: 60000 });
+    await preview(page).getByRole('button', { name: 'Add one', exact: true }).click();
+    await expect(preview(page).getByText('Count: 1', { exact: true })).toBeVisible();
+    // With no backend it has no database here, and the Data tab says so.
+    await page.getByRole('tab', { name: 'Data' }).click();
+    await expect(page.getByText('This app has no database on the server.', { exact: true })).toBeVisible();
+    // What the owner downloads is what was uploaded.
+    await page.getByRole('tab', { name: 'App' }).click();
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download as .softn', exact: true }).click();
+    const saved = join(tmpdir(), `softn-client-download-${Date.now()}.softn`);
+    await (await download).saveAs(saved);
+    expect(Object.fromEntries(Object.entries(unzipSync(readFileSync(saved))).map(([p, bytes]) => [p, strFromU8(bytes)]))).toEqual(files);
   });
 
   test('from the chat: a new SoftN app takes the person to AI Studio, which builds it from their request', async ({ page, context }) => {

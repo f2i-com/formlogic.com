@@ -112,7 +112,7 @@ describe('Python client app import', () => {
 
   it.each(['logic/counter.PY', 'logic/code.js', 'logic/code.wasm', 'logic/code.bin'])('does not expand the upload surface to %s', async path => {
     const bytes = new Uint8Array([0, 255, 1]);
-    await expect(importNativeProject(file({ ...native(), [path]: bytes }))).rejects.toThrow('Unsupported project file');
+    await expect(importNativeProject(file({ ...native(), [path]: bytes }))).rejects.toThrow(`${path} is a kind of file this host cannot keep with an app`);
     expect(() => hostedPackageFromArchive(encode({ ...actions(), [path]: bytes }))).toThrow('native asset hosting');
     const { review } = reviewAppArchive(zipSync(encode({ ...client, [path]: bytes })));
     expect(review.assets).toBe(1);
