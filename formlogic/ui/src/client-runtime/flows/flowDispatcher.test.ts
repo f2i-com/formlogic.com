@@ -994,6 +994,26 @@ describe('a run belongs to the app it started in', () => {
     expect(harness.completeCalls[0].payload.status).not.toBe('done');
   });
 
+  it('stops too when its nodes use the browser\'s own fetch, as they do in production', async () => {
+    let open = 'my-app';
+    const requests: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) => {
+      requests.push(String(url));
+      open = 'their-bank';
+      return json();
+    }));
+    try {
+      installDeps({ getAppSlug: () => open });
+      __setRuntimeFlowsForTests({ flows: [twoRequests('/api/app/my-app/one', '/api/app/my-app/two')], bindings: [] }, 'my-app');
+
+      await expect(runFlowBySlug('echo', { mode: 'sync' })).rejects.toThrow(/no longer open/);
+
+      expect(requests).toEqual(['/api/app/my-app/one']);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('does not take the session to a slug it does not belong to, even with the app still open', async () => {
     const requests: Array<{ url: string; credentials?: string }> = [];
     const fetchFn = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
@@ -1036,6 +1056,7 @@ describe('a flow of someone else\'s app and what is the viewer\'s', () => {
     await expect(deps.resolveDesktopLlmEndpoint?.()).rejects.toThrow(NOT_ALLOWED_MESSAGE);
     await expect(deps.resolveDesktopServiceBase?.('llm')).rejects.toThrow(NOT_ALLOWED_MESSAGE);
     await expect(deps.listDesktopServices?.()).rejects.toThrow(NOT_ALLOWED_MESSAGE);
+    await expect(deps.confirmLocalAccess?.()).rejects.toThrow(NOT_ALLOWED_MESSAGE);
   });
 
   it('is refused while another app is on screen, whoever owns that one', async () => {

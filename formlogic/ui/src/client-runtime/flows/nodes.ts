@@ -357,6 +357,11 @@ export interface FlowExecutorDeps {
    * before this route existed).
    */
   invokeServiceAction?(req: ServiceActionInvokeRequest): Promise<ServiceActionInvokeResult>;
+  /**
+   * Before a node calls a URL its flow names on the viewer's computer: throws unless the
+   * viewer allowed this app (client-runtime/appLocalAccess.ts). Absent in a workspace run.
+   */
+  confirmLocalAccess?(): Promise<void>;
 }
 
 /** One §7.6 browser→Desktop service-action invocation (deps.invokeServiceAction). */
@@ -427,7 +432,8 @@ function sameOriginPath(url: string): string | null {
  * True for loopback-only http(s) URLs (127.0.0.1 / localhost / ::1). Desktop-managed AI
  * services run on their own loopback ports (Ollama on 11434, llama.cpp on 8080, …), so an
  * endpoint RESOLVED FROM the paired Desktop's /api/services list is allowed when — and only
- * when — it stays on the local machine. Never applied to author-supplied URLs.
+ * when — it stays on the local machine. An author-supplied URL that passes this is on the
+ * viewer's computer, and goes through confirmLocalEndpoint.
  */
 export function isLoopbackUrl(url: string): boolean {
   try {
@@ -436,6 +442,31 @@ export function isLoopbackUrl(url: string): boolean {
     return u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]' || u.hostname === '::1';
   } catch {
     return false;
+  }
+}
+
+/** The control ports of FormLogic Desktop and OAIY (DESKTOP_BASE_CANDIDATES). */
+const RUNTIME_CONTROL_PORTS = new Set(['17872', '17972']);
+
+/**
+ * A URL a flow names, about to be called, may be on the viewer's computer. An app's flow
+ * is its author's code in the viewer's browser, and OAIY trusts the site it is linked to
+ * with no token at all, so naming a loopback URL must not step around what the viewer
+ * allowed: a node's fixed path is no help, a `?` in the endpoint swallows it. The runtimes'
+ * control ports are never for an app's flow, whose way in is connectors, and anything else
+ * local is the viewer's to allow (deps.confirmLocalAccess). A workspace run is the person's
+ * own flow, and has neither rule.
+ */
+async function confirmLocalEndpoint(ctx: FlowNodeContext, url: string): Promise<void> {
+  if (!isLoopbackUrl(url)) return;
+  const { node, deps } = ctx;
+  if (deps.appSlug && RUNTIME_CONTROL_PORTS.has(new URL(url).port)) {
+    throw new FlowExecError('capability_denied', `Node '${node.id}' may not call the desktop runtime directly: an app reaches it through connectors`, node.id);
+  }
+  try {
+    await deps.confirmLocalAccess?.();
+  } catch (err) {
+    throw new FlowExecError('capability_denied', `Node '${node.id}': ${err instanceof Error ? err.message : String(err)}`, node.id);
   }
 }
 
@@ -688,6 +719,7 @@ async function resolveLlmChatEndpoint(ctx: FlowNodeContext): Promise<string> {
         node.id
       );
     }
+    await confirmLocalEndpoint(ctx, data.endpoint);
     return data.endpoint;
   }
 
@@ -705,7 +737,10 @@ async function resolveLlmChatEndpoint(ctx: FlowNodeContext): Promise<string> {
   const aiBase = deps.getAppAiBase?.() ?? null;
   if (typeof aiBase === 'string' && aiBase.trim() !== '') {
     const endpoint = `${aiBase.replace(/\/+$/, '')}/chat/completions`;
-    if (isAllowedFlowUrl(endpoint) || isLoopbackUrl(endpoint)) return endpoint;
+    if (isAllowedFlowUrl(endpoint) || isLoopbackUrl(endpoint)) {
+      await confirmLocalEndpoint(ctx, endpoint);
+      return endpoint;
+    }
   }
 
   throw new FlowExecError(
@@ -1040,6 +1075,7 @@ async function runHttpRequest(ctx: FlowNodeContext): Promise<unknown> {
         node.id
       );
     }
+    await confirmLocalEndpoint(ctx, url);
   }
   const method = typeof data.method === 'string' && data.method !== '' ? data.method.toUpperCase() : 'GET';
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -1137,6 +1173,7 @@ async function resolveServiceBase(
         node.id
       );
     }
+    await confirmLocalEndpoint(ctx, base);
     return base;
   }
   if (deps.resolveDesktopServiceBase) {
@@ -1358,6 +1395,7 @@ async function runImageGen(ctx: FlowNodeContext): Promise<unknown> {
     if (!isAllowedFlowUrl(endpoint) && !isLoopbackUrl(endpoint)) {
       throw new FlowExecError('capability_denied', `Node '${node.id}' image_gen endpoint is not allow-listed (a local loopback service or the FormLogic API only)`, node.id);
     }
+    await confirmLocalEndpoint(ctx, endpoint);
   } else {
     endpoint = `${await resolveServiceBase(ctx, serviceId, IMAGE_SERVICE.name)}/generate`;
   }
@@ -1407,6 +1445,7 @@ async function resolveConfiguredEndpoint(ctx: FlowNodeContext, defaultPath: stri
     if (!isAllowedFlowUrl(endpoint) && !isLoopbackUrl(endpoint)) {
       throw new FlowExecError('capability_denied', `Node '${node.id}' endpoint is not allow-listed (a local loopback service or the FormLogic API only)`, node.id);
     }
+    await confirmLocalEndpoint(ctx, endpoint);
     return endpoint;
   }
   const explicitService = typeof data.service === 'string' && data.service !== '' ? data.service : null;

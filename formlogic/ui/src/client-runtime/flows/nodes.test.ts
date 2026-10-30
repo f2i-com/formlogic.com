@@ -1039,6 +1039,57 @@ describe('http_request', () => {
     },
   );
 
+  describe('a URL a flow names on the viewer\'s computer', () => {
+    const NOT_ALLOWED = 'This app has not been allowed';
+    const refusingDeps = (fetchFn: typeof fetch) => fakeDeps({ fetchFn, appSlug: 'shop', confirmLocalAccess: async () => { throw new Error(NOT_ALLOWED); } });
+
+    // OAIY answers a site it is linked to with no token, and a `?` swallows the node's own path.
+    it.each([
+      ['tts_speak', { text: 'x', endpoint: 'http://127.0.0.1:17972/api/services/llm/stop?' }],
+      ['stt_transcribe', { audio: 'x', endpoint: 'http://localhost:17972/api/services/llm/stop?' }],
+      ['image_gen', { prompt: 'x', endpoint: 'http://127.0.0.1:17972/api/services/llm/repair?' }],
+      ['http_request', { url: 'http://127.0.0.1:17872/api/services', method: 'POST' }],
+    ])('an app\'s %s never calls a desktop runtime directly', async (type, data) => {
+      const fetchFn = vi.fn(async () => jsonOk());
+      const confirm = vi.fn(async () => undefined);
+      const deps = fakeDeps({ fetchFn: fetchFn as unknown as typeof fetch, appSlug: 'shop', confirmLocalAccess: confirm });
+      await expect(executeNode(ctxFor({ id: 'n', type, data } as WorkflowGraphNode, deps))).rejects.toMatchObject({ code: 'capability_denied' });
+      expect(fetchFn).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['tts_speak', { text: 'x', endpoint: 'http://127.0.0.1:9000/speak' }],
+      ['image_gen', { prompt: 'x', endpoint: 'http://127.0.0.1:9000/generate' }],
+      ['llm_chat', { prompt: 'x', provider: 'local:none', endpoint: 'http://127.0.0.1:17872/v1/chat/completions' }],
+    ])('an app\'s %s calls nothing local until the viewer allows it', async (type, data) => {
+      const fetchFn = vi.fn(async () => jsonOk());
+      await expect(executeNode(ctxFor({ id: 'n', type, data } as WorkflowGraphNode, refusingDeps(fetchFn as unknown as typeof fetch))))
+        .rejects.toMatchObject({ code: 'capability_denied', message: expect.stringMatching(/not been allowed|may not call the desktop runtime/) });
+      expect(fetchFn).not.toHaveBeenCalled();
+    });
+
+    it('goes on once the viewer has allowed the app', async () => {
+      const fetchFn = vi.fn(async () => new Response('{"url":"x"}', { status: 200, headers: { 'content-type': 'application/json' } }));
+      const confirm = vi.fn(async () => undefined);
+      const deps = fakeDeps({ fetchFn: fetchFn as unknown as typeof fetch, appSlug: 'shop', confirmLocalAccess: confirm });
+      await executeNode(ctxFor({ id: 'n', type: 'image_gen', data: { prompt: 'x', endpoint: 'http://127.0.0.1:9000/generate' } }, deps)).catch(() => undefined);
+      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(fetchFn).toHaveBeenCalled();
+    });
+
+    it('leaves a person\'s own workspace flow alone: it has no app, and nobody to ask', async () => {
+      const fetchFn = vi.fn(async () => jsonOk());
+      await executeNode(ctxFor({ id: 'h', type: 'http_request', data: { url: 'http://127.0.0.1:17872/api/services' } }, fakeDeps({ fetchFn: fetchFn as unknown as typeof fetch })));
+      expect(fetchFn).toHaveBeenCalled();
+    });
+
+    it('does not ask about the FormLogic API, which is not on the viewer\'s computer', async () => {
+      const fetchFn = vi.fn(async () => jsonOk());
+      await executeNode(ctxFor({ id: 'h', type: 'http_request', data: { url: '/api/app/shop/records' } }, refusingDeps(fetchFn as unknown as typeof fetch)));
+      expect(fetchFn).toHaveBeenCalled();
+    });
+  });
+
   it('sends no session with an endpoint a flow names on another kind of node', async () => {
     const fetchFn = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: 'hi' } }] }), { status: 200, headers: { 'content-type': 'application/json' } }));
     const node: WorkflowGraphNode = { id: 'l', type: 'llm_chat', data: { endpoint: '/api/auth/me/export', model: 'm', prompt: 'p' } };

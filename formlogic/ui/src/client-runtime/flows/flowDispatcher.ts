@@ -350,10 +350,12 @@ function depsForAppRun(executorDeps: FlowExecutorDeps, slug: string, stillOpen: 
     get(target, property, receiver) {
       if (property === 'appSlug') return slug;
       const value: unknown = Reflect.get(target, property, receiver);
-      if (typeof value !== 'function') return value;
+      // Without a fetchFn a node calls the global one, which must stop with the run too.
+      const callable = property === 'fetchFn' && value === undefined ? (...args: Parameters<typeof fetch>) => fetch(...args) : value;
+      if (typeof callable !== 'function') return callable;
       return (...args: unknown[]) => {
         if (stillOpen() !== slug) throw new Error(`This run stopped because its app, ${slug}, is no longer open.`);
-        return (value as (...a: unknown[]) => unknown).apply(target, args);
+        return (callable as (...a: unknown[]) => unknown).apply(target, args);
       };
     },
   });
@@ -437,6 +439,7 @@ export function buildDefaultExecutorDeps(): FlowExecutorDeps {
     invokeChildFlow: (req) => invokeChildFlowWith(appChildFlowBackend(), req),
     // service_action's §7.6 Desktop leg (machine-scoped — identical in both builders).
     invokeServiceAction: askingFirst((req: import('./nodes').ServiceActionInvokeRequest) => invokeDesktopServiceAction(req)),
+    confirmLocalAccess: askingFirst(async () => undefined),
   };
 }
 
