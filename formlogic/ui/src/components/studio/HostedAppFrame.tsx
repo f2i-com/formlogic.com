@@ -320,7 +320,9 @@ export function HostedAppFrame({
         // A save is answered at once from this page's storage, so it is not held to the four
         // backend calls: a screen busy with its own calls had its saves refused. The frame sends
         // saves in a lane of their own when told it may (`storageLane` below).
-        const counted = action !== "nativeStorage";
+        // Only where this mount has storage: in a hosted app without it a call by that name is an
+        // ordinary action, a request to the server, and is counted like the rest.
+        const counted = !(storage && action === "nativeStorage");
         if (counted && inFlight >= 4) {
           reply({ error: "Please wait for the current request." });
           return;

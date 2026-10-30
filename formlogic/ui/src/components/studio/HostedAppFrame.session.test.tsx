@@ -58,6 +58,15 @@ it('keeps ordinary hosted frames independent of native storage metadata', async 
   const frame = await mount({ engine }); await ready(frame.iframe);
   expect(mocks.storage).not.toHaveBeenCalled(); expect(frame.post).toHaveBeenCalled(); await call('save', {}); expect(mocks.hosted).toHaveBeenCalledTimes(1);
 });
+it('counts a call named nativeStorage against the four in a hosted app without storage, where it is an ordinary action', async () => {
+  const pending = deferred<unknown>(); mocks.hosted.mockReturnValue(pending.promise);
+  const frame = await mount({ engine }); await ready(frame.iframe); const channel = channels[0];
+  await act(async () => { for (const id of [1, 2, 3, 4, 5]) void channel.port1.onmessage?.({ data: { type: 'call', id, action: 'nativeStorage', input: { operation: 'set', key: 'k', value: 'v' } } }); });
+  expect(mocks.hosted).toHaveBeenCalledTimes(4);
+  expect(channel.port1.postMessage).toHaveBeenCalledWith({ id: 5, result: { error: 'Please wait for the current request.' } });
+  expect(mocks.mutate).not.toHaveBeenCalled();
+  await act(async () => pending.resolve({ data: { actor, result: { ok: true } } }));
+});
 it('does not hydrate after a session changes while engine bytes load', async () => {
   const late = deferred<ArrayBuffer>(); mocks.bytes.mockReturnValue(late.promise); const frame = await mount(); await ready(frame.iframe);
   await act(async () => { bumpSessionGeneration(); setSessionOwner('bob'); }); await act(async () => late.resolve(new ArrayBuffer(8)));
