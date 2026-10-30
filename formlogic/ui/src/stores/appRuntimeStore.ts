@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api, newIdempotencyKey } from '../lib/api';
+import { setOnScreenApp } from '../client-runtime/appLocalAccess';
 import { setConnectorCapabilityContext } from '../client-runtime/desktop/desktopClient';
 import { enqueueSubmission } from '../client-runtime/offlineQueue';
 import { enqueueNativeSubmission, flushQueuesWhenDue } from '../client-runtime/nativeOfflineQueue';
@@ -514,3 +515,9 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
     }
   )
 );
+
+// Which app is open and whether the viewer owns it: what decides if it may use their AI and OAIY.
+useAppRuntimeStore.subscribe((state) => {
+  const app = state.config?.app;
+  setOnScreenApp(app && state.appSlug ? { id: app.id, slug: state.appSlug, name: app.name, manages: app.canManage === true } : null);
+});

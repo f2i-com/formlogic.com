@@ -30,6 +30,7 @@ import { getDesktopInfo } from '../desktop/desktopDetection';
 import { isDesktopPaired } from '../desktop/desktopPairing';
 import { isSimulatorActive } from './connectorSimulator';
 import { generateId } from '../../lib/utils';
+import { appMayUseThisComputer, NOT_ALLOWED_MESSAGE } from '../appLocalAccess';
 import { oaiyRouteAvailable, oaiyConnectorAvailable, oaiyConnectorRequest } from '../oaiy/oaiyRuntime';
 
 /** The demo half a pack driver supplies (see packConnectorDriver.ts). */
@@ -148,6 +149,11 @@ export function createDesktopBackedConnector(
           'connector_unavailable',
           `No local runtime is connected — "${command}" was not performed. Connect and pair OAIY Desktop (or FormLogic Desktop) to use ${manifest.label}.`
         );
+      }
+
+      // The runtime is the viewer's. An app's own grants cannot be what lets it in.
+      if (!(await appMayUseThisComputer())) {
+        throw new ConnectorError('capability_denied', `"${command}" was not performed. ${NOT_ALLOWED_MESSAGE}`);
       }
 
       // The plugin durably journals physical actions. Mint the id once for this

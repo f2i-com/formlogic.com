@@ -4,6 +4,7 @@ import {
   __setFlowDispatcherDepsForTests,
   __setRuntimeFlowsForTests,
   BROWSER_LOGIC_LANGUAGES,
+  buildDefaultExecutorDeps,
   defaultDesktopRuntimeFresh,
   defaultDesktopRuntimeStatus,
   desktopTakesLanguages,
@@ -16,6 +17,7 @@ import {
   type FlowDispatcherDeps,
 } from './flowDispatcher';
 import { api } from '../../lib/api';
+import { __resetAppLocalAccessForTests, NOT_ALLOWED_MESSAGE, setOnScreenApp } from '../appLocalAccess';
 import type { FlowExecutorDeps } from './nodes';
 import type { RuntimeFlows } from '../../types/flows';
 import type { AiSourceListing } from './desktopService';
@@ -939,5 +941,107 @@ describe('runFlowBySlug (flow.run effect / manual)', () => {
     installDeps();
     __setRuntimeFlowsForTests({ flows: [passthroughGraph()], bindings: [] }, 'my-app');
     await expect(runFlowBySlug('nope')).rejects.toThrow(/Unknown or disabled flow/);
+  });
+});
+
+describe('a run belongs to the app it started in', () => {
+  // A run outlives the page it started on, and it used to read the open app afresh:
+  // left running while the person opened another app, it became that app, and its
+  // author could read the second app with the viewer's session.
+  function twoRequests(first: string, second: string): RuntimeFlows['flows'][number] {
+    return {
+      ...passthroughGraph(),
+      flowJson: {
+        nodes: [
+          { id: 'in', type: 'input' },
+          { id: 'a', type: 'http_request', data: { url: first } },
+          { id: 'b', type: 'http_request', data: { url: second } },
+          { id: 'out', type: 'output', data: { value: 'done' } },
+        ],
+        edges: [{ source: 'in', target: 'a' }, { source: 'a', target: 'b' }, { source: 'b', target: 'out' }],
+      },
+    };
+  }
+  const json = () => new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } });
+
+  it('stops when its app is closed, rather than going on as the app opened next', async () => {
+    let open = 'my-app';
+    const requests: Array<{ url: string; credentials?: string }> = [];
+    const fetchFn = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: String(url), credentials: init?.credentials });
+      open = 'their-bank'; // the viewer opens another app while the first request is out
+      return json();
+    });
+    const harness = installDeps({
+      getAppSlug: () => open,
+      executorDeps: {
+        evaluateBoolean: async () => true,
+        evaluateExpression: async () => null,
+        listResponses: async () => [],
+        submitResponse: async () => ({ id: 'r' }),
+        updateResponse: async () => ({ id: 'r' }),
+        connectorRequest: async () => ({ ok: true }),
+        get appSlug() { return open; },
+        fetchFn: fetchFn as unknown as typeof fetch,
+      },
+    });
+    __setRuntimeFlowsForTests({ flows: [twoRequests('/api/app/my-app/one', '/api/app/their-bank/secrets')], bindings: [] }, 'my-app');
+
+    await expect(runFlowBySlug('echo', { mode: 'sync' })).rejects.toThrow(/no longer open/);
+
+    expect(requests).toEqual([{ url: '/api/app/my-app/one', credentials: 'include' }]);
+    expect(harness.completeCalls).toHaveLength(1);
+    expect(harness.completeCalls[0].payload.status).not.toBe('done');
+  });
+
+  it('does not take the session to a slug it does not belong to, even with the app still open', async () => {
+    const requests: Array<{ url: string; credentials?: string }> = [];
+    const fetchFn = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: String(url), credentials: init?.credentials });
+      return json();
+    });
+    installDeps({
+      executorDeps: {
+        evaluateBoolean: async () => true,
+        evaluateExpression: async () => null,
+        listResponses: async () => [],
+        submitResponse: async () => ({ id: 'r' }),
+        updateResponse: async () => ({ id: 'r' }),
+        connectorRequest: async () => ({ ok: true }),
+        get appSlug() { return 'their-bank'; }, // what the shared deps said once another app opened
+        fetchFn: fetchFn as unknown as typeof fetch,
+      },
+    });
+    __setRuntimeFlowsForTests({ flows: [twoRequests('/api/app/my-app/one', '/api/app/their-bank/secrets')], bindings: [] }, 'my-app');
+
+    await runFlowBySlug('echo', { mode: 'sync' });
+
+    expect(requests.map((request) => request.credentials)).toEqual(['include', 'omit']);
+  });
+});
+
+describe('a flow of someone else\'s app and what is the viewer\'s', () => {
+  afterEach(() => __resetAppLocalAccessForTests());
+  const theirs = { id: 'app-theirs', slug: 'theirs', name: 'Their shop', manages: false };
+
+  it('reaches none of it until the viewer says yes', async () => {
+    __resetAppLocalAccessForTests();
+    __setRuntimeFlowsForTests({ flows: [], bindings: [] }, 'theirs');
+    setOnScreenApp(theirs);
+    const deps = buildDefaultExecutorDeps();
+
+    await expect(deps.connectorRequest('aokie', 'call.dial', {})).rejects.toThrow(NOT_ALLOWED_MESSAGE);
+    await expect(deps.resolveAiProvider?.('chat', 'my-key')).rejects.toThrow(NOT_ALLOWED_MESSAGE);
+    await expect(deps.invokeDesktopAiChat?.('p', {})).rejects.toThrow(NOT_ALLOWED_MESSAGE);
+    await expect(deps.resolveDesktopLlmEndpoint?.()).rejects.toThrow(NOT_ALLOWED_MESSAGE);
+    await expect(deps.resolveDesktopServiceBase?.('llm')).rejects.toThrow(NOT_ALLOWED_MESSAGE);
+    await expect(deps.listDesktopServices?.()).rejects.toThrow(NOT_ALLOWED_MESSAGE);
+  });
+
+  it('is refused while another app is on screen, whoever owns that one', async () => {
+    __resetAppLocalAccessForTests();
+    __setRuntimeFlowsForTests({ flows: [], bindings: [] }, 'theirs');
+    setOnScreenApp({ ...theirs, slug: 'mine', id: 'app-mine', manages: true });
+    await expect(buildDefaultExecutorDeps().connectorRequest('aokie', 'call.dial', {})).rejects.toThrow(NOT_ALLOWED_MESSAGE);
   });
 });

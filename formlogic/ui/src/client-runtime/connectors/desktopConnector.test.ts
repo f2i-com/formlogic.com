@@ -20,6 +20,7 @@ vi.mock('../../lib/api', () => ({ api: { isDemoMode: vi.fn(() => false) } }));
 
 import { createDesktopBackedConnector } from './desktopConnector';
 import { ConnectorError } from './connectorTypes';
+import { __resetAppLocalAccessForTests, setOnScreenApp } from '../appLocalAccess';
 import { oaiyRouteAvailable, oaiyConnectorAvailable, oaiyConnectorRequest } from '../oaiy/oaiyRuntime';
 import { desktopClient } from '../desktop/desktopClient';
 import { getDesktopInfo } from '../desktop/desktopDetection';
@@ -59,6 +60,28 @@ describe('createDesktopBackedConnector — OAIY-first routing', () => {
     expect(oaiyRequest).toHaveBeenCalledWith('aokie', 'phone.status', { x: 1 }, undefined);
     // FormLogic Desktop was NOT consulted.
     expect(desktopRequest).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing to the viewer\'s runtime for an app they have not allowed', async () => {
+    oaiyAvailable.mockReturnValue(true);
+    setOnScreenApp({ id: 'app-theirs', slug: 'theirs', name: 'Their shop', manages: false });
+    const c = createDesktopBackedConnector(manifest as never, null);
+
+    await expect(c.request('sms.send', { to: 'x' })).rejects.toMatchObject({ code: 'capability_denied' });
+
+    expect(oaiyRequest).not.toHaveBeenCalled();
+    expect(desktopRequest).not.toHaveBeenCalled();
+    __resetAppLocalAccessForTests();
+  });
+
+  it('asks nothing in an app the viewer owns', async () => {
+    oaiyAvailable.mockReturnValue(true);
+    oaiyRequest.mockResolvedValue({ ok: true, data: { sent: true } });
+    setOnScreenApp({ id: 'app-mine', slug: 'mine', name: 'My shop', manages: true });
+    const c = createDesktopBackedConnector(manifest as never, null);
+
+    expect(await c.request('phone.status')).toEqual({ sent: true });
+    __resetAppLocalAccessForTests();
   });
 
   it('does not replay an uncertain SMS through FormLogic Desktop', async () => {

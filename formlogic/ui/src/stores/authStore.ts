@@ -11,6 +11,7 @@ import { useAppRuntimeStore } from './appRuntimeStore';
 import { useResponseStore } from './responseStore';
 import { toast } from './toastStore';
 import { lockVaultForSessionTeardown, useVaultStore } from './vaultStore';
+import { forgetAppLocalAccessOf, setAppLocalAccessAccount } from '../client-runtime/appLocalAccess';
 import { clearDesktopToken } from '../client-runtime/desktop/desktopPairing';
 import { forgetOaiyTokenOf, setOaiyToken, setOaiyTokenAccount } from '../client-runtime/oaiy/oaiyRuntime';
 
@@ -141,6 +142,7 @@ export async function teardownUserSession(
   if (userId && reason === 'account-deleted') {
     try {
       forgetOaiyTokenOf(userId);
+      forgetAppLocalAccessOf(userId);
     } catch {
       // never let it block the erasure below
     }
@@ -657,10 +659,14 @@ export async function handleSessionBroadcast(data: SessionMessage | null): Promi
   await teardownUserSession(userId, data.reason === 'session-expired' ? 'session-expired' : 'remote-teardown', false, true);
 }
 
-// Whose OAIY token this page uses. The shared demo account never keeps one.
-const followOaiyTokenAccount = (user: User | null) => setOaiyTokenAccount(user && !user.isDemo ? user.id : null);
-followOaiyTokenAccount(useAuthStore.getState().user);
-useAuthStore.subscribe((state) => followOaiyTokenAccount(state.user));
+// Whose OAIY token and allowed apps this page uses. The shared demo account never keeps either.
+const followLocalAccount = (user: User | null) => {
+  const account = user && !user.isDemo ? user.id : null;
+  setOaiyTokenAccount(account);
+  setAppLocalAccessAccount(account);
+};
+followLocalAccount(useAuthStore.getState().user);
+useAuthStore.subscribe((state) => followLocalAccount(state.user));
 
 // Browser-only: vitest runs in node, and the module-level channel would leak there.
 if (typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined') {

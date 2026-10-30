@@ -19,6 +19,8 @@ import { api, newIdempotencyKey } from '../../lib/api';
 import { demoApplyFlowOverlay, demoApplyFormBindingOverlay } from '../../lib/demoLocal';
 import { logger } from '../../lib/logger';
 import { useAuthStore } from '../../stores/authStore';
+import { assertAppMayUseThisComputer } from '../appLocalAccess';
+import type { AiCapability } from './aiProviders';
 import type {
   FlowBinding,
   FlowDefinition,
@@ -335,6 +337,36 @@ async function invokeDesktopServiceAction(
   return { ok: true, output };
 }
 
+/**
+ * The deps of one run of one app. Runs share the dispatcher's deps, which follow
+ * whichever app is open, and leaving an app does not stop a run: a run still going
+ * when the person opened another app became that app, to the session check and to
+ * every store behind these deps, so its author could read the second app with the
+ * viewer's cookie and keep it in the first app's run log. A run has its own slug,
+ * and ends if its app is closed.
+ */
+function depsForAppRun(executorDeps: FlowExecutorDeps, slug: string, stillOpen: () => string | null): FlowExecutorDeps {
+  return new Proxy(executorDeps, {
+    get(target, property, receiver) {
+      if (property === 'appSlug') return slug;
+      const value: unknown = Reflect.get(target, property, receiver);
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]) => {
+        if (stillOpen() !== slug) throw new Error(`This run stopped because its app, ${slug}, is no longer open.`);
+        return (value as (...a: unknown[]) => unknown).apply(target, args);
+      };
+    },
+  });
+}
+
+/** The viewer's own AI and desktop, for a run of the app that is open (client-runtime/appLocalAccess.ts). */
+function askingFirst<A extends unknown[], R>(use: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
+  return async (...args) => {
+    await assertAppMayUseThisComputer(currentSlug ?? '');
+    return use(...args);
+  };
+}
+
 export function buildDefaultExecutorDeps(): FlowExecutorDeps {
   return {
     // Read live, not captured: the runtime app can change after these deps are built.
@@ -387,24 +419,24 @@ export function buildDefaultExecutorDeps(): FlowExecutorDeps {
       const { useAppRuntimeStore } = await import('../../stores/appRuntimeStore');
       return useAppRuntimeStore.getState().updateResponse(formId, responseId, { answers });
     },
-    connectorRequest: async (connectorId, command, payload) => {
+    connectorRequest: askingFirst(async (connectorId: string, command: string, payload?: unknown) => {
       const { getConnectorClient } = await import('../connectors/nativeConnectorClient');
       return getConnectorClient().request(connectorId, command, payload);
-    },
+    }),
     ...buildKvDeps(),
-    resolveDesktopLlmEndpoint: () => resolveDesktopLlmEndpoint(),
-    resolveAiProvider: (capability, providerId) => resolveProviderRequest(useAuthStore.getState().user?.id, capability, providerId),
-    invokeDesktopAiChat: (providerId, body, signal) => invokeDesktopNamedAiChat(providerId, body, signal),
+    resolveDesktopLlmEndpoint: askingFirst(() => resolveDesktopLlmEndpoint()),
+    resolveAiProvider: askingFirst((capability: AiCapability, providerId: string) => resolveProviderRequest(useAuthStore.getState().user?.id, capability, providerId)),
+    invokeDesktopAiChat: askingFirst((providerId: string, body: Record<string, unknown>, signal?: AbortSignal) => invokeDesktopNamedAiChat(providerId, body, signal)),
     getAppAiBase: () => {
       const v = appContext.aiBaseUrl;
       return typeof v === 'string' && v !== '' ? v : null;
     },
-    resolveDesktopServiceBase: (id) => resolveDesktopServiceBase(id),
-    listDesktopServices: () => listDesktopServices(),
+    resolveDesktopServiceBase: askingFirst((id: string) => resolveDesktopServiceBase(id)),
+    listDesktopServices: askingFirst(() => listDesktopServices()),
     // flow_call's browser FlowInvoker (plan §8.5) — shared guard core + APP backend.
     invokeChildFlow: (req) => invokeChildFlowWith(appChildFlowBackend(), req),
     // service_action's §7.6 Desktop leg (machine-scoped — identical in both builders).
-    invokeServiceAction: (req) => invokeDesktopServiceAction(req),
+    invokeServiceAction: askingFirst((req: import('./nodes').ServiceActionInvokeRequest) => invokeDesktopServiceAction(req)),
   };
 }
 
@@ -896,7 +928,11 @@ function appChildFlowBackend(): ChildFlowBackend {
       }
     },
     appContext: () => getDeps().getAppContext(),
-    executorDeps: () => getDeps().executorDeps,
+    // A child runs in the app its parent's run belongs to: only an open app gets here.
+    executorDeps: () => {
+      const d = getDeps();
+      return depsForAppRun(d.executorDeps, d.getAppSlug() ?? '', d.getAppSlug);
+    },
   };
 }
 
@@ -1213,7 +1249,7 @@ async function executeAndComplete(
     binding,
     inputs,
     event,
-    executorDeps: d.executorDeps,
+    executorDeps: depsForAppRun(d.executorDeps, slug, d.getAppSlug),
     actionDeps: appActionDeps(),
     app: d.getAppContext(),
     runId,
@@ -1375,7 +1411,7 @@ export async function runFlowBySlug(flowSlug: string, options: RunFlowOptions = 
         app: d.getAppContext(),
         // Undefined → the executor's adaptive default (longer for AI/service flows).
         timeoutMs: options.timeoutMs,
-        deps: d.executorDeps,
+        deps: depsForAppRun(d.executorDeps, slug, d.getAppSlug),
         capabilities: flow.nodeCapabilities,
         flowSlug: flow.slug,
         callStack: flow.id ? [flow.id] : undefined,
@@ -1554,7 +1590,7 @@ export async function claimQueuedAppRuns(): Promise<number> {
         flow,
         binding,
         app: d.getAppContext(),
-        executorDeps: d.executorDeps,
+        executorDeps: depsForAppRun(d.executorDeps, slug, d.getAppSlug),
         actionDeps: appActionDeps(),
         // instanceId binds the completion to OUR claim — the server 409s any other instance.
         complete: (payload) => d.completeRun(slug, claimedRun.runId, { ...payload, instanceId: getClaimInstanceId() }),

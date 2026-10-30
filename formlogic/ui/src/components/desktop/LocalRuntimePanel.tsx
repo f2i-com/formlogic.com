@@ -55,6 +55,7 @@ import {
   type OaiyPluginSummary,
 } from '../../client-runtime/oaiy/oaiyRuntime';
 import { pairWithOaiy } from '../../client-runtime/oaiy/oaiyPairing';
+import { forgetAllowedApp, listAllowedApps, subscribeAllowedApps } from '../../client-runtime/appLocalAccess';
 import { useFlowsDesktopPresence } from '../flows/useFlowsDesktopPresence';
 
 type PairingUiState = 'idle' | 'pending' | 'approved' | 'denied' | 'failed';
@@ -100,6 +101,8 @@ export function LocalRuntimePanel() {
   /** Plugin ids with an in-flight start/stop, so their button shows a spinner. */
   const [pluginBusy, setPluginBusy] = useState<Set<string>>(new Set());
   const linkedDesktop = useFlowsDesktopPresence(false, false, true);
+  const [allowedApps, setAllowedApps] = useState(listAllowedApps);
+  useEffect(() => subscribeAllowedApps(() => setAllowedApps(listAllowedApps())), []);
 
   // Detection runs only while this panel (or the app runtime) is subscribed.
   useEffect(() => subscribeOaiyStatus(setOaiy), []);
@@ -412,6 +415,20 @@ export function LocalRuntimePanel() {
               Disconnect
             </Button>
           </div>
+        </div>
+      )}
+
+      {allowedApps.length > 0 && (
+        <div className="mb-4">
+          <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-2">Other people's apps you allowed to use your AI and OAIY</p>
+          <ul className="space-y-2">
+            {allowedApps.map((app) => (
+              <li key={app.id} className="flex items-center justify-between gap-2 rounded-xl border border-gray-200/80 dark:border-slate-700/60 px-3 py-2">
+                <span className="min-w-0 truncate text-sm text-gray-900 dark:text-white">{app.name}</span>
+                <Button variant="ghost" size="sm" onClick={() => forgetAllowedApp(app.id)}>Remove</Button>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
