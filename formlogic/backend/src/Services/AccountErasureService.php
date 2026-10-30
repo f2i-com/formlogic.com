@@ -20,6 +20,7 @@ use Psr\Log\NullLogger;
 class AccountErasureService
 {
     private LoggerInterface $logger;
+    private AppStorageEraser $appStorage;
 
     public function __construct(
         private AuthService $authService,
@@ -28,8 +29,10 @@ class AccountErasureService
         private ?TrashService $trashService = null,
         ?LoggerInterface $logger = null,
         private ?\PDO $pdo = null,
+        ?AppStorageEraser $appStorage = null,
     ) {
         $this->logger = $logger ?? new NullLogger();
+        $this->appStorage = $appStorage ?? new AppStorageEraser();
     }
 
     /**
@@ -53,6 +56,9 @@ class AccountErasureService
                 if ($owner === $userId && !empty($app['id'])) {
                     try {
                         $this->appService->deleteApp((string) $app['id']);
+                        // Erasure keeps no bin entry, so this is the app's last moment:
+                        // what it holds on disk goes now, or the erasure did not complete.
+                        $this->appStorage->erase((string) $app['id']);
                     } catch (\Throwable $e) {
                         $failedApps++;
                         $this->logger->error('Account erasure: failed to delete app', ['appId' => $app['id'], 'userId' => $userId, 'error' => $e->getMessage()]);

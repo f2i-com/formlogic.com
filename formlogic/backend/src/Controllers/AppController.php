@@ -117,6 +117,11 @@ class AppController
         if (empty($data['name'])) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App name is required'], 400);
         }
+        // An app's id is the server's to give. It names the app's storage on disk, and a
+        // deleted app's stays there for its recycle-bin restore: a request that chose the id
+        // of an app in the bin would own the app's source, keys and records. createApp takes
+        // an id only from the restore paths, which read it from the server's own snapshot.
+        unset($data['id']);
 
         try {
             // A script language outside javascript | python is refused here as on update

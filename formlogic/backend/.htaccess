@@ -34,7 +34,8 @@ Options -Indexes
   </IfModule>
 </FilesMatch>
 
-<FilesMatch "\.(env|sqlite|sqlite3|db|log|lock)$">
+# json: an app's private/config.json holds its host keys, and project.json its private source.
+<FilesMatch "\.(env|sqlite|sqlite3|db|log|lock|json)$">
   <IfModule mod_authz_core.c>
     Require all denied
   </IfModule>

@@ -1100,7 +1100,10 @@ final class AccountBackupService
                 $summary = $this->restoreRecords($structure, $maps, $stagedDbs, $zip, $manifest['entries'], $warnings);
                 $summary['nativeApps'] = $this->restoreNativeApps($nativePayloads, $maps['appIdMap'], $nativeMode, $warnings);
             } catch (\Throwable $e) {
-                $this->compensate($created, $userId);
+                // An app undeleted under its own id found its storage already there: it is
+                // the app's, with keys no snapshot carries, and stays for the retry.
+                $ownIds = array_keys(array_filter($maps['appIdMap'], static fn ($new, $old): bool => $new === (string) $old, ARRAY_FILTER_USE_BOTH));
+                $this->compensate($created, $userId, $ownIds);
                 throw new \RuntimeException('Backup import failed and was rolled back: ' . $e->getMessage(), 0, $e);
             }
 
@@ -1153,6 +1156,14 @@ final class AccountBackupService
             $newAppId = $appIdMap[$oldAppId] ?? null;
             if ($newAppId === null) {
                 throw new \RuntimeException("Native app '{$name}' has no restored app to attach to");
+            }
+            // Undeleting under its own id (only the recycle bin keeps ids): what is on disk IS
+            // this app, as it was, with the host keys a bin snapshot does not carry. Installing
+            // the snapshot over it was refused, and the retry then lost those keys.
+            $kept = $newAppId === $oldAppId ? $this->native->describe($newAppId) : null;
+            if ($kept !== null) {
+                $restored[] = ['appId' => $newAppId, 'name' => $name, 'version' => $kept['version'], 'database' => $kept['hasDatabase'] ? 'restored' : 'none', 'cryptoMaterial' => NativeAppService::CRYPTO_RESTORED];
+                continue;
             }
             $result = $this->native->restore($newAppId, $payload['project'], $payload['database'], $payload['hostConfig']);
             // An app with no backend has no records here and seals nothing: what it saves stays in
@@ -2062,14 +2073,20 @@ final class AccountBackupService
         return ['responses' => $responsesRestored, 'files' => $filesRestored];
     }
 
-    /** Full compensation after a data-phase failure: delete everything this import created. */
-    private function compensate(array $created, string $userId): void
+    /**
+     * Full compensation after a data-phase failure: delete everything this import created.
+     *
+     * @param list<string> $keepStorageOf Apps whose storage this import did not create.
+     */
+    private function compensate(array $created, string $userId, array $keepStorageOf = []): void
     {
         foreach ($created['apps'] as $app) {
             try {
                 // A native installation restored for this app (audit FL-02) has no
                 // MySQL cascade — remove its storage explicitly (no-op when absent).
-                $this->native->remove($app['id']);
+                if (!in_array($app['id'], $keepStorageOf, true)) {
+                    $this->native->remove($app['id']);
+                }
             } catch (\Throwable $e) {
                 $this->logger->warning('Backup import compensation: could not remove native app storage', ['appId' => $app['id'], 'error' => $e->getMessage()]);
             }

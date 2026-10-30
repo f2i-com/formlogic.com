@@ -836,6 +836,39 @@ class AccountBackupTest extends TestCase
 
     // ── 11. audit FL-02: hosted native apps ride in the backup and restore truthfully ──
 
+    /**
+     * The recycle bin keeps ids, and a bin snapshot carries no host keys. The app's storage
+     * stays on disk while it is in the bin, so an undelete under its own id finds it, and it is
+     * this app with its keys: installing the snapshot over it was refused, and the retry lost them.
+     */
+    public function testUndeletingANativeAppKeepsItsKeysAndRecordsOnTheFirstTry(): void
+    {
+        $native = $this->makeNativeService();
+        if ($native === null) {
+            $this->markTestSkipped('Prepare the native runtime and set FORMLOGIC_NODE_BIN.');
+        }
+        $backup = self::makeService([], $native);
+        $native->install($this->app1, self::nativeProject(), 0);
+        $create = ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'Signed note'], 'client_ip' => '127.0.0.1'];
+        $this->assertSame(201, $native->request($this->app1, $create)['status']);
+        $keys = $native->hostConfig($this->app1);
+
+        $snapshot = $backup->exportScoped($this->userId, 'app', $this->app1);
+        try {
+            self::$apps->deleteApp($this->app1);
+            $result = $backup->importAccount($snapshot, $this->userId, ['preserveIds' => true, 'attachExistingForms' => true, 'attachExistingApps' => true, 'lenientFormBindings' => true, 'rebuildInboundLinks' => true]);
+
+            $this->assertSame($this->app1, $result['nativeApps'][0]['appId']);
+            $this->assertSame(NativeAppService::CRYPTO_RESTORED, $result['nativeApps'][0]['cryptoMaterial']);
+            $this->assertSame([], array_values(array_filter($result['warnings'], static fn ($w) => str_contains($w, 'NEW host keys'))));
+            $this->assertSame($keys, $native->hostConfig($this->app1));
+            $listed = $native->request($this->app1, ['method' => 'GET', 'path' => '/api/notes', 'client_ip' => '127.0.0.1']);
+            $this->assertCount(1, $listed['body']['notes']);
+        } finally {
+            @unlink($snapshot);
+        }
+    }
+
     public function testNativeAppRoundTripRestoresRecordsAndReportsKeyPolicy(): void
     {
         $native = $this->makeNativeService();

@@ -37,10 +37,18 @@ class HostedAppService
     /** Remove a newly created deployment during a failed pack installation. */
     public function remove(string $appId): void
     {
+        self::eraseStorage($appId, $this->storagePath);
+    }
+
+    /** Remove an app's database, and SQLite's files beside it. Needs no runner: nothing is run. */
+    public static function eraseStorage(string $appId, ?string $storagePath = null): void
+    {
         if (!preg_match('/^[a-zA-Z0-9_-]{1,100}$/D', $appId)) throw new InvalidArgumentException('Invalid app identity');
-        $root = $this->storagePath ?? dirname(__DIR__, 2) . '/storage/hosted-apps';
+        $root = $storagePath ?? dirname(__DIR__, 2) . '/storage/hosted-apps';
         $path = $root . '/' . hash('sha256', $appId) . '.sqlite';
-        if (is_file($path) && !unlink($path)) throw new RuntimeException('Cannot remove app deployment');
+        foreach ([$path, $path . '-wal', $path . '-shm', $path . '-journal'] as $file) {
+            if (is_file($file) && !unlink($file)) throw new RuntimeException('Cannot remove app deployment');
+        }
     }
 
     /** A consistent SQLite snapshot, including private actions; owner download only. */

@@ -30,6 +30,10 @@ use Psr\Log\NullLogger;
  * NEVER routed through here: account erasure (purgeUser wipes the bin instead
  * — erasure must not stash data), pack-install rollbacks, import compensation,
  * and empty drafts (0 fields + 0 responses hard-delete without a snapshot).
+ *
+ * An app's storage on disk (AppStorageEraser) stays while the app is in the bin,
+ * and goes with the item: every purge below erases it first, so a failure keeps
+ * the item, and the record of what is left, for a retry.
  */
 final class TrashService
 {
@@ -39,6 +43,7 @@ final class TrashService
     private string $trashDir;
     private int $retentionDays;
     private LoggerInterface $logger;
+    private AppStorageEraser $appStorage;
 
     public function __construct(
         MySQLConnection $mysql,
@@ -50,7 +55,9 @@ final class TrashService
         array $trashConfig = [],
         ?LoggerInterface $logger = null,
         private ?FormEncryptionService $formEncryption = null,
+        ?AppStorageEraser $appStorage = null,
     ) {
+        $this->appStorage = $appStorage ?? new AppStorageEraser();
         $this->pdo = $mysql->getConnection();
         $this->retentionDays = max(1, (int) ($trashConfig['retentionDays'] ?? 30));
         // 'dir' is a test override; production derives from the backend root.
@@ -363,6 +370,7 @@ final class TrashService
         // BEFORE the recovery zip is touched — a crypto-lifecycle failure rolls
         // both back (row + zip intact) instead of consuming the snapshot first.
         try {
+            $this->eraseAppStorage($row);
             $this->pdo->beginTransaction();
             if (($row['kind'] ?? '') === 'form') {
                 $this->formEncryptionLifecycle('purge', (string) $row['original_id'], true);
@@ -402,6 +410,7 @@ final class TrashService
             // BEFORE the zip is unlinked — a failure keeps the item (row + zip)
             // so the next cron run retries instead of losing the recovery data.
             try {
+                $this->eraseAppStorage($row);
                 $this->pdo->beginTransaction();
                 if (($row['kind'] ?? '') === 'form') {
                     $this->formEncryptionLifecycle('purge', (string) $row['original_id'], true);
@@ -452,6 +461,7 @@ final class TrashService
                 if (($row['kind'] ?? '') === 'form') {
                     $this->formEncryptionLifecycle('purge', (string) $row['original_id'], true);
                 }
+                $this->eraseAppStorage($row);
                 $this->pdo->prepare('DELETE FROM trash_items WHERE id = :id')->execute(['id' => $row['id']]);
                 @unlink($this->trashDir . '/' . $row['zip_path']);
             }
@@ -474,6 +484,25 @@ final class TrashService
         } catch (\Throwable $e) {
             $this->logger->error('Trash: erasure purge failed', ['userId' => $userId, 'error' => $e->getMessage()]);
             return 1; // fail closed
+        }
+    }
+
+    /**
+     * An app is leaving the bin for good: take what it left on disk. Never for an id
+     * with a live app, whose storage this is.
+     *
+     * @param array{kind?:string, original_id?:string} $row
+     */
+    private function eraseAppStorage(array $row): void
+    {
+        if (($row['kind'] ?? '') !== 'app') {
+            return;
+        }
+        $appId = (string) ($row['original_id'] ?? '');
+        $live = $this->pdo->prepare('SELECT 1 FROM apps WHERE id = :id');
+        $live->execute(['id' => $appId]);
+        if ($live->fetchColumn() === false) {
+            $this->appStorage->erase($appId);
         }
     }
 

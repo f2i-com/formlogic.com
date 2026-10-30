@@ -8,9 +8,11 @@ use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AccountBackupService;
 use FormLogic\Services\AppService;
+use FormLogic\Services\AppStorageEraser;
 use FormLogic\Services\AppUserService;
 use FormLogic\Services\FlowService;
 use FormLogic\Services\FormService;
+use FormLogic\Services\NativeAppService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\TrashConflictException;
 use FormLogic\Services\TrashService;
@@ -144,6 +146,9 @@ class TrashTest extends TestCase
         }
         $uid = $this->userId;
         self::$pdo->prepare('DELETE FROM trash_items WHERE user_id = ?')->execute([$uid]);
+        foreach (glob(self::$trashDir . '/' . $uid . '/*.zip') ?: [] as $left) {
+            unlink($left); // a test that leaves an item in the bin must not read as another's
+        }
         self::$pdo->prepare('DELETE FROM pack_installations WHERE user_id = ?')->execute([$uid]);
         self::$pdo->prepare('DELETE FROM audit_log WHERE user_id = ?')->execute([$uid]);
         self::$pdo->prepare('DELETE FROM response_links WHERE source_form_id IN (SELECT id FROM forms WHERE user_id = ?)')->execute([$uid]);
@@ -217,6 +222,100 @@ class TrashTest extends TestCase
         self::$flows->createFormBinding($this->userId, $this->f2, ['flow' => 'wf', 'event' => 'form.submitted', 'mode' => 'async']);
         self::$flows->createFlow($this->app1, $this->userId, ['name' => 'App Flow', 'slug' => 'af']);
         self::$flows->createBinding($this->app1, ['flow' => 'af', 'event' => 'form.submitted', 'mode' => 'async', 'formId' => $this->f1]);
+    }
+
+    // ── what an app holds on disk ────────────────────────────────────────────
+
+    /** A bin whose app storage is on a temp root, and the two files that stand for an app's storage. */
+    private function binWithStorage(): array
+    {
+        $root = self::$tmpRoot . '/storage-' . bin2hex(random_bytes(4));
+        $hash = hash('sha256', $this->app1);
+        mkdir("{$root}/native/{$hash}/private/data", 0700, true);
+        mkdir("{$root}/hosted", 0700, true);
+        $native = "{$root}/native/{$hash}/private/config.json";
+        $hosted = "{$root}/hosted/{$hash}.sqlite";
+        file_put_contents($native, '{"keyHex":"secret"}');
+        file_put_contents($hosted, 'records');
+        $trash = new TrashService(
+            self::$mysql, self::$sqlite, self::$backup, self::$forms, self::$apps, self::$flows,
+            ['retentionDays' => 30, 'dir' => self::$trashDir], null, null,
+            new AppStorageEraser(new NativeAppService("{$root}/native"), "{$root}/hosted"),
+        );
+        return [$trash, $native, $hosted];
+    }
+
+    private function trashApp1(TrashService $trash): string
+    {
+        $this->assertTrue($trash->trashApp($this->app1, $this->userId));
+        return (string) array_values(array_filter($this->trashRows(), fn (array $row) => $row['original_id'] === $this->app1))[0]['id'];
+    }
+
+    public function testAnAppKeepsItsStorageInTheBinAndLosesItWithDeleteForever(): void
+    {
+        [$trash, $native, $hosted] = $this->binWithStorage();
+        $item = $this->trashApp1($trash);
+
+        // The bin's snapshot holds no host keys and no hosted database: this is the only copy.
+        $this->assertFileExists($native);
+        $this->assertFileExists($hosted);
+
+        $this->assertTrue($trash->purgeItem($item, $this->userId));
+
+        $this->assertFileDoesNotExist($native);
+        $this->assertFileDoesNotExist($hosted);
+    }
+
+    public function testExpiryAndErasureTakeAnAppsStorageToo(): void
+    {
+        [$trash, $native, $hosted] = $this->binWithStorage();
+        $item = $this->trashApp1($trash);
+        self::$pdo->prepare('UPDATE trash_items SET expires_at = DATE_SUB(NOW(), INTERVAL 1 DAY) WHERE id = ?')->execute([$item]);
+        $trash->purgeExpired();
+        $this->assertFileDoesNotExist($native);
+        $this->assertFileDoesNotExist($hosted);
+    }
+
+    public function testErasingAnAccountTakesTheStorageOfTheAppsInItsBin(): void
+    {
+        [$trash, $native, $hosted] = $this->binWithStorage();
+        $this->trashApp1($trash);
+        $this->assertSame(0, $trash->purgeUser($this->userId));
+        $this->assertFileDoesNotExist($native);
+        $this->assertFileDoesNotExist($hosted);
+    }
+
+    public function testAnIdWithALiveAppKeepsItsStorageWhateverTheBinSays(): void
+    {
+        [$trash, $native, $hosted] = $this->binWithStorage();
+        $item = $this->trashApp1($trash);
+        // What a restore that ended badly could leave: the item, and the app live again.
+        self::$pdo->prepare("INSERT INTO apps (id, owner_id, name, slug, status) VALUES (?, ?, 'Back', ?, 'draft')")
+            ->execute([$this->app1, $this->userId, 'back-' . bin2hex(random_bytes(4))]);
+
+        $this->assertTrue($trash->purgeItem($item, $this->userId));
+
+        $this->assertFileExists($native);
+        $this->assertFileExists($hosted);
+    }
+
+    public function testAnItemWhoseStorageCannotGoStaysForARetry(): void
+    {
+        $eraser = $this->createMock(AppStorageEraser::class);
+        $eraser->method('erase')->willThrowException(new \RuntimeException('The app is busy.'));
+        $trash = new TrashService(
+            self::$mysql, self::$sqlite, self::$backup, self::$forms, self::$apps, self::$flows,
+            ['retentionDays' => 30, 'dir' => self::$trashDir], null, null, $eraser,
+        );
+        $item = $this->trashApp1($trash);
+
+        $this->assertFalse($trash->purgeItem($item, $this->userId));
+        $this->assertNotEmpty(array_filter($this->trashRows(), static fn (array $row) => $row['id'] === $item));
+
+        self::$pdo->prepare('UPDATE trash_items SET expires_at = DATE_SUB(NOW(), INTERVAL 1 DAY) WHERE id = ?')->execute([$item]);
+        $trash->purgeExpired();
+        $this->assertNotEmpty(array_filter($this->trashRows(), static fn (array $row) => $row['id'] === $item));
+        $this->assertSame(1, $trash->purgeUser($this->userId), 'an erasure must not call this complete');
     }
 
     private function linkCount(string $sourceFormId, string $targetFormId): int
