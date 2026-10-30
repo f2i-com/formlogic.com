@@ -400,12 +400,27 @@ export interface FlowNodeContext {
 export function isAllowedFlowUrl(url: string): boolean {
   const desktop = getDesktopBaseUrl();
   if (url === desktop || url.startsWith(desktop + '/')) return true;
-  if (url === '/api' || url.startsWith('/api/')) return true;
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    const apiBase = `${window.location.origin}/api`;
-    if (url === apiBase || url.startsWith(apiBase + '/')) return true;
+  const path = sameOriginPath(url);
+  return path !== null && (path === '/api' || path.startsWith('/api/'));
+}
+
+/**
+ * The path a same-origin URL really reaches, or null for any other URL. Judge this
+ * and never the string a flow wrote: fetch resolves `..`, `%2e%2e` and backslashes
+ * before it sends, so `/api/app/mine/../../auth/me/export` is not under
+ * `/api/app/mine/`. Only an absolute path or this origin counts: a relative URL
+ * resolves against the page, and that is not something a flow should depend on.
+ */
+function sameOriginPath(url: string): string | null {
+  const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : null;
+  if (!url.startsWith('/') && !(origin && (url === origin || url.startsWith(`${origin}/`)))) return null;
+  const base = origin ?? 'http://same-origin.invalid';
+  try {
+    const resolved = new URL(url, base);
+    return resolved.origin === base ? resolved.pathname : null;
+  } catch {
+    return null;
   }
-  return false;
 }
 
 /**
@@ -711,7 +726,7 @@ async function discoverDefaultModel(
   headers?: HeadersInit
 ): Promise<string | null> {
   try {
-    const init: RequestInit = { signal };
+    const init: RequestInit = { credentials: 'omit', signal };
     if (headers) init.headers = headers;
     const res = await doFetch(chatEndpoint.replace('/chat/completions', '/models'), init);
     if (!res.ok) return null;
@@ -953,6 +968,8 @@ async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
         method: 'POST',
         headers: provider?.headers ?? { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
+        // An endpoint a flow names may be on this origin: it gets no session (see http_request).
+        credentials: 'omit',
         signal: ctx.signal,
       });
     } catch (err) {
@@ -1038,9 +1055,7 @@ async function runHttpRequest(ctx: FlowNodeContext): Promise<unknown> {
   // (https://host/api/...) — both are allow-listed, but only the relative form
   // starts with '/', so the absolute form previously ran unauthenticated (401).
   // The desktop loopback base URL is a different origin and keeps 'omit'.
-  const sameOrigin =
-    url.startsWith('/') ||
-    (typeof window !== 'undefined' && !!window.location?.origin && url.startsWith(window.location.origin + '/'));
+  //
   // CREDENTIALS POLICY. This flow was written by the app's owner but runs in the
   // MEMBER's browser, with the member's cookies. Sending those cookies to any
   // same-origin API path let an owner exfiltrate a member's own account — one
@@ -1048,12 +1063,15 @@ async function runHttpRequest(ctx: FlowNodeContext): Promise<unknown> {
   // session travels only into the executing app's own runtime namespace
   // (/api/app/<this app>/…), which is data and actions the member already has in
   // that app. Everything else on this origin is called anonymously; workspace
-  // flows (no app) never send credentials.
-  const apiPath = sameOrigin ? (url.startsWith('/') ? url : url.slice(window.location.origin.length)) : '';
+  // flows (no app) never send credentials. The path judged is the one fetch will
+  // request (sameOriginPath), and an encoded slash, which a server may decode into
+  // a path of its own, is not this app's runtime.
+  const apiPath = sameOriginPath(url) ?? '';
+  const appRuntime = deps.appSlug ? `/api/app/${encodeURIComponent(deps.appSlug)}` : null;
   const ownRuntime =
-    !!deps.appSlug &&
-    (apiPath === `/api/app/${encodeURIComponent(deps.appSlug)}` ||
-      apiPath.startsWith(`/api/app/${encodeURIComponent(deps.appSlug)}/`));
+    appRuntime !== null &&
+    !/%2f|%5c/i.test(apiPath) &&
+    (apiPath === appRuntime || apiPath.startsWith(`${appRuntime}/`));
   let res: Response;
   try {
     res = await doFetch(url, {
@@ -1145,7 +1163,8 @@ async function serviceFetchJson(
   const doFetch = deps.fetchFn ?? fetch;
   let res: Response;
   try {
-    res = await doFetch(url, { ...init, signal: ctx.signal });
+    // An endpoint a flow names may be on this origin: it gets no session (see http_request).
+    res = await doFetch(url, { ...init, credentials: 'omit', signal: ctx.signal });
   } catch {
     // Unreachable / CORS / connection refused — the service isn't running here.
     throw desktopServiceUnavailable(node, humanName, bundled);
@@ -1314,7 +1333,7 @@ async function runBrowserAction(ctx: FlowNodeContext): Promise<unknown> {
   //    threading via $nodes.<id>.sessionId into a later browser_action).
   if (createdSession && data.closeSession) {
     const doFetch = ctx.deps.fetchFn ?? fetch;
-    await doFetch(`${sPath}`, { method: 'DELETE', signal: ctx.signal }).catch(() => undefined);
+    await doFetch(`${sPath}`, { method: 'DELETE', credentials: 'omit', signal: ctx.signal }).catch(() => undefined);
   }
   return out;
 }
@@ -1448,7 +1467,7 @@ async function runTtsSpeak(ctx: FlowNodeContext): Promise<unknown> {
   const doFetch = ctx.deps.fetchFn ?? fetch;
   let res: Response;
   try {
-    res = await doFetch(endpoint, { method: 'POST', headers: provider?.headers ?? JSON_HEADERS, body: JSON.stringify(body), signal: ctx.signal });
+    res = await doFetch(endpoint, { method: 'POST', headers: provider?.headers ?? JSON_HEADERS, body: JSON.stringify(body), credentials: 'omit', signal: ctx.signal });
   } catch {
     if (provider) throw new FlowExecError('node_failed', `Node '${node.id}': text-to-speech provider '${provider.name}' unreachable`, node.id);
     throw desktopServiceUnavailable(node, 'text-to-speech', false);

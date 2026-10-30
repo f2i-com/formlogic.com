@@ -1007,6 +1007,45 @@ describe('http_request', () => {
     }
   });
 
+  // fetch resolves all of these before it sends, so a prefix check of the written URL
+  // let a flow carry the member's cookies out of its own namespace to any path.
+  it.each([
+    '/api/app/shop/../../auth/me/export',
+    '/api/app/shop/%2e%2e/%2e%2e/auth/me/export',
+    '/api/app/shop/.%2E/.%2e/auth/me/export',
+    '/api/app/shop/..\\..\\auth/me/export',
+    '/api/app/shop/x/../../other-app/records',
+    '/api/app/shop/..%2f..%2fauth/me/export',
+    '/api/app/shop/..%5C..%5Cauth/me/export',
+  ])('keeps the session home when the path walks out of the namespace: %s', async (url) => {
+    const fetchFn = vi.fn(async () => jsonOk());
+    await executeNode(ctxFor({ id: 'h', type: 'http_request', data: { url } }, fakeDeps({ fetchFn, appSlug: 'shop' })));
+    expect((fetchFn.mock.calls[0] as unknown[])[1]).toMatchObject({ credentials: 'omit' });
+  });
+
+  it('still sends the session to a path that stays inside, however it is written', async () => {
+    const fetchFn = vi.fn(async () => jsonOk());
+    await executeNode(ctxFor({ id: 'h', type: 'http_request', data: { url: '/api/app/shop/a/../records' } }, fakeDeps({ fetchFn, appSlug: 'shop' })));
+    expect((fetchFn.mock.calls[0] as unknown[])[1]).toMatchObject({ credentials: 'include' });
+  });
+
+  it.each(['/api/../secrets', '/api/%2e%2e/secrets', '//evil.example/api/x', '/\\evil.example/api/x', 'api/app/shop/x'])(
+    'refuses a URL that only looks like the FormLogic API: %s',
+    async (url) => {
+      const fetchFn = vi.fn(async () => jsonOk());
+      await expect(executeNode(ctxFor({ id: 'h', type: 'http_request', data: { url } }, fakeDeps({ fetchFn, appSlug: 'shop' }))))
+        .rejects.toMatchObject({ code: 'capability_denied' });
+      expect(fetchFn).not.toHaveBeenCalled();
+    },
+  );
+
+  it('sends no session with an endpoint a flow names on another kind of node', async () => {
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: 'hi' } }] }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const node: WorkflowGraphNode = { id: 'l', type: 'llm_chat', data: { endpoint: '/api/auth/me/export', model: 'm', prompt: 'p' } };
+    await executeNode(ctxFor(node, fakeDeps({ fetchFn, appSlug: 'shop' })));
+    for (const call of fetchFn.mock.calls as unknown[][]) expect(call[1]).toMatchObject({ credentials: 'omit' });
+  });
+
   it('a workspace flow (no app) never sends credentials, even to /api/app/', async () => {
     const fetchFn = vi.fn(async () => jsonOk());
     const deps = fakeDeps({ fetchFn });
