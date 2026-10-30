@@ -196,6 +196,75 @@ class FlowRuntimeAuthorizationTest extends TestCase
         return self::$flows->reserveRun($this->appId, $this->ownerId, $data)['run'];
     }
 
+    // ── A native app's records are not any member's to read ─────────────────────────────────
+
+    private function enqueueNativeRecord(): array
+    {
+        $binding = self::$flows->createBinding($this->appId, ['flow' => 'triage', 'event' => 'app.record.created.signups', 'mode' => 'async']);
+        $eventId = bin2hex(random_bytes(16));
+        $this->assertSame(1, self::$flows->enqueueNativeRecordEvent($this->appId, $eventId, 'app.record.created.signups', [
+            'record' => ['email' => 'someone-else@example.test'],
+        ], [$binding['id']]));
+        $stmt = self::$pdo->prepare('SELECT id FROM flow_run_logs WHERE app_id = ? AND idempotency_key LIKE ?');
+        $stmt->execute([$this->appId, 'native:' . $eventId . ':%']);
+        return ['runId' => (string) $stmt->fetchColumn(), 'slug' => $this->slug];
+    }
+
+    public function testAMemberNeitherListsNorClaimsARunHoldingANativeRecord(): void
+    {
+        // Every role preset grants execute_flows, and no form names a native row.
+        $this->grant($this->roleId, 'execute_flows');
+        $run = $this->enqueueNativeRecord();
+        $args = ['slug' => $this->slug];
+
+        [$code, $listed] = $this->call('GET', $this->memberId, fn ($rq, $rs) => self::$ctrl->queuedRuns($rq, $rs, $args));
+        $this->assertSame(200, $code);
+        $this->assertSame([], $listed['runs']);
+
+        [$code] = $this->call('POST', $this->memberId, fn ($rq, $rs) => self::$ctrl->claimRun($rq, $rs, $args + ['runId' => $run['runId']]), ['runtime' => 'browser']);
+        $this->assertSame(404, $code);
+        [$code] = $this->call('POST', $this->memberId, fn ($rq, $rs) => self::$ctrl->completeRun($rq, $rs, $args + ['runId' => $run['runId']]), ['status' => 'done']);
+        $this->assertSame(404, $code);
+
+        // The run is still there for the owner's executor, and it was not taken from it.
+        [$code, $claimed] = $this->call('POST', $this->ownerId, fn ($rq, $rs) => self::$ctrl->claimRun($rq, $rs, $args + ['runId' => $run['runId']]), ['runtime' => 'browser']);
+        $this->assertSame(200, $code);
+        $this->assertSame('someone-else@example.test', $claimed['run']['inputSnapshot']['event']['data']['record']['email']);
+    }
+
+    public function testAMemberDoesNotInheritANativeRecordThroughARunDescendedFromIt(): void
+    {
+        $this->grant($this->roleId, 'execute_flows');
+        $root = $this->enqueueNativeRecord();
+        $child = $this->reserveQueued();
+        self::$pdo->prepare('UPDATE flow_run_logs SET root_run_id = ? WHERE id = ?')->execute([$root['runId'], $child['runId']]);
+
+        [$code] = $this->call('POST', $this->memberId, fn ($rq, $rs) => self::$ctrl->claimRun($rq, $rs, ['slug' => $this->slug, 'runId' => $child['runId']]), ['runtime' => 'browser']);
+
+        $this->assertSame(404, $code);
+    }
+
+    public function testAReserveReplayShowsOnlyWhatTheCallerMayRead(): void
+    {
+        // A replay key is writable by anyone who has seen a response id. The form is one this
+        // member has no view_all_responses on, so its answers are not theirs through this route.
+        $this->grant($this->roleId, 'execute_flows');
+        $key = 'binding:b:' . bin2hex(random_bytes(6));
+        $reserved = $this->reserveQueued($this->formId, $key);
+        $replay = fn (string $user) => $this->call('POST', $user, fn ($rq, $rs) => self::$ctrl->reserveRun($rq, $rs, ['slug' => $this->slug]), [
+            'flowSlug' => 'triage', 'triggerEvent' => 'manual', 'correlationId' => 'c', 'idempotencyKey' => $key,
+        ]);
+
+        [$code, $body] = $replay($this->memberId);
+        $this->assertSame(200, $code);
+        $this->assertSame($reserved['runId'], $body['runId']);
+        $this->assertTrue($body['idempotent']);
+        $this->assertArrayNotHasKey('run', $body);
+
+        [, $body] = $replay($this->ownerId);
+        $this->assertSame('value', $body['run']['inputSnapshot']['event']['data']['answers']['secret']);
+    }
+
     // ── execute_flows gates the whole runtime surface ───────────────────────────────────────
 
     public function testMemberWithoutExecuteFlowsIsRejectedAcrossTheRuntimeSurface(): void

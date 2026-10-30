@@ -1529,7 +1529,10 @@ class NativeAppService
                 if (($health['status'] ?? 500) !== 200) throw new RuntimeException(self::startupFailure((string) ($health['body']['diagnostic'] ?? '')), 422);
             }
             $this->advance($root, $journal, 'migrated');
-            $saved = ['home' => ($project['home'] ?? false) === true, 'version' => $expectedVersion + 1, 'updatedAt' => gmdate('c'), 'files' => $files, 'assets' => $assets, 'access' => ($project['access'] ?? '') === 'members' ? 'members' : 'application'];
+            // Saying nothing about who may enter keeps what the app has: a publish that omits
+            // it must not open a members-only app to everyone. A new app defaults to members.
+            $access = $project['access'] ?? $old['access'] ?? 'members';
+            $saved = ['home' => ($project['home'] ?? false) === true, 'version' => $expectedVersion + 1, 'updatedAt' => gmdate('c'), 'files' => $files, 'assets' => $assets, 'access' => $access === 'members' ? 'members' : 'application'];
             $this->writeExact($root . '/project.json', json_encode($saved, JSON_THROW_ON_ERROR), 0600);
             $this->afterStep($root, 'project-written');
             $this->advance($root, $journal, 'metadata-promoted');

@@ -122,6 +122,20 @@ class FlowController
         return $permCache[$formId];
     }
 
+    /**
+     * May this member see this run's input snapshot? A run that holds a native app's own
+     * record names no form, so the rule above would call it visible to any execute_flows
+     * holder, which every role preset grants (FlowService::runCarriesNativeRecord).
+     * @param array<string, bool> $permCache keyed by formId
+     */
+    private function canSeeRun(array $app, string $userId, array $run, array &$permCache): bool
+    {
+        if (($app['ownerId'] ?? null) !== $userId && $this->flows->runCarriesNativeRecord($run)) {
+            return false;
+        }
+        return $this->canSeeRunSnapshot($app, $userId, $this->flows->snapshotFormIdOfRun($run), $permCache);
+    }
+
     // ── Owner: flow definitions ──────────────────────────────────────────────────────────────
 
     public function listFlows(Request $request, Response $response, array $args): Response
@@ -970,7 +984,14 @@ class FlowController
         if ($result['created']) {
             return $this->jsonResponse($response, ['runId' => $result['run']['runId'], 'run' => $result['run']], 201);
         }
-        return $this->jsonResponse($response, ['runId' => $result['run']['runId'], 'idempotent' => true, 'run' => $result['run']], 200);
+        // A replay returns a run this caller may not have started, by a key anyone who has
+        // seen a response id can write, so it answers to the rule the listing and the claim do.
+        $permCache = [];
+        $replay = ['runId' => $result['run']['runId'], 'idempotent' => true];
+        if ($this->canSeeRun($app, $userId, $result['run'], $permCache)) {
+            $replay['run'] = $result['run'];
+        }
+        return $this->jsonResponse($response, $replay, 200);
     }
 
     /**
@@ -990,7 +1011,7 @@ class FlowController
         $runId = (string) ($args['runId'] ?? '');
         $permCache = [];
         $existing = $this->flows->getRun($app['id'], $runId);
-        if (!$existing || !$this->canSeeRunSnapshot($app, $userId, $this->flows->snapshotFormIdOfRun($existing), $permCache)) {
+        if (!$existing || !$this->canSeeRun($app, $userId, $existing, $permCache)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Run not found'], 404);
         }
         try {
@@ -1036,7 +1057,7 @@ class FlowController
             $permCache = [];
             $runs = array_values(array_filter(
                 $runs,
-                fn (array $run) => $this->canSeeRunSnapshot($app, $userId, $this->flows->snapshotFormIdOfRun($run), $permCache)
+                fn (array $run) => $this->canSeeRun($app, $userId, $run, $permCache)
             ));
             foreach ($runs as &$run) {
                 $run['inputSnapshot'] = null;
@@ -1061,7 +1082,7 @@ class FlowController
         $runId = (string) ($args['runId'] ?? '');
         $permCache = [];
         $existing = $this->flows->getRun($app['id'], $runId);
-        if (!$existing || !$this->canSeeRunSnapshot($app, $userId, $this->flows->snapshotFormIdOfRun($existing), $permCache)) {
+        if (!$existing || !$this->canSeeRun($app, $userId, $existing, $permCache)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Run not found'], 404);
         }
         try {

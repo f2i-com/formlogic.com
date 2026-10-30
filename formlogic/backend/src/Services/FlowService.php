@@ -1694,6 +1694,30 @@ class FlowService
         return is_string($formId) && $formId !== '' ? $formId : null;
     }
 
+    /**
+     * Does this run hold a row from a native app's own database (app.record.* events
+     * snapshot it), itself or through the run it descends from? No form names that row,
+     * so no form permission reaches it, and a native app's records are its own to give
+     * out: such a run is the owner's executor's alone.
+     */
+    public function runCarriesNativeRecord(array $run): bool
+    {
+        if (str_starts_with((string) ($run['triggerEvent'] ?? ''), 'app.record.')) {
+            return true;
+        }
+        $ancestors = array_values(array_unique(array_filter(
+            [$run['parentRunId'] ?? null, $run['rootRunId'] ?? null],
+            static fn (mixed $id): bool => is_string($id) && $id !== ''
+        )));
+        if ($ancestors === []) {
+            return false;
+        }
+        $placeholders = implode(',', array_fill(0, count($ancestors), '?'));
+        $stmt = $this->mysql->prepare("SELECT 1 FROM flow_run_logs WHERE id IN ({$placeholders}) AND trigger_event LIKE 'app.record.%' LIMIT 1");
+        $stmt->execute($ancestors);
+        return $stmt->fetchColumn() !== false;
+    }
+
     public function getRun(string $appId, string $runId): ?array
     {
         $stmt = $this->mysql->prepare("

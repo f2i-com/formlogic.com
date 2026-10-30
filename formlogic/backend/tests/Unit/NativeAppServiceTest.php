@@ -49,6 +49,23 @@ final class NativeAppServiceTest extends TestCase
         ]];
     }
 
+    public function testAPublishThatSaysNothingAboutAccessKeepsWhatTheAppHas(): void
+    {
+        $this->assertSame('members', $this->service->install('notes', ['access' => 'members'] + $this->project(), 0)['access']);
+        $silent = $this->project();
+        unset($silent['access']);
+        $this->assertSame('members', $this->service->install('notes', $silent, 1)['access'], 'a members-only app must not open to everyone');
+        $this->assertSame('application', $this->service->install('notes', $this->project(), 2)['access'], 'saying so still changes it');
+        $this->assertSame('application', $this->service->install('notes', $silent, 3)['access']);
+    }
+
+    public function testANewAppThatSaysNothingAboutAccessIsForMembers(): void
+    {
+        $silent = $this->project();
+        unset($silent['access']);
+        $this->assertSame('members', $this->service->install('notes', $silent, 0)['access']);
+    }
+
     private function createNote(string $title): array
     {
         return $this->service->request('notes', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => $title], 'client_ip' => '127.0.0.1']);

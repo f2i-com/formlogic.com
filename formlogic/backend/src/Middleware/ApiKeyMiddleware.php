@@ -66,6 +66,13 @@ class ApiKeyMiddleware implements MiddlewareInterface
             }
         }
 
+        // A key confined to some forms reaches those forms. Only the form routes can hold it
+        // to that (ExternalApiController); every other route under a key acts on the whole
+        // account, whose flow runs, for one, hold other forms' answers.
+        if ($keyData['formIds'] !== null && !preg_match('#/api/v1/forms(/|$)#', $request->getUri()->getPath())) {
+            return $this->errorResponse(403, 'This API key is limited to specific forms.');
+        }
+
         // Per-KEY rate limit (in addition to the coarse per-IP group limit). Counts
         // only authenticated, in-scope requests, so each key gets its own quota and
         // one tenant's traffic — or failed-auth noise on a shared egress IP — can't
