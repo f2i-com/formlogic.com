@@ -12,7 +12,14 @@ import {
 } from '../flows/useFlowsDesktopPresence';
 import { api } from '../../lib/api';
 
-export type DesktopConnectionKind = 'local' | 'remote' | 'none' | 'demo';
+/**
+ * What the control can reach. `oaiy`: OAIY on this computer, paired with this
+ * browser. `local`: the legacy desktop companion on this computer. `remote`: a
+ * desktop linked to this account, through the relay; a computer linked to the
+ * account is this one too, and needs no pairing. `connect`: OAIY is running here
+ * with neither, so this browser can reach nothing of it yet.
+ */
+export type DesktopConnectionKind = 'oaiy' | 'local' | 'remote' | 'connect' | 'none' | 'demo';
 
 export interface DesktopConnectionView {
   kind: DesktopConnectionKind;
@@ -22,7 +29,7 @@ export interface DesktopConnectionView {
   detail: string;
 }
 
-export function deriveConnectionView(presence: FlowsDesktopPresence, isDemo: boolean, now?: number): DesktopConnectionView {
+export function deriveConnectionView(presence: FlowsDesktopPresence, isDemo: boolean, now?: number, oaiyDetected = false): DesktopConnectionView {
   if (isDemo) {
     return {
       kind: 'demo',
@@ -31,7 +38,9 @@ export function deriveConnectionView(presence: FlowsDesktopPresence, isDemo: boo
     };
   }
   if (presence.kind === 'local') {
-    return { kind: 'local', label: 'Desktop — this device', detail: 'The legacy desktop companion is running on this machine.' };
+    return presence.runtime === 'oaiy'
+      ? { kind: 'oaiy', label: 'OAIY connected', detail: 'OAIY Desktop on this computer. This browser reconnects to it by itself.' }
+      : { kind: 'local', label: 'Desktop — this device', detail: 'The legacy desktop companion is running on this machine.' };
   }
   if (presence.kind === 'remote') {
     const seen = describeFlowsLastSeen(presence.lastSeenMs, now);
@@ -39,6 +48,13 @@ export function deriveConnectionView(presence: FlowsDesktopPresence, isDemo: boo
       kind: 'remote',
       label: `Desktop — ${presence.label}`,
       detail: seen ? `Linked desktop · last seen ${seen}` : 'Linked desktop',
+    };
+  }
+  if (oaiyDetected) {
+    return {
+      kind: 'connect',
+      label: 'Connect OAIY',
+      detail: 'OAIY Desktop is running on this computer. Connect it once and this browser reconnects by itself after that.',
     };
   }
   return {
@@ -50,9 +66,12 @@ export function deriveConnectionView(presence: FlowsDesktopPresence, isDemo: boo
 
 export function connectionDotClass(kind: DesktopConnectionKind): string {
   switch (kind) {
+    case 'oaiy':
     case 'local':
     case 'remote':
       return 'bg-emerald-500';
+    case 'connect':
+      return 'bg-amber-500';
     case 'demo':
       return 'bg-amber-400';
     case 'none':
@@ -99,6 +118,12 @@ export function describeOpOutcome(action: string, outcome: DesktopOpOutcome): Op
 export function describeClientResult(action: string, res: DesktopClientResult<unknown>): OpFeedback {
   if (res.ok) return { tone: 'success', text: `${action} completed.` };
   return { tone: 'error', text: `${action} failed: ${res.error.message}` };
+}
+
+/** A call to OAIY on this computer, which says ok or what stopped it. */
+export function describeOaiyResult(action: string, res: { ok: boolean; error?: string }): OpFeedback {
+  if (res.ok) return { tone: 'success', text: `${action} completed.` };
+  return { tone: 'error', text: `${action} failed: ${res.error ?? 'OAIY Desktop reported an error.'}` };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

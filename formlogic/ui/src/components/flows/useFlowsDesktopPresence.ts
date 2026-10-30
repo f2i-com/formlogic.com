@@ -24,11 +24,10 @@ export type FlowsDesktopPresence =
   | { kind: 'none'; label?: undefined; lastSeenMs?: undefined };
 
 export function hasLocalDesktopBridge(): boolean {
-  // FormLogic-Desktop-specific on purpose: this signal drives the header
-  // DesktopConnectionPopover, which issues FormLogic Desktop loopback calls when
-  // it reads 'local'. OAIY is preferred by the connector layer independently (via
-  // oaiyRouteAvailable()); folding OAIY in here would make the popover claim a
-  // local bridge and then call the wrong runtime.
+  // FormLogic-Desktop-specific on purpose: this signal means FormLogic Desktop
+  // loopback calls will work. OAIY is preferred by the connector layer
+  // independently (via oaiyRouteAvailable()), and reported as a local runtime of
+  // its own, `runtime: 'oaiy'`, so nothing calls the wrong one.
   return getDesktopInfo().available && isDesktopPaired();
 }
 
@@ -81,7 +80,7 @@ export function describeFlowsLastSeen(lastSeenMs: number | undefined, now: numbe
   return `${Math.round(minutes / 60)}h ago`;
 }
 
-/** The legacy popover opts out because its controls use the legacy transport. */
+/** A caller that can only speak the legacy transport leaves OAIY out. */
 export function localFlowRuntime(includeOaiy = false): FlowsDesktopPresence {
   if (includeOaiy && oaiyRouteAvailable()) return { kind: 'local', runtime: 'oaiy', label: 'OAIY' };
   return hasLocalDesktopBridge() ? { kind: 'local' } : { kind: 'none' };
@@ -94,8 +93,7 @@ export function useFlowsDesktopPresence(includeOaiy = false, discoverLocal = tru
   const oaiyPaired = isOaiyPaired();
   const [remote, setRemote] = useState<FlowsDesktopPresence | null>(null);
 
-  // Pairing and detection changes update the editor immediately. The legacy
-  // connection popover keeps its own transport-specific presence by opting out.
+  // Pairing and detection changes update the editor immediately.
   useEffect(() => {
     const recompute = () => {
       const next = localFlowRuntime(includeOaiy);

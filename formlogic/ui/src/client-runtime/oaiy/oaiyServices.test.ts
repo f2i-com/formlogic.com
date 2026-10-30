@@ -4,7 +4,7 @@ import {
   __setOaiyBaseUrlForTests,
   setOaiyToken,
 } from './oaiyRuntime';
-import { listOaiyServices } from './oaiyServices';
+import { listOaiyServices, oaiyServiceAction } from './oaiyServices';
 
 const BASE = 'http://127.0.0.1:19996';
 
@@ -107,5 +107,28 @@ describe('listOaiyServices', () => {
   it('returns null on a non-ok response or a malformed body', async () => {
     mockFetch(() => ({ status: 500, body: { error: 'boom' } }));
     expect(await listOaiyServices()).toBeNull();
+  });
+});
+
+describe('oaiyServiceAction', () => {
+  it.each(['start', 'stop', 'repair'] as const)('%s posts to its route with the token', async (action) => {
+    setOaiyToken('t');
+    const { calls } = mockFetch(() => ({ status: 200, body: { ok: true } }));
+    expect(await oaiyServiceAction('llama.cpp', action)).toEqual({ ok: true });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe(`${BASE}/api/services/llama.cpp/${action}`);
+    expect(calls[0].init.method).toBe('POST');
+    expect(new Headers(calls[0].init.headers).get('Authorization')).toBe('Bearer t');
+  });
+
+  it('restarts with a stop and a start: OAIY has no route for it, and its relay does the same', async () => {
+    const { calls } = mockFetch((url) => (url.endsWith('/stop') ? { status: 400, body: { error: 'not running' } } : { status: 200, body: { ok: true } }));
+    expect(await oaiyServiceAction('a/b', 'restart')).toEqual({ ok: true });
+    expect(calls.map((c) => c.url)).toEqual([`${BASE}/api/services/a%2Fb/stop`, `${BASE}/api/services/a%2Fb/start`]);
+  });
+
+  it('says what OAIY said went wrong: a service route refuses in plain text', async () => {
+    mockFetch(() => ({ status: 400, body: { error: 'port 8080 is in use' } }));
+    expect(await oaiyServiceAction('llama.cpp', 'start')).toEqual({ ok: false, error: 'port 8080 is in use' });
   });
 });

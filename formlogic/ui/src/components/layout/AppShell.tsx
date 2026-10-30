@@ -5,7 +5,7 @@ import { Wrench, WifiOff } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { MobileNav } from './MobileNav';
 import { DemoBanner } from './DemoBanner';
-import { RuntimeConnectionControl } from '../desktop/RuntimeConnectionControl';
+import { DesktopConnectionPopover } from '../desktop/DesktopConnectionPopover';
 import { SiteChatWidget } from '../chat/SiteChatWidget';
 import { useChatDockOffset } from '../chat/useChatDockOffset';
 import { useUIStore } from '../../stores/uiStore';
@@ -153,7 +153,7 @@ export function AppShell() {
 
       {/* Global Desktop Connection trigger (presence, services/plugins, AI source).
           Fixed-position, z-40 — under the z-50 banners and the mobile nav. */}
-      <RuntimeConnectionControl />
+      <DesktopConnectionPopover />
 
       {/* Floating Site Chat (plan Phase 6): launcher bottom-right, draggable panel /
           mobile bottom sheet. Also fixed z-40, under the z-50 banners; renders nothing

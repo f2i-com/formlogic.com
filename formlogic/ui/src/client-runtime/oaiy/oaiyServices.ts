@@ -10,9 +10,11 @@
 // Like the rest of the OAIY seam this never throws: an unreachable OAIY resolves
 // to null, which the resolvers treat as "OAIY vanished — try FormLogic Desktop".
 import type { DesktopServiceSnapshot } from '../desktop/desktopClient';
-import { getOaiyBaseUrl, getOaiyToken } from './oaiyRuntime';
+import { getOaiyBaseUrl, getOaiyToken, oaiyLifecycleAction, type OaiyPluginActionResult } from './oaiyRuntime';
 
 const FETCH_TIMEOUT_MS = 10_000;
+/** A repair can reinstall a service while OAIY holds the request open. */
+const REPAIR_TIMEOUT_MS = 120_000;
 
 /** OAIY's `/api/services` item — a superset of the fields the resolvers read. */
 interface OaiyServiceItem {
@@ -67,4 +69,18 @@ export async function listOaiyServices(): Promise<DesktopServiceSnapshot[] | nul
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Start, stop, restart or repair a service OAIY Desktop runs. Restart is a stop
+ * and a start: OAIY has no route for it, and its own relay does the same.
+ */
+export async function oaiyServiceAction(id: string, action: 'start' | 'stop' | 'restart' | 'repair'): Promise<OaiyPluginActionResult> {
+  const route = (verb: string) => `/api/services/${encodeURIComponent(id)}/${verb}`;
+  if (action === 'repair') return oaiyLifecycleAction(route('repair'), 'service repair', REPAIR_TIMEOUT_MS);
+  if (action === 'restart') {
+    await oaiyLifecycleAction(route('stop'), 'service stop');
+    return oaiyLifecycleAction(route('start'), 'service start');
+  }
+  return oaiyLifecycleAction(route(action), `service ${action}`);
 }

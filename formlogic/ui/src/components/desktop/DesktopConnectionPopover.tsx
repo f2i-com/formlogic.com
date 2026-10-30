@@ -4,9 +4,13 @@
 // source.
 //
 // Presence → transport:
+//   'oaiy'   — OAIY paired with this browser on THIS machine → OAIY's own loopback routes.
 //   'local'  — a paired FormLogic Desktop on THIS machine → loopback desktopClient calls.
 //   'remote' — a fresh linked-desktop heartbeat, no local bridge → the account-scoped
-//              ops relay (POST/GET /api/desktop/ops) via desktopOps.ts.
+//              ops relay (POST/GET /api/desktop/ops) via desktopOps.ts. An OAIY linked
+//              to this account is reached this way with no pairing and no code, even
+//              on this machine.
+//   'connect'— OAIY is running here, unpaired and not linked → pair in Settings.
 //   'none'   — no linked desktop → connect CTA deep-linking Settings → Linked Desktops.
 //   demo     — the shared demo account: an honest "demo bridge" state; the demo NEVER
 //              touches a real desktop (audit rule: demo stays read-only/simulated).
@@ -16,11 +20,14 @@
 // The pure view-model helpers live in ./desktopConnection.ts (components-only export here).
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Link2, Loader2, Monitor, Play, RotateCcw, Sparkles, Square, Wrench } from 'lucide-react';
+import { Link2, Loader2, Monitor, Play, RotateCcw, Settings2, Sparkles, Square, Wrench } from 'lucide-react';
 import { Popover } from '../ui/Popover';
 import { desktopClient, type DesktopServiceSnapshot } from '../../client-runtime/desktop/desktopClient';
 import type { DesktopPluginSummary } from '../../client-runtime/desktop/desktopTypes';
 import { runDesktopOp } from '../../client-runtime/desktop/desktopOps';
+import { getOaiyStatus, subscribeOaiyStatus } from '../../client-runtime/oaiy/oaiyDetection';
+import { listOaiyPlugins, restartOaiyPlugin, startOaiyPlugin, stopOaiyPlugin } from '../../client-runtime/oaiy/oaiyRuntime';
+import { listOaiyServices, oaiyServiceAction } from '../../client-runtime/oaiy/oaiyServices';
 import { useFlowsDesktopPresence } from '../flows/useFlowsDesktopPresence';
 import { useAuthStore } from '../../stores/authStore';
 import { useToastStore } from '../../stores/toastStore';
@@ -34,6 +41,7 @@ import {
   connectionDotClass,
   deriveConnectionView,
   describeClientResult,
+  describeOaiyResult,
   describeOpOutcome,
   extractListResult,
   pluginOpName,
@@ -93,8 +101,16 @@ export function DesktopConnectionPopover() {
   const user = useAuthStore((s) => s.user);
   const isDemo = !!user?.isDemo;
   const [open, setOpen] = useState(false);
-  const presence = useFlowsDesktopPresence(false, open);
-  const view = deriveConnectionView(presence, isDemo);
+  const presence = useFlowsDesktopPresence(true, open);
+  const [oaiyDetected, setOaiyDetected] = useState(() => getOaiyStatus().available);
+  // Follows OAIY once something has seen it. Finding it is left to the presence
+  // hook, which asks only while this is open or a token is held: a page that
+  // never touches a local runtime makes no loopback fetches.
+  useEffect(() => {
+    if (isDemo) return;
+    return subscribeOaiyStatus((info) => setOaiyDetected(info.available), { probe: oaiyDetected });
+  }, [isDemo, oaiyDetected]);
+  const view = deriveConnectionView(presence, isDemo, undefined, oaiyDetected);
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const isMobile = useUIStore((s) => s.isMobile);
   const addToast = useToastStore((s) => s.addToast);
@@ -110,15 +126,19 @@ export function DesktopConnectionPopover() {
   const [aiPrefsReady, setAiPrefsReady] = useState(false);
   const [aiSaving, setAiSaving] = useState(false);
 
-  const transport = view.kind === 'local' ? 'local' : 'relay';
+  const transport = view.kind === 'oaiy' ? 'oaiy' : view.kind === 'local' ? 'local' : 'relay';
   const lists = loadedLists.kind === view.kind ? loadedLists : { services: null, plugins: null, error: null };
   const preferencesAvailable = aiPreferencesApi() !== null;
 
   const loadLists = useCallback(async (kind: DesktopConnectionKind, isCurrent: () => boolean = () => true) => {
-    if (kind !== 'local' && kind !== 'remote') return;
+    if (kind !== 'oaiy' && kind !== 'local' && kind !== 'remote') return;
     setListsLoading(true);
     try {
-      if (kind === 'local') {
+      if (kind === 'oaiy') {
+        const [services, plugins] = await Promise.all([listOaiyServices(), listOaiyPlugins()]);
+        if (!isCurrent()) return;
+        setLists({ kind, services, plugins, error: services === null && plugins === null ? 'OAIY Desktop did not answer.' : null });
+      } else if (kind === 'local') {
         const [svc, plg] = await Promise.all([desktopClient.services.list(), desktopClient.plugins.list()]);
         if (!isCurrent()) return;
         setLists({
@@ -198,6 +218,7 @@ export function DesktopConnectionPopover() {
   const serviceAction = (id: string, action: ServiceAction) => {
     const label = `${action} ${id}`;
     void runAction(`svc:${id}`, label, async () => {
+      if (transport === 'oaiy') return describeOaiyResult(label, await oaiyServiceAction(id, action));
       if (transport === 'local') {
         return describeClientResult(label, await desktopClient.services[action](id));
       }
@@ -209,6 +230,10 @@ export function DesktopConnectionPopover() {
   const pluginAction = (id: string, action: PluginAction) => {
     const label = `${action} ${id}`;
     void runAction(`plg:${id}`, label, async () => {
+      if (transport === 'oaiy') {
+        const act = { start: startOaiyPlugin, stop: stopOaiyPlugin, restart: restartOaiyPlugin }[action];
+        return describeOaiyResult(label, await act(id));
+      }
       if (transport === 'local') {
         return describeClientResult(label, await desktopClient.plugins[action](id));
       }
@@ -234,7 +259,11 @@ export function DesktopConnectionPopover() {
     }
   };
 
-  const showControls = view.kind === 'local' || view.kind === 'remote';
+  const showControls = view.kind === 'oaiy' || view.kind === 'local' || view.kind === 'remote';
+  const openConnectionSettings = () => {
+    setOpen(false);
+    navigate('/settings#local-runtime');
+  };
 
   // Inside the App Studio a phone's bottom edge belongs to the section's own
   // content and the global nav. This chip is not essential there — Desktop status
@@ -303,16 +332,24 @@ export function DesktopConnectionPopover() {
               </p>
               <button
                 type="button"
-                onClick={() => {
-                  setOpen(false);
-                  navigate('/settings#local-runtime');
-                }}
+                onClick={openConnectionSettings}
                 className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-700"
               >
                 <Link2 className="h-3.5 w-3.5" />
                 Link a desktop
               </button>
             </div>
+          )}
+
+          {view.kind === 'connect' && (
+            <button
+              type="button"
+              onClick={openConnectionSettings}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-700"
+            >
+              <Link2 className="h-3.5 w-3.5" />
+              Connect this computer
+            </button>
           )}
 
           {view.kind === 'demo' && (
@@ -421,6 +458,13 @@ export function DesktopConnectionPopover() {
                   })}
                 </div>
               </section>
+
+              {view.kind === 'oaiy' && (
+                <button type="button" onClick={openConnectionSettings} className={ACTION_BUTTON_CLASS}>
+                  <Settings2 className="h-3.5 w-3.5" />
+                  <span>Connection settings</span>
+                </button>
+              )}
             </>
           )}
 

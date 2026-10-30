@@ -40,6 +40,15 @@ const h = vi.hoisted(() => ({
     },
   },
   runDesktopOp: vi.fn(),
+  oaiyDetected: false,
+  oaiy: {
+    listServices: vi.fn(),
+    serviceAction: vi.fn(),
+    listPlugins: vi.fn(),
+    startPlugin: vi.fn(),
+    stopPlugin: vi.fn(),
+    restartPlugin: vi.fn(),
+  },
 }));
 
 vi.mock('../flows/useFlowsDesktopPresence', () => ({
@@ -48,6 +57,23 @@ vi.mock('../flows/useFlowsDesktopPresence', () => ({
 }));
 vi.mock('../../client-runtime/desktop/desktopClient', () => ({ desktopClient: h.desktopClient }));
 vi.mock('../../client-runtime/desktop/desktopOps', () => ({ runDesktopOp: h.runDesktopOp }));
+vi.mock('../../client-runtime/oaiy/oaiyDetection', () => ({
+  getOaiyStatus: () => ({ available: h.oaiyDetected }),
+  subscribeOaiyStatus: () => () => {},
+}));
+vi.mock('../../client-runtime/oaiy/oaiyRuntime', () => ({
+  listOaiyPlugins: h.oaiy.listPlugins,
+  startOaiyPlugin: h.oaiy.startPlugin,
+  stopOaiyPlugin: h.oaiy.stopPlugin,
+  restartOaiyPlugin: h.oaiy.restartPlugin,
+  setOaiyToken: vi.fn(),
+  setOaiyTokenAccount: vi.fn(),
+  forgetOaiyTokenOf: vi.fn(),
+}));
+vi.mock('../../client-runtime/oaiy/oaiyServices', () => ({
+  listOaiyServices: h.oaiy.listServices,
+  oaiyServiceAction: h.oaiy.serviceAction,
+}));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -110,6 +136,10 @@ beforeEach(() => {
   document.body.innerHTML = '';
   h.presence = { kind: 'local' };
   h.lastLocation = '';
+  h.oaiyDetected = false;
+  h.oaiy.listServices.mockResolvedValue(SERVICES);
+  h.oaiy.listPlugins.mockResolvedValue(PLUGINS);
+  for (const fn of [h.oaiy.serviceAction, h.oaiy.startPlugin, h.oaiy.stopPlugin, h.oaiy.restartPlugin]) fn.mockResolvedValue({ ok: true });
   useAuthStore.setState({ user: { id: 'u1', email: 'u1@example.com' }, isLoading: false, isInitialized: true, error: null });
   useUIStore.setState({ isMobile: false, sidebarCollapsed: false });
   useToastStore.getState().clearToasts();
@@ -152,6 +182,13 @@ describe('deriveConnectionView', () => {
     expect(deriveConnectionView({ kind: 'none' }, false).label).toBe('No desktop');
     // The demo account is ALWAYS the demo bridge, even with a paired local desktop.
     expect(deriveConnectionView({ kind: 'local' }, true).kind).toBe('demo');
+  });
+
+  it('tells OAIY paired here from OAIY only found here, and a linked desktop outranks asking for a code', () => {
+    expect(deriveConnectionView({ kind: 'local', runtime: 'oaiy', label: 'OAIY' }, false).label).toBe('OAIY connected');
+    expect(deriveConnectionView({ kind: 'none' }, false, undefined, true).label).toBe('Connect OAIY');
+    expect(deriveConnectionView({ kind: 'remote', label: 'SHOP-PC' }, false, undefined, true).kind).toBe('remote');
+    expect(deriveConnectionView({ kind: 'local', runtime: 'oaiy', label: 'OAIY' }, true).kind).toBe('demo');
   });
 });
 
@@ -331,6 +368,109 @@ describe('DesktopConnectionPopover — remote presence', () => {
     const notice = panel()!.querySelector('[role="status"]')!;
     expect(notice.textContent).toContain('outcome uncertain');
     expect(notice.textContent).toContain('may have completed');
+  });
+});
+
+describe('DesktopConnectionPopover — OAIY paired on this computer', () => {
+  beforeEach(() => {
+    h.presence = { kind: 'local', runtime: 'oaiy', label: 'OAIY' };
+    h.oaiyDetected = true;
+  });
+
+  it('opens the menu rather than leaving for Settings, listing OAIY\'s services and plugins', async () => {
+    await renderPopover();
+    expect(trigger().textContent).toContain('OAIY connected');
+    await openPanel();
+    expect(h.lastLocation).toBe('/flows');
+    expect(panel()!.textContent).toContain('llama.cpp');
+    expect(panel()!.textContent).toContain('Aokie Receptionist');
+    // Never the legacy companion's routes or the relay: this is OAIY's own runtime.
+    expect(h.desktopClient.services.list).not.toHaveBeenCalled();
+    expect(h.runDesktopOp).not.toHaveBeenCalled();
+  });
+
+  it.each(['Stop', 'Restart', 'Repair'])('%ss a service through OAIY', async (button) => {
+    await renderPopover();
+    await openPanel();
+    await act(async () => {
+      panelButton(button, 'Services')!.click();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(h.oaiy.serviceAction).toHaveBeenCalledWith('llama-cpp', button.toLowerCase());
+    expect(h.desktopClient.services[button.toLowerCase() as 'stop']).not.toHaveBeenCalled();
+    expect(h.oaiy.listServices).toHaveBeenCalledTimes(2); // the list follows what was done
+  });
+
+  it('starts a stopped service, and restarts a plugin, through OAIY', async () => {
+    h.oaiy.listServices.mockResolvedValue([{ id: 'llama-cpp', name: 'llama.cpp', status: 'stopped', port: 8080 }]);
+    await renderPopover();
+    await openPanel();
+    await act(async () => {
+      panelButton('Start', 'Services')!.click();
+    });
+    await act(async () => {
+      panelButton('Restart', 'Plugins')!.click();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(h.oaiy.serviceAction).toHaveBeenCalledWith('llama-cpp', 'start');
+    expect(h.oaiy.restartPlugin).toHaveBeenCalledWith('aokie');
+  });
+
+  it('says what OAIY said when an action fails', async () => {
+    h.oaiy.serviceAction.mockResolvedValue({ ok: false, error: 'port 8080 is in use' });
+    await renderPopover();
+    await openPanel();
+    await act(async () => {
+      panelButton('Stop', 'Services')!.click();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(panel()!.querySelector('[role="status"]')!.textContent).toContain('port 8080 is in use');
+  });
+
+  it('says so when OAIY stops answering, and keeps a way to its settings', async () => {
+    h.oaiy.listServices.mockResolvedValue(null);
+    h.oaiy.listPlugins.mockResolvedValue(null);
+    await renderPopover();
+    await openPanel();
+    expect(panel()!.textContent).toContain('OAIY Desktop did not answer.');
+    await act(async () => {
+      panelButton('Connection settings')!.click();
+    });
+    expect(h.lastLocation).toBe('/settings#local-runtime');
+  });
+});
+
+describe('DesktopConnectionPopover — OAIY on this computer, not paired', () => {
+  beforeEach(() => {
+    h.oaiyDetected = true;
+  });
+
+  it('drives a desktop linked to the account through the relay, asking for no code', async () => {
+    h.presence = { kind: 'remote', label: 'SHOP-PC' };
+    await renderPopover();
+    await openPanel();
+    expect(trigger().textContent).toContain('SHOP-PC');
+    expect(panel()!.textContent).not.toContain('Connect this computer');
+    expect(h.runDesktopOp).toHaveBeenCalledWith({ op: 'desktop.services.list' });
+    expect(h.oaiy.listServices).not.toHaveBeenCalled();
+  });
+
+  it('asks to connect only when nothing reaches it, and sends the person to pair', async () => {
+    h.presence = { kind: 'none' };
+    await renderPopover();
+    expect(trigger().textContent).toContain('Connect OAIY');
+    await openPanel();
+    expect(h.oaiy.listServices).not.toHaveBeenCalled();
+    await act(async () => {
+      panelButton('Connect this computer')!.click();
+    });
+    expect(h.lastLocation).toBe('/settings#local-runtime');
   });
 });
 
