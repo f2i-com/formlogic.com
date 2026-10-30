@@ -32,16 +32,15 @@ function starterBundle(): Buffer {
 }
 
 /**
- * A client-only app (interface only, no server entry), built from the starter
- * rather than read from a sibling checkout: the manifest without its `server`
- * block and the server files left out.
+ * An app whose backend was written for another SoftN host (an entry and its routes, none of what
+ * this host's runner reads), built from the starter rather than read from a sibling checkout. A
+ * client-only app is one the native import takes (softn-apps.spec.ts uploads one).
  */
-function clientOnlyBundle(): Buffer {
-  const manifest = JSON.parse(STARTER.files['manifest.json']) as Record<string, unknown> & { config?: Record<string, unknown> };
-  delete manifest.server;
-  if (manifest.config && typeof manifest.config === 'object') delete (manifest.config as Record<string, unknown>).server;
-  const files: Record<string, Uint8Array> = { 'manifest.json': strToU8(JSON.stringify(manifest, null, 2)) };
-  for (const [path, source] of Object.entries(STARTER.files)) if (path.startsWith('ui/')) files[path] = strToU8(source);
+function otherHostBundle(): Buffer {
+  const manifest = JSON.parse(STARTER.files['manifest.json']) as Record<string, unknown> & { server: Record<string, unknown> };
+  manifest.server = { entry: manifest.server.entry, routes: manifest.server.routes };
+  const files = Object.fromEntries(Object.entries(STARTER.files).map(([path, source]) => [path, strToU8(source)]));
+  files['manifest.json'] = strToU8(JSON.stringify(manifest, null, 2));
   return Buffer.from(zipSync(files));
 }
 
@@ -117,9 +116,9 @@ test.describe('embedded editors: round trip and live conflict', () => {
       await page.route('**/api/ai/preferences', route => route.fulfill({ json: { data: { aiSource: 'site', chatToolMode: 'auto' } } }));
       const dialog = await openHosting(page, app.id);
 
-      // A client-only bundle (no server entry) is refused by the native import with its reason.
-      await dialog.getByLabel('Import native app').setInputFiles({ name: 'client-only.softn', mimeType: 'application/zip', buffer: clientOnlyBundle() });
-      await expect(dialog.getByRole('alert')).toContainText('no native server entry');
+      // A backend this host does not run is refused by the native import with its reason.
+      await dialog.getByLabel('Import native app').setInputFiles({ name: 'other-host.softn', mimeType: 'application/zip', buffer: otherHostBundle() });
+      await expect(dialog.getByRole('alert')).toContainText('This app\'s backend is not one FormLogic runs: it was written for another SoftN host.');
 
       // 1. Import the starter project through the file input and install it (version 1).
       await dialog.getByLabel('Import native app').setInputFiles({ name: 'starter.softn', mimeType: 'application/zip', buffer: starterBundle() });
