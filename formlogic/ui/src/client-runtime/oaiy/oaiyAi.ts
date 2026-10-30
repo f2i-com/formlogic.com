@@ -9,7 +9,7 @@
 // with a one-line branch and keep its error handling unchanged.
 import type { DesktopClientResult } from '../desktop/desktopTypes';
 import type { DesktopAiSource } from '../desktop/desktopClient';
-import { getOaiyBaseUrl, getOaiyToken, mapOaiyErrorCode } from './oaiyRuntime';
+import { forgetRefusedOaiyToken, getOaiyBaseUrl, getOaiyToken, mapOaiyErrorCode } from './oaiyRuntime';
 
 const FETCH_TIMEOUT_MS = 30_000;
 
@@ -91,6 +91,7 @@ export async function oaiyAiChat(
   if (resp.ok) {
     return { ok: true, data: (json ?? {}) as Record<string, unknown> };
   }
+  forgetRefusedOaiyToken(resp.status, json);
   const err = (json as { error?: { code?: string; message?: string } })?.error;
   return {
     ok: false,

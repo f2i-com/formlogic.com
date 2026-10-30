@@ -42,11 +42,23 @@ a trust boundary. A browser served by `oaiy.com` or OAIY's own webview is truste
 by Origin; FormLogic Web, a different origin, presents a **bearer token** (the
 generic non-browser-origin path the protocol defines), set via `setOaiyToken()`.
 
-Provisioning that token is a pairing step (the analogue of `desktopPairing.ts`)
-and is the remaining production wiring: FormLogic pairs with OAIY Desktop once,
-stores the token, and every connector call carries it. Until that UI exists, the
-token can be set programmatically (or, against a debug OAIY build, loopback
-origins are trusted so no token is needed in dev).
+The token comes from pairing (`oaiyPairing.ts`, the analogue of
+`desktopPairing.ts`): OAIY shows a code, the person approves it in OAIY's window,
+and every connector call then carries the token. It is kept for the signed-in
+FormLogic account, in `localStorage` under the account's id, so a new tab or a
+restarted browser reconnects with no new code, and neither another account on
+that browser nor the demo account can reach it. Unlike FormLogic Desktop's
+session-only token, this is OAIY's design: it keeps a grant across restarts until
+it goes 90 days unused, and holds it to the page it was granted to. Disconnect
+forgets it, as does OAIY's guard refusing it (`forgetRefusedOaiyToken`), and
+signing out only puts it out of reach. An account deletion erases it.
+
+A desktop LINKED to the account needs no pairing at all. Its heartbeat puts it in
+the account's `desktop_connections`, and the Desktop control then drives its
+services and plugins through the ops relay, on this computer as on any other.
+Pairing adds direct calls from this browser. OAIY also trusts a linked site's
+origin for reads, and for starting and stopping services, but FormLogic does not
+rely on that: it is per site, not per account, and it does not reach commands.
 
 ## Genericity
 

@@ -18,7 +18,7 @@ vi.mock('./appUserStore', () => ({ useAppUserStore: { getState: () => ({ reset: 
 vi.mock('./appRuntimeStore', () => ({ useAppRuntimeStore: { getState: () => ({ reset: calls.runtime }) } }));
 vi.mock('./responseStore', () => ({ useResponseStore: { setState: calls.responses } }));
 vi.mock('./vaultStore', () => ({ lockVaultForSessionTeardown: vi.fn(), useVaultStore: { setState: vi.fn() } }));
-vi.mock('../client-runtime/oaiy/oaiyRuntime', () => ({ setOaiyToken: vi.fn() }));
+vi.mock('../client-runtime/oaiy/oaiyRuntime', () => ({ setOaiyToken: vi.fn(), setOaiyTokenAccount: vi.fn(), forgetOaiyTokenOf: vi.fn() }));
 vi.mock('../client-runtime/offlineQueue', () => ({ purgeQueueForOwner: calls.purgeBrowser }));
 vi.mock('../client-runtime/nativeOfflineQueue', () => ({ purgeNativeQueue: calls.purgeNative }));
 vi.mock('../components/chat/chatStore', () => ({ deleteChatDataForUser: vi.fn(async () => {}) }));

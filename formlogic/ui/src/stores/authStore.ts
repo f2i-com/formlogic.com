@@ -11,7 +11,7 @@ import { useAppRuntimeStore } from './appRuntimeStore';
 import { useResponseStore } from './responseStore';
 import { toast } from './toastStore';
 import { lockVaultForSessionTeardown, useVaultStore } from './vaultStore';
-import { setOaiyToken } from '../client-runtime/oaiy/oaiyRuntime';
+import { forgetOaiyTokenOf, setOaiyToken, setOaiyTokenAccount } from '../client-runtime/oaiy/oaiyRuntime';
 
 interface User {
   id: string;
@@ -138,6 +138,11 @@ export async function teardownUserSession(
   if (reason !== 'session-expired') await forgetQueuedSubmissions(userId, generation);
 
   if (userId && reason === 'account-deleted') {
+    try {
+      forgetOaiyTokenOf(userId);
+    } catch {
+      // never let it block the erasure below
+    }
     // Request erasure of the deleted account's per-user chat DB (audit FL-10):
     // plaintext transcripts and image data URIs must not merely be detached.
     try {
@@ -293,10 +298,13 @@ async function clearUserSessionData(generation: number, memoryOnly: boolean): Pr
     // Never let vault teardown block the logout path.
   }
 
-  // The OAIY pairing token lives in sessionStorage keyed by base URL only. Left
-  // behind, it survives into the next session — including the shared demo
-  // account — and drives the operator's real hardware.
+  // The OAIY pairing token drives the operator's real hardware, so it must not
+  // reach the next session, the shared demo account included. What an account
+  // keeps stays under its id, out of reach until it signs in again, so signing
+  // out does not mean pairing again, and this never deletes it: another tab's
+  // sign-out runs this too. What this tab holds for no account goes.
   try {
+    setOaiyTokenAccount(null);
     setOaiyToken(null);
   } catch {
     // never let it block logout
@@ -646,6 +654,11 @@ export async function handleSessionBroadcast(data: SessionMessage | null): Promi
   withMemoryOnlyPersistence(() => useAuthStore.setState({ user: null, error: null, isLoading: false }));
   await teardownUserSession(userId, data.reason === 'session-expired' ? 'session-expired' : 'remote-teardown', false, true);
 }
+
+// Whose OAIY token this page uses. The shared demo account never keeps one.
+const followOaiyTokenAccount = (user: User | null) => setOaiyTokenAccount(user && !user.isDemo ? user.id : null);
+followOaiyTokenAccount(useAuthStore.getState().user);
+useAuthStore.subscribe((state) => followOaiyTokenAccount(state.user));
 
 // Browser-only: vitest runs in node, and the module-level channel would leak there.
 if (typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined') {

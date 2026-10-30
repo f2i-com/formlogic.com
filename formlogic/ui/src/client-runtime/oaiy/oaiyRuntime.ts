@@ -65,33 +65,53 @@ export interface OaiyHealth {
 // own webview is trusted by Origin; FormLogic Web (a different origin) presents
 // a bearer token instead, the generic non-browser-origin path the protocol
 // defines. Stored per base URL so a test instance and production do not share.
+//
+// OAIY keeps a grant across its restarts until it goes 90 days unused, and holds
+// it to the page it was granted to, so a token copied to another site is refused.
+// The token is kept for the signed-in FormLogic account, in localStorage, so that
+// a new tab or a restarted browser reconnects without a new code. It is under
+// the account's id: nobody else who signs in on this browser, the shared demo
+// account included, can reach it, and signing out leaves it for its owner. With
+// no account (a page outside a sign-in), it lasts for the tab, as sessionStorage
+// does. Disconnecting, or OAIY refusing it, forgets it.
 // ---------------------------------------------------------------------------
 
-// sessionStorage is absent in non-DOM environments (unit tests, SSR); fall back
-// to an in-memory map with the same per-base keying, matching desktopPairing.
+// Storage is absent in non-DOM environments (unit tests, SSR); fall back to an
+// in-memory map with the same keying, matching desktopPairing.
 const memoryStore = new Map<string, string>();
 
-function tokenKey(): string {
+/** The signed-in account a token is kept for; authStore sets it. */
+let tokenAccount: string | null = null;
+
+function tabKey(): string {
   return `oaiy.token:${getOaiyBaseUrl()}`;
 }
 
-export function getOaiyToken(): string | null {
-  const key = tokenKey();
+function accountKey(account: string): string {
+  return `${tabKey()}:${account}`;
+}
+
+function storageArea(kept: boolean): Storage | null {
+  if (kept) return typeof localStorage === 'undefined' ? null : localStorage;
+  return typeof sessionStorage === 'undefined' ? null : sessionStorage;
+}
+
+function readToken(key: string, kept: boolean): string | null {
   try {
-    if (typeof sessionStorage !== 'undefined') return sessionStorage.getItem(key);
+    const area = storageArea(kept);
+    if (area) return area.getItem(key);
   } catch {
     /* storage blocked — fall through to memory */
   }
   return memoryStore.get(key) ?? null;
 }
 
-export function setOaiyToken(token: string | null): void {
-  const key = tokenKey();
+function writeToken(key: string, kept: boolean, token: string | null): void {
   try {
-    if (typeof sessionStorage !== 'undefined') {
-      if (token) sessionStorage.setItem(key, token);
-      else sessionStorage.removeItem(key);
-      notifyOaiyPaired();
+    const area = storageArea(kept);
+    if (area) {
+      if (token) area.setItem(key, token);
+      else area.removeItem(key);
       return;
     }
   } catch {
@@ -99,6 +119,28 @@ export function setOaiyToken(token: string | null): void {
   }
   if (token) memoryStore.set(key, token);
   else memoryStore.delete(key);
+}
+
+export function getOaiyToken(): string | null {
+  return (tokenAccount ? readToken(accountKey(tokenAccount), true) : null) ?? readToken(tabKey(), false);
+}
+
+export function setOaiyToken(token: string | null): void {
+  writeToken(tabKey(), false, tokenAccount ? null : token);
+  if (tokenAccount) writeToken(accountKey(tokenAccount), true, token);
+  notifyOaiyPaired();
+}
+
+/** Say whose session this is: their kept token comes into use, and anyone else's goes out of reach. */
+export function setOaiyTokenAccount(account: string | null): void {
+  if (account === tokenAccount) return;
+  tokenAccount = account;
+  notifyOaiyPaired();
+}
+
+/** Erase what an account kept here, whoever is signed in: the account is being deleted. */
+export function forgetOaiyTokenOf(account: string): void {
+  writeToken(accountKey(account), true, null);
   notifyOaiyPaired();
 }
 
@@ -133,9 +175,39 @@ export function subscribeOaiyPaired(listener: OaiyPairedListener): () => void {
   };
 }
 
+// A token kept for the account is shared by the account's tabs: pairing or
+// disconnecting in one reaches the others.
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event: StorageEvent) => {
+    if (event.key === null || event.key.startsWith('oaiy.token:')) notifyOaiyPaired();
+  });
+}
+
 function authHeaders(): Record<string, string> {
   const t = getOaiyToken();
   return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
+/**
+ * Forget a token OAIY no longer honours: revoked in OAIY's window, or unused for
+ * 90 days. A kept token would otherwise read as connected for good. OAIY's guard
+ * refuses before any route runs, with `{error: "<text>"}`; a route's own refusal
+ * (a command denied, a plugin that is stopped) has a code or a 400, and says
+ * nothing about the token, so it leaves it alone. Every route FormLogic calls is
+ * one its grant reaches, so a guard refusal can only mean the token is gone.
+ * (On a desktop linked to this site, reads pass by origin with a dead token, so
+ * the first refused command is what finds it.)
+ */
+export function forgetRefusedOaiyToken(status: number, body: unknown): void {
+  const refusedByGuard = status === 401
+    || (status === 403 && typeof (body as { error?: unknown } | null | undefined)?.error === 'string');
+  if (refusedByGuard && getOaiyToken() !== null) setOaiyToken(null);
+}
+
+/** What OAIY said went wrong: a guard's or a service route's text, or a typed error's message. */
+function oaiyErrorText(body: unknown): string | undefined {
+  const error = (body as { error?: string | { message?: string } } | null | undefined)?.error;
+  return typeof error === 'string' ? error : error?.message;
 }
 
 // ---------------------------------------------------------------------------
@@ -337,6 +409,7 @@ export async function oaiyConnectorRequest(
     return { ok: true, data };
   }
 
+  forgetRefusedOaiyToken(resp.status, json);
   const err = (json as { error?: { code?: string; message?: string; detail?: string } })?.error;
   const error: DesktopErrorShape = {
     code: mapOaiyErrorCode(err?.code ?? '', resp.status),
@@ -405,7 +478,10 @@ export async function listOaiyPlugins(): Promise<OaiyPluginSummary[] | null> {
       headers: { Accept: 'application/json', ...authHeaders() },
     });
     clearTimeout(timer);
-    if (!resp.ok) return null;
+    if (!resp.ok) {
+      forgetRefusedOaiyToken(resp.status, await resp.json().catch(() => null));
+      return null;
+    }
     const body = (await resp.json().catch(() => null)) as {
       plugins?: Array<{
         id: string;
@@ -427,50 +503,58 @@ export async function listOaiyPlugins(): Promise<OaiyPluginSummary[] | null> {
   }
 }
 
-/** Outcome of a plugin lifecycle action — ok, or an actionable message. */
+/** Outcome of a plugin or service lifecycle action — ok, or an actionable message. */
 export interface OaiyPluginActionResult {
   ok: boolean;
   error?: string;
 }
 
 /**
- * Start or stop an OAIY-hosted plugin (POST /api/plugins/{id}/{start|stop}).
- * Privileged, so it carries the pairing bearer. Starting spawns the plugin
- * process + handshake, which can take a few seconds — hence the longer timeout.
- * Never throws: an unreachable OAIY, a 401, or a host refusal all come back as
- * `{ ok:false, error }` for the caller to surface.
+ * Ask OAIY to act on a plugin or a service (POST with no body). Privileged, so it
+ * carries the pairing bearer. Starting spawns a process and its handshake, which
+ * can take a few seconds — hence the longer timeout. Never throws: an unreachable
+ * OAIY, a 401, or a host refusal all come back as `{ ok:false, error }` for the
+ * caller to surface.
  */
-async function pluginLifecycle(id: string, action: 'start' | 'stop'): Promise<OaiyPluginActionResult> {
+export async function oaiyLifecycleAction(path: string, what: string, timeoutMs = 20_000): Promise<OaiyPluginActionResult> {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20_000);
-    const resp = await fetch(
-      `${getOaiyBaseUrl()}/api/plugins/${encodeURIComponent(id)}/${action}`,
-      {
-        method: 'POST',
-        credentials: 'omit',
-        cache: 'no-store',
-        signal: controller.signal,
-        headers: { Accept: 'application/json', ...authHeaders() },
-      },
-    );
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const resp = await fetch(`${getOaiyBaseUrl()}${path}`, {
+      method: 'POST',
+      credentials: 'omit',
+      cache: 'no-store',
+      signal: controller.signal,
+      headers: { Accept: 'application/json', ...authHeaders() },
+    });
     clearTimeout(timer);
     if (resp.ok) return { ok: true };
-    const body = (await resp.json().catch(() => null)) as { error?: { message?: string } } | null;
-    return { ok: false, error: body?.error?.message ?? `OAIY plugin ${action} failed (HTTP ${resp.status})` };
+    const body = await resp.json().catch(() => null);
+    forgetRefusedOaiyToken(resp.status, body);
+    return { ok: false, error: oaiyErrorText(body) ?? `OAIY ${what} failed (HTTP ${resp.status})` };
   } catch {
     return { ok: false, error: 'OAIY Desktop did not respond.' };
   }
 }
 
-/** Start an OAIY-hosted plugin. See {@link pluginLifecycle}. */
+function pluginLifecycle(id: string, action: 'start' | 'stop'): Promise<OaiyPluginActionResult> {
+  return oaiyLifecycleAction(`/api/plugins/${encodeURIComponent(id)}/${action}`, `plugin ${action}`);
+}
+
+/** Start an OAIY-hosted plugin. See {@link oaiyLifecycleAction}. */
 export function startOaiyPlugin(id: string): Promise<OaiyPluginActionResult> {
   return pluginLifecycle(id, 'start');
 }
 
-/** Stop an OAIY-hosted plugin. See {@link pluginLifecycle}. */
+/** Stop an OAIY-hosted plugin. See {@link oaiyLifecycleAction}. */
 export function stopOaiyPlugin(id: string): Promise<OaiyPluginActionResult> {
   return pluginLifecycle(id, 'stop');
+}
+
+/** Restart an OAIY-hosted plugin. OAIY has no route for it: its relay stops and starts too. */
+export async function restartOaiyPlugin(id: string): Promise<OaiyPluginActionResult> {
+  await stopOaiyPlugin(id);
+  return startOaiyPlugin(id);
 }
 
 /** Unwrap a plugin's `{ ok: true, data }` connector-response envelope to its

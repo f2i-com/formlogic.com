@@ -55,6 +55,7 @@ import {
   type OaiyPluginSummary,
 } from '../../client-runtime/oaiy/oaiyRuntime';
 import { pairWithOaiy } from '../../client-runtime/oaiy/oaiyPairing';
+import { useFlowsDesktopPresence } from '../flows/useFlowsDesktopPresence';
 
 type PairingUiState = 'idle' | 'pending' | 'approved' | 'denied' | 'failed';
 
@@ -98,6 +99,7 @@ export function LocalRuntimePanel() {
   const [refreshing, setRefreshing] = useState(false);
   /** Plugin ids with an in-flight start/stop, so their button shows a spinner. */
   const [pluginBusy, setPluginBusy] = useState<Set<string>>(new Set());
+  const linkedDesktop = useFlowsDesktopPresence(false, false, true);
 
   // Detection runs only while this panel (or the app runtime) is subscribed.
   useEffect(() => subscribeOaiyStatus(setOaiy), []);
@@ -121,7 +123,8 @@ export function LocalRuntimePanel() {
 
   // Auto-reconnect is a FormLogic Desktop capability (origin-trusted silent
   // re-pair). Only attempt it when FormLogic Desktop is the active runtime — OAIY
-  // has no silent path (every OAIY pairing needs an explicit approval).
+  // needs none: every new OAIY pairing needs an explicit approval, and the token
+  // it gives is kept for this account (oaiyRuntime.ts), so one is enough.
   useEffect(() => {
     if (active === 'desktop' && desktop.available && !desktopPaired) void attemptSilentReconnect();
   }, [active, desktop.available, desktopPaired]);
@@ -220,10 +223,10 @@ export function LocalRuntimePanel() {
 
   const handleDisconnect = () => {
     if (active === 'oaiy') {
-      setOaiyToken(null); // drops this session's OAIY token (→ subscribeOaiyPaired fires)
+      setOaiyToken(null); // forgets the token kept for this account (→ subscribeOaiyPaired fires)
       setPairing('idle');
       setLoadedPlugins({ runtime: active, rows: null });
-      toast.info('Disconnected', 'The OAIY Desktop token for this browser session was discarded.');
+      toast.info('Disconnected', 'This browser no longer holds an OAIY Desktop token for your account.');
       return;
     }
     disconnectDesktop(); // drops the token AND suppresses auto-reconnect until an explicit Connect
@@ -315,6 +318,13 @@ export function LocalRuntimePanel() {
 
       {detected && !activePaired && (
         <div className="mb-4">
+          {active === 'oaiy' && linkedDesktop.kind === 'remote' && (
+            <p className="mb-3 text-sm text-gray-600 dark:text-slate-400">
+              {linkedDesktop.label} is linked to your account, so its services and plugins already work from the
+              Desktop button at the bottom of the screen, with no code. Connect here as well only if this browser
+              should reach OAIY directly.
+            </p>
+          )}
           <Button onClick={handleConnect} isLoading={pairing === 'pending'} disabled={pairing === 'pending'} leftIcon={<Plug className="h-4 w-4" />}>
             {pairing === 'pending' ? `Waiting for approval in ${activeLabel}…` : `Connect ${activeLabel}`}
           </Button>
@@ -336,7 +346,7 @@ export function LocalRuntimePanel() {
           )}
           <p className="mt-2 text-[11px] text-gray-400 dark:text-slate-500">
             {active === 'oaiy' ? (
-              <>Approving in OAIY Desktop issues a token this browser session holds — it lives only in this session and you can revoke the connection from OAIY Desktop at any time.</>
+              <>Approving in OAIY Desktop issues a token this browser keeps for your account, so you only do this once. Only this site can use it, and you can disconnect here or revoke it from OAIY Desktop at any time.</>
             ) : (
               <>Approving on the desktop issues a token bound to <span className="font-mono">{window.location.origin}</span> — other websites cannot reuse it, and it lives only in this browser session.</>
             )}
@@ -396,7 +406,7 @@ export function LocalRuntimePanel() {
           <div className="flex items-center justify-between gap-2">
             <p className="text-[11px] text-gray-400 dark:text-slate-500">
               Connected to <span className="font-medium">{activeLabel}</span> on this machine. Disconnect here to
-              drop this session’s token{active === 'desktop' ? ', or revoke the origin from the desktop’s settings' : ', or revoke this app from OAIY Desktop'}.
+              drop {active === 'desktop' ? 'this session’s token, or revoke the origin from the desktop’s settings' : 'the token this browser keeps, or revoke this app from OAIY Desktop'}.
             </p>
             <Button variant="ghost" size="sm" onClick={handleDisconnect} leftIcon={<Unplug className="h-3.5 w-3.5" />}>
               Disconnect

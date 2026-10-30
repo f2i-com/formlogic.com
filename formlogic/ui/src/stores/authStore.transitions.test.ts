@@ -8,7 +8,7 @@ vi.mock('./appUserStore', () => ({ useAppUserStore: { getState: () => ({ reset: 
 vi.mock('./appRuntimeStore', () => ({ useAppRuntimeStore: { getState: () => ({ reset: vi.fn() }) } }));
 vi.mock('./responseStore', () => ({ useResponseStore: { setState: vi.fn() } }));
 vi.mock('./vaultStore', () => ({ lockVaultForSessionTeardown: calls.lockVault, useVaultStore: { setState: calls.vaultState, getState: () => ({ lock: calls.lockLocalVault }) } }));
-vi.mock('../client-runtime/oaiy/oaiyRuntime', () => ({ setOaiyToken: calls.oaiy }));
+vi.mock('../client-runtime/oaiy/oaiyRuntime', () => ({ setOaiyToken: calls.oaiy, setOaiyTokenAccount: vi.fn(), forgetOaiyTokenOf: vi.fn() }));
 vi.mock('../client-runtime/offlineQueue', () => ({ purgeQueueForOwner: vi.fn(async () => {}) }));
 vi.mock('../client-runtime/nativeOfflineQueue', () => ({ purgeNativeQueue: vi.fn(async () => {}) }));
 vi.mock('./toastStore', () => ({ toast: { warning: vi.fn() } }));
