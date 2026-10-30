@@ -238,8 +238,9 @@ export function DesktopConnectionPopover() {
 
   // Inside the App Studio a phone's bottom edge belongs to the section's own
   // content and the global nav. This chip is not essential there — Desktop status
-  // stays available on Flows and in Settings.
-  if (isMobile && pathClaimsBottomEdge(location.pathname)) return null;
+  // stays available on Flows and in Settings. Nor is it with no desktop at all: on a
+  // phone it floats over the page's own fields to say only that nothing is linked.
+  if (isMobile && (view.kind === 'none' || pathClaimsBottomEdge(location.pathname))) return null;
 
   return (
     <>

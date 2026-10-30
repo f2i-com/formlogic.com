@@ -306,7 +306,7 @@ function FormResponseView() {
         }
       />
 
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
         {/* History-aware back: return to wherever the user came from (the records table,
             another record via a linked chip or related row, Analytics, a dashboard…),
             falling back to this form's records list on a direct load. A separate quiet
@@ -530,7 +530,7 @@ function FormResponseView() {
             </div>
           </>
         )}
-      </main>
+      </div>
 
       <ConfirmDialog
         isOpen={showDelete}

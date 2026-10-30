@@ -209,6 +209,18 @@ describe('DesktopConnectionPopover — local presence', () => {
     expect(container.querySelector('button[aria-haspopup="dialog"]')).toBeNull();
   });
 
+  it('floats over a phone\'s page only when a desktop is linked, not to say none is', async () => {
+    useUIStore.setState({ isMobile: true });
+    h.presence = { kind: 'none' };
+    await renderPopover('/apps/new');
+    expect(container.querySelector('button[aria-haspopup="dialog"]')).toBeNull();
+    await act(async () => { root.unmount(); });
+    container.remove();
+    h.presence = { kind: 'remote', label: 'OTHER-PC', lastSeenMs: Date.now() };
+    await renderPopover('/apps/new');
+    expect(trigger().textContent).toContain('Desktop — OTHER-PC');
+  });
+
   it('shows the local label and lists services + plugins from the loopback client', async () => {
     await renderPopover();
     expect(trigger().textContent).toContain('Desktop — this device');

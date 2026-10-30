@@ -143,7 +143,7 @@ export function AppCreateStart() {
         title="Create app"
         back={{ onClick: () => navigate('/apps'), label: 'Back to apps' }}
       />
-      <main className="mx-auto max-w-3xl px-4 pb-32 pt-6 sm:pb-16 sm:pt-8">
+      <div className="mx-auto max-w-3xl px-4 pb-32 pt-6 sm:pb-16 sm:pt-8">
         {(
           <>
             <h2 className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">
@@ -336,7 +336,7 @@ export function AppCreateStart() {
             </div>
           </>
         )}
-      </main>
+      </div>
       <VaultSetupWizard
         isOpen={showVaultSetup}
         onClose={() => setShowVaultSetup(false)}

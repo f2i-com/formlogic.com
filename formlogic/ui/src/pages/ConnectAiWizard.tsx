@@ -100,7 +100,7 @@ export default function ConnectAiWizard() {
   return (
     <div className="min-h-screen">
       <Header title="Connect your AI" />
-      <main className="mx-auto max-w-3xl space-y-6 px-4 py-6 pb-24 sm:px-6 sm:py-10">
+      <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 pb-24 sm:px-6 sm:py-10">
         <Link
           to="/"
           className="inline-flex items-center gap-2 text-sm text-gray-500"
@@ -314,7 +314,7 @@ export default function ConnectAiWizard() {
             desktopPresence={presence}
           />
         )}
-      </main>
+      </div>
     </div>
   );
 }
