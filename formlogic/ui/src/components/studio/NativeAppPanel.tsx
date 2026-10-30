@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { AppEngineSelect } from './AppEngineSelect';
 import { AppTorchSwitch } from './AppTorchSwitch';
 import { importNativeProject, exportNativeProject, type NativeProject } from '../../lib/nativeHosting';
+import { projectHasBackend } from '../../lib/softnApps';
 import { useAiReady } from '../../hooks/useAiReady';
 import { AiConnectNotice } from '../ai/AiConnectNotice';
 import { DRAFT_KEEPING, useNativeProjectDraft } from './useNativeProjectDraft';
@@ -33,6 +34,8 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
   // The editor is mounted anew for each chosen entry tab.
   const draft = useNativeProjectDraft(app, { onInstalled: installed => onInstalled?.(!!installed.home), reloadKey: `${initialTab}:${initialTable}` });
   const { project, version, ready, available, preflight, readOnly, engine, enginePolicy, busy, dirty, error, notice, conflict, base, recoverable, edit } = draft;
+  // Only a backend runs on the server's runtime: an app with none publishes and runs without it.
+  const needsRuntime = !project || projectHasBackend(project);
   const firstBackend = (files: Record<string, string>) => Object.keys(files).find(path => path.startsWith('server/') && path.endsWith('.logic')) || '';
   // The chosen backend file while it exists, else the first backend file of the open project.
   const activeSource = project && project.files[sourceFile] !== undefined ? sourceFile : firstBackend(project?.files ?? {});
@@ -61,14 +64,14 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
   const keeping = draft.keeping;
   const leaveMessage = () => draft.leaveMessage();
   const close = () => { if (!draft.isLocked() && (!dirty || window.confirm(leaveMessage()))) onClose(); };
-  return <Modal isOpen title="Native app hosting" size={tab === 'screens' || tab === 'backend' ? 'full' : '2xl'} onClose={close} footer={<div className="flex flex-wrap items-center justify-between gap-3"><span className="text-xs text-slate-500 dark:text-slate-400">{version ? `Installed version ${version}` : 'No native app installed'}{dirty ? ` · Unpublished draft${keeping ? ` (${DRAFT_KEEPING[keeping][0]})` : ''}` : ''}</span>{tab === 'records' || readOnly ? <Button variant="secondary" onClick={close}>Done</Button> : <Button disabled={!ready || !available || !project || !dirty || busy} isLoading={busy} onClick={() => void save()}>{version ? 'Publish changes' : 'Install app project'}</Button>}</div>}>
+  return <Modal isOpen title="Native app hosting" size={tab === 'screens' || tab === 'backend' ? 'full' : '2xl'} onClose={close} footer={<div className="flex flex-wrap items-center justify-between gap-3"><span className="text-xs text-slate-500 dark:text-slate-400">{version ? `Installed version ${version}` : 'No native app installed'}{dirty ? ` · Unpublished draft${keeping ? ` (${DRAFT_KEEPING[keeping][0]})` : ''}` : ''}</span>{tab === 'records' || readOnly ? <Button variant="secondary" onClick={close}>Done</Button> : <Button disabled={!ready || (needsRuntime && !available) || !project || !dirty || busy} isLoading={busy} onClick={() => void save()}>{version ? 'Publish changes' : 'Install app project'}</Button>}</div>}>
     <div className="space-y-5 p-4 sm:p-6">
-      {tab !== 'records' && <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">FormLogic manages this project. Its private .logic code runs in ZIPP and its records stay in one app database. Importing does not publish the parent app or configure external SMS providers.</p>}
+      {tab !== 'records' && <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">{needsRuntime ? 'FormLogic manages this project. Its private .logic code runs in ZIPP and its records stay in one app database.' : 'FormLogic manages this project. It has no backend: it runs in each visitor’s browser and keeps its data there.'} Importing does not publish the parent app or configure external SMS providers.</p>}
       {readOnly && <p role="note" className="rounded-xl bg-slate-100 p-3 text-sm leading-6 text-slate-700 dark:bg-slate-800 dark:text-slate-300">This is the shared demo, so this app’s backend and database are read-only. Browse the project, its source and its records; importing, editing and publishing are disabled.</p>}
       {!ready && !error && <p role="status">Loading native hosting…</p>}
       {/* The demo never runs the runtime preflight: it cannot install anything, so it is not told what the server lacks. */}
-      {ready && !readOnly && !available && !preflight && <p role="alert" className="text-sm text-amber-700 dark:text-amber-300">The server needs the native app runtime installed before it can run this project.</p>}
-      {ready && !readOnly && preflight && !preflight.ok && <div role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+      {ready && !readOnly && needsRuntime && !available && !preflight && <p role="alert" className="text-sm text-amber-700 dark:text-amber-300">The server needs the native app runtime installed before it can run this project.</p>}
+      {ready && !readOnly && needsRuntime && preflight && !preflight.ok && <div role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
         <p className="font-medium">The native runtime is prepared but cannot start on this server yet.</p>
         <ul className="mt-2 list-disc space-y-1 pl-5">{preflight.checks.filter(check => !check.ok && !check.warning).map(check => <li key={check.id}><span className="font-mono text-xs">{check.id}</span> — {check.message}</li>)}</ul>
       </div>}

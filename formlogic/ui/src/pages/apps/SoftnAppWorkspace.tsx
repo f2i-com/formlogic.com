@@ -357,11 +357,13 @@ function Setup({ app, aiReady, aiReason, onAiRecheck, initialRequest, onInstalle
 }
 
 function Messages({ draft }: { draft: ReturnType<typeof useNativeProjectDraft> }) {
-  const { ready, readOnly, available, preflight, error, notice, conflict, base, version, recoverable, busy } = draft;
+  const { ready, readOnly, available, preflight, error, notice, conflict, base, version, recoverable, busy, project } = draft;
+  // The runtime runs backends only: an app with none is not stopped by its absence.
+  const needsRuntime = !project || projectHasBackend(project);
   return <div className="mt-4 space-y-3 empty:hidden">
     {readOnly && <p role="note" className="rounded-xl bg-slate-100 p-3 text-sm text-slate-700 dark:bg-slate-800 dark:text-slate-300">This is the shared demo, so this app is read-only.</p>}
-    {ready && !readOnly && !available && !preflight && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">This server needs the app runtime installed before it can run SoftN apps. Ask your administrator.</p>}
-    {ready && !readOnly && preflight && !preflight.ok && <div role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+    {ready && !readOnly && needsRuntime && !available && !preflight && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">This server needs the app runtime installed before it can run SoftN apps. Ask your administrator.</p>}
+    {ready && !readOnly && needsRuntime && preflight && !preflight.ok && <div role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
       <p className="font-medium">The app runtime is installed but cannot start on this server yet.</p>
       <ul className="mt-2 list-disc space-y-1 pl-5">{preflight.checks.filter(check => !check.ok).map(check => <li key={check.id}>{check.message}</li>)}</ul>
     </div>}

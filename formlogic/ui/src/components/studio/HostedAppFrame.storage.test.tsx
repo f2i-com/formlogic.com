@@ -306,3 +306,36 @@ it('invalidates before a trusted workspace navigation and ignores late callbacks
     onlyDisposal(channels[0]);
   } finally { history.replaceState(null, '', previous); }
 });
+
+it('takes saves apart from the four backend calls, and tells the frame it may send them in a lane of their own', async () => {
+  let finish!: () => void;
+  vi.mocked(api.runNativeRequest).mockImplementation(() => new Promise(resolve => { finish = () => resolve({ data: { result: { status: 200, body: {} } } } as never); }));
+  const { iframe, post } = await mountNative();
+  await act(async () => sendReady(iframe, 1));
+  expect(post).toHaveBeenCalledWith(expect.objectContaining({ type: 'formlogic:init', storageLane: true }), '*', expect.anything());
+  // Four slow backend calls fill the four slots; a fifth is refused, a save is not.
+  await act(async () => { for (const id of [1, 2, 3, 4, 5]) void call(channels[0], { url: '/api/notes', options: {} }, id, 'nativeRequest'); });
+  expect(channels[0].port1.postMessage).toHaveBeenCalledWith({ id: 5, result: { error: 'Please wait for the current request.' } });
+  await act(async () => call(channels[0], { operation: 'set', key: 'draft', value: 'kept' }, 1_000_000_000));
+  expect(channels[0].port1.postMessage).toHaveBeenCalledWith({ id: 1_000_000_000, result: { result: { saved: true } } });
+  expect(localStorage.getItem(storageKey)).toBe(JSON.stringify({ draft: 'kept' }));
+  await act(async () => finish());
+});
+
+it('sends a method upper-cased, as a browser sends it', async () => {
+  vi.mocked(api.runNativeRequest).mockResolvedValue({ data: { result: { status: 201, body: {} } } } as never);
+  const { iframe } = await mountNative();
+  await act(async () => sendReady(iframe, 1));
+  await act(async () => call(channels[0], { url: '/api/notes', options: { method: 'post', body: { title: 'A' } } }, 1, 'nativeRequest'));
+  expect(api.runNativeRequest).toHaveBeenCalledWith('notes', expect.objectContaining({ method: 'POST' }), expect.anything(), undefined);
+});
+
+it('puts "could not load" over an app that did not open, and not over one that is running', async () => {
+  const { iframe } = await mountNative();
+  await act(async () => sendReady(iframe, 1));
+  await act(async () => channels[0].port1.onmessage?.({ data: { type: 'error', reason: 'x is not defined', phase: 'runtime' } }));
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  // A frame before SoftN v0.0.28 sends no phase, and meant a load failure.
+  await act(async () => channels[0].port1.onmessage?.({ data: { type: 'error', reason: 'Unexpected token' } }));
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain('The app could not load');
+});

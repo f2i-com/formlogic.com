@@ -159,8 +159,8 @@ describe('SoftnCreateForm', () => {
     await pick(new File([new Uint8Array([1])], 'broken.softn'));
     expect(container.querySelector('[role="alert"]')?.textContent).toBeTruthy();
     expect(button(/Create from this file/).disabled).toBe(true);
-    await pick(softn({ name: 'Shaders', main: 'ui/main.ui' }, { 'assets/add.wgsl': 'fn main() {}' }));
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('assets/add.wgsl cannot be hosted with this app');
+    await pick(softn({ name: 'Pages', main: 'ui/main.ui' }, { 'assets/page.html': '<script>1</script>' }));
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('assets/page.html cannot be hosted with this app');
     expect(button(/Create from this file/).disabled).toBe(true);
     // A backend written for another SoftN host is refused before any app is made for it...
     await pick(softn({ name: 'Notes', main: 'ui/main.ui', server: { entry: 'server/main.logic', routes: [] } }, { 'server/main.logic': 'function list() {}' }));

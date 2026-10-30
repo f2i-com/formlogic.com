@@ -19,7 +19,7 @@ import { NativeEditor } from './NativeAppPanel';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 const app = { id: 'app1', slug: 'app', name: 'App' };
-const project = (version: number) => ({ version, files: { 'manifest.json': '{}', 'server/main.logic': 'original()', 'ui/main.ui': '<Text>Hi</Text>' }, assets: {}, access: 'application' as const });
+const project = (version: number, manifest = '{"server":{"entry":"server/main.logic"}}') => ({ version, files: { 'manifest.json': manifest, 'server/main.logic': 'original()', 'ui/main.ui': '<Text>Hi</Text>' }, assets: {}, access: 'application' as const });
 const SQLITE3 = 'The sqlite3 PHP extension is not loaded. Apps can be installed for the first time and served without it, but updating an app that already has a database needs it to restore that database if the update fails. Enable it (the php-sqlite3 package, or extension=sqlite3 in php.ini).';
 const FILES = 'Native runtime is not prepared; missing runner.mjs (run scripts/prepare-native-runtime.mjs)';
 const preflight = (checks: Array<{ id: string; ok: boolean; warning?: boolean; message: string }>, warnings: string[]) => ({
@@ -98,6 +98,15 @@ it('with a failed check and the warning, the warning is not listed as a failure 
   expect(warnings()?.textContent).toContain('php-sqlite3');
   await edit();
   expect(button('Publish changes')!.hasAttribute('disabled')).toBe(true);
+});
+
+it('an app with no backend needs no runtime: nothing is said of it, and Publish stays', async () => {
+  getProject.mockResolvedValue({ data: { available: false, ready: true, preflight: preflight([filesFailure], []), project: project(2, '{"name":"Field notes"}'), readOnly: false } });
+  await mount();
+  expect(failures()).toBeNull();
+  expect(document.body.textContent).toContain('It has no backend: it runs in each visitor’s browser');
+  await edit();
+  expect(button('Publish changes')!.hasAttribute('disabled')).toBe(false);
 });
 
 it('an older answer without warnings shows none', async () => {

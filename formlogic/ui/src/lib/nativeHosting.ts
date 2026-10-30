@@ -19,8 +19,11 @@ export interface NativeRecords { schema?: { fields: NativeRecordField[]; primary
 const SOURCE_PATH = /^(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+\.(?:ui|logic|py|json|sql|xdb)$/;
 /** The private tree: backend code, which runs only under a server block. */
 const PRIVATE_TREE = /^(server|backend|private)\//i;
-/** The media the app host serves an app's page (the server holds uploads to the same list). */
-const HOSTED_MEDIA =/^assets\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+\.(?:png|jpg|jpeg|webp|gif|svg|wav|mp3|ogg|woff2?)$/i;
+/**
+ * The media the app host serves an app's page: the SoftN frame's own list (Softn v0.0.28's
+ * apps/formlogic-host/src/media.ts), and the server holds uploads to the same one.
+ */
+export const HOSTED_MEDIA = /^assets\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+\.(?:png|jpe?g|gif|webp|avif|ico|bmp|svg|hdr|exr|mp3|wav|ogg|opus|aac|flac|m4a|mp4|webm|woff2?|ttf|otf|glb|gltf|obj|stl|fbx|bin|wgsl|txt|md)$/i;
 
 const NATIVE_CAPABILITIES = ['sql', 'crypto', 'time', 'trusted-client-ip', 'transaction-scope', 'photos'];
 const record = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -38,6 +41,8 @@ export function backendProblem(manifest: Record<string, unknown>, files: Record<
   const lead = 'This app\'s backend is not one FormLogic runs';
   const needs = 'FormLogic runs a SoftN backend whose manifest.json server block has "requires": { "apiVersion": 1, "capabilities": [...] }, an "entry" under server/ ending in .logic, and "database": { "kind": "private-sqlite" }.';
   if (!server || requires?.apiVersion !== 1) return `${lead}: it was written for another SoftN host. ${needs}`;
+  // JSON reads 1.0 as 1 here, but the server reads it as a fraction and refuses it.
+  if (typeof files['manifest.json'] === 'string' && /"apiVersion"\s*:\s*1[.eE]/.test(files['manifest.json'])) return `${lead}: write its "apiVersion" as 1, a whole number.`;
   const entry = server.entry;
   if (typeof entry !== 'string' || !entry.startsWith('server/') || !entry.endsWith('.logic') || !(entry in files)) return `${lead}: its entry should be a server/….logic file in the app. ${needs}`;
   const capabilities = requires.capabilities;
@@ -67,11 +72,12 @@ export async function importNativeProject(file: File): Promise<NativeProject> {
     if (path.endsWith('.py') && PRIVATE_TREE.test(path)) throw new Error('Python is a client logic language; the app backend stays JavaScript.');
     // .xdb is the app's seed data: JSON text kept with it.
     if (/\.(ui|logic|py|json|sql|xdb)$/.test(path)) {
-      if (!SOURCE_PATH.test(path)) throw new Error(`${path}: this host keeps file names made of letters, digits, '-', '_' and '.'. Rename it and try again.`);
+      if (!SOURCE_PATH.test(path) || path.includes('..')) throw new Error(`${path}: this host keeps file names made of letters, digits, '-', '_' and '.' (never two dots together). Rename it and try again.`);
       if (bytes.length > 1_000_000) throw new Error(`${path} is larger than this host keeps (1 MB per source file).`);
       source[path] = strFromU8(bytes);
     } else if (path.startsWith('assets/')) {
-      if (!HOSTED_MEDIA.test(path)) throw new Error(`${path} cannot be hosted with this app: its media can be pictures (PNG, JPEG, WebP, GIF, SVG), sound (WAV, MP3, Ogg) and fonts (WOFF, WOFF2).`);
+      if (path.includes('..')) throw new Error(`${path}: this host keeps file names without two dots together. Rename it and try again.`);
+      if (!HOSTED_MEDIA.test(path)) throw new Error(`${path} cannot be hosted with this app: its media can be pictures (PNG, JPEG, GIF, WebP, AVIF, ICO, BMP, SVG, HDR, EXR), sound (MP3, WAV, Ogg, Opus, AAC, FLAC, M4A), video (MP4, WebM), fonts (WOFF, WOFF2, TTF, OTF), 3D models (glTF, GLB, BIN, OBJ, STL, FBX), and WGSL, text and Markdown files.`);
       if (bytes.length > 8 * 1024 * 1024) throw new Error(`${path} is larger than this host keeps (8 MB per media file).`);
       let binary = '';
       for (let offset=0;offset<bytes.length;offset+=8192) binary += String.fromCharCode(...bytes.subarray(offset,offset+8192));

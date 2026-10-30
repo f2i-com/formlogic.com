@@ -286,7 +286,10 @@ export function HostedAppFrame({
           return;
         }
         if (event.data?.type === "error") {
-          setError(
+          // An app that failed after its first page was drawn is still on screen and shows what
+          // went wrong inside it (SoftN v0.0.28 says `phase`); a frame before that sends none,
+          // and meant a load failure.
+          if (event.data.phase !== "runtime") setError(
             "The app could not load. Check its interface and logic files.",
           );
           return;
@@ -314,11 +317,15 @@ export function HostedAppFrame({
           reply({ error: "Invalid action input." });
           return;
         }
-        if (inFlight >= 4) {
+        // A save is answered at once from this page's storage, so it is not held to the four
+        // backend calls: a screen busy with its own calls had its saves refused. The frame sends
+        // saves in a lane of their own when told it may (`storageLane` below).
+        const counted = action !== "nativeStorage";
+        if (counted && inFlight >= 4) {
           reply({ error: "Please wait for the current request." });
           return;
         }
-        inFlight++;
+        if (counted) inFlight++;
         try {
           if (storage && action === "nativeStorage") {
             if (input.operation === "batch" && !acknowledgedStorage) throw new Error("This app runtime does not support acknowledged storage batches.");
@@ -333,7 +340,8 @@ export function HostedAppFrame({
             const url = new URL(input.url, window.location.origin);
             if (url.origin !== window.location.origin && !mountNative.origins?.includes(url.origin)) throw new Error("This URL is not part of the app backend");
             const options = input.options as Record<string, unknown>;
-            const result = await api.runNativeRequest(slug, { path: url.pathname, query: Object.fromEntries(url.searchParams), method: options.method || "GET", headers: options.headers || {}, body: options.body || {} }, controller.signal, clientEngine);
+            // Upper-cased as a browser's fetch sends it: `post` from a frame before SoftN v0.0.28 was refused.
+            const result = await api.runNativeRequest(slug, { path: url.pathname, query: Object.fromEntries(url.searchParams), method: String(options.method || "GET").toUpperCase(), headers: options.headers || {}, body: options.body || {} }, controller.signal, clientEngine);
             if (isCurrentMount() && engineChanged(result)) void remountOnNewEngine();
             reply(result.error ? { error: result.error } : result.data);
             return;
@@ -377,7 +385,7 @@ export function HostedAppFrame({
           }
           reply({ error: reason instanceof Error ? reason.message : "The request could not be completed." });
         } finally {
-          inFlight--;
+          if (counted) inFlight--;
         }
       };
       frame.current?.contentWindow?.postMessage(
@@ -389,6 +397,9 @@ export function HostedAppFrame({
           assets: mountNative?.assets,
           storage: savedStorage,
           ...(acknowledgedStorage ? { storageProtocol: 1 } : {}),
+          // Saves are not counted against the four calls above, so the frame (SoftN v0.0.28 on)
+          // may send them in a lane of their own; an older frame ignores the key.
+          ...(storage ? { storageLane: true } : {}),
           dark: document.documentElement.classList.contains("dark"),
           // The id alone: the shell serves engines by name and refuses one it does not, so an
           // object here would arrive as "[object Object]" and be refused. A shell from before the
