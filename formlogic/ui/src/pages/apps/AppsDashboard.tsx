@@ -97,7 +97,7 @@ export function AppsDashboard() {
             <Button variant="outline" size="sm" onClick={() => setShowHandToAi(true)} leftIcon={<Plug className="h-4 w-4" />} aria-label="Connect an AI" title="Share a temporary MCP link so your own AI can build a new app">
               <span className="hidden sm:inline">Connect an AI</span>
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setShowImport(true)} leftIcon={<Upload className="h-4 w-4" />} aria-label="Import an app" title="Import an app from a .json bundle exported from FormLogic">
+            <Button variant="outline" size="sm" onClick={() => setShowImport(true)} leftIcon={<Upload className="h-4 w-4" />} aria-label="Import an app" title="Import an app: a SoftN app (.softn), or a FormLogic export (.json, .zip, .formlogic)">
               <span className="hidden sm:inline">Import</span>
             </Button>
             <Button size="sm" onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />} aria-label="Create app">
@@ -164,11 +164,14 @@ export function AppsDashboard() {
           <EmptyState
             icon={Globe}
             title="No apps yet"
-            description="Create your first app to group forms into a deployable application — or install a ready-made one from the marketplace."
+            description="Create your first app, bring one you already have (a .softn file), or install a ready-made one from the marketplace."
             action={
               <div className="flex flex-col sm:flex-row items-center gap-3">
                 <Button onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />}>
                   Create an app
+                </Button>
+                <Button variant="outline" onClick={() => setShowImport(true)} leftIcon={<Upload className="h-4 w-4" />}>
+                  Import an app
                 </Button>
                 <Button variant="outline" onClick={() => navigate('/packs')} leftIcon={<Package className="h-4 w-4" />}>
                   Browse the marketplace
@@ -245,7 +248,7 @@ export function AppsDashboard() {
         isLoading={deleting}
       />
 
-      {showImport && <PackImportModal isOpen onClose={() => { setShowImport(false); fetchApps(); }} initialTab="upload" />}
+      {showImport && <PackImportModal isOpen onClose={() => { setShowImport(false); fetchApps(); }} initialTab="upload" forApps />}
       <ConnectAiModal isOpen={showHandToAi} onClose={() => { setShowHandToAi(false); fetchApps(); }} creator />
     </div>
   );
@@ -295,8 +298,11 @@ function AppRow({ app, packName, canManage, onManage, onSettings, onDelete }: { 
         </div>
         <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400 min-w-0">
           <span className="font-mono truncate max-w-[45%]">/{app.slug}</span>
-          <span aria-hidden="true">·</span>
-          <span className="tabular-nums flex-none">{formCount} form{formCount === 1 ? '' : 's'}</span>
+          {/* A SoftN app is its own project, not a group of forms: a count of them says nothing. */}
+          {!isSoftnApp(app) && <>
+            <span aria-hidden="true">·</span>
+            <span className="tabular-nums flex-none">{formCount} form{formCount === 1 ? '' : 's'}</span>
+          </>}
         </div>
       </div>
       <Badge
@@ -416,9 +422,12 @@ function AppCard({ app, packName, canManage, onClick, onManage, onDelete }: { ap
       {/* mt-auto pins the meta/actions row to the bottom so cards in a row stay footer-aligned. */}
       <div className="mt-auto flex items-center justify-between gap-2 pt-4 border-t border-gray-100 dark:border-slate-700/40">
         <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400 min-w-0">
-          <FileText className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
-          <span className="flex-shrink-0 tabular-nums">{formCount} form{formCount === 1 ? '' : 's'}</span>
-          <span aria-hidden="true">·</span>
+          {/* A SoftN app is its own project, not a group of forms: a count of them says nothing. */}
+          {!isSoftnApp(app) && <>
+            <FileText className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+            <span className="flex-shrink-0 tabular-nums">{formCount} form{formCount === 1 ? '' : 's'}</span>
+            <span aria-hidden="true">·</span>
+          </>}
           <span className="truncate">Updated {formatRelativeTime(app.updatedAt)}</span>
         </div>
         <div className="flex gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
@@ -476,7 +485,7 @@ function NewAppCard({ onClick }: { onClick: () => void }) {
         <Plus className="h-5 w-5" />
       </span>
       <span className="text-sm font-medium">Create app</span>
-      <span className="text-xs text-gray-500 dark:text-slate-400">Group forms into a deployable app</span>
+      <span className="text-xs text-gray-500 dark:text-slate-400">Build one, or bring a .softn file</span>
     </button>
   );
 }

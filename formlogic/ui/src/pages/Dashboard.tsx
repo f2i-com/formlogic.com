@@ -1769,6 +1769,7 @@ export function Dashboard() {
         onBlank={onWelcomeBlank}
         onTemplate={onWelcomeTemplate}
         onAI={onWelcomeAI}
+        onApp={() => { dismissWelcome(); navigate('/apps/new'); }}
       />
 
       {/* Template Selector */}

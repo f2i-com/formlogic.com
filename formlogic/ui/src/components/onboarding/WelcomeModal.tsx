@@ -8,6 +8,8 @@ interface WelcomeModalProps {
   onBlank: () => void;
   onTemplate: () => void;
   onAI: () => void;
+  /** Go to making an app instead: building one, or bringing a .softn file. */
+  onApp?: () => void;
 }
 
 const PATHS = [
@@ -21,7 +23,7 @@ const PATHS = [
  * three ways to create their first form, so the dashboard isn't an intimidating blank slate.
  * Dismissal is persisted by the caller so returning users aren't nagged.
  */
-export function WelcomeModal({ isOpen, onClose, onBlank, onTemplate, onAI }: WelcomeModalProps) {
+export function WelcomeModal({ isOpen, onClose, onBlank, onTemplate, onAI, onApp }: WelcomeModalProps) {
   const handlers: Record<string, () => void> = { blank: onBlank, template: onTemplate, ai: onAI };
   // Hide the "Generate with AI" path when the in-app AI is off (AI_ENABLED=false) or unconfigured.
   const aiAvailable = useAiAvailable();
@@ -57,7 +59,16 @@ export function WelcomeModal({ isOpen, onClose, onBlank, onTemplate, onAI }: Wel
           ))}
         </div>
         <div className="mt-7 pt-5 border-t border-gray-100 dark:border-slate-800 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs text-gray-500 dark:text-slate-400 min-w-0">You can publish and share your form the moment it's ready.</p>
+          {onApp ? (
+            <p className="text-xs text-gray-500 dark:text-slate-400 min-w-0">
+              Making an app instead?{' '}
+              <button type="button" onClick={onApp} className="font-semibold text-primary-600 dark:text-primary-400 hover:underline rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 cursor-pointer">
+                Create one, or bring a .softn file
+              </button>
+            </p>
+          ) : (
+            <p className="text-xs text-gray-500 dark:text-slate-400 min-w-0">You can publish and share your form the moment it's ready.</p>
+          )}
           <button type="button" onClick={onClose} className="shrink-0 self-start sm:self-auto text-sm font-medium text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors cursor-pointer">
             I'll explore on my own
           </button>

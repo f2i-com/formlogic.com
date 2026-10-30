@@ -58,6 +58,8 @@ interface PackImportModalProps {
   onClose: () => void;
   /** Which tab to open on. Defaults to the marketplace; pass 'upload' to jump straight to file import. */
   initialTab?: Tab;
+  /** Opened from the Apps page, where what is imported is an app: the dialog is named for that. */
+  forApps?: boolean;
 }
 
 /** The reviewed v2 install plan the Import button will confirm. */
@@ -73,7 +75,7 @@ interface V2PlanState {
   resolution: PackageInstallPlan['resolution'] | null;
 }
 
-export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModalProps) {
+export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }: PackImportModalProps) {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<Tab>(initialTab ?? 'marketplace');
 
@@ -720,7 +722,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
 
   return (
     <>
-      <Modal isOpen={isOpen} onClose={handleClose} title="Pack Marketplace" size="full">
+      <Modal isOpen={isOpen} onClose={handleClose} title={forApps ? 'Import an app' : 'Pack Marketplace'} size="full">
         {/* Fixed-height flex column so the dialog stays one size across tabs:
             tabs pinned, content scrolls in the middle, footer pinned. Taller on
             mobile to use the available screen. */}
@@ -1246,8 +1248,11 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                       <Upload className="h-7 w-7 text-gray-400 dark:text-slate-500 group-hover:text-primary-500 dark:group-hover:text-primary-400 transition-colors" />
                     </div>
                     <p className="text-sm font-medium text-gray-700 dark:text-slate-300">
-                      Drop your pack file here
+                      {forApps ? 'Drop an app file here' : 'Drop your pack file here'}
                     </p>
+                    {forApps && <p className="mt-1 max-w-md text-center text-xs text-gray-500 dark:text-slate-400">
+                      A SoftN app (.softn) is added as an app of its own. A FormLogic export (.json, .zip or .formlogic) brings its apps and forms.
+                    </p>}
                     <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
                       or <span className="text-primary-600 dark:text-primary-400 font-medium">click to browse</span>
                     </p>
@@ -1504,7 +1509,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                   isLoading={importing}
                   leftIcon={importing ? undefined : <Download className="h-4 w-4" />}
                 >
-                  {importing ? 'Importing...' : v2Plan?.action === 'update' ? 'Update extension' : 'Import to My Forms'}
+                  {importing ? 'Importing...' : v2Plan?.action === 'update' ? 'Update extension' : forApps ? 'Import' : 'Import to My Forms'}
                 </Button>
               </div>
             </div>
