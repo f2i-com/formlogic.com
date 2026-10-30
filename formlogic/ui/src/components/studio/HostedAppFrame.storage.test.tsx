@@ -25,7 +25,7 @@ import { workspaceBridge } from '../../lib/softn/workspaceBridge';
 const identity = { version: '0.0.17', sha256: 'current' };
 // Existing runtime/storage checks use explicitly admitted independent application mode.
 const application = { access: 'application' as const, storageScope: { access: 'application' as const, appId: 'notes-app' } };
-const storageKey = 'formlogic:native-storage:notes';
+const storageKey = 'formlogic:native-app-storage:v1:notes-app';
 let root: Root | undefined;
 let container: HTMLDivElement;
 type StubChannel = {

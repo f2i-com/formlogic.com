@@ -5,7 +5,7 @@ import { NativeStorageError, nativeAppStorage as createNativeAppStorage } from '
 // These existing bounded-map and acknowledgement cases exercise independent application mode.
 const nativeAppStorage = (slug: string) => createNativeAppStorage(slug, { access: 'application', appId: slug });
 
-const storageKey = (slug: string) => `formlogic:native-storage:${encodeURIComponent(slug)}`;
+const storageKey = (slug: string) => `formlogic:native-app-storage:v1:${encodeURIComponent(slug)}`;
 beforeEach(() => localStorage.clear());
 
 it('restores only the selected app session and keeps it when another app clears storage', () => {

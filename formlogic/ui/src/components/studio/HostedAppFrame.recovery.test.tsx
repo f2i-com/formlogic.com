@@ -77,7 +77,7 @@ async function ready(iframe: HTMLIFrameElement) {
 }
 
 describe.each(['members', 'application'] as const)('%s recovery', access => {
-  const key = access === 'members' ? 'formlogic:native-member-storage:v1:A:app-one' : 'formlogic:native-storage:notes';
+  const key = access === 'members' ? 'formlogic:native-member-storage:v1:A:app-one' : 'formlogic:native-app-storage:v1:app-one';
   const scope = access === 'members' ? { access, appId: 'app-one', userId: 'A' } : { access, appId: 'app-one' };
   const props = { slug: 'notes', client: { 'manifest.json': '{}' }, version: 1, native: { access, storageScope: scope, assets: {} } };
   const untouched = ['formlogic:native-member-storage:v1:B:app-one', 'formlogic:native-member-storage:v1:A:other', 'formlogic:native-storage:other', ...(access === 'members' ? ['formlogic:native-storage:notes'] : [])];

@@ -16,6 +16,40 @@ const purge = (userId: string) => (storage as unknown as { clearNativeMemberStor
 beforeEach(() => { localStorage.clear(); setSessionOwner('member-a'); bumpSessionGeneration(); });
 afterEach(() => { vi.restoreAllMocks(); setSessionOwner(null); });
 
+describe('an application map belongs to the app, not to its slug', () => {
+  const app = (appId: string): Scope => ({ access: 'application', appId });
+
+  it('gives an app that claims a freed slug nothing a visitor saved in the app before it', () => {
+    save(open('cafe', app('app-one')));
+    expect(open('cafe', app('app-evil')).read()).toEqual({});
+    expect(open('cafe', app('app-evil')).exportRaw()).toBeNull();
+  });
+  it('follows its app through a rename', () => {
+    save(open('cafe', app('app-one')));
+    expect(open('renamed-cafe', app('app-one')).read()).toEqual({ session: 'synthetic-a' });
+  });
+  it('moves what was saved under the slug to the app the first time it asks, and only once', () => {
+    localStorage.setItem(legacy('cafe'), JSON.stringify({ session: 'from-before' }));
+    expect(open('cafe', app('app-one')).read()).toEqual({ session: 'from-before' });
+    expect(localStorage.getItem(legacy('cafe'))).toBeNull();
+    expect(open('cafe', app('app-evil')).read()).toEqual({});
+  });
+  it('lets no slug spell another app\'s key', () => {
+    save(open('cafe', app('app-one')));
+    expect(open('app-one', app('app-evil')).read()).toEqual({});
+    expect(open('cafe', app('app-one')).read()).toEqual({ session: 'synthetic-a' });
+  });
+  it('prefers what the app already has over an old slug map, and a reset clears both', () => {
+    save(open('cafe', app('app-one')), 'current');
+    localStorage.setItem(legacy('cafe'), JSON.stringify({ session: 'stale' }));
+    const value = open('cafe', app('app-one'));
+    expect(value.read()).toEqual({ session: 'current' });
+    value.reset();
+    expect(value.read()).toEqual({});
+    expect(localStorage.getItem(legacy('cafe'))).toBeNull();
+  });
+});
+
 describe('trusted native member namespaces', () => {
   it('never adopts or exports the previous unbound slug snapshot', () => {
     localStorage.setItem(legacy('cafe'), JSON.stringify({ session: 'unattributed' }));

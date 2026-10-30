@@ -11,6 +11,7 @@ import { useAppRuntimeStore } from './appRuntimeStore';
 import { useResponseStore } from './responseStore';
 import { toast } from './toastStore';
 import { lockVaultForSessionTeardown, useVaultStore } from './vaultStore';
+import { clearDesktopToken } from '../client-runtime/desktop/desktopPairing';
 import { forgetOaiyTokenOf, setOaiyToken, setOaiyTokenAccount } from '../client-runtime/oaiy/oaiyRuntime';
 
 interface User {
@@ -306,6 +307,7 @@ async function clearUserSessionData(generation: number, memoryOnly: boolean): Pr
   try {
     setOaiyTokenAccount(null);
     setOaiyToken(null);
+    clearDesktopToken(); // the tab's FormLogic Desktop token, for the same reason
   } catch {
     // never let it block logout
   }

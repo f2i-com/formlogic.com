@@ -17,6 +17,10 @@ const ENTRY_LIMIT = 200;
 // measured in UTF-16 code units after JSON escaping, like the existing map.
 const INPUT_LIMIT = 32768;
 const MEMBER_PREFIX = 'formlogic:native-member-storage:v1:';
+// By app id, because a slug is reusable: rename an app and another can claim its
+// old slug, and it was then handed what a visitor had saved in the first. A prefix
+// of its own, so no slug can name a key here (see adoptSlugMap).
+const APPLICATION_PREFIX = 'formlogic:native-app-storage:v1:';
 const pendingMemberPurges = new Set<string>();
 
 /** Returned only after the server has admitted the request to this installation. */
@@ -83,7 +87,21 @@ export function nativeAppStorage(slug: string, inputScope: NativeStorageScope | 
   const generation = currentSessionGeneration();
   const key = scope?.access === 'members'
     ? `${MEMBER_PREFIX}${encodeURIComponent(scope.userId)}:${encodeURIComponent(scope.appId)}`
-    : `formlogic:native-storage:${encodeURIComponent(slug)}`;
+    : `${APPLICATION_PREFIX}${encodeURIComponent(scope?.appId ?? slug)}`;
+  const slugKey = scope?.access === 'application' ? `formlogic:native-storage:${encodeURIComponent(slug)}` : null;
+  /**
+   * What was saved under the slug, before maps were kept by id, moves here the
+   * first time its app asks, so nothing a person saved is lost. A member's map
+   * never does: nothing says whose an unbound slug map was.
+   */
+  function adoptSlugMap(): string | null {
+    const saved = slugKey ? localStorage.getItem(slugKey) : null;
+    if (slugKey && saved !== null) {
+      localStorage.setItem(key, saved);
+      localStorage.removeItem(slugKey);
+    }
+    return saved;
+  }
   function assertScope(): void {
     if (!scope) throw new NativeStorageError('A valid app storage scope is required.', 'invalid');
     if (scope.access !== 'members') return; // Independent native login persists across platform logout.
@@ -97,7 +115,7 @@ export function nativeAppStorage(slug: string, inputScope: NativeStorageScope | 
   }
   function rawValue(): string | null {
     assertScope();
-    try { return localStorage.getItem(key); }
+    try { return localStorage.getItem(key) ?? adoptSlugMap(); }
     catch { throw new NativeStorageError('Browser storage is not available.', 'unavailable'); }
   }
   /** The whole stored map, or the reason it cannot be trusted. Never partial. */
@@ -177,8 +195,10 @@ export function nativeAppStorage(slug: string, inputScope: NativeStorageScope | 
   /** Deliberate recovery for this app only; other apps' data is untouched. */
   function reset(): void {
     assertScope();
-    try { localStorage.removeItem(key); }
-    catch { throw new NativeStorageError('Browser storage is not available.', 'unavailable'); }
+    try {
+      localStorage.removeItem(key);
+      if (slugKey && localStorage.getItem(slugKey) !== null) localStorage.removeItem(slugKey);
+    } catch { throw new NativeStorageError('Browser storage is not available.', 'unavailable'); }
   }
   return { read, mutate, status, exportRaw, reset };
 }

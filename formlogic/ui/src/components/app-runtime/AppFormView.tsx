@@ -17,6 +17,7 @@ const onPrimaryFor = (c: string): string =>
   (typeof c === 'string' && c.startsWith('#')) ? readableForegroundColor(c) : 'var(--app-on-primary)';
 import { LinkedRecordInput } from './LinkedRecordInput';
 import { api } from '../../lib/api';
+import { currentSessionOwner } from '../../lib/sessionGeneration';
 import { cn } from '../../lib/utils';
 import { PhoneInput } from '../ui/PhoneInput';
 import { CalculatedFieldDisplay } from '../ui/CalculatedFieldDisplay';
@@ -695,6 +696,12 @@ function validateField(field: FormField, value: unknown): string | null {
   return null;
 }
 
+/** Whose half-typed answers these are: a tab outlives a sign-in, and the next account must not be offered them. */
+function runtimeDraftKey(appSlug: string, formId: string): string {
+  const owner = currentSessionOwner();
+  return `formlogic.runtimeDraft.${owner ? `${owner}.` : ''}${appSlug}.${formId}`;
+}
+
 export function AppFormView() {
   const { appSlug, formId } = useParams();
   const userId = useAuthStore((state) => state.user?.id ?? 'anonymous');
@@ -735,7 +742,7 @@ function FormVisit() {
   // silently, so nobody is confused by answers they did not just type.
   const [recoverableDraft, setRecoverableDraft] = useState<Record<string, unknown> | null>(() => {
     try {
-      const stored = sessionStorage.getItem(`formlogic.runtimeDraft.${appSlug}.${formId}`);
+      const stored = appSlug && formId ? sessionStorage.getItem(runtimeDraftKey(appSlug, formId)) : null;
       const parsed: unknown = stored ? JSON.parse(stored) : null;
       return parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Object.keys(parsed).length > 0 ? parsed as Record<string, unknown> : null;
     } catch { return null; }
@@ -797,7 +804,7 @@ function FormVisit() {
 
   // Tab-scoped so it dies with the tab (sessionStorage, not localStorage): a shared or
   // kiosk device must not hand the next person someone else's half-typed answers.
-  const draftKey = appSlug && formId ? `formlogic.runtimeDraft.${appSlug}.${formId}` : null;
+  const draftKey = appSlug && formId ? runtimeDraftKey(appSlug, formId) : null;
 
   useEffect(() => {
     if (!draftKey || submitted || (recoverableDraft && Object.keys(answerEdits).length === 0)) return;
