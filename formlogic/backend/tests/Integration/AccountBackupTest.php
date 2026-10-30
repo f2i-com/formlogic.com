@@ -909,6 +909,41 @@ class AccountBackupTest extends TestCase
         }
     }
 
+    /**
+     * An app with no backend keeps nothing on the server but its files: its data is in its
+     * visitors' browsers and it seals nothing. Restored from the user's download it comes back
+     * whole, and the restore warns of neither lost records nor new keys, which were about
+     * nothing it had.
+     */
+    public function testAClientOnlyNativeAppRestoresWithNoWarningAboutRecordsOrKeys(): void
+    {
+        $native = $this->makeNativeService();
+        if ($native === null) {
+            $this->markTestSkipped('Prepare the native runtime and set FORMLOGIC_NODE_BIN.');
+        }
+        $backup = self::makeService([], $native);
+        $project = ['access' => 'application', 'assets' => [], 'files' => [
+            'manifest.json' => json_encode(['name' => 'Field notes', 'version' => '1.0.0', 'main' => 'ui/main.ui']),
+            'ui/main.ui' => '<Text>Field notes</Text>',
+        ]];
+        $native->install($this->app1, $project, 0);
+        $userZip = $backup->exportAccount($this->userId);
+        try {
+            $result = $backup->importAccount($userZip, $this->otherId);
+            $this->assertCount(1, $result['nativeApps']);
+            $this->assertSame('none', $result['nativeApps'][0]['database']);
+            $this->assertSame([], array_values(array_filter($result['warnings'], static fn ($w) => str_contains($w, 'without records') || str_contains($w, 'NEW host keys'))));
+            $this->assertSame($project['files'], $native->get($result['nativeApps'][0]['appId'])['files']);
+            // It needs no runner, so a server without the native runtime restores it too.
+            $bare = new NativeAppService(self::$tmpRoot . '/client-only-storage', self::$tmpRoot . '/no-runtime', 'node');
+            $again = self::makeService([], $bare)->importAccount($userZip, $this->otherId);
+            $this->assertCount(1, $again['nativeApps']);
+            $this->assertSame($project['files'], $bare->get($again['nativeApps'][0]['appId'])['files']);
+        } finally {
+            @unlink($userZip);
+        }
+    }
+
     public function testMissingNativePayloadIsAnExplicitFailureNotAPartialRestore(): void
     {
         $native = $this->makeNativeService();

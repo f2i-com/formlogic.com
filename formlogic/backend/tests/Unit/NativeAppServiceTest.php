@@ -570,7 +570,101 @@ final class NativeAppServiceTest extends TestCase
         $renamed = $backend;
         $renamed['files']['manifest.json'] = str_replace('"test.notes"', '"test.other"', $renamed['files']['manifest.json']);
         try { $this->service->install('grows', $renamed, 2); $this->fail('An app with a database took another identity'); }
-        catch (\InvalidArgumentException $refused) { $this->assertStringContainsString('same app identity', $refused->getMessage()); }
+        catch (\InvalidArgumentException $refused) { $this->assertStringContainsString('This app runs as test.notes, and its data and keys are kept under that identity', $refused->getMessage()); }
+    }
+
+    /**
+     * An app installed with an id may drop it in a later version: it keeps running under that id
+     * (its configuration names it). A key-preserving restore of it, under a new app id, takes the
+     * identity its captured keys name, and its backend runs on the restored records.
+     */
+    public function testAnAppThatDroppedItsIdRestoresWithItsKeys(): void
+    {
+        $this->service->install('named', $this->project(), 0);
+        $this->assertSame(201, $this->createNoteIn('named', 'Before'));
+        $nameless = $this->project();
+        $nameless['files']['manifest.json'] = json_encode(array_diff_key(json_decode($nameless['files']['manifest.json'], true), ['id' => true]));
+        $this->service->install('named', $nameless, 1);
+        $captured = $this->service->captureForBackup('named', $this->storage . '/named.sqlite', null, true);
+        $this->assertSame('test.notes', $captured['hostConfig']['appId']);
+        $restored = $this->service->restore('elsewhere', $captured['project'], $captured['databasePath'], $captured['hostConfig']);
+        $this->assertSame(NativeAppService::CRYPTO_RESTORED, $restored['cryptoMaterial']);
+        $this->assertSame(201, $this->createNoteIn('elsewhere', 'After'));
+        $this->assertCount(2, $this->service->records('elsewhere', 'notes')['rows']);
+        // A captured configuration whose identity is not one a manifest could name is refused.
+        $this->service->remove('elsewhere');
+        try { $this->service->restore('elsewhere', $captured['project'], $captured['databasePath'], ['appId' => 'bad id!'] + $captured['hostConfig']); $this->fail('An identity no manifest could name was restored'); }
+        catch (\InvalidArgumentException $refused) { $this->assertStringContainsString('does not belong to this app', $refused->getMessage()); }
+    }
+
+    /**
+     * A backend whose migrations have run keeps its server block: the runner holds every later
+     * version to those migrations. A version without one is refused, and says why.
+     */
+    public function testABackendWhoseMigrationsRanKeepsItsServerBlock(): void
+    {
+        $this->service->install('kept', $this->project(), 0);
+        $this->assertSame(201, $this->createNoteIn('kept', 'Stored'));
+        try { $this->service->install('kept', $this->clientProject(), 1); $this->fail('The backend was dropped from a database whose migrations ran'); }
+        catch (\InvalidArgumentException $refused) { $this->assertStringContainsString('database migrations have already run', $refused->getMessage()); }
+        $this->assertCount(1, $this->service->records('kept', 'notes')['rows']);
+    }
+
+    /**
+     * An app with no backend needs no runner: a server that cannot start one (no Node, no
+     * proc_open) still installs and restores it, and still refuses a backend.
+     */
+    public function testAClientOnlyAppNeedsNoRuntime(): void
+    {
+        $empty = $this->storage . '/no-runtime';
+        mkdir($empty);
+        $service = new NativeAppService($this->storage, $empty, $this->storage . '/no-such-node', 'node');
+        $this->assertFalse($service->available());
+        $this->assertSame(1, $service->install('browser-only', $this->clientProject(), 0)['version']);
+        $service->remove('browser-only');
+        $this->assertSame('none', $service->restore('browser-only', $this->clientProject(), null, null)['database']);
+        try { $service->install('server-side', $this->project(), 0); $this->fail('A backend installed with no runtime'); }
+        catch (\RuntimeException $refused) { $this->assertStringContainsString('Prepare the native app runtime', $refused->getMessage()); }
+    }
+
+    /**
+     * A manifest with no id is given to the runner with one named; one the runner's copy cannot
+     * be written back from (a number past what JSON can carry) is refused as the owner's to fix,
+     * not answered with a server error.
+     */
+    public function testAManifestWithNoIdThatCannotBeWrittenBackIsRefusedPlainly(): void
+    {
+        $odd = $this->project();
+        $manifest = json_decode($odd['files']['manifest.json'], true);
+        unset($manifest['id']);
+        $odd['files']['manifest.json'] = substr(json_encode($manifest), 0, -1) . ',"weight":1e400}';
+        try { $this->service->install('odd', $odd, 0); $this->fail('An unwritable manifest was installed'); }
+        catch (\InvalidArgumentException $refused) { $this->assertStringContainsString('give it an id', $refused->getMessage()); }
+        $this->assertNull($this->service->get('odd'), 'nothing was installed');
+    }
+
+    /**
+     * The app's page gets the backend's body as it was written: an empty object stays an object,
+     * going in and coming back, and the key an app retries a write with reaches its handler.
+     */
+    public function testAnEmptyObjectStaysAnObjectAndTheIdempotencyKeyReachesTheHandler(): void
+    {
+        $echo = $this->project();
+        $manifest = json_decode($echo['files']['manifest.json'], true);
+        $manifest['server']['routes'][] = ['path' => '/api/echo', 'method' => 'POST', 'handler' => 'echo', 'transaction' => 'read', 'authorization' => 'anonymous'];
+        $echo['files']['manifest.json'] = json_encode($manifest);
+        $echo['files']['server/main.logic'] .= "\nfunction echo(req) { return {status:200,body:{sent:req.body,isList:Array.isArray(req.body.tags),key:req.headers['idempotency-key'],none:{}}}; }";
+        $this->service->install('echo', $echo, 0);
+        $request = ['method' => 'POST', 'path' => '/api/echo', 'body' => (object) ['tags' => (object) []], 'headers' => (object) ['authorization' => '', 'idempotency-key' => 'invite-7'], 'client_ip' => '127.0.0.1'];
+        $page = $this->service->request('echo', $request, [], [], null, true);
+        $this->assertSame('{"sent":{"tags":{}},"isList":false,"key":"invite-7","none":{}}', json_encode($page['body']));
+        // Read for this server's own use, the body is arrays, as it always was.
+        $this->assertSame([], $this->service->request('echo', $request)['body']['none']);
+    }
+
+    private function createNoteIn(string $app, string $title): int
+    {
+        return $this->service->request($app, ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => $title], 'client_ip' => '127.0.0.1'])['status'];
     }
 
     /**

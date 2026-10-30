@@ -64,6 +64,12 @@ class NativeAppService
     public const NATIVE_PROTOCOL = 1;
     public const RECORD_EVENTS_PROTOCOL = 1;
 
+    /**
+     * An app's media, by path: the kinds the SoftN frame serves its page (Softn v0.0.28's
+     * apps/formlogic-host/src/media.ts; the UI's HOSTED_MEDIA is the same list).
+     */
+    public const MEDIA_PATH = '~^assets/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:png|jpe?g|gif|webp|avif|ico|bmp|svg|hdr|exr|mp3|wav|ogg|opus|aac|flac|m4a|mp4|webm|woff2?|ttf|otf|glb|gltf|obj|stl|fbx|bin|wgsl|txt|md)$~Di';
+
     private const PREFLIGHT_TTL = 60;
 
     /**
@@ -318,11 +324,14 @@ class NativeAppService
      */
     public function restore(string $appId, array $project, ?string $databaseSnapshot, ?array $hostConfig): array
     {
-        if (!$this->available()) throw new RuntimeException('Prepare the native app runtime before restoring native apps');
         [$files, $decoded, $manifest, $capabilities] = self::validateProject($project);
+        // An app with no backend runs nothing on this server: it needs no runner to be restored.
+        if (array_key_exists('server', $manifest) && !$this->available()) throw new RuntimeException('Prepare the native app runtime before restoring native apps');
         // Restored under a new app id: an app that declares no id keeps the identity its keys were
-        // made under, which the captured configuration names.
-        $identity = self::identity($manifest, $appId, is_string($hostConfig['appId'] ?? null) ? $hostConfig['appId'] : null);
+        // made under, which the captured configuration names. That identity is the runner's to
+        // compare, so it is held to the form a manifest id has before it is used anywhere.
+        $captured = is_string($hostConfig['appId'] ?? null) && preg_match('/^[a-zA-Z0-9._-]{1,120}$/D', $hostConfig['appId']) ? $hostConfig['appId'] : null;
+        $identity = self::identity($manifest, $appId, $captured);
         $root = $this->root($appId);
         if (is_dir($root) && (is_file($root . '/project.json') || is_dir($root . '/app') || is_file($root . '/private/data/application.sqlite'))) {
             throw new RuntimeException('A native installation already exists for this app; remove it before restoring');
@@ -332,7 +341,7 @@ class NativeAppService
             $this->assertSnapshotHealthy($databaseSnapshot);
         }
         if ($hostConfig !== null) {
-            if (!is_string($hostConfig['keyHex'] ?? null) || !preg_match('/^[0-9a-f]{64}$/', $hostConfig['keyHex']) || ($hostConfig['appId'] ?? null) !== $identity || (!is_string($manifest['id'] ?? null) && !str_starts_with($identity, 'formlogic.app.'))) {
+            if (!is_string($hostConfig['keyHex'] ?? null) || !preg_match('/^[0-9a-f]{64}$/', $hostConfig['keyHex']) || ($hostConfig['appId'] ?? null) !== $identity) {
                 throw new InvalidArgumentException('The native host configuration does not belong to this app');
             }
         }
@@ -362,7 +371,7 @@ class NativeAppService
                 if (!copy($databaseSnapshot, $target) || !$this->sameSize($target, $databaseSnapshot)) throw new RuntimeException('Could not place the restored app database');
                 $database = 'restored';
             }
-            $this->stageProject($staging, array_merge(self::runnerFiles($files, $identity), $decoded));
+            $this->stageProject($staging, array_merge(self::runnerFiles($files, $manifest, $identity), $decoded));
             if (!rename($staging, $root . '/app')) throw new RuntimeException('Could not activate restored app source');
             // A client-only app has no backend to start, so there is nothing for the runner to check.
             if (array_key_exists('server', $manifest)) {
@@ -822,12 +831,20 @@ class NativeAppService
      * @param array<string, string> $files
      * @return array<string, string>
      */
-    private static function runnerFiles(array $files, string $identity): array
+    private static function runnerFiles(array $files, array $manifest, string $identity): array
     {
-        $manifest = json_decode($files['manifest.json'], false, 64, JSON_THROW_ON_ERROR);
-        if (!$manifest instanceof \stdClass || isset($manifest->id)) return $files;
-        $manifest->id = $identity;
-        $files['manifest.json'] = json_encode($manifest, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        // A manifest that names its id is given as it is, byte for byte.
+        if (is_string($manifest['id'] ?? null)) return $files;
+        try {
+            // Decoded again as objects, so an empty object stays one in the runner's copy.
+            $object = json_decode($files['manifest.json'], false, 64, JSON_THROW_ON_ERROR);
+            if (!$object instanceof \stdClass) return $files;
+            $object->id = $identity;
+            $files['manifest.json'] = json_encode($object, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        } catch (\JsonException) {
+            // A key PHP cannot keep as a property, or a number too large to write back.
+            throw new InvalidArgumentException('manifest.json declares no id and cannot be read back to name one: give it an id, such as "id": "com.example.notes"');
+        }
         return $files;
     }
 
@@ -1278,7 +1295,9 @@ class NativeAppService
         if (!is_array($assets) || count($assets) > 100) throw new InvalidArgumentException('Include at most 100 media files');
         $decoded = [];
         foreach ($assets as $path => $encoded) {
-            if (!is_string($path) || !preg_match('~^assets/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:png|jpg|jpeg|webp|gif|svg|wav|mp3|ogg|woff2?)$~Di', $path) || str_contains($path, '..') || !is_string($encoded)) throw new InvalidArgumentException('Invalid media file');
+            // The media the SoftN frame serves an app's page (from Softn v0.0.28): pictures, sound,
+            // video, fonts, 3D models, and WGSL, text and Markdown files. Nothing that runs.
+            if (!is_string($path) || !preg_match(self::MEDIA_PATH, $path) || str_contains($path, '..') || !is_string($encoded)) throw new InvalidArgumentException(is_string($path) && preg_match('~^[\w./-]{1,200}$~', $path) ? "Invalid media file: {$path}" : 'Invalid media file');
             $value = base64_decode($encoded, true);
             if ($value === false || strlen($value) > 8 * 1024 * 1024) throw new InvalidArgumentException('Invalid media data');
             $bytes += strlen($value);
@@ -1407,8 +1426,10 @@ class NativeAppService
 
     public function install(string $appId, array $project, int $expectedVersion): array
     {
-        if (!$this->available()) throw new RuntimeException('Prepare the native app runtime before importing this project');
         [$files, $decoded, $manifest, $capabilities] = self::validateProject($project);
+        // An app with no backend runs nothing on this server, so a server that cannot start the
+        // runner (no proc_open, say) still hosts it.
+        if (array_key_exists('server', $manifest) && !$this->available()) throw new RuntimeException('Prepare the native app runtime before importing this project');
         $assets = $project['assets'] ?? [];
         $root = $this->root($appId);
         $database = $root . '/private/data/application.sqlite';
@@ -1435,9 +1456,16 @@ class NativeAppService
             $configured = self::configuredIdentity($configPath);
             $identity = self::identity($manifest, $appId, $configured);
             $identityFree = $old !== null && !self::hasBackend($old) && !is_file($database);
-            if ($old && self::identity(json_decode($old['files']['manifest.json'], true) ?: [], $appId, $configured) !== $identity && !$identityFree) throw new InvalidArgumentException('Import updates with the same app identity to preserve its database');
+            $kept = $old ? self::identity(json_decode($old['files']['manifest.json'], true) ?: [], $appId, $configured) : null;
+            // Named, because a manifest with no id does not show the one the app runs under.
+            if ($old && $kept !== $identity && !$identityFree) throw new InvalidArgumentException("This app runs as {$kept}, and its data and keys are kept under that identity: give manifest.json that id, or none.");
+            // A database whose migrations have run keeps its backend: the runner holds every later
+            // version to those migrations, and only a server block can list them.
+            if ($old && self::hasBackend($old) && !array_key_exists('server', $manifest) && (json_decode($old['files']['manifest.json'], true)['server']['database']['migrations'] ?? []) !== [] && is_file($database)) {
+                throw new InvalidArgumentException('This app has a backend whose database migrations have already run, so a version without its server block cannot replace it. Keep the server block (its migrations listed), or create a new app for a version with no backend.');
+            }
             if ($old) self::assertMigrationsKept($old['files'], $files);
-            $this->stageProject($staging, array_merge(self::runnerFiles($files, $identity), $decoded));
+            $this->stageProject($staging, array_merge(self::runnerFiles($files, $manifest, $identity), $decoded));
             // The journal is the durable intent (FL-S03): written before anything active changes,
             // advanced before each phase, so a process that dies leaves a record of how far it got.
             // It names every file the update may create before that file exists, so whichever way
@@ -1536,13 +1564,15 @@ class NativeAppService
     /**
      * Run one app request. $generation, when given, is the project version the caller's access
      * decision was made against: the request is refused (409) if the installation has moved on.
+     * $bodyAsWritten: the answer's body keeps the backend's objects as objects, for a caller that
+     * sends it on as JSON (the app's page); otherwise it is read as arrays.
      */
-    public function request(string $appId, array $request, array $identity = [], array $subscriptions = [], ?int $generation = null): array
+    public function request(string $appId, array $request, array $identity = [], array $subscriptions = [], ?int $generation = null, bool $bodyAsWritten = false): array
     {
         [$root, $lock, $project] = $this->openShared($appId, $generation);
         try {
             if (!self::hasBackend($project ?? [])) throw new RuntimeException('This app has no backend', 404);
-            return $this->invoke($root, $request, $identity, $subscriptions);
+            return $this->invoke($root, $request, $identity, $subscriptions, $bodyAsWritten);
         }
         finally { flock($lock, LOCK_UN); fclose($lock); }
     }
@@ -1575,7 +1605,7 @@ class NativeAppService
         }
     }
 
-    private function invoke(string $root, array $request, array $identity = [], array $subscriptions = []): array
+    private function invoke(string $root, array $request, array $identity = [], array $subscriptions = [], bool $bodyAsWritten = false): array
     {
         $protocol = json_decode((string) file_get_contents($this->runtime() . '/host-protocol.json'), true);
         if ($subscriptions && (!is_file($this->runtime() . '/record-events.mjs') || ($protocol['recordEvents'] ?? null) !== self::RECORD_EVENTS_PROTOCOL)) throw new RuntimeException('Update the native runtime to enable record automations');
@@ -1590,10 +1620,18 @@ class NativeAppService
         $slots = dirname($root) . '/.runtime-slots';
         $this->directory($slots);
         $slot = null;
-        for ($index = 0; $index < 4; $index++) {
-            $candidate = fopen($slots . '/' . $index . '.lock', 'c');
-            if ($candidate && flock($candidate, LOCK_EX | LOCK_NB)) { $slot = $candidate; break; }
-            if ($candidate) fclose($candidate);
+        // A request waits up to three seconds for a slot before it is turned away: most run in
+        // well under a second, so a burst (a screen loading four lists at once) is served, not
+        // answered busy.
+        $waitUntil = microtime(true) + 3;
+        while (true) {
+            for ($index = 0; $index < 4; $index++) {
+                $candidate = fopen($slots . '/' . $index . '.lock', 'c');
+                if ($candidate && flock($candidate, LOCK_EX | LOCK_NB)) { $slot = $candidate; break; }
+                if ($candidate) fclose($candidate);
+            }
+            if ($slot || microtime(true) >= $waitUntil) break;
+            usleep(50000);
         }
         if (!$slot) { unlink($base . '.in'); throw new RuntimeException('The native host is busy. Try again shortly.', 429); }
         try {
@@ -1614,6 +1652,9 @@ class NativeAppService
             $output = is_file($base . '.out') ? file_get_contents($base . '.out', false, null, 0, 3200000) : '';
             $result = json_decode($output, true);
             if (!is_array($result) || !is_int($result['status'] ?? null) || !array_key_exists('body', $result)) throw new RuntimeException('Native runtime returned no response');
+            // For the app's own page, the body as the backend wrote it: read as arrays, `{}` and
+            // `[]` are one, and an empty object reached the page as a list.
+            if ($bodyAsWritten) $result['body'] = json_decode($output, false, 512, JSON_THROW_ON_ERROR)->body;
             return $result;
         } finally {
             if (is_resource($process)) proc_close($process);

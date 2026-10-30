@@ -1035,8 +1035,11 @@ final class AccountBackupService
                 $nativePayloads[$oldAppId] = ['name' => $nativeBlock['name'], 'project' => $project, 'database' => $dbPath, 'hostConfig' => $hostConfig];
             }
             $nativeMode = (($options['nativeApps'] ?? 'restore') === 'skip') ? 'skip' : 'restore';
-            if ($nativePayloads !== [] && $nativeMode === 'restore' && !$this->native->available()) {
-                throw new \RuntimeException('This backup contains hosted native apps but the native app runtime is not prepared on this server. Prepare it first, or import with native apps skipped.');
+            // Only an app with a backend needs the runtime; one that runs in the browser alone
+            // restores on any server.
+            $withBackends = array_filter($nativePayloads, fn(array $payload) => NativeAppService::hasBackend($payload['project']));
+            if ($withBackends !== [] && $nativeMode === 'restore' && !$this->native->available()) {
+                throw new \RuntimeException('This backup contains hosted native apps with backends of their own, and the native app runtime is not prepared on this server. Prepare it first, or import with native apps skipped.');
             }
 
             $formsInBackup = $structure['forms'];
@@ -1152,10 +1155,13 @@ final class AccountBackupService
                 throw new \RuntimeException("Native app '{$name}' has no restored app to attach to");
             }
             $result = $this->native->restore($newAppId, $payload['project'], $payload['database'], $payload['hostConfig']);
-            if ($result['cryptoMaterial'] === NativeAppService::CRYPTO_REISSUED) {
+            // An app with no backend has no records here and seals nothing: what it saves stays in
+            // its visitors' browsers, so neither warning is about anything it lost.
+            $backend = NativeAppService::hasBackend($payload['project']);
+            if ($backend && $result['cryptoMaterial'] === NativeAppService::CRYPTO_REISSUED) {
                 $warnings[] = "Hosted native app '{$name}' was restored with NEW host keys: this backup did not carry its key material, so values the app sealed or signed before cannot be read or verified. Key-preserving recovery uses the scheduled site backup.";
             }
-            if ($result['database'] === 'none') {
+            if ($backend && $result['database'] === 'none') {
                 $warnings[] = "Hosted native app '{$name}' was restored without records (the backup carried no database for it).";
             }
             $restored[] = ['appId' => $newAppId, 'name' => $name] + $result;

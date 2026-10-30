@@ -177,14 +177,22 @@ class NativeAppController
             $headers = is_array($input['headers'] ?? null) ? array_change_key_case($input['headers'], CASE_LOWER) : [];
             $authorization = is_string($headers['authorization'] ?? null) ? $headers['authorization'] : '';
             if (strlen($authorization) > 4096) throw new \InvalidArgumentException('Invalid application authorization');
-            $body = $input['body'] ?? (object) [];
+            // An app retries a write with the same Idempotency-Key, so its backend can tell the
+            // retry from a second write; it is passed on as the app sent it.
+            $idempotency = is_string($headers['idempotency-key'] ?? null) ? $headers['idempotency-key'] : '';
+            if (strlen($idempotency) > 255) throw new \InvalidArgumentException('Invalid idempotency key');
+            // The body as the app sent it. The parsed request is arrays only, where `{}` and `[]`
+            // are one, so an empty object reached the backend as a list.
+            $sent = json_decode((string) $request->getBody(), false, 512);
+            $body = is_object($sent) && property_exists($sent, 'body') && $sent->body !== null ? $sent->body : ($input['body'] ?? (object) []);
             if (is_string($body)) $body = json_decode($body, false, 64, JSON_THROW_ON_ERROR);
             if (!is_array($body) && !is_object($body)) throw new \InvalidArgumentException('App request body must be JSON');
             $result = $this->native->request($app['id'], [
                 'method' => $input['method'], 'path' => $input['path'], 'query' => (object) ($input['query'] ?? []), 'body' => $body,
-                'headers' => (object) ['authorization' => $authorization],
+                // Both always present, empty when not sent, as SoftN's PHP host gives them.
+                'headers' => (object) ['authorization' => $authorization, 'idempotency-key' => $idempotency],
                 'client_ip' => $request->getServerParams()['REMOTE_ADDR'] ?? 'unknown', 'photos' => false,
-            ], $identity, $this->flows->nativeRecordSubscriptions($app['id']), (int) ($project['version'] ?? 0));
+            ], $identity, $this->flows->nativeRecordSubscriptions($app['id']), (int) ($project['version'] ?? 0), true);
             try {
                 $this->native->dispatchRecordEvents($app['id'], fn($id, $event, $data, $bindings) => $this->flows->enqueueNativeRecordEvent($app['id'], $id, $event, $data, $bindings));
             } catch (\Throwable $error) {
