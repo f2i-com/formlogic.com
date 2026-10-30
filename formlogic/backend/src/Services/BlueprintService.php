@@ -69,6 +69,14 @@ class BlueprintService
         $appId = isset($input['appId']) && is_string($input['appId']) && $input['appId'] !== ''
             ? substr($input['appId'], 0, 36)
             : null;
+        // Linking a diagram to an app means materialising forms INTO that app.
+        if ($appId !== null) {
+            $owned = $this->mysql->prepare('SELECT 1 FROM apps WHERE id = :id AND owner_id = :o');
+            $owned->execute(['id' => $appId, 'o' => $ownerUserId]);
+            if ($owned->fetchColumn() === false) {
+                throw new \InvalidArgumentException('App not found or access denied');
+            }
+        }
         $count = $this->mysql->prepare('SELECT COUNT(*) FROM blueprints WHERE owner_user_id = :o');
         $count->execute(['o' => $ownerUserId]);
         if ((int) $count->fetchColumn() >= self::MAX_BLUEPRINTS_PER_OWNER) {
@@ -125,7 +133,7 @@ class BlueprintService
             ],
             $elements->fetchAll()
         );
-        $this->attachResourceSync($blueprintId, $out['elements']);
+        $this->attachResourceSync($ownerUserId, $blueprintId, $out['elements']);
         return $out;
     }
 
@@ -468,7 +476,7 @@ class BlueprintService
      *
      * @param array[] $elements modified in place
      */
-    private function attachResourceSync(string $blueprintId, array &$elements): void
+    private function attachResourceSync(string $ownerUserId, string $blueprintId, array &$elements): void
     {
         $formIds = [];
         foreach ($elements as $element) {
@@ -481,10 +489,12 @@ class BlueprintService
             return;
         }
         $placeholders = implode(',', array_fill(0, count($formIds), '?'));
+        // Only the owner's own forms: anyone can put any id on a diagram, and a form that
+        // is not theirs reads as missing rather than handing them its title.
         $stmt = $this->mysql->prepare(
-            "SELECT id, title, field_count, updated_at FROM forms WHERE id IN ({$placeholders})"
+            "SELECT id, title, field_count, updated_at FROM forms WHERE id IN ({$placeholders}) AND user_id = ?"
         );
-        $stmt->execute(array_values(array_unique($formIds)));
+        $stmt->execute([...array_values(array_unique($formIds)), $ownerUserId]);
         $live = [];
         foreach ($stmt->fetchAll() as $form) {
             $live[(string) $form['id']] = $form;

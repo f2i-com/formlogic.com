@@ -330,6 +330,64 @@ class BlueprintMaterializeTest extends TestCase
         }
     }
 
+    private function otherAccount(): string
+    {
+        $otherId = 'bp-mz-other-' . bin2hex(random_bytes(6));
+        self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, 'x', 'Other')")
+            ->execute([$otherId, "{$otherId}@test.local"]);
+        return $otherId;
+    }
+
+    /** A diagram linked to an app adds forms INTO it: that is not anyone's to link. */
+    public function testADiagramCannotBeLinkedToAnotherAccountsApp(): void
+    {
+        $theirs = self::$apps->createApp(['name' => 'Their shop'], $this->otherAccount());
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('access denied');
+        self::$blueprints->createBlueprint($this->userId, ['name' => 'Squatter', 'appId' => $theirs['id']]);
+    }
+
+    public function testADiagramAlreadyStoredWithAnotherAccountsAppAddsNothingToIt(): void
+    {
+        $theirs = self::$apps->createApp(['name' => 'Their shop'], $this->otherAccount());
+        $blueprint = self::$blueprints->createBlueprint($this->userId, ['name' => 'From before the check']);
+        self::$pdo->prepare('UPDATE blueprints SET app_id = ? WHERE id = ?')->execute([$theirs['id'], $blueprint['id']]);
+        self::$blueprints->commitOperations($this->userId, $blueprint['id'], [
+            'baseSemanticRevision' => 0,
+            'operations' => [$this->op('blueprint.element.create', ['targetId' => 'el-f', 'elementType' => 'form', 'properties' => ['title' => 'Planted', 'fields' => []]])],
+        ]);
+
+        try {
+            self::$materializer->materialize($this->userId, $blueprint['id']);
+            $this->fail('expected a refusal');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('access denied', $e->getMessage());
+        }
+
+        $attached = self::$pdo->prepare('SELECT COUNT(*) FROM app_forms WHERE app_id = ?');
+        $attached->execute([$theirs['id']]);
+        $this->assertSame(0, (int) $attached->fetchColumn());
+    }
+
+    public function testADiagramLinkedToTheOwnersAppStillWorks(): void
+    {
+        $mine = self::$apps->createApp(['name' => 'My shop'], $this->userId);
+        $this->assertSame($mine['id'], self::$blueprints->createBlueprint($this->userId, ['name' => 'Mine', 'appId' => $mine['id']])['appId']);
+    }
+
+    public function testAnotherAccountsFormOnADiagramGivesUpNoTitle(): void
+    {
+        $foreign = self::$forms->createForm(['userId' => $this->otherAccount(), 'title' => 'Salaries 2027', 'fields' => []]);
+        $blueprint = self::$blueprints->createBlueprint($this->userId, ['name' => 'Peek']);
+        self::$blueprints->commitOperations($this->userId, $blueprint['id'], [
+            'baseSemanticRevision' => 0,
+            'operations' => [$this->op('blueprint.element.create', ['targetId' => 'el-f', 'elementType' => 'form', 'resourceRef' => ['kind' => 'form', 'id' => $foreign['id']], 'properties' => ['title' => 'A guess']])],
+        ]);
+
+        $this->assertStringNotContainsString('Salaries 2027', (string) json_encode(self::$blueprints->getBlueprint($this->userId, $blueprint['id'])));
+    }
+
     public function testEmptyDiagramAndForeignFormRefsRefuseCleanly(): void
     {
         $blueprint = self::$blueprints->createBlueprint($this->userId, ['name' => 'Empty']);

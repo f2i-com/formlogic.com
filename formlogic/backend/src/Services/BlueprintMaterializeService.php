@@ -52,6 +52,11 @@ class BlueprintMaterializeService
         // land on the existing app; nothing already materialised is touched again.
         $existingAppId = is_string($blueprint['appId'] ?? null) ? $blueprint['appId'] : null;
         $delta = $existingAppId !== null;
+        // Checked here too, and not only when the link is made: a row stored before that
+        // check, or an app that changed hands since, must not take this owner's forms.
+        if ($delta && ($this->apps->getApp($existingAppId)['ownerId'] ?? null) !== $ownerUserId) {
+            throw new \InvalidArgumentException('App not found or access denied');
+        }
         $elements = $blueprint['elements'] ?? [];
         $formElements = array_values(array_filter($elements, fn (array $e) => $e['elementType'] === 'form'));
         if (!$delta && $formElements === []) {

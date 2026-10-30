@@ -953,9 +953,13 @@ class AppService
         }
 
         // One batched lookup for targets OUTSIDE the app (rare) — title stands in for a display name.
+        // Only the app owner's forms: a field can name any id, and that must not read out a stranger's title.
         $externalNames = [];
+        $appOwner = $externalTargetIds === [] ? null : ($this->getApp($appId)['ownerId'] ?? null);
         foreach ($this->formService->getFormsByIds(array_keys($externalTargetIds)) as $tid => $tform) {
-            $externalNames[$tid] = (string) ($tform['title'] ?? '');
+            if (($tform['userId'] ?? null) === $appOwner) {
+                $externalNames[$tid] = (string) ($tform['title'] ?? '');
+            }
         }
 
         // Resolve outgoing target names + build the in-app inverse (incoming) index.
