@@ -10,6 +10,8 @@ import {
   __resetAiDefaultForTests,
   __setAiPreferencesFetcherForTests,
   defaultSourceLabel,
+  editorAiLabel,
+  explainDesktopAiError,
   getAiPreferences,
   invalidateAiPreferencesCache,
   resolveDefaultLlm,
@@ -406,5 +408,56 @@ describe('defaultSourceLabel (picker hint)', () => {
     expect(defaultSourceLabel(prefs({ aiSource: 'custom', customProviderId: 'p1' }), 'My OpenAI')).toBe('Custom — My OpenAI');
     expect(defaultSourceLabel(prefs({ aiSource: 'custom', customProviderId: 'p1' }))).toBe('Custom — p1');
     expect(defaultSourceLabel(prefs({ aiSource: 'custom' }))).toBe('Custom (no service chosen)');
+  });
+});
+
+describe('editorAiLabel (which AI answers an embedded editor)', () => {
+  beforeEach(() => {
+    useAuthStore.setState({ user: { id: 'user-1', email: 'u@example.com' } });
+  });
+  const labelFor = async (value: AiPreferences) => {
+    invalidateAiPreferencesCache();
+    __setAiPreferencesFetcherForTests(async () => prefsOk(value));
+    return editorAiLabel();
+  };
+
+  it('names each source from the saved settings, with no request to the AI', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    expect(await labelFor(prefs())).toBe('FormLogic Site AI');
+    expect(await labelFor(prefs({ aiSource: 'desktop', desktopProviderId: 'provider:oaiy-engine', desktopModel: 'flash' }))).toBe('Desktop AI (OAIY) — oaiy-engine · flash');
+    expect(await labelFor(prefs({ aiSource: 'desktop', desktopProviderId: 'codex' }))).toBe('Desktop AI (OAIY) — codex');
+    expect(await labelFor(prefs({ aiSource: 'desktop' }))).toBe('Desktop AI (OAIY), no provider chosen');
+    expect(await labelFor(prefs({ aiSource: 'custom' }))).toBe('Custom (no service chosen)');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('is null when the settings cannot be read', async () => {
+    invalidateAiPreferencesCache();
+    __setAiPreferencesFetcherForTests(async () => ({ ok: false, error: { code: 'ai_default_unresolved', message: 'down' } }));
+    expect(await editorAiLabel()).toBeNull();
+  });
+});
+
+describe('explainDesktopAiError (OAIY before 0.1.11 and its engine)', () => {
+  it('says what to do when OAIY refused its own engine through the relay, and leaves other errors as they were', () => {
+    const refused = explainDesktopAiError('this desktop has no provider named "oaiy-engine"');
+    expect(refused).toContain('this desktop has no provider named "oaiy-engine"');
+    expect(refused).toContain('from OAIY 0.1.11');
+    expect(refused).toContain('Settings → AI');
+    expect(explainDesktopAiError('this desktop has no provider named "codex"')).toBe('this desktop has no provider named "codex"');
+    expect(explainDesktopAiError('desktop_offline')).toBe('desktop_offline');
+  });
+
+  it('is what a Desktop AI chat that OAIY refused this way answers with', async () => {
+    const out = await resolveDefaultLlm({ messages: MESSAGES }, {
+      fetchPreferences: async () => prefsOk(prefs({ aiSource: 'desktop', desktopProviderId: 'oaiy-engine' })),
+      tunnelChat: async () => ({ ok: false, error: { code: 'provider_unavailable', message: 'this desktop has no provider named "oaiy-engine"' } }) as DesktopTunnelResult<ChatViaTunnelSuccess>,
+    });
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.error.code).toBe('provider_unavailable');
+      expect(out.error.message).toContain('from OAIY 0.1.11');
+    }
   });
 });

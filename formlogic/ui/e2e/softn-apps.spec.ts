@@ -86,7 +86,7 @@ function studioAgent(context: BrowserContext, appId: () => string, from: () => s
  * In AI Studio, opened with a request: wait for the agent to build and finish, pasting the
  * request into Studio's chat first when this Studio is from before agentRuns.
  */
-async function watchStudioBuild(page: Page, request: string, heading: string) {
+async function watchStudioBuild(page: Page, request: string, heading: string, aiLabel?: string) {
   const studio = page.getByRole('dialog', { name: 'AI Studio', exact: true });
   await expect(studio).toBeVisible({ timeout: 30000 });
   const frame = page.frameLocator('iframe[title="App AI editor"]');
@@ -101,6 +101,13 @@ async function watchStudioBuild(page: Page, request: string, heading: string) {
     await expect(frame.getByText(`Built ${heading}.`, { exact: true })).toBeVisible({ timeout: 60000 });
   } else {
     await expect(finished).toBeVisible({ timeout: 90000 });
+  }
+  if (aiLabel) {
+    // Studio names the AI FormLogic answers it with (SoftN v0.0.29 on), where it said
+    // "FormLogic default" and a local server's address.
+    await openStudioAiPanel(frame);
+    await expect(frame.getByText(aiLabel, { exact: true })).toBeVisible();
+    await expect(frame.getByText('localhost:11434', { exact: false })).toHaveCount(0);
   }
   await expect(studio.getByRole('button', { name: 'Save changes', exact: true })).toBeEnabled({ timeout: 30000 });
   await studio.getByRole('button', { name: 'Save changes', exact: true }).click();
@@ -183,7 +190,7 @@ test.describe('hosted SoftN apps', () => {
     await page.getByRole('button', { name: 'Create and build with AI', exact: true }).click();
     appId = await workspaceAppId(page);
 
-    await watchStudioBuild(page, request, '<Text>Family Recipes</Text>');
+    await watchStudioBuild(page, request, '<Text>Family Recipes</Text>', 'FormLogic Site AI');
     const built = (await nativeProject(context, appId))!;
     expect(built.version).toBe(2);
     expect(built.files['ui/main.ui']).toContain('<Text>Family Recipes</Text>');

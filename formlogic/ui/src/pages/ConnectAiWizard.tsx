@@ -77,6 +77,11 @@ export default function ConnectAiWizard() {
               (p.refId === id || p.id === prefs.desktopProviderId),
           )
         ) {
+          // OAIY before 0.1.11 offered its own engine on its computer but not through the relay.
+          if (id === "oaiy-engine" && desktopConnection === "account")
+            throw new Error(
+              "OAIY's own engine answers through the relay from OAIY 0.1.11. Update OAIY, or add a provider in OAIY (Codex, an API key, or a local model server) and choose it here.",
+            );
           throw new Error(
             "The saved provider is not available. Keep OAIY open, link your FormLogic account in Connections and enable a provider there.",
           );

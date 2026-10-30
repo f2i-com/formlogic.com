@@ -9,7 +9,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../client-runtime/flows/aiDefault', () => ({ resolveDefaultLlm: vi.fn(), resolveDefaultLlmTools: vi.fn(), TOOLS_UNSUPPORTED: 'tools-unsupported' }));
+vi.mock('../../client-runtime/flows/aiDefault', () => ({ resolveDefaultLlm: vi.fn(), resolveDefaultLlmTools: vi.fn(), editorAiLabel: vi.fn(async () => null), TOOLS_UNSUPPORTED: 'tools-unsupported' }));
 vi.mock('fflate', () => ({
   unzipSync: () => ({ 'manifest.json': new TextEncoder().encode('{"name":"App","files":{}}') }),
   zipSync: () => new Uint8Array([1, 2, 3]),

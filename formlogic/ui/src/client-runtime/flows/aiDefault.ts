@@ -386,6 +386,47 @@ export function defaultSourceLabel(prefs: AiPreferences, customProviderName?: st
   }
 }
 
+/**
+ * The default AI as an embedded editor names it ("Desktop AI (OAIY) — oaiy-engine · flash"):
+ * which AI answers the editor's requests, from the saved settings alone, with no round trip to
+ * the AI. SoftN's Studio shows it in its settings and its AI pill (the bridge's `aiLabel`);
+ * without it, Studio said "FormLogic default" and the address of a local server it never asks.
+ * Null when the settings cannot be read.
+ */
+export async function editorAiLabel(): Promise<string | null> {
+  try {
+    const res = await getAiPreferences();
+    if (!res.ok) return null;
+    const prefs = res.data;
+    switch (prefs.aiSource) {
+      case 'site':
+        return 'FormLogic Site AI';
+      case 'desktop': {
+        const provider = prefs.desktopProviderId?.replace(/^provider:/, '').trim();
+        const model = prefs.desktopModel?.trim();
+        return provider ? `Desktop AI (OAIY) — ${provider}${model ? ` · ${model}` : ''}` : 'Desktop AI (OAIY), no provider chosen';
+      }
+      case 'custom': {
+        const id = prefs.customProviderId?.trim();
+        const provider = id ? await resolveProviderRequest(useAuthStore.getState().user?.id, 'chat', id).catch(() => null) : null;
+        return defaultSourceLabel(prefs, provider?.name ?? null);
+      }
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A Desktop AI failure in words the person can act on. OAIY before 0.1.11 offered its own engine
+ * (`oaiy-engine`) on its computer but refused it through the relay, so a computer whose only AI
+ * was its engine could list it here and never answer: "this desktop has no provider named …".
+ */
+export function explainDesktopAiError(message: string): string {
+  if (!/no provider named "oaiy-engine"/.test(message)) return message;
+  return `${message.replace(/\.$/, '')}. OAIY's own engine answers through the relay from OAIY 0.1.11: update OAIY, or add a provider in OAIY (Codex, an API key, or a local model server) and choose it in Settings → AI.`;
+}
+
 // ---------------------------------------------------------------------------
 // resolveDefaultLlm — run one chat turn through the settings-chosen source.
 // ---------------------------------------------------------------------------
@@ -598,8 +639,9 @@ export async function resolveDefaultLlm(
         onState: opts.onState,
       });
       if (!res.ok) {
-        // Tunnel typed errors (desktop_offline, e2e_key_rotated, …) pass through verbatim.
-        return failure({ code: res.error.code, message: res.error.message, status: res.error.status });
+        // Tunnel typed errors (desktop_offline, e2e_key_rotated, …) pass through, with what to
+        // do where the message alone does not say.
+        return failure({ code: res.error.code, message: explainDesktopAiError(res.error.message), status: res.error.status });
       }
       return { ok: true, data: { source: 'desktop', content: res.data.finalText, threadId: res.data.threadId } };
     }

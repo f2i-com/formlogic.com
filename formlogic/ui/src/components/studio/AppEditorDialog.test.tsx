@@ -9,7 +9,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../client-runtime/flows/aiDefault', () => ({ resolveDefaultLlm: vi.fn(), resolveDefaultLlmTools: vi.fn(), TOOLS_UNSUPPORTED: 'tools-unsupported' }));
+vi.mock('../../client-runtime/flows/aiDefault', () => ({ resolveDefaultLlm: vi.fn(), resolveDefaultLlmTools: vi.fn(), editorAiLabel: vi.fn(async () => 'Desktop AI (OAIY) — oaiy-engine · flash'), TOOLS_UNSUPPORTED: 'tools-unsupported' }));
 vi.mock('fflate', () => ({
   unzipSync: () => ({ 'manifest.json': new TextEncoder().encode('{"name":"App","files":{}}') }),
   zipSync: () => new Uint8Array([1, 2, 3]),
@@ -98,6 +98,20 @@ describe('AppEditorDialog save acknowledgement', () => {
     expect(sent().filter(m => m.kind === 'save-result')).toEqual([{ kind: 'save-result', id: 'save-2', ok: false, error: 'The project changed. Reload before importing.' }]);
     expect(onClose).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain('The project changed.');
+  });
+});
+
+describe('AppEditorDialog says which AI answers Studio', () => {
+  it('opens Studio with the default AI’s label, and the Builder, which has no AI, without one', async () => {
+    const studio = await mount(vi.fn(async () => {}), 'studio');
+    expect(studio.sent().find(m => m.method === 'open')).toMatchObject({ aiLabel: 'Desktop AI (OAIY) — oaiy-engine · flash', saveLabel: expect.any(String) });
+    await act(async () => root?.unmount());
+    root = undefined;
+    channels.length = 0;
+    const builder = await mount(vi.fn(async () => {}), 'builder');
+    const open = builder.sent().find(m => m.method === 'open') as Record<string, unknown>;
+    expect(open).toBeTruthy();
+    expect(open).not.toHaveProperty('aiLabel');
   });
 });
 

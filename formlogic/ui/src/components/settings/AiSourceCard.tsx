@@ -25,6 +25,7 @@ import { fetchModelCatalog, fetchProviderCatalog } from '../../client-runtime/de
 import { listAiSources, type AiSourceListing } from '../../client-runtime/flows/desktopService';
 import { listProviders, providerSupports, type AiProviderConfig } from '../../client-runtime/flows/aiProviders';
 import { useFlowsDesktopPresence } from '../flows/useFlowsDesktopPresence';
+import { explainDesktopAiError } from '../../client-runtime/flows/aiDefault';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
 import { logger } from '../../lib/logger';
@@ -520,7 +521,9 @@ export function AiSourceCard({ preferredSource, remoteOnly = false }: { preferre
                   />
                   {catalogState === 'error' && (
                     <p className="text-xs text-amber-700 dark:text-amber-300">
-                      The model catalog couldn&apos;t be loaded ({catalogError}) — enter a model id, or leave blank for the provider default.{' '}
+                      {catalogError && explainDesktopAiError(catalogError) !== catalogError
+                        ? <>{explainDesktopAiError(catalogError)}{' '}</>
+                        : <>The model catalog couldn&apos;t be loaded ({catalogError}) — enter a model id, or leave blank for the provider default.{' '}</>}
                       <button
                         type="button"
                         className="underline cursor-pointer"
