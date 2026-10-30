@@ -22,9 +22,14 @@ Any SoftN app can be uploaded, with a backend of its own or none:
 - **No backend** (no `server` block in `manifest.json`, which is most SoftN apps): it runs in the
   member's browser alone. Nothing starts a runner for it and it has no database here, so what it
   saves stays in each visitor's browser and the **Data** tab says so. Its media are served to its
-  page. Its seed data (`.xdb` files) is kept with it and downloaded with it, but the SoftN runtime
-  FormLogic embeds (v0.0.27) does not load seed data yet, so the app starts with no records. A
-  later version may add a backend.
+  page. Its seed data (the `.xdb` files `manifest.files.xdb` names) is kept with it, downloaded
+  with it, and added to each visitor's copy before the app first draws (SoftN v0.0.28 on): once
+  per record, never over a record the visitor has, and a seed record they removed stays removed.
+  Browser storage holds about 30,000 characters per collection (256 KB and 200 keys per app), so a
+  larger seed is skipped with a console warning naming it, and the app opens with the rest. It
+  needs no runtime on the server: a server without the native runtime installs, publishes and
+  restores it. A later version may add a backend; once a backend's migrations have run, a version
+  without its `server` block is refused.
 - **A backend of its own**: a `server` block with `"requires": {"apiVersion": 1, "capabilities":
   [...]}`, an `entry` under `server/` ending in `.logic`, and `"database": {"kind":
   "private-sqlite"}`. A backend written for another SoftN host (routes and an entry, nothing
@@ -36,9 +41,12 @@ Any SoftN app can be uploaded, with a backend of its own or none:
 
 The name is optional: an uploaded app keeps its own (the manifest's `name`, else the file's).
 The file is read as soon as it is chosen, or dropped anywhere on the form, so what it is (and any
-reason it cannot be hosted, file by file) shows before anything is created. Media can be pictures
-(PNG, JPEG, WebP, GIF, SVG), sound (WAV, MP3, Ogg) and fonts (WOFF, WOFF2): those are what the app's
-page is served.
+reason it cannot be hosted, file by file) shows before anything is created. Media go under
+`assets/` and can be pictures (PNG, JPEG, GIF, WebP, AVIF, ICO, BMP, SVG, HDR, EXR), sound (MP3,
+WAV, Ogg, Opus, AAC, FLAC, M4A), video (MP4, WebM), fonts (WOFF, WOFF2, TTF, OTF), 3D models (glTF,
+GLB and its `.bin`, OBJ, STL, FBX), and WGSL shaders, text and Markdown: what SoftN's frame serves
+an app's page (v0.0.28 on), which can also `fetch` them. HTML, CSS and JavaScript files are not
+kept. A file name may not have two dots together, and `apiVersion` is written `1`, not `1.0`.
 
 The owner manages it at `/apps/<id>/softn`: **App** previews it at desktop or phone width and
 changes it with AI Studio, the Visual Builder, a new `.softn` file or the source editor; **Data**
@@ -371,6 +379,11 @@ projects cannot supply Node modules, provider hooks or a different VM. The paren
 to the installed app's `/api/...` handlers. It preserves the application's bearer header
 inside this bridge; it never forwards the FormLogic account credential as an app token.
 These origins are routing aliases, not permission to make arbitrary external requests.
+A handler's `req.headers` always has `authorization` and `idempotency-key` (empty when not
+sent), as on SoftN's PHP host, so an app that retries a write with the same key can tell the
+retry from a second write. The method is sent upper-cased, and bodies keep `{}` and `[]` apart
+both ways. The frame waits 35 seconds for an answer, longer than the server's 25-second
+deadline, so a write that was made is never reported to the app as failed.
 
 Native browser storage is scoped to the selected app (256 KB total, 200 keys), including
 session persistence across reloads. A failed persistence acknowledgement is shown in the
@@ -385,8 +398,10 @@ Owner APIs are `GET/PUT /api/apps/{id}/native` and
 The last accepts `{method,path,query,headers,body}` and returns `{result:{status,body}}`.
 The service limits decoded project content to 16 MB; source files to 1 MB each; source/media
 counts to 200/100. The browser action bridge currently limits an individual message to 32 KB.
-At most four native workers run concurrently across apps in one storage root, with a 20-second
-worker deadline. This is an initial capacity limit, not a production concurrency benchmark.
+At most four native workers run concurrently across apps in one storage root, with a 25-second
+worker deadline; a request waits up to three seconds for one before it is answered busy (`429`).
+This is an initial capacity limit, not a production concurrency benchmark. Saves to the app's
+browser storage are not counted against the frame's four calls at a time.
 
 ### Source and records walkthrough
 

@@ -125,11 +125,14 @@ try {
       // directory, which holds its assets) — the pin that keeps an author's host JavaScript off
       // /api and off every other origin; and no form, frame or base can point anywhere at all. Both
       // documents, so the host document cannot be the one that quietly gains a source.
+      // From SoftN v0.0.28 the shell may also name `data:`, so an app can fetch its own media (the
+      // data: URLs it was handed): that is no network at all, and nothing else may join it.
       const runtimeDirectory = `${origin}/hosted-runtime/`;
       for (const [document, policy] of [['index.html', index], ['host.html', host]]) {
         const sources = Object.fromEntries(policy.split(';').map(d => d.trim()).filter(Boolean).map(d => { const [name, ...rest] = d.split(/\s+/); return [name, rest]; }));
         assert.deepEqual(sources['default-src'], ["'none'"], `${document} must write default-src 'none': ${policy}`);
-        assert.deepEqual(sources['connect-src'], [runtimeDirectory], `${document} must write connect-src as exactly its runtime directory ${runtimeDirectory} and no other source: ${policy}`);
+        assert.equal(sources['connect-src']?.[0], runtimeDirectory, `${document} must write connect-src as its runtime directory ${runtimeDirectory} first: ${policy}`);
+        assert.ok([[runtimeDirectory], [runtimeDirectory, 'data:']].some(allowed => JSON.stringify(allowed) === JSON.stringify(sources['connect-src'])), `${document} must write connect-src as exactly its runtime directory ${runtimeDirectory}, and data: at most, with no other source: ${policy}`);
         assert.deepEqual(sources['form-action'], ["'none'"], `${document} must write form-action 'none': ${policy}`);
         assert.deepEqual(sources['frame-src'], ["'none'"], `${document} must write frame-src 'none': ${policy}`);
         assert.deepEqual(sources['base-uri'], ["'none'"], `${document} must write base-uri 'none': ${policy}`);

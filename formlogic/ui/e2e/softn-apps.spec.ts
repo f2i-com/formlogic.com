@@ -8,7 +8,8 @@ import { sessionHeaders } from './session-request';
  *   - Built with AI: AI Studio builds the app from the description while FormLogic shows it
  *     working, and the change is installed when the owner keeps it.
  *   - Uploaded: a .softn file becomes the app's first version, with a backend of its own or
- *     none (an app that runs in the browser alone, named after itself, downloads as it came).
+ *     none (an app that runs in the browser alone, named after itself, downloads as it came),
+ *     and with seed data, which it opens with once (SoftN v0.0.28 on).
  *   - From the chat: a create_softn_app result takes the person to the new app, where AI Studio
  *     builds it from their request.
  *
@@ -243,6 +244,61 @@ test.describe('hosted SoftN apps', () => {
     const saved = join(tmpdir(), `softn-client-download-${Date.now()}.softn`);
     await (await download).saveAs(saved);
     expect(Object.fromEntries(Object.entries(unzipSync(readFileSync(saved))).map(([p, bytes]) => [p, strFromU8(bytes)]))).toEqual(files);
+  });
+
+  test('uploaded with seed data: the app opens with its records, once, and its own media', async ({ page }) => {
+    test.setTimeout(180000);
+    // Forty records: more than the frame's storage takes saves at once, if they were saved one by one.
+    const records = Array.from({ length: 40 }, (_, i) => ({ id: `note-${i}`, title: `Seeded note ${i}` }));
+    const files: Record<string, string> = {
+      'manifest.json': JSON.stringify({ name: `Seeded notes ${Date.now()}`, version: '1.0.0', main: 'ui/main.ui', files: { xdb: ['xdb/notes.xdb'] } }),
+      'ui/main.ui': '<logic>\nvar notes = [];\nfunction _init() { notes = db.query("notes"); }\nfunction add() { db.create("notes", { title: "Added here" }); notes = db.query("notes"); }\n</logic>\n<Stack padding="24" gap="12"><Text>Notes: {notes.length}</Text><Text>{notes.length > 0 ? notes[0].data.title : "none"}</Text><Button onClick={add}>Add a note</Button><Text>{asset("assets/shaders/tint.wgsl").startsWith("data:text/plain") ? "Shader served" : "Shader missing"}</Text></Stack>',
+      'xdb/notes.xdb': JSON.stringify({ collection: 'notes', records }),
+      'assets/shaders/tint.wgsl': '@compute @workgroup_size(1) fn main() {}',
+    };
+    const path = join(tmpdir(), `softn-seeded-${Date.now()}.softn`);
+    writeFileSync(path, Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([p, source]) => [p, strToU8(source)])))));
+    await page.goto('/apps/new?type=upload');
+    await page.getByLabel('Choose a .softn file').setInputFiles(path);
+    await page.getByRole('button', { name: 'Create from this file', exact: true }).click();
+    await workspaceAppId(page);
+    await expect(preview(page).getByText('Notes: 40', { exact: true })).toBeVisible({ timeout: 60000 });
+    await expect(preview(page).getByText('Seeded note 0', { exact: true })).toBeVisible();
+    // A kind of media the frame did not serve before SoftN v0.0.28.
+    await expect(preview(page).getByText('Shader served', { exact: true })).toBeVisible();
+    await preview(page).getByRole('button', { name: 'Add a note', exact: true }).click();
+    await expect(preview(page).getByText('Notes: 41', { exact: true })).toBeVisible();
+    // Opened again: the visitor's note is kept and no seed is added twice.
+    await page.reload();
+    await expect(preview(page).getByText('Notes: 41', { exact: true })).toBeVisible({ timeout: 60000 });
+  });
+
+  test('uploaded with a seed larger than browser storage holds: that seed is skipped and the app opens with the rest', async ({ page }) => {
+    test.setTimeout(180000);
+    // About 44,000 characters in one collection: past the 30,000 a stored value may have.
+    const big = Array.from({ length: 40 }, (_, i) => ({ id: `long-${i}`, body: 'x'.repeat(1100) }));
+    const files: Record<string, string> = {
+      'manifest.json': JSON.stringify({ name: `Big seed ${Date.now()}`, version: '1.0.0', main: 'ui/main.ui', files: { xdb: ['xdb/long.xdb', 'xdb/tags.xdb'] } }),
+      'ui/main.ui': '<logic>\nvar long = [];\nvar tags = [];\nfunction _init() { long = db.query("long"); tags = db.query("tags"); }\nfunction add() { db.create("tags", { name: "new" }); tags = db.query("tags"); }\n</logic>\n<Stack padding="24" gap="12"><Text>Long: {long.length}</Text><Text>Tags: {tags.length}</Text><Button onClick={add}>Add a tag</Button></Stack>',
+      'xdb/long.xdb': JSON.stringify({ collection: 'long', records: big }),
+      'xdb/tags.xdb': JSON.stringify({ collection: 'tags', records: [{ id: 't1', name: 'a' }, { id: 't2', name: 'b' }] }),
+    };
+    const path = join(tmpdir(), `softn-bigseed-${Date.now()}.softn`);
+    writeFileSync(path, Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([p, source]) => [p, strToU8(source)])))));
+    await page.goto('/apps/new?type=upload');
+    await page.getByLabel('Choose a .softn file').setInputFiles(path);
+    await page.getByRole('button', { name: 'Create from this file', exact: true }).click();
+    await workspaceAppId(page);
+    await expect(preview(page).getByText('Tags: 2', { exact: true })).toBeVisible({ timeout: 60000 });
+    await expect(preview(page).getByText('Long: 0', { exact: true })).toBeVisible();
+    // The app's own saves still work, and nothing says the app could not load or save.
+    await preview(page).getByRole('button', { name: 'Add a tag', exact: true }).click();
+    await expect(preview(page).getByText('Tags: 3', { exact: true })).toBeVisible();
+    await page.reload();
+    await expect(preview(page).getByText('Tags: 3', { exact: true })).toBeVisible({ timeout: 60000 });
+    await expect(page.getByText('could not load', { exact: false })).toHaveCount(0);
+    await expect(page.getByText('could not be saved', { exact: false })).toHaveCount(0);
+    await expect(preview(page).getByRole('alert')).toHaveCount(0);
   });
 
   test('from the chat: a new SoftN app takes the person to AI Studio, which builds it from their request', async ({ page, context }) => {
