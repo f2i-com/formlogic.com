@@ -1,5 +1,6 @@
-// The create-app entry (/apps/new): name the app, then land straight in the
-// App Studio wizard — creating and editing share ONE surface (owner direction).
+// The create-app entry (/apps/new): choose what to make — forms & data, a website or web app
+// (a hosted SoftN app), or an app the person already has (a .softn file) — then name it and land
+// straight in its editor: creating and editing share ONE surface (owner direction).
 //
 // AI readiness is checked in the background. Creation stays available while
 // optional connection controls expand in place, preserving the app draft.
@@ -7,7 +8,7 @@
 // step, companion apps are created from an app's Forms manager.
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { AppWindow, ArrowRight, Boxes, Check, ClipboardList, HardDrive, Package, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AppWindow, ArrowRight, Boxes, Check, ClipboardList, FileUp, HardDrive, Package, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -24,6 +25,21 @@ import { cn } from '../../lib/utils';
 import type { AppFormPrivacyDefault, AppKind } from '../../types/app';
 import { SoftnCreateForm } from './SoftnCreateForm';
 
+type Build = 'forms' | 'softn' | 'upload';
+
+/** The three things a person can make here, each with what it is in a sentence. */
+const BUILDS: ReadonlyArray<readonly [Build, string, string, typeof ClipboardList]> = [
+  ['forms', 'Forms & data', 'Collect records with forms, then add screens, automations and roles.', ClipboardList],
+  ['softn', 'Website or web app', 'Your own pages and logic, with a backend and database if it needs one. Built with SoftN.', AppWindow],
+  ['upload', 'Bring an app you have', 'Upload a SoftN app (.softn) and host it here, with or without its own backend.', FileUp],
+];
+
+/** What each choice leads to, under the heading. */
+const LEADS: Record<Build, string> = {
+  forms: 'Name it and step into the App Studio — a guided, skippable builder for data, screens, automations and access. Everything is editable later.',
+  softn: 'A website or web app with its own pages, hosted here. Build it with AI, or start from a working app and edit it visually.',
+  upload: 'Drop in a .softn file: it is checked as you choose it, keeps its own name unless you give it another, and opens ready to preview and publish.',
+};
 
 export function AppCreateStart() {
   const navigate = useNavigate();
@@ -32,10 +48,12 @@ export function AppCreateStart() {
   const [aiReady, setAiReady] = useState(false);
   const [aiChecked, setAiChecked] = useState(false);
   const [aiReason, setAiReason] = useState<string | null>(null);
-  // A forms app (the App Studio), or a hosted SoftN app: a website or web app with its own
-  // backend and database. /apps/new?type=softn opens on the second.
+  // What the person makes: a forms & data app (the App Studio), a website or web app (a hosted
+  // SoftN app, with or without a backend of its own), or an app they already have, uploaded.
+  // /apps/new?type=softn opens on the second, ?type=upload on the third.
   const [searchParams] = useSearchParams();
-  const [build, setBuild] = useState<'forms' | 'softn'>(searchParams.get('type') === 'softn' ? 'softn' : 'forms');
+  const requested = searchParams.get('type');
+  const [build, setBuild] = useState<Build>(requested === 'softn' || requested === 'upload' ? requested : 'forms');
   const [rechecking, setRechecking] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -148,22 +166,32 @@ export function AppCreateStart() {
           <>
             <h2 className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">
               <Boxes className="h-6 w-6 text-primary-600 dark:text-primary-300" />
-              Create a new app
+              What do you want to make?
             </h2>
-            <p className="mt-2 max-w-xl text-sm leading-relaxed text-gray-500 dark:text-slate-400">
-              {build === 'softn'
-                ? 'A SoftN app is a website or web app with its own pages, backend and database, hosted here. Build it with AI, edit it visually, or upload one you have.'
-                : aiReady
-                ? 'Name it and step into the App Studio — plan it with AI, sketch it as a diagram, or build it by hand. Everything is editable later.'
-                : 'Name it and step into the App Studio — a guided, skippable builder for data, screens, automations and access. Everything is editable later.'}
-            </p>
+            <fieldset className="mt-5">
+              <legend className="sr-only">What kind of app</legend>
+              {/* A row each on a phone, so the form is in reach without a long scroll; cards side by side above that. */}
+              <div className="grid gap-2 sm:grid-cols-3 sm:gap-3">
+                {BUILDS.map(([value, label, hint, Icon]) => (
+                  <label key={value} className={cn('flex cursor-pointer items-start gap-3 rounded-2xl border p-3 transition has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-primary-500 sm:flex-col sm:gap-2 sm:p-4', build === value ? 'border-primary-500 bg-primary-50 ring-2 ring-primary-500/15 dark:bg-primary-500/10' : 'border-gray-200 bg-white hover:border-gray-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600')}>
+                    <input type="radio" name="app-build" value={value} checked={build === value} disabled={creating} onChange={() => setBuild(value)} className="sr-only" />
+                    <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-xl', build === value ? 'bg-primary-600 text-white dark:bg-primary-500' : 'bg-gray-100 text-gray-500 dark:bg-slate-800 dark:text-slate-300')}><Icon className="h-5 w-5" aria-hidden="true" /></span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-gray-900 dark:text-white">{label}</span>
+                      <span className="mt-0.5 block text-xs leading-5 text-gray-500 dark:text-slate-400 sm:mt-1">{hint}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <p className="mt-5 max-w-2xl text-sm leading-relaxed text-gray-500 dark:text-slate-400">{LEADS[build]}</p>
 
-            {!aiReady && <details className="mt-5 rounded-xl border border-gray-200 dark:border-slate-700 p-4">
+            {!aiReady && build !== 'upload' && <details className="mt-4 rounded-xl border border-gray-200 dark:border-slate-700 p-4">
               <summary className="cursor-pointer text-sm font-medium text-gray-700 dark:text-slate-200">Optional: connect an AI copilot</summary>
               <div className="mt-4"><ConnectAiDoors onConnected={() => recheck(true)} /></div>
               <Button className="mt-3" variant="secondary" onClick={() => void recheck()} isLoading={rechecking} leftIcon={<RefreshCw className="h-4 w-4" />}>Check connection</Button>
             </details>}
-            <section className="mt-6 rounded-2xl border border-gray-200/80 bg-white p-5 shadow-sm dark:border-slate-700/60 dark:bg-slate-900 sm:p-6">
+            <section className="mt-5 rounded-2xl border border-gray-200/80 bg-white p-5 shadow-sm dark:border-slate-700/60 dark:bg-slate-900 sm:p-6">
               {isDemo && (
                 <div className="mb-5 flex items-start gap-3 rounded-xl border border-primary-200/80 bg-primary-50/70 p-3 text-primary-800 dark:border-primary-500/20 dark:bg-primary-500/10 dark:text-primary-200">
                   <HardDrive className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
@@ -172,19 +200,7 @@ export function AppCreateStart() {
                   </p>
                 </div>
               )}
-              <fieldset className="mb-5">
-                <legend className="mb-2 text-sm font-semibold text-gray-700 dark:text-slate-200">What kind of app?</legend>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {([['forms', 'Forms app', 'Collect and manage records with forms, screens, automations and roles.', ClipboardList], ['softn', 'SoftN app', 'A website or web app with its own pages, backend and database.', AppWindow]] as const).map(([value, label, hint, Icon]) => (
-                    <label key={value} className={cn('flex cursor-pointer gap-3 rounded-xl border p-3 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-primary-500', build === value ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10' : 'border-gray-200 dark:border-slate-700')}>
-                      <input type="radio" name="app-build" value={value} checked={build === value} disabled={creating} onChange={() => setBuild(value)} className="sr-only" />
-                      <Icon className={cn('mt-0.5 h-5 w-5 shrink-0', build === value ? 'text-primary-600 dark:text-primary-300' : 'text-gray-400')} aria-hidden="true" />
-                      <span><span className="block text-sm font-semibold text-gray-900 dark:text-white">{label}</span><span className="mt-0.5 block text-xs leading-5 text-gray-500 dark:text-slate-400">{hint}</span></span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-              {build === 'softn' ? <SoftnCreateForm aiReady={aiChecked ? aiReady : null} aiReason={aiReason} onAiRecheck={() => recheck(true)} disabled={isDemo} /> : <div className="space-y-4">
+              {build !== 'forms' ? <SoftnCreateForm key={build} uploadOnly={build === 'upload'} aiReady={aiChecked ? aiReady : null} aiReason={aiReason} onAiRecheck={() => recheck(true)} disabled={isDemo} /> : <div className="space-y-4">
                 <fieldset>
                   <legend className="mb-2 text-sm font-semibold text-gray-700 dark:text-slate-200">What are you building?</legend>
                   <div className="grid grid-cols-2 gap-2">
@@ -312,7 +328,7 @@ export function AppCreateStart() {
                   </Button>
                 </div>
               </div>}
-              {build === 'softn' && isDemo && <p className="mt-3 text-xs text-gray-500 dark:text-slate-400">SoftN apps are hosted on the server, so they are available after sign-up.</p>}
+              {build !== 'forms' && isDemo && <p className="mt-3 text-xs text-gray-500 dark:text-slate-400">Websites and web apps are hosted on the server, so they are available after sign-up.</p>}
             </section>
 
             {/* Starting from a ready-made app was invisible at the moment someone

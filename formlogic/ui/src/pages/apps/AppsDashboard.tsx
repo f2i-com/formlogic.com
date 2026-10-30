@@ -93,7 +93,8 @@ export function AppsDashboard() {
         actions={
           <div className="flex items-center gap-2">
             {/* Labels collapse on phones — three full-width buttons pushed the theme
-                toggle and user menu past a clipped edge, making them unreachable. */}
+                toggle and user menu past a clipped edge, making them unreachable, and
+                even "New" left the page's own title cut to "A…". */}
             <Button variant="outline" size="sm" onClick={() => setShowHandToAi(true)} leftIcon={<Plug className="h-4 w-4" />} aria-label="Connect an AI" title="Share a temporary MCP link so your own AI can build a new app">
               <span className="hidden sm:inline">Connect an AI</span>
             </Button>
@@ -102,7 +103,6 @@ export function AppsDashboard() {
             </Button>
             <Button size="sm" onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />} aria-label="Create app">
               <span className="hidden sm:inline">Create app</span>
-              <span className="sm:hidden">New</span>
             </Button>
           </div>
         }

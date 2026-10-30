@@ -82,10 +82,10 @@ afterEach(async () => {
   useAuthStore.setState({ user: null });
 });
 
-async function renderPage() {
+async function renderPage(entry = '/apps/new') {
   await act(async () => {
     root.render(
-      <MemoryRouter initialEntries={['/apps/new']}>
+      <MemoryRouter initialEntries={[entry]}>
         <PathProbe />
         <Routes>
           <Route path="*" element={<AppCreateStart />} />
@@ -145,5 +145,38 @@ describe('AppCreateStart data protection', () => {
     await renderPage();
     expect(container.querySelector<HTMLInputElement>('input[value="private"]')?.disabled).toBe(true);
     expect(container.textContent).toContain('Demo data is already kept on this device');
+  });
+});
+
+describe('AppCreateStart: what to make', () => {
+  const cards = () => [...container.querySelectorAll<HTMLInputElement>('input[name="app-build"]')];
+  const choose = (value: string) => act(async () => { container.querySelector<HTMLInputElement>(`input[name="app-build"][value="${value}"]`)!.click(); });
+
+  it('offers three starts and opens on forms & data', async () => {
+    await renderPage();
+    expect(cards().map(card => card.value)).toEqual(['forms', 'softn', 'upload']);
+    expect(cards().find(card => card.checked)?.value).toBe('forms');
+    expect(container.querySelector('#new-app-name')).not.toBeNull();
+    // A website or web app: the SoftN form, with its three ways to start.
+    await choose('softn');
+    expect(container.querySelector('#new-app-name')).toBeNull();
+    expect(container.querySelector('#softn-app-name')).not.toBeNull();
+    expect(container.textContent).toContain('How do you want to start?');
+  });
+
+  it('?type=upload opens on bringing an app: the file first, no other way to start offered, and no AI to connect', async () => {
+    await renderPage('/apps/new?type=upload');
+    expect(cards().find(card => card.checked)?.value).toBe('upload');
+    expect(container.textContent).not.toContain('How do you want to start?');
+    expect(container.textContent).not.toContain('connect an AI copilot');
+    const drop = container.querySelector('[data-testid="softn-drop-zone"]')!;
+    const name = container.querySelector('#softn-app-name')!;
+    expect(drop.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.textContent).toContain('Create from this file');
+  });
+
+  it('?type=softn opens on a website or web app', async () => {
+    await renderPage('/apps/new?type=softn');
+    expect(cards().find(card => card.checked)?.value).toBe('softn');
   });
 });
