@@ -45,8 +45,9 @@ reason it cannot be hosted, file by file) shows before anything is created. Medi
 `assets/` and can be pictures (PNG, JPEG, GIF, WebP, AVIF, ICO, BMP, SVG, HDR, EXR), sound (MP3,
 WAV, Ogg, Opus, AAC, FLAC, M4A), video (MP4, WebM), fonts (WOFF, WOFF2, TTF, OTF), 3D models (glTF,
 GLB and its `.bin`, OBJ, STL, FBX), and WGSL shaders, text and Markdown: what SoftN's frame serves
-an app's page (v0.0.28 on), which can also `fetch` them. HTML, CSS and JavaScript files are not
-kept. A file name may not have two dots together, and `apiVersion` is written `1`, not `1.0`.
+an app's page (v0.0.28 on), which can also `fetch` them. Scene3D draws a model from them from
+SoftN v0.0.30 (before it, it refused the frame's `data:` URLs as "Unsafe model URL"). HTML, CSS
+and JavaScript files are not kept. A file name may not have two dots together, and `apiVersion` is written `1`, not `1.0`.
 
 The owner manages it at `/apps/<id>/softn`: **App** previews it at desktop or phone width and
 changes it with AI Studio, the Visual Builder, a new `.softn` file or the source editor; **Data**

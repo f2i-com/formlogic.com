@@ -308,6 +308,32 @@ test.describe('hosted SoftN apps', () => {
     await expect(preview(page).getByRole('alert')).toHaveCount(0);
   });
 
+  test('uploaded with a 3D model: Scene3D loads it from the app\'s assets', async ({ page }) => {
+    test.setTimeout(180000);
+    // The frame gives every asset as a data: URL, which Scene3D refused as an "Unsafe model URL"
+    // until SoftN v0.0.30. A triangle, its buffer embedded.
+    const positions = Buffer.from(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]).buffer).toString('base64');
+    const files: Record<string, string> = {
+      'manifest.json': JSON.stringify({ name: `Model ${Date.now()}`, version: '1.0.0', main: 'ui/main.ui' }),
+      'ui/main.ui': '<logic>\nvar modelState = "none";\nvar modelError = "";\nfunction seen(info) { modelState = info.state; modelError = info.error ? String(info.error) : ""; }\n</logic>\n<Stack padding="16" gap="8"><Text>Model: {modelState}</Text><Text>{modelError}</Text><Scene3D height="240" onModelState={seen} objects={[{ id: "tri", type: "model", modelUrl: asset("assets/tri.gltf") }]} /></Stack>',
+      'assets/tri.gltf': JSON.stringify({
+        asset: { version: '2.0' }, scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0 }],
+        meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+        buffers: [{ byteLength: 36, uri: `data:application/octet-stream;base64,${positions}` }],
+        bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 36 }],
+        accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: 'VEC3', max: [1, 1, 0], min: [0, 0, 0] }],
+      }),
+    };
+    const path = join(tmpdir(), `softn-model-${Date.now()}.softn`);
+    writeFileSync(path, Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([p, source]) => [p, strToU8(source)])))));
+    await page.goto('/apps/new?type=upload');
+    await page.getByLabel('Choose a .softn file').setInputFiles(path);
+    await page.getByRole('button', { name: 'Create from this file', exact: true }).click();
+    await workspaceAppId(page);
+    await expect(preview(page).getByText(/^Model: (loaded|error)$/)).toBeVisible({ timeout: 60000 });
+    await expect(preview(page).getByText('Model: loaded', { exact: true })).toBeVisible();
+  });
+
   test('from the chat: a new SoftN app takes the person to AI Studio, which builds it from their request', async ({ page, context }) => {
     test.setTimeout(240000);
     // The app the chat's tool made (create_softn_app runs on the server; the stream is stubbed).
