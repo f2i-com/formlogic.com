@@ -56,6 +56,7 @@ const SDK_SHIM = `
     });
   }
   window.addEventListener('message', function(e){
+    if (e.source !== parent) return; // only the host answers: a sibling frame could forge a reply
     var m = e.data;
     if (m && m.__flPush) {
       var h = pushSubs[m.subId];

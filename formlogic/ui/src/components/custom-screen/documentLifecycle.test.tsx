@@ -49,6 +49,7 @@ describe.each(['app', 'form'] as const)('%s custom-screen document lifecycle', (
     const firstDocument = sent.mock.calls.find(([message]) => message.__flScreenDoc)?.[0].__flScreenDoc as string;
     const firstGeneration = Number(firstDocument.match(/var __flGen=(\d+)/)?.[1]);
     expect(firstDocument).toContain('First document');
+    expect(firstDocument).toContain('if (e.source !== parent) return;');
 
     await act(async () => useUIStore.setState({ theme: 'dark' }));
     expect(container.querySelector('iframe')).toBe(original);

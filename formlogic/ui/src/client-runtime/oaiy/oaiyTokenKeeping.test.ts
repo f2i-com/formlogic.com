@@ -108,14 +108,22 @@ describe('a token kept for an account', () => {
     expect(seen).toEqual([true]);
   });
 
-  it('moves in from the old tab-only place, so a tab open across an update stays connected', () => {
+  it('moves in from the old tab-only place by itself, so an update asks for no new code', () => {
     sessionStorage.setItem(`oaiy.token:${BASE}`, 'from-before');
     setOaiyTokenAccount('alice');
-    expect(getOaiyToken()).toBe('from-before');
-    setOaiyToken('from-before');
     expect(sessionStorage.getItem(`oaiy.token:${BASE}`)).toBeNull();
     openNewTab();
     expect(getOaiyToken()).toBe('from-before');
+  });
+
+  it('never replaces what the account already keeps with what a tab holds', () => {
+    setOaiyTokenAccount('alice');
+    setOaiyToken('kept');
+    setOaiyTokenAccount(null);
+    sessionStorage.setItem(`oaiy.token:${BASE}`, 'tab-only');
+    setOaiyTokenAccount('alice');
+    expect(getOaiyToken()).toBe('kept');
+    expect(sessionStorage.getItem(`oaiy.token:${BASE}`)).toBeNull();
   });
 });
 

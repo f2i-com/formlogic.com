@@ -40,5 +40,5 @@ export function screenPaletteCss(accent: string, onAccent: string): string {
 
 /** Injected into the iframe: flips the `fl-dark` root class when the parent posts { __flTheme }. */
 export const SCREEN_THEME_SHIM =
-  '(function(){window.addEventListener("message",function(e){var m=e.data;if(!m||!m.__flTheme)return;'
+  '(function(){window.addEventListener("message",function(e){if(e.source!==parent)return;var m=e.data;if(!m||!m.__flTheme)return;'
   + 'document.documentElement.classList.toggle("fl-dark",m.__flTheme==="dark");});})();';

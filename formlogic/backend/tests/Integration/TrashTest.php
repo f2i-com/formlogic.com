@@ -224,6 +224,41 @@ class TrashTest extends TestCase
         self::$flows->createBinding($this->app1, ['flow' => 'af', 'event' => 'form.submitted', 'mode' => 'async', 'formId' => $this->f1]);
     }
 
+    // ── a form's id while it is in the bin ───────────────────────────────────
+
+    public function testAnotherAccountCannotTakeTheIdOfAFormInTheBin(): void
+    {
+        $this->assertTrue(self::$trash->trashForm($this->f1, $this->userId)['trashed']);
+        $stranger = $this->makeUser();
+        try {
+            self::$forms->createForm(['id' => $this->f1, 'title' => 'Squatter', 'userId' => $stranger]);
+            $this->fail('expected a refusal');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('already exists', $e->getMessage());
+        } finally {
+            self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$stranger]);
+        }
+        $this->assertNull(self::$forms->getForm($this->f1));
+    }
+
+    public function testItsOwnerCanStillRestoreIt(): void
+    {
+        self::$trash->trashForm($this->f1, $this->userId);
+        $item = (string) array_values(array_filter($this->trashRows(), fn (array $row) => $row['original_id'] === $this->f1))[0]['id'];
+
+        self::$trash->restore($item, $this->userId);
+
+        $this->assertNotNull(self::$forms->getForm($this->f1));
+    }
+
+    public function testAClientMadeIdStillWorks(): void
+    {
+        // A form made offline keeps the id its client gave it: that is why ids are not dropped.
+        $id = 'offline-' . bin2hex(random_bytes(8));
+        $form = self::$forms->createForm(['id' => $id, 'title' => 'Made offline', 'userId' => $this->userId]);
+        $this->assertSame($id, $form['id']);
+    }
+
     // ── what an app holds on disk ────────────────────────────────────────────
 
     /** A bin whose app storage is on a temp root, and the two files that stand for an app's storage. */

@@ -469,7 +469,7 @@ export function Docs() {
               <P>Create a key, then send it as a Bearer token on every request:</P>
               <Steps items={[
                 <>Open <C>Settings → API keys</C> and choose <strong className="text-gray-900 dark:text-white">Create API Key</strong>.</>,
-                <>Choose its <strong className="text-gray-900 dark:text-white">scopes</strong> (grant only what's needed), and optionally restrict it to specific forms or set an expiry.</>,
+                <>Choose its <strong className="text-gray-900 dark:text-white">scopes</strong> (grant only what's needed), and optionally restrict it to specific forms or set an expiry. A key restricted to forms reaches those forms and no other part of the API.</>,
                 <>Copy the key (<C>flk_…</C>) — it's shown <strong className="text-gray-900 dark:text-white">once</strong> and stored hashed. Keep it secret.</>,
               ]} />
               <CodeBlock title="submit a response — runs validation + the onSubmit script">{`curl -X POST https://<your-api-host>/api/v1/forms/FORM_ID/responses \\

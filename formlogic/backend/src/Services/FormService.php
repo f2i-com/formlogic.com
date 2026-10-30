@@ -392,6 +392,17 @@ class FormService
             return $this->updateForm($id, $data);
         }
 
+        // Clients choose form ids (a form made offline keeps its id when it syncs), and a
+        // deleted form's id is free while it sits in its owner's recycle bin. Taking it would
+        // make a private form's restore fail for good: its id is baked into its encryption.
+        if (isset($data['id'])) {
+            $binned = $this->mysql->prepare("SELECT 1 FROM trash_items WHERE kind = 'form' AND original_id = :id AND user_id != :user LIMIT 1");
+            $binned->execute(['id' => $id, 'user' => (string) ($data['userId'] ?? '')]);
+            if ($binned->fetchColumn() !== false) {
+                throw new \RuntimeException('A form with this ID already exists');
+            }
+        }
+
         // Cross-store saga (audit FL-DATA-001): the MySQL insert and the durable op
         // record commit atomically; the SQLite fields save follows, and a failure there
         // COMPENSATES (removes the metadata row + any SQLite file this call created) so

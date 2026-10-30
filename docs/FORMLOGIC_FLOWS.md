@@ -66,6 +66,14 @@ Unsupported node types fail the run with `invalid_flow` naming the node — flow
 
 **llm_chat endpoint resolution** (in order): (1) the node's own `data.endpoint` (allow-listed to the Desktop base URL / FormLogic API); (2) a running **FormLogic Desktop** local AI service — the paired Desktop's `GET /api/services` is queried for the first running OpenAI-compatible service and its loopback endpoint is used; (3) the app's configured AI base URL (`<base>/chat/completions`). No candidate → `node_failed` naming all three options.
 
+**What a flow may reach in the viewer's browser.** An app's flow is its author's code running in whoever opens the app, so three rules hold for it and not for a workspace flow, which is the person's own:
+
+- The session goes only to the app's own runtime namespace (`/api/app/<slug>/...`). The path judged is the one `fetch` will request, after `..` and the like are resolved, and every other endpoint is called with no cookies.
+- The viewer's AI and desktop are theirs to give. Connector commands, saved AI providers, local AI and services, and any loopback URL a flow names, ask anyone who does not own the app, once per app (`client-runtime/appLocalAccess.ts`). The answer is kept for their account and can be taken back in Settings. A connector grant in the app's manifest is the app's own word and does not count as this.
+- An app's flow never calls a desktop runtime's control port (17872, 17972) directly: its way in is a connector.
+
+A run belongs to the app it started in. It keeps that app's slug, and it stops if the app is closed.
+
 ### 4.1 Node reference (how each executable node works)
 
 #### How a flow works (read this first)

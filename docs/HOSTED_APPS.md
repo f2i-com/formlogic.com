@@ -122,6 +122,10 @@ version conflict by blindly replacing `expectedVersion`.
 
 The hosted interface runs in a sandboxed iframe without same-origin access. The trusted FormLogic parent handles authentication and CSRF. Client code receives neither cookies nor tokens. The app's manifest cannot choose another app's database. Backend actions run in the existing ZIPP sandbox, with bounded record operations handled by PHP.
 
+An app's id is the server's to give, and its storage is kept under that id. What an app saves in a visitor's browser is kept by app id too, so a slug that changes hands carries none of it. When an app is deleted its storage stays while it sits in the recycle bin, because a restore needs it, and goes when the app is gone for good: Delete forever, the end of the bin's retention, or account erasure.
+
+A native app's own records stay with its owner: a flow triggered by one runs only in the owner's session or on their desktop, never in a member's browser. Someone who does not own an app is asked once before it can use their AI or OAIY on their computer, and can take that back in Settings → AI & devices.
+
 ### App engine
 
 Which engine an embedded app's client code runs on is the server's decision, taken on every runtime request from three things it re-reads each time: the site policy (`system_meta.client_engine_policy`), the owner's code-trust verification (`users.code_trust_verified_at`) and what the installed hosted runtime advertises (`hostedRuntime.engines` in the native runtime's generated `provenance.json`). It is never taken from the client, the package or native manifest, `permission.json` or `apps.settings`.

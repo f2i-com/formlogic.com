@@ -63,6 +63,16 @@ if (preg_match('#^/(hosted-runtime|app-editors)/#', $uri)) {
     }
 }
 
+// Mirrors ui/public/.htaccess IS_SCREEN_HOST, so the end-to-end suite runs custom screens
+// under the framing rule they get on a real server: same-origin ancestors only.
+if ($uri === '/screen-host.html' && is_file($dist . $uri)) {
+    header('Content-Type: text/html; charset=UTF-8');
+    header('X-Frame-Options: SAMEORIGIN');
+    header("Content-Security-Policy: frame-ancestors 'self'; base-uri 'self'; object-src 'none'");
+    readfile($dist . $uri);
+    return true;
+}
+
 // Let the built-in server serve a real static asset from the doc root (dist).
 if ($uri !== '/' && is_file($dist . $uri)) {
     return false;

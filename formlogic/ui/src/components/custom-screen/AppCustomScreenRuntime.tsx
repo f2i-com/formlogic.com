@@ -28,6 +28,7 @@ const APP_SDK_SHIM = `
     });
   }
   window.addEventListener('message', function(e){
+    if (e.source !== parent) return; // only the host answers: a sibling frame could forge a reply
     var m = e.data;
     if (!m || !m.__flReply || !pending[m.id]) return;
     var p = pending[m.id]; delete pending[m.id];

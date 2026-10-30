@@ -131,10 +131,19 @@ export function setOaiyToken(token: string | null): void {
   notifyOaiyPaired();
 }
 
-/** Say whose session this is: their kept token comes into use, and anyone else's goes out of reach. */
+/**
+ * Say whose session this is: their kept token comes into use, and anyone else's goes out
+ * of reach. A token this tab already holds is theirs (sign-out clears it), and moves in to
+ * be kept, so a tab open since before tokens were kept needs no new code.
+ */
 export function setOaiyTokenAccount(account: string | null): void {
   if (account === tokenAccount) return;
   tokenAccount = account;
+  const held = account ? readToken(tabKey(), false) : null;
+  if (account && held) {
+    if (readToken(accountKey(account), true) === null) writeToken(accountKey(account), true, held);
+    writeToken(tabKey(), false, null);
+  }
   notifyOaiyPaired();
 }
 
