@@ -15,6 +15,7 @@ import type { EditorBrief } from '../../components/studio/editorAgent';
 import { AppEngineSelect } from '../../components/studio/AppEngineSelect';
 import { AppTorchSwitch } from '../../components/studio/AppTorchSwitch';
 import { NativeEditor } from '../../components/studio/NativeAppPanel';
+import { NativeAppView } from '../../components/studio/NativeAppView';
 import { NativeRecordsBrowser } from '../../components/studio/NativeRecordsBrowser';
 import { DRAFT_KEEPING, useNativeProjectDraft } from '../../components/studio/useNativeProjectDraft';
 import { useAiReady } from '../../hooks/useAiReady';
@@ -224,8 +225,13 @@ function Workspace({ app }: { app: App }) {
               </div>
             </div>
             <div className="flex justify-center bg-slate-50 p-3 dark:bg-slate-950">
-              <iframe key={`${previewKey}:${version}`} title="App preview" src={`/app/${encodeURIComponent(app.slug)}/native?v=${version}`}
-                className={cn('h-[70vh] min-h-[28rem] rounded-xl border border-slate-200 bg-white dark:border-slate-700', device === 'mobile' ? 'w-[390px] max-w-full' : 'w-full')} />
+              {/* The app itself, in place: its frame is as wide as the device chosen, so its page
+                  lays out for that width. Not the app's own page in a frame of ours — a FormLogic
+                  page may not be framed, and the browser refuses it on a real server. */}
+              <div key={`${previewKey}:${version}`} data-testid="softn-app-preview"
+                className={cn('h-[70vh] min-h-[28rem] overflow-hidden rounded-xl', device === 'mobile' ? 'w-[390px] max-w-full' : 'w-full')}>
+                <NativeAppView slug={app.slug} />
+              </div>
             </div>
           </section>
 

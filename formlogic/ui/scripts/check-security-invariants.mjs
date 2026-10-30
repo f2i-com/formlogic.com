@@ -124,6 +124,31 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
   }
 }
 
+// ── No page of the app shell is framed by the app shell ─────────────────────
+// public/.htaccess sends frame-ancestors 'none' and X-Frame-Options DENY for every page of the
+// app shell; only the documents named above (the hosted runtime, the editors, screen-host.html)
+// and the public form runtime accept a frame. An iframe of ours pointed at any other path of this
+// origin is refused by the browser on a real server, though it works under a dev server that sends
+// no such header: the SoftN workspace's preview framed /app/<slug>/native until v0.1.16, and on a
+// real server showed only the browser's refusal.
+{
+  const { readdirSync } = await import('node:fs');
+  const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = resolve(dir, entry.name);
+    return entry.isDirectory() ? walk(path) : /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) ? [path] : [];
+  });
+  const FRAMEABLE = /^\/(hosted-runtime\/|app-editors\/|screen-host\.html|form\/)/;
+  for (const file of walk(resolve(root, 'src'))) {
+    const source = readFileSync(file, 'utf8');
+    for (const tag of source.match(/<iframe\b[^>]*>/g) || []) {
+      const src = /\bsrc=\{?\s*[`'"](\/[^`'"$]*)/.exec(tag)?.[1];
+      if (src !== undefined && !FRAMEABLE.test(src)) {
+        fail(`${file.slice(root.length + 1)} frames ${src}, a page of the app shell, which public/.htaccess forbids framing; render it in place instead`);
+      }
+    }
+  }
+}
+
 // ── The shell reaches exactly one npm origin: the screen compiler's ──────────
 // npm imports in a custom screen are fetched by the HOST page while the screen compiles
 // (screenCompile.ts), never by the sandbox, whose connect-src stays 'none' above. The shell's

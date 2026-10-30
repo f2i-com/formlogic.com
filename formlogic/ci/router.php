@@ -68,7 +68,17 @@ if ($uri !== '/' && is_file($dist . $uri)) {
     return false;
 }
 
-// SPA fallback (client-side routes).
+// SPA fallback (client-side routes), under the app shell's framing rule from ui/public/.htaccess:
+// no page of it may be framed, save the public form runtime (/form/..., embeddable anywhere). Sent
+// here too so the end-to-end suite runs under it. Without it, a page that framed the app shell
+// (the SoftN workspace's preview did, until v0.1.16) worked here and was refused by the browser on
+// every real server.
 header('Content-Type: text/html; charset=UTF-8');
+if (str_starts_with($uri, '/form/')) {
+    header("Content-Security-Policy: frame-ancestors *; base-uri 'self'; object-src 'none'");
+} else {
+    header('X-Frame-Options: DENY');
+    header("Content-Security-Policy: frame-ancestors 'none'; base-uri 'self'; object-src 'none'");
+}
 readfile($dist . '/index.html');
 return true;

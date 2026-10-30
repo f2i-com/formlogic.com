@@ -42,6 +42,7 @@ import { statusLabel } from '../../../lib/appStatus';
 import { AppLookPanel } from './AppLookPanel';
 import { HostedAppPanel } from '../HostedAppPanel';
 import { NativeAppPanel } from '../NativeAppPanel';
+import { NativeAppView } from '../NativeAppView';
 import { ConnectedWorkspacePanel } from '../ConnectedWorkspacePanel';
 import { AppCompositionPanel } from '../AppCompositionPanel';
 import { SoftnExportPanel } from '../SoftnExportPanel';
@@ -482,7 +483,8 @@ export function ScreensStep({
       <div className="min-w-0 space-y-5">
       {nativeHome && selection.kind === 'home' ? <section className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
         <div className="flex flex-wrap items-center justify-between gap-3 p-4"><div><h3 className="font-semibold text-slate-900 dark:text-white">Website preview</h3><p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-400">Your installed interface is the app home. This is a live preview using its current session and records.</p></div><a className="inline-flex min-h-11 items-center text-sm font-medium text-indigo-600 dark:text-indigo-300" href={`/app/${app.slug}`} target="_blank" rel="noopener noreferrer">Open website</a></div>
-        <iframe key={nativeRevision} title="Installed website preview" src={`/app/${encodeURIComponent(app.slug)}/native`} className="h-[620px] w-full border-0 bg-white" />
+        {/* The installed app in place, not its page framed: a FormLogic page may not be framed. */}
+        <div key={nativeRevision} data-testid="installed-website-preview" className="h-[620px] w-full p-2"><NativeAppView slug={app.slug} /></div>
       </section> : <section className="h-fit overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
         <div className="space-y-4 border-b border-gray-200/80 p-4 dark:border-white/[0.06]">
           <div className="flex flex-wrap items-center justify-between gap-3">

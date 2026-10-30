@@ -54,7 +54,7 @@ async function workspaceAppId(page: Page): Promise<string> {
 }
 
 /** The running app inside the workspace's preview. */
-const preview = (page: Page) => page.frameLocator('iframe[title="App preview"]').frameLocator('iframe[title="Hosted app"]');
+const preview = (page: Page) => page.getByTestId('softn-app-preview').frameLocator('iframe[title="Hosted app"]');
 
 /**
  * Studio's agent, scripted: it reads the page and writes it back with the new heading, and the

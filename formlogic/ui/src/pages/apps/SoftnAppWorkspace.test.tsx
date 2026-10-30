@@ -34,6 +34,7 @@ vi.mock('../../components/studio/AppEditorDialog', () => ({
 vi.mock('../../components/studio/NativeRecordsBrowser', () => ({ NativeRecordsBrowser: () => <p>records</p> }));
 vi.mock('../../components/studio/AppEngineSelect', () => ({ AppEngineSelect: () => null }));
 vi.mock('../../components/studio/NativeAppPanel', () => ({ NativeEditor: () => <p>source editor</p> }));
+vi.mock('../../components/studio/NativeAppView', () => ({ NativeAppView: ({ slug }: { slug: string }) => <p>running {slug}</p> }));
 
 const { SoftnAppWorkspace } = await import('./SoftnAppWorkspace');
 const { useAppStore } = await import('../../stores/appStore');
@@ -67,6 +68,16 @@ async function render(status: 'draft' | 'published', project: NativeProject | nu
 const button = (text: RegExp) => [...document.body.querySelectorAll('button')].find(b => text.test(b.textContent ?? '')) as HTMLButtonElement | undefined;
 
 describe('SoftnAppWorkspace', () => {
+  it('previews the app in place at the width chosen, never framing a page of FormLogic', async () => {
+    await render('draft', installed(1));
+    const preview = container.querySelector('[data-testid="softn-app-preview"]')!;
+    expect(preview.textContent).toBe('running recipes');
+    // A FormLogic page may not be framed: the browser refused the preview on a real server.
+    expect(container.querySelector('iframe')).toBeNull();
+    await act(async () => (container.querySelector('button[aria-label="Phone width"]') as HTMLButtonElement).click());
+    expect(container.querySelector('[data-testid="softn-app-preview"]')!.className).toContain('w-[390px]');
+  });
+
   it('offers the ways to start for an app with nothing installed, and opens the Visual Builder on the starter', async () => {
     await render('draft', null);
     expect(container.textContent).toContain('Set up Recipes');
