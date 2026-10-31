@@ -1233,6 +1233,9 @@ class PackageV2InstallTest extends TestCase
 
         $dropped = $this->nodeOnlyAggregate();
         $dropped['package']['version'] = '1.6.0';
+        $dropped['contributions']['flowNodes'][0]['version'] = '1.3.0';
+        $dropped['contributions']['flowNodes'][0]['handler'] = ['kind' => 'core-preset', 'coreType' => 'condition', 'defaults' => ['expr' => 'true']];
+        $dropped['contributions']['flowNodes'][0]['sideEffects'] = 'none';
         $dropped['requirements']['services'] = [];
         self::$pkgV2->update($dropped, $this->userId, ['connector.acme.media'], 'json', 'community');
         $this->assertFalse($alive($capability));

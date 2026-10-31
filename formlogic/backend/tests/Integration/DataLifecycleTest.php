@@ -246,7 +246,7 @@ final class DataLifecycleTest extends E2eeTestCase
             'submittedAt' => '2020-01-01 00:00:00', 'updatedAt' => '2020-01-01 00:00:00',
         ]]);
         $history = self::$responses->getResponseTombstones($formId, '2000-01-01 00:00:00');
-        $this->assertGreaterThan('2020-01-01 00:00:00', $history['since'], 'a copy older than this has to read everything again');
+        $this->assertGreaterThan(gmdate('Y-m-d H:i:s', time() - 3600), $history['since'], 'a copy older than this has to read everything again');
     }
 
     /** @dataProvider patterns */

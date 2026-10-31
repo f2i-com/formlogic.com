@@ -56,6 +56,8 @@ final class AccessLimitsTest extends E2eeTestCase
         foreach (array_merge(array_fill(0, 201, $hidden), [$visible]) as $i => $formId) {
             self::$flows->enqueueRun($flow, ['triggerEvent' => 'manual', 'correlationId' => "c{$i}", 'idempotencyKey' => "queue-{$i}", 'inputSnapshot' => [], 'formId' => $formId]);
         }
+        // The oldest first, so the one they may see is past a whole page of the others.
+        self::$pdo->prepare('UPDATE flow_run_logs SET created_at = NOW() - INTERVAL 1 HOUR WHERE app_id = ? AND form_id = ?')->execute([$appId, $hidden]);
         $users = $this->createMock(AppUserService::class);
         $users->method('getAppUser')->willReturn(['status' => 'active']);
         $users->method('hasPermission')->willReturnCallback(static fn (string $a, string $u, string $p, ?string $f = null): bool => $p === 'execute_flows' || $f === $visible);
