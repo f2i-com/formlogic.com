@@ -414,7 +414,7 @@ class MySQLConnection
                 form_id VARCHAR(36) NOT NULL,
                 user_id VARCHAR(36) NOT NULL,
                 url VARCHAR(2000) NOT NULL,
-                secret VARCHAR(64) NOT NULL,
+                secret VARCHAR(255) NOT NULL,
                 events JSON NOT NULL,
                 is_active TINYINT(1) DEFAULT 1,
                 description VARCHAR(255) DEFAULT NULL,
@@ -2121,13 +2121,25 @@ class MySQLConnection
         // code proves the authenticator), the enabled flag, and the hashed
         // single-use recovery codes (JSON array of sha256 hex).
         foreach ([
-            'mfa_secret' => "ALTER TABLE users ADD COLUMN mfa_secret VARCHAR(64) DEFAULT NULL",
+            'mfa_secret' => "ALTER TABLE users ADD COLUMN mfa_secret VARCHAR(255) DEFAULT NULL",
             'mfa_enabled' => "ALTER TABLE users ADD COLUMN mfa_enabled TINYINT(1) NOT NULL DEFAULT 0",
             'mfa_recovery_codes' => "ALTER TABLE users ADD COLUMN mfa_recovery_codes TEXT DEFAULT NULL",
         ] as $col => $ddl) {
             $result = $pdo->query("SHOW COLUMNS FROM users LIKE '{$col}'");
             if ($result->rowCount() === 0) {
                 $pdo->exec($ddl);
+            }
+        }
+
+        // Encrypted secrets are longer than the plain ones these columns were sized for, and a
+        // non-strict MySQL would cut them short without saying so (Support/DataEncryption).
+        foreach ([
+            'users' => ['mfa_secret', 'VARCHAR(255) DEFAULT NULL'],
+            'webhooks' => ['secret', 'VARCHAR(255) NOT NULL'],
+        ] as $table => [$col, $type]) {
+            $found = $pdo->query("SHOW COLUMNS FROM {$table} LIKE '{$col}'")->fetch(PDO::FETCH_ASSOC);
+            if ($found && stripos((string) $found['Type'], 'varchar(64)') !== false) {
+                $pdo->exec("ALTER TABLE {$table} MODIFY COLUMN {$col} {$type}");
             }
         }
 

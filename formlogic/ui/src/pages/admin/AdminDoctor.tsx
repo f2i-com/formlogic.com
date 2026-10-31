@@ -25,6 +25,7 @@ const LABELS: Record<string, string> = {
   paypal: 'Billing (PayPal)',
   webhook_worker: 'Webhook retry worker',
   scheduled_backup: 'Nightly backups',
+  data_encryption: 'Encryption of stored data',
   dual_store: 'Dual-store consistency',
   document_converter: 'Document converters',
   ai: 'AI service',

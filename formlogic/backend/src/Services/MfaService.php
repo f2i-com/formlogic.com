@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
+use FormLogic\Support\DataEncryption;
+use FormLogic\Support\DataEncryptionException;
 use PDO;
 
 /**
@@ -90,7 +92,7 @@ class MfaService
     {
         $secret = $this->totp->generateSecret();
         $stmt = $this->mysql->prepare('UPDATE users SET mfa_secret = :s, mfa_enabled = 0, mfa_recovery_codes = NULL WHERE id = :id AND mfa_enabled = 0');
-        $stmt->execute(['s' => $secret, 'id' => $userId]);
+        $stmt->execute(['s' => DataEncryption::fromEnvironment()->seal($secret, self::secretContext($userId)), 'id' => $userId]);
         if ($stmt->rowCount() === 0 && $this->isEnabled($userId)) {
             throw new \RuntimeException('Two-factor authentication is already enabled');
         }
@@ -112,7 +114,11 @@ class MfaService
         if ((bool) $row['mfa_enabled']) {
             throw new \RuntimeException('Two-factor authentication is already enabled');
         }
-        if (!$this->totp->verify((string) $row['mfa_secret'], $code)) {
+        $secret = $this->readableSecret($userId, (string) $row['mfa_secret']);
+        if ($secret === null) {
+            throw new \RuntimeException('Start the two-factor setup first');
+        }
+        if (!$this->totp->verify($secret, $code)) {
             throw new \RuntimeException('That code didn\'t match — check your authenticator app and try again');
         }
         [$plain, $hashes] = $this->mintRecoveryCodes();
@@ -264,7 +270,8 @@ class MfaService
         if (!$row || !(bool) $row['mfa_enabled'] || empty($row['mfa_secret'])) {
             return false;
         }
-        if ($this->totp->verify((string) $row['mfa_secret'], $code)) {
+        $secret = $this->readableSecret($userId, (string) $row['mfa_secret']);
+        if ($secret !== null && $this->totp->verify($secret, $code)) {
             return true;
         }
         // Recovery code path: normalized (case/dash/space-insensitive), single-use.
@@ -273,6 +280,21 @@ class MfaService
             return false;
         }
         return $this->consumeRecoveryCode($userId, hash('sha256', $normalized));
+    }
+
+    private static function secretContext(string $userId): string
+    {
+        return 'users.mfa_secret:' . $userId;
+    }
+
+    /** Null when the secret can't be decrypted. A recovery code still works, so nobody is locked out by it. */
+    private function readableSecret(string $userId, string $stored): ?string
+    {
+        try {
+            return DataEncryption::fromEnvironment()->open($stored, self::secretContext($userId));
+        } catch (DataEncryptionException) {
+            return null;
+        }
     }
 
     /**

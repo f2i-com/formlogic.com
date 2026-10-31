@@ -93,6 +93,13 @@ class HealthController
             $checks['rate_limiter'] = ['ok' => false, 'critical' => true, 'detail' => 'probe failed'];
         }
 
+        // What protects stored data, and whether the key in .env is the one it was encrypted with.
+        try {
+            $checks['data_encryption'] = \FormLogic\Support\DataEncryption::fromEnvironment()->health($this->db->getConnection());
+        } catch (\Throwable $e) {
+            $checks['data_encryption'] = ['ok' => false, 'critical' => true, 'detail' => 'check failed'];
+        }
+
         // Writable storage/log directories.
         $dirs = [
             'storage/forms' => $this->settings['sqlite']['storage_path'] ?? ($base . '/storage/forms'),

@@ -7,6 +7,7 @@ namespace FormLogic\Services;
 use FormLogic\Helpers\IpSafety;
 
 use FormLogic\Database\MySQLConnection;
+use FormLogic\Support\DataEncryption;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use PDO;
@@ -95,7 +96,7 @@ class WebhookService
             'form_id' => $formId,
             'user_id' => $userId,
             'url' => $url,
-            'secret' => $secret,
+            'secret' => DataEncryption::fromEnvironment()->seal($secret, self::secretContext($id)),
             'events' => json_encode($events),
             'description' => $description,
         ]);
@@ -104,6 +105,11 @@ class WebhookService
         // Include secret only on creation
         $webhook['secret'] = $secret;
         return $webhook;
+    }
+
+    private static function secretContext(string $webhookId): string
+    {
+        return 'webhooks.secret:' . $webhookId;
     }
 
     public function getWebhooksForForm(string $formId): array
@@ -344,7 +350,8 @@ class WebhookService
         // hash_hmac('sha256', timestamp . '.' . rawBody, secret) and also check the
         // timestamp is within an acceptable skew (e.g. 5 minutes).
         $timestamp = (string) time();
-        $signature = 'sha256=' . hash_hmac('sha256', $timestamp . '.' . $body, $webhook['secret']);
+        $secret = DataEncryption::fromEnvironment()->open((string) $webhook['secret'], self::secretContext((string) $webhook['id']));
+        $signature = 'sha256=' . hash_hmac('sha256', $timestamp . '.' . $body, $secret);
 
         // SSRF protection: re-resolve + re-validate at delivery time (same authority as
         // create/update), then pin curl to the validated IP below. Re-checking here closes
