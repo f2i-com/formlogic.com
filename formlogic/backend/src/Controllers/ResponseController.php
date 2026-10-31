@@ -958,6 +958,10 @@ class ResponseController
                 'code' => PrivateFormEncryptedException::ERROR_CODE,
             ]];
         } catch (\PDOException $e) {
+            // The form was deleted as this answer came in: nothing failed, there's just no form now.
+            if ((string) ($e->errorInfo[0] ?? $e->getCode()) === '23000' && $this->formService->getForm($formId) === null) {
+                return ['status' => 404, 'payload' => ['error' => true, 'message' => 'This form is no longer available']];
+            }
             // A PDOException is a RuntimeException, and its text is the SQL error.
             $this->logger->error('Response creation error', ['exception' => $e->getMessage()]);
             return ['status' => 500, 'payload' => [

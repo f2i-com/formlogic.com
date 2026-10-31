@@ -47,6 +47,33 @@ class AppUserController
         return $this->appUserService->hasPermission($appId, $userId, $permission);
     }
 
+    /** A name that isn't text is refused here, before it reaches a typed model or a SQL parameter. */
+    private function nameRefusal(Response $response, mixed $data, string $what, bool $required): ?Response
+    {
+        $name = is_array($data) ? ($data['name'] ?? null) : null;
+        $missing = $name === null || $name === '';
+        if ($missing ? $required : !is_string($name)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => "{$what} name is required"], 400);
+        }
+        $description = is_array($data) ? ($data['description'] ?? null) : null;
+        if ($description !== null && !is_string($description)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => "{$what} description must be text"], 400);
+        }
+        return null;
+    }
+
+    /** A name already in use is the person's to change. A database error's text is never theirs to read. */
+    private function saveFailure(Response $response, \Exception $e, string $what): Response
+    {
+        if (!$e instanceof \PDOException) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
+        if ((string) ($e->errorInfo[0] ?? $e->getCode()) === '23000') {
+            return $this->jsonResponse($response, ['error' => true, 'code' => 'name_taken', 'message' => "This app already has a {$what} with that name"], 409);
+        }
+        return $this->jsonResponse($response, ['error' => true, 'message' => 'An unexpected error occurred'], 500);
+    }
+
     // Roles
 
     public function listRoles(Request $request, Response $response, array $args): Response
@@ -78,8 +105,8 @@ class AppUserController
         }
 
         $data = $request->getParsedBody();
-        if (empty($data['name'])) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Role name is required'], 400);
+        if ($refused = $this->nameRefusal($response, $data, 'Role', true)) {
+            return $refused;
         }
 
         try {
@@ -87,7 +114,7 @@ class AppUserController
             $this->audit($request, 'role.create', 'role', $role['id'] ?? '', ['appId' => $appId]);
             return $this->jsonResponse($response, ['role' => $role], 201);
         } catch (\Exception $e) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+            return $this->saveFailure($response, $e, 'role');
         }
     }
 
@@ -108,6 +135,9 @@ class AppUserController
         }
 
         $data = $request->getParsedBody() ?? [];
+        if ($refused = $this->nameRefusal($response, $data, 'Role', false)) {
+            return $refused;
+        }
 
         try {
             $this->appUserService->updateRole($args['roleId'], $data);
@@ -115,7 +145,7 @@ class AppUserController
             $roles = $this->appUserService->getRoles($appId);
             return $this->jsonResponse($response, ['roles' => $roles]);
         } catch (\Exception $e) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+            return $this->saveFailure($response, $e, 'role');
         }
     }
 
@@ -399,7 +429,7 @@ class AppUserController
         }
 
         $data = $request->getParsedBody();
-        if (empty($data['token'])) {
+        if (!is_string($data['token'] ?? null) || $data['token'] === '') {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Invitation token is required'], 400);
         }
 
@@ -464,15 +494,15 @@ class AppUserController
         }
 
         $data = $request->getParsedBody();
-        if (empty($data['name'])) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Group name is required'], 400);
+        if ($refused = $this->nameRefusal($response, $data, 'Group', true)) {
+            return $refused;
         }
 
         try {
             $group = $this->appUserService->createGroup($appId, $data);
             return $this->jsonResponse($response, ['group' => $group], 201);
         } catch (\Exception $e) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+            return $this->saveFailure($response, $e, 'group');
         }
     }
 
@@ -493,7 +523,15 @@ class AppUserController
         }
 
         $data = $request->getParsedBody() ?? [];
-        $this->appUserService->updateGroup($args['id'], $data);
+        if ($refused = $this->nameRefusal($response, $data, 'Group', false)) {
+            return $refused;
+        }
+
+        try {
+            $this->appUserService->updateGroup($args['id'], $data);
+        } catch (\Exception $e) {
+            return $this->saveFailure($response, $e, 'group');
+        }
         return $this->jsonResponse($response, ['success' => true]);
     }
 

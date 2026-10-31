@@ -82,18 +82,22 @@ class AIController
      */
     public function status(Request $request, Response $response): Response
     {
-        $enabled = $this->aiService->isEnabled();
-        $isConfigured = $this->aiService->isConfigured();
-
         return $this->jsonResponse($response, [
-            'available' => $isConfigured,
-            'enabled' => $enabled,
-            'message' => !$enabled
-                ? 'Operator-funded Site AI is disabled. Open Connect your AI to use OAIY or your own API provider.'
-                : ($isConfigured
-                    ? 'AI service is configured and ready'
-                    : 'AI service is not configured. Set AI_BASE_URL to a local/OpenAI-compatible server (LM Studio, Ollama, …) — add AI_API_KEY only if your provider requires one.'),
+            'available' => $this->aiService->isConfigured(),
+            'enabled' => $this->aiService->isEnabled(),
+            'message' => $this->siteAiMissing() ?? 'AI service is configured and ready',
         ]);
+    }
+
+    /** Why Site AI can't answer, or null when it can. */
+    private function siteAiMissing(): ?string
+    {
+        if (!$this->aiService->isEnabled()) {
+            return 'Operator-funded Site AI is disabled. Open Connect your AI to use OAIY or your own API provider.';
+        }
+        return $this->aiService->isConfigured()
+            ? null
+            : 'AI service is not configured. Set AI_BASE_URL to a local/OpenAI-compatible server (LM Studio, Ollama, …) — add AI_API_KEY only if your provider requires one.';
     }
 
     /**
@@ -111,6 +115,10 @@ class AIController
      */
     private function meterGeneration(Request $request, Response $response): ?Response
     {
+        // Nothing can run, so nothing to charge, and "try rephrasing" would send them the wrong way.
+        if (($missing = $this->siteAiMissing()) !== null) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => 'site_ai_unavailable', 'message' => $missing], 503);
+        }
         if ($this->planService === null) {
             return null;
         }
@@ -203,6 +211,9 @@ class AIController
         $image = is_string($body['image'] ?? null) ? $body['image'] : null;
         if ($image !== null && strlen($image) > 8_000_000) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Image is too large (max ~6MB)'], 400);
+        }
+        if ($image !== null && $image !== '' && preg_match('/^data:image\/(jpeg|png|gif|webp);base64,/', $image) !== 1) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Image must be a JPEG, PNG, GIF or WebP'], 400);
         }
 
         try {

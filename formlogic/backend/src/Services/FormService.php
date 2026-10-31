@@ -529,6 +529,26 @@ class FormService
         return $stmt->fetchColumn() !== false;
     }
 
+    /**
+     * Holds this form's checked saves to one at a time. Comparing what a save started from and
+     * writing it are two steps, and two tabs saving together both passed the comparison, so the
+     * later one took out the other's work. Null when the wait runs out.
+     */
+    public function holdFieldSaves(string $formId, int $waitSeconds = 10): ?string
+    {
+        $hold = 'formlogic_fields_' . substr(hash('sha256', $formId), 0, 40);
+        $stmt = $this->mysql->prepare('SELECT GET_LOCK(:hold, :wait)');
+        $stmt->execute(['hold' => $hold, 'wait' => $waitSeconds]);
+        return (int) $stmt->fetchColumn() === 1 ? $hold : null;
+    }
+
+    public function releaseFieldSaves(string $hold): void
+    {
+        $stmt = $this->mysql->prepare('SELECT RELEASE_LOCK(:hold)');
+        $stmt->execute(['hold' => $hold]);
+        $stmt->closeCursor();
+    }
+
     public function updateForm(string $formId, array $data, ?string $actorUserId = null): ?array
     {
         // Check form exists

@@ -3858,6 +3858,9 @@ class ResponseService
         try {
             $this->updateAnalytics($formId, 'view');
         } catch (\Throwable $e) {
+            if (self::isNoSuchForm($e)) {
+                return;
+            }
             $this->logger->warning('Failed to record form view', ['formId' => $formId, 'error' => $e->getMessage()]);
         }
     }
@@ -3871,8 +3874,17 @@ class ResponseService
         try {
             $this->updateAnalytics($formId, 'start');
         } catch (\Throwable $e) {
+            if (self::isNoSuchForm($e)) {
+                return;
+            }
             $this->logger->warning('Failed to record form start', ['formId' => $formId, 'error' => $e->getMessage()]);
         }
+    }
+
+    /** Anyone can name a form that isn't there, and nothing went wrong: no reason to fill the log. */
+    private static function isNoSuchForm(\Throwable $e): bool
+    {
+        return $e instanceof \PDOException && (string) $e->getCode() === '23000';
     }
 
     /**

@@ -359,8 +359,9 @@ class FormController
         // say what it started from isn't checked.
         $startedFrom = $data['expectedFieldsRevision'] ?? null;
         unset($data['expectedFieldsRevision']);
-        if (is_string($startedFrom) && isset($data['fields']) && $startedFrom !== FormService::fieldsRevision($form['fields'] ?? [])) {
-            return $this->jsonError($response, 'This form was changed somewhere else since you opened it. Reload the page to get the latest version, then make your change again.', 409, 'form_changed');
+        $checked = is_string($startedFrom) && isset($data['fields']);
+        if ($checked && $startedFrom !== FormService::fieldsRevision($form['fields'] ?? [])) {
+            return $this->formChangedRefusal($response);
         }
 
         // Validate input types
@@ -400,6 +401,20 @@ class FormController
         }
         if (($codeRefusal = AdminActingLimits::codeRefusal($request, $data, $form)) !== null) {
             return $this->jsonResponse($response, $codeRefusal, 403);
+        }
+
+        // Checked again under a hold: two saves from one copy could both pass the check above.
+        $hold = null;
+        if ($checked) {
+            $hold = $this->formService->holdFieldSaves($formId);
+            if ($hold === null) {
+                return $this->jsonError($response, 'This form is being saved somewhere else. Try again in a moment.', 409, 'form_busy');
+            }
+            $current = $this->formService->getForm($formId);
+            if ($startedFrom !== FormService::fieldsRevision($current['fields'] ?? [])) {
+                $this->formService->releaseFieldSaves($hold);
+                return $this->formChangedRefusal($response);
+            }
         }
 
         try {
@@ -456,7 +471,16 @@ class FormController
                 'error' => true,
                 'message' => 'An unexpected error occurred',
             ], 500);
+        } finally {
+            if ($hold !== null) {
+                $this->formService->releaseFieldSaves($hold);
+            }
         }
+    }
+
+    private function formChangedRefusal(Response $response): Response
+    {
+        return $this->jsonError($response, 'This form was changed somewhere else since you opened it. Reload the page to get the latest version, then make your change again.', 409, 'form_changed');
     }
 
     /**

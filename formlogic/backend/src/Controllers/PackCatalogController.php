@@ -42,25 +42,15 @@ class PackCatalogController
         $params = $request->getQueryParams();
 
         $filters = [];
-        if (!empty($params['search'])) {
-            $filters['search'] = $params['search'];
-        }
-        if (!empty($params['category'])) {
-            $filters['category'] = $params['category'];
-        }
-        if (!empty($params['tag'])) {
-            $filters['tag'] = $params['tag'];
-        }
-        // Marketplace facets (spec §30): artifact type + trust level. The service validates the values
+        // itemType and trustLevel are marketplace facets (spec §30). The service validates them
         // against its fixed enums, so an unknown value is simply ignored.
-        if (!empty($params['itemType'])) {
-            $filters['itemType'] = $params['itemType'];
-        }
-        if (!empty($params['trustLevel'])) {
-            $filters['trustLevel'] = $params['trustLevel'];
+        foreach (['search', 'category', 'tag', 'itemType', 'trustLevel'] as $filter) {
+            if (is_string($params[$filter] ?? null) && $params[$filter] !== '') {
+                $filters[$filter] = $params[$filter];
+            }
         }
 
-        $sort = $params['sort'] ?? 'popular';
+        $sort = is_string($params['sort'] ?? null) ? $params['sort'] : 'popular';
         $page = max(1, (int)($params['page'] ?? 1));
         $limit = min(50, max(1, (int)($params['limit'] ?? 20)));
 
@@ -123,6 +113,12 @@ class PackCatalogController
 
         if (!$packData || !is_array($packData)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack data is required'], 400);
+        }
+
+        foreach (['name', 'description', 'slug', 'icon', 'category', 'itemType', 'version', 'changelog'] as $field) {
+            if (isset($body[$field]) && !is_string($body[$field])) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => "Pack {$field} must be text"], 400);
+            }
         }
 
         $name = trim($body['name'] ?? '');

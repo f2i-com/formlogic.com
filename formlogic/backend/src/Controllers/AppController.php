@@ -488,7 +488,7 @@ class AppController
         }
 
         $data = $request->getParsedBody();
-        if (empty($data['formId'])) {
+        if (!is_string($data['formId'] ?? null) || $data['formId'] === '') {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Form ID is required'], 400);
         }
 

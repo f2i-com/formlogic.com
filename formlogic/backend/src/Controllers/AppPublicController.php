@@ -1211,6 +1211,9 @@ class AppPublicController
 
         // Validate answers against form fields if answers are being updated
         if (isset($data['answers'])) {
+            if (!is_array($data['answers'])) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Answers must be an object'], 422);
+            }
             $form = $this->formService->getForm($formId);
             if ($form) {
                 // PATCH semantics: callers (record editors, app-logic effects, flow output

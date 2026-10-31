@@ -130,6 +130,10 @@ class WebhookController
             }
         }
 
+        if (!is_array($data)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid request body'], 400);
+        }
+
         // Only allow known fields to prevent mass-assignment
         $allowedFields = ['url', 'events', 'is_active', 'description'];
         $filtered = array_intersect_key($data, array_flip($allowedFields));

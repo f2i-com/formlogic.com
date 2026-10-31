@@ -137,7 +137,7 @@ class AuthController
         // register()/requestPasswordReset() already tolerate.
         $email = trim((string) ($data['email'] ?? ''));
 
-        if ($email === '' || empty($data['password'])) {
+        if ($email === '' || !is_string($data['password'] ?? null) || $data['password'] === '') {
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'Email and password are required',
@@ -1069,7 +1069,7 @@ class AuthController
     }
 
     /** Forget a remembered browser (it re-prompts for a code next login). DELETE /api/auth/mfa/trusted-browsers/{id} */
-    public function mfaRevokeTrustedBrowser(Request $request, Response $response, array $args): Response
+    public function mfaRevokeTrustedBrowser(Request $request, Response $response, string $id): Response
     {
         $user = $request->getAttribute('user');
         if (!$user || $this->mfaService === null) {
@@ -1078,9 +1078,9 @@ class AuthController
         if ($blocked = $this->blockIfDemo($request, $response)) {
             return $blocked;
         }
-        $ok = $this->mfaService->revokeTrust($user->id, (string) ($args['id'] ?? ''));
+        $ok = $this->mfaService->revokeTrust($user->id, $id);
         if ($ok) {
-            $this->audit($request, 'auth.mfa.trusted_browser_revoked', 'user', $user->id, ['trustId' => $args['id'] ?? '']);
+            $this->audit($request, 'auth.mfa.trusted_browser_revoked', 'user', $user->id, ['trustId' => $id]);
         }
         return $this->jsonResponse($response, ['revoked' => $ok], $ok ? 200 : 404);
     }
