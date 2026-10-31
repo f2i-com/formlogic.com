@@ -19,6 +19,10 @@ pub fn save_as(_prompt: &str, _name: &str) -> Result<Option<PathBuf>, String> {
     Err(REFUSED.to_string())
 }
 
+pub fn choose_folder(_prompt: &str) -> Result<Option<PathBuf>, String> {
+    Err(REFUSED.to_string())
+}
+
 pub fn open_url(_url: &str) -> Result<(), String> {
     Err(REFUSED.to_string())
 }

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
@@ -26,6 +26,7 @@ interface Reply {
   fingerprint: string;
   keyId: string;
   endedAtServer: boolean;
+  moved: number;
   total: number;
   apps: { name: string }[];
   forms: { title: string }[];
@@ -219,6 +220,15 @@ test('the plugin links, is approved, backs up, restores and lets go', async ({ p
       expect(bytes.includes(planted)).toBe(false);
     }
 
+    // Moved to a folder of the person's own, which can be on another drive, they go on working,
+    // and new backups go there too.
+    const ownFolder = process.env.FORMLOGIC_BACKUPS_FOLDER ?? path.join(plugin.folder, 'my-backups');
+    mkdirSync(ownFolder, { recursive: true });
+    plugin.answer(`folder ${ownFolder}`);
+    expect((await plugin.done('backups.move', { to: 'chosen' })).moved).toBe(4);
+    expect(everyFile(path.join(ownFolder, 'FormLogic Backups')).filter((file) => file.endsWith('.flbk'))).toHaveLength(2);
+    expect(everyFile(path.join(plugin.folder, 'data', 'backups'))).toHaveLength(0);
+
     // A backup started by a command is kept, however few the schedule keeps: a flow can start
     // as many as it likes, and they must not push out an older copy.
     plugin.answer('yes');
@@ -226,6 +236,7 @@ test('the plugin links, is approved, backs up, restores and lets go', async ({ p
     expect(plugin.asked()).toContain('Keep 1 of each');
     await plugin.done('backup.run', { only: [{ kind: 'form', id: form.sourceId, name: planted }] });
     expect((await plugin.command('backups.list')).total).toBe(3);
+    expect(everyFile(path.join(ownFolder, 'FormLogic Backups')).filter((file) => file.endsWith('.flbk'))).toHaveLength(3);
 
     // A plain copy goes where the window says, and is a plain backup.
     const chosen = path.join(plugin.folder, 'chosen.zip');

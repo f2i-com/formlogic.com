@@ -194,6 +194,35 @@ it('the schedule saves what the form says', async () => {
   expect(calls.find((call) => call.name === 'settings.set')?.payload).toEqual({ enabled: true, everyHours: 12, keep: 3 });
 });
 
-it('the page warns that uninstalling takes the backups with it', () => {
-  expect(html).toContain('Uninstalling this plugin deletes them');
+it('backups in the plugin\'s own folder come with a warning', async () => {
+  start(READY);
+  await settle();
+  expect(isShown('fb-where-plugin')).toBe(true);
+  expect(byId('fb-where-plugin').textContent).toContain('Uninstalling this plugin deletes them');
+  expect(isShown('fb-use-own-folder')).toBe(false);
+});
+
+it('backups in a folder of the person\'s own say where, and what an uninstall leaves', async () => {
+  start(READY, { 'backups.list': () => ({ ...NO_BACKUPS, folder: 'D:\\My Backups' }) });
+  await settle();
+  expect(isShown('fb-where-chosen')).toBe(true);
+  expect(isShown('fb-where-plugin')).toBe(false);
+  expect(byId('fb-folder').textContent).toBe('D:\\My Backups');
+  expect(byId('fb-where-chosen').textContent).toContain('twelve words');
+  expect(isShown('fb-folder-missing')).toBe(false);
+});
+
+it('a folder that has gone says so', async () => {
+  start({ ...READY, state: 'folder-missing', detail: "The backup folder isn't there", folderMissing: true }, { 'backups.list': () => ({ ...NO_BACKUPS, folder: 'E:\\Backups' }) });
+  await settle();
+  expect(isShown('fb-folder-missing')).toBe(true);
+});
+
+it('choosing a folder asks the plugin, which asks the person: the page names no path', async () => {
+  start(READY, { 'backups.move': () => ({ jobId: 'j1' }), 'jobs.get': () => ({ state: 'done', result: { moved: 2 } }) });
+  await settle();
+  byId('fb-choose-folder').click();
+  await settle();
+  expect(calls.find((call) => call.name === 'backups.move')?.payload).toEqual({ to: 'chosen' });
+  await vi.waitFor(() => expect(byId('fb-said').textContent).toBe('Your backups are in the new folder.'));
 });

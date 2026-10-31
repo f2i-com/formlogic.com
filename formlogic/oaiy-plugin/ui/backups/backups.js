@@ -195,6 +195,11 @@
     answer.backups.forEach(function (backup) { list.appendChild(renderBackup(backup)); });
     show('fb-backups-empty', answer.total === 0);
     show('fb-backups-more', answer.total > answer.backups.length);
+    show('fb-where-plugin', !answer.folder);
+    show('fb-where-chosen', !!answer.folder);
+    show('fb-use-own-folder', !!answer.folder);
+    show('fb-folder-missing', !!(status && status.folderMissing));
+    $('fb-folder').textContent = answer.folder || '';
     var last = answer.lastRun;
     show('fb-last-run', !!last);
     if (last) {
@@ -214,7 +219,7 @@
       return call('backups.list', { offset: gathered.length, limit: Math.min(MOST_AT_ONCE, shown - gathered.length) }).then(function (answer) {
         gathered = gathered.concat(answer.backups);
         var more = gathered.length < shown && gathered.length < answer.total && answer.backups.length > 0;
-        return more ? next() : { backups: gathered, total: answer.total, lastRun: answer.lastRun };
+        return more ? next() : { backups: gathered, total: answer.total, lastRun: answer.lastRun, folder: answer.folder };
       });
     }
     return next();
@@ -295,6 +300,14 @@
   });
 
   $('fb-sources-refresh').addEventListener('click', loadSources);
+
+  $('fb-choose-folder').addEventListener('click', function () {
+    act('backups.move', { to: 'chosen' }, 'Choose a folder in the window that opened.', 'Your backups are in the new folder.');
+  });
+
+  $('fb-use-own-folder').addEventListener('click', function () {
+    act('backups.move', { to: 'plugin' }, 'Answer the window that opened.', 'Your backups are back in the plugin\'s folder.');
+  });
 
   $('fb-backups-more').addEventListener('click', function () {
     shown += PAGE;

@@ -3,9 +3,10 @@
 
 use std::path::PathBuf;
 
+use windows_sys::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, COINIT_APARTMENTTHREADED};
 use windows_sys::Win32::System::SystemInformation::{ComputerNameDnsHostname, GetComputerNameExW};
 use windows_sys::Win32::UI::Controls::Dialogs::{GetSaveFileNameW, OFN_EXPLORER, OFN_NOCHANGEDIR, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW};
-use windows_sys::Win32::UI::Shell::ShellExecuteW;
+use windows_sys::Win32::UI::Shell::{SHBrowseForFolderW, SHGetPathFromIDListW, ShellExecuteW, BIF_NEWDIALOGSTYLE, BIF_RETURNONLYFSDIRS, BROWSEINFOW};
 use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, IDOK, MB_DEFBUTTON2, MB_ICONWARNING, MB_OKCANCEL, MB_SETFOREGROUND, MB_TOPMOST, SW_SHOWNORMAL};
 
 pub const CAN_ASK: bool = true;
@@ -56,6 +57,38 @@ pub fn save_as(prompt: &str, name: &str) -> Result<Option<PathBuf>, String> {
     let chosen = unsafe { GetSaveFileNameW(&mut dialog) } != 0;
     if !chosen {
         return Ok(None);
+    }
+    let end = path.iter().position(|unit| *unit == 0).unwrap_or(path.len());
+    Ok(Some(PathBuf::from(String::from_utf16_lossy(&path[..end]))))
+}
+
+pub fn choose_folder(prompt: &str) -> Result<Option<PathBuf>, String> {
+    let title = wide(prompt);
+    let mut name = vec![0u16; 4096];
+    // SAFETY: BROWSEINFOW is plain data, and all zeros is its documented starting point.
+    let mut dialog: BROWSEINFOW = unsafe { std::mem::zeroed() };
+    dialog.lpszTitle = title.as_ptr();
+    dialog.pszDisplayName = name.as_mut_ptr();
+    dialog.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    // SAFETY: the dialog's new style needs COM on this thread, which is the job's own and ends with
+    // it. The pointers in `dialog` are to buffers above that outlive the call.
+    let chosen = unsafe {
+        CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32);
+        SHBrowseForFolderW(&dialog)
+    };
+    if chosen.is_null() {
+        return Ok(None);
+    }
+    let mut path = vec![0u16; 4096];
+    // SAFETY: `chosen` came from the call above and is freed once here, and `path` is longer than
+    // the path this writes.
+    let found = unsafe {
+        let found = SHGetPathFromIDListW(chosen, path.as_mut_ptr()) != 0;
+        CoTaskMemFree(chosen as *const _);
+        found
+    };
+    if !found {
+        return Err("That can't hold backups. Choose a folder on a drive.".to_string());
     }
     let end = path.iter().position(|unit| *unit == 0).unwrap_or(path.len());
     Ok(Some(PathBuf::from(String::from_utf16_lossy(&path[..end]))))
@@ -139,6 +172,15 @@ mod tests {
         let prompt = "A test of FormLogic Backups. It closes itself.";
         let (thread, found) = press(prompt, IDCANCEL);
         assert_eq!(save_as(prompt, "test.zip").unwrap(), None);
+        thread.join().unwrap();
+        assert!(found.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    #[ignore = "opens real windows on the desktop"]
+    fn windows_cancelling_the_folder_window_chooses_nothing() {
+        let (thread, found) = press("Browse For Folder", IDCANCEL);
+        assert_eq!(choose_folder("A test of FormLogic Backups. It closes itself.").unwrap(), None);
         thread.join().unwrap();
         assert!(found.load(Ordering::SeqCst));
     }

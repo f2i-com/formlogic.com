@@ -53,6 +53,12 @@ impl Drop for OneRun {
     }
 }
 
+/// Does `work` with no run going, for something that moves the files a run writes.
+pub fn alone<T>(work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let _one = OneRun::claim().ok_or("A backup is running. Try again when it finishes.")?;
+    work()
+}
+
 /// One app or form to back up, with its name for saying what failed.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Source {
@@ -249,6 +255,9 @@ pub fn back_up(data: &Path, only: Option<Vec<Source>>, pace: Duration, started: 
 fn run_sources(data: &Path, store: &Store, only: Option<Vec<Source>>, pace: Duration, started: Started, outcome: &mut Outcome, progress: &dyn Fn(&str)) -> Result<(), String> {
     let account = link::load(data)?.ok_or("Connect to FormLogic first.")?;
     let key = keys::load(&store.key_folder())?.ok_or("Set up your twelve words first.")?;
+    if store.folder_missing() {
+        return Err("The folder your backups go to isn't there. Connect its drive, or choose another.".to_string());
+    }
     let identity = NodeIdentity::load_or_create(data)?;
     let keep = kept_by(started, store);
     let sources = match only {
@@ -442,7 +451,9 @@ mod tests {
     fn a_second_run_is_refused_while_the_first_holds_its_place() {
         let first = OneRun::claim().expect("nothing is running");
         assert!(OneRun::claim().is_none());
+        assert!(alone(|| Ok(())).is_err(), "nor can the files be moved from under it");
         drop(first);
+        assert!(alone(|| Ok(())).is_ok());
         assert!(OneRun::claim().is_some());
     }
 }

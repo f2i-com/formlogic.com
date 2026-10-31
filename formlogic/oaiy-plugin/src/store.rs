@@ -1,11 +1,15 @@
-//! The files on this computer, all under the folder OAIY gives the plugin:
+//! The files on this computer, under the folder OAIY gives the plugin:
 //!
 //! ```text
 //! backups/<account>/<kind>-<id>/<time>.flbk    a sealed backup, with what FormLogic said about it in .json
 //! backup-key/                                  the key, apart from the backups
 //! staging/                                     a backup on its way in, or a plain one on its way to FormLogic
 //! settings.json, last-run.json, schedule.json
+//! backups-folder.txt                           the folder the person chose instead, if they did
 //! ```
+//!
+//! OAIY deletes that folder when the plugin is uninstalled, so the person can choose a folder of
+//! their own for the backups: `<chosen>/FormLogic Backups/<account>/...`. The key stays here.
 //!
 //! `<account>` stands for one server and one account, so two accounts' backups of an app with the
 //! same id can't be mistaken for each other. A backup's id comes back from the page as
@@ -25,6 +29,9 @@ const OUTCOME: &str = "last-run.json";
 const SCHEDULE: &str = "schedule.json";
 const EXTENSION: &str = "flbk";
 const OPENING: &str = "opening";
+const LOCATION: &str = "backups-folder.txt";
+/// What is made inside the folder the person chooses, so their folder stays tidy.
+const CHOSEN_FOLDER: &str = "FormLogic Backups";
 
 /// How the schedule runs. Off until the person turns it on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +94,7 @@ pub struct About<'a> {
 
 pub struct Store {
     root: PathBuf,
+    chosen: Option<PathBuf>,
 }
 
 /// The folder for one server and one account.
@@ -128,11 +136,95 @@ fn safe_folder(folder: &str) -> bool {
 
 impl Store {
     pub fn open(data_dir: &Path) -> Store {
-        Store { root: data_dir.to_path_buf() }
+        let chosen = std::fs::read_to_string(data_dir.join(LOCATION)).ok().map(|text| PathBuf::from(text.trim())).filter(|folder| folder.is_absolute());
+        Store { root: data_dir.to_path_buf(), chosen }
     }
 
     fn backups(&self) -> PathBuf {
-        self.root.join("backups")
+        self.chosen.as_ref().map_or_else(|| self.root.join("backups"), |folder| folder.join(CHOSEN_FOLDER))
+    }
+
+    /// The folder the person chose for the backups, if they did.
+    pub fn chosen_folder(&self) -> Option<&Path> {
+        self.chosen.as_deref()
+    }
+
+    /// Whether the chosen folder has gone: a drive can be unplugged.
+    pub fn folder_missing(&self) -> bool {
+        self.chosen.as_ref().is_some_and(|folder| !folder.is_dir())
+    }
+
+    /// The backup files as they lie, each with its details, relative to the backups folder.
+    fn backup_files(&self) -> Vec<PathBuf> {
+        let mut found = Vec::new();
+        for scope in std::fs::read_dir(self.backups()).into_iter().flatten().flatten().filter(|entry| safe_scope(&entry.file_name().to_string_lossy())) {
+            for folder in std::fs::read_dir(scope.path()).into_iter().flatten().flatten().filter(|entry| safe_folder(&entry.file_name().to_string_lossy())) {
+                for file in std::fs::read_dir(folder.path()).into_iter().flatten().flatten() {
+                    let path = file.path();
+                    let ours = path.extension().is_some_and(|extension| extension == EXTENSION || extension == "json");
+                    if ours && path.file_stem().and_then(|stem| stem.to_str()).is_some_and(safe_time) {
+                        found.push(PathBuf::from(scope.file_name()).join(folder.file_name()).join(file.file_name()));
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    /// Moves every backup into `to`, or back into the plugin's own folder, and keeps them there
+    /// from now on. Backups already in `to` stay, which is how a folder is picked up again after a
+    /// reinstall. The old copies go only once every new one is in place and the choice is saved,
+    /// so a failure half way leaves things as they were, with some spare copies in `to`.
+    pub fn move_backups(&self, to: Option<&Path>) -> Result<usize, String> {
+        if self.folder_missing() {
+            return Err("The folder your backups are in isn't there. Connect its drive first.".to_string());
+        }
+        let target = match to {
+            Some(folder) => {
+                self.check_folder(folder)?;
+                folder.join(CHOSEN_FOLDER)
+            }
+            None => self.root.join("backups"),
+        };
+        let from = self.backups();
+        let same = std::fs::canonicalize(&from).ok().zip(std::fs::canonicalize(&target).ok()).is_some_and(|(from, target)| from == target);
+        if from == target || same {
+            return Ok(0);
+        }
+        let files = self.backup_files();
+        for relative in &files {
+            let (source, destination) = (from.join(relative), target.join(relative));
+            let parent = destination.parent().ok_or("That folder can't be used.")?;
+            secret_file::create_private_dir(parent).map_err(|e| format!("Could not make a folder for your backups: {e}"))?;
+            match std::fs::metadata(&destination) {
+                Ok(there) if std::fs::metadata(&source).is_ok_and(|here| here.len() == there.len()) => {}
+                Ok(_) => return Err("That folder already holds a different backup under the same name. Nothing was moved.".to_string()),
+                Err(_) => secret_file::copy_over(&source, &destination).map_err(|e| format!("Could not copy your backups there: {e}. Nothing was moved."))?,
+            }
+        }
+        match to {
+            Some(folder) => secret_file::write(&self.root.join(LOCATION), folder.to_string_lossy().as_bytes()).map_err(|e| format!("Could not save the folder: {e}"))?,
+            None => std::fs::remove_file(self.root.join(LOCATION)).map_err(|e| format!("Could not save the folder: {e}"))?,
+        }
+        for relative in &files {
+            let _ = std::fs::remove_file(from.join(relative));
+            let mut empty = relative.parent();
+            while let Some(folder) = empty.filter(|folder| !folder.as_os_str().is_empty()) {
+                let _ = std::fs::remove_dir(from.join(folder));
+                empty = folder.parent();
+            }
+        }
+        Ok(files.len())
+    }
+
+    /// A folder inside the plugin's own would go with an uninstall, which is what this is to avoid.
+    fn check_folder(&self, folder: &Path) -> Result<(), String> {
+        let chosen = std::fs::canonicalize(folder).map_err(|_| "That folder can't be used.".to_string())?;
+        let own = std::fs::canonicalize(&self.root).map_err(|e| e.to_string())?;
+        if chosen.starts_with(&own) {
+            return Err("That folder is inside the plugin's own, which goes when the plugin is uninstalled. Choose another.".to_string());
+        }
+        Ok(())
     }
 
     /// Where the key is: apart from the backups, so a copy of them doesn't carry what opens them.
@@ -222,7 +314,7 @@ impl Store {
             "counts": about.counts, "keyId": about.key_id, "server": about.server, "accountEmail": about.account_email, "scheduled": about.scheduled,
         });
         secret_file::write(&path.with_extension("json"), serde_json::to_vec_pretty(&details).map_err(|e| e.to_string())?).map_err(|e| format!("Could not save the backup's details: {e}"))?;
-        secret_file::rename_over(staged, &path).map_err(|e| format!("Could not file the backup: {e}"))?;
+        secret_file::move_file(staged, &path).map_err(|e| format!("Could not file the backup: {e}"))?;
         Ok(LocalBackup {
             id: format!("{}/{folder_name}/{time}", about.scope),
             scope: about.scope.to_string(),
@@ -566,6 +658,137 @@ mod tests {
         assert!(store.path_of("../../outside").is_err());
         assert!(store.remove("../../outside").is_err());
         assert!(dir.join("outside.flbk").exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn outside(dir: &Path) -> PathBuf {
+        let folder = dir.parent().unwrap().join(format!("{}-chosen", dir.file_name().unwrap().to_string_lossy()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        folder
+    }
+
+    #[test]
+    fn backups_move_to_a_chosen_folder_and_stay_there() {
+        let (store, dir) = store("chosen");
+        let kept = file(&store, "app", "a1", "20261031T000000000Z").unwrap();
+        let chosen = outside(&dir);
+
+        assert_eq!(store.move_backups(Some(&chosen)).unwrap(), 2, "the backup and its details");
+
+        let moved = Store::open(&dir);
+        assert_eq!(moved.chosen_folder(), Some(chosen.as_path()));
+        assert_eq!(moved.list(), vec![kept.clone()], "the same backup, under the same id");
+        assert!(moved.path_of(&kept.id).unwrap().starts_with(chosen.join(CHOSEN_FOLDER)));
+        assert!(!dir.join("backups").join(SCOPE).exists(), "nothing is left behind");
+
+        let next = file(&moved, "app", "a1", "20261101T000000000Z").unwrap();
+        assert!(moved.path_of(&next.id).unwrap().starts_with(&chosen), "new backups go there too");
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(chosen);
+    }
+
+    #[test]
+    fn backups_come_back_to_the_plugins_own_folder() {
+        let (store, dir) = store("back");
+        let kept = file(&store, "app", "a1", "20261031T000000000Z").unwrap();
+        let chosen = outside(&dir);
+        store.move_backups(Some(&chosen)).unwrap();
+
+        Store::open(&dir).move_backups(None).unwrap();
+
+        let back = Store::open(&dir);
+        assert_eq!(back.chosen_folder(), None);
+        assert!(back.path_of(&kept.id).unwrap().starts_with(dir.join("backups")));
+        assert!(!chosen.join(CHOSEN_FOLDER).join(SCOPE).exists());
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(chosen);
+    }
+
+    /// What an uninstall and a reinstall come to: an empty plugin folder, and the same folder chosen.
+    #[test]
+    fn a_folder_chosen_again_after_a_reinstall_brings_its_backups_back() {
+        let (store, dir) = store("reinstall");
+        let kept = file(&store, "app", "a1", "20261031T000000000Z").unwrap();
+        let chosen = outside(&dir);
+        store.move_backups(Some(&chosen)).unwrap();
+        let (fresh, fresh_dir) = self::store("reinstall-fresh");
+        assert!(fresh.list().is_empty());
+
+        assert_eq!(fresh.move_backups(Some(&chosen)).unwrap(), 0);
+
+        assert_eq!(Store::open(&fresh_dir).list(), vec![kept]);
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(fresh_dir);
+        let _ = std::fs::remove_dir_all(chosen);
+    }
+
+    #[test]
+    fn a_folder_inside_the_plugins_own_is_refused() {
+        let (store, dir) = store("inside");
+        let inside = dir.join("mine");
+        std::fs::create_dir_all(&inside).unwrap();
+
+        assert!(store.move_backups(Some(&inside)).unwrap_err().contains("uninstalled"));
+        assert!(store.move_backups(Some(&dir)).unwrap_err().contains("uninstalled"));
+        assert_eq!(Store::open(&dir).chosen_folder(), None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_move_that_cannot_finish_leaves_the_backups_where_they_were() {
+        let (store, dir) = store("clash");
+        let kept = file(&store, "app", "a1", "20261031T000000000Z").unwrap();
+        let chosen = outside(&dir);
+        let clash = chosen.join(CHOSEN_FOLDER).join(SCOPE).join(source_folder("app", "a1"));
+        std::fs::create_dir_all(&clash).unwrap();
+        std::fs::write(clash.join("20261031T000000000Z.flbk"), b"something else").unwrap();
+
+        assert!(store.move_backups(Some(&chosen)).unwrap_err().contains("Nothing was moved"));
+
+        let same = Store::open(&dir);
+        assert_eq!(same.chosen_folder(), None);
+        assert_eq!(same.list(), vec![kept]);
+        assert_eq!(std::fs::read(clash.join("20261031T000000000Z.flbk")).unwrap(), b"something else");
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(chosen);
+    }
+
+    #[test]
+    fn moving_to_where_they_already_are_does_nothing() {
+        let (store, dir) = store("same");
+        file(&store, "app", "a1", "20261031T000000000Z").unwrap();
+        let chosen = outside(&dir);
+        store.move_backups(Some(&chosen)).unwrap();
+        let moved = Store::open(&dir);
+
+        assert_eq!(moved.move_backups(Some(&chosen)).unwrap(), 0);
+
+        assert_eq!(Store::open(&dir).list().len(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(chosen);
+    }
+
+    #[test]
+    fn a_drive_that_has_gone_is_noticed_and_nothing_moves() {
+        let (store, dir) = store("gone");
+        let chosen = outside(&dir);
+        store.move_backups(Some(&chosen)).unwrap();
+        std::fs::remove_dir_all(&chosen).unwrap();
+
+        let gone = Store::open(&dir);
+        assert!(gone.folder_missing());
+        assert!(gone.list().is_empty());
+        assert!(gone.move_backups(None).unwrap_err().contains("isn't there"));
+        assert_eq!(Store::open(&dir).chosen_folder(), Some(chosen.as_path()), "the choice stands for when it comes back");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_damaged_location_means_the_plugins_own_folder() {
+        let (_, dir) = store("location");
+        std::fs::write(dir.join(LOCATION), "not/absolute").unwrap();
+        assert_eq!(Store::open(&dir).chosen_folder(), None);
         let _ = std::fs::remove_dir_all(dir);
     }
 

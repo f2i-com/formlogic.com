@@ -6,13 +6,13 @@ The plugin's source is in `formlogic/oaiy-plugin`. It adds to OAIY through OAIY'
 
 **Lose the twelve words and a lost computer takes these backups with it.** They are shown once, in a window of their own, and nothing keeps them. Nobody can reset them. Nothing is set up until you say you have written them down, so closing the window costs nothing.
 
-**Uninstalling the plugin deletes the backups on this computer.** OAIY removes a plugin's folder with it, and OAIY's own backup leaves that folder out. Save a plain copy of anything you want to keep first. Updating the plugin keeps them.
+**Uninstalling the plugin deletes backups kept in its own folder,** which is where they start. OAIY removes a plugin's folder with it, and OAIY's own backup leaves that folder out. Choose a folder of your own on the plugin's page and they stay through an uninstall. Updating the plugin keeps them either way.
 
 ## Install it
 
 You need OAIY on Windows or macOS, and a FormLogic whose operator has turned on `PRIVATE_FORMS` and `DATA_NODES`.
 
-1. Download the zip for your system from the FormLogic release: `formlogic-backups-<version>-windows-x64.zip` or `formlogic-backups-<version>-macos.zip`.
+1. Download the zip for your system from the FormLogic release: `formlogic-backups-<version>-windows-x64.zip` or `formlogic-backups-<version>-macos.zip`. The Mac one is added to a release by hand, so it can arrive later.
 2. In OAIY, open **Plugins**, enter the path to the zip, and choose **Install**.
 3. Choose **Trust this plugin**, then **Start**. The plugin isn't signed, so OAIY asks you to trust each new version.
 4. Open **FormLogic Backups** in OAIY's sidebar.
@@ -40,7 +40,7 @@ From the list you can:
 OAIY's commands can come from more than the plugin's page: the agent, and flows and app scripts run on this computer, including ones that come from a linked FormLogic. The relay can also send anything not marked as journalled. So:
 
 - Only `status.get` and `settings.get` are left unjournalled. They say how things stand, and name no app, file or person. The relay refuses everything else.
-- What could do harm in the wrong hands waits for the person in a window of the plugin's own, which no command can answer: connecting to a server, forgetting the link, making or entering the words, saving a plain copy, restoring, deleting, and any change to the schedule. Each says what it will do, and to cancel it if you didn't ask. Listing and backing up don't ask.
+- What could do harm in the wrong hands waits for the person in a window of the plugin's own, which no command can answer: connecting to a server, forgetting the link, making or entering the words, saving a plain copy, restoring, deleting, choosing where backups are kept, and any change to the schedule. Each says what it will do, and to cancel it if you didn't ask. Listing and backing up don't ask.
 - The twelve words are never in a command's answer. Words you type to recover a key do pass through a command. If you give them to OAIY's agent rather than typing them on the page, they end up in the agent's log and in what it sends its model, so don't.
 
 The windows stop what can only send OAIY a command. They don't stop a program already running as you: that can read the plugin's folder, the key included, and press a window's buttons. OAIY's agent can run programs when you let it.
@@ -53,11 +53,17 @@ If you reset your FormLogic password, the key ends, on purpose, and backups stop
 
 Revoking the computer under Data nodes ends its key too. Forgetting the link on the plugin's page does the same from this end. If FormLogic can't be reached at that moment the plugin says so, and you can revoke it there.
 
-## Moving to a new computer
+## Where they are kept
 
-Install the plugin there, close OAIY, and copy the `backups` folder from the plugin's data folder to the same place on the new computer. Then choose **I already have my words**. The same words make the same key on any computer, and they are checked against the backups you copied, so a mistyped word can't replace your key. With no backups there, any valid twelve words are taken, and the checksum alone catches only most mistakes.
+They start in the plugin's own folder, `plugin-data/formlogic-backups/backups` under OAIY's data folder. **Choose a folder** on the plugin's page moves them to a folder of yours, in a folder called `FormLogic Backups` inside it, and new backups go there from then on. The old copies go only once all the new ones are in place. Only the window can name the folder: no command can.
 
-The plugin's data folder is `plugin-data/formlogic-backups` under OAIY's data folder. The key is kept apart in `backup-key`, so `backups` can go on a drive or in a synced folder without giving anyone what's in them. Don't copy `backup-key` with it. What is in a backup is sealed, but each one has a plain `.json` beside it with its name, date and size, the account's email address and the server, because the plugin lists them without opening anything.
+A drive that isn't connected stops backups until it is back, and the page says so. A folder inside the plugin's own is refused, because it would go with an uninstall.
+
+Your key stays in the plugin's folder, in `backup-key`, so a chosen folder can be on a drive or in a synced folder without giving anyone what's in the backups. What is in a backup is sealed, but each one has a plain `.json` beside it with its name, date and size, the account's email address and the server, because the plugin lists them without opening anything. So a synced folder shows those.
+
+## Moving to a new computer, or reinstalling
+
+Uninstalling leaves a chosen folder alone, but takes the key with it. Install the plugin, choose the same folder (or a copy of it on the new computer) and the backups appear. Then choose **I already have my words**. The same words make the same key on any computer, and they are checked against the backups there, so a mistyped word can't replace your key. With no backups there, any valid twelve words are taken, and the checksum alone catches only most mistakes.
 
 A backup sealed to other words is kept, marked as needing them, and is never pruned: new backups are no replacement for it, because different words are what open it. A backup from another account or server is kept too, and restoring it asks twice.
 
@@ -69,7 +75,7 @@ The key is derived from the 16 random bytes the words spell: Argon2id13 (3 passe
 
 The plugin's windows are in `src/native`: `MessageBoxW` and `GetSaveFileNameW` on Windows, `osascript` on macOS. **Linux has no package.** OAIY gives a plugin there no `DISPLAY`, so the plugin can't ask anyone, and it refuses what needs asking, connecting included.
 
-`.github/workflows/oaiy-plugin.yml` tests and builds a zip for each system. CI keeps them as artifacts, and a Package run from a tag attaches them to the release. `scripts/package-oaiy-plugin.mjs` writes the zip and refuses a test build. A zip holds no `package-manifest.json`, because OAIY quarantines a signature it has no pin for.
+`.github/workflows/oaiy-plugin.yml` tests the plugin and builds its zip. CI and Package call it for Windows: CI keeps the zip as an artifact, and a Package run from a tag attaches it to the release. A Mac costs several times as much, so **OAIY plugin for macOS (manual)** does that job by hand: run from a branch it keeps the zip as an artifact, and run from a tag it adds the zip to that tag's release. `scripts/package-oaiy-plugin.mjs` writes the zip and refuses a test build. A zip holds no `package-manifest.json`, because OAIY quarantines a signature it has no pin for.
 
 ## Testing it
 
@@ -81,7 +87,7 @@ cargo test --features scripted-dialogs
 
 `tests/protocol.rs` starts the built program and speaks to it as OAIY does, with its windows answered from a file. A package never has that feature.
 
-The real windows, which show on the desktop for a moment, on Windows:
+The real windows, which show on the desktop for a moment, on an English Windows:
 
 ```sh
 cargo test windows_ -- --include-ignored --test-threads=1
@@ -93,4 +99,4 @@ Against a real FormLogic with a real browser, from `formlogic/ui`, with a server
 FORMLOGIC_BACKUPS_BIN=<the program built with scripted-dialogs> npx playwright test e2e/backup-plugin.spec.ts
 ```
 
-CI skips that one, because it has neither. Run it before a release. It signs in, approves the computer through the vault, backs up, saves a plain copy, restores, deletes and forgets the link.
+CI skips that one, because it has neither. Run it before a release. It signs in, approves the computer through the vault, backs up, moves the backups to a chosen folder, saves a plain copy, restores, deletes and forgets the link. Set `FORMLOGIC_BACKUPS_FOLDER` to a folder on another drive to prove that too.

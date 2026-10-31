@@ -82,6 +82,25 @@
     <p class="fb-note" id="fb-last-run" hidden></p>
   </section>
 
+  <section class="fb-card" aria-labelledby="fb-where-title">
+    <div class="fb-card-head">
+      <h2 id="fb-where-title">Where they are kept</h2>
+    </div>
+    <div id="fb-where-plugin">
+      <p>In the plugin's own folder, which OAIY's backup leaves out. <b>Uninstalling this plugin deletes them.</b> Choose a folder of your own to keep them through an uninstall.</p>
+    </div>
+    <div id="fb-where-chosen" hidden>
+      <p>In <span class="fb-mono" id="fb-folder"></span>, in a folder called FormLogic Backups.</p>
+      <p class="fb-note is-warn" id="fb-folder-missing" hidden>That folder isn't there. Connect its drive, or choose another. Backups can't run until then.</p>
+      <p class="fb-hint">Uninstalling the plugin leaves this folder alone, but your key goes with it. To open these backups again, install the plugin, choose this folder, and enter your twelve words.</p>
+    </div>
+    <div class="fb-actions">
+      <button type="button" class="fb-button" id="fb-choose-folder">Choose a folder…</button>
+      <button type="button" class="fb-button" id="fb-use-own-folder" hidden>Move back to the plugin's folder…</button>
+    </div>
+    <p class="fb-hint">What is in a backup is sealed. Beside each one is a small file with its name, its date, your email address and the server, so a folder that syncs somewhere shows those.</p>
+  </section>
+
   <section class="fb-card" aria-labelledby="fb-schedule-title">
     <div class="fb-card-head">
       <h2 id="fb-schedule-title">Schedule</h2>
@@ -99,5 +118,4 @@
     </form>
   </section>
 
-  <p class="fb-note is-danger">Backups are kept in the plugin's own folder, and OAIY's backup leaves that folder out. <b>Uninstalling this plugin deletes them.</b> Save a plain copy of anything you want to keep first.</p>
 </main>

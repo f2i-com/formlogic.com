@@ -52,6 +52,39 @@ pub fn rename_over(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
+/// Moves a file to `to`, on another drive if it has to, which `rename` can't do.
+pub fn move_file(from: &Path, to: &Path) -> io::Result<()> {
+    match rename_over(from, to) {
+        Err(e) if e.kind() == io::ErrorKind::CrossesDevices => {
+            copy_over(from, to)?;
+            std::fs::remove_file(from)
+        }
+        done => done,
+    }
+}
+
+/// Copies a file to `to` so that `to` is only ever the whole of it: private from its first byte,
+/// on the disk, and checked for length before it takes the name.
+pub fn copy_over(from: &Path, to: &Path) -> io::Result<()> {
+    let name = to.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no file name"))?.to_string_lossy().into_owned();
+    let mut random = [0u8; 8];
+    getrandom::fill(&mut random).map_err(|e| io::Error::other(e.to_string()))?;
+    let staging = to.with_file_name(format!(".{name}.{}.tmp", u64::from_le_bytes(random)));
+    let copied = (|| {
+        let mut file = create_new_owner_only(&staging)?;
+        let bytes = io::copy(&mut File::open(from)?, &mut file)?;
+        file.sync_all()?;
+        if bytes != std::fs::metadata(from)?.len() {
+            return Err(io::Error::other("the copy came out a different length"));
+        }
+        rename_over(&staging, to)
+    })();
+    if copied.is_err() {
+        let _ = std::fs::remove_file(&staging);
+    }
+    copied
+}
+
 /// Access denied, a sharing violation or a lock violation.
 fn busy(e: &io::Error) -> bool {
     e.kind() == io::ErrorKind::PermissionDenied || matches!(e.raw_os_error(), Some(5 | 32 | 33))
@@ -102,6 +135,46 @@ mod tests {
         write(&path, "second").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
         assert_eq!(std::fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_copy_replaces_the_target_and_leaves_nothing_else() {
+        let dir = folder("copy");
+        let (from, to) = (dir.join("a.flbk"), dir.join("to").join("a.flbk"));
+        create_private_dir(to.parent().unwrap()).unwrap();
+        std::fs::write(&from, "sealed").unwrap();
+        std::fs::write(&to, "old").unwrap();
+
+        copy_over(&from, &to).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&to).unwrap(), "sealed");
+        assert_eq!(std::fs::read_dir(to.parent().unwrap()).unwrap().count(), 1);
+        assert!(from.exists(), "a copy leaves the original");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_copy_that_fails_leaves_the_target_alone() {
+        let dir = folder("copy-fails");
+        let (from, to) = (dir.join("missing.flbk"), dir.join("a.flbk"));
+        std::fs::write(&to, "old").unwrap();
+
+        assert!(copy_over(&from, &to).is_err());
+
+        assert_eq!(std::fs::read_to_string(&to).unwrap(), "old");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_move_takes_the_file_away() {
+        let dir = folder("move");
+        let (from, to) = (dir.join("a.flbk"), dir.join("b.flbk"));
+        std::fs::write(&from, "sealed").unwrap();
+        move_file(&from, &to).unwrap();
+        assert_eq!(std::fs::read_to_string(&to).unwrap(), "sealed");
+        assert!(!from.exists());
         let _ = std::fs::remove_dir_all(dir);
     }
 

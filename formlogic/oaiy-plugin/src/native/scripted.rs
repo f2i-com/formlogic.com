@@ -3,7 +3,7 @@
 //! binary and refuses it.
 //!
 //! `FORMLOGIC_BACKUPS_SCRIPTED` names a folder. `answers.txt` holds one answer a line (`yes`, `no`,
-//! `save <path>`, or `slow <ms>`, a yes that takes that long), each used once; with none left the
+//! `save <path>`, `folder <path>`, or `slow <ms>`, a yes that takes that long), each used once; with none left the
 //! answer is no. Everything asked goes in `asked.txt`, and an address that would have opened in
 //! `opened.txt`.
 
@@ -47,6 +47,11 @@ pub fn show_words(words: &str) -> Result<bool, String> {
 pub fn save_as(prompt: &str, name: &str) -> Result<Option<PathBuf>, String> {
     note("asked.txt", &format!("SAVE {prompt} {name}"))?;
     Ok(next_answer()?.strip_prefix("save ").map(PathBuf::from))
+}
+
+pub fn choose_folder(prompt: &str) -> Result<Option<PathBuf>, String> {
+    note("asked.txt", &format!("FOLDER {prompt}"))?;
+    Ok(next_answer()?.strip_prefix("folder ").map(PathBuf::from))
 }
 
 pub fn open_url(url: &str) -> Result<(), String> {

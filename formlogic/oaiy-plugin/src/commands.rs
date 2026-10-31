@@ -127,6 +127,7 @@ impl App {
             () if account.is_none() => ("needs-link", "Not connected to FormLogic"),
             () if standing.relink => ("needs-link", "FormLogic no longer accepts this link"),
             () if standing.not_offered => ("not-offered", "This FormLogic doesn't offer backups"),
+            () if store.folder_missing() => ("folder-missing", "The backup folder isn't there"),
             () if !approved => ("needs-approval", "Waiting for approval in FormLogic"),
             () if !has_key => ("needs-words", "Twelve words not set up"),
             () if running => ("running", "Backing up"),
@@ -152,6 +153,7 @@ impl App {
             "canAsk": native::can_ask(),
             "hasKey": has_key,
             "keyId": keys::saved_id(&store.key_folder()),
+            "folderMissing": store.folder_missing(),
             "running": running,
             "lastRun": last_run,
         })
@@ -191,7 +193,9 @@ impl App {
         let all = store.list();
         let offset = number(payload, "offset").unwrap_or(0) as usize;
         let page: Vec<&LocalBackup> = all.iter().skip(offset).take(page_size(payload)).collect();
-        json!({"backups": page, "total": all.len(), "lastRun": store.outcome()})
+        // A path, which is why this command is journalled and status.get says nothing of it.
+        let folder = store.chosen_folder().map(|folder| folder.to_string_lossy().into_owned());
+        json!({"backups": page, "total": all.len(), "lastRun": store.outcome(), "folder": folder})
     }
 
     /// Starts `work` as a job and answers with its id. A request sent again finds its first job.
@@ -344,6 +348,25 @@ impl App {
         Ok(json!({"deleted": true}))
     }
 
+    /// The person picks the folder in a window of the plugin's own, so no caller can name one.
+    fn move_backups(&self, job: &str, to_chosen: bool) -> Result<Value, String> {
+        let store = self.store();
+        let to = if to_chosen {
+            let prompt = "Choose where to keep your backups. A folder called FormLogic Backups is made inside it.";
+            let Some(folder) = native::choose_folder(prompt)? else { return Err(NOT_NOW.to_string()) };
+            Some(folder)
+        } else {
+            let asked = "Move your backups into the plugin's own folder?\n\nUninstalling the plugin deletes what is in there.";
+            if store.chosen_folder().is_none() || !native::confirm(asked)? {
+                return Err(NOT_NOW.to_string());
+            }
+            None
+        };
+        self.jobs.step(job, "Moving your backups");
+        let moved = run::alone(|| store.move_backups(to.as_deref()))?;
+        Ok(json!({"moved": moved}))
+    }
+
     fn sources(&self) -> Result<Value, String> {
         let account = link::load(&self.data)?.ok_or("Connect to FormLogic first.")?;
         let listed = client::sources(&account).map_err(|refusal| refusal.words())?;
@@ -446,6 +469,14 @@ fn route(app: &Arc<App>, command: &str, payload: &Value, request: Option<&str>) 
         "backup.delete" => {
             let id = backup_id(app, payload)?;
             app.job(request, command, move |app, _| app.delete(&id))
+        }
+        "backups.move" => {
+            let to_chosen = match text(payload, "to")?.as_str() {
+                "chosen" => true,
+                "plugin" => false,
+                _ => return Err("to must be chosen or plugin.".to_string()),
+            };
+            app.job(request, command, move |app, job| app.move_backups(job, to_chosen))
         }
         _ => Err(format!("No command {command}.")),
     }

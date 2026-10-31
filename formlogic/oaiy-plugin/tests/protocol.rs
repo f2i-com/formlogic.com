@@ -583,3 +583,81 @@ fn restoring_names_where_it_goes_and_another_accounts_backup_is_asked_about_twic
     assert_eq!(plugin.job("backup.restore", json!({"id": id}))["message"], "Nothing was changed.");
     assert!(plugin.asked().contains("https://other.example (else@example.test)"), "{}", plugin.asked());
 }
+
+fn a_backup_in(folder: &Path) -> String {
+    let source = folder.join("0123456789abcdef").join("app-a1");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(source.join("20261031T000000000Z.flbk"), b"sealed").unwrap();
+    std::fs::write(source.join("20261031T000000000Z.json"), json!({"name": "Bookings", "sourceId": "a1"}).to_string()).unwrap();
+    "0123456789abcdef/app-a1/20261031T000000000Z".to_string()
+}
+
+#[test]
+fn backups_move_to_a_folder_only_the_person_can_name() {
+    let mut plugin = Plugin::start();
+    let id = a_backup_in(&plugin.data_dir().join("backups"));
+    let chosen = plugin.folder.join("my backups");
+    std::fs::create_dir_all(&chosen).unwrap();
+
+    assert!(plugin.refused("backups.move", json!({"to": chosen.to_string_lossy()})).contains("chosen or plugin"), "a caller can't name one");
+
+    plugin.answer(&["cancel"]);
+    assert_eq!(plugin.job("backups.move", json!({"to": "chosen"}))["message"], "Nothing was changed.");
+    assert!(plugin.asked().contains("FOLDER"), "{}", plugin.asked());
+    assert!(plugin.data("backups.list", json!({}))["folder"].is_null());
+
+    plugin.answer(&[&format!("folder {}", chosen.display())]);
+    let job = plugin.job("backups.move", json!({"to": "chosen"}));
+    assert_eq!(job["result"]["moved"], 2, "{job}");
+
+    let list = plugin.data("backups.list", json!({}));
+    assert_eq!(list["backups"][0]["id"], id.as_str(), "the same id, so the page needn't know");
+    assert_eq!(list["folder"], chosen.to_string_lossy().as_ref());
+    assert!(chosen.join("FormLogic Backups").join(&id).with_extension("flbk").is_file());
+    assert!(!plugin.data_dir().join("backups").join(&id).with_extension("flbk").exists());
+    assert!(!plugin.data("status.get", json!({})).to_string().contains("my backups"), "no path in what the relay can read");
+}
+
+#[test]
+fn moving_back_is_asked_about_because_an_uninstall_would_take_them() {
+    let mut plugin = Plugin::start();
+    let id = a_backup_in(&plugin.data_dir().join("backups"));
+    let chosen = plugin.folder.join("mine");
+    std::fs::create_dir_all(&chosen).unwrap();
+    plugin.answer(&[&format!("folder {}", chosen.display())]);
+    assert_eq!(plugin.job("backups.move", json!({"to": "chosen"}))["state"], "done");
+
+    plugin.answer(&["no"]);
+    assert_eq!(plugin.job("backups.move", json!({"to": "plugin"}))["message"], "Nothing was changed.");
+    assert!(plugin.asked().contains("Uninstalling the plugin deletes"), "{}", plugin.asked());
+    assert!(chosen.join("FormLogic Backups").join(&id).with_extension("flbk").is_file());
+
+    plugin.answer(&["yes"]);
+    assert_eq!(plugin.job("backups.move", json!({"to": "plugin"}))["state"], "done");
+    assert!(plugin.data_dir().join("backups").join(&id).with_extension("flbk").is_file());
+    assert!(plugin.data("backups.list", json!({}))["folder"].is_null());
+}
+
+#[test]
+fn a_folder_inside_the_plugins_own_is_refused_and_a_gone_drive_stops_a_run() {
+    let mut plugin = Plugin::start();
+    let inside = plugin.data_dir().join("inside");
+    std::fs::create_dir_all(&inside).unwrap();
+    plugin.answer(&[&format!("folder {}", inside.display())]);
+    assert!(plugin.job("backups.move", json!({"to": "chosen"}))["message"].as_str().unwrap().contains("uninstalled"));
+
+    let chosen = plugin.folder.join("usb drive");
+    std::fs::create_dir_all(&chosen).unwrap();
+    plugin.answer(&[&format!("folder {}", chosen.display())]);
+    assert_eq!(plugin.job("backups.move", json!({"to": "chosen"}))["state"], "done");
+    linked(&plugin);
+    plugin.answer(&["yes"]);
+    assert_eq!(plugin.job("key.recover", json!({"words": WORDS}))["state"], "done");
+    std::fs::remove_dir_all(&chosen).unwrap();
+
+    let status = plugin.data("status.get", json!({}));
+    assert_eq!(status["folderMissing"], true);
+    assert_eq!(status["state"], "folder-missing");
+    let run = plugin.job("backup.run", json!({}));
+    assert!(run["result"]["stopped"].as_str().unwrap().contains("isn't there"), "it stops before asking FormLogic for anything: {run}");
+}

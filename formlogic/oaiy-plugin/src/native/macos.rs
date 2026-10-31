@@ -78,6 +78,15 @@ pub fn save_as(prompt: &str, name: &str) -> Result<Option<PathBuf>, String> {
     Ok((!path.is_empty()).then(|| PathBuf::from(path)))
 }
 
+pub fn choose_folder(prompt: &str) -> Result<Option<PathBuf>, String> {
+    let output = run(&format!("activate\nPOSIX path of (choose folder with prompt {})\n", quoted(prompt)))?;
+    if !finished(&output)? {
+        return Ok(None);
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok((!path.is_empty()).then(|| PathBuf::from(path)))
+}
+
 pub fn open_url(url: &str) -> Result<(), String> {
     let opened = Command::new("/usr/bin/open").arg(url).status().map_err(|e| format!("Could not open your browser: {e}"))?;
     if opened.success() {

@@ -57,6 +57,12 @@ pub fn save_as(prompt: &str, name: &str) -> Result<Option<PathBuf>, String> {
     system::save_as(prompt, name)
 }
 
+/// Asks which folder to use. `None` if the person closes the window.
+pub fn choose_folder(prompt: &str) -> Result<Option<PathBuf>, String> {
+    let _held = one_window()?;
+    system::choose_folder(prompt)
+}
+
 /// Opens the person's browser, for a web address and nothing else.
 pub fn open_url(url: &str) -> Result<(), String> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
