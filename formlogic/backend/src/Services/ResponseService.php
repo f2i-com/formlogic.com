@@ -1122,8 +1122,13 @@ class ResponseService
                             return $msg;
                         }
                         $ok = @preg_match($this->pcreFromJs($rval), $value);
+                        // What PCRE can't read at all (a lookbehind of no fixed length, say) the
+                        // browser has already judged, and refusing here would refuse every answer.
+                        if ($ok === false && preg_last_error() === PREG_INTERNAL_ERROR) {
+                            break;
+                        }
                         if ($ok !== 1) {
-                            return $msg; // fail closed on no-match or an uncompilable pattern
+                            return $msg; // fail closed on no-match or a pattern that ran away
                         }
                     }
                     break;
@@ -3032,23 +3037,65 @@ class ResponseService
 
     /**
      * A rule's pattern is written for the browser's RegExp, so the same answer has to get the same
-     * verdict here: characters rather than bytes, `$` not matching before a trailing newline,
-     * \uXXXX (which PCRE lacks), and a `/` the author may or may not have escaped.
+     * verdict here. Characters count rather than bytes (/u), which also makes PCRE's \d, \w and \b
+     * read Unicode where the browser's read ASCII, so those are spelled out. `$` doesn't match
+     * before a trailing newline (/D). What the browser takes as a plain letter or an empty class
+     * would mean something else, or not compile, unless it is written its PCRE way.
      */
     private function pcreFromJs(string $pattern): string
     {
+        $word = 'A-Za-z0-9_';
+        $outside = [
+            'd' => '[0-9]', 'D' => '[^0-9]', 'w' => "[{$word}]", 'W' => "[^{$word}]",
+            'b' => "(?:(?<=[{$word}])(?![{$word}])|(?<![{$word}])(?=[{$word}]))",
+            'B' => "(?:(?<=[{$word}])(?=[{$word}])|(?<![{$word}])(?![{$word}]))",
+        ];
+        $inside = [
+            'd' => '0-9', 'D' => '\x{0}-\x{2F}\x{3A}-\x{10FFFF}', 'w' => $word,
+            'W' => '\x{0}-\x{2F}\x{3A}-\x{40}\x{5B}-\x{5E}\x{60}\x{7B}-\x{10FFFF}',
+        ];
         $out = '';
+        $inClass = false;
         for ($i = 0, $n = strlen($pattern); $i < $n; $i++) {
-            if ($pattern[$i] === '\\' && $i + 1 < $n) {
-                if ($pattern[$i + 1] === 'u' && preg_match('/\G[0-9a-fA-F]{4}/', $pattern, $hex, 0, $i + 2)) {
-                    $out .= '\\x{' . $hex[0] . '}';
-                    $i += 5;
+            $char = $pattern[$i];
+            if ($char === '\\' && $i + 1 < $n) {
+                $next = $pattern[++$i];
+                if ($next === 'u') {
+                    if (preg_match('/\G[0-9a-fA-F]{4}/', $pattern, $hex, 0, $i + 1) !== 1) {
+                        $out .= 'u'; // to the browser, \u with no code after it is a u
+                        continue;
+                    }
+                    $code = (int) hexdec($hex[0]);
+                    $i += 4;
+                    if ($code >= 0xD800 && $code <= 0xDBFF && preg_match('/\G\\\\u([dD][c-fC-F][0-9a-fA-F]{2})/', $pattern, $low, 0, $i + 1) === 1) {
+                        $code = 0x10000 + (($code - 0xD800) << 10) + ((int) hexdec($low[1]) - 0xDC00);
+                        $i += 6;
+                    }
+                    $out .= sprintf('\x{%X}', $code);
                     continue;
                 }
-                $out .= $pattern[$i] . $pattern[++$i];
+                if (isset(($inClass ? $inside : $outside)[$next])) {
+                    $out .= ($inClass ? $inside : $outside)[$next];
+                    continue;
+                }
+                $out .= ctype_alpha($next) && !str_contains($inClass ? 'bsStnvfrcx' : 'sStnvfrcxk', $next) ? $next : '\\' . $next;
                 continue;
             }
-            $out .= $pattern[$i] === '/' ? '\\/' : $pattern[$i];
+            if ($inClass) {
+                $inClass = $char !== ']';
+                $out .= $char === '[' ? '\\[' : ($char === '/' ? '\\/' : $char);
+                continue;
+            }
+            if ($char === '[' && substr($pattern, $i, 2) === '[]') {
+                $out .= '(?!)';
+                $i++;
+            } elseif ($char === '[' && substr($pattern, $i, 3) === '[^]') {
+                $out .= '[\s\S]';
+                $i += 2;
+            } else {
+                $inClass = $char === '[';
+                $out .= $char === '/' ? '\\/' : $char;
+            }
         }
         return '/' . $out . '/uD';
     }

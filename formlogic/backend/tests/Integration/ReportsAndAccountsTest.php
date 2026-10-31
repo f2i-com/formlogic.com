@@ -99,6 +99,7 @@ final class ReportsAndAccountsTest extends E2eeTestCase
 
         $this->assertEqualsCanonicalizing(['My customer', 'Their customer', 'Linked record'], $cells([]), 'a member who sees everyone there: no archived name');
         $this->assertEqualsCanonicalizing(['My customer', 'Linked record', 'Linked record'], $cells([$targetId]), 'a member who sees only their own');
+        $this->assertEqualsCanonicalizing(['My customer', 'Their customer', 'Archived customer'], array_column($service->runReport(['viz' => 'table', 'limit' => 10], $fields, $ordersId, 'all', $this->userId, [], 'UTC', [$targetId])['rows'], 'c0'), 'the owner sees every name');
     }
 
     private function auth(): AuthService
@@ -140,6 +141,15 @@ final class ReportsAndAccountsTest extends E2eeTestCase
 
         // That address is refused, but the account isn't, from anywhere else.
         $this->assertNotEmpty($auth->login($email, 'a-strong-password-123', '203.0.113.9'));
+
+        // And past its limit that address hears so, with nothing on the account's own count.
+        $refused = '';
+        try {
+            $auth->login($email, 'wrong-guess', '198.51.100.7');
+        } catch (\RuntimeException $e) {
+            $refused = $e->getMessage();
+        }
+        $this->assertStringContainsString('Too many login attempts', $refused);
     }
 
     public function testAResetLinkEndsTheLockoutOnTheAccount(): void

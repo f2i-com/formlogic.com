@@ -185,8 +185,9 @@ log, so none of that happens without it.
 0 4 * * 1      php /path/to/backend/bin/reconcile.php
 ```
 
-The jobs that must not overlap hold a lock in `storage/locks`. If the user running cron can't write
-there the job exits non-zero, so run them as the web server's user.
+The jobs that must not overlap hold a lock in `storage/locks`, or in the system's temp folder under
+a name this install alone uses if the user running cron can't write there. They exit non-zero if
+neither works. Run them as the web server's user, so that every run of a job shares one lock.
 
 ---
 

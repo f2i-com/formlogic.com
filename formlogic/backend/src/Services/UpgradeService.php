@@ -709,6 +709,10 @@ class UpgradeService
         if (!is_dir("{$backupDir}/api") || !is_dir("{$backupDir}/web")) {
             throw new \RuntimeException('This backup has no code snapshot to restore');
         }
+        // Written last: without it the copy stopped part way, and restoring would delete what it lacks.
+        if (!is_file("{$backupDir}/backup-info.json")) {
+            throw new \RuntimeException('This backup was never finished. The upgrade that made it had not touched the site yet, so there is nothing to roll back from it.');
+        }
 
         $maintenanceWasOn = $this->maintenance->enabled();
         if (!$maintenanceWasOn) {
@@ -1019,14 +1023,14 @@ class UpgradeService
         return $removed;
     }
 
-    /** Before the site closes: the snapshot and the new code have to fit, and a database export besides. */
+    /** Before the site closes: the snapshot has to fit, and a database export besides. */
     private function assertRoomFor(string $staging): void
     {
         $free = $this->freeDiskBytes();
         if ($free === null) {
             return;
         }
-        $needed = 2 * $this->treeBytes($staging) + self::SPARE_DISK_BYTES;
+        $needed = $this->treeBytes($staging) + self::SPARE_DISK_BYTES;
         if ($free < $needed) {
             throw new \RuntimeException(sprintf(
                 'Not enough free disk space to upgrade: about %d MB is needed and %d MB is free. Nothing was changed.',
@@ -1038,7 +1042,8 @@ class UpgradeService
 
     protected function freeDiskBytes(): ?float
     {
-        $free = @disk_free_space($this->apiRoot);
+        // A host can disable this, and calling it then is an Error.
+        $free = function_exists('disk_free_space') ? @disk_free_space($this->apiRoot) : false;
         return $free === false ? null : $free;
     }
 

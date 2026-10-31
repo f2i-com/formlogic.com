@@ -42,6 +42,16 @@ class SQLiteConnection
     }
 
     /**
+     * Whether this can name a form that already exists. Wider than a new id may be: older
+     * versions let the API choose ids such as survey.2026. What it keeps out are the spellings the
+     * database folds onto a real id, a trailing space or an accent, which would each get a file.
+     */
+    public static function mayNameForm(string $formId): bool
+    {
+        return preg_match('/^[a-zA-Z0-9._:-]{1,64}$/D', $formId) === 1;
+    }
+
+    /**
      * Get or create a SQLite database for a specific form
      *
      * Opening one that isn't there creates it, and MySQL's collation finds a form under spellings
@@ -52,7 +62,7 @@ class SQLiteConnection
         if (isset($this->connections[$formId])) {
             return $this->connections[$formId];
         }
-        if (!self::isFormId($formId)) {
+        if (!self::mayNameForm($formId)) {
             throw new \InvalidArgumentException('Invalid form id');
         }
 
@@ -150,7 +160,7 @@ class SQLiteConnection
      */
     public function formDatabaseExists(string $formId): bool
     {
-        return self::isFormId($formId) && file_exists($this->getFormDbPath($formId));
+        return self::mayNameForm($formId) && file_exists($this->getFormDbPath($formId));
     }
 
     /**

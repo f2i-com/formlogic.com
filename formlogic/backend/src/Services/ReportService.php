@@ -92,7 +92,7 @@ class ReportService
      *   [] = resolve none (default; e.g. public). Others render as an opaque "Linked record" placeholder,
      *   never a raw id.
      */
-    public function runReport(array $spec, array $fields, string $formId, string $scope, ?string $userId, array $joins = [], string $timezone = 'UTC', ?array $resolvableFormIds = [], array $ownOnlyFormIds = []): array
+    public function runReport(array $spec, array $fields, string $formId, string $scope, ?string $userId, array $joins = [], string $timezone = 'UTC', ?array $resolvableFormIds = [], ?array $ownOnlyFormIds = null): array
     {
         $viz = in_array($spec['viz'] ?? 'table', self::VIZ, true) ? (string) $spec['viz'] : 'table';
 
@@ -509,7 +509,7 @@ class ReportService
                 $target = (string) $info['field']['properties']['targetFormId'];
                 // A label names the record it stands for, so the record's rules apply to it: a member
                 // who sees only their own rows there sees only their own names here.
-                $linkedMaps[$col] = $this->resolveLinkedLabelMap($info['field'], array_values($ids), $resolvableFormIds !== null, in_array($target, $ownOnlyFormIds, true) ? $userId : null);
+                $linkedMaps[$col] = $this->resolveLinkedLabelMap($info['field'], array_values($ids), $ownOnlyFormIds !== null, in_array($target, $ownOnlyFormIds ?? [], true) ? $userId : null);
             }
 
             $rows = [];

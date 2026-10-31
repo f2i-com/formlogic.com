@@ -34,11 +34,19 @@ final class CronLockTest extends TestCase
         $this->assertIsResource(CronLock::take('job', $this->dir));
     }
 
-    public function testNotBeingAbleToOpenTheLockIsAFailureNotARunInProgress(): void
+    public function testALockItCannotOpenHereIsTakenInTheTempFolderUnderANameOfItsOwn(): void
     {
         mkdir($this->dir . '/job.lock', 0700, true);
-        $this->expectException(\RuntimeException::class);
-        CronLock::take('job', $this->dir);
+        $name = 'formlogic-' . substr(hash('sha256', $this->dir), 0, 16) . '-job.lock';
+        try {
+            $held = CronLock::take('job', $this->dir);
+            $this->assertIsResource($held);
+            $this->assertFileExists(sys_get_temp_dir() . '/' . $name);
+            $this->assertNull(CronLock::take('job', $this->dir), 'and it still holds one run at a time');
+            fclose($held);
+        } finally {
+            @unlink(sys_get_temp_dir() . '/' . $name);
+        }
     }
 
     public function testEveryScheduledScriptTakesItsLockFromThisInstall(): void

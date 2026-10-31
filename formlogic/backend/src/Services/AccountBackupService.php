@@ -411,6 +411,7 @@ final class AccountBackupService
     public function exportSource(string $userId, string $kind, string $id): string
     {
         $structure = $this->buildStructure($userId);
+        unset($structure['workspaceFlowKv']); // the account's, not this app's or form's
         $keepForm = static fn (array $form): bool => false;
         if ($kind === 'app') {
             $apps = array_values(array_filter($structure['apps'], static fn (array $app): bool => (string) $app['id'] === $id));
@@ -804,22 +805,29 @@ final class AccountBackupService
     }
 
     /**
-     * A store's rows, as far as $room bytes go: 5,000 keys of 64 KB each would be past what
-     * backup.json may hold, and then the whole backup couldn't be restored.
+     * A store's rows, as far as $room bytes of backup.json go: 5,000 keys of 64 KB each would be
+     * past what it may hold, and the whole backup couldn't then be restored. In pages, as a store
+     * that size needn't all be in memory to find that only some of it fits.
      *
      * @return list<array{scope: string, k: string, v: ?string}>
      */
     private function flowKvRows(string $userId, string $appId, int &$room): array
     {
-        $stmt = $this->pdo->prepare('SELECT scope, k, v FROM flow_kv WHERE owner_user_id = :o AND app_id = :a ORDER BY scope, k');
-        $stmt->execute(['o' => $userId, 'a' => $appId]);
         $rows = [];
-        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-            $room -= strlen((string) $row['v']);
-            if ($room < 0) {
+        for ($offset = 0; $room >= 0; $offset += 100) {
+            $stmt = $this->pdo->prepare("SELECT scope, k, v FROM flow_kv WHERE owner_user_id = :o AND app_id = :a ORDER BY scope, k LIMIT 100 OFFSET {$offset}");
+            $stmt->execute(['o' => $userId, 'a' => $appId]);
+            $page = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($page as $row) {
+                $room -= strlen((string) json_encode($row));
+                if ($room < 0) {
+                    return $rows;
+                }
+                $rows[] = $row;
+            }
+            if (count($page) < 100) {
                 break;
             }
-            $rows[] = $row;
         }
         return $rows;
     }
@@ -1362,13 +1370,13 @@ final class AccountBackupService
         $kept = [];
         foreach ($structure['forms'] as $bf) {
             $id = (string) $bf['id'];
-            if (($bf['encryption'] ?? null) !== 'private' || ($backupOwnerId === $userId && $this->formIdIsFree($id))) {
+            if (($bf['encryption'] ?? null) !== 'private' || ($backupOwnerId === $userId && $this->formIdIsFree($id) && !$this->holdsFormKeys($id))) {
                 $kept[] = $bf;
                 continue;
             }
             $title = (string) ($bf['title'] ?? $id);
             $warnings[] = $backupOwnerId === $userId
-                ? "Private form '{$title}' was left out: it is still in your account, and an encrypted form can never be restored as a copy."
+                ? "Private form '{$title}' was left out: it is still in your account or its recycle bin, and an encrypted form can never be restored as a copy."
                 : "Private form '{$title}' was left out: its encryption is bound to the account that made it, so it can only be restored there.";
             unset($stagedDbs[$id]);
         }
@@ -2581,6 +2589,18 @@ final class AccountBackupService
         $op = $this->pdo->prepare("SELECT 1 FROM store_ops WHERE entity_type = 'form' AND entity_id = :id AND op_type = 'form_delete' LIMIT 1");
         $op->execute(['id' => $formId]);
         return $op->fetchColumn() === false;
+    }
+
+    /**
+     * Whether a form's keys are still here, parked with it in the recycle bin. Restored beside
+     * them it would run with them parked, and the bin item's purge would then delete the keys of
+     * the live form, with nothing left that can open its records.
+     */
+    private function holdsFormKeys(string $formId): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT 1 FROM form_encryption WHERE form_id = :id LIMIT 1');
+        $stmt->execute(['id' => $formId]);
+        return $stmt->fetchColumn() !== false;
     }
 
     private function ownedFormExists(string $formId, string $userId): bool

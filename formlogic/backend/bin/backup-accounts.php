@@ -165,6 +165,11 @@ try {
 // Records past a form's retention period, and old webhook deliveries.
 try {
     $retentionResponses = new ResponseService($mysql, $sqlite, null, new NullLogger(), null, $fileStorage ?? null);
+    // Without it a record of a placed dataset would go with no signed tombstone, and come back on replay.
+    $retentionResponses->setDataOperationLog(new \FormLogic\Services\DataOperationLogService($mysql, new \FormLogic\Services\DataCloudSigner(
+        dirname((string) ($settings['uploads']['storagePath'] ?? __DIR__ . '/../storage/uploads')) . '/keys/data-cloud-signing.key',
+        \FormLogic\Support\Environment::get('DATA_CLOUD_SIGNING_SEED', '') ?: null
+    )));
     $expired = 0;
     foreach ($mysql->getConnection()->query("SELECT id FROM forms WHERE settings LIKE '%retentionDays%'")->fetchAll(\PDO::FETCH_COLUMN) as $retentionFormId) {
         try {

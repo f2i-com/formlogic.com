@@ -273,11 +273,12 @@ server {
         add_header Content-Security-Policy "frame-ancestors *; base-uri 'self'; object-src 'none'" always;
     }
 
-    # The custom-screen host and the app editors are framed by the shell, and by nothing else.
+    # The custom-screen host is framed by a form, which any page may embed, so it sandboxes itself:
+    # anything may frame it, and nothing that does gets this origin.
     location = /screen-host.html {
-        add_header X-Frame-Options "SAMEORIGIN" always;
-        add_header Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" always;
+        add_header Content-Security-Policy "sandbox allow-scripts; frame-ancestors *; base-uri 'self'; object-src 'none'" always;
     }
+    # The app editors are framed by the shell, and by nothing else.
     location ^~ /app-editors/ {
         try_files $uri $uri/ =404;
         add_header X-Frame-Options "SAMEORIGIN" always;

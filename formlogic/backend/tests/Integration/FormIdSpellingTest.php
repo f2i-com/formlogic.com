@@ -69,7 +69,7 @@ final class FormIdSpellingTest extends E2eeTestCase
     public static function notFormIds(): array
     {
         return [
-            'a space' => ['abc def'], 'a dot' => ['abc.def'], 'a slash' => ['abc/def'], 'too long' => [str_repeat('a', 37)],
+            'a space' => ['abc def'], 'a slash' => ['abc/def'], 'too long' => [str_repeat('a', 65)],
             'a line break' => ["abc\n"], 'empty' => [''], 'an accent' => ["\u{00E1}bc"],
         ];
     }
@@ -86,5 +86,14 @@ final class FormIdSpellingTest extends E2eeTestCase
             $this->assertSame('Invalid form id', $e->getMessage());
         }
         $this->assertSame($before, $this->databases());
+    }
+
+    public function testAFormFromBeforeIdsHadAFormatStillOpens(): void
+    {
+        $id = 'survey.2026';
+        self::$pdo->prepare("INSERT INTO forms (id, user_id, title, status, settings, theme) VALUES (?, ?, 'Old', 'published', '{}', '{}')")->execute([$id, $this->userId]);
+
+        $this->assertInstanceOf(\PDO::class, self::$sqlite->getFormDatabase($id));
+        $this->assertTrue(self::$sqlite->formDatabaseExists($id));
     }
 }

@@ -409,6 +409,39 @@ class AccountBackupTest extends TestCase
         $this->assertSame(['a' => 1], $kv->get($this->userId, null, 'flow:wf', 'seen')['v']);
     }
 
+    public function testOneFormsBackupCarriesNoneOfTheAccountsFlowStorage(): void
+    {
+        (new \FormLogic\Services\FlowKvService(self::$mysql))->put($this->userId, null, 'app', 'token', 'secret-of-the-account');
+
+        $zipPath = self::$backup->exportSource($this->userId, 'form', $this->f2);
+        try {
+            $zip = new \ZipArchive();
+            $zip->open($zipPath);
+            $structure = (string) $zip->getFromName('backup.json');
+            $zip->close();
+        } finally {
+            @unlink($zipPath);
+        }
+
+        $this->assertStringNotContainsString('secret-of-the-account', $structure);
+    }
+
+    public function testStorageTooBigForABackupIsLeftOutAndNamed(): void
+    {
+        $build = new \ReflectionMethod(self::$backup, 'flowKvRows');
+        $kv = new \FormLogic\Services\FlowKvService(self::$mysql);
+        foreach (['a', 'b', 'c'] as $key) {
+            $kv->put($this->userId, $this->app1, 'app', $key, str_repeat('"', 1000));
+        }
+
+        $room = 6000; // quotes are escaped twice over, so each row takes about 4,000 of it
+        $args = [$this->userId, $this->app1, &$room];
+        $rows = $build->invokeArgs(self::$backup, $args);
+
+        $this->assertCount(1, $rows);
+        $this->assertLessThan(0, $room);
+    }
+
     public function testAForgedRowInABackupDoesNotReachFlowStorage(): void
     {
         $restore = new \ReflectionMethod(self::$backup, 'restoreFlowKv');

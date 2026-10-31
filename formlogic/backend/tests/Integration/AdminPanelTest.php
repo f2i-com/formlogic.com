@@ -1026,6 +1026,24 @@ class AdminPanelTest extends TestCase
         $this->assertFileExists($webRoot . '/.user.ini');
     }
 
+    public function testASnapshotThatWasNeverFinishedCannotReplaceTheSite(): void
+    {
+        [$webRoot, $apiRoot] = $this->buildFakeInstall();
+        $svc = $this->upgradeService($apiRoot, new MaintenanceService($apiRoot . '/storage/maintenance.json'));
+        $partial = $apiRoot . '/storage/backups/20260101-000000-aaaaaa';
+        mkdir($partial . '/api', 0777, true);
+        mkdir($partial . '/web', 0777, true);
+
+        try {
+            $svc->rollback('20260101-000000-aaaaaa', $this->adminId);
+            $this->fail('it went ahead');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('never finished', $e->getMessage());
+        }
+        $this->assertFileExists($webRoot . '/index.html');
+        $this->assertFileExists($apiRoot . '/src/OldFeature.php');
+    }
+
     public function testAnOlderPackageNeedsTheDowngradeConfirmed(): void
     {
         [, $apiRoot] = $this->buildFakeInstall();

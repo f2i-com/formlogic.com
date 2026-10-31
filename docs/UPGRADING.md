@@ -39,9 +39,11 @@ code snapshots are kept. An upgrade checks for free disk space before it closes 
 older package installs only after you confirm the downgrade.
 
 If the server kills an upgrade part way, the site stays in maintenance mode and the admin panel may
-not load. From a shell, `php api/bin/upgrade.php --rollback=<id>` puts the code back, where `<id>` is
-the newest folder in `api/storage/backups`. Without a shell, copy that folder's `api` and `web`
-contents back over the site by hand.
+not load. From a shell, as the web server's user, `php api/bin/upgrade.php --rollback=<id>` puts the
+code back, where `<id>` is the newest folder in `api/storage/backups` that has a `backup-info.json`.
+A folder without one was never finished, and the upgrade hadn't touched the site's files yet, so only
+maintenance mode needs turning off. Without a shell, copy the folder's `api` and `web` contents back
+over the site by hand.
 
 The manual paths below remain fully supported and are what the wizard automates.
 

@@ -336,7 +336,8 @@ Usage:
                                            columns and indexes exist. Writes nothing.
   php bin/upgrade.php --rollback=<id>      Put back the code snapshot in storage/backups/<id>, for
                                            when an upgrade was killed and the admin panel can't run.
-                                           The database is left as it is.
+                                           The database is left as it is. Run it as the web server's
+                                           user: the files it writes are owned by whoever runs it.
   php bin/upgrade.php --help               This help.
 
 Version stamped into schema_meta: the --app-version flag, else the VERSION file next to the backend

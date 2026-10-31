@@ -17,7 +17,7 @@ final class StreamSlots
      */
     public static function take(string $who, int $max, ?string $dir = null)
     {
-        $dir ??= dirname(__DIR__, 2) . '/storage/locks/streams';
+        $dir ??= dirname(__DIR__, 2) . '/storage/streams';
         if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) {
             return false;
         }

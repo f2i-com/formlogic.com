@@ -239,24 +239,25 @@ class AuthService
         // gate (the documented distributed-attack defense). Every attempt is now
         // counted up front; a successful login clears both keys below, so legitimate
         // logins aren't penalized.
-        // An attempt this address has already been refused for doesn't count against the account
-        // too: otherwise one address could keep any account locked out of its own password.
         $window = $this->decaySeconds();
         $ipCount = $this->rateLimiter->hit($rateLimitKey, $window);
-        $emailCount = $ipCount > $this->rateLimitConfig['maxAttempts']
-            ? $this->rateLimiter->count($emailKey, $window)
-            : $this->rateLimiter->hit($emailKey, $window);
-        if ($ipCount === RateLimiter::UNAVAILABLE || $emailCount === RateLimiter::UNAVAILABLE) {
+        if ($ipCount === RateLimiter::UNAVAILABLE) {
             // Login is a HIGH-RISK action: a limiter-store outage fails CLOSED
             // (audit RATE-001) — otherwise the outage window is an unlimited
             // brute-force window. Mapped to a retryable 503 upstream.
             throw new RateLimiterUnavailableException();
         }
+        // Refused here, the attempt doesn't count against the account too: otherwise one address
+        // could keep any account locked out of its own password.
         if ($ipCount > $this->rateLimitConfig['maxAttempts']) {
             throw new \RuntimeException(
                 "Too many login attempts. Please try again in " .
                 ceil($this->getRateLimitRemainingSeconds($rateLimitKey) / 60) . " minute(s)."
             );
+        }
+        $emailCount = $this->rateLimiter->hit($emailKey, $window);
+        if ($emailCount === RateLimiter::UNAVAILABLE) {
+            throw new RateLimiterUnavailableException();
         }
         if ($emailCount > $this->rateLimitConfig['maxEmailAttempts']) {
             throw new \RuntimeException(

@@ -92,6 +92,7 @@ const BACKEND_COPY_FILES = ['composer.json', 'composer.lock', '.env.example', '.
 const BACKEND_SKELETON_DIRS = [
   'logs',
   'storage/forms',
+  'storage/locks',
   'storage/form-templates',
   'storage/pack-projects',
   'storage/hosted-apps',
@@ -362,8 +363,11 @@ from the backup if anything looks wrong. Uploading this zip there instead works
 only if the zip is signed for your server; see docs/UPGRADING.md.
 
 If an upgrade is killed part way and the admin panel can't run, put the code
-back from a shell with: php api/bin/upgrade.php --rollback=<id>, where <id> is
-the newest folder in api/storage/backups.
+back from a shell, as the web server's user, with:
+  php api/bin/upgrade.php --rollback=<id>
+where <id> is the newest folder in api/storage/backups that has a
+backup-info.json. One without it was never finished, and the site's files
+hadn't been touched yet.
 
 Manual path:
 

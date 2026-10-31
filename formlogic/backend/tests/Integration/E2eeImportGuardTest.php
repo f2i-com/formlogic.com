@@ -107,6 +107,24 @@ class E2eeImportGuardTest extends E2eeTestCase
         $this->assertSame(3, (int) self::$pdo->query("SELECT COUNT(*) FROM forms WHERE user_id = '{$this->userId}'")->fetchColumn(), 'the private form, the plain form and its copy: no copy of the private one');
     }
 
+    public function testAPlainRestoreLeavesOutAPrivateFormWhoseKeysAreParkedInTheBin(): void
+    {
+        $formId = (string) $this->makeDraftForm()['id'];
+        $this->enablePrivateForm($formId);
+        $zip = self::$backup->exportAccount($this->userId);
+        self::$forms->deleteForm($formId); // as the recycle bin leaves it: the form gone, its keys parked
+
+        try {
+            $result = self::$backup->importAccount($zip, $this->userId);
+        } finally {
+            @unlink($zip);
+        }
+
+        $this->assertNotContains($formId, array_column($result['forms'], 'id'), 'its id stays free for the bin to restore it');
+        $this->assertStringContainsString('recycle bin', implode(' ', $result['warnings']));
+        $this->assertNotFalse($this->row('SELECT mode FROM form_encryption WHERE form_id = ?', [$formId]));
+    }
+
     public function testRestoreDrillPreservesIdsAndEncryptionMaterial(): void
     {
         $form = $this->makeDraftForm();
