@@ -545,13 +545,24 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let app = Arc::new(App::new(dir.clone()));
+        // Bad payloads, and a key already here, because a build without scripted-dialogs would
+        // otherwise open the real window: nothing below may get that far.
+        keys::recover(&app.store().key_folder(), "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about", &[]).unwrap();
         for command in manifest()["connectors"][0]["commands"].as_array().unwrap() {
             let command = command.as_str().unwrap();
-            // Bad payloads, so nothing opens a window or starts a job that matters.
             let answer = route(&app, command, &json!({"id": "", "server": "ftp://x", "only": "x", "enabled": "x"}), None);
             assert!(!answer.as_ref().is_err_and(|message| message.starts_with("No command")), "{command}");
         }
         assert!(route(&app, "backup.nothing", &Value::Null, None).unwrap_err().starts_with("No command"));
+
+        let started = route(&app, "key.setup", &Value::Null, Some("again")).unwrap();
+        let job = started["jobId"].as_str().unwrap();
+        let until = Instant::now() + Duration::from_secs(10);
+        while app.jobs.get(job).unwrap().state == "running" {
+            assert!(Instant::now() < until, "it should stop before any window");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(app.jobs.get(job).unwrap().message.unwrap().contains("already has a backup key"));
         let _ = std::fs::remove_dir_all(dir);
     }
 
