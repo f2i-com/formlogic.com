@@ -470,24 +470,16 @@ class FileStorageService
     }
 
     /**
-     * The form ids that currently have an upload directory — the work list for the
-     * nightly file GC (bin/backup-accounts.php), which must sweep forms with no
-     * organic traffic to retrigger the on-mutation sweeps.
-     *
-     * @return string[]
+     * Whether this form has an upload directory, for the nightly file GC
+     * (bin/backup-accounts.php), which must sweep forms with no organic traffic to
+     * retrigger the on-mutation sweeps. It asks by form: a directory's name is not the
+     * form's id when the id has an underscore, and the GC would then find no form to
+     * check a file against and take it for unreferenced.
      */
-    public function formIdsWithUploads(): array
+    public function hasUploads(string $formId): bool
     {
-        $out = [];
-        foreach (scandir($this->storagePath) ?: [] as $name) {
-            if ($name === '.' || $name === '..' || $name === '') {
-                continue;
-            }
-            if (is_dir($this->storagePath . '/' . $name) && $this->sanitizeId($name) === $name) {
-                $out[] = $name;
-            }
-        }
-        return $out;
+        $safeId = $this->sanitizeId($formId);
+        return $safeId !== '' && is_dir($this->storagePath . '/' . $safeId);
     }
 
     /**

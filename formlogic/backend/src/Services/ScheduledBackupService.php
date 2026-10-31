@@ -580,7 +580,9 @@ FormLogic scheduled backup — how to restore
       'snapshots' in the zip's manifest.json) - copy it as one file:
         data/forms/*.sqlite  ->  backend/storage/forms/
         files/<formId>/*     ->  backend/storage/uploads/<formId>/
-      The ids match the restored MySQL rows, so everything lines up.
+      The ids match the restored MySQL rows, so everything lines up. (A form
+      whose id is not a UUID, which only the API can choose, is stored under
+      another name: bring that one back through path 1.)
    c. Apps keep their own storage, in the same zip:
         native/<appId>/project.json        a native app's source and media
         native/<appId>/application.sqlite  its private record database

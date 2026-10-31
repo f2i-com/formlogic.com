@@ -597,7 +597,7 @@ class TrashTest extends TestCase
         self::$trash->trashForm($this->f2, $this->userId);
         $rows = $this->trashRows();
         $claimedId = (string) $rows[0]['id'];
-        self::$pdo->prepare("UPDATE trash_items SET status = 'restoring' WHERE id = ?")->execute([$claimedId]);
+        self::$pdo->prepare("UPDATE trash_items SET status = 'restoring', claimed_at = NOW() WHERE id = ?")->execute([$claimedId]);
         try {
             self::$trash->restore($claimedId, $this->userId);
             $this->fail('Expected a conflict on the claimed item');

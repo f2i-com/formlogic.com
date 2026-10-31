@@ -293,7 +293,13 @@ final class TrashService
             throw new \RuntimeException('Recycle bin item not found');
         }
 
-        $claim = $this->pdo->prepare("UPDATE trash_items SET status = 'restoring' WHERE id = :id AND user_id = :u AND status = 'trashed'");
+        // A worker killed in a restore never releases its claim, and the item would then be
+        // stuck until it expires. A restore gets ten minutes (importAccount); this is well past it.
+        $claim = $this->pdo->prepare("
+            UPDATE trash_items SET status = 'restoring', claimed_at = NOW()
+            WHERE id = :id AND user_id = :u
+              AND (status = 'trashed' OR claimed_at IS NULL OR claimed_at < NOW() - INTERVAL 30 MINUTE)
+        ");
         $claim->execute(['id' => $trashId, 'u' => $userId]);
         if ($claim->rowCount() !== 1) {
             throw new TrashConflictException('This item is already being restored');

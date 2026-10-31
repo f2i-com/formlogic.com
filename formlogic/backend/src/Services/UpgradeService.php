@@ -25,6 +25,9 @@ use PDO;
  */
 class UpgradeService
 {
+    /** Well under the 4 MB some servers still default max_allowed_packet to. */
+    private const DUMP_STATEMENT_BYTES = 1024 * 1024;
+
     /** Paths (relative to the api root) an upgrade must never write or restore over. */
     private const PROTECTED_API_PATHS = ['.env', 'storage', 'logs'];
 
@@ -1139,6 +1142,7 @@ class UpgradeService
 
                     $stmt = $this->pdo->query("SELECT * FROM {$quoted}");
                     $batch = [];
+                    $batchBytes = 0;
                     while (($row = $stmt->fetch(PDO::FETCH_ASSOC)) !== false) {
                         $values = [];
                         foreach ($row as $value) {
@@ -1150,9 +1154,13 @@ class UpgradeService
                             }
                         }
                         $batch[] = '(' . implode(',', $values) . ')';
-                        if (count($batch) >= 200) {
+                        $batchBytes += strlen($batch[array_key_last($batch)]);
+                        // Replaying has to fit a statement in max_allowed_packet, and a table
+                        // of whole form versions reaches that long before 200 rows.
+                        if (count($batch) >= 200 || $batchBytes >= self::DUMP_STATEMENT_BYTES) {
                             $write("INSERT INTO {$quoted} VALUES " . implode(',', $batch) . ";\n");
                             $batch = [];
+                            $batchBytes = 0;
                         }
                     }
                     if ($batch !== []) {

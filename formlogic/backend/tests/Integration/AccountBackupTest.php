@@ -717,6 +717,26 @@ class AccountBackupTest extends TestCase
         $this->assertSame([2, 2, 2], $this->countUserResources($this->userId));
     }
 
+    public function testAnArchiveThisServerWroteIsNotHeldToWhatAnUploadIs(): void
+    {
+        // A bin item past these caps is the only copy of what it holds.
+        $zipPath = self::$backup->exportAccount($this->userId);
+        $tight = self::makeService(['maxForms' => 1, 'maxApps' => 1, 'maxFlows' => 0, 'maxBindings' => 0, 'maxResponsesPerForm' => 1]);
+        try {
+            try {
+                $tight->importAccount($zipPath, $this->otherId);
+                $this->fail('an upload is held to the caps');
+            } catch (\RuntimeException $e) {
+                $this->assertStringContainsString('exceeds the maximum', $e->getMessage());
+            }
+            $result = $tight->importAccount($zipPath, $this->otherId, ['serverHeld' => true]);
+            $this->assertCount(2, $result['forms']);
+            $this->assertSame(4, $result['responses']);
+        } finally {
+            @unlink($zipPath);
+        }
+    }
+
     public function testARestoreKeepsWhatWasKnownAboutAScreen(): void
     {
         // A pack's screen, unreviewed, stays that way: a restore isn't the owner's approval.

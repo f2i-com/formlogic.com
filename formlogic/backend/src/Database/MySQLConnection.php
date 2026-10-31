@@ -2462,6 +2462,7 @@ class MySQLConnection
                 size_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
                 meta JSON NULL,
                 status ENUM('trashed','restoring') NOT NULL DEFAULT 'trashed',
+                claimed_at TIMESTAMP NULL DEFAULT NULL,
                 deleted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 expires_at TIMESTAMP NOT NULL,
                 INDEX idx_trash_user (user_id, deleted_at),
@@ -2469,6 +2470,10 @@ class MySQLConnection
                 CONSTRAINT trash_items_ibfk_1 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+        // When a restore took a bin item (TrashService::restore): a killed worker's claim lapses.
+        if ($pdo->query("SHOW COLUMNS FROM trash_items LIKE 'claimed_at'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE trash_items ADD COLUMN claimed_at TIMESTAMP NULL DEFAULT NULL AFTER status");
+        }
 
         // FormLogic Flows tables for existing installs (CREATE TABLE IF NOT EXISTS; shared with
         // initializeSchema so fresh and migrated schemas match byte-for-byte).

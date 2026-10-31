@@ -59,6 +59,17 @@ class SQLiteConnection
         $dbPath = $this->getFormDbPath($formId);
         $isNew = !file_exists($dbPath);
 
+        // Two first requests must not both build a form's file: the second would hit the first's
+        // lock, and its cleanup below would delete a database the first is writing to.
+        $initLock = null;
+        if ($isNew) {
+            $initLock = @fopen($dbPath . '.init', 'c');
+            if ($initLock !== false) {
+                flock($initLock, LOCK_EX);
+            }
+            $isNew = !file_exists($dbPath);
+        }
+
         try {
             $pdo = new PDO(
                 "sqlite:$dbPath",
@@ -100,6 +111,12 @@ class SQLiteConnection
                 @unlink($dbPath . '-shm');
             }
             throw new PDOException('SQLite Connection failed', 0, $e);
+        } finally {
+            if (is_resource($initLock)) {
+                flock($initLock, LOCK_UN);
+                fclose($initLock);
+                @unlink($dbPath . '.init');
+            }
         }
     }
 

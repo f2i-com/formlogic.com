@@ -35,27 +35,76 @@ class E2eeImportGuardTest extends E2eeTestCase
         );
     }
 
-    public function testPlainImportRefusesPrivateForms(): void
+    public function testAPlainRestoreIntoAnotherAccountLeavesAPrivateFormOutAndBringsTheRest(): void
     {
         $form = $this->makeDraftForm();
         $formId = (string) $form['id'];
         $this->enablePrivateForm($formId);
         self::$forms->updateForm($formId, ['status' => 'published']);
+        $plain = self::$forms->createForm(['title' => 'Plain', 'userId' => $this->userId, 'status' => 'published', 'fields' => []]);
         $zip = self::$backup->exportAccount($this->userId);
 
         $otherUser = $this->makeUser();
         try {
-            self::$backup->importAccount($zip, $otherUser); // preserveIds defaults to false
-            $this->fail('id-reminting import must refuse private forms');
-        } catch (EncryptionRequestException $e) {
-            $this->assertSame('import_remint_refused', $e->errorCode);
-            $this->assertSame(400, $e->status);
+            $result = self::$backup->importAccount($zip, $otherUser);
         } finally {
             @unlink($zip);
         }
-        // Nothing was created for the other user.
-        $this->assertNull($this->row('SELECT 1 AS x FROM forms WHERE user_id = ?', [$otherUser]));
-        $this->assertNull($this->row('SELECT 1 AS x FROM user_vaults WHERE user_id = ?', [$otherUser]));
+
+        $this->assertSame(['Plain'], array_column($result['forms'], 'title'), 'the rest of the backup came back');
+        $this->assertStringContainsString('left out', implode(' ', $result['warnings']));
+        $this->assertNull($this->row('SELECT 1 AS x FROM forms WHERE id = ? AND user_id = ?', [$formId, $otherUser]));
+        $this->assertNull($this->row('SELECT 1 AS x FROM user_vaults WHERE user_id = ?', [$otherUser]), 'nothing of the vault crossed accounts');
+        $this->assertNull($this->row('SELECT 1 AS x FROM form_key_grants WHERE user_id = ?', [$otherUser]));
+        $this->assertSame((string) $plain['title'], 'Plain');
+        self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$otherUser]);
+    }
+
+    public function testAPlainRestoreBringsAPrivateFormBackUnderItsOwnId(): void
+    {
+        $form = $this->makeDraftForm();
+        $formId = (string) $form['id'];
+        $this->enablePrivateForm($formId);
+        self::$forms->updateForm($formId, ['status' => 'published']);
+        $env = $this->makeEnvelope($formId);
+        self::$responses->createEncryptedResponse($formId, $env, null, null);
+        $zip = self::$backup->exportAccount($this->userId);
+
+        self::$forms->deleteForm($formId);
+        self::$encryption->purgeFormRows($formId);
+        FormEncryptionService::invalidateCache();
+
+        try {
+            $result = self::$backup->importAccount($zip, $this->userId); // what Settings and the plugin do
+        } finally {
+            @unlink($zip);
+        }
+        FormEncryptionService::invalidateCache();
+
+        $this->assertSame([$formId], array_column($result['forms'], 'id'));
+        $this->assertSame([], $result['warnings']);
+        $this->assertSame('private', $this->row('SELECT mode FROM form_encryption WHERE form_id = ?', [$formId])['mode']);
+        $row = self::$sqlite->getFormDatabase($formId)->query('SELECT * FROM responses LIMIT 1')->fetch(\PDO::FETCH_ASSOC);
+        $this->assertSame($env['recordId'], $row['id'], 'the record kept its id, which its envelope is bound to');
+    }
+
+    public function testAPlainRestoreLeavesOutAPrivateFormStillInTheAccount(): void
+    {
+        $form = $this->makeDraftForm();
+        $formId = (string) $form['id'];
+        $this->enablePrivateForm($formId);
+        self::$forms->createForm(['title' => 'Plain', 'userId' => $this->userId, 'status' => 'published', 'fields' => []]);
+        $zip = self::$backup->exportAccount($this->userId);
+
+        try {
+            $result = self::$backup->importAccount($zip, $this->userId);
+        } finally {
+            @unlink($zip);
+        }
+
+        $this->assertSame(['Plain'], array_column($result['forms'], 'title'));
+        $this->assertStringContainsString('still in your account', implode(' ', $result['warnings']));
+        $this->assertSame(3, (int) self::$pdo->query("SELECT COUNT(*) FROM forms WHERE user_id = '{$this->userId}'")->fetchColumn(), 'the private form, the plain form and its copy: no copy of the private one');
     }
 
     public function testRestoreDrillPreservesIdsAndEncryptionMaterial(): void

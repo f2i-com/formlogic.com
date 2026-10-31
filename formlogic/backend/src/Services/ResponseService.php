@@ -2111,6 +2111,15 @@ class ResponseService
     }
 
     /** Whether a form still exists in MySQL (the source of truth for form lifecycle). */
+    /**
+     * The SQLite side accepts 'spam' but the MySQL response_metadata ENUM does not: it mirrors as
+     * 'archived' (both are closed, report-excluded states) instead of failing a strict-mode write.
+     */
+    private static function metadataStatus(string $status): string
+    {
+        return $status === 'spam' ? 'archived' : $status;
+    }
+
     private function formExists(string $formId): bool
     {
         try {
@@ -2329,7 +2338,7 @@ class ResponseService
             $mysqlStmt->execute([
                 'id' => $id,
                 'form_id' => $formId,
-                'status' => $status,
+                'status' => self::metadataStatus($status),
                 'submitted_at' => $now,
                 'ip_address' => $data['ipAddress'] ?? null,
                 'user_agent' => $data['userAgent'] ?? null,
@@ -2927,7 +2936,7 @@ class ResponseService
                 $mysqlStmt = $this->mysql->prepare("
                     UPDATE response_metadata SET status = :status WHERE id = :id
                 ");
-                $mysqlStmt->execute(['status' => $data['status'], 'id' => $responseId]);
+                $mysqlStmt->execute(['status' => self::metadataStatus((string) $data['status']), 'id' => $responseId]);
             } catch (\Throwable $mirrorErr) {
                 $this->logger->error('Failed to mirror response status to response_metadata', [
                     'responseId' => $responseId,

@@ -951,6 +951,13 @@ class ResponseController
                 'message' => $e->getMessage(),
                 'code' => PrivateFormEncryptedException::ERROR_CODE,
             ]];
+        } catch (\PDOException $e) {
+            // A PDOException is a RuntimeException, and its text is the SQL error.
+            $this->logger->error('Response creation error', ['exception' => $e->getMessage()]);
+            return ['status' => 500, 'payload' => [
+                'error' => true,
+                'message' => 'An unexpected error occurred',
+            ]];
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return ['status' => 400, 'payload' => [
                 'error' => true,

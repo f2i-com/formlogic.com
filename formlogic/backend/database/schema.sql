@@ -1821,6 +1821,7 @@ CREATE TABLE `trash_items` (
   `size_bytes` bigint unsigned NOT NULL DEFAULT '0',
   `meta` json DEFAULT NULL,
   `status` enum('trashed','restoring') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'trashed',
+  `claimed_at` timestamp NULL DEFAULT NULL,
   `deleted_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `expires_at` timestamp NOT NULL,
   PRIMARY KEY (`id`),

@@ -1163,7 +1163,7 @@ final class AccountBackupService
             if (!is_array($structure)) {
                 throw new \RuntimeException('backup.json is not valid JSON');
             }
-            $this->validateStructure($structure, $manifest['entries']);
+            $this->validateStructure($structure, $manifest['entries'], $serverHeld);
 
             // Extract + validate every shipped sqlite BEFORE anything is created.
             $stagedDbs = []; // oldFormId => staged path
@@ -1174,7 +1174,7 @@ final class AccountBackupService
                 $oldFormId = basename($name, '.sqlite');
                 $staged = $stagingDir . '/' . $oldFormId . '.sqlite';
                 $this->extractEntryStreaming($zip, $name, $staged);
-                $this->validateShippedSqlite($staged);
+                $this->validateShippedSqlite($staged, $serverHeld);
                 $stagedDbs[$oldFormId] = $staged;
             }
 
@@ -1205,38 +1205,35 @@ final class AccountBackupService
             ];
 
             // E2EE import-id-preservation guard (plan §7): a private form's form_id,
-            // recordIds, key ids and epochs are baked into envelope AADs — an import
-            // that would remint ANY of them must refuse, never silently corrupt.
+            // recordIds, key ids and epochs are baked into envelope AADs, so an import
+            // must never remint ANY of them. A plain restore keeps such a form's ids or
+            // leaves it out and says so: no route offers preserve-ids, and one form
+            // that can't come back must not stop the fifty that can.
+            $backupOwnerId = is_array($structure['user'] ?? null) ? ($structure['user']['id'] ?? null) : null;
             if (!$opts['preserveIds']) {
-                foreach ($structure['forms'] as $bf) {
-                    if (($bf['encryption'] ?? null) === 'private') {
-                        throw new EncryptionRequestException(
-                            'import_remint_refused',
-                            'This backup contains an end-to-end encrypted (private) form. A plain import would assign new ids and permanently corrupt its encrypted data — restore it in preserve-ids mode instead.',
-                            400
-                        );
-                    }
-                }
+                [$structure, $stagedDbs] = $this->setAsidePrivateForms($structure, $stagedDbs, $userId, $backupOwnerId, $warnings);
             }
 
             // E2EE cross-account guard (security review, blocker 5): the vault's
             // wrapped UMK is AAD-bound to the OWNING account id and every grant to
             // its signed user ids — installed under a different account id, the
-            // vault unwraps to nothing and the grants are useless. v1 fails CLOSED:
-            // when the backup carries encryption material and its owning account id
-            // differs from the restore target, refuse the WHOLE restore (a partial
-            // restore would silently strand the private forms).
+            // vault unwraps to nothing and the grants are useless. So that material
+            // never crosses accounts. An undelete, which has nothing to fall back on,
+            // refuses; a plain restore has already left the private forms out and
+            // goes on without it (a vault alone is no reason to stop a move).
             $encBlock = $structure['encryption'] ?? null;
             $hasEncryptionMaterial = is_array($encBlock)
                 && (is_array($encBlock['vault'] ?? null)
                     || (is_array($encBlock['forms'] ?? null) && $encBlock['forms'] !== []));
-            $backupOwnerId = is_array($structure['user'] ?? null) ? ($structure['user']['id'] ?? null) : null;
             if ($hasEncryptionMaterial && $backupOwnerId !== $userId) {
-                throw new EncryptionRequestException(
-                    'encryption_not_restorable',
-                    'This backup contains end-to-end encrypted (private-form) key material that is cryptographically bound to the account that created it — only a restore into that same account can recover it.',
-                    400
-                );
+                if ($opts['preserveIds']) {
+                    throw new EncryptionRequestException(
+                        'encryption_not_restorable',
+                        'This backup contains end-to-end encrypted (private-form) key material that is cryptographically bound to the account that created it — only a restore into that same account can recover it.',
+                        400
+                    );
+                }
+                unset($structure['encryption']);
             }
 
             // ── Phase 1: structure, in ONE MySQL transaction ──
@@ -1285,6 +1282,33 @@ final class AccountBackupService
     }
 
     /**
+     * Which private forms a plain restore can bring back: those going back to the account that
+     * made them, under an id still free. The rest stay out, with a warning that says why.
+     *
+     * @param array<string, string> $stagedDbs oldFormId => staged path
+     * @param list<string> $warnings
+     * @return array{0: array<string, mixed>, 1: array<string, string>}
+     */
+    private function setAsidePrivateForms(array $structure, array $stagedDbs, string $userId, mixed $backupOwnerId, array &$warnings): array
+    {
+        $kept = [];
+        foreach ($structure['forms'] as $bf) {
+            $id = (string) $bf['id'];
+            if (($bf['encryption'] ?? null) !== 'private' || ($backupOwnerId === $userId && $this->formIdIsFree($id))) {
+                $kept[] = $bf;
+                continue;
+            }
+            $title = (string) ($bf['title'] ?? $id);
+            $warnings[] = $backupOwnerId === $userId
+                ? "Private form '{$title}' was left out: it is still in your account, and an encrypted form can never be restored as a copy."
+                : "Private form '{$title}' was left out: its encryption is bound to the account that made it, so it can only be restored there.";
+            unset($stagedDbs[$id]);
+        }
+        $structure['forms'] = $kept;
+        return [$structure, $stagedDbs];
+    }
+
+    /**
      * Disaster recovery, once the site's MySQL dump is back: puts the apps in one scheduled
      * account archive back on disk under their ORIGINAL ids, so the restored rows, links, members
      * and visitors' saved data find them. importAccount() cannot: it makes new apps. An app
@@ -1315,7 +1339,7 @@ final class AccountBackupService
             if (!is_array($structure)) {
                 throw new \RuntimeException('backup.json is not valid JSON');
             }
-            $this->validateStructure($structure, $manifest['entries']);
+            $this->validateStructure($structure, $manifest['entries'], true);
             $native = $this->stageNativePayloads($zip, $structure, $manifest['entries'], $stagingDir, true);
             $hosted = $this->stageHostedDatabases($zip, $manifest['entries'], $stagingDir);
 
@@ -1506,7 +1530,10 @@ final class AccountBackupService
     /** @return array{formatVersion:int, entries: array<string,string>} */
     private function readManifest(\ZipArchive $zip): array
     {
-        $raw = $this->readEntryBounded($zip, 'manifest.json', 1024 * 1024);
+        // A line for every entry: a form with thousands of uploads is more than a megabyte, and a
+        // bin snapshot is the only copy of it. Parsed before anything else, and no larger than
+        // backup.json may be.
+        $raw = $this->readEntryBounded($zip, 'manifest.json', 64 * 1024 * 1024);
         $manifest = json_decode($raw, true);
         if (!is_array($manifest)) {
             throw new \RuntimeException('manifest.json is missing or invalid');
@@ -1567,23 +1594,24 @@ final class AccountBackupService
         }
     }
 
-    private function validateStructure(array $structure, array $entries): void
+    /** The count caps stop a hostile upload. An archive this server wrote holds what the account held. */
+    private function validateStructure(array $structure, array $entries, bool $serverHeld = false): void
     {
         foreach (['forms', 'apps', 'flows', 'appBindings', 'formBindings'] as $key) {
             if (!is_array($structure[$key] ?? null)) {
                 throw new \RuntimeException("backup.json is missing '{$key}'");
             }
         }
-        if (count($structure['forms']) > (int) $this->config['maxForms']) {
+        if (!$serverHeld && count($structure['forms']) > (int) $this->config['maxForms']) {
             throw new \RuntimeException('Backup exceeds the maximum of ' . $this->config['maxForms'] . ' forms');
         }
-        if (count($structure['apps']) > (int) $this->config['maxApps']) {
+        if (!$serverHeld && count($structure['apps']) > (int) $this->config['maxApps']) {
             throw new \RuntimeException('Backup exceeds the maximum of ' . $this->config['maxApps'] . ' apps');
         }
-        if (count($structure['flows']) > (int) $this->config['maxFlows']) {
+        if (!$serverHeld && count($structure['flows']) > (int) $this->config['maxFlows']) {
             throw new \RuntimeException('Backup exceeds the maximum of ' . $this->config['maxFlows'] . ' flows');
         }
-        if (count($structure['appBindings']) + count($structure['formBindings']) > (int) $this->config['maxBindings']) {
+        if (!$serverHeld && count($structure['appBindings']) + count($structure['formBindings']) > (int) $this->config['maxBindings']) {
             throw new \RuntimeException('Backup exceeds the maximum of ' . $this->config['maxBindings'] . ' flow bindings');
         }
 
@@ -1642,7 +1670,7 @@ final class AccountBackupService
         }
     }
 
-    private function validateShippedSqlite(string $path): void
+    private function validateShippedSqlite(string $path, bool $serverHeld = false): void
     {
         $src = $this->openSqliteReadOnly($path);
         $check = $src->query('PRAGMA quick_check')->fetchColumn();
@@ -1654,7 +1682,7 @@ final class AccountBackupService
             throw new \RuntimeException('A backup database has no responses table');
         }
         $count = (int) $src->query('SELECT COUNT(*) FROM responses')->fetchColumn();
-        if ($count > (int) $this->config['maxResponsesPerForm']) {
+        if (!$serverHeld && $count > (int) $this->config['maxResponsesPerForm']) {
             throw new \RuntimeException('A backup database exceeds the per-form response limit');
         }
     }
@@ -1674,7 +1702,7 @@ final class AccountBackupService
             $formIdMap = [];
             foreach ($structure['forms'] as $bf) {
                 $oldId = (string) $bf['id'];
-                if ($opts['preserveIds'] && $this->formIdIsFree($oldId)) {
+                if (($opts['preserveIds'] || ($bf['encryption'] ?? null) === 'private') && $this->formIdIsFree($oldId)) {
                     $formIdMap[$oldId] = $oldId;
                 } else {
                     // E2EE: a private form can NEVER be restored as a copy — its id is

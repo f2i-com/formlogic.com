@@ -150,8 +150,11 @@ try {
     $gcResponseService = new ResponseService($mysql, $sqlite, null, new NullLogger(), null, $fileStorage);
     $gcForms = 0;
     $gcFiles = 0;
-    foreach ($fileStorage->formIdsWithUploads() as $gcFormId) {
-        $gcFiles += $gcResponseService->sweepFileGarbage($gcFormId, true);
+    foreach ($mysql->getConnection()->query('SELECT id FROM forms')->fetchAll(\PDO::FETCH_COLUMN) as $gcFormId) {
+        if (!$fileStorage->hasUploads((string) $gcFormId)) {
+            continue;
+        }
+        $gcFiles += $gcResponseService->sweepFileGarbage((string) $gcFormId, true);
         $gcForms++;
     }
     printf("[%s] upload GC: %d file(s) reclaimed across %d form dir(s)\n", date('c'), $gcFiles, $gcForms);
