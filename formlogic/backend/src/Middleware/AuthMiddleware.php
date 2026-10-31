@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Middleware;
 
 use FormLogic\Services\AuthService;
+use FormLogic\Support\AppDomainSession;
 use FormLogic\Support\HostedActorContext;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -18,7 +19,7 @@ class AuthMiddleware implements MiddlewareInterface
     private bool $optional;
     private string $cookieName;
 
-    public function __construct(AuthService $authService, bool $optional = false, string $cookieName = 'formlogic_auth')
+    public function __construct(AuthService $authService, bool $optional = false, string $cookieName = 'formlogic_auth', private ?AppDomainSession $appDomainSessions = null)
     {
         $this->authService = $authService;
         $this->optional = $optional;
@@ -30,7 +31,8 @@ class AuthMiddleware implements MiddlewareInterface
         // Optional authentication must not preserve authority left on a reused
         // request when this invocation did not validate a credential.
         $request = $request->withoutAttribute('user')->withoutAttribute('userId')
-            ->withoutAttribute(HostedActorContext::SESSION_ATTRIBUTE);
+            ->withoutAttribute(HostedActorContext::SESSION_ATTRIBUTE)
+            ->withoutAttribute(AppDomainSession::ATTRIBUTE);
         $token = $this->extractToken($request);
 
         if ($token === null) {
@@ -41,6 +43,18 @@ class AuthMiddleware implements MiddlewareInterface
         }
 
         $user = $this->authService->validateToken($token);
+
+        if (!$user && $this->appDomainSessions !== null) {
+            $session = $this->authService->validateAppDomainToken($token);
+            if ($session !== null) {
+                if ($this->appDomainSessions->admits($request, $session)) {
+                    $user = $session['user'];
+                    $request = $request->withAttribute(AppDomainSession::ATTRIBUTE, $session);
+                } elseif (!$this->optional) {
+                    return $this->outOfScope();
+                }
+            }
+        }
 
         if (!$user) {
             if ($this->optional) {
@@ -82,6 +96,20 @@ class AuthMiddleware implements MiddlewareInterface
         }
 
         return null;
+    }
+
+    private function outOfScope(): Response
+    {
+        $response = new SlimResponse();
+        $response->getBody()->write(json_encode([
+            'error' => true,
+            'code' => AppDomainSession::OUT_OF_SCOPE,
+            'message' => 'This sign-in only works for this app',
+        ]));
+
+        return $response
+            ->withStatus(403)
+            ->withHeader('Content-Type', 'application/json');
     }
 
     private function unauthorized(string $message): Response

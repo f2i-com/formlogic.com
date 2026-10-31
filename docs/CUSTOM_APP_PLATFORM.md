@@ -860,15 +860,23 @@ product, not a page inside FormLogic.
 
 ### Owner flow
 
-App → **Deploy & share** → **Custom domains**: add a domain, get the DNS TXT record, verify, open,
-remove. UI: `ui/src/components/apps/CustomDomainsPanel.tsx`.
+App → **Deploy & share** → **Custom domains**, or the **Settings** tab of a SoftN app: add a domain,
+get the DNS records, verify, open, remove. UI: `ui/src/components/apps/CustomDomainsPanel.tsx`.
 
-DNS to add: `TXT  _formlogic.<domain>  =  fl-domain-verification=<token>`.
+DNS to add: `TXT  _formlogic.<domain>  =  fl-domain-verification=<token>`, which proves who owns the
+domain, and a CNAME or A record, which brings its visitors here. The panel shows both. The second
+comes from `APP_DOMAIN_CNAME_TARGET` and `APP_DOMAIN_A_RECORD`, or by default `APP_URL`'s host as the
+CNAME; a server with none of them tells the owner to ask its operator.
+
+A claim nobody proves lapses after 72 hours for anyone else who adds that domain, so typing someone
+else's name first does not keep them out of it. A proven domain never lapses.
 
 ### Modes
 
 - `launch_page` — the site root shows a branded launch page (logo/name + Open app + install CTAs).
-- `runtime_direct` — the root goes straight into the app runtime.
+- `runtime_direct` — the root goes straight into the app runtime. A SoftN app opens in place, full
+  screen, at the domain's own address; any other app redirects to `/app/<slug>`. A SoftN app's panel
+  starts on this mode, and its `project.home` setting does not matter here.
 
 `AppDomainService::MODES` also lists `website_plus_app`, `native_required`, and `redirect` as
 *accepted* strings (so a stored value round-trips), but only `launch_page` / `runtime_direct` are
@@ -892,10 +900,77 @@ deferred until there's a product need to *forbid* web access, not just *prefer* 
 
 ### How it renders (frontend, Option A)
 
-The same SPA loads on every domain. `RootGate` in `App.tsx` checks the host: on a customer domain's
-**root**, it renders `DomainLaunchRouter` → `AppLaunchPage`; deeper paths (`/app/:slug`, `/form/:id`)
-render the normal app. A `?__flhost=<domain>` **dev override** lets you preview any connected
-domain on `formlogic.local` without DNS.
+The same SPA loads on every domain. `RootGate` in `App.tsx` sends any host that isn't a platform host
+through `DomainLaunchRouter`, which asks the server what the host is:
+
+- **A connected domain of a SoftN app:** the app is the site. It runs at every path, so no platform
+  page shows on the domain, except the account pages a visitor needs (`/login`, `/signup`, password
+  reset, `/accept-invite`, `/privacy`, `/terms`). In `launch_page` mode the root shows the launch page.
+- **A connected domain of any other app:** the root shows the launch page or redirects, and deeper
+  paths (`/app/:slug`, `/form/:id`) render the normal app.
+- **A host the server doesn't know:** its root says the domain isn't connected, and every other path
+  renders the normal app, because it may be a self-hosted FormLogic built without `VITE_PUBLIC_DOMAIN`.
+
+A `?__flhost=<domain>` **dev override** previews a connected domain on a local host (`localhost`,
+`127.0.0.1`, `*.local`) without DNS. It works nowhere else: a link must not open somebody's app at
+the site's root. It cannot show sign-in on a domain, which needs the real hostname:
+`e2e/softn-app-domain.spec.ts` maps names to the test server with Chromium's `--host-resolver-rules`.
+
+### Signing in on a domain
+
+A sign-in on a connected domain gets a session for that one app, never a platform session. Whoever
+owns a domain controls where its name points, so a platform cookie on it could be collected by
+repointing the name and replayed as a Bearer token: every member's whole account, for any app owner
+who wanted it. `Support/AppDomainSession.php` explains the rest; in short:
+
+- **Who may sign in.** `CsrfMiddleware` still admits the configured origins, unchanged. Outside that
+  list a sign-in needs an `Origin` naming the host the request reached, Fetch Metadata that agrees,
+  HTTPS outside development, and that host being a connected domain of a published app. The shared
+  demo never starts on a domain.
+- **What it can do.** The token has its own audience, so `validateToken()`, and with it every platform
+  route, refuses it. `AuthMiddleware` accepts it only on that host, for `/api/app/<that app>/…`,
+  `/api/auth/me` and `/api/auth/logout`, while the domain stays connected. A refusal is a 403 with the
+  code `app_domain_session_scope`, because a 401 would sign the visitor out of the app.
+- **What it never carries.** The cookies are host-only, ignoring `COOKIE_DOMAIN`, and no trusted-browser
+  token is set, since one would skip the code on the platform too. Leaving a domain ends that session
+  alone: it is the one session a domain's owner could be holding, and it must not sign the member out
+  everywhere for them.
+- **What stays the member's.** Their account is the same one, so changing a password ends these
+  sessions too. Account settings are on the platform, and a password reset's link goes there.
+
+Browser storage belongs to an origin, so what an app keeps in the browser on its domain is separate
+from what it keeps at `/app/<slug>` on the platform. Moving an app to a domain does not bring that
+data along; records in its server database are the same everywhere.
+
+### What the server's operator sets up
+
+The panel can only prove ownership. Traffic for the domain still has to reach this server:
+
+- **The site must answer for any hostname:** the default virtual host, or `ServerAlias *`, with the
+  bundled `./api`. A split deployment (API on another domain) is not supported for custom domains,
+  since sign-in would need third-party cookies.
+- **Every domain needs a certificate.** With Caddy in front, on-demand TLS issues them as visitors
+  arrive; `GET /api/public/domains/certificate?domain=…` answers 200 only for a proven domain, so
+  nobody can make it issue certificates for names that aren't connected:
+
+  ```caddy
+  {
+    on_demand_tls {
+      ask http://127.0.0.1/api/public/domains/certificate
+    }
+  }
+
+  https:// {
+    tls {
+      on_demand
+    }
+    reverse_proxy 127.0.0.1:8080
+  }
+  ```
+
+  Keep the visitor's `Host` on the way through, as `reverse_proxy` does: a domain is recognised by it.
+  Otherwise use your provider's equivalent, such as Cloudflare for SaaS, or add certificates by hand.
+- `APP_DOMAIN_REQUIRE_TLS_ACTIVE=1` holds a domain back until a real HTTPS handshake succeeds.
 
 ### Backend
 

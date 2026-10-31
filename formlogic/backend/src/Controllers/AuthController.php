@@ -13,6 +13,7 @@ use FormLogic\Helpers\IpResolver;
 use FormLogic\Helpers\AppUrl;
 use FormLogic\Middleware\CsrfMiddleware;
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
+use FormLogic\Support\AppDomainSession;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
@@ -98,13 +99,13 @@ class AuthController
             );
 
             // Set HttpOnly cookie with the token
-            $response = $this->setAuthCookie($response, $result['token']);
+            $response = $this->setSessionCookie($request, $response, (string) ($result['user']['id'] ?? ''), $result['token']);
 
             $this->audit($request, 'auth.register', 'user', $result['user']['id'] ?? null);
 
             // Return user data without token (token is in cookie)
             return $this->jsonResponse($response, [
-                'user' => $result['user'],
+                'user' => $this->signedInUser($request, $result['user']),
             ], 201);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             // Known validation errors - safe to expose
@@ -176,13 +177,13 @@ class AuthController
             }
 
             // Set HttpOnly cookie with the token
-            $response = $this->setAuthCookie($response, $result['token']);
+            $response = $this->setSessionCookie($request, $response, $userId, $result['token']);
 
             $this->audit($request, 'auth.login', 'user', $result['user']['id'] ?? null);
 
             // Return user data without token (token is in cookie)
             return $this->jsonResponse($response, [
-                'user' => $result['user'],
+                'user' => $this->signedInUser($request, $result['user']),
             ]);
         } catch (\FormLogic\Services\RateLimiterUnavailableException $e) {
             // High-risk limiter outage: fail closed with a retryable 503
@@ -251,8 +252,11 @@ class AuthController
             ]);
         }
 
+        if ($request->getAttribute(AppDomainSession::ATTRIBUTE) !== null) {
+            $decorated['domainSession'] = true;
+        }
         return $this->jsonResponse($response, [
-            'user' => $this->decorateUser($user),
+            'user' => $decorated,
         ]);
     }
 
@@ -677,12 +681,16 @@ class AuthController
         // identity — the cookie clear below already ends this visitor's session.
         $user = $request->getAttribute('user');
         $isDemo = $user && $user->email === $this->demoEmail();
-        if ($userId && !$isDemo) {
+        // Another exception: a session on an app's connected domain ends here alone. It is the
+        // one session a domain's owner could be holding, and it must not sign the member out
+        // of the platform and every other device for them.
+        $domainSession = $request->getAttribute(AppDomainSession::ATTRIBUTE) !== null;
+        if ($userId && !$isDemo && !$domainSession) {
             $this->authService->revokeTokens($userId);
         }
 
         // Clear the auth cookie by setting it to expire in the past
-        $response = $this->clearAuthCookie($response);
+        $response = $this->clearAuthCookie($response, $domainSession);
 
         return $this->jsonResponse($response, [
             'message' => 'Logged out successfully',
@@ -690,9 +698,34 @@ class AuthController
     }
 
     /**
+     * The cookie a sign-in ends with: the platform session, or on an app's connected domain the
+     * session limited to that app, which also never takes the platform's cookie Domain (a
+     * browser drops a cookie that names another site).
+     */
+    private function setSessionCookie(Request $request, Response $response, string $userId, string $platformToken): Response
+    {
+        $domain = $request->getAttribute(AppDomainSession::SIGN_IN_ATTRIBUTE);
+        if (!is_array($domain)) {
+            return $this->setAuthCookie($response, $platformToken);
+        }
+        return $this->setAuthCookie($response, $this->authService->issueAppDomainToken($userId, $domain['appId'], $domain['host']), true);
+    }
+
+    /**
+     * The user a sign-in answers with, marked when its session is limited to one app.
+     *
+     * @param array<string, mixed> $user
+     * @return array<string, mixed>
+     */
+    private function signedInUser(Request $request, array $user): array
+    {
+        return $request->getAttribute(AppDomainSession::SIGN_IN_ATTRIBUTE) !== null ? $user + ['domainSession' => true] : $user;
+    }
+
+    /**
      * Set the authentication cookie with the JWT token
      */
-    private function setAuthCookie(Response $response, string $token): Response
+    private function setAuthCookie(Response $response, string $token, bool $hostOnly = false): Response
     {
         $cookieParts = [
             $this->cookieConfig['name'] . '=' . urlencode($token),
@@ -706,14 +739,14 @@ class AuthController
             $cookieParts[] = 'Secure';
         }
 
-        if (!empty($this->cookieConfig['domain'])) {
+        if (!$hostOnly && !empty($this->cookieConfig['domain'])) {
             $cookieParts[] = 'Domain=' . $this->cookieConfig['domain'];
         }
 
         $response = $response->withAddedHeader('Set-Cookie', implode('; ', $cookieParts));
 
         // Set CSRF token (bound to this auth token) as a non-HttpOnly cookie so JS can read it
-        $response = $this->setCsrfCookie($response, $token);
+        $response = $this->setCsrfCookie($response, $token, $hostOnly);
 
         return $response;
     }
@@ -721,7 +754,7 @@ class AuthController
     /**
      * Clear the authentication cookie
      */
-    private function clearAuthCookie(Response $response): Response
+    private function clearAuthCookie(Response $response, bool $hostOnly = false): Response
     {
         $cookieParts = [
             $this->cookieConfig['name'] . '=',
@@ -736,14 +769,14 @@ class AuthController
             $cookieParts[] = 'Secure';
         }
 
-        if (!empty($this->cookieConfig['domain'])) {
+        if (!$hostOnly && !empty($this->cookieConfig['domain'])) {
             $cookieParts[] = 'Domain=' . $this->cookieConfig['domain'];
         }
 
         $response = $response->withAddedHeader('Set-Cookie', implode('; ', $cookieParts));
 
         // Clear the CSRF cookie too
-        $response = $this->clearCsrfCookie($response);
+        $response = $this->clearCsrfCookie($response, $hostOnly);
 
         return $response;
     }
@@ -751,7 +784,7 @@ class AuthController
     /**
      * Set CSRF token cookie (non-HttpOnly so frontend JS can read it)
      */
-    private function setCsrfCookie(Response $response, string $authToken): Response
+    private function setCsrfCookie(Response $response, string $authToken, bool $hostOnly = false): Response
     {
         // Bind the CSRF token to this session's auth token (HMAC) so it can't be
         // replayed against a different session. The middleware recomputes + verifies.
@@ -768,7 +801,7 @@ class AuthController
             $cookieParts[] = 'Secure';
         }
 
-        if (!empty($this->cookieConfig['domain'])) {
+        if (!$hostOnly && !empty($this->cookieConfig['domain'])) {
             $cookieParts[] = 'Domain=' . $this->cookieConfig['domain'];
         }
 
@@ -778,7 +811,7 @@ class AuthController
     /**
      * Clear the CSRF cookie
      */
-    private function clearCsrfCookie(Response $response): Response
+    private function clearCsrfCookie(Response $response, bool $hostOnly = false): Response
     {
         $cookieParts = [
             'formlogic_csrf=',
@@ -792,7 +825,7 @@ class AuthController
             $cookieParts[] = 'Secure';
         }
 
-        if (!empty($this->cookieConfig['domain'])) {
+        if (!$hostOnly && !empty($this->cookieConfig['domain'])) {
             $cookieParts[] = 'Domain=' . $this->cookieConfig['domain'];
         }
 
@@ -848,13 +881,16 @@ class AuthController
             return $this->jsonError($response, 'Your sign-in expired — enter your password again', 401);
         }
 
-        $response = $this->setAuthCookie($response, $this->authService->issueToken($user));
-        if (!empty($data['rememberBrowser'])) {
+        $response = $this->setSessionCookie($request, $response, $user->id, $this->authService->issueToken($user));
+        // A trusted-browser token skips the code on the platform too, so it never rests on a
+        // host its owner can repoint.
+        $remember = !empty($data['rememberBrowser']) && $request->getAttribute(AppDomainSession::SIGN_IN_ATTRIBUTE) === null;
+        if ($remember) {
             $trustToken = $this->mfaService->mintTrust($user->id, $request->getHeaderLine('User-Agent'));
             $response = $this->setMfaTrustCookie($response, $trustToken);
         }
-        $this->audit($request, 'auth.login', 'user', $user->id, ['mfa' => true, 'rememberedBrowser' => !empty($data['rememberBrowser'])]);
-        return $this->jsonResponse($response, ['user' => $this->authService->userPayload($user)]);
+        $this->audit($request, 'auth.login', 'user', $user->id, ['mfa' => true, 'rememberedBrowser' => $remember]);
+        return $this->jsonResponse($response, ['user' => $this->signedInUser($request, $this->authService->userPayload($user))]);
     }
 
     /** Settings payload: enabled/pending state, recovery-code count, trusted browsers. GET /api/auth/mfa */

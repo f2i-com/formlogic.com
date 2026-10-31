@@ -144,6 +144,17 @@ class AppDomainController
     }
 
     /**
+     * Public: whether a certificate may be issued for ?domain=, the question Caddy's on-demand TLS
+     * asks before each new certificate. Ownership proven is enough: strict mode waits for HTTPS
+     * before a domain goes active, so it cannot wait for active here.
+     */
+    public function certificateAllowed(Request $request, Response $response): Response
+    {
+        $domain = trim((string) ($request->getQueryParams()['domain'] ?? ''));
+        return $this->jsonResponse($response, [], $domain !== '' && $this->domains->ownershipProven($domain) ? 200 : 404);
+    }
+
+    /**
      * Public: Android Digital Asset Links (App Links verification), served at the domain ROOT
      * (/.well-known/assetlinks.json) via an .htaccess rewrite. No auth.
      *

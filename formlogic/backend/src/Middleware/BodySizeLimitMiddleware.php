@@ -114,7 +114,8 @@ class BodySizeLimitMiddleware implements MiddlewareInterface
         if ($token === null || $token === '') {
             $token = $request->getCookieParams()[$this->cookieName] ?? null;
         }
-        return is_string($token) && $token !== '' && $this->authService->validateToken($token) !== null;
+        return is_string($token) && $token !== ''
+            && ($this->authService->validateToken($token) !== null || $this->authService->validateAppDomainToken($token) !== null);
     }
 
     private function unauthorized(): Response

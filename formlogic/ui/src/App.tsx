@@ -170,6 +170,9 @@ function AppInitializer({ children }: { children: React.ReactNode }) {
     if (!isAuthInitialized) return;
 
     if (user) {
+      // Signed in on an app's own domain: the session opens that app alone, and the forms
+      // and apps of an account are out of its reach.
+      if (user.domainSession) return;
       // User is authenticated — load their data
       const mode = useFormStore.getState().storageMode;
       let explicitMode: string | null = null;
@@ -542,11 +545,13 @@ function AppRoutes() {
 /**
  * The host to render a custom-domain launch page for, or null on the FormLogic
  * platform host. `?__flhost=<domain>` is a dev override so the launch surface is
- * testable on formlogic.local without real DNS.
+ * testable on formlogic.local without real DNS. Local hosts only: a domain's app
+ * now opens in place, and a link must not open somebody's app at the site's root.
  */
 function getLaunchHost(): string | null {
   try {
-    const override = new URLSearchParams(window.location.search).get('__flhost');
+    const local = import.meta.env.DEV || /(^|\.)(localhost|local)$|^127\.0\.0\.1$/.test(window.location.hostname);
+    const override = local ? new URLSearchParams(window.location.search).get('__flhost') : null;
     if (override) return override.toLowerCase();
     const host = window.location.host;
     return isFormLogicMainHost(host) ? null : host;
@@ -556,16 +561,12 @@ function getLaunchHost(): string | null {
 }
 
 /**
- * Root gate: on a customer custom domain, the site root shows the branded launch
- * page; every deeper path (and the whole platform host) renders the normal app.
+ * Root gate: a customer's custom domain goes through DomainLaunchRouter, which
+ * decides what it shows; the platform host renders the normal app.
  */
 function RootGate() {
-  const location = useLocation();
   const launchHost = React.useMemo(() => getLaunchHost(), []);
-  if (launchHost && location.pathname === '/') {
-    return <DomainLaunchRouter host={launchHost} />;
-  }
-  return <AppRoutes />;
+  return launchHost ? <DomainLaunchRouter host={launchHost}><AppRoutes /></DomainLaunchRouter> : <AppRoutes />;
 }
 
 export default function App() {

@@ -25,6 +25,8 @@ interface User {
   timezone?: string;
   /** True for the shared public "Demo" account (drives the demo banner). */
   isDemo?: boolean;
+  /** Signed in on an app's own domain: this session opens that app and nothing else. */
+  domainSession?: boolean;
   /** Platform administrator (unlocks the /admin panel). */
   isAdmin?: boolean;
   /** Two-factor authentication switched on (drives the Settings card + signup nudge). */

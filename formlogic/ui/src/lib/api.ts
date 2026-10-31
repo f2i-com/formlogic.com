@@ -620,6 +620,8 @@ export interface AppDomain {
   verificationMethod: string;
   verificationToken: string;
   dns: { type: string; name: string; value: string };
+  /** Where this server takes the domain's traffic. Absent values: its operator hasn't said. */
+  routing?: { cname: string | null; a: string | null };
   verifiedAt: string | null;
   tlsStatus: string;
   landingConfig: Record<string, unknown>;
@@ -2004,7 +2006,7 @@ class ApiClient {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  async getNativeEntry(slug: string): Promise<ApiResponse<{ home: boolean; access: 'application' | 'members' }>> {
+  async getNativeEntry(slug: string): Promise<ApiResponse<{ home: boolean; access: 'application' | 'members'; native?: boolean }>> {
     return this.request(`/app/${encodeURIComponent(slug)}/entry`);
   }
   /** `readOnly`: the shared demo, which browses the project and records but cannot import, publish or edit them. */

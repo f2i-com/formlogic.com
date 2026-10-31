@@ -16,11 +16,14 @@ const mocks = vi.hoisted(() => ({
   saveNativeProject: vi.fn(),
   installNativeStarter: vi.fn(),
   publishApp: vi.fn(),
+  getAppDomains: vi.fn(),
+  createAppDomain: vi.fn(),
   editor: null as null | { kind: string; brief?: unknown; applyLabel?: string; onApply(bytes: Uint8Array): Promise<void>; onClose(): void },
 }));
 vi.mock('../../hooks/usePublicConfig', () => ({ usePublicConfig: () => ({ plans: { siteAiEnabled: false } }) }));
 vi.mock('../../lib/api', () => ({ api: {
   getNativeProject: mocks.getNativeProject, saveNativeProject: mocks.saveNativeProject, installNativeStarter: mocks.installNativeStarter, publishApp: mocks.publishApp,
+  getAppDomains: mocks.getAppDomains, createAppDomain: mocks.createAppDomain,
   isAdminActing: () => false, isDemoMode: () => false,
 } }));
 vi.mock('../../hooks/useAiReady', () => ({ useAiReady: () => ({ ready: true, reason: null, recheck: async () => true }) }));
@@ -39,6 +42,7 @@ vi.mock('../../components/studio/NativeAppView', () => ({ NativeAppView: ({ slug
 const { SoftnAppWorkspace } = await import('./SoftnAppWorkspace');
 const { useAppStore } = await import('../../stores/appStore');
 const { useUIStore } = await import('../../stores/uiStore');
+const { useAuthStore } = await import('../../stores/authStore');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root;
@@ -52,6 +56,9 @@ beforeEach(() => {
   mocks.editor = null;
   mocks.saveNativeProject.mockImplementation(async (_id: string, project: NativeProject, expected: number) => ({ data: { project: { ...project, version: expected + 1 } } }));
   mocks.publishApp.mockResolvedValue({ data: { app: app('published'), version: 1 } });
+  mocks.getAppDomains.mockReset().mockResolvedValue({ data: { domains: [] } });
+  mocks.createAppDomain.mockReset();
+  useAuthStore.setState({ user: { id: 'u1', email: 'owner@example.test' } as never });
   useUIStore.getState().setSoftnOpen(null);
   container = document.createElement('div');
   document.body.append(container);
@@ -68,6 +75,23 @@ async function render(status: 'draft' | 'published', project: NativeProject | nu
 const button = (text: RegExp) => [...document.body.querySelectorAll('button')].find(b => text.test(b.textContent ?? '')) as HTMLButtonElement | undefined;
 
 describe('SoftnAppWorkspace', () => {
+  it('lets the owner give the app a domain, opening the app itself by default', async () => {
+    await render('published', installed(1));
+    await act(async () => (container.querySelector('#softn-tab-settings') as HTMLButtonElement).click());
+    await act(async () => {});
+    expect(container.textContent).toContain('Custom domains');
+    expect(container.textContent).toContain('full screen on your domain');
+    expect((container.querySelector('select[aria-label="Domain mode"]') as HTMLSelectElement).value).toBe('runtime_direct');
+  });
+
+  it('shows the domains panel to the owner alone, as the server allows', async () => {
+    useAuthStore.setState({ user: { id: 'manager', email: 'manager@example.test' } as never });
+    await render('published', installed(1));
+    await act(async () => (container.querySelector('#softn-tab-settings') as HTMLButtonElement).click());
+    expect(container.textContent).not.toContain('Custom domains');
+    expect(mocks.getAppDomains).not.toHaveBeenCalled();
+  });
+
   it('previews the app in place at the width chosen, never framing a page of FormLogic', async () => {
     await render('draft', installed(1));
     const preview = container.querySelector('[data-testid="softn-app-preview"]')!;

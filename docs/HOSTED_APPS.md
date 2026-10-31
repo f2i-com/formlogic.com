@@ -338,8 +338,10 @@ named-action editor described above.
    that should use FormLogic registration/invitations. Configure these in **Users & roles**.
 3. Optionally enable **Use this app as the website home**. The regular `/app/<slug>`
    address then opens this interface. A verified custom domain in **Open the app directly**
-   mode uses that same entry point. DNS, the web server hostname and HTTPS still need
-   operator configuration; local development does not provision a public domain.
+   mode opens it too, full screen, whether or not this is on; a member signing in there
+   gets a session for this app alone. DNS, the web server hostname and HTTPS still need
+   operator configuration (docs/CUSTOM_APP_PLATFORM.md, "What the server's operator sets
+   up"); local development does not provision a public domain.
 4. **Install app project** validates the backend in ZIPP and applies its declared migrations.
    **Screens** edits the public interface/client source. **Backend** edits private `.logic`;
    both source editors include syntax colours, line numbers, search, wrapping, and light/dark themes.

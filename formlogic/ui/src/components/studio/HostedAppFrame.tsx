@@ -38,7 +38,10 @@ export function HostedAppFrame({
   engine,
   hostedAdmission,
   workspaceOnly = false,
+  bare = false,
 }: {
+  /** The app IS the page: no card around it, and no minimum height to overflow a short screen. */
+  bare?: boolean;
   slug: string;
   client: Record<string, string>;
   version: number;
@@ -464,7 +467,7 @@ export function HostedAppFrame({
     setStorageEpoch((epoch) => epoch + 1);
   };
   return (
-    <div className="flex h-full min-h-[420px] min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-950">
+    <div className={`flex h-full min-w-0 flex-col overflow-hidden bg-white dark:bg-slate-950 ${bare ? "" : "min-h-[420px] rounded-2xl border border-slate-200 dark:border-slate-700"}`}>
       {!blocked && error && (
         <div
           role="alert"
@@ -508,7 +511,7 @@ export function HostedAppFrame({
           // check-security-invariants.mjs pins this literal, and the token it must never contain.
           sandbox="allow-scripts"
           referrerPolicy="no-referrer"
-          className="min-h-[420px] w-full flex-1 border-0"
+          className={`w-full flex-1 border-0 ${bare ? "" : "min-h-[420px]"}`}
           onLoad={countLoad}
         />
       )}

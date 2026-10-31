@@ -121,7 +121,7 @@ class NativeAppController
         if (!$app || !$this->apps->isRuntimeVisible($app, $request->getAttribute('userId'))) return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), ['home' => false]);
         return $this->respond($response, function () use ($app) {
             $project = $this->native->get($app['id']);
-            return ['home' => (bool) ($project['home'] ?? false), 'access' => $project['access'] ?? 'members'];
+            return ['home' => (bool) ($project['home'] ?? false), 'access' => $project['access'] ?? 'members', 'native' => $project !== null];
         });
     }
 

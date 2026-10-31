@@ -10,6 +10,7 @@ import { Button } from '../../components/ui/Button';
 import { Textarea } from '../../components/ui/Textarea';
 import { Switch } from '../../components/ui/Switch';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { CustomDomainsPanel } from '../../components/apps/CustomDomainsPanel';
 import { AppEditorDialog, type AppEditorKind } from '../../components/studio/AppEditorDialog';
 import type { EditorBrief } from '../../components/studio/editorAgent';
 import { AppEngineSelect } from '../../components/studio/AppEngineSelect';
@@ -25,6 +26,7 @@ import { exportNativeProject, importNativeProject, type NativeProject } from '..
 import { isSoftnApp, projectFromUpload, projectHasBackend } from '../../lib/softnApps';
 import { cn } from '../../lib/utils';
 import { useAppStore } from '../../stores/appStore';
+import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
 import { useUIStore, type SoftnOpen } from '../../stores/uiStore';
 import type { App } from '../../types/app';
@@ -79,6 +81,7 @@ function Workspace({ app }: { app: App }) {
   const [copied, setCopied] = useState(false);
   const upload = useRef<HTMLInputElement>(null);
   const published = app.status === 'published';
+  const userId = useAuthStore(s => s.user?.id);
   const liveUrl = `${window.location.origin}/app/${encodeURIComponent(app.slug)}${project?.home ? '' : '/native'}`;
   // An app without a backend of its own runs in the browser alone: it has no database here.
   const backend = project ? projectHasBackend(project) : true;
@@ -294,6 +297,7 @@ function Workspace({ app }: { app: App }) {
             {published ? <Button className="mt-4" variant="secondary" size="sm" disabled={readOnly} onClick={() => setConfirmUnpublish(true)}>Unpublish</Button>
               : <p className="mt-4 text-xs leading-5 text-slate-500 dark:text-slate-400">Not published yet: only you can open it. Publish from the top of the page when it is ready.</p>}
           </Panel>
+          {!readOnly && app.ownerId === userId && <div className="min-w-0 lg:col-span-2"><CustomDomainsPanel appId={app.id} published={published} softn /></div>}
           {draft.engine && draft.enginePolicy && <Panel title="Engine" icon={<SettingsIcon className="h-4 w-4" />}>
             <AppEngineSelect appId={app.id} engine={draft.engine} policy={draft.enginePolicy} disabled={busy || readOnly} onChanged={() => void draft.refreshEngine()} />
             <div className="mt-4"><AppTorchSwitch appId={app.id} policy={draft.enginePolicy} disabled={busy || readOnly} /></div>

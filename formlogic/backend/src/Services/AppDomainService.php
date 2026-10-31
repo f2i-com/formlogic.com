@@ -6,6 +6,7 @@ namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Helpers\IpSafety;
+use FormLogic\Support\Environment;
 use PDO;
 
 /**
@@ -29,6 +30,10 @@ class AppDomainService
     // Reserved / non-public suffixes that must never be claimable as a public launch domain.
     private const RESERVED_SUFFIXES = ['.local', '.localhost', '.internal', '.test', '.example', '.invalid', '.localdomain'];
     private const RESERVED_HOSTS = ['localhost', '0.0.0.0', 'broadcasthost'];
+
+    // How long a claim nobody proved holds a domain. One domain → one app, so without a limit
+    // whoever typed a name first would keep its real owner out for good.
+    private const UNPROVEN_CLAIM_HOURS = 72;
 
     public function __construct(MySQLConnection $mysql)
     {
@@ -139,6 +144,11 @@ class AppDomainService
         if (!in_array($mode, self::MODES, true)) {
             $mode = 'launch_page';
         }
+
+        $this->mysql->prepare(
+            "DELETE FROM app_domains WHERE normalized_domain = :d AND verified_at IS NULL
+             AND created_at < NOW() - INTERVAL " . self::UNPROVEN_CLAIM_HOURS . " HOUR"
+        )->execute(['d' => $domain]);
 
         $exists = $this->mysql->prepare("SELECT owner_id FROM app_domains WHERE normalized_domain = :d LIMIT 1");
         $exists->execute(['d' => $domain]);
@@ -415,7 +425,33 @@ class AppDomainService
         ];
     }
 
+    /** Whether a host's owner has proven it, live or still waiting for HTTPS. */
+    public function ownershipProven(string $host): bool
+    {
+        $stmt = $this->mysql->prepare(
+            "SELECT 1 FROM app_domains WHERE normalized_domain = :d AND status IN ('verified', 'active') LIMIT 1"
+        );
+        $stmt->execute(['d' => $this->normalizeDomain($host)]);
+        return $stmt->fetchColumn() !== false;
+    }
+
     // ---- helpers --------------------------------------------------------------------
+
+    /**
+     * Where an owner points a domain: what this server's operator set, else this site's own
+     * name as the CNAME. Null values mean the panel has nothing true to show.
+     *
+     * @return array{cname: string|null, a: string|null}
+     */
+    private function routingTarget(): array
+    {
+        $cname = Environment::nonEmpty('APP_DOMAIN_CNAME_TARGET');
+        if ($cname === null) {
+            $host = (string) parse_url((string) Environment::nonEmpty('APP_URL', ''), PHP_URL_HOST);
+            $cname = $this->isValidDomain($host) && $this->isPublicDomain($host) ? $host : null;
+        }
+        return ['cname' => $cname, 'a' => Environment::nonEmpty('APP_DOMAIN_A_RECORD')];
+    }
 
     /** @return array<string,mixed>|false */
     private function fetchOwned(string $domainId, string $ownerId)
@@ -506,6 +542,7 @@ class AppDomainService
                 'name' => '_formlogic.' . $row['normalized_domain'],
                 'value' => $row['verification_token'],
             ],
+            'routing' => $this->routingTarget(),
             'verifiedAt' => $row['verified_at'],
             'tlsStatus' => $row['tls_status'],
             'landingConfig' => $this->decodeJson($row['landing_config']),

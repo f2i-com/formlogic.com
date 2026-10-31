@@ -23,6 +23,24 @@ async function owner(id: string) { await act(async () => { setSessionOwner(id ||
 beforeEach(() => { vi.resetAllMocks(); mocks.userId = 'alice'; setSessionOwner('alice'); bumpSessionGeneration(); container = document.createElement('div'); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); });
 
+it('is the app and nothing else: no margin, and no card around the frame', async () => {
+  mocks.get.mockResolvedValue({ name: 'x', data: { name: 'Notes', project: project() } }); await mount();
+  expect(mocks.frame).toHaveBeenLastCalledWith(expect.objectContaining({ bare: true }));
+  expect(container.querySelector('main')?.className).not.toMatch(/(^|\s)p-\d/);
+  expect(container.querySelector('main')?.className).toContain('h-dvh');
+});
+it('names the tab after the app while it is open', async () => {
+  document.title = 'FormLogic';
+  mocks.get.mockResolvedValue({ data: { name: 'Notes', project: project() } }); await mount();
+  expect(document.title).toBe('Notes');
+  await act(async () => root.render(<div />));
+  expect(document.title).toBe('FormLogic');
+});
+it('sends a refused visitor where the page says, staying on an app domain', async () => {
+  mocks.get.mockResolvedValue({ error: 'Membership required' });
+  await act(async () => root.render(<NativeAppPage slug="notes" signInTo="/" />));
+  expect(container.textContent).toContain('Sign in or join this app');
+});
 it('passes the exact admitted server scope and access to the native frame', async () => {
   mocks.get.mockResolvedValue({ data: { project: project() } }); await mount();
   expect(mocks.frame).toHaveBeenLastCalledWith(expect.objectContaining({ native: expect.objectContaining({ access: 'members', storageScope: scope }) }));

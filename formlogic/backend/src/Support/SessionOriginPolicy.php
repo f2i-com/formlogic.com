@@ -54,6 +54,38 @@ final class SessionOriginPolicy
             && in_array($sites[0], ['same-origin', 'same-site', 'cross-site'], true);
     }
 
+    /**
+     * The host of a sign-in posted from the page's own origin, or null. This alone admits
+     * nothing: the caller also needs that host's connected-domain row, and what it grants is
+     * limited to that app (AppDomainSession). Origin must name the host the request reached and
+     * Fetch Metadata, where a browser sends it, must agree, so a page anywhere else cannot post
+     * here as that domain, the domain's own owner included once the name points away. Hostnames
+     * are compared, not ports: Slim drops the port from Host, a TLS proxy changes it, and Fetch
+     * Metadata already holds a browser to the exact origin.
+     */
+    public static function sameHostOrigin(Request $request, bool $httpsOnly): ?string
+    {
+        $origins = $request->getHeader('Origin');
+        $hosts = $request->getHeader('Host');
+        if (count($origins) !== 1 || count($hosts) !== 1) {
+            return null;
+        }
+        $origin = self::normalizeOrigin($origins[0]);
+        $parts = $origin !== null ? parse_url($origin) : false;
+        if ($parts === false || ($httpsOnly && ($parts['scheme'] ?? '') !== 'https')) {
+            return null;
+        }
+        $reached = strtolower(rtrim((string) preg_replace('/:\d+$/D', '', trim($hosts[0])), '.'));
+        if (($parts['host'] ?? '') !== $reached) {
+            return null;
+        }
+        $sites = $request->getHeader('Sec-Fetch-Site');
+        if ($sites !== [] && $sites !== ['same-origin']) {
+            return null;
+        }
+        return $parts['host'] ?? null;
+    }
+
     /** Shared exact-origin comparison with CORS; never accepts wildcard patterns. */
     public static function normalizeOrigin(string $origin): ?string
     {

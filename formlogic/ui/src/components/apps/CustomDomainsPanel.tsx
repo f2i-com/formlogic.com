@@ -21,6 +21,27 @@ const MODE_OPTIONS = [
   { value: 'runtime_direct', label: 'Open the app directly' },
 ];
 
+/** The records that bring a domain's visitors here: the TXT record only proves who owns it. */
+function RoutingRecords({ domain }: { domain: AppDomain }) {
+  const { cname, a } = domain.routing ?? {};
+  return (
+    <div className="mt-3 bg-gray-50 dark:bg-slate-800 rounded-lg p-3 text-xs text-gray-600 dark:text-slate-400 overflow-x-auto">
+      <p className="font-medium mb-2 text-gray-700 dark:text-slate-300">Point the domain at this server:</p>
+      {cname || a ? (
+        <>
+          <div className="grid grid-cols-[auto,auto,1fr] gap-x-4 gap-y-1 font-mono whitespace-nowrap">
+            {cname && <><span className="text-gray-400">CNAME</span><span>{domain.domain}</span><span>{cname}</span></>}
+            {a && <><span className="text-gray-400">A</span><span>{domain.domain}</span><span>{a}</span></>}
+          </div>
+          {cname && a && <p className="mt-2">Use one of these. A root domain can&rsquo;t have a CNAME, so it takes the A record.</p>}
+        </>
+      ) : (
+        <p>Ask whoever runs this FormLogic server which address to point it at.</p>
+      )}
+    </div>
+  );
+}
+
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
     active: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20',
@@ -379,11 +400,12 @@ function NativeConfigEditor({ appId, domain, onSaved }: { appId: string; domain:
   );
 }
 
-export function CustomDomainsPanel({ appId, published = true }: { appId: string; appSlug?: string; published?: boolean }) {
+/** `softn`: an installed app, which opens full screen on its domain by default. */
+export function CustomDomainsPanel({ appId, published = true, softn = false }: { appId: string; appSlug?: string; published?: boolean; softn?: boolean }) {
   const [domains, setDomains] = useState<AppDomain[]>([]);
   const [loading, setLoading] = useState(true);
   const [newDomain, setNewDomain] = useState('');
-  const [mode, setMode] = useState('launch_page');
+  const [mode, setMode] = useState(softn ? 'runtime_direct' : 'launch_page');
   const [adding, setAdding] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -450,6 +472,17 @@ export function CustomDomainsPanel({ appId, published = true }: { appId: string;
     }
   };
 
+  const changeMode = async (d: AppDomain, next: string) => {
+    setBusyId(d.id);
+    const res = await api.updateAppDomain(appId, d.id, { mode: next });
+    setBusyId(null);
+    if (res.error || !res.data?.domain) {
+      toast.error('Could not change what this domain opens');
+      return;
+    }
+    setDomains((list) => list.map((x) => (x.id === d.id ? res.data!.domain : x)));
+  };
+
   const remove = async (d: AppDomain) => {
     setRemoveTarget(null);
     setBusyId(d.id);
@@ -482,7 +515,9 @@ export function CustomDomainsPanel({ appId, published = true }: { appId: string;
         <h3 className="font-medium text-gray-900 dark:text-white tracking-tight">Custom domains</h3>
       </div>
       <p className="text-sm text-gray-600 dark:text-slate-400 mb-4">
-        Run this app on your own domain, so it feels like your product — not a page inside FormLogic.
+        {softn
+          ? 'Give this app its own address. Visitors see the app full screen on your domain, with nothing of FormLogic around it.'
+          : 'Run this app on your own domain, so it feels like your product — not a page inside FormLogic.'}
       </p>
 
       <details className="mb-5 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-300">
@@ -594,16 +629,35 @@ export function CustomDomainsPanel({ appId, published = true }: { appId: string;
                 </div>
               )}
 
-              <LaunchPageEditor
-                appId={appId}
-                domain={d}
-                onSaved={(u) => setDomains((list) => list.map((x) => (x.id === u.id ? u : x)))}
-              />
-              <NativeConfigEditor
-                appId={appId}
-                domain={d}
-                onSaved={(u) => setDomains((list) => list.map((x) => (x.id === u.id ? u : x)))}
-              />
+              {(d.status !== 'active' || d.tlsStatus !== 'active') && <RoutingRecords domain={d} />}
+
+              <label className="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-slate-400">
+                Opens
+                <select
+                  value={d.mode}
+                  disabled={busyId === d.id}
+                  onChange={(e) => changeMode(d, e.target.value)}
+                  aria-label={`What ${d.domain} opens`}
+                  className="min-w-0 rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                >
+                  {MODE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </label>
+
+              {(!softn || d.mode === 'launch_page') && (
+                <LaunchPageEditor
+                  appId={appId}
+                  domain={d}
+                  onSaved={(u) => setDomains((list) => list.map((x) => (x.id === u.id ? u : x)))}
+                />
+              )}
+              {!softn && (
+                <NativeConfigEditor
+                  appId={appId}
+                  domain={d}
+                  onSaved={(u) => setDomains((list) => list.map((x) => (x.id === u.id ? u : x)))}
+                />
+              )}
             </li>
           ))}
         </ul>

@@ -1144,8 +1144,18 @@ $sessionOriginConfig = \FormLogic\Support\Environment::nonEmpty('CORS_ALLOWED_OR
     ?? \FormLogic\Support\Environment::nonEmpty('CORS_ORIGIN');
 $sessionOrigins = $sessionOriginConfig === null ? [] : array_map('trim', explode(',', $sessionOriginConfig));
 
+// The live app of a connected domain. Only sign-ins from a host outside that list, and sessions
+// from such a sign-in, ever run this query.
+$connectedApp = static fn (string $host): ?array => $container->get(\FormLogic\Services\AppDomainService::class)->resolveAppSlugByHost($host);
+
 // Add CSRF middleware (validates tokens on state-changing requests).
-$app->add(new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', $cookieName, $csrfSecret, $sessionOrigins));
+$app->add(new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', $cookieName, $csrfSecret, $sessionOrigins,
+    static function (string $host) use ($connectedApp): ?array {
+        $app = $connectedApp($host);
+        return $app === null ? null : ['appId' => $app['id'], 'host' => $host];
+    },
+    $settings['settings']['isProduction'] ?? true
+));
 
 // Make the shared public "Demo" account read-only on the server (its visitors' data lives in their
 // browser via the client overlay). Self-contained token check, so global placement is fine.
@@ -1240,8 +1250,9 @@ $app->add(function ($request, $handler) use ($oauthPublicPaths) {
 });
 
 // Create auth middleware instances
-$authRequired = new AuthMiddleware($container->get(AuthService::class), false, $cookieName);
-$authOptional = new AuthMiddleware($container->get(AuthService::class), true, $cookieName);
+$appDomainSessions = new \FormLogic\Support\AppDomainSession($connectedApp);
+$authRequired = new AuthMiddleware($container->get(AuthService::class), false, $cookieName, $appDomainSessions);
+$authOptional = new AuthMiddleware($container->get(AuthService::class), true, $cookieName, $appDomainSessions);
 
 // Routes
 $app->options('/{routes:.+}', function ($request, $response) {
@@ -2120,6 +2131,11 @@ $app->post('/api/public/forms/{id}/reports/run-batch', function ($request, $resp
 // Public: resolve a custom-domain host to its branded launch config (display/install metadata only).
 $app->get('/api/public/launch/by-host', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\AppDomainController::class)->resolveByHost($request, $response);
+})->add($publicFormRateLimiter);
+
+// Public: whether this server may obtain a certificate for a host (Caddy's on-demand TLS asks here).
+$app->get('/api/public/domains/certificate', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AppDomainController::class)->certificateAllowed($request, $response);
 })->add($publicFormRateLimiter);
 
 // Public: signature verification key (so the native runtime / package verifiers can check manifests).

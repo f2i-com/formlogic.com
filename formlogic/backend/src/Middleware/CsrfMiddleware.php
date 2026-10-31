@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Middleware;
 
+use FormLogic\Support\AppDomainSession;
 use FormLogic\Support\SessionOriginPolicy;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -30,12 +31,19 @@ class CsrfMiddleware implements MiddlewareInterface
     private string $secret;
     private SessionOriginPolicy $sessionOriginPolicy;
 
+    /**
+     * @param array<mixed> $trustedSessionOrigins
+     * @param (\Closure(string): ?array{appId: string, host: string})|null $connectedDomain the app a
+     *        sign-in on this host is limited to, or null when the host is not a connected domain
+     */
     public function __construct(
         string $cookieName = 'formlogic_csrf',
         string $headerName = 'X-CSRF-Token',
         string $authCookieName = 'formlogic_auth',
         string $secret = '',
-        array $trustedSessionOrigins = []
+        array $trustedSessionOrigins = [],
+        private ?\Closure $connectedDomain = null,
+        private bool $domainsRequireHttps = true
     ) {
         $this->cookieName = $cookieName;
         $this->headerName = $headerName;
@@ -78,7 +86,13 @@ class CsrfMiddleware implements MiddlewareInterface
                 return $this->forbidden('CSRF protection is misconfigured (no signing secret) - set JWT_SECRET');
             }
             if (!$this->sessionOriginPolicy->allows($request)) {
-                return $this->forbidden('Session creation requires an explicitly trusted request origin');
+                // Not on the configured list, which stays exactly that. A connected domain
+                // signs in too, but only ever to the one app (AppDomainSession).
+                $domain = $this->connectedDomainOf($request, $path);
+                if ($domain === null) {
+                    return $this->forbidden('Session creation requires an explicitly trusted request origin');
+                }
+                $request = $request->withAttribute(AppDomainSession::SIGN_IN_ATTRIBUTE, $domain);
             }
             return $handler->handle($request);
         }
@@ -121,6 +135,21 @@ class CsrfMiddleware implements MiddlewareInterface
         }
 
         return $handler->handle($request);
+    }
+
+    /**
+     * The connected domain a sign-in came from, or null. The shared demo is a platform session
+     * and has no place on a customer's domain.
+     *
+     * @return array{appId: string, host: string}|null
+     */
+    private function connectedDomainOf(Request $request, string $path): ?array
+    {
+        if ($this->connectedDomain === null || $path === '/api/demo/start') {
+            return null;
+        }
+        $host = SessionOriginPolicy::sameHostOrigin($request, $this->domainsRequireHttps);
+        return $host === null ? null : ($this->connectedDomain)($host);
     }
 
     /**

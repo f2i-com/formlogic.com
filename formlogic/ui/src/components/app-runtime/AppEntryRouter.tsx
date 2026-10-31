@@ -8,14 +8,19 @@ import { AppRuntimeRoot } from './AppRuntimeRoot';
 import { AppRuntimeAuthGuard } from './AppRuntimeAuthGuard';
 import { startFlowDispatcher } from '../../client-runtime/flows/flowDispatcher';
 
-function MemberNativeApp({ slug }: { slug: string }) {
+function MemberNativeApp({ slug, signInTo }: { slug: string; signInTo?: string }) {
   const { initialize, reset, config } = useAppRuntimeStore();
   useEffect(() => { void initialize(slug); return () => reset(); }, [slug, initialize, reset]);
   const appId = config?.app?.id;
   useEffect(() => {
     if (appId && config?.app?.slug === slug) return startFlowDispatcher(slug, { id: appId });
   }, [slug, appId, config?.app?.slug]);
-  return <AppRuntimeAuthGuard><NativeAppPage /></AppRuntimeAuthGuard>;
+  return <AppRuntimeAuthGuard><NativeAppPage slug={slug} signInTo={signInTo} /></AppRuntimeAuthGuard>;
+}
+
+/** An installed app on its own domain: it is the site, so the way back in is the site's root. */
+export function DomainNativeApp({ slug, access }: { slug: string; access: 'application' | 'members' }) {
+  return access === 'members' ? <MemberNativeApp slug={slug} signInTo="/" /> : <NativeAppPage slug={slug} signInTo="/" />;
 }
 
 function Home({ slug }: { slug: string }) {

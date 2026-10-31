@@ -7,6 +7,7 @@ namespace FormLogic\Services;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Models\User;
 use FormLogic\Services\EmailService;
+use FormLogic\Support\AppDomainSession;
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
 use PDO;
@@ -391,6 +392,30 @@ class AuthService
      */
     public function validateToken(string $token): ?User
     {
+        return $this->sessionFrom($token, $this->jwtConfig['audience'] ?? 'formlogic-api')['user'] ?? null;
+    }
+
+    /**
+     * A session a sign-in on an app's connected domain received: the same checks, but only ever
+     * this audience. Every other caller goes through validateToken(), which refuses it, so a
+     * route is closed to these sessions unless AppDomainSession admits it.
+     *
+     * @return array{user: User, appId: string, host: string}|null
+     */
+    public function validateAppDomainToken(string $token): ?array
+    {
+        $session = $this->sessionFrom($token, AppDomainSession::AUDIENCE);
+        $appId = $session['claims']->app ?? null;
+        $host = $session['claims']->host ?? null;
+        if ($session === null || !is_string($appId) || $appId === '' || !is_string($host) || $host === '') {
+            return null;
+        }
+        return ['user' => $session['user'], 'appId' => $appId, 'host' => $host];
+    }
+
+    /** @return array{user: User, claims: object}|null */
+    private function sessionFrom(string $token, string $expectedAudience): ?array
+    {
         try {
             // Firebase JWT library automatically validates:
             // - Signature
@@ -411,7 +436,6 @@ class AuthService
             }
 
             // Validate audience (must be present and match)
-            $expectedAudience = $this->jwtConfig['audience'] ?? 'formlogic-api';
             if (!isset($decoded->aud)) {
                 return null;
             }
@@ -456,7 +480,7 @@ class AuthService
                     }
                 }
             }
-            return $user;
+            return ['user' => $user, 'claims' => $decoded];
         } catch (\Firebase\JWT\ExpiredException $e) {
             // Token has expired
             return null;
@@ -893,6 +917,24 @@ class AuthService
     public function issueToken(User $user): string
     {
         return $this->generateToken($user);
+    }
+
+    /** The session of a sign-in on an app's connected domain: see AppDomainSession. */
+    public function issueAppDomainToken(string $userId, string $appId, string $host): string
+    {
+        $now = time();
+        return JWT::encode([
+            'iss' => $this->jwtConfig['issuer'] ?? 'formlogic',
+            'aud' => AppDomainSession::AUDIENCE,
+            'sub' => $userId,
+            'app' => $appId,
+            'host' => $host,
+            'iat' => $now,
+            'nbf' => $now,
+            'exp' => $now + $this->jwtConfig['expiry'],
+            'tv' => $this->getTokenVersion($userId),
+            'sg' => $this->getSessionGeneration(),
+        ], $this->jwtConfig['secret'], $this->jwtConfig['algorithm']);
     }
 
     /** Lifetime of the password→MFA-code bridge token, in seconds. */
