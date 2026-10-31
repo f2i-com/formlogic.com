@@ -56,6 +56,17 @@ final class AppUrl
         );
     }
 
+    /** This site's own address when there's no request to go on: only ever what the server was told. */
+    public static function configuredBase(): ?string
+    {
+        foreach ([self::env('APP_URL'), self::env('CORS_ORIGIN'), self::allowedOrigins()[0] ?? ''] as $base) {
+            if ($base !== '') {
+                return rtrim($base, '/');
+            }
+        }
+        return null;
+    }
+
     /** @return string[] */
     private static function allowedOrigins(): array
     {

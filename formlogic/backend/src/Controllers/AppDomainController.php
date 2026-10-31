@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
+use FormLogic\Helpers\AppUrl;
 use FormLogic\Services\AppDomainService;
 use FormLogic\Services\AppService;
 use FormLogic\Support\Environment;
@@ -160,9 +161,9 @@ class AppDomainController
         if (!$config) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Domain not connected'], 404);
         }
-        // Where a sign-in happens: never on the domain (AppDomainSignInService).
-        $site = Environment::nonEmpty('APP_URL');
-        return $this->jsonResponse($response, $config + ['platformUrl' => $site === null ? null : rtrim($site, '/')]);
+        // Where a sign-in happens: never on the domain (AppDomainSignInService). A site from the
+        // wizard may have only CORS_ORIGIN, and with no address here its members can't sign in.
+        return $this->jsonResponse($response, $config + ['platformUrl' => AppUrl::configuredBase()]);
     }
 
     /**

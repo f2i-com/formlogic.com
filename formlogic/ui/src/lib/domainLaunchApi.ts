@@ -28,7 +28,7 @@ export interface LaunchConfig {
     privacyUrl?: string | null;
     termsUrl?: string | null;
   };
-  // FormLogic's own address, where this domain's visitors sign in. Null on a server that lost APP_URL.
+  // FormLogic's own address, where this domain's visitors sign in. Null on a server told no address of its own.
   platformUrl?: string | null;
   // Public-safe native-runtime metadata for this domain (never security config). Optional so an older
   // backend that doesn't emit it still type-checks; the launch page treats a missing section as "off".
