@@ -22,7 +22,8 @@ export function SupportAccessPanel() {
     let cancelled = false;
     void api.getSupportAccess().then((result) => {
       if (cancelled) return;
-      if (result.data) setState(result.data);
+      // One section of Settings must not take the page down over a reply it can't read.
+      if (result.data && Array.isArray(result.data.activity)) setState(result.data);
       else setFailed(true);
     });
     return () => { cancelled = true; };

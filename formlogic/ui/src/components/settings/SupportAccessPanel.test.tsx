@@ -67,6 +67,12 @@ describe('SupportAccessPanel', () => {
     expect(button('Allow for 24 hours')).toBeUndefined();
   });
 
+  it('does not take the page down over a reply it cannot read', async () => {
+    getSupportAccess.mockResolvedValue({ data: { keys: [] } });
+    await open();
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  });
+
   it('is not shown in the shared demo', async () => {
     useAuthStore.setState({ user: { ...owner, isDemo: true } as never });
     await open();
