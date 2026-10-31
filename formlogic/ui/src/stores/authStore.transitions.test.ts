@@ -151,18 +151,26 @@ it.each(['network-result', 'network-rejection'])('unconfirmed startup %s fences 
   expect(open().read()).toEqual({ session: 'offline-synthetic-a' });
 });
 
-it.each(['logout', 'switch'])('a later %s removes the member cached during an unconfirmed startup', async boundary => {
+it('a later logout removes the member cached during an unconfirmed startup', async () => {
   const open = () => nativeAppStorage('cafe', { access: 'members', appId: 'app-one', userId: 'a' });
   open().mutate({ operation: 'set', key: 'session', value: 'offline-synthetic-a' });
   useAuthStore.setState({ isInitialized: false }); calls.getMe.mockResolvedValue({ error: 'offline' });
   await useAuthStore.getState().initialize();
-  if (boundary === 'logout') await useAuthStore.getState().logout();
-  else {
-    calls.login.mockResolvedValue({ data: { user: user('b') } });
-    await useAuthStore.getState().login('b@example.test', 'synthetic');
-  }
+  await useAuthStore.getState().logout();
   useAuthStore.setState({ user: user('a') });
   expect(open().read()).toEqual({});
+});
+
+it('someone else signing in after an unconfirmed startup leaves that member their data', async () => {
+  const open = () => nativeAppStorage('cafe', { access: 'members', appId: 'app-one', userId: 'a' });
+  open().mutate({ operation: 'set', key: 'session', value: 'offline-synthetic-a' });
+  useAuthStore.setState({ isInitialized: false }); calls.getMe.mockResolvedValue({ error: 'offline' });
+  await useAuthStore.getState().initialize();
+  calls.login.mockResolvedValue({ data: { user: user('b') } });
+  await useAuthStore.getState().login('b@example.test', 'synthetic');
+  expect(nativeAppStorage('cafe', { access: 'members', appId: 'app-one', userId: 'b' }).read()).toEqual({});
+  useAuthStore.setState({ user: user('a') });
+  expect(open().read()).toEqual({ session: 'offline-synthetic-a' });
 });
 
 it('remote cleanup locks this tab vault without broadcasting a second lock to the new account', async () => {

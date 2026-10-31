@@ -64,7 +64,6 @@ const SESSION_TRANSITION_KEY = 'formlogic-session-transition';
 type SessionMessage = { type?: string; reason?: string; userId?: unknown; revision?: unknown; ordered?: unknown };
 let lastHandledTransition: string | null = null;
 let unconfirmedMemberOwner: string | null = null;
-let preserveMemberOnStartupFailure = false;
 
 /** Ordering metadata only: never a credential and never used to hydrate a user. */
 function publishSessionTransition(type: 'fl-teardown' | 'fl-session-transition', userId: string | null, reason?: SessionTeardownReason): void {
@@ -114,6 +113,11 @@ function withMemoryOnlyPersistence(run: () => void): void {
  *
  * Submissions still queued on the device (pending or failed) are removed for every
  * reason except 'session-expired': see forgetQueuedSubmissions.
+ *
+ * So is what a member keeps in this browser, for the same reasons and one more: for an app
+ * with no backend it is the only copy of their records, and a session ends by itself every
+ * day. Only asking to leave erases it. Until then it stays under their id, which no other
+ * account can open (nativeAppStorage's assertScope).
  */
 export async function teardownUserSession(
   userId: string | null,
@@ -122,17 +126,18 @@ export async function teardownUserSession(
   memoryOnly = false
 ): Promise<void> {
   if (unconfirmedMemberOwner === userId) unconfirmedMemberOwner = null;
+  const leaving = reason !== 'session-expired';
   // An old caller may finish after another identity has already signed in. Only
   // its private namespace belongs to it; B's stores and callbacks must survive.
   if (currentSessionOwner() !== null && currentSessionOwner() !== userId) {
-    if (userId) clearNativeMemberStorage(userId);
+    if (userId && leaving) clearNativeMemberStorage(userId);
     return;
   }
   // The generation bump comes FIRST (audit FL-11): an authenticated request still in
   // flight compares its captured generation on resolve and DISCARDS its result rather
   // than repopulating the stores this teardown is about to clear.
   const generation = bumpSessionGeneration();
-  if (userId) clearNativeMemberStorage(userId);
+  if (userId && leaving) clearNativeMemberStorage(userId);
   // Publish before awaiting cleanup, so a delayed A teardown cannot announce a
   // newer boundary after B has signed in and published its transition.
   if (broadcast) publishSessionTransition('fl-teardown', userId, reason);
@@ -379,9 +384,7 @@ export const useAuthStore = create<AuthState>()(
         const generation = currentSessionGeneration();
         const forgetUnconfirmedIdentity = () => {
           unconfirmedMemberOwner = get().user?.id ?? unconfirmedMemberOwner;
-          preserveMemberOnStartupFailure = true;
-          try { set({ user: null, isLoading: false, isInitialized: true }); }
-          finally { preserveMemberOnStartupFailure = false; }
+          set({ user: null, isLoading: false, isInitialized: true });
         };
 
         // Check if we have a valid session by calling getMe()
@@ -603,16 +606,9 @@ export const useAuthStore = create<AuthState>()(
 // queue stamps every row with its owner and flushes only the current owner's rows.
 setSessionOwner(useAuthStore.getState().user?.id ?? null);
 useAuthStore.subscribe((state) => {
-  const previous = currentSessionOwner();
   const next = state.user?.id ?? null;
-  setSessionOwner(next); // Fence the old owner before removing any private storage.
-  if (!preserveMemberOnStartupFailure) {
-    if (previous && previous !== next) clearNativeMemberStorage(previous);
-    if (unconfirmedMemberOwner && next) {
-      if (unconfirmedMemberOwner !== next) clearNativeMemberStorage(unconfirmedMemberOwner);
-      unconfirmedMemberOwner = null;
-    }
-  }
+  setSessionOwner(next); // Fences the old owner: its private storage opens to nobody else.
+  if (next) unconfirmedMemberOwner = null;
 });
 
 // Cross-tab teardown (audit FL-10): when another tab ends the session (logout,
@@ -633,10 +629,7 @@ export async function handleSessionBroadcast(data: SessionMessage | null): Promi
   if (data.type === 'fl-session-transition') {
     if (typeof data.userId !== 'string' || data.userId.length === 0) return;
     if (user === null || user.id === data.userId) {
-      if (unconfirmedMemberOwner && unconfirmedMemberOwner !== data.userId) {
-        clearNativeMemberStorage(unconfirmedMemberOwner);
-        unconfirmedMemberOwner = null;
-      }
+      if (unconfirmedMemberOwner !== data.userId) unconfirmedMemberOwner = null;
       // Refetch admission, never install the broadcast's claimed identity.
       bumpSessionGeneration();
       withMemoryOnlyPersistence(() => useAuthStore.setState({ isLoading: false, error: null }));
@@ -648,7 +641,7 @@ export async function handleSessionBroadcast(data: SessionMessage | null): Promi
     // ended cookie still invalidates that pending continuation.
     bumpSessionGeneration();
     const leaving = typeof data.userId === 'string' ? data.userId : unconfirmedMemberOwner;
-    if (leaving) clearNativeMemberStorage(leaving);
+    if (leaving && data.reason !== 'session-expired') clearNativeMemberStorage(leaving);
     if (leaving === unconfirmedMemberOwner) unconfirmedMemberOwner = null;
     withMemoryOnlyPersistence(() => useAuthStore.setState({ isLoading: false, error: null }));
     return;

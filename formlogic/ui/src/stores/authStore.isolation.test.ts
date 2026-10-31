@@ -42,7 +42,34 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); useAuthStore.setState({ user: null }); });
 
 describe('native member state at actual auth-store boundaries', () => {
-  it.each(['logout', 'session-expired', 'account-deleted', 'remote-teardown'] as const)('purges the leaving member synchronously on %s while preserving application mode', async reason => {
+  it('keeps a member\'s data through a session ending, for them alone', async () => {
+    save(member()); save(app(), 'independent');
+    const old = member();
+    const pending = teardownUserSession('a', 'session-expired', false);
+    expect(() => old.read()).toThrow();
+    await pending;
+    useAuthStore.setState({ user: user('b') });
+    expect(member('b').read()).toEqual({});
+    useAuthStore.setState({ user: user('a') });
+    expect(member().read()).toEqual({ session: 'synthetic-session' });
+  });
+  it('keeps it when the server says the session is over at startup', async () => {
+    save(member());
+    useAuthStore.setState({ isInitialized: false });
+    calls.getMe.mockResolvedValue({ error: 'Invalid or expired token', status: 401 });
+    await useAuthStore.getState().initialize();
+    expect(useAuthStore.getState().user).toBeNull();
+    useAuthStore.setState({ user: user('a') });
+    expect(member().read()).toEqual({ session: 'synthetic-session' });
+  });
+  it('keeps it when another tab finds the session over', async () => {
+    save(member());
+    useAuthStore.setState({ user: null });
+    await handleSessionBroadcast({ type: 'fl-teardown', reason: 'session-expired', userId: 'a' });
+    useAuthStore.setState({ user: user('a') });
+    expect(member().read()).toEqual({ session: 'synthetic-session' });
+  });
+  it.each(['logout', 'account-deleted', 'remote-teardown'] as const)('purges the leaving member synchronously on %s while preserving application mode', async reason => {
     save(member()); save(app(), 'independent');
     const old = member(); const generation = currentSessionGeneration();
     const pending = teardownUserSession('a', reason, false);
@@ -88,7 +115,14 @@ describe('native member state at actual auth-store boundaries', () => {
     expect(useAuthStore.getState().user?.id).toBe('b'); expect(isSessionGenerationCurrent(generation)).toBe(true);
     expect(member('b').read()).toEqual({ session: 'b' });
   });
-  it.each(['logout', 'session-expired', 'account-deleted'])('a same-member %s broadcast removes private data but preserves application data', async reason => {
+  it('a same-member expiry broadcast keeps private data out of reach until they return', async () => {
+    save(member());
+    await handleSessionBroadcast({ type: 'fl-teardown', reason: 'session-expired', userId: 'a' });
+    expect(useAuthStore.getState().user).toBeNull();
+    expect(() => member().read()).toThrow();
+    useAuthStore.setState({ user: user('a') }); expect(member().read()).toEqual({ session: 'synthetic-session' });
+  });
+  it.each(['logout', 'account-deleted'])('a same-member %s broadcast removes private data but preserves application data', async reason => {
     save(member()); save(app(), 'independent');
     await handleSessionBroadcast({ type: 'fl-teardown', reason, userId: 'a' });
     expect(useAuthStore.getState().user).toBeNull(); expect(app().read()).toEqual({ session: 'independent' });
@@ -101,12 +135,13 @@ describe('native member state at actual auth-store boundaries', () => {
     useAuthStore.setState({ user: user('b') });
     expect(() => save(old, 'late')).toThrow(); expect(member('b').read()).toEqual({});
   });
-  it('a direct account transition fences A and removes A while retaining same-user refresh state', () => {
+  it('a direct account transition fences A, whose data waits for them, and keeps same-user refresh state', () => {
     save(member()); const old = member();
     useAuthStore.setState({ user: { ...user('a'), name: 'Updated name' } });
     expect(member().read()).toEqual({ session: 'synthetic-session' });
     useAuthStore.setState({ user: user('b') }); expect(() => old.read()).toThrow();
-    useAuthStore.setState({ user: user('a') }); expect(member().read()).toEqual({});
+    expect(member('b').read()).toEqual({});
+    useAuthStore.setState({ user: user('a') }); expect(member().read()).toEqual({ session: 'synthetic-session' });
   });
   it('an old startup reply cannot replace the newer current account', async () => {
     const request = deferred<unknown>(); calls.getMe.mockReturnValue(request.promise);

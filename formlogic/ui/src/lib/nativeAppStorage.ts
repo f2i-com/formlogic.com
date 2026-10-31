@@ -16,6 +16,8 @@ const ENTRY_LIMIT = 200;
 // This is the action INPUT limit used by the private hosted-runtime port,
 // measured in UTF-16 code units after JSON escaping, like the existing map.
 const INPUT_LIMIT = 32768;
+// SoftN names an app's keys after the id the frame gives it.
+const APP_KEY = /^(xdb|softn):native-([a-zA-Z0-9_-]*):/;
 const MEMBER_PREFIX = 'formlogic:native-member-storage:v1:';
 // By app id, because a slug is reusable: rename an app and another can claim its
 // old slug, and it was then handed what a visitor had saved in the first. A prefix
@@ -40,6 +42,30 @@ export function isNativeStorageScope(value: unknown): value is NativeStorageScop
     || (scope.access === 'members' && validIdentity(scope.userId)));
 }
 
+/**
+ * The id a frame is given, which names the keys inside a map. By app id, as the map itself is:
+ * by slug, a renamed app found none of its keys and opened empty, and added its seeds again.
+ */
+export const nativeFrameAppId = (appId: string) => `native-${appId}`;
+
+/**
+ * Moves keys named after a slug to the id, the current slug's first, so an older name never
+ * replaces what is already there. Anything that cannot move stays as it is, unread but not lost.
+ */
+function adoptKeyNames(saved: Record<string, string>, slug: string, appId: string): Record<string, string> | null {
+  const entries = Object.entries(saved).filter(([name]) => { const match = APP_KEY.exec(name); return match && match[2] !== appId; });
+  if (entries.length === 0) return null;
+  const adopted = new Map(Object.entries(saved));
+  const ofThisSlug = ([name]: [string, string]) => APP_KEY.exec(name)?.[2] === slug ? 0 : 1;
+  for (const [name, value] of entries.sort((a, b) => ofThisSlug(a) - ofThisSlug(b))) {
+    const moved = name.replace(APP_KEY, (_all, store) => `${store}:${nativeFrameAppId(appId)}:`);
+    if (adopted.has(moved) || moved.length > KEY_LIMIT) continue;
+    adopted.delete(name);
+    adopted.set(moved, value);
+  }
+  return Object.fromEntries(adopted);
+}
+
 /** No legacy slug maps are attributed to a member, including during cleanup. */
 export function clearNativeMemberStorage(userId: string): void {
   if (!validIdentity(userId)) return;
@@ -59,7 +85,7 @@ export function clearNativeMemberStorage(userId: string): void {
   }
 }
 
-export type NativeStorageFailure = 'unavailable' | 'too-large' | 'corrupt' | 'invalid' | 'limit';
+export type NativeStorageFailure = 'unavailable' | 'too-large' | 'corrupt' | 'invalid' | 'limit' | 'stale';
 
 export class NativeStorageError extends Error {
   readonly code: NativeStorageFailure;
@@ -89,6 +115,9 @@ export function nativeAppStorage(slug: string, inputScope: NativeStorageScope | 
     ? `${MEMBER_PREFIX}${encodeURIComponent(scope.userId)}:${encodeURIComponent(scope.appId)}`
     : `${APPLICATION_PREFIX}${encodeURIComponent(scope?.appId ?? slug)}`;
   const slugKey = scope?.access === 'application' ? `formlogic:native-storage:${encodeURIComponent(slug)}` : null;
+  // Each key as this handle last read or saved it: a frame holds a snapshot and writes a whole
+  // collection from it, so a key that moved since is another tab's work about to be replaced.
+  let seen: Map<string, string> | null = null;
   /**
    * What was saved under the slug, before maps were kept by id, moves here the
    * first time its app asks, so nothing a person saved is lost. A member's map
@@ -133,8 +162,20 @@ export function nativeAppStorage(slug: string, inputScope: NativeStorageScope | 
     }
     return Object.fromEntries(entries as [string, string][]);
   }
+  function current(): Record<string, string> {
+    const saved = parse(rawValue());
+    const adopted = scope ? adoptKeyNames(saved, slug, scope.appId) : null;
+    if (!adopted) return saved;
+    // Ids are longer than slugs, so a map at its limit can't take them yet. It keeps the old names
+    // and opens under the new ones until a save brings it back under: this runs at every opening.
+    const data = JSON.stringify(adopted);
+    if (data.length <= LIMIT) try { localStorage.setItem(key, data); } catch { /* As above. */ }
+    return adopted;
+  }
   function read(): Record<string, string> {
-    return parse(rawValue());
+    const saved = current();
+    seen = new Map(Object.entries(saved));
+    return saved;
   }
   function mutate(input: Record<string, unknown>) {
     assertScope();
@@ -161,7 +202,9 @@ export function nativeAppStorage(slug: string, inputScope: NativeStorageScope | 
     }
     // Refused before any change when the stored map is not whole: the
     // original bytes are the owner's to export or reset, not ours to rewrite.
-    const entries = new Map(Object.entries(read()));
+    const before = new Map(Object.entries(current()));
+    const entries = new Map(before);
+    const known = seen ?? new Map(before);
     if (input.operation === 'clear') entries.clear();
     else if (replacements) {
       for (const item of replacements) entries.set(item.key, item.value);
@@ -174,7 +217,18 @@ export function nativeAppStorage(slug: string, inputScope: NativeStorageScope | 
     }
     const data = JSON.stringify(Object.fromEntries(entries));
     if (entries.size > ENTRY_LIMIT || data.length > LIMIT) throw new NativeStorageError('This app has reached its browser storage limit.', 'limit');
+    const touched = input.operation === 'clear' ? [...new Set([...before.keys(), ...known.keys()])]
+      : replacements ? replacements.map(item => item.key) : [input.key as string];
+    if (touched.some(name => before.get(name) !== known.get(name))) {
+      throw new NativeStorageError('This app’s saved data changed in another tab.', 'stale');
+    }
     localStorage.setItem(key, data);
+    for (const name of touched) {
+      const value = entries.get(name);
+      if (value === undefined) known.delete(name);
+      else known.set(name, value);
+    }
+    seen = known;
     return { saved: true };
   }
   /** What the owner can be told before the app starts: healthy, empty, or how it failed. */
@@ -198,7 +252,8 @@ export function nativeAppStorage(slug: string, inputScope: NativeStorageScope | 
     try {
       localStorage.removeItem(key);
       if (slugKey && localStorage.getItem(slugKey) !== null) localStorage.removeItem(slugKey);
+      seen = null;
     } catch { throw new NativeStorageError('Browser storage is not available.', 'unavailable'); }
   }
-  return { read, mutate, status, exportRaw, reset };
+  return { key, read, mutate, status, exportRaw, reset };
 }

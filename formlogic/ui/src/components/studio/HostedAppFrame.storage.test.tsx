@@ -20,6 +20,7 @@ import { NATIVE_PROTOCOL } from '../../lib/softn/protocol';
 import { bumpSessionGeneration } from '../../lib/sessionGeneration';
 import { api } from '../../lib/api';
 import { workspaceBridge } from '../../lib/softn/workspaceBridge';
+import { toast } from '../../stores/toastStore';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 const identity = { version: '0.0.17', sha256: 'current' };
@@ -71,6 +72,39 @@ function sendReady(iframe: HTMLIFrameElement, storageProtocol?: number) {
 const button = (label: string) => [...container.querySelectorAll('button')].find(node => node.textContent === label);
 const call = (channel: StubChannel, input: unknown, id = 1, action = 'nativeStorage') => channel.port1.onmessage?.({ data: { type: 'call', id, action, input } });
 const onlyDisposal = (channel: StubChannel) => expect(channel.port1.postMessage.mock.calls.map(([message]) => message)).toEqual([{ type: 'formlogic:dispose' }]);
+
+it('reopens on the latest saved data when someone comes back to a tab another tab saved past', async () => {
+  const { iframe } = await mountNative();
+  await act(async () => sendReady(iframe, 1));
+  localStorage.setItem(storageKey, JSON.stringify({ notes: 'from-another-tab' }));
+  await act(async () => { window.dispatchEvent(new StorageEvent('storage', { key: storageKey })); });
+  expect(container.querySelector('iframe')).toBe(iframe);
+  await act(async () => { window.dispatchEvent(new Event('focus')); });
+  expect(container.querySelector('iframe')).not.toBe(iframe);
+  const next = spyOnFrame();
+  await act(async () => sendReady(next.iframe, 1));
+  expect(next.post).toHaveBeenCalledWith(expect.objectContaining({ storage: { notes: 'from-another-tab' } }), '*', expect.anything());
+});
+
+it('takes no notice of another key changing in another tab', async () => {
+  const { iframe } = await mountNative();
+  await act(async () => sendReady(iframe, 1));
+  await act(async () => { window.dispatchEvent(new StorageEvent('storage', { key: 'formlogic:native-app-storage:v1:other-app' })); });
+  await act(async () => { window.dispatchEvent(new Event('focus')); });
+  expect(container.querySelector('iframe')).toBe(iframe);
+});
+
+it('refuses a save from an old snapshot, says so, and reopens on what is saved', async () => {
+  const warn = vi.spyOn(toast, 'warning');
+  const { iframe } = await mountNative();
+  await act(async () => sendReady(iframe, 1));
+  const channel = channels[0];
+  localStorage.setItem(storageKey, JSON.stringify({ notes: 'from-another-tab' }));
+  await act(async () => call(channel, { operation: 'set', key: 'notes', value: 'overwrites-it' }));
+  expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({ notes: 'from-another-tab' });
+  expect(warn).toHaveBeenCalledWith('This app changed in another tab', expect.stringContaining('not saved'));
+  expect(container.querySelector('iframe')).not.toBe(iframe);
+});
 
 it('hands healthy saved data to the app unchanged', async () => {
   localStorage.setItem(storageKey, JSON.stringify({ session: 'kept' }));
@@ -241,7 +275,7 @@ it('fences a source/app replacement before a delayed old callback can write to e
   onlyDisposal(oldChannel);
   const next = spyOnFrame();
   await act(async () => sendReady(next.iframe, 1));
-  expect(next.post).toHaveBeenCalledWith(expect.objectContaining({ appId: 'native-other', storage: {} }), '*', expect.anything());
+  expect(next.post).toHaveBeenCalledWith(expect.objectContaining({ appId: 'native-notes-app', storage: {} }), '*', expect.anything());
 });
 
 it('remounts when native assets change even if the client/version/engine stay identical', async () => {

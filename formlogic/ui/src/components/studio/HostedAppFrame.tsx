@@ -5,7 +5,8 @@ import { NATIVE_PROTOCOL } from "../../lib/softn/protocol";
 import { engineIdentity, engineNeedsBytes, getEngineBytes } from "../../lib/formlogic/zipp-bytes";
 import { announcedIdentity, chooseFrameEngine, frameSource, sameIdentity } from "../../lib/formlogic/frameEngine";
 
-import { nativeAppStorage, NativeStorageError, isNativeStorageScope, type NativeStorageScope } from "../../lib/nativeAppStorage";
+import { nativeAppStorage, nativeFrameAppId, NativeStorageError, isNativeStorageScope, type NativeStorageScope } from "../../lib/nativeAppStorage";
+import { toast } from "../../stores/toastStore";
 import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent, subscribeSessionGeneration } from "../../lib/sessionGeneration";
 import { copyHostedActor, HOSTED_ACTOR_ERROR, isHostedAdmissionCurrent, sameHostedActor, type HostedAdmission } from '../../lib/hostedActor';
 
@@ -229,6 +230,21 @@ export function HostedAppFrame({
       if (port.current === channel?.port1) port.current = null;
     }
     invalidateMount.current = invalidate;
+    // Another tab saved this app's data, so this frame's snapshot is old. It is reopened when
+    // someone comes back to it, not on the spot: tabs that each save while opening would
+    // otherwise reopen each other for ever. A save from an old snapshot is refused (stale).
+    let snapshotOld = false;
+    const noteOtherTab = (event: StorageEvent) => {
+      if (storage && (event.key === storage.key || event.key === null)) snapshotOld = true;
+    };
+    const reopenIfOld = () => {
+      if (!snapshotOld || document.hidden || !isCurrentMount()) return;
+      snapshotOld = false;
+      setStorageEpoch((epoch) => epoch + 1);
+    };
+    window.addEventListener("storage", noteOtherTab);
+    window.addEventListener("focus", reopenIfOld);
+    document.addEventListener("visibilitychange", reopenIfOld);
     // Close the old channel at the session boundary itself, before React cleanup.
     const unsubscribe = subscribeSessionGeneration(() => { if (!sameSession()) invalidate(); });
     async function receive(event: MessageEvent) {
@@ -383,6 +399,10 @@ export function HostedAppFrame({
           if (isCurrentMount() && engineChanged(result)) void remountOnNewEngine();
           reply(result.error ? { error: result.error } : { result: result.data?.result });
         } catch (reason) {
+          if (action === "nativeStorage" && reason instanceof NativeStorageError && reason.code === "stale" && isCurrentMount()) {
+            toast.warning("This app changed in another tab", "It has reopened with the latest saved data. Your last change was not saved.");
+            setStorageEpoch((epoch) => epoch + 1);
+          }
           if (action === "nativeStorage" && reason instanceof NativeStorageError && ["corrupt", "too-large", "unavailable"].includes(reason.code) && isCurrentMount()) {
             const exportable = (() => { try { return reason.code !== "unavailable" && !!storage?.exportRaw(); } catch { return false; } })();
             setStorageIssue({ key: frameKey, message: reason.message, exportable });
@@ -397,7 +417,7 @@ export function HostedAppFrame({
         {
           type: "formlogic:init",
           client: mountClient,
-          appId: mountNative ? `native-${slug}` : `hosted-${slug}-${mountVersion}`,
+          appId: mountNative ? nativeFrameAppId(mountNative.storageScope?.appId ?? slug) : `hosted-${slug}-${mountVersion}`,
           native: !!mountNative,
           assets: mountNative?.assets,
           storage: savedStorage,
@@ -426,6 +446,9 @@ export function HostedAppFrame({
       active = false;
       unsubscribe();
       invalidate();
+      window.removeEventListener("storage", noteOtherTab);
+      window.removeEventListener("focus", reopenIfOld);
+      document.removeEventListener("visibilitychange", reopenIfOld);
       window.removeEventListener("message", receive);
       if (invalidateMount.current === invalidate) invalidateMount.current = null;
       if (recovery.current?.key === frameKey) recovery.current = null;

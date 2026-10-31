@@ -289,6 +289,7 @@ function Workspace({ app }: { app: App }) {
                   <span><span className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-white"><Icon className="h-4 w-4" aria-hidden="true" />{label}</span><span className="mt-0.5 block text-xs leading-5 text-slate-500 dark:text-slate-400">{hint}</span></span>
                 </label>)}
             </fieldset>
+            {!projectHasBackend(project) && <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">This app keeps its records in each visitor&rsquo;s own browser, so changing this starts everyone again from empty.</p>}
             <Link to={`/apps/${app.id}/studio/access`} className="mt-3 inline-flex min-h-10 items-center text-sm font-medium text-indigo-600 dark:text-indigo-300">Members &amp; roles</Link>
           </Panel>
           <Panel title="Address" icon={<Globe className="h-4 w-4" />}>

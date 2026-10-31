@@ -25,6 +25,9 @@ Any SoftN app can be uploaded, with a backend of its own or none:
   page. Its seed data (the `.xdb` files `manifest.files.xdb` names) is kept with it, downloaded
   with it, and added to each visitor's copy before the app first draws (SoftN v0.0.28 on): once
   per record, never over a record the visitor has, and a seed record they removed stays removed.
+  What a member saves stays through a session ending, in every tab and across renames of the app;
+  signing out or deleting the account is what erases it, so a shared computer needs a sign-out.
+  Another account never reads it. Changing who can use the app starts everyone from empty.
   Browser storage holds about 30,000 characters per collection (256 KB and 200 keys per app), so a
   larger seed is skipped with a console warning naming it, and the app opens with the rest. It
   needs no runtime on the server: a server without the native runtime installs, publishes and

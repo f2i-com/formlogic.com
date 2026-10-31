@@ -50,6 +50,127 @@ describe('an application map belongs to the app, not to its slug', () => {
   });
 });
 
+describe('the keys inside a map belong to the app, not to its slug', () => {
+  const app = (appId: string): Scope => ({ access: 'application', appId });
+  const stored = (appId: string) => JSON.parse(localStorage.getItem(`formlogic:native-app-storage:v1:${appId}`)!);
+  const store = (appId: string, map: Record<string, string>) => localStorage.setItem(`formlogic:native-app-storage:v1:${appId}`, JSON.stringify(map));
+
+  it('moves every key named after a slug to the id, seed records and app storage too', () => {
+    store('app-one', { 'xdb:native-cafe:notes': '[1]', 'xdb:native-cafe::seeded': 'yes', 'softn:native-cafe:token': 'kept', other: 'left alone' });
+    const expected = { 'xdb:native-app-one:notes': '[1]', 'xdb:native-app-one::seeded': 'yes', 'softn:native-app-one:token': 'kept', other: 'left alone' };
+    expect(open('cafe', app('app-one')).read()).toEqual(expected);
+    expect(stored('app-one')).toEqual(expected);
+  });
+  it('keeps an app\'s records through a rename made before the keys moved', () => {
+    store('app-one', { 'xdb:native-old-name:notes': '[1]' });
+    expect(open('new-name', app('app-one')).read()).toEqual({ 'xdb:native-app-one:notes': '[1]' });
+  });
+  it('lets the current slug win over an older one, losing neither', () => {
+    store('app-one', { 'xdb:native-old-name:notes': '[old]', 'xdb:native-new-name:notes': '[new]' });
+    expect(open('new-name', app('app-one')).read()).toEqual({ 'xdb:native-app-one:notes': '[new]', 'xdb:native-old-name:notes': '[old]' });
+  });
+  it('never replaces what is already under the id', () => {
+    store('app-one', { 'xdb:native-app-one:notes': '[current]', 'xdb:native-cafe:notes': '[old]' });
+    expect(open('cafe', app('app-one')).read()).toEqual({ 'xdb:native-app-one:notes': '[current]', 'xdb:native-cafe:notes': '[old]' });
+  });
+  it('does nothing to a map already in order, and writes nothing', () => {
+    store('app-one', { 'xdb:native-app-one:notes': '[1]' });
+    const write = vi.spyOn(Storage.prototype, 'setItem');
+    expect(open('cafe', app('app-one')).read()).toEqual({ 'xdb:native-app-one:notes': '[1]' });
+    expect(write).not.toHaveBeenCalled();
+  });
+  it('moves a member\'s keys too', () => {
+    localStorage.setItem('formlogic:native-member-storage:v1:member-a:app-one', JSON.stringify({ 'xdb:native-cafe:notes': '[1]' }));
+    expect(open('cafe', member()).read()).toEqual({ 'xdb:native-app-one:notes': '[1]' });
+  });
+  it('leaves a key that would pass the key limit where it is', () => {
+    const name = `xdb:native-c:${'n'.repeat(240)}`;
+    store('app-one', { [name]: '[1]' });
+    expect(open('c', app('a-rather-long-application-identifier')).read()).toEqual({});
+    store('a-rather-long-application-identifier', { [name]: '[1]' });
+    expect(open('c', app('a-rather-long-application-identifier')).read()).toEqual({ [name]: '[1]' });
+  });
+  it('opens a map at its limit under the new names without rewriting it, and saves once it fits', () => {
+    const value = 'x'.repeat(29_000);
+    const full = Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`xdb:native-c:c${i}`, value]));
+    const padded = { ...full, pad: 'y'.repeat(256 * 1024 - JSON.stringify(full).length - 12) };
+    store('app-one', padded);
+    const before = localStorage.getItem('formlogic:native-app-storage:v1:app-one');
+    const opened = open('c', app('app-one'));
+    expect(opened.read()['xdb:native-app-one:c0']).toBe(value);
+    expect(localStorage.getItem('formlogic:native-app-storage:v1:app-one')).toBe(before);
+    opened.mutate({ operation: 'remove', key: 'pad' });
+    expect(stored('app-one')['xdb:native-app-one:c0']).toBe(value);
+    expect(stored('app-one')['xdb:native-c:c0']).toBeUndefined();
+  });
+});
+
+describe('two tabs on one map', () => {
+  const app: Scope = { access: 'application', appId: 'app-one' };
+  const write = (value: ReturnType<typeof open>, key: string, text: string) => value.mutate({ operation: 'set', key, value: text });
+
+  it('refuses a save from a snapshot another tab has moved past, and keeps that tab\'s work', () => {
+    const first = open('cafe', app); const second = open('cafe', app);
+    first.read(); second.read();
+    write(first, 'notes', '[a]');
+    expect(() => write(second, 'notes', '[b]')).toThrowError(expect.objectContaining({ code: 'stale' }));
+    expect(open('cafe', app).read()).toEqual({ notes: '[a]' });
+  });
+  it('lets two tabs save different keys', () => {
+    const first = open('cafe', app); const second = open('cafe', app);
+    first.read(); second.read();
+    write(first, 'notes', '[a]');
+    write(second, 'todos', '[b]');
+    expect(open('cafe', app).read()).toEqual({ notes: '[a]', todos: '[b]' });
+  });
+  it('lets a tab keep saving over its own writes', () => {
+    const first = open('cafe', app);
+    first.read();
+    write(first, 'notes', '[1]'); write(first, 'notes', '[1,2]');
+    first.mutate({ operation: 'remove', key: 'notes' }); write(first, 'notes', '[3]');
+    expect(open('cafe', app).read()).toEqual({ notes: '[3]' });
+  });
+  it('refuses a key another tab created or removed', () => {
+    const first = open('cafe', app); const second = open('cafe', app);
+    write(first, 'notes', '[1]');
+    first.read(); second.read();
+    write(first, 'todos', '[1]');
+    expect(() => write(second, 'todos', '[2]')).toThrowError(expect.objectContaining({ code: 'stale' }));
+    first.mutate({ operation: 'remove', key: 'notes' });
+    expect(() => write(second, 'notes', '[2]')).toThrowError(expect.objectContaining({ code: 'stale' }));
+  });
+  it('refuses a whole batch if one key moved, saving none of it', () => {
+    const first = open('cafe', app); const second = open('cafe', app);
+    first.read(); second.read();
+    write(first, 'notes', '[a]');
+    const batch = { operation: 'batch', replacements: [{ key: 'todos', value: '[b]' }, { key: 'notes', value: '[b]' }] };
+    expect(() => second.mutate(batch)).toThrowError(expect.objectContaining({ code: 'stale' }));
+    expect(open('cafe', app).read()).toEqual({ notes: '[a]' });
+  });
+  it('refuses a clear from an old snapshot', () => {
+    const first = open('cafe', app); const second = open('cafe', app);
+    first.read(); second.read();
+    write(first, 'notes', '[a]');
+    expect(() => second.mutate({ operation: 'clear' })).toThrowError(expect.objectContaining({ code: 'stale' }));
+    expect(open('cafe', app).read()).toEqual({ notes: '[a]' });
+  });
+  it('accepts the same save again once the tab has read what changed', () => {
+    const first = open('cafe', app); const second = open('cafe', app);
+    first.read(); second.read();
+    write(first, 'notes', '[a]');
+    second.read();
+    write(second, 'notes', '[a,b]');
+    expect(open('cafe', app).read()).toEqual({ notes: '[a,b]' });
+  });
+  it('holds no claim from before a reset', () => {
+    const first = open('cafe', app);
+    write(first, 'notes', '[a]');
+    first.reset();
+    write(first, 'notes', '[b]');
+    expect(open('cafe', app).read()).toEqual({ notes: '[b]' });
+  });
+});
+
 describe('trusted native member namespaces', () => {
   it('never adopts or exports the previous unbound slug snapshot', () => {
     localStorage.setItem(legacy('cafe'), JSON.stringify({ session: 'unattributed' }));

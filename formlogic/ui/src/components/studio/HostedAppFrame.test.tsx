@@ -499,7 +499,7 @@ describe('a remount on the server’s new decision', () => {
     const init = initOf(post);
     expect(init.client).toEqual(fresh);
     expect(init.assets).toEqual({ 'logo.png': 'new' });
-    expect(init.appId).toBe('native-notes');
+    expect(init.appId).toBe('native-notes-app');
   });
 
   it('keeps this mount’s client when the refetched answer carries none', async () => {
