@@ -13,16 +13,44 @@ class HostedAppService
 {
     public function __construct(private SandboxRunner $runner, private ?string $storagePath = null) {}
 
-    private function database(string $appId): PDO
+    /** Where an app's database is, or would be. Unlike opening it, this creates nothing. */
+    public static function databasePath(string $appId, ?string $storagePath = null): string
     {
         if (!preg_match('/^[a-zA-Z0-9_-]{1,100}$/D', $appId)) {
             throw new InvalidArgumentException('Invalid app identity');
         }
-        $root = $this->storagePath ?? dirname(__DIR__, 2) . '/storage/hosted-apps';
+        return ($storagePath ?? dirname(__DIR__, 2) . '/storage/hosted-apps') . '/' . hash('sha256', $appId) . '.sqlite';
+    }
+
+    /**
+     * Puts a verified snapshot in place as an app's database, in one rename. What the app already
+     * has is never replaced: it says false, and an undeleted app keeps what it has.
+     */
+    public static function restoreDatabase(string $appId, string $snapshot, ?string $storagePath = null): bool
+    {
+        $path = self::databasePath($appId, $storagePath);
+        if (is_file($path)) return false;
+        $root = dirname($path);
+        if (!is_dir($root) && !@mkdir($root, 0700, true) && !is_dir($root)) {
+            throw new RuntimeException('App storage is unavailable');
+        }
+        $staged = $path . '.restore-' . bin2hex(random_bytes(4));
+        try {
+            if (!copy($snapshot, $staged) || !rename($staged, $path)) throw new RuntimeException('Cannot restore the app database');
+        } finally {
+            if (is_file($staged)) unlink($staged);
+        }
+        return true;
+    }
+
+    private function database(string $appId): PDO
+    {
+        $path = self::databasePath($appId, $this->storagePath);
+        $root = dirname($path);
         if (!is_dir($root) && !mkdir($root, 0700, true) && !is_dir($root)) {
             throw new RuntimeException('App storage is unavailable');
         }
-        $db = new PDO('sqlite:' . $root . '/' . hash('sha256', $appId) . '.sqlite', null, null, [
+        $db = new PDO('sqlite:' . $path, null, null, [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         ]);
@@ -43,9 +71,7 @@ class HostedAppService
     /** Remove an app's database, and SQLite's files beside it. Needs no runner: nothing is run. */
     public static function eraseStorage(string $appId, ?string $storagePath = null): void
     {
-        if (!preg_match('/^[a-zA-Z0-9_-]{1,100}$/D', $appId)) throw new InvalidArgumentException('Invalid app identity');
-        $root = $storagePath ?? dirname(__DIR__, 2) . '/storage/hosted-apps';
-        $path = $root . '/' . hash('sha256', $appId) . '.sqlite';
+        $path = self::databasePath($appId, $storagePath);
         foreach ([$path, $path . '-wal', $path . '-shm', $path . '-journal'] as $file) {
             if (is_file($file) && !unlink($file)) throw new RuntimeException('Cannot remove app deployment');
         }

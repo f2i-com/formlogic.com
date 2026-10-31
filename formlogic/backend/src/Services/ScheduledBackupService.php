@@ -160,7 +160,7 @@ final class ScheduledBackupService
                     throw new \RuntimeException('Could not move the account zip into the staging folder');
                 }
                 @unlink($tmpZip); // no-op after a successful rename
-                $counts = $this->verifyAccountZip($dest);
+                $verified = $this->verifyAccountZip($dest);
                 $this->syncFile($dest);
                 $size = (int) filesize($dest);
                 $totalBytes += $size;
@@ -172,7 +172,9 @@ final class ScheduledBackupService
                     'sha256' => hash_file('sha256', $dest),
                     // What the zip actually carries (from ITS manifest) — a restore
                     // operator can see native apps are included without unzipping.
-                    'counts' => $counts,
+                    'counts' => $verified['counts'],
+                    // Anything it had to leave out, such as an app waiting on recovery.
+                    'warnings' => $verified['warnings'],
                 ];
                 $ok++;
             } catch (\Throwable $e) {
@@ -309,7 +311,8 @@ final class ScheduledBackupService
         foreach (is_array($manifest['counts'] ?? null) ? $manifest['counts'] : [] as $key => $value) {
             $counts[(string) $key] = (int) $value;
         }
-        return $counts;
+        $warnings = array_values(array_filter(is_array($manifest['warnings'] ?? null) ? $manifest['warnings'] : [], 'is_string'));
+        return ['counts' => $counts, 'warnings' => $warnings];
     }
 
     private function writeChecked(string $path, string $content): void
@@ -413,7 +416,7 @@ final class ScheduledBackupService
         if (!is_file($zip)) {
             throw new \RuntimeException("No backup for this account exists on {$date}");
         }
-        return $this->accountBackup->importAccount($zip, $userId);
+        return $this->accountBackup->importAccount($zip, $userId, ['serverHeld' => true]);
     }
 
     // ── internals ────────────────────────────────────────────────────────────
@@ -514,18 +517,22 @@ FormLogic scheduled backup — how to restore
         data/forms/*.sqlite  ->  backend/storage/forms/
         files/<formId>/*     ->  backend/storage/uploads/<formId>/
       The ids match the restored MySQL rows, so everything lines up.
-   c. Hosted NATIVE apps live under native/<appId>/ in the same zip:
-        project.json        the app's source and media (portable)
-        application.sqlite  its private record database (consistent snapshot)
-        host-config.json    its host KEY MATERIAL - present only in these
-                            scheduled archives; keep this folder as private as
-                            the MySQL dump.
-      Put them back with the admin restore (option 1 in preserve-ids mode) or,
-      by hand, run the account import; do NOT copy native/ files into
-      backend/storage/native-apps/ directly - the directory names there are
-      hashes of the app id and the runtime validates the source on install.
-      A restore WITHOUT host-config.json reissues the app's keys and says so in
-      its warnings: values the app sealed or signed before cannot be read.
+   c. Apps keep their own storage, in the same zip:
+        native/<appId>/project.json        a native app's source and media
+        native/<appId>/application.sqlite  its private record database
+        native/<appId>/host-config.json    its host KEY MATERIAL - present only
+                            in these scheduled archives; keep this folder as
+                            private as the MySQL dump.
+        hosted/<appId>/application.sqlite  a hosted app's deployment, private
+                            actions and records
+      Once step a is done, put them back under their original ids, so the
+      restored rows, links, members and visitors' saved data find them:
+        php backend/bin/restore-app-storage.php <this folder>
+      Run it again whenever you like: storage already there is never replaced.
+      Do NOT copy these files into backend/storage/ by hand - the names there
+      are hashes of the app id and the runtime validates the source on install.
+      A native app restored WITHOUT host-config.json gets new keys and says so:
+      values it sealed or signed before cannot be read.
 
 3) MOVE ACCOUNTS TO ANOTHER SERVER
    Import individual accounts/<userId>.zip files through Settings -> Backup &

@@ -303,6 +303,7 @@ final class TrashService
                 throw new \RuntimeException('The snapshot file for this item is missing from the server');
             }
             $summary = $this->backup->importAccount($zipAbs, $userId, [
+                'serverHeld' => true,
                 'preserveIds' => true,
                 'attachExistingForms' => true,
                 'attachExistingApps' => true,

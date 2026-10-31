@@ -59,7 +59,7 @@ OAIY replaces the retired FormLogic Desktop host. Its default local API is `http
 
 Automatic push/PR checks are temporarily paused. Run relevant checks manually and record their results for the commit being released. The package workflow is manual-only; select the intended branch or tag when starting it. The workflow files in [`.github/workflows`](../.github/workflows) define the actual release triggers.
 
-Hosted app databases under `backend/storage/hosted-apps` are separate from per-form response databases and are not yet included in account/form exports. Include them in operator backups using a consistent SQLite snapshot; see [export and backup boundaries](HOSTED_APPS.md#export-and-back-up).
+Hosted app databases under `backend/storage/hosted-apps` are separate from per-form response databases. Account backups carry them; see [export and backup boundaries](HOSTED_APPS.md#export-and-back-up).
 
 ## Design records and legacy contracts
 
