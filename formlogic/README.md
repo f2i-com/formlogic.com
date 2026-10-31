@@ -179,6 +179,7 @@ npm run build     # output: ui/dist/
 - Serve `ui/dist/` as the document root (SPA fallback to `index.html`)
 - Route `/api/*` to `backend/public/index.php`
 - Serve `/hosted-runtime/*` as real static files, with `Access-Control-Allow-Origin: *` and `X-Content-Type-Options: nosniff` for the sandboxed app frame. Missing assets must return 404, not the SPA HTML. Apply these headers only to this static directory, not authenticated API routes.
+- Send `Content-Security-Policy: sandbox allow-scripts; frame-ancestors 'self'; base-uri 'self'; object-src 'none'` and `X-Frame-Options: SAMEORIGIN` on the two runtime documents, `/hosted-runtime/index.html` and `/hosted-runtime/host.html`. They run other people's code: without this, a page elsewhere could frame them and run that code at your origin. The examples below do it, and the bundled `.htaccess` does it for you.
 
 > **Production must be HTTPS.** Auth uses `Secure` cookies in production, so login fails over plain HTTP. Terminate TLS directly or at a reverse proxy (which must send `X-Forwarded-Proto: https`), and redirect port 80 → 443. See [DEPLOYMENT.md](../DEPLOYMENT.md) for the full launch checklist.
 >
@@ -214,6 +215,10 @@ npm run build     # output: ui/dist/
         FallbackResource disabled
         Header always set Access-Control-Allow-Origin "*"
         Header always set X-Content-Type-Options "nosniff"
+        <FilesMatch "^(index|host)\.html$">
+            Header always set X-Frame-Options "SAMEORIGIN"
+            Header always set Content-Security-Policy "sandbox allow-scripts; frame-ancestors 'self'; base-uri 'self'; object-src 'none'"
+        </FilesMatch>
     </Directory>
 
     # Backend API — exposes backend/public ONLY (never backend/storage, backend/logs, or .env).
@@ -262,6 +267,21 @@ server {
         try_files $uri =404;
         add_header Access-Control-Allow-Origin "*" always;
         add_header X-Content-Type-Options "nosniff" always;
+    }
+
+    # The two runtime documents sandbox themselves. nginx drops inherited add_header lines, so
+    # these repeat them, and exact matches win over the prefix above.
+    location = /hosted-runtime/index.html {
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header Content-Security-Policy "sandbox allow-scripts; frame-ancestors 'self'; base-uri 'self'; object-src 'none'" always;
+    }
+    location = /hosted-runtime/host.html {
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header Content-Security-Policy "sandbox allow-scripts; frame-ancestors 'self'; base-uri 'self'; object-src 'none'" always;
     }
 
     # Backend API — backend/public ONLY.

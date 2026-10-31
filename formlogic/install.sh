@@ -95,6 +95,9 @@ cd "$BACKEND_DIR"
 
 # Create storage directories
 mkdir -p storage/forms storage/hosted-apps storage/native-apps storage/packs storage/uploads storage/pack-screenshots logs
+# Databases and backups are written at the default mode, so these folders are what keeps other
+# accounts on this machine out of them.
+chmod -R o-rwx storage logs
 
 # Install PHP dependencies
 info "Installing Composer dependencies..."

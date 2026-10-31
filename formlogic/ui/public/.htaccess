@@ -58,6 +58,12 @@ Options -Indexes
   SetEnvIf Request_URI "^/(hosted-runtime/(index\.html|host\.html)?|app-editors/(builder|studio)/(index\.html)?)$" IS_APP_FRAME
   Header always set X-Frame-Options "SAMEORIGIN" env=IS_APP_FRAME
   Header always set Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" env=IS_APP_FRAME
+  # The runtime documents run other people's code, so the response itself sandboxes them: they
+  # stay opaque however they are reached, not only inside FormLogic's own frame. Framed by some
+  # other page on a server missing the rules above, they would otherwise run at this origin.
+  # After the policy above, which this replaces. The editors are same-origin and stay out of it.
+  SetEnvIf Request_URI "^/hosted-runtime/(index\.html|host\.html)?$" IS_APP_RUNTIME
+  Header always set Content-Security-Policy "sandbox allow-scripts; frame-ancestors 'self'; base-uri 'self'; object-src 'none'" env=IS_APP_RUNTIME
 </IfModule>
 
 # ---- Never serve secrets or server files over HTTP -------------------------

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Services;
 
 use FormLogic\Database\SqliteSnapshot;
+use FormLogic\Support\Environment;
 use InvalidArgumentException;
 use RuntimeException;
 use PDO;
@@ -97,6 +98,14 @@ class NativeAppService
      * not hold secrets it has no use for. Compared case-insensitively (Windows).
      */
     private const NODE_ENV_ALLOWLIST = ['PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'LANG', 'LC_ALL', 'NODE_OPTIONS', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE'];
+
+    /**
+     * Workers across every app here, and how many of them any one app may hold. A worker is held
+     * for a whole request, and a query can run for about twenty seconds, so without the second
+     * number one app's visitors could turn every other app away.
+     */
+    private const WORKERS = 4;
+    private const WORKERS_PER_APP = 2;
 
     /** softn-runner as a Softn release carries it in native-runtime/bin, by the server it runs on (x86-64). */
     private const RUNNER_BINARIES = ['Linux' => 'softn-runner-linux-x86_64', 'Windows' => 'softn-runner-windows-x86_64.exe'];
@@ -1622,27 +1631,39 @@ class NativeAppService
         // Bound concurrent native workers across every app in this storage root.
         $slots = dirname($root) . '/.runtime-slots';
         $this->directory($slots);
+        $take = static function (string $prefix, int $count) use ($slots) {
+            for ($index = 0; $index < $count; $index++) {
+                $candidate = fopen($slots . '/' . $prefix . $index . '.lock', 'c');
+                if ($candidate && flock($candidate, LOCK_EX | LOCK_NB)) return $candidate;
+                if ($candidate) fclose($candidate);
+            }
+            return null;
+        };
+        $appSlot = null;
         $slot = null;
         // A request waits up to three seconds for a slot before it is turned away: most run in
         // well under a second, so a burst (a screen loading four lists at once) is served, not
         // answered busy.
         $waitUntil = microtime(true) + 3;
         while (true) {
-            for ($index = 0; $index < 4; $index++) {
-                $candidate = fopen($slots . '/' . $index . '.lock', 'c');
-                if ($candidate && flock($candidate, LOCK_EX | LOCK_NB)) { $slot = $candidate; break; }
-                if ($candidate) fclose($candidate);
-            }
+            $appSlot ??= $take(basename($root) . '-', self::WORKERS_PER_APP);
+            if ($appSlot) $slot = $take('', self::WORKERS);
             if ($slot || microtime(true) >= $waitUntil) break;
             usleep(50000);
         }
-        if (!$slot) { unlink($base . '.in'); throw new RuntimeException('The native host is busy. Try again shortly.', 429); }
+        if (!$slot) {
+            if ($appSlot) { flock($appSlot, LOCK_UN); fclose($appSlot); }
+            unlink($base . '.in');
+            throw new RuntimeException('The native host is busy. Try again shortly.', 429);
+        }
         $answered = false;
         try {
             $node = $this->nodeBinary();
             // Only the allowlisted variables reach the runtime (see NODE_ENV_ALLOWLIST); the
             // three SOFTN_* values are the whole host context the worker reads.
-            $env = self::nodeEnvironment(getenv(), ['SOFTN_BACKEND_ROOT' => $root, 'SOFTN_HOST_CONTEXT' => json_encode($identity, JSON_THROW_ON_ERROR), 'SOFTN_RECORD_EVENTS' => json_encode($subscriptions, JSON_THROW_ON_ERROR)]);
+            // An operator's cap on what one worker may use; the runner's own limit otherwise.
+            $memory = Environment::nonEmpty('SOFTN_RUNNER_MEMORY_MB');
+            $env = self::nodeEnvironment(getenv(), ['SOFTN_BACKEND_ROOT' => $root, 'SOFTN_HOST_CONTEXT' => json_encode($identity, JSON_THROW_ON_ERROR), 'SOFTN_RECORD_EVENTS' => json_encode($subscriptions, JSON_THROW_ON_ERROR)] + ($memory !== null ? ['SOFTN_RUNNER_MEMORY_MB' => $memory] : []));
             $command = $runner !== null ? [$runner] : self::runnerCommand($node, $this->runtime());
             $process = proc_open($command, [0 => ['file', $base . '.in', 'r'], 1 => ['file', $base . '.out', 'w'], 2 => ['file', $base . '.err', 'w']], $pipes, $root, $env, ['bypass_shell' => true]);
             if (!is_resource($process)) throw new RuntimeException('Native runtime could not start');
@@ -1664,6 +1685,7 @@ class NativeAppService
         } finally {
             if (is_resource($process)) proc_close($process);
             flock($slot, LOCK_UN); fclose($slot);
+            flock($appSlot, LOCK_UN); fclose($appSlot);
             // A visitor gets a general error, so this is all anyone will have to go on.
             if (!$answered && is_file($base . '.err') && filesize($base . '.err') > 0) {
                 error_log('Native runner failed in ' . basename($root) . ': ' . file_get_contents($base . '.err', false, null, 0, 4096));

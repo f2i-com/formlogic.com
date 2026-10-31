@@ -67,6 +67,8 @@ $dotenv->safeLoad();
 // Load settings
 $settings = require __DIR__ . '/../config/settings.php';
 
+\FormLogic\Support\StorageAccess::closeToOthers(__DIR__ . '/../storage', __DIR__ . '/../logs');
+
 // Create Container
 $container = new Container();
 
@@ -3044,6 +3046,9 @@ $app->get('/api/admin/audit/verify', function ($request, $response) use ($contai
 
 // Hosted projects: authentication, CSRF (global), bounded requests and cloud write gate.
 $hostingLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'hosted_apps', true, true);
+// What an app's own page spends is counted per app, apart from the owner's publishes above: a
+// hostile frame could otherwise lock a viewer out of every other app, and of publishing.
+$hostingRuntimeLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'hosted_app_runtime', true, true, null, true);
 // An owner reading their own app's project (the SoftN app workspace, the hosting panels and the
 // editors each read it as they open) has a bucket of its own, so reads never use up the
 // installs and publishes the write bucket above is there to bound.
@@ -3068,10 +3073,10 @@ $app->put('/api/apps/{id}/engine', function ($request, $response) use ($containe
 })->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
 $app->get('/api/app/{slug}/hosting', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\HostedAppController::class)->runtime($request, $response, $getArgs($request));
-})->add($hostingLimiter)->add($authRequired);
+})->add($hostingRuntimeLimiter)->add($authRequired);
 $app->post('/api/app/{slug}/actions/{action}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\HostedAppController::class)->runtime($request, $response, $getArgs($request));
-})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+})->add($cloudWriteGate)->add($hostingRuntimeLimiter)->add($authRequired);
 
 // Native SoftN app administration and isolated application requests.
 $app->get('/api/apps/{id}/native', function ($request, $response) use ($container, $getArgs) {
@@ -3089,7 +3094,7 @@ $nativeRecordLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'native_rec
 $app->map(['GET', 'POST'], '/api/apps/{id}/native/{operation:records}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
 })->add($nativeRecordLimiter)->add($authRequired);
-$nativeLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'native_apps', true, true);
+$nativeLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'native_apps', true, true, null, true);
 $app->get('/api/app/{slug}/entry', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->entry($request, $response, $getArgs($request));
 })->add($nativeLimiter)->add($authOptional);

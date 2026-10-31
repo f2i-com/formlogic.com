@@ -788,7 +788,8 @@ TXT;
 
     private function tmpDir(): string
     {
-        $dir = sys_get_temp_dir() . '/formlogic-app-exports';
+        // In our own storage, not the system's: on a shared machine anyone could make that folder first.
+        $dir = dirname(__DIR__, 2) . '/storage/tmp/app-exports';
         if (!is_dir($dir) && !mkdir($dir, 0700, true) && !is_dir($dir)) {
             throw new \RuntimeException('Could not create the export temp directory');
         }

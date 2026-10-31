@@ -134,7 +134,8 @@ class AppStorageBackupTest extends TestCase
         $db->exec('CREATE TABLE deployment (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL, package TEXT NOT NULL, updated_at TEXT NOT NULL)');
         $db->exec('CREATE TABLE records (collection TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(collection,id))');
         if ($deployed) {
-            $db->exec("INSERT INTO deployment VALUES (1, 3, '{\"actions\":\"private\"}', 'now')");
+            $package = json_encode(['version' => 1, 'client' => ['manifest.json' => '{"main":"ui/main.ui"}', 'ui/main.ui' => '<Text>Kept</Text>'], 'actions' => []]);
+            $db->prepare("INSERT INTO deployment VALUES (1, 3, ?, 'now')")->execute([$package]);
             $db->exec("INSERT INTO records VALUES ('orders', 'r1', '{\"total\":42}', 'now')");
         }
     }
@@ -224,6 +225,48 @@ class AppStorageBackupTest extends TestCase
         self::assertSame([], array_values(array_filter($this->entries($zip), static fn ($name) => str_starts_with($name, 'hosted/'))));
         self::assertSame(0, $this->manifest($zip)['counts']['hostedApps']);
         self::assertFileDoesNotExist(HostedAppService::databasePath($never, $this->hostedPath), 'a backup creates nothing');
+        unlink($zip);
+    }
+
+    public function testAnUploadedDatabaseBringsItsRowsAndNotItsSchema(): void
+    {
+        $appId = $this->app();
+        $this->hostedDatabase($appId);
+        $source = HostedAppService::databasePath($appId, $this->hostedPath);
+        $db = new PDO('sqlite:' . $source);
+        $db->exec('CREATE TABLE stolen (value TEXT)');
+        $db->exec('CREATE TRIGGER planted AFTER INSERT ON records BEGIN INSERT INTO stolen VALUES (new.data); END');
+        $db = null;
+        $zip = $this->service()->exportAccount($this->userId);
+
+        $this->service()->importAccount($zip, $this->userId);
+        $restored = array_values(array_diff($this->appsOf($this->userId), [$appId]));
+        $copy = new PDO('sqlite:' . HostedAppService::databasePath($restored[0], $this->hostedPath));
+        $names = $copy->query("SELECT name FROM sqlite_master WHERE type IN ('table', 'trigger', 'view') ORDER BY name")->fetchAll(PDO::FETCH_COLUMN);
+        self::assertSame(['deployment', 'records'], $names);
+        self::assertSame('{"total":42}', $this->hostedRecord($restored[0]));
+        unlink($zip);
+    }
+
+    public function testAnUploadedDeploymentHasToPassWhatPublishingAsks(): void
+    {
+        $appId = $this->app();
+        $this->hostedDatabase($appId);
+        $db = new PDO('sqlite:' . HostedAppService::databasePath($appId, $this->hostedPath));
+        $db->exec("UPDATE deployment SET package = '{\"version\":1,\"client\":{\"manifest.json\":\"{}\",\"x.html\":\"<script>\"},\"actions\":{}}'");
+        $db = null;
+        $zip = $this->service()->exportAccount($this->userId);
+        $before = $this->appsOf($this->userId);
+        try {
+            $this->service()->importAccount($zip, $this->userId);
+            self::fail('The import should have failed');
+        } catch (\RuntimeException $refused) {
+            self::assertStringContainsString('rolled back', $refused->getMessage());
+        }
+        self::assertSame($before, $this->appsOf($this->userId));
+
+        // This server's own archive is not held to it: a later rule must not stop a recovery.
+        self::assertSame(1, $this->service()->importAccount($zip, $this->userId, ['serverHeld' => true])['hostedApps']);
         unlink($zip);
     }
 

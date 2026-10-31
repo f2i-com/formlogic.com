@@ -23,10 +23,15 @@ class HostedAppService
     }
 
     /**
-     * Puts a verified snapshot in place as an app's database, in one rename. What the app already
-     * has is never replaced: it says false, and an undeleted app keeps what it has.
+     * Puts a snapshot in place as an app's database, in one rename. What the app already has is
+     * never replaced: it says false, and an undeleted app keeps what it has.
+     *
+     * Only rows cross, into a database made here, because a backup can be an upload and a SQLite
+     * file carries triggers and views as well as data. An upload's deployment also has to pass
+     * what publishing asks ($validate). An archive this server kept was checked when published,
+     * and later rules must not stop a disaster recovery.
      */
-    public static function restoreDatabase(string $appId, string $snapshot, ?string $storagePath = null): bool
+    public static function restoreDatabase(string $appId, string $snapshot, ?string $storagePath = null, bool $validate = true): bool
     {
         $path = self::databasePath($appId, $storagePath);
         if (is_file($path)) return false;
@@ -36,11 +41,40 @@ class HostedAppService
         }
         $staged = $path . '.restore-' . bin2hex(random_bytes(4));
         try {
-            if (!copy($snapshot, $staged) || !rename($staged, $path)) throw new RuntimeException('Cannot restore the app database');
+            self::copyRows($snapshot, $staged, $validate);
+            if (!rename($staged, $path)) throw new RuntimeException('Cannot restore the app database');
         } finally {
             if (is_file($staged)) unlink($staged);
         }
         return true;
+    }
+
+    private static function copyRows(string $snapshot, string $staged, bool $validate): void
+    {
+        $source = new PDO('sqlite:' . $snapshot, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
+        $source->exec('PRAGMA trusted_schema=OFF');
+        $source->exec('PRAGMA query_only=1');
+        $target = new PDO('sqlite:' . $staged, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        self::createTables($target);
+        $target->exec('BEGIN IMMEDIATE');
+        $deployments = $source->query('SELECT version, package, updated_at FROM deployment WHERE id=1')->fetchAll();
+        foreach ($deployments as $deployment) {
+            if ($validate) self::validate(json_decode((string) $deployment['package'], true, 64, JSON_THROW_ON_ERROR));
+            $target->prepare('INSERT INTO deployment (id, version, package, updated_at) VALUES (1, ?, ?, ?)')
+                ->execute([(int) $deployment['version'], (string) $deployment['package'], (string) $deployment['updated_at']]);
+        }
+        $insert = $target->prepare('INSERT INTO records (collection, id, data, updated_at) VALUES (?, ?, ?, ?)');
+        foreach ($source->query('SELECT collection, id, data, updated_at FROM records') as $record) {
+            $insert->execute([(string) $record['collection'], (string) $record['id'], (string) $record['data'], (string) $record['updated_at']]);
+        }
+        $target->exec('COMMIT');
+    }
+
+    private static function createTables(PDO $db): void
+    {
+        $db->exec('CREATE TABLE IF NOT EXISTS deployment (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL, package TEXT NOT NULL, updated_at TEXT NOT NULL)');
+        $db->exec('CREATE TABLE IF NOT EXISTS records (collection TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(collection,id))');
+        $db->exec('CREATE INDEX IF NOT EXISTS records_recent ON records(collection,updated_at DESC,id DESC)');
     }
 
     private function database(string $appId): PDO
@@ -56,9 +90,7 @@ class HostedAppService
         ]);
         $db->exec('PRAGMA busy_timeout=2000');
         $db->exec('PRAGMA max_page_count=32768');
-        $db->exec('CREATE TABLE IF NOT EXISTS deployment (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL, package TEXT NOT NULL, updated_at TEXT NOT NULL)');
-        $db->exec('CREATE TABLE IF NOT EXISTS records (collection TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(collection,id))');
-        $db->exec('CREATE INDEX IF NOT EXISTS records_recent ON records(collection,updated_at DESC,id DESC)');
+        self::createTables($db);
         return $db;
     }
 
@@ -91,7 +123,7 @@ class HostedAppService
     }
 
     /** Strict text bundle for the first hosting version; no executable JS/HTML or private files in client output. */
-    public function validate(array $package): array
+    public static function validate(array $package): array
     {
         if (($package['version'] ?? null) !== 1 || !is_array($package['client'] ?? null) || !is_array($package['actions'] ?? null)) {
             throw new InvalidArgumentException('Expected version 1, client files and backend actions');

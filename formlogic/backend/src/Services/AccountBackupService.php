@@ -1114,7 +1114,7 @@ final class AccountBackupService
             try {
                 $summary = $this->restoreRecords($structure, $maps, $stagedDbs, $zip, $manifest['entries'], $warnings);
                 $summary['nativeApps'] = $this->restoreNativeApps($nativePayloads, $maps['appIdMap'], $nativeMode, $warnings);
-                $summary['hostedApps'] = $this->restoreHostedApps($hostedDatabases, $maps['appIdMap']);
+                $summary['hostedApps'] = $this->restoreHostedApps($hostedDatabases, $maps['appIdMap'], !$serverHeld);
             } catch (\Throwable $e) {
                 // An app undeleted under its own id found its storage already there: it is
                 // the app's, with keys no snapshot carries, and stays for the retry.
@@ -1206,7 +1206,7 @@ final class AccountBackupService
             foreach ($hosted as $appId => $database) {
                 if (!$present($appId)) {
                     $result['noApp'][] = $appId;
-                } elseif (HostedAppService::restoreDatabase($appId, $database, $this->hostedPath)) {
+                } elseif (HostedAppService::restoreDatabase($appId, $database, $this->hostedPath, false)) {
                     $result['restored'][] = $appId;
                 } else {
                     $result['kept'][] = $appId;
@@ -1291,8 +1291,9 @@ final class AccountBackupService
      *
      * @param array<string,string> $databases oldAppId => staged path
      * @param array<string,string> $appIdMap
+     * @param bool $validate hold each deployment to what publishing asks: an uploaded archive
      */
-    private function restoreHostedApps(array $databases, array $appIdMap): int
+    private function restoreHostedApps(array $databases, array $appIdMap, bool $validate): int
     {
         $restored = 0;
         foreach ($databases as $oldAppId => $path) {
@@ -1300,7 +1301,7 @@ final class AccountBackupService
             if ($newAppId === null) {
                 throw new \RuntimeException("Hosted app {$oldAppId} has no restored app to attach to");
             }
-            if (HostedAppService::restoreDatabase($newAppId, $path, $this->hostedPath)) {
+            if (HostedAppService::restoreDatabase($newAppId, $path, $this->hostedPath, $validate)) {
                 $restored++;
             }
         }

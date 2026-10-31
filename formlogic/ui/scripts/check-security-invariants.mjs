@@ -112,6 +112,16 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
   for (const document of ['index\\.html', 'host\\.html']) {
     if (!appFrame.includes(document)) fail(`.htaccess IS_APP_FRAME must cover ${document}`);
   }
+  // The runtime documents run other people's code: the response itself keeps them opaque, and
+  // a same-origin token there would hand that code this origin.
+  const runtime = htaccess.split('\n').find((line) => line.includes('IS_APP_RUNTIME') && line.includes('SetEnvIf')) || '';
+  for (const document of ['index\\.html', 'host\\.html']) {
+    if (!runtime.includes(document)) fail(`.htaccess IS_APP_RUNTIME must cover ${document}`);
+  }
+  const runtimePolicy = htaccess.split('\n').find((line) => line.includes('env=IS_APP_RUNTIME')) || '';
+  if (!runtimePolicy.includes('sandbox allow-scripts;') || runtimePolicy.includes('allow-same-origin')) {
+    fail('.htaccess must send a CSP sandbox of allow-scripts alone on the runtime documents');
+  }
   // A redirect under either frame tree defeats the shell's connect-src pin: CSP path matching
   // stops at the redirect, so a redirect to /api carries the request (and, in some browsers, the
   // viewer's cookies) out of the frame. Neither tree may contain one.

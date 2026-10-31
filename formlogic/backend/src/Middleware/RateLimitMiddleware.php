@@ -52,6 +52,8 @@ class RateLimitMiddleware implements MiddlewareInterface
      *                                  against the key owner's account, in the same bucket as
      *                                  that account's sessions. A key that does not validate
      *                                  is counted by address; refusing it is the controller's.
+     * @param bool $perApp              Count each /api/app/{slug} apart, so a frame that spends a
+     *                                  viewer's budget in its own app leaves them the others.
      */
     public function __construct(
         RateLimiter $limiter,
@@ -60,7 +62,8 @@ class RateLimitMiddleware implements MiddlewareInterface
         string $keyPrefix = 'default',
         bool $keyByUser = false,
         bool $failClosed = false,
-        ?ApiKeyService $apiKeys = null
+        ?ApiKeyService $apiKeys = null,
+        private bool $perApp = false
     ) {
         $this->limiter = $limiter;
         $this->maxRequests = $maxRequests;
@@ -151,6 +154,15 @@ class RateLimitMiddleware implements MiddlewareInterface
      * cannot buy fresh credential-management budgets (RATE-001).
      */
     private function getClientKey(Request $request): string
+    {
+        $key = $this->subjectKey($request);
+        if ($this->perApp && preg_match('~^/api/app/([^/]+)~', rawurldecode($request->getUri()->getPath()), $match) === 1) {
+            return $key . ':a:' . hash('sha256', strtolower($match[1]));
+        }
+        return $key;
+    }
+
+    private function subjectKey(Request $request): string
     {
         if ($this->keyByUser) {
             $userId = $request->getAttribute('userId');
