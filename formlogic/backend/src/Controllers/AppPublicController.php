@@ -1785,6 +1785,7 @@ class AppPublicController
             || in_array(AppPermissions::VIEW_OWN_RESPONSES, $appLevel, true)
             || in_array(AppPermissions::MANAGE_APP, $appLevel, true);
         $resolvableFormIds = [];
+        $ownOnlyFormIds = [];
         foreach ($this->appService->getAppForms($app['id']) as $af) {
             $fid = (string) ($af['formId'] ?? '');
             $fl = $perms['formLevel'][$fid] ?? [];
@@ -1792,6 +1793,9 @@ class AppPublicController
                 || in_array(AppPermissions::VIEW_ALL_RESPONSES, $fl, true)
                 || in_array(AppPermissions::VIEW_OWN_RESPONSES, $fl, true))) {
                 $resolvableFormIds[] = $fid;
+                if (!$this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_ALL_RESPONSES, $fid)) {
+                    $ownOnlyFormIds[] = $fid;
+                }
             }
         }
 
@@ -1799,7 +1803,7 @@ class AppPublicController
             // Relative date filters are evaluated in the app's timezone (falls back to UTC).
             $tz = (string) ($app['settings']['timezone'] ?? 'UTC') ?: 'UTC';
             $svc = new \FormLogic\Services\ReportService($this->sqlite, $this->formService, $this->mysql);
-            $result = $svc->runReport($spec, $form['fields'] ?? [], $formId, $canViewAll ? 'all' : 'own', $userId, $resolvedJoins, $tz, $resolvableFormIds);
+            $result = $svc->runReport($spec, $form['fields'] ?? [], $formId, $canViewAll ? 'all' : 'own', $userId, $resolvedJoins, $tz, $resolvableFormIds, $ownOnlyFormIds);
             return ['status' => 200, 'body' => $result];
         } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
             // §9.2: reports over ciphertext refuse loudly (typed), never empty charts.

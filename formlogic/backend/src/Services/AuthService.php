@@ -101,7 +101,7 @@ class AuthService
      */
     public function register(string $email, string $password, ?string $name = null, ?string $timezone = null): array
     {
-        if (in_array(strtolower(trim($email)), $this->adminEmails, true)) {
+        if ($this->isReservedEmail($email)) {
             throw new \RuntimeException(
                 'This address is reserved for administrator bootstrap and cannot be registered publicly.'
             );
@@ -239,9 +239,13 @@ class AuthService
         // gate (the documented distributed-attack defense). Every attempt is now
         // counted up front; a successful login clears both keys below, so legitimate
         // logins aren't penalized.
+        // An attempt this address has already been refused for doesn't count against the account
+        // too: otherwise one address could keep any account locked out of its own password.
         $window = $this->decaySeconds();
         $ipCount = $this->rateLimiter->hit($rateLimitKey, $window);
-        $emailCount = $this->rateLimiter->hit($emailKey, $window);
+        $emailCount = $ipCount > $this->rateLimitConfig['maxAttempts']
+            ? $this->rateLimiter->count($emailKey, $window)
+            : $this->rateLimiter->hit($emailKey, $window);
         if ($ipCount === RateLimiter::UNAVAILABLE || $emailCount === RateLimiter::UNAVAILABLE) {
             // Login is a HIGH-RISK action: a limiter-store outage fails CLOSED
             // (audit RATE-001) — otherwise the outage window is an unlimited
@@ -674,7 +678,7 @@ class AuthService
                 // The same reservation register() applies: bin/bootstrap-admin.php promotes
                 // whichever account holds the address, so taking it by an email change
                 // before the bootstrap would make this account the platform admin.
-                if (in_array(strtolower($newEmail), $this->adminEmails, true)) {
+                if ($this->isReservedEmail($newEmail)) {
                     throw new \RuntimeException('This address is reserved for administrator bootstrap and cannot be used for an account.');
                 }
                 // Require current-password verification before changing the email
@@ -765,6 +769,19 @@ class AuthService
         } catch (\Exception $e) {
             return 0; // column not migrated — treat as version 0
         }
+    }
+
+    /**
+     * An address that carries authority here: an administrator's, or the two provision-demo seeds.
+     * Whoever holds the official address publishes trusted packs, and with no email verification
+     * anyone could otherwise sign up with it on a site not seeded yet.
+     */
+    private function isReservedEmail(string $email): bool
+    {
+        $address = strtolower(trim($email));
+        return in_array($address, $this->adminEmails, true)
+            || $address === strtolower((string) ($_ENV['OFFICIAL_EMAIL'] ?? 'official@formlogic.local'))
+            || $address === strtolower((string) ($_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local'));
     }
 
     /**
@@ -912,6 +929,13 @@ class AuthService
                 $this->mysql->rollBack();
             }
             throw $e;
+        }
+        // Proving the mailbox ends a lockout: someone may be keeping this account locked on purpose.
+        $email = $this->mysql->prepare('SELECT email FROM users WHERE id = :uid');
+        $email->execute(['uid' => $userId]);
+        $address = $email->fetchColumn();
+        if (is_string($address)) {
+            $this->rateLimiter->clear($this->getEmailRateLimitKey($this->loginLimitIdentity($address)));
         }
     }
 

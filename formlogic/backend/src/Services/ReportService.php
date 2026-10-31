@@ -48,6 +48,13 @@ class ReportService
     // Drafts + archived never appear in reports; everything else (submitted, reviewed, approved, …) does.
     private const HIDDEN_STATUSES = "('draft', 'archived')";
 
+    /**
+     * The most values of one answer a report unnests. Two dimensions multiply, and an answer can
+     * be text that merely parses as a long array: unbounded, one row was a trillion steps inside
+     * SQLite, where no limit reaches it. No choice field has this many options.
+     */
+    private const MAX_UNNESTED_VALUES = 100;
+
     public function __construct(
         private SQLiteConnection $sqlite,
         private ?FormService $formService = null,
@@ -85,7 +92,7 @@ class ReportService
      *   [] = resolve none (default; e.g. public). Others render as an opaque "Linked record" placeholder,
      *   never a raw id.
      */
-    public function runReport(array $spec, array $fields, string $formId, string $scope, ?string $userId, array $joins = [], string $timezone = 'UTC', ?array $resolvableFormIds = []): array
+    public function runReport(array $spec, array $fields, string $formId, string $scope, ?string $userId, array $joins = [], string $timezone = 'UTC', ?array $resolvableFormIds = [], array $ownOnlyFormIds = []): array
     {
         $viz = in_array($spec['viz'] ?? 'table', self::VIZ, true) ? (string) $spec['viz'] : 'table';
 
@@ -311,6 +318,9 @@ class ReportService
                 $stmt = $db->prepare("SELECT " . $aggExpr($spec['measure'] ?? ['fn' => 'count']) . " AS val FROM $from WHERE $whereSql");
                 $stmt->execute($params);
                 $kpi = ['viz' => 'kpi', 'value' => (float) ($stmt->fetchColumn() ?: 0)];
+                // Left stepping, the statement keeps a join's database locked: its DETACH then fails,
+                // and the next report in a batch can't attach and loses its join with no error.
+                $stmt->closeCursor();
 
                 // Sparkline (spec.sparkline + a date-BUCKETED groupBy): also return the bucketed trend so
                 // the renderer can draw a mini axis-less area under the big number. Same whitelisted
@@ -320,7 +330,7 @@ class ReportService
                     $gcol = $refExpr($gref);
                     $bucket = (string) ($spec['groupBy']['bucket'] ?? 'none');
                     if ($gcol !== null && in_array($bucket, ['day', 'month', 'year'], true)) {
-                        $normArr = "CASE WHEN json_valid($gcol) AND json_type($gcol) = 'array' THEN $gcol ELSE json_array($gcol) END";
+                        $normArr = $this->unnestable($gcol);
                         // Bucket boundaries in the app timezone (same $localExpr as the filters above), so
                         // a day/month/year bucket agrees with a same-field date filter near a boundary.
                         $gIsDate = in_array($refField($gref)['type'] ?? '', self::DATE_TYPES, true) || $gref === '__submitted_at';
@@ -357,7 +367,7 @@ class ReportService
                 if (!in_array($bucket, self::BUCKETS, true)) { $bucket = 'none'; }
                 $isDateBucket = $bucket !== 'none';
                 // Normalise to a JSON array so multi-select answers group per-option and scalars stay 1:1.
-                $normArr = "CASE WHEN json_valid($gcol) AND json_type($gcol) = 'array' THEN $gcol ELSE json_array($gcol) END";
+                $normArr = $this->unnestable($gcol);
                 $groupFrom = "$from, json_each($normArr) ge";
                 // Bucket boundaries in the app timezone (same $localExpr as the filters above), so a
                 // day/month/year bucket agrees with a same-field date filter near a boundary.
@@ -379,7 +389,7 @@ class ReportService
                 $sbExpr = $sbRef !== '' ? $refExpr($sbRef) : null;
                 if ($sbExpr !== null) {
                     // Unnest array answers the same way as the primary dimension.
-                    $sbNorm = "CASE WHEN json_valid($sbExpr) AND json_type($sbExpr) = 'array' THEN $sbExpr ELSE json_array($sbExpr) END";
+                    $sbNorm = $this->unnestable($sbExpr);
                     $groupFrom .= ", json_each($sbNorm) se";
                     $havingSql = '';
                     if (isset($spec['having']['op']) && isset(self::OPS[$spec['having']['op']])) {
@@ -453,13 +463,14 @@ class ReportService
                     if (!in_array($f['type'] ?? '', self::SKIP_TYPES, true)) { $refs[] = $f['id']; }
                 }
             }
+            if (empty($refs)) { return ['viz' => 'table', 'columns' => [], 'rows' => []]; } // nothing it may show
             $selects = [];
             $columns = [];
             foreach ($refs as $i => $ref) {
                 $selects[] = $refExpr((string) $ref) . " AS c$i";
                 $columns[] = ['id' => "c$i", 'label' => $refField((string) $ref)['label'] ?? (string) $ref];
             }
-            $selectSql = empty($selects) ? 'r.id AS c0' : implode(', ', $selects);
+            $selectSql = implode(', ', $selects);
             // Sort: a chosen column/direction, else newest first.
             $orderSql = 'r.submitted_at DESC';
             if (isset($spec['sort']['by'])) {
@@ -495,7 +506,10 @@ class ReportService
                 foreach ($rawRows as $rr) {
                     foreach ($this->linkedIds($rr[$col] ?? null) as $id) { $ids[$id] = $id; }
                 }
-                $linkedMaps[$col] = $this->resolveLinkedLabelMap($info['field'], array_values($ids));
+                $target = (string) $info['field']['properties']['targetFormId'];
+                // A label names the record it stands for, so the record's rules apply to it: a member
+                // who sees only their own rows there sees only their own names here.
+                $linkedMaps[$col] = $this->resolveLinkedLabelMap($info['field'], array_values($ids), $resolvableFormIds !== null, in_array($target, $ownOnlyFormIds, true) ? $userId : null);
             }
 
             $rows = [];
@@ -609,6 +623,12 @@ class ReportService
     }
 
     /** Whether the caller may reveal labels from $targetFormId (see runReport's $resolvableFormIds). */
+    /** A SQL expression for json_each over an answer: one value, or the values of a short array. */
+    private function unnestable(string $column): string
+    {
+        return "CASE WHEN json_valid($column) AND json_type($column) = 'array' AND json_array_length($column) <= " . self::MAX_UNNESTED_VALUES . " THEN $column ELSE json_array($column) END";
+    }
+
     private function canResolveForm(string $targetFormId, ?array $resolvableFormIds): bool
     {
         if (!$this->formService) { return false; }            // no way to fetch target fields → don't resolve
@@ -640,7 +660,7 @@ class ReportService
      * @param string[] $ids
      * @return array<string,string>
      */
-    private function resolveLinkedLabelMap(array $field, array $ids): array
+    private function resolveLinkedLabelMap(array $field, array $ids, bool $forAMember = false, ?string $onlyOwnedBy = null): array
     {
         $targetFormId = (string) ($field['properties']['targetFormId'] ?? '');
         if ($targetFormId === '' || empty($ids) || !$this->formService || !$this->sqlite->formDatabaseExists($targetFormId)) {
@@ -652,8 +672,10 @@ class ReportService
 
         $db = $this->sqlite->getFormDatabase($targetFormId);
         $placeholders = implode(',', array_fill(0, count($ids), '?'));
-        $stmt = $db->prepare("SELECT id, answers FROM responses WHERE id IN ($placeholders)");
-        $stmt->execute(array_values($ids));
+        $visible = ($forAMember ? ' AND status NOT IN ' . self::HIDDEN_STATUSES : '')
+            . ($onlyOwnedBy !== null ? " AND json_extract(metadata, '$.submittedByUserId') = ?" : '');
+        $stmt = $db->prepare("SELECT id, answers FROM responses WHERE id IN ($placeholders)$visible");
+        $stmt->execute($onlyOwnedBy !== null ? [...array_values($ids), $onlyOwnedBy] : array_values($ids));
 
         $map = [];
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $tr) {

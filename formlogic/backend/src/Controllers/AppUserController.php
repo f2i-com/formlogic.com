@@ -259,6 +259,11 @@ class AppUserController
 
         try {
             $this->appUserService->updateAppUser($args['id'], $data, $userId, $appId);
+            $this->audit($request, 'user.update', 'app', $appId, array_filter([
+                'appUserId' => $args['id'],
+                'roleId' => $data['roleId'] ?? null,
+                'status' => $data['status'] ?? null,
+            ], static fn ($value) => $value !== null));
             $users = $this->appUserService->getAppUsers($appId);
             return $this->jsonResponse($response, ['users' => $users]);
         } catch (\Exception $e) {
@@ -400,6 +405,7 @@ class AppUserController
 
         try {
             $result = $this->appUserService->acceptInvitation($data['token'], $userId);
+            $this->audit($request, 'user.join', 'app', (string) ($result['appId'] ?? ''), ['roleName' => $result['roleName'] ?? null]);
             return $this->jsonResponse($response, ['success' => true, 'membership' => $result]);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
@@ -423,6 +429,7 @@ class AppUserController
         }
 
         $this->appUserService->revokeInvitation($args['id']);
+        $this->audit($request, 'user.invite_revoke', 'app', $appId, ['invitationId' => $args['id']]);
         return $this->jsonResponse($response, ['success' => true, 'message' => 'Invitation revoked']);
     }
 

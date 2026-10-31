@@ -2032,12 +2032,14 @@ $app->get('/api/forms/{formId}/app-contexts', function ($request, $response) use
 
 // Owner-scoped report execution — powers form section-screen widget dashboards in the builder
 // preview / play route / standalone (non-app) forms. Read-only; the owner sees all their responses.
+// A report runs on the form's database, and a batch is up to 40 of them.
+$reportRateLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'reports', true);
 $app->post('/api/forms/{id}/reports/run', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\FormReportController::class)->runOwner($request, $response, $getArgs($request));
-})->add($authRequired);
+})->add($reportRateLimiter)->add($authRequired);
 $app->post('/api/forms/{id}/reports/run-batch', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\FormReportController::class)->runOwnerBatch($request, $response, $getArgs($request));
-})->add($authRequired);
+})->add($reportRateLimiter)->add($authRequired);
 
 // Test an onSubmit script against sample answers without persisting (protected,
 // rate-limited per user — runs sandboxed user code + may make ctx.http calls)
@@ -3588,7 +3590,7 @@ $app->group('/api/flow-kv', function (RouteCollectorProxy $group) use ($containe
 })->add($cloudWriteGate)->add($authRequired);
 
 // App Runtime routes (public-facing, auth required for most)
-$app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired, $appSubmissionRateLimiter, $flowRunRateLimiter, $connectorRelayRateLimiter, $serviceCapabilityRateLimiter, $cloudWriteGate) {
+$app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired, $appSubmissionRateLimiter, $flowRunRateLimiter, $connectorRelayRateLimiter, $serviceCapabilityRateLimiter, $cloudWriteGate, $reportRateLimiter) {
     // PWA manifest (public, no auth)
     $group->get('/manifest.json', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->manifest($request, $response, $getArgs($request));
@@ -3635,12 +3637,12 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
     // Run a no-code report (read-only SELECT; POST carries the report spec). Whitelisted for the demo.
     $group->post('/reports/run', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->runReport($request, $response, $getArgs($request));
-    })->add($authRequired);
+    })->add($reportRateLimiter)->add($authRequired);
 
     // Batch: run many specs in one round (a widget dashboard fetches all its charts at once).
     $group->post('/reports/run-batch', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->runReportBatch($request, $response, $getArgs($request));
-    })->add($authRequired);
+    })->add($reportRateLimiter)->add($authRequired);
 
     // FormLogic Flows runtime: enabled definitions + bindings for the browser runner (member-gated;
     // no owner-only fields), and the reserve-first run log (rate-limited like reports run).

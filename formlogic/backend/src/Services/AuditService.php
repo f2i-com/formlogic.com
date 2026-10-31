@@ -83,6 +83,13 @@ class AuditService
         ?string $ipAddress,
         array $details = []
     ): void {
+        // The column holds a uuid. An OAuth client's id is longer, and a client-metadata URL longer
+        // still: strict SQL then refused the row, so the grant went unrecorded, and any other mode
+        // cut it, which the chain reads as tampering. The whole id goes in the details.
+        if ($resourceId !== null && strlen($resourceId) > 36) {
+            $details += ['resourceId' => $resourceId];
+            $resourceId = substr(hash('sha256', $resourceId), 0, 36);
+        }
         $gotLock = false;
         $alreadyInTransaction = $this->mysql->inTransaction();
         try {

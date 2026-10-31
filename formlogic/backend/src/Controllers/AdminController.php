@@ -177,7 +177,7 @@ class AdminController
         $body = $request->getParsedBody() ?? [];
         if (!$this->auth->verifyPassword($adminId, (string) ($body['password'] ?? ''))) {
             $this->audit($request, 'admin.mfa_reset_denied', $userId, ['reason' => 'step_up_failed']);
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Enter your own password to confirm this reset'], 401);
+            return $this->jsonResponse($response, ['error' => true, 'code' => 'password_incorrect', 'message' => 'Enter your own password to confirm this reset'], 403);
         }
         $wasEnabled = $this->mfaService->isEnabled($userId);
         // Transactional; bumps token_version = sessions + pending tokens revoked. The admin is the

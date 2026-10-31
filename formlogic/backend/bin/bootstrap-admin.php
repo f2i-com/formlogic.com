@@ -89,10 +89,20 @@ try {
             'name' => 'Administrator',
         ]);
     } else {
+        // There is no email verification, so whoever signed up with this address before it was
+        // reserved may not be the operator. The account becomes an administrator only with a
+        // password the operator chose, and with nobody else's second factor on it.
+        if ($password === '') {
+            throw new RuntimeException(
+                'An account already uses this address. Set ADMIN_BOOTSTRAP_PASSWORD: its password is replaced before it becomes an administrator.'
+            );
+        }
         $promote = $pdo->prepare(
-            'UPDATE users SET is_admin = 1, token_version = token_version + 1 WHERE id = :id'
+            'UPDATE users SET is_admin = 1, password_hash = :password_hash, mfa_enabled = 0, mfa_secret = NULL, mfa_recovery_codes = NULL,
+             token_version = token_version + 1 WHERE id = :id'
         );
-        $promote->execute(['id' => $userId]);
+        $promote->execute(['id' => $userId, 'password_hash' => password_hash($password, PASSWORD_DEFAULT)]);
+        $pdo->prepare('DELETE FROM mfa_trusted_browsers WHERE user_id = :id')->execute(['id' => $userId]);
     }
 
     // Invalidate every pre-bootstrap JWT, including sessions minted while an

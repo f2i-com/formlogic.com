@@ -193,8 +193,11 @@ class FormReportController
         $safe = $this->reportValidator->sanitizePublicSpec($spec, $formId, $allowed);
         try {
             $svc = new ReportService($this->sqlite, null, $this->mysql);
+            // The engine only knows the fields it is given, so what a visitor may ask about is all
+            // it is given: with no columns named, a table falls back to the first fields it has.
+            $fields = array_values(array_filter($form['fields'] ?? [], static fn (array $field): bool => in_array($field['id'] ?? null, $allowed, true)));
             // scope 'all' (no per-user own-filter); joins are already stripped for public.
-            $result = $svc->runReport($safe, $form['fields'] ?? [], $formId, 'all', null, [], 'UTC');
+            $result = $svc->runReport($safe, $fields, $formId, 'all', null, [], 'UTC');
             return ['status' => 200, 'body' => $result];
         } catch (PrivateFormEncryptedException $e) {
             return ['status' => 400, 'body' => ['error' => true, 'message' => $e->getMessage(), 'code' => PrivateFormEncryptedException::ERROR_CODE]];

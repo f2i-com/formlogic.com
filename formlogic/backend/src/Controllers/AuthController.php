@@ -1031,7 +1031,8 @@ class AuthController
         }
         $data = $request->getParsedBody();
         if (!$this->authService->verifyPassword($user->id, (string) ($data['password'] ?? ''))) {
-            return $this->jsonError($response, 'Incorrect password', 401);
+            // Not 401: the client takes that to mean the session has gone, and tears it down.
+            return $this->jsonError($response, 'Incorrect password', 403, 'password_incorrect');
         }
         if (!$this->mfaService->verifyChallenge($user->id, (string) ($data['code'] ?? ''))) {
             return $this->jsonError($response, 'That code didn\'t match — check your authenticator app and try again', 403, 'mfa_code_required');
@@ -1060,7 +1061,7 @@ class AuthController
         }
         $data = $request->getParsedBody();
         if (!$this->mfaService->verifyChallenge($user->id, (string) ($data['code'] ?? ''))) {
-            return $this->jsonError($response, 'That code didn\'t match — check your authenticator app and try again', 401);
+            return $this->jsonError($response, 'That code didn\'t match — check your authenticator app and try again', 403, 'mfa_code_required');
         }
         $codes = $this->mfaService->regenerateRecoveryCodes($user->id);
         $this->audit($request, 'auth.mfa.recovery_codes_regenerated', 'user', $user->id);

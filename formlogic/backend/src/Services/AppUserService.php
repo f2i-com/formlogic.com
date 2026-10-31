@@ -936,7 +936,11 @@ class AppUserService
                 'roleName' => $invitation['role_name'],
             ];
         } catch (\Exception $e) {
-            $this->mysql->rollBack();
+            // The branches above roll back themselves, and a second rollback would replace
+            // what they say with "There is no active transaction".
+            if ($this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
+            }
             throw $e;
         }
     }
