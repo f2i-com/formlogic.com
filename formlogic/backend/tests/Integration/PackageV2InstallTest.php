@@ -1219,6 +1219,25 @@ class PackageV2InstallTest extends TestCase
         return [$mint, $alive];
     }
 
+    public function testAnUpdateThatDropsASlotEndsItsCapabilitiesNow(): void
+    {
+        $installed = self::$pkgV2->install($this->nodeOnlyAggregate(), $this->userId, []);
+        $this->bindingService()->bind($installed['installationId'], $this->userId, 'imageGenerator', 'openai-api', 'conn-1');
+        [$mint, $alive] = $this->capabilityProbes();
+        $capability = $mint('openai-api', ['service.openai-api.generate-image']);
+
+        $kept = $this->nodeOnlyAggregate();
+        $kept['package']['version'] = '1.5.0';
+        self::$pkgV2->update($kept, $this->userId, ['connector.acme.media'], 'json', 'community');
+        $this->assertTrue($alive($capability), 'the slot is still there');
+
+        $dropped = $this->nodeOnlyAggregate();
+        $dropped['package']['version'] = '1.6.0';
+        $dropped['requirements']['services'] = [];
+        self::$pkgV2->update($dropped, $this->userId, ['connector.acme.media'], 'json', 'community');
+        $this->assertFalse($alive($capability));
+    }
+
     public function testBuiltInServicesStayAuthorizedWithoutAnyInstall(): void
     {
         $auth = $this->authorization();

@@ -1,3 +1,5 @@
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { expect, test } from '@playwright/test';
 import { sessionHeaders } from './session-request';
 
@@ -24,14 +26,16 @@ test('a form with a custom screen shows in someone else\'s page, and again after
   const body = await created.json();
   const form = body.data?.form ?? body.form ?? body;
 
+  // On localhost, another site to 127.0.0.1: a made-up public name may not frame a local address.
+  const customer = createServer((_request, response) => {
+    response.setHeader('Content-Type', 'text/html');
+    response.end(`<!doctype html><title>A customer</title><iframe id="embed" src="${baseURL}/form/${form.id}" width="900" height="600"></iframe>`);
+  });
+  await new Promise<void>((done) => customer.listen(0, 'localhost', done));
   const visitor = await browser.newContext({ baseURL });
   const page = await visitor.newPage();
   try {
-    await page.route('http://customer.test/**', (route) => route.fulfill({
-      contentType: 'text/html',
-      body: `<!doctype html><title>A customer</title><iframe id="embed" src="${baseURL}/form/${form.id}" width="900" height="600"></iframe>`,
-    }));
-    await page.goto('http://customer.test/');
+    await page.goto(`http://localhost:${(customer.address() as AddressInfo).port}/`);
     const screen = page.frameLocator('#embed').frameLocator('iframe').first();
     await expect(screen.getByText('The custom screen is here')).toBeVisible({ timeout: 20000 });
 
@@ -42,5 +46,6 @@ test('a form with a custom screen shows in someone else\'s page, and again after
     await expect(screen.getByText('The custom screen is here')).toBeVisible({ timeout: 20000 });
   } finally {
     await visitor.close();
+    customer.close();
   }
 });

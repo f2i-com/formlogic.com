@@ -33,14 +33,14 @@ test('a visitor whose answers the server refused is not told they were received'
   const page = await visitor.newPage();
   try {
     await page.goto(`/form/${form.id}`);
-    await page.getByLabel(/Your name/).fill('Ada');
+    await page.getByRole('textbox', { name: /Your name/ }).fill('Ada');
     await page.getByRole('button', { name: /Submit/ }).click();
     await expect(page.getByText('We are not taking entries today.')).toBeVisible();
     await expect(page.getByText(/submitted successfully|Thank you/i)).toHaveCount(0);
 
     // And one the server takes still thanks them, and leaves nothing in the browser.
     await page.goto(`/form/${open.id}`);
-    await page.getByLabel(/Your name/).fill('Ada Lovelace');
+    await page.getByRole('textbox', { name: /Your name/ }).fill('Ada Lovelace');
     await page.getByRole('button', { name: /Submit/ }).click();
     await expect(page.getByText(/submitted successfully|Thank you/i).first()).toBeVisible();
     const kept = await page.evaluate(() => localStorage.getItem('formlogic-responses') ?? '');
