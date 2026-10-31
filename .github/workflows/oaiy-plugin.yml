@@ -1,0 +1,94 @@
+name: OAIY plugin (FormLogic Backups)
+
+# Tests FormLogic Backups (formlogic/oaiy-plugin) and builds a zip for each system
+# OAIY can show the plugin's windows on. Someone downloads the zip for their system
+# and installs it from OAIY's Plugins page. CI keeps the zips as artifacts, and a
+# tagged Package run attaches them to the release.
+#
+# No Linux zip: OAIY gives a plugin on Linux no display, so the plugin can't ask the
+# person before it does anything that matters, and it refuses to. The tests below
+# don't cover that build either; docs/FORMLOGIC_BACKUPS.md says how to check it.
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Plugin (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            platform: windows-x64
+          - runner: macos-15
+            platform: macos
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: '.node-version'
+
+      # formlogic/oaiy-plugin/rust-toolchain.toml names the version; rustup installs it here.
+      - name: Rust toolchain
+        id: rust
+        working-directory: formlogic/oaiy-plugin
+        run: |
+          rustup show active-toolchain
+          lock="$(sha256sum Cargo.lock 2>/dev/null || shasum -a 256 Cargo.lock)"
+          echo "cache-key=oaiy-plugin-${{ matrix.platform }}-${lock%% *}" >> "$GITHUB_OUTPUT"
+
+      - name: Cargo dependency cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            formlogic/oaiy-plugin/target
+          key: ${{ steps.rust.outputs.cache-key }}
+
+      # Twice: scripted-dialogs replaces this system's windows, so their own tests need a build without it.
+      - name: Test
+        working-directory: formlogic/oaiy-plugin
+        run: |
+          cargo test --locked
+          cargo test --locked --features scripted-dialogs
+
+      - name: Build (Windows)
+        if: matrix.platform == 'windows-x64'
+        working-directory: formlogic/oaiy-plugin
+        run: |
+          cargo build --release --locked
+          echo "PROGRAM=formlogic/oaiy-plugin/target/release/formlogic-backups.exe" >> "$GITHUB_ENV"
+
+      # One program for both kinds of Mac.
+      - name: Build (macOS)
+        if: matrix.platform == 'macos'
+        working-directory: formlogic/oaiy-plugin
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+          lipo -create -output target/release-universal target/aarch64-apple-darwin/release/formlogic-backups target/x86_64-apple-darwin/release/formlogic-backups
+          echo "PROGRAM=formlogic/oaiy-plugin/target/release-universal" >> "$GITHUB_ENV"
+
+      - name: Package
+        run: node scripts/package-oaiy-plugin.mjs --platform "${{ matrix.platform }}" --binary "$PROGRAM"
+
+      - name: Upload the zip
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oaiy-plugin-${{ matrix.platform }}
+          path: dist-oaiy-plugin/*.zip
+          if-no-files-found: error
+          retention-days: 30

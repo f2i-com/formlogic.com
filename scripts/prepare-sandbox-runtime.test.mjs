@@ -151,7 +151,7 @@ test('package.yml builds the sandbox once per run, and packages only what that r
   assert.ok(windows.indexOf('name: sandbox-guest') < windows.indexOf('bash scripts/build-runtime.sh windows smoke'));
   assert.match(windows, /name: sandbox-windows\n\s+path: \|\n\s+formlogic\/backend\/bin\/runtime\/formlogic-runtime-windows-x86_64\.exe\n\s+\.runtime-source\/sandbox\/windows\.json\n\s+include-hidden-files: true/);
   const packaging = job(pkg, 'package');
-  assert.match(packaging, /needs: \[resolve, verify, e2e, php-floor, sandbox-linux, sandbox-windows\]/);
+  assert.match(packaging, /needs: \[resolve, verify, e2e, php-floor, sandbox-linux, sandbox-windows, oaiy-plugin\]/);
   assert.deepEqual(sandboxCalls(packaging).map((call) => call.with), [{ mode: 'install', artifacts: 'sandbox-linux sandbox-windows', 'frozen-release-json': '${{ needs.resolve.outputs.frozen }}', 'php-preflight': "'false'" }]);
   assert.ok(packaging.indexOf('prepare-sandbox-runtime') < packaging.indexOf('node scripts/package-dist.mjs --release'));
   const verify = job(pkg, 'verify');

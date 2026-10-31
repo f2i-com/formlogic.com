@@ -40,6 +40,12 @@ jobs:
     with:
       oaiy-cli-release: ${{ inputs.oaiy-cli-release }}
 
+  # FormLogic Backups, the plugin for OAIY: tested, with a zip for each system kept
+  # as an artifact of this run.
+  oaiy-plugin:
+    name: OAIY plugin
+    uses: ./.github/workflows/oaiy-plugin.yml
+
   backend:
     name: Backend (PHP)
     # Pinned, like ZIPP's own release lanes: this job builds the server sandbox.
@@ -234,7 +240,7 @@ jobs:
       # generated lock, its provenance, and the parity legs tied to one ZIPP release.
       - name: Engine sourcing script tests
         working-directory: ${{ github.workspace }}
-        run: node --test scripts/fetch-softn-release.test.mjs scripts/prepare-hosted-runtime.test.mjs scripts/engine-provenance-guard.test.mjs scripts/ecosystem-manifest.test.mjs scripts/sync-zipp-from-softn.test.mjs scripts/release-runtime.test.mjs scripts/zipp-source.test.mjs scripts/runtime-provenance.test.mjs scripts/check-expression-parity.test.mjs scripts/prepare-sandbox-runtime.test.mjs scripts/fetch-oaiy-cli.test.mjs
+        run: node --test scripts/fetch-softn-release.test.mjs scripts/prepare-hosted-runtime.test.mjs scripts/engine-provenance-guard.test.mjs scripts/ecosystem-manifest.test.mjs scripts/sync-zipp-from-softn.test.mjs scripts/release-runtime.test.mjs scripts/zipp-source.test.mjs scripts/runtime-provenance.test.mjs scripts/check-expression-parity.test.mjs scripts/prepare-sandbox-runtime.test.mjs scripts/fetch-oaiy-cli.test.mjs scripts/package-oaiy-plugin.test.mjs
 
       # The build's prebuild step syncs prelude.js into the backend and regenerates the served
       # leaf-script profile; if either produced a diff, the committed backend copy was stale

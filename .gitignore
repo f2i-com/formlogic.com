@@ -13,6 +13,8 @@ playwright-report/
 **/test-results/
 **/playwright-report/
 dist-package/
+dist-oaiy-plugin/
+formlogic/oaiy-plugin/target/
 
 # Session resume notes (local only — full status for picking up in a new session)
 CLAUDE.md

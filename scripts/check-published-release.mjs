@@ -1,7 +1,7 @@
 // Run after uploading assets and before publishing a new draft release.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 // `gh release view` resolves authenticated drafts as well as published releases.
@@ -27,8 +27,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const release = readReleaseForVerification(repo, tag);
   const files = readdirSync('dist-package').filter(name => name.endsWith('.zip'));
   if (files.length !== 1) throw new Error('Expected exactly one release ZIP.');
-  for (const name of files) {
-    verifyUploadedAsset(release, name, readFileSync(`dist-package/${name}`));
+  const plugins = existsSync('dist-oaiy-plugin') ? readdirSync('dist-oaiy-plugin').filter(name => name.endsWith('.zip')) : [];
+  const paths = [...files.map(name => `dist-package/${name}`), ...plugins.map(name => `dist-oaiy-plugin/${name}`)];
+  for (const path of paths) {
+    const name = path.slice(path.indexOf('/') + 1);
+    verifyUploadedAsset(release, name, readFileSync(path));
     console.log(`${name}: GitHub SHA-256 and size verified.`);
   }
 }

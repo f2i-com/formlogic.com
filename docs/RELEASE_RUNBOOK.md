@@ -61,6 +61,9 @@ local review checks, not proof that a production deployment has been validated.
 - [ ] **Restore tested on staging** from that backup — don't assume; run it.
 - [ ] Rollback path known: previous release tag/artifact identified; DB migrations are additive, but
       confirm you can redeploy the prior build and (if needed) restore the DB snapshot.
+- [ ] FormLogic Backups plugin: `e2e/backup-plugin.spec.ts` run by hand against a server with
+      `PRIVATE_FORMS` and `DATA_NODES` on (CI skips it; docs/FORMLOGIC_BACKUPS.md says how), and
+      the zip for each system installed once in a real OAIY.
 
 ## 4. Smoke the launch-critical states (manually, in prod or a prod-like staging)
 
