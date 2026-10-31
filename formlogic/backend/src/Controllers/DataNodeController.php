@@ -27,6 +27,10 @@ use Psr\Http\Message\ServerRequestInterface as Request;
  *    `connector:relay` on this tier is a documented migration shim and goes
  *    away once enrolment mints least-privilege `data:snapshot` keys.
  *
+ *    A backup of one app or form (createSourceBackup, restoreSource) is the
+ *    same tier, and every request is also signed by the node's own key, so
+ *    the API key alone can't name a key to seal to or push a restore.
+ *
  * Staged artifacts (snapshots + sealed account backups) are additionally
  * bound to their owner in data_staged_artifacts (review FL-002): GET/DELETE
  * of another tenant's artifact ID is indistinguishable from a missing ID.
@@ -44,6 +48,8 @@ final class DataNodeController
         private DataAccountBackupService $accountBackups,
         private \FormLogic\Services\DataNodeService $nodes,
         private bool $dataNodesEnabled,
+        private ?\FormLogic\Services\AccountBackupService $backups = null,
+        private ?\FormLogic\Services\AuditService $audit = null,
     ) {
     }
 
@@ -173,6 +179,119 @@ final class DataNodeController
             return $this->jsonError($response, 'Unknown snapshot', 404, 'snapshot_not_found');
         }
         return $this->jsonResponse($response, ['data' => ['ok' => true]]);
+    }
+
+    /** GET /api/v1/data-node/backup-sources — names and dates of what this account can back up. */
+    public function backupSources(Request $request, Response $response): Response
+    {
+        if (($gate = $this->gate($request, $response)) !== null) {
+            return $gate;
+        }
+        $node = $this->approvedNode($request, $response);
+        if ($node instanceof Response) {
+            return $node;
+        }
+        if ($this->backups === null) {
+            return $this->jsonError($response, 'Backups are not available', 503);
+        }
+        return $this->jsonResponse($response, ['data' => $this->backups->sources((string) $request->getAttribute('userId'))]);
+    }
+
+    /** POST /api/v1/data-node/source-backups — seal one app or form to this node's backup key. */
+    public function createSourceBackup(Request $request, Response $response): Response
+    {
+        if (($gate = $this->gate($request, $response)) !== null) {
+            return $gate;
+        }
+        $node = $this->approvedNode($request, $response);
+        if ($node instanceof Response) {
+            return $node;
+        }
+        $userId = (string) $request->getAttribute('userId');
+        $body = json_decode((string) $request->getBody(), true);
+        if (!is_array($body)) {
+            return $this->jsonError($response, 'A JSON body is required', 400, 'invalid_request');
+        }
+        try {
+            $result = $this->accountBackups->createSource($userId, $body, $node);
+        } catch (\RuntimeException $e) {
+            $known = match ($e->getMessage()) {
+                'source_backup_bad_source' => ['Name an app or a form', 400],
+                'account_backup_bad_ephemeral_key' => ['recipientPk must be a base64 X25519 public key', 400],
+                'account_backup_key_unbound' => ['The request must carry a fresh signature by this node\'s enrolled signing key', 403],
+                'account_backup_too_large' => ['This backup exceeds the transfer cap', 413],
+                'App not found', 'Form not found' => ['Unknown app or form', 404],
+                default => null,
+            };
+            if ($known === null) {
+                throw $e;
+            }
+            return $this->jsonError($response, $known[0], $known[1], $e->getMessage());
+        }
+        $this->record($request, 'data.source_backup', [
+            'nodeId' => $node['id'] ?? null,
+            'kind' => $body['kind'] ?? null,
+            'sourceId' => $body['id'] ?? null,
+            'backupId' => $result['backupId'],
+            'sizeBytes' => $result['header']['zipBytes'] ?? 0,
+        ]);
+        return $this->jsonResponse($response, ['data' => $result], 201);
+    }
+
+    /**
+     * POST /api/v1/data-node/restores — the body is a plain backup zip, with the node's signature in
+     * X-Data-Requested-At and X-Data-Signature. Nothing is overwritten: it restores as new copies.
+     */
+    public function restoreSource(Request $request, Response $response): Response
+    {
+        if (($gate = $this->gate($request, $response)) !== null) {
+            return $gate;
+        }
+        $node = $this->approvedNode($request, $response);
+        if ($node instanceof Response) {
+            return $node;
+        }
+        $tmp = (string) tempnam(sys_get_temp_dir(), 'flnoderestore_');
+        try {
+            $out = fopen($tmp, 'wb');
+            $body = $request->getBody();
+            if ($out === false) {
+                return $this->jsonError($response, 'Could not stage the backup', 500);
+            }
+            while (!$body->eof()) {
+                fwrite($out, $body->read(1 << 20));
+            }
+            fclose($out);
+            $result = $this->accountBackups->restoreSource(
+                (string) $request->getAttribute('userId'),
+                $tmp,
+                $request->getHeaderLine('X-Data-Requested-At'),
+                $request->getHeaderLine('X-Data-Signature'),
+                $node,
+            );
+            $this->record($request, 'data.source_restore', ['nodeId' => $node['id'] ?? null, 'apps' => count($result['apps']), 'forms' => count($result['forms'])]);
+            return $this->jsonResponse($response, ['data' => $result]);
+        } catch (\FormLogic\Services\EncryptionRequestException $e) {
+            return $this->jsonError($response, $e->getMessage(), $e->status, $e->errorCode);
+        } catch (\RuntimeException | \InvalidArgumentException $e) {
+            if ($e->getMessage() === 'account_backup_key_unbound') {
+                return $this->jsonError($response, 'The request must carry a fresh signature by this node\'s enrolled signing key', 403, 'account_backup_key_unbound');
+            }
+            return $this->jsonError($response, $e->getMessage(), 400, 'restore_failed');
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    /** @param array<string, mixed> $details */
+    private function record(Request $request, string $action, array $details): void
+    {
+        try {
+            $userId = (string) $request->getAttribute('userId');
+            $this->audit?->log($action, 'account', $userId, $userId, $request->getServerParams()['REMOTE_ADDR'] ?? null, $details);
+        } catch (\Throwable) {
+            // audit is best-effort
+        }
     }
 
     public function createAccountBackup(Request $request, Response $response): Response

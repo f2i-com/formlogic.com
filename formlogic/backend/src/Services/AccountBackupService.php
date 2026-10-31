@@ -351,6 +351,94 @@ final class AccountBackupService
     }
 
     /**
+     * What an owner can back up one at a time: names and dates, no contents.
+     *
+     * @return array{
+     *   apps: list<array{id: string, name: string, updatedAt: ?string, forms: int, softn: bool}>,
+     *   forms: list<array{id: string, title: string, updatedAt: ?string, inApp: bool, private: bool}>
+     * }
+     */
+    public function sources(string $userId): array
+    {
+        $members = $this->pdo->prepare('SELECT af.app_id, af.form_id FROM app_forms af JOIN apps a ON a.id = af.app_id WHERE a.owner_id = ?');
+        $members->execute([$userId]);
+        $formsByApp = [];
+        $inApp = [];
+        foreach ($members->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $formsByApp[(string) $row['app_id']] = ($formsByApp[(string) $row['app_id']] ?? 0) + 1;
+            $inApp[(string) $row['form_id']] = true;
+        }
+
+        $apps = [];
+        $stmt = $this->pdo->prepare('SELECT id, name, updated_at FROM apps WHERE owner_id = ? ORDER BY name ASC');
+        $stmt->execute([$userId]);
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $id = (string) $row['id'];
+            $apps[] = [
+                'id' => $id,
+                'name' => (string) $row['name'],
+                'updatedAt' => $row['updated_at'] !== null ? (string) $row['updated_at'] : null,
+                'forms' => $formsByApp[$id] ?? 0,
+                'softn' => $this->describeNative($id) !== null || is_file(HostedAppService::databasePath($id, $this->hostedPath)),
+            ];
+        }
+
+        $encryption = new FormEncryptionService($this->pdo);
+        $forms = [];
+        $stmt = $this->pdo->prepare('SELECT id, title, updated_at FROM forms WHERE user_id = ? ORDER BY title ASC');
+        $stmt->execute([$userId]);
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $id = (string) $row['id'];
+            $forms[] = [
+                'id' => $id,
+                'title' => (string) $row['title'],
+                'updatedAt' => $row['updated_at'] !== null ? (string) $row['updated_at'] : null,
+                'inApp' => isset($inApp[$id]),
+                'private' => $encryption->isPrivate($id),
+            ];
+        }
+        return ['apps' => $apps, 'forms' => $forms];
+    }
+
+    /**
+     * One app with its forms, flows and data, or one form with its own, as a backup that leaves
+     * the server. It is an account backup with less in it, so the same restore reads it, and like
+     * every download it never carries host keys.
+     */
+    public function exportSource(string $userId, string $kind, string $id): string
+    {
+        $structure = $this->buildStructure($userId);
+        $keepForm = static fn (array $form): bool => false;
+        if ($kind === 'app') {
+            $apps = array_values(array_filter($structure['apps'], static fn (array $app): bool => (string) $app['id'] === $id));
+            if ($apps === []) {
+                throw new \RuntimeException('App not found');
+            }
+            $formIds = array_map('strval', array_column($apps[0]['forms'], 'formId'));
+            $keepForm = static fn (array $form): bool => in_array((string) $form['id'], $formIds, true);
+            $structure['apps'] = $apps;
+            $structure['flows'] = array_values(array_filter($structure['flows'], static fn (array $flow): bool => $flow['appId'] === $id));
+            $structure['appBindings'] = array_values(array_filter($structure['appBindings'], static fn (array $binding): bool => $binding['appId'] === $id));
+            $structure['formBindings'] = [];
+        } elseif ($kind === 'form') {
+            $keepForm = static fn (array $form): bool => (string) $form['id'] === $id;
+            $structure['apps'] = [];
+            $structure['appBindings'] = [];
+            $structure['formBindings'] = array_values(array_filter($structure['formBindings'], static fn (array $binding): bool => (string) $binding['formId'] === $id));
+            $slugs = array_column($structure['formBindings'], 'flow');
+            $structure['flows'] = array_values(array_filter($structure['flows'], static fn (array $flow): bool => $flow['appId'] === null && in_array($flow['slug'], $slugs, true)));
+        } else {
+            throw new \InvalidArgumentException('Back up an app or a form');
+        }
+        $structure['forms'] = array_values(array_filter($structure['forms'], $keepForm));
+        if ($kind === 'form' && $structure['forms'] === []) {
+            throw new \RuntimeException('Form not found');
+        }
+        $structure['encryption'] = $this->encryptionBlock($userId, array_map(static fn (array $form): string => (string) $form['id'], $structure['forms']));
+        return $this->buildZip($structure, true, false, true);
+    }
+
+    /**
      * Zip a structure document + its record databases/files into a temp archive.
      *
      * @param bool $includeHostSecrets add native/<appId>/host-config.json (key material)

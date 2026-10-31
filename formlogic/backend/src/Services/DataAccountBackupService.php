@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Services;
 
+use FormLogic\Support\BackupEnvelope;
 use FormLogic\Support\DataCanonicalJson;
 
 /**
@@ -41,6 +42,10 @@ final class DataAccountBackupService
     public const TTL_SECONDS = 3600;
     /** Domain prefix of the node-signed ephemeral-key challenge (review FL-001). */
     public const REQUEST_SIGNATURE_DOMAIN = 'flaccountreq:1';
+    /** The same challenge for one app or form, sealed to a key that outlives this computer. */
+    public const SOURCE_SIGNATURE_DOMAIN = 'flsourcebackup:1';
+    /** And for putting a backup back: it names the bytes, so a signature can't be reused for others. */
+    public const RESTORE_SIGNATURE_DOMAIN = 'flsourcerestore:1';
     /** Freshness window for the signed challenge, either direction. */
     public const REQUEST_SIGNATURE_WINDOW_SECONDS = 600;
 
@@ -201,6 +206,144 @@ final class DataAccountBackupService
         } finally {
             @unlink($zipPath);
         }
+    }
+
+    /**
+     * One app or form, sealed for the requesting node as a BackupEnvelope.
+     *
+     * Unlike create(), the key is not ephemeral: a backup kept for years must open after this
+     * computer is gone, so the desktop holds a long-term key with its own recovery. The rule is
+     * the same: the enrolled node signs the key and what it asks for, so a stolen API key can't
+     * name a key of its own, or turn one request into a request for something else.
+     *
+     * @param array<string,mixed> $request {kind, id, recipientPk, requestedAt, recipientPkSignature}
+     * @param array<string,mixed> $node    the resolved approved data_nodes row
+     * @return array{backupId: string, header: array<string,mixed>}
+     */
+    public function createSource(string $userId, array $request, array $node): array
+    {
+        $this->sweepExpired();
+        $kind = (string) ($request['kind'] ?? '');
+        $id = (string) ($request['id'] ?? '');
+        $recipientB64 = (string) ($request['recipientPk'] ?? '');
+        $recipient = base64_decode($recipientB64, true);
+        if (!in_array($kind, ['app', 'form'], true) || preg_match('/^[a-zA-Z0-9_-]{1,100}$/D', $id) !== 1) {
+            throw new \RuntimeException('source_backup_bad_source');
+        }
+        if (!is_string($recipient) || strlen($recipient) !== SODIUM_CRYPTO_BOX_PUBLICKEYBYTES) {
+            throw new \RuntimeException('account_backup_bad_ephemeral_key');
+        }
+        $requestedAt = (string) ($request['requestedAt'] ?? '');
+        $this->assertSignedByNode(
+            $node,
+            $requestedAt,
+            self::SOURCE_SIGNATURE_DOMAIN . '|' . $requestedAt . '|' . $recipientB64 . '|' . $kind . '|' . $id,
+            (string) ($request['recipientPkSignature'] ?? ''),
+        );
+
+        $zipPath = $this->backups->exportSource($userId, $kind, $id);
+        try {
+            $zipBytes = (int) filesize($zipPath);
+            if ($zipBytes <= 0 || $zipBytes > self::MAX_ZIP_BYTES) {
+                throw new \RuntimeException('account_backup_too_large');
+            }
+            $backupId = 'acct-' . bin2hex(random_bytes(16));
+            $dir = $this->stagingRoot . '/' . $backupId;
+            if (!mkdir($dir, 0700, true) && !is_dir($dir)) {
+                throw new \RuntimeException('could not create the account-backup staging directory');
+            }
+            $this->artifacts->record(
+                $backupId,
+                DataStagedArtifactIndex::KIND_ACCOUNT_BACKUP,
+                $userId,
+                is_string($node['id'] ?? null) ? $node['id'] : null,
+                self::TTL_SECONDS,
+            );
+            BackupEnvelope::seal($zipPath, $dir . '/payload.bin', ['publicKey' => $recipient]);
+
+            $identity = $this->signer->publicIdentity();
+            $header = [
+                'v' => 1,
+                'kind' => 'source-backup',
+                'source' => ['kind' => $kind, 'id' => $id, 'name' => $this->sourceName($zipPath, $kind)],
+                'counts' => $this->countsIn($zipPath),
+                'protocol' => self::PROTOCOL,
+                'backupId' => $backupId,
+                'accountId' => $userId,
+                'createdAt' => gmdate('Y-m-d\TH:i:s\Z'),
+                'cipher' => BackupEnvelope::CIPHER,
+                'zipBytes' => $zipBytes,
+                'zipSha256' => (string) hash_file('sha256', $zipPath),
+                'signerKeyId' => $identity['keyId'],
+                'signerKeyGeneration' => 1,
+            ];
+            $header['signature'] = $this->signer->sign(DataCanonicalJson::DOMAIN_BACKUP, $header);
+            file_put_contents($dir . '/header.json', json_encode($header, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT) . "\n");
+            return ['backupId' => $backupId, 'header' => $header];
+        } finally {
+            @unlink($zipPath);
+        }
+    }
+
+    /**
+     * Puts a backup back as new copies, as Settings → Restore does.
+     *
+     * @param array<string,mixed> $node
+     * @return array<string,mixed> the importAccount summary
+     */
+    public function restoreSource(string $userId, string $zipPath, string $requestedAt, string $signature, array $node): array
+    {
+        $this->assertSignedByNode(
+            $node,
+            $requestedAt,
+            self::RESTORE_SIGNATURE_DOMAIN . '|' . $requestedAt . '|' . hash_file('sha256', $zipPath),
+            $signature,
+        );
+        return $this->backups->importAccount($zipPath, $userId);
+    }
+
+    /** @param array<string,mixed> $node */
+    private function assertSignedByNode(array $node, string $requestedAt, string $message, string $signature): void
+    {
+        $ts = DataNodeService::parseRfc3339Utc($requestedAt);
+        if ($ts === null || abs(time() - $ts) > self::REQUEST_SIGNATURE_WINDOW_SECONDS) {
+            throw new \RuntimeException('account_backup_key_unbound');
+        }
+        $sig = base64_decode($signature, true);
+        $nodePk = base64_decode((string) ($node['signing_public_key'] ?? ''), true);
+        if (
+            !is_string($sig) || strlen($sig) !== SODIUM_CRYPTO_SIGN_BYTES
+            || !is_string($nodePk) || strlen($nodePk) !== SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES
+            || !sodium_crypto_sign_verify_detached($sig, $message, $nodePk)
+        ) {
+            throw new \RuntimeException('account_backup_key_unbound');
+        }
+    }
+
+    /** @return array<string,int> what the archive's own manifest counted */
+    private function countsIn(string $zipPath): array
+    {
+        $counts = ['forms' => 0, 'apps' => 0, 'flows' => 0, 'responses' => 0, 'files' => 0];
+        $za = new \ZipArchive();
+        if ($za->open($zipPath) === true) {
+            $decoded = json_decode((string) $za->getFromName('manifest.json'), true);
+            foreach (array_keys($counts) as $key) {
+                $counts[$key] = (int) ($decoded['counts'][$key] ?? 0);
+            }
+            $za->close();
+        }
+        return $counts;
+    }
+
+    private function sourceName(string $zipPath, string $kind): string
+    {
+        $za = new \ZipArchive();
+        if ($za->open($zipPath) !== true) {
+            return '';
+        }
+        $structure = json_decode((string) $za->getFromName('backup.json'), true);
+        $za->close();
+        return (string) ($kind === 'app' ? ($structure['apps'][0]['name'] ?? '') : ($structure['forms'][0]['title'] ?? ''));
     }
 
     /**

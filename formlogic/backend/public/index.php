@@ -447,7 +447,9 @@ $container->set(\FormLogic\Controllers\DataNodeController::class, function (Cont
         $c->get(\FormLogic\Services\DataCloudSigner::class),
         $c->get(\FormLogic\Services\DataAccountBackupService::class),
         $c->get(\FormLogic\Services\DataNodeService::class),
-        (bool) ($c->get('settings')['cloud']['dataNodes'] ?? false)
+        (bool) ($c->get('settings')['cloud']['dataNodes'] ?? false),
+        $c->get(\FormLogic\Services\AccountBackupService::class),
+        $c->get(\FormLogic\Services\AuditService::class)
     );
 });
 $container->set(\FormLogic\Controllers\DataPlacementController::class, function (Container $c) {
@@ -1215,6 +1217,7 @@ $app->add(new BodySizeLimitMiddleware(
         // Native projects include base64 media; the service separately caps decoded content at 16 MB.
         ['path' => '#^/api/apps/[a-zA-Z0-9_-]+/native$#', 'method' => 'PUT', 'maxBytes' => 24 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => true],
         ['path' => '#^/api/account/backup/import$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
+        ['path' => '#^/api/v1/data-node/restores$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => ['application/zip'], 'auth' => false],
         ['path' => '#^/api/admin/upgrade/upload$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
         ['path' => '#^/api/(application-packages/import|packs/catalog/upload)$#', 'maxBytes' => $packMax + (4 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
         // SAFE-001: describe also accepts a multipart .formlogic archive (pre-install review of a
@@ -2920,6 +2923,18 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     $group->delete('/data-node/account-backups/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\DataNodeController::class)->deleteAccountBackup($request, $response, $getArgs($request));
     })->add($dataNodeAuth);
+    // One app or form at a time, for OAIY's FormLogic data page. The backup is fetched and removed
+    // through the account-backups routes above: it is staged the same way.
+    $sourceBackupLimiter = new RateLimitMiddleware($rateLimiter, 12, 60, 'data_source_backup', true);
+    $group->get('/data-node/backup-sources', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\DataNodeController::class)->backupSources($request, $response);
+    })->add($dataNodeAuth);
+    $group->post('/data-node/source-backups', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\DataNodeController::class)->createSourceBackup($request, $response);
+    })->add($sourceBackupLimiter)->add($dataNodeAuth);
+    $group->post('/data-node/restores', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\DataNodeController::class)->restoreSource($request, $response);
+    })->add($sourceBackupLimiter)->add($dataNodeAuth);
 
     // AI preferences (plan Phase 2 + section 5.6): the desktop flow runner reads the ACCOUNT
     // OWNER's AI source settings. The controller accepts ai:relay or the grandfathered

@@ -10,6 +10,7 @@ use FormLogic\Services\DataAccountBackupService;
 use FormLogic\Services\DataCloudSigner;
 use FormLogic\Services\DataNodeService;
 use FormLogic\Services\DataSnapshotService;
+use FormLogic\Support\BackupEnvelope;
 use FormLogic\Support\DataCanonicalJson;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -39,6 +40,7 @@ final class DataNodeAuthorityTest extends E2eeTestCase
     private static DataSnapshotService $snapshots;
     private static DataAccountBackupService $accountBackups;
     private static DataNodeController $controller;
+    private static AccountBackupService $backups;
 
     public static function setUpBeforeClass(): void
     {
@@ -61,6 +63,7 @@ final class DataNodeAuthorityTest extends E2eeTestCase
             self::$tmpRoot . '/sqlite',
             self::$uploadsPath,
         );
+        self::$backups = $backups;
         self::$accountBackups = new DataAccountBackupService($backups, self::$signer, self::$tmpRoot . '/data-snapshots', self::$mysql);
         self::$controller = new DataNodeController(
             self::$snapshots,
@@ -170,6 +173,9 @@ final class DataNodeAuthorityTest extends E2eeTestCase
             'createAccountBackup' => $c->createAccountBackup($this->request($userId, $apiKeyId, $scopes, ['ephemeralPk' => base64_encode(random_bytes(32))]), $this->response()),
             'accountBackupPayload' => $c->accountBackupPayload($this->request($userId, $apiKeyId, $scopes), $this->response(), ['id' => 'acct-' . str_repeat('a', 32)]),
             'deleteAccountBackup' => $c->deleteAccountBackup($this->request($userId, $apiKeyId, $scopes), $this->response(), ['id' => 'acct-' . str_repeat('a', 32)]),
+            'backupSources' => $c->backupSources($this->request($userId, $apiKeyId, $scopes), $this->response()),
+            'createSourceBackup' => $c->createSourceBackup($this->request($userId, $apiKeyId, $scopes, ['kind' => 'form', 'id' => 'x', 'recipientPk' => base64_encode(random_bytes(32))]), $this->response()),
+            'restoreSource' => $c->restoreSource($this->request($userId, $apiKeyId, $scopes), $this->response()),
         ];
     }
 
@@ -325,6 +331,59 @@ final class DataNodeAuthorityTest extends E2eeTestCase
         self::$pdo->prepare('DELETE FROM desktop_connections WHERE owner_user_id = ?')->execute([$stranger]);
         self::$pdo->prepare('DELETE FROM user_vaults WHERE user_id = ?')->execute([$stranger]);
         self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$stranger]);
+        $this->cleanupNodes();
+    }
+
+    public function testAnApprovedNodeBacksUpOneFormAndPutsItBack(): void
+    {
+        $approved = $this->makeApprovedNode();
+        $form = $this->makeDraftForm();
+        $controller = new DataNodeController(self::$snapshots, self::$signer, self::$accountBackups, self::$nodes, true, self::$backups);
+        [$public, $secret] = BackupEnvelope::generateKeyPair();
+        $requestedAt = gmdate('Y-m-d\TH:i:s\Z');
+        $message = DataAccountBackupService::SOURCE_SIGNATURE_DOMAIN . '|' . $requestedAt . '|' . $public . '|form|' . $form['id'];
+        $body = [
+            'kind' => 'form', 'id' => $form['id'], 'recipientPk' => $public, 'requestedAt' => $requestedAt,
+            'recipientPkSignature' => base64_encode(sodium_crypto_sign_detached($message, $approved['signSk'])),
+        ];
+
+        $listed = $controller->backupSources($this->request($this->userId, $approved['apiKeyId'], ['data:snapshot']), $this->response());
+        self::assertSame(200, $listed->getStatusCode());
+        self::assertContains($form['id'], array_column($this->decode($listed)['data']['forms'], 'id'));
+
+        $created = $controller->createSourceBackup($this->request($this->userId, $approved['apiKeyId'], ['data:snapshot'], $body), $this->response());
+        self::assertSame(201, $created->getStatusCode(), (string) $created->getBody());
+
+        $backupId = (string) $this->decode($created)['data']['backupId'];
+        $payload = $controller->accountBackupPayload($this->request($this->userId, $approved['apiKeyId'], ['data:snapshot']), $this->response(), ['id' => $backupId]);
+        self::assertSame(200, $payload->getStatusCode());
+        $sealed = self::$tmpRoot . '/fetched-' . bin2hex(random_bytes(4)) . '.flbk';
+        file_put_contents($sealed, (string) $payload->getBody());
+        BackupEnvelope::open($sealed, $sealed . '.zip', ['secretKey' => base64_decode($secret)]);
+
+        $bytes = (string) file_get_contents($sealed . '.zip');
+        $restoreAt = gmdate('Y-m-d\TH:i:s\Z');
+        $signature = sodium_crypto_sign_detached(
+            DataAccountBackupService::RESTORE_SIGNATURE_DOMAIN . '|' . $restoreAt . '|' . hash('sha256', $bytes),
+            $approved['signSk'],
+        );
+        $restore = $this->request($this->userId, $approved['apiKeyId'], ['data:snapshot'])
+            ->withBody((new StreamFactory())->createStream($bytes))
+            ->withHeader('X-Data-Requested-At', $restoreAt)
+            ->withHeader('X-Data-Signature', base64_encode($signature));
+        $restored = $controller->restoreSource($restore, $this->response());
+        self::assertSame(200, $restored->getStatusCode(), (string) $restored->getBody());
+        self::assertCount(1, $this->decode($restored)['data']['forms']);
+
+        $unsigned = $controller->restoreSource(
+            $this->request($this->userId, $approved['apiKeyId'], ['data:snapshot'])->withBody((new StreamFactory())->createStream($bytes)),
+            $this->response(),
+        );
+        self::assertSame(403, $unsigned->getStatusCode());
+        self::assertSame('account_backup_key_unbound', $this->decode($unsigned)['code'] ?? null);
+
+        unlink($sealed);
+        unlink($sealed . '.zip');
         $this->cleanupNodes();
     }
 
