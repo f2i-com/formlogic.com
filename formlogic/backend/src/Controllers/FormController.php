@@ -305,6 +305,10 @@ class FormController
         if (($refusal = AdminActingLimits::codeRefusal($request, $data)) !== null) {
             return $this->jsonResponse($response, $refusal, 403);
         }
+        // createForm turns an id that exists into an update, which has its own checks in update().
+        if (AdminActingLimits::acting($request) && is_string($data['id'] ?? null) && $this->formService->getForm($data['id']) !== null) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => 'That form exists already: open it to change it'], 403);
+        }
         if ($overQuota = $this->checkFormQuota($response, $userId)) {
             return $overQuota;
         }

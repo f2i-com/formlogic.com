@@ -54,6 +54,9 @@ export function MfaPanel() {
   // Disable + regenerate confirmations.
   const [disableOpen, setDisableOpen] = useState(false);
   const [disablePassword, setDisablePassword] = useState('');
+  const [disableCode, setDisableCode] = useState('');
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [setupPassword, setSetupPassword] = useState('');
   const [regenOpen, setRegenOpen] = useState(false);
   const [regenCode, setRegenCode] = useState('');
   const [refreshTick, setRefreshTick] = useState(0);
@@ -70,12 +73,14 @@ export function MfaPanel() {
 
   const startSetup = async () => {
     setBusy(true);
-    const r = await api.startMfaSetup();
+    const r = await api.startMfaSetup(setupPassword);
     setBusy(false);
     if (r.error || !r.data) {
       toast.error('Could not start setup', r.error);
       return;
     }
+    setSetupOpen(false);
+    setSetupPassword('');
     setSetup(r.data);
     setEnableCode('');
   };
@@ -100,7 +105,7 @@ export function MfaPanel() {
 
   const confirmDisable = async () => {
     setBusy(true);
-    const r = await api.disableMfa(disablePassword);
+    const r = await api.disableMfa(disablePassword, disableCode.trim());
     setBusy(false);
     if (r.error) {
       toast.error('Could not turn off two-factor', r.error);
@@ -108,6 +113,7 @@ export function MfaPanel() {
     }
     setDisableOpen(false);
     setDisablePassword('');
+    setDisableCode('');
     setRecoveryCodes(null);
     refresh();
     useAuthStore.setState((s) => (s.user ? { user: { ...s.user, mfaEnabled: false } } : s));
@@ -177,12 +183,12 @@ export function MfaPanel() {
               <Button variant="outline" size="sm" onClick={() => { setRegenOpen(true); setRegenCode(''); }} leftIcon={<RefreshCcw className="h-4 w-4" />}>
                 New recovery codes
               </Button>
-              <Button variant="outline" size="sm" onClick={() => { setDisableOpen(true); setDisablePassword(''); }}>
+              <Button variant="outline" size="sm" onClick={() => { setDisableOpen(true); setDisablePassword(''); setDisableCode(''); }}>
                 Turn off
               </Button>
             </>
           ) : setup === null ? (
-            <Button variant="outline" size="sm" onClick={() => { void startSetup(); }} isLoading={busy} leftIcon={<ShieldCheck className="h-4 w-4" />}>
+            <Button variant="outline" size="sm" onClick={() => { setSetupPassword(''); setSetupOpen(true); }} isLoading={busy} leftIcon={<ShieldCheck className="h-4 w-4" />}>
               Set up
             </Button>
           ) : null}
@@ -298,22 +304,50 @@ export function MfaPanel() {
 
       {/* Turn off: password re-entry required */}
       <ConfirmDialog
+        isOpen={setupOpen}
+        onClose={() => setSetupOpen(false)}
+        onConfirm={() => { void startSetup(); }}
+        title="Set up two-factor authentication?"
+        message="Confirm with your password, so nobody using an open session can add their own authenticator to your account."
+        confirmLabel="Continue"
+        isLoading={busy}
+        confirmDisabled={!setupPassword}
+      >
+        <PasswordInput
+          label="Password"
+          value={setupPassword}
+          onChange={(e) => setSetupPassword(e.target.value)}
+          placeholder="Your password"
+          autoComplete="current-password"
+        />
+      </ConfirmDialog>
+
+      <ConfirmDialog
         isOpen={disableOpen}
         onClose={() => setDisableOpen(false)}
         onConfirm={() => { void confirmDisable(); }}
         title="Turn off two-factor authentication?"
-        message="Sign-ins will only need your password again, and every remembered browser and recovery code is forgotten. Confirm with your password below."
+        message="Sign-ins will only need your password again, and every remembered browser and recovery code is forgotten. Confirm with your password and a code from your authenticator, or a recovery code."
         confirmLabel="Turn off"
         variant="danger"
         isLoading={busy}
+        confirmDisabled={!disablePassword || !disableCode.trim()}
       >
-        <PasswordInput
-          label="Password"
-          value={disablePassword}
-          onChange={(e) => setDisablePassword(e.target.value)}
-          placeholder="Your password"
-          autoComplete="current-password"
-        />
+        <div className="space-y-3">
+          <PasswordInput
+            label="Password"
+            value={disablePassword}
+            onChange={(e) => setDisablePassword(e.target.value)}
+            placeholder="Your password"
+            autoComplete="current-password"
+          />
+          <Input
+            label="Authenticator or recovery code"
+            value={disableCode}
+            onChange={(e) => setDisableCode(e.target.value)}
+            autoComplete="one-time-code"
+          />
+        </div>
       </ConfirmDialog>
 
       {/* Regenerate recovery codes: current TOTP code required */}

@@ -202,6 +202,8 @@ class AdminSafeguardsTest extends TestCase
             $_ENV['APP_ENV'] = 'production';
             $_ENV['ADMIN_MFA_REQUIRED'] = 'false';
             $this->assertFalse(AuthService::adminMfaRequired());
+            $_ENV['ADMIN_MFA_REQUIRED'] = 'enabled';
+            $this->assertTrue(AuthService::adminMfaRequired(), 'a typo keeps it on');
             $_ENV['APP_ENV'] = 'development';
             $_ENV['ADMIN_MFA_REQUIRED'] = 'true';
             $this->assertTrue(AuthService::adminMfaRequired());
@@ -274,6 +276,26 @@ class AdminSafeguardsTest extends TestCase
         $this->assertFalse(self::$auth->adminConfirmed($token, $this->adminId, self::SESSION), 'a sign-out everywhere ends it');
     }
 
+    public function testEveryAdminWriteIsConfirmedAndReadsPass(): void
+    {
+        $middleware = new AdminConfirmationMiddleware(self::$auth, true);
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                return new Response(204);
+            }
+        };
+        $at = fn (string $method, string $path) => (new ServerRequestFactory())->createServerRequest($method, 'https://formlogic.example' . $path)
+            ->withAttribute('userId', $this->adminId)->withAttribute(HostedActorContext::SESSION_ATTRIBUTE, self::SESSION);
+        foreach ([['POST', '/api/admin/upgrade/apply'], ['POST', '/api/admin/upgrade/rollback'], ['POST', '/api/admin/upgrade/restore-db'], ['POST', '/api/admin/backups/restore'], ['PUT', '/api/admin/flows/x'], ['POST', '/api/admin/maintenance'], ['DELETE', '/api/admin/notices/x']] as [$method, $path]) {
+            $this->assertSame(403, $middleware->process($at($method, $path), $handler)->getStatusCode(), $path);
+        }
+        $this->assertSame(204, $middleware->process($at('GET', '/api/admin/overview'), $handler)->getStatusCode());
+        $this->assertSame(204, $middleware->process($at('POST', '/api/admin/confirm'), $handler)->getStatusCode(), 'how one gets confirmed');
+        $this->assertSame(403, $middleware->process($at('POST', '/api/admin/confirm/x'), $handler)->getStatusCode());
+        $this->assertSame(403, (new AdminConfirmationMiddleware(self::$auth))->process($at('GET', '/api/admin/users/x/flows'), $handler)->getStatusCode(), 'acting asks for reads too');
+    }
+
     public function testTheMiddlewareAdmitsOnlyAConfirmedRequest(): void
     {
         $middleware = new AdminConfirmationMiddleware(self::$auth);
@@ -334,6 +356,27 @@ class AdminSafeguardsTest extends TestCase
         $this->assertNull(self::$auth->validateToken($session), 'old sessions end');
     }
 
+    public function testAnotherAdministratorsAccountIsNotResetFromHere(): void
+    {
+        self::$pdo->prepare('UPDATE users SET is_admin = 1 WHERE id = ?')->execute([$this->ownerId]);
+        $mfa = $this->createStub(MfaService::class);
+        $factory = new ResponseFactory();
+        $this->assertStringContainsString('administrator', self::decode($this->controller()->resetPassword($this->adminRequest('/x'), $factory->createResponse(), ['id' => $this->ownerId]))['message']);
+        $this->assertSame(400, $this->controller()->updateEmail($this->adminRequest('/x', ['email' => 'mine@safeguards.test']), $factory->createResponse(), ['id' => $this->ownerId])->getStatusCode());
+        $this->assertSame(400, $this->controller($mfa)->resetMfa($this->adminRequest('/x', ['password' => 'the-right-password']), $factory->createResponse(), ['id' => $this->ownerId])->getStatusCode());
+        $this->assertTrue(self::$auth->verifyPassword($this->ownerId, 'the-right-password'));
+    }
+
+    public function testAnEmailChangeEndsResetLinksAlreadySent(): void
+    {
+        self::$pdo->prepare('INSERT INTO password_resets (id, user_id, token_hash, expires_at) VALUES (UUID(), ?, ?, DATE_ADD(NOW(), INTERVAL 1 HOUR))')
+            ->execute([$this->ownerId, hash('sha256', bin2hex(random_bytes(8)))]);
+        self::$admin->setUserEmail($this->ownerId, 'moved-' . $this->ownerId . '@safeguards.test');
+        $left = self::$pdo->prepare('SELECT COUNT(*) FROM password_resets WHERE user_id = ?');
+        $left->execute([$this->ownerId]);
+        $this->assertSame(0, (int) $left->fetchColumn());
+    }
+
     public function testChangingTheEmailTellsTheOldAddress(): void
     {
         $old = $this->ownerId . '@safeguards.test';
@@ -372,6 +415,84 @@ class AdminSafeguardsTest extends TestCase
         $this->assertSame(['An administrator changed something in your account', 'An administrator sent you a password reset link'], $what);
         $this->assertSame(['at', 'what'], array_keys($seen[0]));
         $this->assertStringNotContainsString($this->adminId, (string) json_encode($seen), 'which administrator stays in the log');
+    }
+
+    public function testAnOrdinaryEditCannotPushAResetOffTheList(): void
+    {
+        $activity = new AdminSupportActivity(self::$mysql, self::$audit);
+        self::$audit->log('admin.mfa_reset', 'admin', $this->ownerId, $this->adminId, null, []);
+        for ($i = 0; $i < 12; $i++) {
+            self::$audit->log('admin.on_behalf', 'admin', $this->ownerId, $this->adminId, null, []);
+        }
+        $this->assertContains('An administrator turned off your two-factor authentication', array_column($activity->recentFor($this->ownerId, 5), 'what'));
+    }
+
+    public function testASecondAdministratorIsToldAboutToo(): void
+    {
+        $other = $this->user(true);
+        try {
+            $email = $this->createMock(EmailService::class);
+            $email->expects($this->exactly(2))->method('send')->willReturn(true);
+            $activity = new AdminSupportActivity(self::$mysql, self::$audit, $email);
+            $activity->opened($this->owner(), $this->adminId, null);
+            $activity->opened($this->owner(), $other, null);
+        } finally {
+            self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$other]);
+        }
+    }
+
+    public function testAFlowEditFromTheAdminPanelWaitsForTheOwner(): void
+    {
+        $flowId = 'flow-' . bin2hex(random_bytes(6));
+        self::$pdo->prepare("INSERT INTO flow_definitions (id, owner_user_id, name, slug, flow_json) VALUES (?, ?, 'F', ?, '{}')")->execute([$flowId, $this->ownerId, $flowId]);
+        try {
+            $refused = $this->controller()->updateFlow($this->adminRequest('/x', ['flowJson' => ['nodes' => []]]), (new ResponseFactory())->createResponse(), ['id' => $flowId]);
+            $this->assertSame(403, $refused->getStatusCode());
+            $this->assertSame('admin_support_access_required', self::decode($refused)['code']);
+        } finally {
+            self::$pdo->prepare('DELETE FROM flow_definitions WHERE id = ?')->execute([$flowId]);
+        }
+    }
+
+    // ── Two-factor can't be taken with a session alone ───────────────────────
+
+    public function testSettingUpTwoFactorTakesThePassword(): void
+    {
+        $mfa = $this->createMock(MfaService::class);
+        $mfa->expects($this->once())->method('beginSetup')->willReturn(['secret' => 's', 'uri' => 'u']);
+        $controller = new AuthController(self::$auth, [], 3600, null, null, '', null, null, null, null, null, $mfa);
+        $request = (new ServerRequestFactory())->createServerRequest('POST', 'https://formlogic.example/api/auth/mfa/setup')
+            ->withAttribute('user', $this->owner())->withAttribute('userId', $this->ownerId);
+        $this->assertSame(403, $controller->mfaSetup($request, (new ResponseFactory())->createResponse())->getStatusCode());
+        $this->assertSame(403, $controller->mfaSetup($request->withParsedBody(['password' => 'a-guess']), (new ResponseFactory())->createResponse())->getStatusCode());
+        $this->assertSame(200, $controller->mfaSetup($request->withParsedBody(['password' => 'the-right-password']), (new ResponseFactory())->createResponse())->getStatusCode());
+    }
+
+    public function testTurningTwoFactorOnEndsEveryOtherSession(): void
+    {
+        $mfa = $this->createStub(MfaService::class);
+        $mfa->method('enable')->willReturn(['code-1']);
+        $controller = new AuthController(self::$auth, [], 3600, null, null, 'csrf', null, null, null, null, null, $mfa);
+        $stolen = self::$auth->issueToken($this->owner());
+        $request = (new ServerRequestFactory())->createServerRequest('POST', 'https://formlogic.example/api/auth/mfa/enable')
+            ->withAttribute('user', $this->owner())->withAttribute('userId', $this->ownerId)->withParsedBody(['code' => '123456']);
+        $response = $controller->mfaEnable($request, (new ResponseFactory())->createResponse());
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertNull(self::$auth->validateToken($stolen));
+        preg_match('/^formlogic_auth=([^;]+)/', $response->getHeader('Set-Cookie')[0], $match);
+        $this->assertNotNull(self::$auth->validateToken(urldecode($match[1])), 'this one carries on');
+    }
+
+    public function testTurningTwoFactorOffTakesTheCodeToo(): void
+    {
+        $mfa = $this->createMock(MfaService::class);
+        $mfa->method('verifyChallenge')->willReturnCallback(static fn (string $id, string $code): bool => $code === '123456');
+        $mfa->expects($this->once())->method('disable');
+        $controller = new AuthController(self::$auth, [], 3600, null, null, 'csrf', null, null, null, null, null, $mfa);
+        $request = (new ServerRequestFactory())->createServerRequest('POST', 'https://formlogic.example/api/auth/mfa/disable')
+            ->withAttribute('user', $this->owner())->withAttribute('userId', $this->ownerId);
+        $this->assertSame(403, $controller->mfaDisable($request->withParsedBody(['password' => 'the-right-password']), (new ResponseFactory())->createResponse())->getStatusCode());
+        $this->assertSame(200, $controller->mfaDisable($request->withParsedBody(['password' => 'the-right-password', 'code' => '123456']), (new ResponseFactory())->createResponse())->getStatusCode());
     }
 
     // ── Support access ───────────────────────────────────────────────────────

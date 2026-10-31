@@ -81,7 +81,9 @@ class AdminActAsMiddleware implements MiddlewareInterface
         if ($mutating) {
             try {
                 $sp = $request->getServerParams();
-                $this->auditService?->log('admin.on_behalf', 'admin', $ownerId, is_string($adminId) ? $adminId : null, $sp['REMOTE_ADDR'] ?? null, [
+                // The owner sees admin.on_behalf, which must mean something changed.
+                $action = $response->getStatusCode() < 400 ? 'admin.on_behalf' : 'admin.on_behalf_refused';
+                $this->auditService?->log($action, 'admin', $ownerId, is_string($adminId) ? $adminId : null, $sp['REMOTE_ADDR'] ?? null, [
                     'method' => $method,
                     'route' => $route?->getPattern(),
                     'path' => $request->getUri()->getPath(),

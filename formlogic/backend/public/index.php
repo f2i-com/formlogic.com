@@ -1366,10 +1366,11 @@ $adminArgs = function ($request) {
     return \Slim\Routing\RouteContext::fromRequest($request)->getRoute()->getArguments();
 };
 $adminConfirmation = new \FormLogic\Middleware\AdminConfirmationMiddleware($container->get(AuthService::class));
-$app->group('/api/admin', function (RouteCollectorProxy $group) use ($container, $adminArgs, $adminStepUpRateLimiter, $adminConfirmation) {
+$adminWritesConfirmed = new \FormLogic\Middleware\AdminConfirmationMiddleware($container->get(AuthService::class), true);
+$app->group('/api/admin', function (RouteCollectorProxy $group) use ($container, $adminArgs, $adminStepUpRateLimiter) {
     $ctrl = fn () => $container->get(\FormLogic\Controllers\AdminController::class);
 
-    // Proves who the administrator is for the routes below that take over or open an account.
+    // Proves who the administrator is, for every write below and for acting as an account.
     $group->post('/confirm', function ($request, $response) use ($ctrl) {
         return $ctrl()->confirm($request, $response);
     })->add($adminStepUpRateLimiter);
@@ -1385,7 +1386,7 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     });
     $group->post('/users/{id}/admin', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->setAdmin($request, $response, $adminArgs($request));
-    })->add($adminConfirmation);
+    });
     // Lockout recovery: reset a user's two-factor auth (secret + recovery codes
     // + remembered browsers wiped) so they can sign in and re-enroll. Audited.
     $group->post('/users/{id}/mfa/reset', function ($request, $response) use ($ctrl, $adminArgs) {
@@ -1401,10 +1402,10 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     // complimentary access, and — heavily gated — erase the whole account.
     $group->post('/users/{id}/password', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->resetPassword($request, $response, $adminArgs($request));
-    })->add($adminConfirmation);
+    });
     $group->put('/users/{id}/email', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->updateEmail($request, $response, $adminArgs($request));
-    })->add($adminConfirmation);
+    });
     $group->get('/users/{id}/payments', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->listPayments($request, $response, $adminArgs($request));
     });
@@ -1413,7 +1414,7 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     });
     $group->post('/users/{id}/delete', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->deleteUser($request, $response, $adminArgs($request));
-    })->add($adminConfirmation);
+    });
     // Structure-only backup manifest: the user's schema + per-form sqlite/uploads
     // PATHS and sizes — never record data (the admin panel lists, it never exports).
     $group->get('/users/{id}/backup-manifest', function ($request, $response) use ($ctrl, $adminArgs) {
@@ -1516,7 +1517,7 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     $group->delete('/upgrade/package', function ($request, $response) use ($ctrl) {
         return $ctrl()->upgradeDiscard($request, $response);
     });
-})->add($adminRateLimiter)->add($adminGate)->add($authRequired);
+})->add($adminWritesConfirmed)->add($adminRateLimiter)->add($adminGate)->add($authRequired);
 
 // ── Admin acting-as mirror (platform administrators only) ──────────────────────
 // Owner-parity management of ANOTHER user's apps/forms/flows through the SAME

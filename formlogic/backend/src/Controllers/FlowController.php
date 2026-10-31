@@ -15,6 +15,7 @@ use FormLogic\Services\Flows\FlowLogicLanguages;
 use FormLogic\Services\Flows\LogicLanguageUnsupportedException;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
+use FormLogic\Support\AdminActingLimits;
 use FormLogic\Support\AppDomainSession;
 
 /**
@@ -857,6 +858,10 @@ class FlowController
         [$body, $identityError] = $this->bindOwnerRunIdentity($request, $response, (string) $userId);
         if ($identityError !== null) {
             return $identityError;
+        }
+        // Output actions run on records as the flow would: code, for an administrator.
+        if (AdminActingLimits::acting($request) && !AdminActingLimits::mayEditCode($request) && !empty($body['outputActions'])) {
+            return $this->jsonResponse($response, AdminActingLimits::SUPPORT_ACCESS_REFUSAL, 403);
         }
         try {
             $run = $this->flows->completeOwnerRun($userId, (string) ($args['runId'] ?? ''), $body);

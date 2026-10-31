@@ -78,11 +78,31 @@ final class AdminActingLimits
             if (!array_key_exists($key, $input)) {
                 continue;
             }
-            // A widget dashboard is data the server checks against the app, not code.
-            if ($key === 'customScreen' && is_array($input[$key]) && ($input[$key]['kind'] ?? '') === 'dashboard') {
+            // A widget dashboard is data the server checks against the app, not code, as long as
+            // it holds no code and doesn't replace any.
+            if ($key === 'customScreen' && self::isDashboard($input[$key]) && !self::holdsScreenCode($stored[$key] ?? null)) {
                 continue;
             }
             if (self::comparable($input[$key]) !== self::comparable($stored[$key] ?? null)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static function isDashboard(mixed $screen): bool
+    {
+        return is_array($screen) && ($screen['kind'] ?? '') === 'dashboard' && !self::holdsScreenCode($screen);
+    }
+
+    /** The kind is only a label: renderers run a screen's code whatever it says. */
+    private static function holdsScreenCode(mixed $screen): bool
+    {
+        if (!is_array($screen)) {
+            return false;
+        }
+        foreach (['html', 'css', 'js', 'ts', 'files', 'entry'] as $key) {
+            if (self::comparable($screen[$key] ?? null) !== null) {
                 return true;
             }
         }
@@ -96,7 +116,7 @@ final class AdminActingLimits
             return trim($code) === '' ? null : $code;
         }
         if (!is_array($code)) {
-            return null;
+            return $code;
         }
         unset($code['_trust'], $code['_provenance']);
         $code = array_map(self::comparable(...), $code);

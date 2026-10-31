@@ -153,6 +153,9 @@ class AdminController
         if ($adminId === $userId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Use Settings → Security to manage your own two-factor authentication'], 400);
         }
+        if (!empty($target['is_admin'])) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'This user is an administrator — remove their admin access first'], 400);
+        }
         $body = $request->getParsedBody() ?? [];
         if (!$this->auth->verifyPassword($adminId, (string) ($body['password'] ?? ''))) {
             $this->audit($request, 'admin.mfa_reset_denied', $userId, ['reason' => 'step_up_failed']);
@@ -295,12 +298,17 @@ class AdminController
         if ($target instanceof Response) {
             return $target;
         }
+        if (!empty($target['is_admin'])) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'This user is an administrator — remove their admin access first'], 400);
+        }
         if ($this->email?->isConfigured()) {
             try {
                 $this->auth->requestPasswordReset((string) $target['email'], AppUrl::frontendBase($request) . '/reset-password', false);
             } catch (\RuntimeException $e) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'The reset link could not be sent: ' . $e->getMessage()], 503);
             }
+            // Someone asking for this may be locked out by whoever is signed in.
+            $this->auth->revokeTokens($target['id']);
             $this->audit($request, 'admin.password_reset_link', $target['id']);
             return $this->jsonResponse($response, ['success' => true, 'emailed' => true]);
         }
@@ -323,6 +331,9 @@ class AdminController
         $target = $this->accountTarget($response, (string) $args['id']);
         if ($target instanceof Response) {
             return $target;
+        }
+        if (!empty($target['is_admin'])) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'This user is an administrator — remove their admin access first'], 400);
         }
         $body = $request->getParsedBody() ?? [];
         $email = trim((string) ($body['email'] ?? ''));
@@ -658,6 +669,7 @@ class AdminController
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }
         $this->audit($request, 'admin.update_form', $formId, ['ownerId' => $form['userId'] ?? null, 'keys' => array_keys($input)]);
+        $this->audit($request, 'admin.on_behalf', (string) ($form['userId'] ?? ''), ['route' => '/forms/{id}']);
         return $this->jsonResponse($response, ['form' => $updated]);
     }
 
@@ -705,6 +717,7 @@ class AdminController
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }
         $this->audit($request, 'admin.update_app', $appId, ['ownerId' => $app['ownerId'] ?? null, 'keys' => array_keys($upd)]);
+        $this->audit($request, 'admin.on_behalf', (string) ($app['ownerId'] ?? ''), ['route' => '/apps/{id}']);
         return $this->jsonResponse($response, ['app' => $updated]);
     }
 
@@ -733,6 +746,9 @@ class AdminController
         if ($owner === null) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Flow not found'], 404);
         }
+        if ($this->auth->supportAccessUntil($owner) === null) {
+            return $this->jsonResponse($response, AdminActingLimits::SUPPORT_ACCESS_REFUSAL, 403);
+        }
         $body = $request->getParsedBody() ?? [];
         $input = [];
         foreach (['name', 'slug', 'description', 'flowJson', 'nodeCapabilities', 'enabled'] as $k) {
@@ -754,6 +770,7 @@ class AdminController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Flow not found'], 404);
         }
         $this->audit($request, 'admin.update_flow', $flowId, ['ownerId' => $owner, 'keys' => array_keys($input)]);
+        $this->audit($request, 'admin.on_behalf', $owner, ['route' => '/flows/{id}']);
         return $this->jsonResponse($response, ['flow' => $flow]);
     }
 

@@ -530,6 +530,21 @@ class AdminActingAsTest extends TestCase
         // A widget dashboard is data, checked by the server.
         $this->assertSame(200, $this->send('PUT', $app, ['customScreen' => ['kind' => 'dashboard', 'enabled' => true, 'dashboard' => ['widgets' => []]]], $admin)->getStatusCode());
 
+        // The kind is only a label: code in a dashboard, or code a dashboard replaces, is code.
+        $this->assertSame(403, $this->send('PUT', $form, ['customScreen' => ['kind' => 'dashboard', 'enabled' => true, 'js' => 'steal()']], $admin)->getStatusCode());
+        $this->assertSame(403, $this->send('PUT', $form, ['customScreen' => ['kind' => 'dashboard', 'enabled' => true, 'dashboard' => ['widgets' => []]]], $admin)->getStatusCode());
+        // A switch is part of the code: turning a disabled script on is an edit of it.
+        $off = ['scripts' => [['id' => 'x', 'enabled' => false, 'language' => 'javascript', 'source' => 'steal()']]];
+        self::$apps->updateApp($this->appId, ['customLogic' => $off]);
+        $on = $off;
+        $on['scripts'][0]['enabled'] = true;
+        $this->assertSame(403, $this->send('PUT', $app, ['customLogic' => $on], $admin)->getStatusCode());
+        // An id that exists would be an update by another name, past update()'s checks.
+        $over = $this->send('POST', "/api/admin/users/{$this->ownerId}/forms", ['id' => $this->formId, 'title' => 'Same', 'settings' => ['notifications' => ['notificationEmail' => 'admin@elsewhere.test']]], $admin);
+        $this->assertSame(403, $over->getStatusCode(), $this->body($over));
+        // A run's output actions act on records as the flow would.
+        $this->assertSame(403, $this->send('PATCH', "/api/admin/users/{$this->ownerId}/flow-runs/{$this->runId}", ['status' => 'done', 'outputActions' => [['type' => 'submitResponse']]], $admin)->getStatusCode());
+
         // With the owner's leave it all goes through, until that lapses.
         self::$auth->setSupportAccess($this->ownerId, true);
         $this->assertSame(200, $this->send('PUT', $form, ['logicScript' => 'function onSubmit() { /* fixed */ }'], $admin)->getStatusCode());

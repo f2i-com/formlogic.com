@@ -1061,8 +1061,8 @@ class ApiClient {
   }
 
   /** Start enrollment: a fresh secret + otpauth:// URI to render as a QR. */
-  async startMfaSetup(): Promise<ApiResponse<{ secret: string; uri: string }>> {
-    return this.request('/auth/mfa/setup', { method: 'POST' });
+  async startMfaSetup(password: string): Promise<ApiResponse<{ secret: string; uri: string }>> {
+    return this.request('/auth/mfa/setup', { method: 'POST', body: JSON.stringify({ password }) });
   }
 
   /** Prove the authenticator works and switch MFA on. Returns the one-time recovery codes. */
@@ -1070,8 +1070,8 @@ class ApiClient {
     return this.request('/auth/mfa/enable', { method: 'POST', body: JSON.stringify({ code }) });
   }
 
-  async disableMfa(password: string): Promise<ApiResponse<{ enabled: boolean }>> {
-    return this.request('/auth/mfa/disable', { method: 'POST', body: JSON.stringify({ password }) });
+  async disableMfa(password: string, code: string): Promise<ApiResponse<{ enabled: boolean }>> {
+    return this.request('/auth/mfa/disable', { method: 'POST', body: JSON.stringify({ password, code }) });
   }
 
   async regenerateMfaRecoveryCodes(code: string): Promise<ApiResponse<{ recoveryCodes: string[] }>> {
@@ -4722,12 +4722,12 @@ class ApiClient {
   }
 
   /** Upload a release zip for the upgrade wizard (multipart — raw fetch like the other uploads). */
-  async adminUpgradeUpload(file: File): Promise<ApiResponse<{ staged: AdminStagedPackage }>> {
+  async adminUpgradeUpload(file: File, confirmedAgain = false): Promise<ApiResponse<{ staged: AdminStagedPackage }>> {
     const generation = currentSessionGeneration();
     try {
       const formData = new FormData();
       formData.append('package', file);
-      const headers: Record<string, string> = {};
+      const headers: Record<string, string> = adminConfirmationHeaders();
       const csrf = this.getCsrfToken();
       if (csrf) headers['X-CSRF-Token'] = csrf;
       const res = await fetch(`${this.baseUrl}/admin/upgrade/upload`, {
@@ -4738,6 +4738,9 @@ class ApiClient {
       });
       if (res.status === 401) { this.handleUnauthorized(generation); return { error: 'Session expired', status: 401 }; }
       const body = await res.json().catch(() => null);
+      if (body?.code === ADMIN_CONFIRMATION_REQUIRED && !confirmedAgain && await askForAdminConfirmation()) {
+        return this.adminUpgradeUpload(file, true);
+      }
       if (!res.ok) return { error: body?.message || `Upload failed (HTTP ${res.status})`, status: res.status };
       return { data: body };
     } catch (e) {

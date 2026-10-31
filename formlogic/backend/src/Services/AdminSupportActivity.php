@@ -36,12 +36,13 @@ class AdminSupportActivity
         $seen = $this->mysql->prepare(
             "SELECT 1 FROM audit_log
              WHERE action = 'admin.support_opened' AND resource_type = 'admin' AND resource_id = :owner
-               AND created_at > NOW() - INTERVAL 24 HOUR LIMIT 1"
+               AND user_id = :admin AND created_at > NOW() - INTERVAL 24 HOUR LIMIT 1"
         );
-        $seen->execute(['owner' => $owner->id]);
+        $seen->execute(['owner' => $owner->id, 'admin' => $adminId]);
         if ($seen->fetchColumn() !== false) {
             return;
         }
+        // The record comes first, as it does for everything an administrator does: mail fails.
         $this->audit?->log('admin.support_opened', 'admin', $owner->id, $adminId, $ip, []);
         $this->email?->send(
             $owner->email,
@@ -54,17 +55,23 @@ class AdminSupportActivity
     /** @return list<array{at: string, what: string}> newest first */
     public function recentFor(string $ownerId, int $limit = 30): array
     {
+        // Ordinary edits can't push a password reset off the list, however many there are.
+        $rows = [];
         $actions = array_keys(self::SAY);
-        $stmt = $this->mysql->prepare(
-            "SELECT action, UNIX_TIMESTAMP(created_at) AS at FROM audit_log
-             WHERE resource_type = 'admin' AND resource_id = ?
-               AND action IN (" . implode(',', array_fill(0, count($actions), '?')) . ")
-             ORDER BY created_at DESC LIMIT " . max(1, min($limit, 100))
-        );
-        $stmt->execute(array_merge([$ownerId], $actions));
+        foreach ([['admin.on_behalf'], array_values(array_diff($actions, ['admin.on_behalf']))] as $group) {
+            $stmt = $this->mysql->prepare(
+                "SELECT action, UNIX_TIMESTAMP(created_at) AS at FROM audit_log
+                 WHERE resource_type = 'admin' AND resource_id = ?
+                   AND action IN (" . implode(',', array_fill(0, count($group), '?')) . ")
+                 ORDER BY created_at DESC LIMIT " . max(1, min($limit, 100))
+            );
+            $stmt->execute(array_merge([$ownerId], $group));
+            $rows = array_merge($rows, $stmt->fetchAll(PDO::FETCH_ASSOC));
+        }
+        usort($rows, static fn (array $a, array $b): int => (int) $b['at'] <=> (int) $a['at']);
         return array_map(
             static fn (array $row): array => ['at' => gmdate('c', (int) $row['at']), 'what' => self::SAY[$row['action']]],
-            $stmt->fetchAll(PDO::FETCH_ASSOC)
+            $rows
         );
     }
 }

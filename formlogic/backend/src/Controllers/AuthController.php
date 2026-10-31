@@ -969,7 +969,11 @@ class AuthController
         return $this->jsonResponse($response, $this->mfaService->status($user->id, is_string($trust) ? $trust : null));
     }
 
-    /** Start enrollment: fresh secret + otpauth URI (QR rendered client-side). POST /api/auth/mfa/setup */
+    /**
+     * Start enrollment: fresh secret + otpauth URI (QR rendered client-side). A session alone must
+     * not choose the second factor: a stolen one would lock its owner out, and on an administrator
+     * it would pass the admin gate. POST /api/auth/mfa/setup { password }
+     */
     public function mfaSetup(Request $request, Response $response): Response
     {
         $user = $request->getAttribute('user');
@@ -978,6 +982,9 @@ class AuthController
         }
         if ($blocked = $this->blockIfDemo($request, $response)) {
             return $blocked;
+        }
+        if (!$this->authService->verifyPassword($user->id, (string) (($request->getParsedBody() ?? [])['password'] ?? ''))) {
+            return $this->jsonError($response, 'Incorrect password', 403, 'password_required');
         }
         try {
             return $this->jsonResponse($response, $this->mfaService->beginSetup($user->id, $user->email));
@@ -999,6 +1006,12 @@ class AuthController
         $data = $request->getParsedBody();
         try {
             $codes = $this->mfaService->enable($user->id, (string) ($data['code'] ?? ''));
+            // A session from before two-factor mustn't pass as one from after it: any other ends.
+            $this->authService->revokeTokens($user->id);
+            $fresh = $this->authService->getUserById($user->id);
+            if ($fresh !== null) {
+                $response = $this->setAuthCookie($response, $this->authService->issueToken($fresh));
+            }
             $this->audit($request, 'auth.mfa.enabled', 'user', $user->id);
             return $this->jsonResponse($response, ['enabled' => true, 'recoveryCodes' => $codes]);
         } catch (\RuntimeException $e) {
@@ -1006,7 +1019,7 @@ class AuthController
         }
     }
 
-    /** Switch MFA off (password re-entry required). POST /api/auth/mfa/disable { password } */
+    /** Switch MFA off (password and code both, or a recovery code). POST /api/auth/mfa/disable { password, code } */
     public function mfaDisable(Request $request, Response $response): Response
     {
         $user = $request->getAttribute('user');
@@ -1019,6 +1032,9 @@ class AuthController
         $data = $request->getParsedBody();
         if (!$this->authService->verifyPassword($user->id, (string) ($data['password'] ?? ''))) {
             return $this->jsonError($response, 'Incorrect password', 401);
+        }
+        if (!$this->mfaService->verifyChallenge($user->id, (string) ($data['code'] ?? ''))) {
+            return $this->jsonError($response, 'That code didn\'t match — check your authenticator app and try again', 403, 'mfa_code_required');
         }
         $this->mfaService->disable($user->id);
         // disable() bumps token_version, revoking every OTHER session, pending

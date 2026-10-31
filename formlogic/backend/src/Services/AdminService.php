@@ -413,6 +413,8 @@ class AdminService
         }
         $upd = $this->mysql->prepare('UPDATE users SET email = :e WHERE id = :id');
         $upd->execute(['e' => $email, 'id' => $userId]);
+        // A link already sent, perhaps to the old address, must not outlive the change.
+        $this->mysql->prepare('DELETE FROM password_resets WHERE user_id = :id')->execute(['id' => $userId]);
     }
 
     /** The user's payment ledger (metadata only — amounts, months, status; never card/PayPal detail). */

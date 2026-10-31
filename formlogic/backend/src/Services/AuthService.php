@@ -180,7 +180,8 @@ class AuthService
     public static function adminMfaRequired(): bool
     {
         $set = Environment::nonEmpty('ADMIN_MFA_REQUIRED');
-        return $set !== null ? filter_var($set, FILTER_VALIDATE_BOOLEAN) : Environment::get('APP_ENV', 'production') !== 'development';
+        // A value nobody can read keeps it on: only a clear "false" turns this off.
+        return $set !== null ? (filter_var($set, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? true) : Environment::get('APP_ENV', 'production') !== 'development';
     }
 
     /** Whether an admin verified this account for the host-JavaScript client engine. */
