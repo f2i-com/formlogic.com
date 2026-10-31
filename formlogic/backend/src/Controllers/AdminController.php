@@ -939,8 +939,11 @@ class AdminController
                 (string) $request->getAttribute('userId'),
                 ($body['keepMaintenanceOn'] ?? null) === true,
                 $packageId,
-                $digest
+                $digest,
+                ($body['allowDowngrade'] ?? null) === true
             );
+        } catch (\FormLogic\Services\DowngradeNotConfirmedException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage(), 'code' => 'downgrade_not_confirmed'], 409);
         } catch (\FormLogic\Services\UpgradeInProgressException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage(), 'code' => 'upgrade_in_progress'], 409);
         } catch (\FormLogic\Services\StagedPackageMismatchException $e) {

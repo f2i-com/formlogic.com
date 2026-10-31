@@ -318,7 +318,7 @@ fn a_request_sent_twice_is_one_job_and_one_window() {
 #[test]
 fn health_is_answered_while_a_window_waits_and_a_second_window_is_refused() {
     let mut plugin = Plugin::start();
-    plugin.answer(&["slow 1500", "yes"]);
+    plugin.answer(&["slow 4000", "yes"]);
     let started = plugin.data("key.setup", json!({}));
     std::thread::sleep(Duration::from_millis(100));
 
@@ -330,6 +330,18 @@ fn health_is_answered_while_a_window_waits_and_a_second_window_is_refused() {
     assert_eq!(second["state"], "failed");
     assert!(second["message"].as_str().unwrap().contains("already asking"), "{second}");
     assert_eq!(plugin.wait_for_job(started["jobId"].as_str().unwrap())["state"], "done");
+}
+
+#[test]
+fn the_words_are_not_taken_while_the_folder_that_checks_them_is_missing() {
+    let mut plugin = Plugin::start();
+    let gone = plugin.folder.join("unplugged");
+    std::fs::write(plugin.folder.join("data").join("backups-folder.txt"), gone.display().to_string()).unwrap();
+    let job = plugin.job("key.recover", json!({"words": WORDS}));
+    assert_eq!(job["state"], "failed");
+    assert!(job["message"].as_str().unwrap().contains("isn't there"), "{job}");
+    assert_eq!(plugin.data("status.get", json!({}))["hasKey"], false);
+    assert_eq!(plugin.asked(), "", "and nobody was asked");
 }
 
 #[test]

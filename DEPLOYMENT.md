@@ -104,7 +104,7 @@ Work top to bottom before exposing the app publicly. Most of these live in
       refuses to boot otherwise) and `CLOUD_MAX_FORMS` / `CLOUD_MAX_STORAGE_BYTES` reviewed
 
 **Operations**
-- [ ] Webhook retry worker scheduled (§3)
+- [ ] Scheduled jobs set up (§3), including the nightly `backup-accounts.php`
 - [ ] Backups configured (§2)
 - [ ] `GET /api/health/deep` (as a platform admin) returns `status: ok` (§5)
 - [ ] Dependency audits clean: `composer audit` (backend), `npm audit` (ui)
@@ -165,6 +165,28 @@ are never retried.
 Each run records a heartbeat, so `GET /api/health/deep` (and the Doctor view) report the
 `webhook_worker` check as `last run ~Nm ago`, with a warning if it has never run or is stale
 (>15 min) — an easy way to catch a missing/broken cron.
+
+### Every scheduled job
+
+The install wizard and `INSTALL.txt` print the same list. `backup-accounts.php` also purges the
+recycle bin, clears abandoned uploads, applies each form's record retention and prunes the webhook
+log, so none of that happens without it.
+
+```cron
+* * * * *      php /path/to/backend/bin/webhook-worker.php
+* * * * *      php /path/to/backend/bin/native-record-dispatch.php
+0-59/5 * * * * php /path/to/backend/bin/flow-runs-reclaim.php
+0-59/5 * * * * php /path/to/backend/bin/flow-outcome-dispatch.php
+11 * * * *     php /path/to/backend/bin/artifact-sweep.php
+15 2 * * *     php /path/to/backend/bin/backup-accounts.php
+17 3 * * *     php /path/to/backend/bin/idempotency-cleanup.php
+23 3 * * *     php /path/to/backend/bin/desktop-commands-cleanup.php
+41 3 * * *     php /path/to/backend/bin/privacy-sweep.php
+0 4 * * 1      php /path/to/backend/bin/reconcile.php
+```
+
+The jobs that must not overlap hold a lock in `storage/locks`. If the user running cron can't write
+there the job exits non-zero, so run them as the web server's user.
 
 ---
 

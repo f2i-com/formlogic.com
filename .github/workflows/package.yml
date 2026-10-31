@@ -279,6 +279,7 @@ jobs:
         run: |
           npm ci
           npm run lint
+          npm run test:script-profile
           npm test
           npm run build
           npx playwright install --with-deps chromium
@@ -288,6 +289,8 @@ jobs:
           node scripts/check-security-invariants.mjs
           git diff --exit-code ../backend/resources/formlogic-prelude.js \
             || (echo "::error::backend prelude is out of sync — run 'npm run sync:prelude' in formlogic/ui and commit the result" && exit 1)
+          git diff --exit-code ../backend/resources/formlogic-script-profile.json \
+            || (echo "::error::the served leaf-script profile is out of sync — run 'npm run build:script-profile' in formlogic/ui and commit the result" && exit 1)
           npm audit --audit-level=high
 
       # Both parity legs ran above (composer test wrote test-results/parity/backend.json
@@ -387,7 +390,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: [resolve, verify, e2e, php-floor, sandbox-linux, sandbox-windows, oaiy-plugin]
     steps:
+      # npm ci runs third-party install scripts in this job, whose token can replace release
+      # assets: it isn't left in .git for them to read. gh gets it from GH_TOKEN, one step only.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # Mirrors ci.yml: PHP 8.3 for the staged `composer install --no-dev`.
       - name: Set up PHP

@@ -58,3 +58,17 @@ test('CLI frontend setup uses the committed lockfile and prepares hosted/native 
   assert.ok(directories?.includes('storage/hosted-apps'));
   assert.ok(directories?.includes('storage/pack-screenshots'));
 });
+
+test('the wizard, INSTALL.txt and the deployment guide list the same scheduled jobs', () => {
+  const jobs = (file) => [...new Set(readFileSync(resolve(root, file), 'utf8').match(/^.*\bbin\/[a-z-]+\.php.*$/gm)
+    .filter((line) => /(?:\*|[\d/-]+)(?: (?:\*|\d+)){4}\s+php\b/.test(line))
+    .map((line) => line.match(/bin\/([a-z-]+)\.php/)[1]))].sort();
+  const expected = [
+    'artifact-sweep', 'backup-accounts', 'desktop-commands-cleanup', 'flow-outcome-dispatch', 'flow-runs-reclaim',
+    'idempotency-cleanup', 'native-record-dispatch', 'privacy-sweep', 'reconcile', 'webhook-worker',
+  ];
+  for (const file of ['formlogic/install.php', 'scripts/package-dist.mjs']) assert.deepEqual(jobs(file), expected, file);
+  const guide = readFileSync(resolve(root, 'DEPLOYMENT.md'), 'utf8');
+  const listed = guide.slice(guide.indexOf('### Every scheduled job'), guide.indexOf('## 4. PayPal'));
+  for (const job of expected) assert.ok(listed.includes(`bin/${job}.php`), job);
+});

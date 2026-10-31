@@ -44,8 +44,8 @@ try {
     fwrite(STDERR, sprintf("[%s] schema init failed: %s\n", date('c'), $e->getMessage()));
 }
 
-$lockHandle = fopen(sys_get_temp_dir() . '/formlogic-flow-outcome-dispatch.lock', 'c');
-if ($lockHandle === false || !flock($lockHandle, LOCK_EX | LOCK_NB)) {
+$lockHandle = \FormLogic\Support\CronLock::take('flow-outcome-dispatch');
+if ($lockHandle === null) {
     fwrite(STDERR, sprintf("[%s] another outcome dispatch is already running; exiting\n", date('c')));
     exit(0);
 }

@@ -39,6 +39,14 @@ class UpgradeService
     /** Package files that live OUTSIDE the manifest inventory (the manifest
      *  cannot list itself; the signature envelope signs the manifest bytes). */
     private const MANIFEST_EXEMPT_FILES = ['manifest.json', 'manifest.sig.json', '.staged-info.json'];
+
+    /** Where the web server is another user than PHP, it has to be able to enter a new folder of assets. */
+    private const WEB_DIR_MODE = 0755;
+
+    private const SNAPSHOTS_KEPT = 3;
+
+    /** Room left for the database export, whose size isn't known until it is written. */
+    private const SPARE_DISK_BYTES = 256 * 1024 * 1024;
     /** What every FormLogic release carries (a single-domain package). */
     private const REQUIRED_RELEASE_FILES = ['index.html', 'api/public/index.php', 'api/vendor/autoload.php', 'api/database/schema.sql'];
 
@@ -526,10 +534,10 @@ class UpgradeService
      *
      * @throws \RuntimeException with the journal context on failure
      */
-    public function apply(string $actingUserId, bool $keepMaintenanceOn = false, ?string $packageId = null, ?string $expectedDigest = null): array
+    public function apply(string $actingUserId, bool $keepMaintenanceOn = false, ?string $packageId = null, ?string $expectedDigest = null, bool $allowDowngrade = false): array
     {
         @set_time_limit(600);
-        return $this->withUpgradeLock(function () use ($actingUserId, $keepMaintenanceOn, $packageId, $expectedDigest): array {
+        return $this->withUpgradeLock(function () use ($actingUserId, $keepMaintenanceOn, $packageId, $expectedDigest, $allowDowngrade): array {
             $staged = $this->stagedInfo();
             if ($staged === null) {
                 throw new \RuntimeException('No validated package is staged — upload one first');
@@ -563,6 +571,11 @@ class UpgradeService
             if ($report['version'] !== ($staged['version'] ?? null)) {
                 throw new StagedPackageMismatchException('the package version changed on disk');
             }
+            // An older release can bring back what a newer one fixed.
+            if (!$allowDowngrade && version_compare($this->normalizeVersion($report['version']), $this->normalizeVersion($this->currentVersion()), '<')) {
+                throw new DowngradeNotConfirmedException('This package is older than the running version. Confirm the downgrade to install it.');
+            }
+            $this->assertRoomFor($staging);
 
             $journal = [];
             $fromVersion = $this->currentVersion();
@@ -591,16 +604,20 @@ class UpgradeService
                     'id' => $backupId, 'at' => gmdate('c'), 'version' => $fromVersion, 'by' => $actingUserId,
                 ], JSON_PRETTY_PRINT));
 
+                // Read now: the copy below replaces the manifest that says what this install shipped.
+                $shipped = $this->shippedFiles($layout['webRoot']);
+
                 // 3. Apply: backend first, then the web root. Protected paths are
                 //    excluded on the DESTINATION side, and the package's own (empty)
                 //    api/storage skeleton is excluded on the SOURCE side — the
                 //    per-form SQLite databases are never written under any input.
-                //    After each copy, managed files ABSENT from the package are
-                //    removed (review FL-007: obsolete public endpoints must not
-                //    stay deployed) — protected paths are equally exempt here.
+                //    After each copy, files the installed release shipped that are
+                //    ABSENT from the package are removed (review FL-007: obsolete
+                //    public endpoints must not stay deployed). Anything else in these
+                //    folders is the host's or the operator's, and stays.
                 $counts = $this->copyTree("{$staging}/api", $this->apiRoot, self::PROTECTED_API_PATHS);
                 $journal[] = "Backend files applied ({$counts} files)";
-                $removed = $this->deleteStale($this->apiRoot, "{$staging}/api", self::PROTECTED_API_PATHS);
+                $removed = $this->deleteStale($this->apiRoot, "{$staging}/api", self::PROTECTED_API_PATHS, $shipped['api']);
                 $journal[] = "Stale backend files removed ({$removed})";
                 // The one file under api/storage a release owns: storage/.htaccess, which keeps
                 // the directory from being served over HTTP. Nothing is copied into storage/
@@ -614,10 +631,13 @@ class UpgradeService
                         : 'storage/.htaccess could NOT be written: copy it from the release into api/storage';
                 }
                 $webExclude = array_merge(self::PROTECTED_WEB_PATHS, ['.staged-info.json']);
-                $counts = $this->copyTree($staging, $layout['webRoot'], $webExclude);
+                $counts = $this->copyTree($staging, $layout['webRoot'], $webExclude, self::WEB_DIR_MODE);
                 $journal[] = "Frontend files applied ({$counts} files)";
-                $removed = $this->deleteStale($layout['webRoot'], $staging, $webExclude);
+                $removed = $this->deleteStale($layout['webRoot'], $staging, $webExclude, $shipped['web']);
                 $journal[] = "Stale frontend files removed ({$removed})";
+                if ($shipped['api'] === [] && $shipped['web'] === []) {
+                    $journal[] = 'This install has no manifest.json, so no old files were removed';
+                }
 
                 // 4. Version stamps: api/VERSION already copied; mirror into schema_meta
                 //    (the same stamp bin/upgrade.php writes) so --check agrees.
@@ -631,6 +651,8 @@ class UpgradeService
                 ]);
                 $this->rrmdir($staging);
                 @unlink($this->pointerFile());
+                @unlink($this->officialArchivePath());
+                $this->pruneSnapshots();
 
                 // 5. Reopen unless the admin asked to stay closed (or it was already closed).
                 if (!$maintenanceWasOn && !$keepMaintenanceOn) {
@@ -667,9 +689,9 @@ class UpgradeService
     /**
      * Restore the code snapshot from a backup (the DB is NOT auto-restored —
      * see restoreDatabase). Review FL-007: the snapshot is authoritative —
-     * managed files that exist now but were not in the snapshot (files the
-     * newer release introduced) are REMOVED, so the prior inventory is
-     * reconstructed exactly; protected data/config paths stay untouched.
+     * files the release being left shipped that were not in the snapshot are
+     * REMOVED, so the prior inventory is reconstructed; protected data/config
+     * paths and the host's own files stay untouched.
      */
     public function rollback(string $backupId, string $actingUserId): array
     {
@@ -694,14 +716,15 @@ class UpgradeService
         }
         $journal = ['Maintenance mode enabled'];
         $fromVersion = $this->currentVersion();
+        $shipped = $this->shippedFiles($layout['webRoot']);
 
         $counts = $this->copyTree("{$backupDir}/api", $this->apiRoot, self::PROTECTED_API_PATHS);
         $journal[] = "Backend restored ({$counts} files)";
-        $removed = $this->deleteStale($this->apiRoot, "{$backupDir}/api", self::PROTECTED_API_PATHS);
+        $removed = $this->deleteStale($this->apiRoot, "{$backupDir}/api", self::PROTECTED_API_PATHS, $shipped['api']);
         $journal[] = "Backend files not in the snapshot removed ({$removed})";
-        $counts = $this->copyTree("{$backupDir}/web", $layout['webRoot'], self::PROTECTED_WEB_PATHS);
+        $counts = $this->copyTree("{$backupDir}/web", $layout['webRoot'], self::PROTECTED_WEB_PATHS, self::WEB_DIR_MODE);
         $journal[] = "Frontend restored ({$counts} files)";
-        $removed = $this->deleteStale($layout['webRoot'], "{$backupDir}/web", self::PROTECTED_WEB_PATHS);
+        $removed = $this->deleteStale($layout['webRoot'], "{$backupDir}/web", self::PROTECTED_WEB_PATHS, $shipped['web']);
         $journal[] = "Frontend files not in the snapshot removed ({$removed})";
 
         $info = json_decode((string) @file_get_contents("{$backupDir}/backup-info.json"), true);
@@ -941,53 +964,106 @@ class UpgradeService
     }
 
     /**
-     * Remove files under $dst that have no counterpart file in $src
-     * (review FL-007). Exclusions apply to top-level names on the $dst side
-     * exactly as copyTree applies them, so protected data/config paths can
-     * never be deleted. Empty directories left behind are pruned. Returns the
-     * number of files removed.
+     * What the installed release shipped, from the manifest.json it put in the web root: the
+     * backend's files relative to api/, the rest relative to the web root. Nothing without one:
+     * with no record of what is ours, nothing here can be called stale.
+     *
+     * @return array{api: list<string>, web: list<string>}
      */
-    private function deleteStale(string $dst, string $src, array $excludeTopLevel): int
+    private function shippedFiles(string $webRoot): array
     {
-        if (!is_dir($dst) || !is_dir($src)) {
-            return 0;
+        $manifest = json_decode((string) @file_get_contents("{$webRoot}/manifest.json"), true);
+        $shipped = ['api' => [], 'web' => []];
+        foreach (is_array($manifest['files'] ?? null) ? array_keys($manifest['files']) : [] as $rel) {
+            $rel = str_replace('\\', '/', (string) $rel);
+            if ($rel === '' || str_starts_with($rel, '/') || str_contains($rel, '../') || str_contains($rel, ':') || str_contains($rel, "\0")) {
+                continue;
+            }
+            if (str_starts_with($rel, 'api/')) {
+                $shipped['api'][] = substr($rel, 4);
+            } else {
+                $shipped['web'][] = $rel;
+            }
         }
+        return $shipped;
+    }
+
+    /**
+     * Remove the files in $shipped that have no counterpart in $src (review FL-007), and the
+     * folders that leaves empty. A host keeps its own files beside ours: a .user.ini with the
+     * upload limits, a robots.txt, the .env.backup-* an upgrade made. Exclusions apply to top-level
+     * names as copyTree applies them, so protected data/config paths are never deleted. Returns the
+     * number of files removed.
+     *
+     * @param list<string> $shipped paths relative to $dst
+     */
+    private function deleteStale(string $dst, string $src, array $excludeTopLevel, array $shipped): int
+    {
         $exclude = array_map('strtolower', $excludeTopLevel);
         $removed = 0;
-        foreach (scandir($dst) ?: [] as $entry) {
-            if ($entry === '.' || $entry === '..') {
+        foreach ($shipped as $rel) {
+            if (in_array(strtolower(explode('/', $rel, 2)[0]), $exclude, true) || is_file("{$src}/{$rel}")) {
                 continue;
             }
-            if (in_array(strtolower(rtrim($entry, '/\\')), $exclude, true)) {
+            $path = "{$dst}/{$rel}";
+            if (is_link($path) || !is_file($path) || !@unlink($path)) {
                 continue;
             }
-            $removed += $this->deleteStaleEntry("{$dst}/{$entry}", "{$src}/{$entry}");
+            $removed++;
+            for ($dir = dirname($rel); $dir !== '.' && !is_dir("{$src}/{$dir}"); $dir = dirname($dir)) {
+                if (!@rmdir("{$dst}/{$dir}")) {
+                    break; // not empty
+                }
+            }
         }
         return $removed;
     }
 
-    private function deleteStaleEntry(string $dst, string $src): int
+    /** Before the site closes: the snapshot and the new code have to fit, and a database export besides. */
+    private function assertRoomFor(string $staging): void
     {
-        if (is_link($dst)) {
-            return 0; // never follow or judge links
+        $free = $this->freeDiskBytes();
+        if ($free === null) {
+            return;
         }
-        if (is_dir($dst)) {
-            $removed = 0;
-            foreach (scandir($dst) ?: [] as $entry) {
-                if ($entry === '.' || $entry === '..') {
-                    continue;
-                }
-                $removed += $this->deleteStaleEntry("{$dst}/{$entry}", "{$src}/{$entry}");
+        $needed = 2 * $this->treeBytes($staging) + self::SPARE_DISK_BYTES;
+        if ($free < $needed) {
+            throw new \RuntimeException(sprintf(
+                'Not enough free disk space to upgrade: about %d MB is needed and %d MB is free. Nothing was changed.',
+                ceil($needed / 1048576),
+                floor($free / 1048576)
+            ));
+        }
+    }
+
+    protected function freeDiskBytes(): ?float
+    {
+        $free = @disk_free_space($this->apiRoot);
+        return $free === false ? null : $free;
+    }
+
+    private function treeBytes(string $dir): int
+    {
+        $bytes = 0;
+        foreach ($this->walkRelativeFiles($dir) as $rel) {
+            $bytes += (int) @filesize("{$dir}/{$rel}");
+        }
+        return $bytes;
+    }
+
+    /** Code snapshots add up on the disk the databases live on. The newest few are the ones to go back to. */
+    private function pruneSnapshots(): void
+    {
+        $dir = $this->backupsDir();
+        $kept = 0;
+        foreach (scandir($dir, SCANDIR_SORT_DESCENDING) ?: [] as $entry) {
+            if ($entry === '.' || $entry === '..' || !is_dir("{$dir}/{$entry}/api")) {
+                continue; // database-only exports and the scheduled backups are not ours to prune
             }
-            if (!is_dir($src)) {
-                @rmdir($dst); // prune only if now empty
+            if (++$kept > self::SNAPSHOTS_KEPT) {
+                $this->rrmdir("{$dir}/{$entry}");
             }
-            return $removed;
         }
-        if (!is_file($src)) {
-            return @unlink($dst) ? 1 : 0;
-        }
-        return 0;
     }
 
     private function backupsDir(): string
@@ -1013,7 +1089,7 @@ class UpgradeService
      * whose top-level name is protected is neither read from the source nor
      * written over at the destination. Returns the number of files copied.
      */
-    private function copyTree(string $src, string $dst, array $excludeTopLevel): int
+    private function copyTree(string $src, string $dst, array $excludeTopLevel, int $dirMode = 0750): int
     {
         if (!is_dir($src)) {
             throw new \RuntimeException("Source directory missing: {$src}");
@@ -1028,31 +1104,34 @@ class UpgradeService
             if (in_array(strtolower(rtrim($entry, '/\\')), $exclude, true)) {
                 continue;
             }
-            $count += $this->copyEntry("{$src}/{$entry}", "{$dst}/{$entry}");
+            $count += $this->copyEntry("{$src}/{$entry}", "{$dst}/{$entry}", $dirMode);
         }
         return $count;
     }
 
-    private function copyEntry(string $src, string $dst): int
+    private function copyEntry(string $src, string $dst, int $dirMode): int
     {
         if (is_link($src)) {
             return 0; // never follow links out of the tree
         }
         if (is_dir($src)) {
-            if (!is_dir($dst) && !@mkdir($dst, 0750, true)) {
-                throw new \RuntimeException("Cannot create directory {$dst}");
+            if (!is_dir($dst)) {
+                if (!@mkdir($dst, $dirMode, true)) {
+                    throw new \RuntimeException("Cannot create directory {$dst}");
+                }
+                @chmod($dst, $dirMode); // past the umask
             }
             $count = 0;
             foreach (scandir($src) ?: [] as $entry) {
                 if ($entry === '.' || $entry === '..') {
                     continue;
                 }
-                $count += $this->copyEntry("{$src}/{$entry}", "{$dst}/{$entry}");
+                $count += $this->copyEntry("{$src}/{$entry}", "{$dst}/{$entry}", $dirMode);
             }
             return $count;
         }
         $dir = dirname($dst);
-        if (!is_dir($dir) && !@mkdir($dir, 0750, true)) {
+        if (!is_dir($dir) && !@mkdir($dir, $dirMode, true)) {
             throw new \RuntimeException("Cannot create directory {$dir}");
         }
         if (!@copy($src, $dst)) {

@@ -35,6 +35,8 @@ local review checks, not proof that a production deployment has been validated.
 - [ ] `APP_ENV=production` in `backend/.env` (a missing/typo'd value defaults to production behaviour).
 - [ ] `JWT_SECRET` ≥ 32 random chars; `AUDIT_HMAC_KEY` set; no default DB password. (Weak values
       fail hard on boot in production — that's expected.)
+- [ ] `DATA_ENCRYPTION_KEY` set, and a copy kept away from this server: without it, what it
+      encrypted can never be read.
 - [ ] HTTPS terminated (direct TLS or reverse proxy); port 80 → 443 redirect in place. Cookies are
       `Secure` in production and won't survive plain HTTP.
 - [ ] Web server exposes only `ui/dist` and `backend/public` (`/api`). `backend/storage`,

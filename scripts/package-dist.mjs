@@ -257,10 +257,12 @@ Manual install (no wizard)
 1. Upload the CONTENTS of this zip to your site's web root (as above) and
    delete install.php if you won't use it.
 2. Create the backend config: copy api/.env.example to api/.env, then set
+     APP_ENV=production and APP_DEBUG=false          — the example is for development: it shows
+                                                       errors to visitors and trusts any domain claim
      DB_HOST, DB_DATABASE, DB_USERNAME, DB_PASSWORD  — your MySQL details
      JWT_SECRET                                      — a long random string
      DATA_ENCRYPTION_KEY                             — encrypts stored secrets and app records
-   Generate a strong value for each with:
+   Generate a strong value for the last two with:
      php -r "echo bin2hex(random_bytes(32));"
    Keep a copy of DATA_ENCRYPTION_KEY away from this server. Without it, what it
    encrypted can never be read.
@@ -296,9 +298,14 @@ Scheduled tasks (optional but recommended)
 The wizard prints these ready-to-paste; the crontab lines are (use the full
 path to your PHP 8.2+ CLI binary if plain "php" isn't on cron's PATH):
   * * * * *  php <web-root>/api/bin/webhook-worker.php       # webhook retry delivery (lock-guarded; or run once with --loop as a service)
+  * * * * *  php <web-root>/api/bin/native-record-dispatch.php    # retry record events after an interrupted delivery
+  0-59/5 * * * * php <web-root>/api/bin/flow-runs-reclaim.php     # every 5 min: revert flow runs stuck 'running' >10min (crashed claimant) to 'error'
+  0-59/5 * * * * php <web-root>/api/bin/flow-outcome-dispatch.php # every 5 min: finish flow outcome events a crash left pending
+  11 * * * * php <web-root>/api/bin/artifact-sweep.php       # hourly: remove expired flow artifacts
+  15 2 * * * php <web-root>/api/bin/backup-accounts.php      # nightly: account and site backups, recycle-bin purge, upload cleanup, record retention, webhook log prune
   17 3 * * * php <web-root>/api/bin/idempotency-cleanup.php  # nightly offline-sync ledger prune (rows older than 30 days)
   23 3 * * * php <web-root>/api/bin/desktop-commands-cleanup.php  # nightly desktop-command relay prune (rows older than 7 days; also expires crashed/claimed rows)
-  0-59/5 * * * * php <web-root>/api/bin/flow-runs-reclaim.php     # every 5 min: revert flow runs stuck 'running' >10min (crashed claimant) to 'error'
+  41 3 * * * php <web-root>/api/bin/privacy-sweep.php        # nightly: clear respondent addresses on private forms after 30 days
   0 4 * * 1  php <web-root>/api/bin/reconcile.php            # weekly read-only MySQL<->SQLite drift report (--fix applies safe repairs)
 
 Troubleshooting
@@ -346,11 +353,17 @@ function upgradeTxt(version) {
 Full guide: docs/UPGRADING.md in the source repository.
 
 EASIEST — the ADMIN PANEL (no shell access needed): sign in as a platform
-administrator, open Admin → Upgrade, and upload THIS zip. It verifies the
-package checksums (manifest.json), closes the site for maintenance, exports
-the database and snapshots the current code automatically, applies the new
-files (never touching api/.env or api/storage/), and reopens — with one-click
-code rollback from the backup if anything looks wrong.
+administrator, open Admin → Updates, choose Check for updates, then Download
+and verify, then Install. It checks the release against GitHub and its
+manifest.json, closes the site for maintenance, exports the database and
+snapshots the current code automatically, applies the new files (never
+touching api/.env or api/storage/), and reopens — with one-click code rollback
+from the backup if anything looks wrong. Uploading this zip there instead works
+only if the zip is signed for your server; see docs/UPGRADING.md.
+
+If an upgrade is killed part way and the admin panel can't run, put the code
+back from a shell with: php api/bin/upgrade.php --rollback=<id>, where <id> is
+the newest folder in api/storage/backups.
 
 Manual path:
 

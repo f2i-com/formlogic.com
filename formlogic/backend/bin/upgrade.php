@@ -30,6 +30,7 @@ if (isset($_SERVER['REQUEST_METHOD'])) {
  *   php api/bin/upgrade.php --app-version=1.4.0    # migrate + stamp this version
  *   php api/bin/upgrade.php                        # version falls back to the VERSION file (api/VERSION)
  *   php api/bin/upgrade.php --check                # read-only drift report; writes nothing
+ *   php api/bin/upgrade.php --rollback=<id>        # put back the code of api/storage/backups/<id>
  *
  * In a source checkout the backend is formlogic/backend, so:
  *   php formlogic/backend/bin/upgrade.php --check
@@ -333,6 +334,9 @@ Usage:
                                            stamp schema_meta. Idempotent — safe to re-run.
   php bin/upgrade.php --check              Read-only: report which core tables / recently-migrated
                                            columns and indexes exist. Writes nothing.
+  php bin/upgrade.php --rollback=<id>      Put back the code snapshot in storage/backups/<id>, for
+                                           when an upgrade was killed and the admin panel can't run.
+                                           The database is left as it is.
   php bin/upgrade.php --help               This help.
 
 Version stamped into schema_meta: the --app-version flag, else the VERSION file next to the backend
@@ -362,9 +366,14 @@ $argvSafe = is_array($argv ?? null) ? $argv : [];
 $args = array_slice($argvSafe, 1);
 
 $check = false;
+$rollbackId = null;
 foreach ($args as $arg) {
     if ($arg === '--check') {
         $check = true;
+        continue;
+    }
+    if (preg_match('/^--rollback=(.+)$/', $arg, $m)) {
+        $rollbackId = $m[1];
         continue;
     }
     if ($arg === '--help' || $arg === '-h') {
@@ -422,6 +431,25 @@ $out = static function (string $line): void {
 
 if ($check) {
     exit(formlogicUpgradeCheck($pdo, $out));
+}
+
+if ($rollbackId !== null) {
+    $maintenance = new \FormLogic\Services\MaintenanceService(\FormLogic\Services\MaintenanceService::defaultPath());
+    $upgrade = new \FormLogic\Services\UpgradeService(\FormLogic\Services\UpgradeService::defaultApiRoot(), $mysql, $maintenance);
+    try {
+        $result = $upgrade->rollback($rollbackId, 'cli');
+    } catch (\Throwable $e) {
+        fwrite(STDERR, 'Rollback failed: ' . $e->getMessage() . "\n");
+        exit(1);
+    }
+    foreach ($result['journal'] as $line) {
+        $out($line);
+    }
+    $out("Restored version {$result['restoredVersion']}.");
+    if ($maintenance->enabled()) {
+        $out('Maintenance mode is still on. Sign in as an administrator and turn it off from the Maintenance tab.');
+    }
+    exit(0);
 }
 
 [$version, $versionSource] = formlogicUpgradeResolveVersion($args, __DIR__ . '/../VERSION');

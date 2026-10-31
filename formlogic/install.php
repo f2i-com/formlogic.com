@@ -1708,6 +1708,16 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
           <code>php <?= $backendRelHtml ?>/bin/webhook-worker.php --loop</code> (sleeps 60s between passes).</span>
         </li>
         <li style="margin-bottom:10px;">
+          <strong>Nightly backup and cleanup</strong> — account and site backups, then the recycle-bin
+          purge, upload cleanup, record retention and the webhook log prune, none of which run
+          without it:<br>
+          <code>15 2 * * * php <?= $backendAbsHtml ?>/bin/backup-accounts.php &gt;&gt; /var/log/formlogic-backup.log 2&gt;&amp;1</code>
+        </li>
+        <li style="margin-bottom:10px;">
+          <strong>Native app record events</strong> — retries record events after an interrupted delivery:<br>
+          <code>* * * * * php <?= $backendAbsHtml ?>/bin/native-record-dispatch.php &gt;&gt; /var/log/formlogic-native-records.log 2&gt;&amp;1</code>
+        </li>
+        <li style="margin-bottom:10px;">
           <strong>Offline-sync ledger cleanup</strong> — nightly prune of idempotency rows older than
           30 days (replayed offline submissions no longer need them):<br>
           <code>17 3 * * * php <?= $backendAbsHtml ?>/bin/idempotency-cleanup.php &gt;&gt; /var/log/formlogic-idempotency.log 2&gt;&amp;1</code>
@@ -1723,6 +1733,14 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
           'running' for more than 10 minutes (the claiming FormLogic Desktop/browser runtime crashed
           or lost connectivity) to 'error' so anything waiting on it can retry:<br>
           <code>0-59/5 * * * * php <?= $backendAbsHtml ?>/bin/flow-runs-reclaim.php &gt;&gt; /var/log/formlogic-flow-runs-reclaim.log 2&gt;&amp;1</code>
+        </li>
+        <li style="margin-bottom:10px;">
+          <strong>Flow outcome recovery</strong> — every 5 minutes, finishes outcome events a crash left pending:<br>
+          <code>0-59/5 * * * * php <?= $backendAbsHtml ?>/bin/flow-outcome-dispatch.php &gt;&gt; /var/log/formlogic-flow-outcomes.log 2&gt;&amp;1</code>
+        </li>
+        <li style="margin-bottom:10px;">
+          <strong>Flow artifact cleanup</strong> — hourly, removes expired artifacts:<br>
+          <code>11 * * * * php <?= $backendAbsHtml ?>/bin/artifact-sweep.php &gt;&gt; /var/log/formlogic-artifacts.log 2&gt;&amp;1</code>
         </li>
         <li style="margin-bottom:10px;">
           <strong>Private-form privacy sweep</strong> — nightly null-out of respondent IP addresses

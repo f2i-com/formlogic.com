@@ -78,7 +78,8 @@
     return call(name, payload)
       .then(function (started) { return finished(started, function (text) { say('', text); }); })
       .then(function (result) {
-        say('good', typeof closing === 'function' ? closing(result) : closing);
+        var fellShort = result && (result.stopped || result.failedTotal);
+        say(fellShort ? 'bad' : 'good', typeof closing === 'function' ? closing(result) : closing);
         return result;
       })
       .catch(function (error) {

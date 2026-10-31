@@ -95,8 +95,8 @@ try {
 $pdo = $mysql->getConnection();
 
 // Single-instance guard so overlapping cron ticks don't both run a pass.
-$lockHandle = fopen(sys_get_temp_dir() . '/formlogic-idempotency-cleanup.lock', 'c');
-if ($lockHandle === false || !flock($lockHandle, LOCK_EX | LOCK_NB)) {
+$lockHandle = \FormLogic\Support\CronLock::take('idempotency-cleanup');
+if ($lockHandle === null) {
     fwrite(STDERR, sprintf("[%s] another idempotency cleanup is already running; exiting\n", date('c')));
     exit(0);
 }

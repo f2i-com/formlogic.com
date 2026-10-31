@@ -337,6 +337,11 @@ impl App {
 
     fn recover_key(&self, words: &str) -> Result<Value, String> {
         let store = self.store();
+        // The words are checked against the backups in the folder. With its drive unplugged a
+        // mistyped word could pass, and later backups would be sealed to words nobody has.
+        if store.folder_missing() {
+            return Err("The backup folder isn't there, so these words can't be checked. Connect its drive, or choose another folder, and try again.".to_string());
+        }
         let new = keys::id_of_words(words)?;
         let asked = match keys::saved_id(&store.key_folder()) {
             Some(now) if now != new => format!(

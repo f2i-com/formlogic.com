@@ -24,15 +24,24 @@ No GitHub token or release-signing key is required for this official online upda
    `api/storage/backups/<id>/`,
 4. applies the new backend + UI files — `api/.env`, `api/storage/**` (per-form SQLite databases,
    uploads, packs), `api/logs/` and `.well-known/` are **never written**, by construction —
-   and removes managed files the new release no longer ships (obsolete endpoints don't stay
-   deployed; rollback likewise reconstructs the prior file inventory exactly). Applying is
+   and removes the files the installed release shipped that the new one doesn't (obsolete endpoints
+   don't stay deployed; rollback does the same the other way). Only those: a `.user.ini`, a
+   `robots.txt` or another folder you added stays. A file the release ships, such as the web-root
+   `.htaccess`, is replaced, so keep host-specific changes to it somewhere you can reapply them. Applying is
    bound to the exact reviewed package (id + content digest) under a cross-process lock, and
    the immutable staged tree is fully re-verified immediately before any file is copied,
 5. stamps the version and reopens; schema migrations run automatically on the next request.
 
 If anything looks wrong afterwards, the same tab offers **one-click code rollback** from the
 backup (the database is deliberately NOT auto-restored — records created since the upgrade are
-kept; a separate, heavily-confirmed "Restore DB" exists for genuine corruption).
+kept; a separate, heavily-confirmed "Restore DB" exists for genuine corruption). The newest three
+code snapshots are kept. An upgrade checks for free disk space before it closes the site, and an
+older package installs only after you confirm the downgrade.
+
+If the server kills an upgrade part way, the site stays in maintenance mode and the admin panel may
+not load. From a shell, `php api/bin/upgrade.php --rollback=<id>` puts the code back, where `<id>` is
+the newest folder in `api/storage/backups`. Without a shell, copy that folder's `api` and `web`
+contents back over the site by hand.
 
 The manual paths below remain fully supported and are what the wizard automates.
 
@@ -55,7 +64,7 @@ the steps below, or a signed ZIP accepted by its existing updater. After that, u
 ## Building and publishing releases
 
 The Package workflow remains manual and **needs no signing secrets**. It checks PHP 8.2 compatibility
-as well as the main PHP 8.3 suite, and builds the hosted runtime from the exact Softn commit in
+as well as the main PHP 8.3 suite, and installs the hosted runtime from the frozen Softn release archive in
 [prepare-hosted-runtime](../.github/actions/prepare-hosted-runtime/action.yml). The packager verifies
 its complete inventory, JavaScript and matching ZIPP binary, including with `--skip-ui-build`.
 Development source maps are excluded.

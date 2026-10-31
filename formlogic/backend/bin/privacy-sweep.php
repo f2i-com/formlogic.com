@@ -92,8 +92,8 @@ try {
 }
 
 // Single-instance guard so overlapping cron ticks don't both run a pass.
-$lockHandle = fopen(sys_get_temp_dir() . '/formlogic-privacy-sweep.lock', 'c');
-if ($lockHandle === false || !flock($lockHandle, LOCK_EX | LOCK_NB)) {
+$lockHandle = \FormLogic\Support\CronLock::take('privacy-sweep');
+if ($lockHandle === null) {
     fwrite(STDERR, sprintf("[%s] another privacy sweep is already running; exiting\n", date('c')));
     exit(0);
 }

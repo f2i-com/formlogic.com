@@ -630,6 +630,9 @@ class AdminPanelTest extends TestCase
         file_put_contents($apiRoot . '/storage/forms/user-data.sqlite', 'PRECIOUS-USER-RECORDS');
         file_put_contents($apiRoot . '/src/OldFeature.php', '<?php // old');
         file_put_contents($apiRoot . '/VERSION', "1.0.0\n");
+        file_put_contents($webRoot . '/manifest.json', json_encode(['name' => 'formlogic', 'version' => '1.0.0', 'files' => [
+            'index.html' => '', 'api/src/OldFeature.php' => '', 'api/VERSION' => '',
+        ]]));
         return [$webRoot, $apiRoot];
     }
 
@@ -973,6 +976,133 @@ class AdminPanelTest extends TestCase
             $this->assertSame('PRECIOUS-USER-RECORDS', (string) file_get_contents($apiRoot . '/storage/forms/user-data.sqlite'));
             $this->assertFileDoesNotExist($apiRoot . '/storage/forms/planted.sqlite', 'nothing else under storage/ comes from a release');
         }
+    }
+
+    public function testAnUpgradeRemovesOnlyWhatTheInstalledReleaseShipped(): void
+    {
+        foreach ([true, false] as $hasManifest) {
+            [$webRoot, $apiRoot] = $this->buildFakeInstall();
+            if (!$hasManifest) {
+                unlink($webRoot . '/manifest.json');
+            }
+            file_put_contents($webRoot . '/.user.ini', 'post_max_size=220M');
+            file_put_contents($webRoot . '/robots.txt', 'User-agent: *');
+            file_put_contents($apiRoot . '/.env.backup-20261101', 'OLD_KEYS=1');
+            mkdir($webRoot . '/blog');
+            file_put_contents($webRoot . '/blog/index.html', 'theirs');
+            mkdir($webRoot . '/assets');
+            file_put_contents($webRoot . '/assets/old-chunk.js', 'ours');
+            if ($hasManifest) {
+                $manifest = json_decode((string) file_get_contents($webRoot . '/manifest.json'), true);
+                $manifest['files']['assets/old-chunk.js'] = '';
+                file_put_contents($webRoot . '/manifest.json', json_encode($manifest));
+            }
+            $svc = $this->upgradeService($apiRoot, new MaintenanceService($apiRoot . '/storage/maintenance.json'));
+            $staged = $svc->stageUploadedPackage($this->buildFakePackage('2.0.0'));
+            $result = $svc->apply($this->adminId, false, $staged['packageId'], $staged['digest']);
+
+            foreach (['/.user.ini', '/robots.txt', '/blog/index.html', '/api/.env.backup-20261101'] as $theirs) {
+                $this->assertFileExists($webRoot . $theirs, 'not ours to delete');
+            }
+            $this->assertSame(!$hasManifest, file_exists($apiRoot . '/src/OldFeature.php'));
+            $this->assertSame(!$hasManifest, file_exists($webRoot . '/assets/old-chunk.js'));
+            $this->assertSame(!$hasManifest, is_dir($webRoot . '/assets'), 'an emptied folder goes with its files');
+            $this->assertSame(!$hasManifest, in_array('This install has no manifest.json, so no old files were removed', $result['journal'], true));
+        }
+    }
+
+    public function testARollbackRemovesWhatTheReleaseBroughtAndNothingElse(): void
+    {
+        [$webRoot, $apiRoot] = $this->buildFakeInstall();
+        $svc = $this->upgradeService($apiRoot, new MaintenanceService($apiRoot . '/storage/maintenance.json'));
+        $staged = $svc->stageUploadedPackage($this->buildFakePackage('2.0.0'));
+        $backupId = $svc->apply($this->adminId, false, $staged['packageId'], $staged['digest'])['backupId'];
+        file_put_contents($webRoot . '/.user.ini', 'added after the upgrade');
+
+        $svc->rollback($backupId, $this->adminId);
+
+        $this->assertFileDoesNotExist($apiRoot . '/src/NewFeature.php');
+        $this->assertFileExists($apiRoot . '/src/OldFeature.php');
+        $this->assertFileExists($webRoot . '/.user.ini');
+    }
+
+    public function testAnOlderPackageNeedsTheDowngradeConfirmed(): void
+    {
+        [, $apiRoot] = $this->buildFakeInstall();
+        file_put_contents($apiRoot . '/VERSION', "3.0.0\n");
+        $maintenance = new MaintenanceService($apiRoot . '/storage/maintenance.json');
+        $svc = $this->upgradeService($apiRoot, $maintenance);
+        $staged = $svc->stageUploadedPackage($this->buildFakePackage('2.0.0'));
+        $this->assertTrue($staged['isDowngrade']);
+
+        try {
+            $svc->apply($this->adminId, false, $staged['packageId'], $staged['digest']);
+            $this->fail('an older package went in unconfirmed');
+        } catch (\FormLogic\Services\DowngradeNotConfirmedException) {
+        }
+        $this->assertFalse($maintenance->enabled(), 'refused before the site closed');
+        $this->assertSame("3.0.0\n", (string) file_get_contents($apiRoot . '/VERSION'));
+
+        $this->assertSame('2.0.0', $svc->apply($this->adminId, false, $staged['packageId'], $staged['digest'], true)['toVersion']);
+    }
+
+    public function testAnUpgradeStopsBeforeClosingTheSiteWithoutRoomOnTheDisk(): void
+    {
+        [, $apiRoot] = $this->buildFakeInstall();
+        $maintenance = new MaintenanceService($apiRoot . '/storage/maintenance.json');
+        $svc = new class ($apiRoot, self::$mysql, $maintenance, base64_encode(self::releaseKey()['pk'])) extends UpgradeService {
+            public ?float $free = 1024.0 * 1024;
+            protected function freeDiskBytes(): ?float
+            {
+                return $this->free;
+            }
+        };
+        $staged = $svc->stageUploadedPackage($this->buildFakePackage('2.0.0'));
+        try {
+            $svc->apply($this->adminId, false, $staged['packageId'], $staged['digest']);
+            $this->fail('it went ahead');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('Not enough free disk space', $e->getMessage());
+        }
+        $this->assertFalse($maintenance->enabled());
+
+        $svc->free = null; // unknown is not "full"
+        $this->assertTrue($svc->apply($this->adminId, false, $staged['packageId'], $staged['digest'])['ok']);
+    }
+
+    public function testOnlyTheNewestCodeSnapshotsAreKept(): void
+    {
+        [, $apiRoot] = $this->buildFakeInstall();
+        $backups = $apiRoot . '/storage/backups';
+        foreach (['20260101-000000-aaaaaa', '20260102-000000-aaaaaa', '20260103-000000-aaaaaa', '20260104-000000-aaaaaa'] as $old) {
+            mkdir("{$backups}/{$old}/api", 0777, true);
+        }
+        mkdir("{$backups}/20260101-000000-bbbbbb-manual", 0777, true);
+        mkdir("{$backups}/scheduled/2026-01-01", 0777, true);
+        $svc = $this->upgradeService($apiRoot, new MaintenanceService($apiRoot . '/storage/maintenance.json'));
+        $staged = $svc->stageUploadedPackage($this->buildFakePackage('2.0.0'));
+        $backupId = $svc->apply($this->adminId, false, $staged['packageId'], $staged['digest'])['backupId'];
+
+        $this->assertDirectoryExists("{$backups}/{$backupId}");
+        $this->assertDirectoryExists("{$backups}/20260104-000000-aaaaaa");
+        $this->assertDirectoryExists("{$backups}/20260103-000000-aaaaaa");
+        $this->assertDirectoryDoesNotExist("{$backups}/20260102-000000-aaaaaa");
+        $this->assertDirectoryDoesNotExist("{$backups}/20260101-000000-aaaaaa");
+        $this->assertDirectoryExists("{$backups}/20260101-000000-bbbbbb-manual", 'a database export is not a code snapshot');
+        $this->assertDirectoryExists("{$backups}/scheduled/2026-01-01");
+    }
+
+    public function testANewFolderOfAssetsCanBeEnteredByTheWebServer(): void
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            $this->markTestSkipped('Unix modes');
+        }
+        [$webRoot, $apiRoot] = $this->buildFakeInstall();
+        $svc = $this->upgradeService($apiRoot, new MaintenanceService($apiRoot . '/storage/maintenance.json'));
+        $staged = $svc->stageUploadedPackage($this->buildFakePackage('2.0.0', extraFiles: ['assets/new/chunk.js' => 'x']));
+        $svc->apply($this->adminId, false, $staged['packageId'], $staged['digest']);
+
+        $this->assertSame('0755', substr(sprintf('%o', fileperms($webRoot . '/assets/new')), -4));
     }
 
     public function testUpgradeApplyProtectsUserDataAndBacksUpFirst(): void
