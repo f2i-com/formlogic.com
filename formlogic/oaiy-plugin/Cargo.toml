@@ -1,0 +1,50 @@
+[package]
+name = "formlogic-backups"
+version = "0.1.0"
+edition = "2021"
+description = "FormLogic Backups: sealed backups of a FormLogic account's apps and forms, kept on a computer running OAIY"
+publish = false
+
+# Not part of any workspace: a plugin is built on its own, one binary per operating system.
+[workspace]
+
+[dependencies]
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "fast", "zeroize"] }
+getrandom = "0.3"
+# The vault's own primitives, pinned to a commit: a backup's key must come out the same for as long
+# as there are backups sealed to it.
+oaiy-crypto = { git = "https://github.com/f2i-com/oaiy.com", rev = "1cc3b80e17716f263f152cd2b572572efd2c28b0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+ureq = { version = "2", default-features = false, features = ["json", "tls"] }
+zeroize = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_System_SystemInformation",
+  "Win32_UI_Controls_Dialogs",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+oaiy-crypto = { git = "https://github.com/f2i-com/oaiy.com", rev = "1cc3b80e17716f263f152cd2b572572efd2c28b0", features = ["test-vectors"] }
+
+[features]
+# Answers confirmations from a file instead of a person, for tests/. Never in a package:
+# scripts/package-oaiy-plugin.mjs refuses a binary that has it.
+scripted-dialogs = []
+
+# The tests derive keys for real, and Argon2 unoptimised takes long enough to time out on a slow
+# machine. Only the dependencies: the plugin's own code stays quick to build.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true

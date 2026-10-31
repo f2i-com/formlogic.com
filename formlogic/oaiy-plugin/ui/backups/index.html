@@ -1,0 +1,103 @@
+<main class="fb" id="fb">
+  <header class="fb-head">
+    <div>
+      <h1>FormLogic Backups</h1>
+      <p class="fb-hint">Sealed copies of your FormLogic apps and forms, kept on this computer. FormLogic seals each one to a key made from twelve words you write down, so they mean nothing to anyone else, and they open on any computer that has the words.</p>
+    </div>
+    <span class="fb-pill" id="fb-state"><i></i><b>Checking…</b></span>
+  </header>
+
+  <p class="fb-said" id="fb-said" role="status" hidden></p>
+  <p class="fb-note is-danger" id="fb-no-windows" hidden>This computer can't show the plugin's confirmation windows, so connecting, restoring and deleting are off. It works on Windows and macOS.</p>
+
+  <section class="fb-card" aria-labelledby="fb-link-title">
+    <div class="fb-card-head">
+      <span class="fb-step">1</span>
+      <h2 id="fb-link-title">Connect to FormLogic</h2>
+    </div>
+    <form id="fb-connect" hidden>
+      <label for="fb-server">Your FormLogic address</label>
+      <div class="fb-row">
+        <input id="fb-server" type="text" placeholder="https://your-formlogic.example" autocomplete="off" spellcheck="false">
+        <button type="submit" class="fb-button is-primary">Connect…</button>
+      </div>
+      <p class="fb-hint">A window asks you to confirm, then your browser opens so you can sign in. This sign-in is the plugin's own: it can take and restore backups and do nothing else. OAIY's own link to FormLogic isn't touched.</p>
+    </form>
+    <div id="fb-linked" hidden>
+      <dl class="fb-facts">
+        <dt>Server</dt><dd id="fb-linked-server"></dd>
+        <dt>Account</dt><dd id="fb-linked-account"></dd>
+        <dt>Fingerprint</dt><dd id="fb-fingerprint" class="fb-mono"></dd>
+      </dl>
+      <p class="fb-note is-warn" id="fb-approve" hidden>Approve this computer in FormLogic, under Settings, Linked Desktops, Data nodes. Check that the fingerprint there matches the one here. Approving needs your encryption vault, which you can set up under Settings, Security.</p>
+      <p class="fb-note is-warn" id="fb-relink" hidden>FormLogic no longer accepts this link, as it won't after a password reset. Forget it and connect again.</p>
+      <p class="fb-note is-warn" id="fb-not-offered" hidden>This FormLogic doesn't offer backups. Its administrator can turn on PRIVATE_FORMS and DATA_NODES.</p>
+      <div class="fb-actions"><button type="button" class="fb-button" id="fb-forget">Forget this link…</button></div>
+    </div>
+  </section>
+
+  <section class="fb-card" aria-labelledby="fb-words-title">
+    <div class="fb-card-head">
+      <span class="fb-step">2</span>
+      <h2 id="fb-words-title">Your twelve words</h2>
+    </div>
+    <div id="fb-key-none" hidden>
+      <p>These make the key your backups are sealed to. Without them a backup can't be opened by anyone, and that includes FormLogic.</p>
+      <div class="fb-actions"><button type="button" class="fb-button is-primary" id="fb-setup">Make my words…</button></div>
+      <p class="fb-hint">They appear in a window of their own. Write them down: they are not saved, and they won't be shown again.</p>
+    </div>
+    <div id="fb-key-set" hidden>
+      <p>This computer has your key. <span class="fb-mono" id="fb-key-id"></span></p>
+    </div>
+    <details id="fb-recover" class="fb-details">
+      <summary>I already have my words</summary>
+      <form id="fb-recover-form">
+        <label for="fb-words">Your twelve words</label>
+        <textarea id="fb-words" rows="2" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+        <div class="fb-actions"><button type="submit" class="fb-button">Use these words…</button></div>
+      </form>
+    </details>
+  </section>
+
+  <section class="fb-card" aria-labelledby="fb-sources-title">
+    <div class="fb-card-head">
+      <span class="fb-step">3</span>
+      <h2 id="fb-sources-title">Your apps and forms</h2>
+      <div class="fb-card-side">
+        <button type="button" class="fb-button" id="fb-sources-refresh">Refresh</button>
+        <button type="button" class="fb-button is-primary" id="fb-run-all">Back up everything</button>
+      </div>
+    </div>
+    <p class="fb-hint" id="fb-sources-empty">Once this computer is approved, your apps and forms appear here.</p>
+    <ul class="fb-list" id="fb-sources"></ul>
+  </section>
+
+  <section class="fb-card" aria-labelledby="fb-backups-title">
+    <div class="fb-card-head">
+      <h2 id="fb-backups-title">Backups on this computer</h2>
+    </div>
+    <p class="fb-hint" id="fb-backups-empty">No backups yet.</p>
+    <ul class="fb-list" id="fb-backups"></ul>
+    <div class="fb-actions"><button type="button" class="fb-button" id="fb-backups-more" hidden>Show more</button></div>
+    <p class="fb-note" id="fb-last-run" hidden></p>
+  </section>
+
+  <section class="fb-card" aria-labelledby="fb-schedule-title">
+    <div class="fb-card-head">
+      <h2 id="fb-schedule-title">Schedule</h2>
+    </div>
+    <form id="fb-schedule">
+      <label class="fb-check"><input type="checkbox" id="fb-enabled"> Back up everything on a schedule while OAIY is running</label>
+      <div class="fb-row">
+        <label for="fb-every">Every</label>
+        <input id="fb-every" type="number" min="1" max="720" step="1">
+        <span>hours, keeping</span>
+        <input id="fb-keep" type="number" min="1" max="365" step="1" aria-label="How many backups to keep of each app or form">
+        <span>of each. Backups you start yourself stay until you delete them.</span>
+        <button type="submit" class="fb-button">Save</button>
+      </div>
+    </form>
+  </section>
+
+  <p class="fb-note is-danger">Backups are kept in the plugin's own folder, and OAIY's backup leaves that folder out. <b>Uninstalling this plugin deletes them.</b> Save a plain copy of anything you want to keep first.</p>
+</main>

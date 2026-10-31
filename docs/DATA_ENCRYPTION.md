@@ -108,7 +108,7 @@ The file key is wrapped once per recipient:
 
 ## Backups kept in OAIY
 
-OAIY can keep sealed backups of an account's apps and forms on the owner's own computer. It needs `PRIVATE_FORMS` and `DATA_NODES` on, and the owner approving that computer. See `docs/FORMLOGIC_DATA_NODES.md`, section 10.
+The FormLogic Backups plugin for OAIY keeps sealed backups of an account's apps and forms on the owner's own computer. It needs `PRIVATE_FORMS` and `DATA_NODES` on, and the owner approving that computer. See `docs/FORMLOGIC_BACKUPS.md`, and `docs/FORMLOGIC_DATA_NODES.md`, section 10.
 
 ## The Doctor
 

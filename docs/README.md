@@ -73,6 +73,7 @@ These documents retain design history and compatibility details. Use current sou
 | [Custom app specification](CUSTOM_APP_SPEC.md), [app sections](APP_SECTIONS_SPEC.md), [widget dashboards](WIDGET_DASHBOARD_DESIGN.md) | Architecture and screen model history. Current portable app authoring starts with the hosted/connected app guides. |
 | [Custom-screen dashboard kit](CUSTOM_SCREEN_DASHBOARD_KIT.md) | Legacy sandboxed HTML/CSS/JS screen kit, separate from the Softn hosted runtime. |
 | [Private forms plan](E2EE_PRIVATE_FORMS_PLAN.md), [browser hardening](E2EE_P3_BROWSER_HARDENING.md), [encrypted data-node plan](FORMLOGIC_DESKTOP_ENCRYPTED_DATA_NODES_PLAN.md), [data-node contract](FORMLOGIC_DATA_NODES.md) | Gated encryption/data-node work and retired desktop contracts; not a default-enabled deployment recipe. |
+| [FormLogic Backups](FORMLOGIC_BACKUPS.md) | The plugin for OAIY that keeps sealed backups of an account on the owner's computer: installing it, what can reach it, and how to test it. Needs `PRIVATE_FORMS` and `DATA_NODES`. |
 | [Native Tauri runtime](NATIVE_RUNTIME_TAURI.md) | Optional app shell design; distinct from the OAIY desktop host. |
 
 When updating a feature, update its current task guide with the implementation and validation limits. Keep historical specifications labelled rather than presenting a proposed feature as available.

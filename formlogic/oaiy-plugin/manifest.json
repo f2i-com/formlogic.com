@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 4,
+  "id": "formlogic-backups",
+  "name": "FormLogic Backups",
+  "version": "0.1.0",
+  "publisher": "FormLogic",
+  "description": "Sealed backups of your FormLogic apps and forms, kept on this computer. They open with twelve words you write down, so they outlive it.",
+  "pluginApiVersion": 1,
+  "minDesktopVersion": "0.1.0",
+  "entry": {
+    "kind": "process",
+    "command": "bin/formlogic-backups",
+    "args": []
+  },
+  "capabilities": [
+    "connector.formlogic-backups.status.get",
+    "connector.formlogic-backups.settings.get",
+    "connector.formlogic-backups.link.get",
+    "connector.formlogic-backups.link.connect",
+    "connector.formlogic-backups.link.forget",
+    "connector.formlogic-backups.sources.list",
+    "connector.formlogic-backups.backups.list",
+    "connector.formlogic-backups.backup.run",
+    "connector.formlogic-backups.backup.save",
+    "connector.formlogic-backups.backup.restore",
+    "connector.formlogic-backups.backup.delete",
+    "connector.formlogic-backups.settings.set",
+    "connector.formlogic-backups.key.setup",
+    "connector.formlogic-backups.key.recover",
+    "connector.formlogic-backups.jobs.get"
+  ],
+  "connectors": [
+    {
+      "id": "formlogic-backups",
+      "name": "FormLogic Backups",
+      "commands": [
+        "status.get",
+        "settings.get",
+        "link.get",
+        "link.connect",
+        "link.forget",
+        "sources.list",
+        "backups.list",
+        "backup.run",
+        "backup.save",
+        "backup.restore",
+        "backup.delete",
+        "settings.set",
+        "key.setup",
+        "key.recover",
+        "jobs.get"
+      ]
+    }
+  ],
+  "commands": {
+    "journalled": [
+      "link.get",
+      "link.connect",
+      "link.forget",
+      "sources.list",
+      "backups.list",
+      "backup.run",
+      "backup.save",
+      "backup.restore",
+      "backup.delete",
+      "settings.set",
+      "key.setup",
+      "key.recover",
+      "jobs.get"
+    ]
+  },
+  "ui": {
+    "nav": [
+      {
+        "id": "formlogic-backups",
+        "label": "FormLogic Backups",
+        "icon": "archive",
+        "screen": "backups"
+      }
+    ],
+    "screens": [
+      {
+        "id": "backups",
+        "title": "FormLogic Backups",
+        "entry": "ui/backups/index.html",
+        "files": [
+          "ui/backups/index.html",
+          "ui/backups/backups.css",
+          "ui/backups/backups.js"
+        ]
+      }
+    ]
+  }
+}
