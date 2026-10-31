@@ -1388,7 +1388,7 @@ $adminArgs = function ($request) {
 };
 $adminConfirmation = new \FormLogic\Middleware\AdminConfirmationMiddleware($container->get(AuthService::class));
 $adminWritesConfirmed = new \FormLogic\Middleware\AdminConfirmationMiddleware($container->get(AuthService::class), true);
-$app->group('/api/admin', function (RouteCollectorProxy $group) use ($container, $adminArgs, $adminStepUpRateLimiter) {
+$app->group('/api/admin', function (RouteCollectorProxy $group) use ($container, $adminArgs, $adminStepUpRateLimiter, $adminConfirmation) {
     $ctrl = fn () => $container->get(\FormLogic\Controllers\AdminController::class);
 
     // Proves who the administrator is, for every write below and for acting as an account.

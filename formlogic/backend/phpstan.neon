@@ -5,6 +5,7 @@ parameters:
     level: 3
     paths:
         - src
+        - public/index.php
     ignoreErrors:
         # symfony/mailer is an OPTIONAL runtime dependency (self-host installs
         # without SMTP never load it; the /doctor page reports its absence).
