@@ -245,12 +245,22 @@ class HostedAppService
             if (!$action || (!$owner && $action['access'] !== 'member')) throw new RuntimeException('Action not found or access denied', 404);
             $calls = 0;
             $failed = false;
-            $handler = function (string $module, string $method, array $args) use ($db, $action, &$calls, &$failed): mixed {
+            $reason = 'Backend action failed';
+            $handler = function (string $module, string $method, array $args) use ($db, $action, &$calls, &$failed, &$reason): mixed {
                 try {
+                    // A script may catch the error and carry on, but SQLite can already have rolled
+                    // back on its own, and a write after that would commit by itself.
+                    if ($failed) throw new RuntimeException('An earlier operation failed');
                     if (++$calls > 50 || $module !== 'db' || $method !== 'getField' || !is_string($args[0] ?? null)) throw new RuntimeException('Unsupported backend operation');
                     $operation = json_decode($args[0], true, 32, JSON_THROW_ON_ERROR);
                     return $this->recordOperation($db, $operation, $action['mode'] === 'write');
-                } catch (\Throwable $e) { $failed = true; throw $e; }
+                } catch (\Throwable $e) {
+                    // These are this file's own words ("App record limit reached"). A database
+                    // error's may name paths, so it stays general.
+                    if (!$failed && !$e instanceof \PDOException) $reason = $e->getMessage();
+                    $failed = true;
+                    throw $e;
+                }
             };
             // Use the existing sandbox RPC; scripts receive no PDO handle, paths, credentials or network capability.
             $source = $action['source'] . <<<'LOGIC'
@@ -268,14 +278,14 @@ function onSubmit(host) {
 }
 LOGIC;
             $done = $this->runner->runScript($source, ['answers' => $input, 'meta' => ['userId' => $userId, 'isOwner' => $owner, 'requestId' => bin2hex(random_bytes(16))]], $handler, 2500);
-            if ($failed || isset($done['error'])) throw new RuntimeException('Backend action failed; database changes were rolled back', 422);
+            if ($failed || isset($done['error'])) throw new RuntimeException($reason . '; database changes were rolled back', 422);
             if (($done['reject'] ?? false) === true) throw new RuntimeException(mb_substr((string) ($done['message'] ?? 'Action rejected'), 0, 300), 422);
             $result = $done['result'] ?? null;
             if (strlen(json_encode($result, JSON_THROW_ON_ERROR)) > 262144) throw new RuntimeException('Action result exceeds 256 KB', 422);
             $db->exec('COMMIT');
             return $result;
         } catch (\Throwable $e) {
-            $db->exec('ROLLBACK');
+            if ($db->inTransaction()) $db->exec('ROLLBACK');
             throw $e;
         }
     }

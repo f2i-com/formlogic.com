@@ -1637,6 +1637,7 @@ class NativeAppService
             usleep(50000);
         }
         if (!$slot) { unlink($base . '.in'); throw new RuntimeException('The native host is busy. Try again shortly.', 429); }
+        $answered = false;
         try {
             $node = $this->nodeBinary();
             // Only the allowlisted variables reach the runtime (see NODE_ENV_ALLOWLIST); the
@@ -1658,10 +1659,15 @@ class NativeAppService
             // For the app's own page, the body as the backend wrote it: read as arrays, `{}` and
             // `[]` are one, and an empty object reached the page as a list.
             if ($bodyAsWritten) $result['body'] = json_decode($output, false, 512, JSON_THROW_ON_ERROR)->body;
+            $answered = true;
             return $result;
         } finally {
             if (is_resource($process)) proc_close($process);
             flock($slot, LOCK_UN); fclose($slot);
+            // A visitor gets a general error, so this is all anyone will have to go on.
+            if (!$answered && is_file($base . '.err') && filesize($base . '.err') > 0) {
+                error_log('Native runner failed in ' . basename($root) . ': ' . file_get_contents($base . '.err', false, null, 0, 4096));
+            }
             foreach (['.in', '.out', '.err'] as $suffix) if (is_file($base . $suffix)) unlink($base . $suffix);
         }
     }

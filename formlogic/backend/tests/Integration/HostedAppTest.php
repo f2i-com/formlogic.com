@@ -63,6 +63,21 @@ class HostedAppTest extends TestCase
         self::assertSame(['data/options.json'], $manifest['files']['json']);
         self::assertArrayNotHasKey('config', $manifest, 'Private manifest configuration stays excluded');
     }
+    public function testAScriptCannotCarryOnWritingAfterAFailedOperationAndIsToldWhy(): void
+    {
+        $p = $this->package();
+        $p['actions']['carryOn'] = ['access' => 'owner', 'mode' => 'write', 'source' => 'function onRequest(ctx) { try { ctx.db.put("not a collection!","x",{}); } catch (e) {} ctx.db.put("notes","after",{text:"after"}); return "done"; }'];
+        $this->host->publish('app-a', $p, 0);
+        try {
+            $this->host->run('app-a', 'carryOn', [], 'owner', true);
+            self::fail('The action should have failed');
+        } catch (\RuntimeException $failed) {
+            self::assertStringContainsString('Invalid collection', $failed->getMessage());
+            self::assertStringContainsString('rolled back', $failed->getMessage());
+            self::assertSame(422, $failed->getCode());
+        }
+        self::assertSame([], $this->host->run('app-a', 'list', [], 'owner', true));
+    }
     public function testFailedScriptRollsBack(): void
     {
         $p = $this->package();
