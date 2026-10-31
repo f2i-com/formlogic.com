@@ -215,6 +215,8 @@ class AppDomainTokenTest extends TestCase
         self::assertSame(400, $this->exchange($code . 'x', $app, $host)->getStatusCode(), 'another code');
         self::assertSame(400, $this->exchange('', $app, $host)->getStatusCode());
         self::assertSame(200, $this->exchange($code, $app, $host)->getStatusCode(), 'none of that spent it');
+        // A moment later, or the update below would change nothing and pass for a refusal.
+        self::$pdo->prepare('UPDATE app_domain_sign_ins SET exchanged_at = NOW() - INTERVAL 5 SECOND WHERE code_hash = ?')->execute([hash('sha256', $code)]);
         self::assertSame(400, $this->exchange($code, $app, $host)->getStatusCode(), 'spent');
     }
 
