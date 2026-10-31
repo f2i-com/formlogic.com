@@ -69,6 +69,8 @@ lerna-debug.log*
 # per-install, it is not shared, and a `git add -A` would otherwise stage it —
 # every other runtime path under storage/ is ignored, and this one was not.
 /backend/storage/keys/
+/backend/storage/locks/
+/backend/storage/streams/
 /backend/logs/*.log
 
 # OS files

@@ -55,7 +55,7 @@ const edit = () => click(host!.querySelector('[data-testid="edit"]'));
 const back = () => click(host!.querySelector('[aria-label="Back to flows"]'));
 const buttonNamed = (name: string) => Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent === name);
 const shownX = () => Number(host!.querySelector('[data-testid="edit"]')!.getAttribute('data-x'));
-const sentX = (patch: SavePatch) => patch.flowJson.nodes[0].position.x;
+const sentX = (patch: SavePatch) => patch.flowJson.nodes[0].position!.x;
 const pastAutosave = () => act(async () => { await vi.advanceTimersByTimeAsync(1400); });
 
 function closeEditor() {
@@ -213,7 +213,7 @@ describe('leaving the flow editor', () => {
 
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(onSave.mock.calls[0]).toMatchObject([{ nodeCapabilities: expect.any(Array) }]);
-    expect((onSave.mock.calls[0] as unknown as [SavePatch])[0].flowJson.nodes[0].position.y).toBe(40);
+    expect((onSave.mock.calls[0] as unknown as [SavePatch])[0].flowJson.nodes[0].position!.y).toBe(40);
   });
 
   it('sends nothing on unmount when nothing changed', async () => {
@@ -228,7 +228,7 @@ describe('leaving the flow editor', () => {
     const order: string[] = [];
     let finishFirst: (ok: boolean) => void = () => undefined;
     const onSave = vi.fn((patch: SavePatch) => {
-      order.push(`start ${patch.flowJson.nodes[0].position.x}`);
+      order.push(`start ${patch.flowJson.nodes[0].position!.x}`);
       return onSave.mock.calls.length === 1 ? new Promise<boolean>((resolve) => { finishFirst = resolve; }) : Promise.resolve(true);
     });
     await renderEditor(onSave);

@@ -58,7 +58,7 @@ afterEach(() => {
 
 describe('duplicating a flow', () => {
   it('picks a free slug when a copy already exists, as creating a flow does', async () => {
-    const create = vi.spyOn(api, 'createWorkspaceFlow').mockImplementation(async (body) => ({ data: { flow: flow(body.slug, body.name) } }) as never);
+    const create = vi.spyOn(api, 'createWorkspaceFlow').mockImplementation(async (body) => ({ data: { flow: flow(body.slug!, body.name) } }) as never);
     await renderWorkspace([flow('greet', 'Greet'), flow('greet-copy', 'Greet copy')]);
 
     await act(async () => h.duplicate!(flow('greet', 'Greet')));
@@ -67,7 +67,7 @@ describe('duplicating a flow', () => {
   });
 
   it('keeps the plain copy name the first time', async () => {
-    const create = vi.spyOn(api, 'createWorkspaceFlow').mockImplementation(async (body) => ({ data: { flow: flow(body.slug, body.name) } }) as never);
+    const create = vi.spyOn(api, 'createWorkspaceFlow').mockImplementation(async (body) => ({ data: { flow: flow(body.slug!, body.name) } }) as never);
     await renderWorkspace([flow('greet', 'Greet')]);
 
     await act(async () => h.duplicate!(flow('greet', 'Greet')));

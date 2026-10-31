@@ -1068,7 +1068,7 @@ describe('a flow of someone else\'s app and what is the viewer\'s', () => {
     const flow = { id: 'f1', slug: 'listen', version: 1, flowJson: { schema: 'formlogic-flow/1', nodes: [], edges: [] }, nodeCapabilities: [] };
     const binding = { id: 'b1', flow: 'listen', event: 'aokie.sms.received', mode: 'async', inputMap: { text: '$event.data.text' } };
     __setRuntimeFlowsForTests({ flows: [flow], bindings: [binding] } as unknown as Parameters<typeof __setRuntimeFlowsForTests>[0], 'theirs');
-    const envelope = { schemaVersion: 1, name: 'aokie.sms.received', connectorId: 'aokie', source: 'aokie', correlationId: 'c', idempotencyKey: 'k', occurredAt: '2026-11-01T00:00:00Z', data: { text: 'private' } };
+    const envelope = { schemaVersion: 1, name: 'aokie.sms.received', connectorId: 'aokie', source: 'aokie', correlationId: 'c', idempotencyKey: 'k', occurredAt: '2026-11-01T00:00:00Z', data: { text: 'private' } } as unknown as Parameters<typeof __onDesktopEventForTests>[0];
 
     setOnScreenApp(theirs);
     __onDesktopEventForTests(envelope);

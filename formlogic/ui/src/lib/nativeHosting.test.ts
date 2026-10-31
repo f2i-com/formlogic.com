@@ -18,7 +18,7 @@ describe('importNativeProject', () => {
     expect(project.files['xdb/tasks.xdb']).toBe(client['xdb/tasks.xdb']);
     expect(Uint8Array.from(atob(project.assets['assets/logo.png']), c => c.charCodeAt(0))).toEqual(png);
     // What the owner downloads again is what was uploaded (the README aside, which is not kept).
-    const again = await importNativeProject(new File([exportNativeProject(project)], 'again.softn'));
+    const again = await importNativeProject(new File([exportNativeProject(project) as BlobPart], 'again.softn'));
     expect(again.files).toEqual(project.files);
     expect(again.assets).toEqual(project.assets);
   });
