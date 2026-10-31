@@ -40,8 +40,8 @@ jobs:
     with:
       oaiy-cli-release: ${{ inputs.oaiy-cli-release }}
 
-  # FormLogic Backups, the plugin for OAIY: tested, with a zip for each system kept
-  # as an artifact of this run.
+  # FormLogic Backups, the plugin for OAIY: tested, with the Windows zip kept as an
+  # artifact of this run. The Mac zip is a workflow of its own, run by hand.
   oaiy-plugin:
     name: OAIY plugin
     uses: ./.github/workflows/oaiy-plugin.yml

@@ -63,7 +63,8 @@ local review checks, not proof that a production deployment has been validated.
       confirm you can redeploy the prior build and (if needed) restore the DB snapshot.
 - [ ] FormLogic Backups plugin: `e2e/backup-plugin.spec.ts` run by hand against a server with
       `PRIVATE_FORMS` and `DATA_NODES` on (CI skips it; docs/FORMLOGIC_BACKUPS.md says how), and
-      the zip for each system installed once in a real OAIY.
+      the zip for each system installed once in a real OAIY. Package attaches the Windows zip;
+      run **OAIY plugin for macOS (manual)** from the same tag to add the Mac one.
 
 ## 4. Smoke the launch-critical states (manually, in prod or a prod-like staging)
 

@@ -373,8 +373,9 @@ jobs:
         run: composer test
 
 
-  # FormLogic Backups, the plugin for OAIY: a zip for each system, built and tested
-  # by the same workflow CI uses. A tag build attaches them to its release.
+  # FormLogic Backups, the plugin for OAIY: the Windows zip, built and tested by the
+  # same workflow CI uses. A tag build attaches it to its release. The Mac zip is
+  # added to that release by hand: oaiy-plugin-macos.yml.
   oaiy-plugin:
     name: OAIY plugin
     uses: ./.github/workflows/oaiy-plugin.yml

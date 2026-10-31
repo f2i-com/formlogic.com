@@ -1,32 +1,28 @@
 name: OAIY plugin (FormLogic Backups)
 
-# Tests FormLogic Backups (formlogic/oaiy-plugin) and builds a zip for each system
-# OAIY can show the plugin's windows on. Someone downloads the zip for their system
-# and installs it from OAIY's Plugins page. CI keeps the zips as artifacts, and a
-# tagged Package run attaches them to the release.
+# Tests FormLogic Backups (formlogic/oaiy-plugin) and builds its zip for one system.
+# Someone downloads the zip for their system and installs it from OAIY's Plugins page.
+#
+# CI and Package call this for Windows. A Mac costs several times as much, so it has
+# a workflow of its own, run by hand: oaiy-plugin-macos.yml.
 #
 # No Linux zip: OAIY gives a plugin on Linux no display, so the plugin can't ask the
-# person before it does anything that matters, and it refuses to. The tests below
-# don't cover that build either; docs/FORMLOGIC_BACKUPS.md says how to check it.
+# person before it does anything that matters, and it refuses to.
 on:
   workflow_call:
-  workflow_dispatch:
+    inputs:
+      platform:
+        description: windows-x64 or macos
+        type: string
+        default: windows-x64
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Plugin (${{ matrix.platform }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: windows-2022
-            platform: windows-x64
-          - runner: macos-15
-            platform: macos
+    name: Plugin (${{ inputs.platform }})
+    runs-on: ${{ inputs.platform == 'macos' && 'macos-15' || 'windows-2022' }}
     defaults:
       run:
         shell: bash
@@ -45,7 +41,7 @@ jobs:
         run: |
           rustup show active-toolchain
           lock="$(sha256sum Cargo.lock 2>/dev/null || shasum -a 256 Cargo.lock)"
-          echo "cache-key=oaiy-plugin-${{ matrix.platform }}-${lock%% *}" >> "$GITHUB_OUTPUT"
+          echo "cache-key=oaiy-plugin-${{ inputs.platform }}-${lock%% *}" >> "$GITHUB_OUTPUT"
 
       - name: Cargo dependency cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -65,7 +61,7 @@ jobs:
           cargo test --locked --features scripted-dialogs
 
       - name: Build (Windows)
-        if: matrix.platform == 'windows-x64'
+        if: inputs.platform == 'windows-x64'
         working-directory: formlogic/oaiy-plugin
         run: |
           cargo build --release --locked
@@ -73,7 +69,7 @@ jobs:
 
       # One program for both kinds of Mac.
       - name: Build (macOS)
-        if: matrix.platform == 'macos'
+        if: inputs.platform == 'macos'
         working-directory: formlogic/oaiy-plugin
         run: |
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
@@ -83,12 +79,12 @@ jobs:
           echo "PROGRAM=formlogic/oaiy-plugin/target/release-universal" >> "$GITHUB_ENV"
 
       - name: Package
-        run: node scripts/package-oaiy-plugin.mjs --platform "${{ matrix.platform }}" --binary "$PROGRAM"
+        run: node scripts/package-oaiy-plugin.mjs --platform "${{ inputs.platform }}" --binary "$PROGRAM"
 
       - name: Upload the zip
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: oaiy-plugin-${{ matrix.platform }}
+          name: oaiy-plugin-${{ inputs.platform }}
           path: dist-oaiy-plugin/*.zip
           if-no-files-found: error
           retention-days: 30

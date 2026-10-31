@@ -25,8 +25,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const tag = process.env.GITHUB_REF_NAME;
   if (!repo || !tag) throw new Error('GitHub repository and release tag are required.');
   const release = readReleaseForVerification(repo, tag);
-  const files = readdirSync('dist-package').filter(name => name.endsWith('.zip'));
-  if (files.length !== 1) throw new Error('Expected exactly one release ZIP.');
+  // oaiy-plugin-macos.yml adds a zip to a release Package made, and has no release ZIP of its own.
+  const pluginsOnly = process.argv.includes('--plugin-zips-only');
+  const files = pluginsOnly ? [] : readdirSync('dist-package').filter(name => name.endsWith('.zip'));
+  if (!pluginsOnly && files.length !== 1) throw new Error('Expected exactly one release ZIP.');
   const plugins = existsSync('dist-oaiy-plugin') ? readdirSync('dist-oaiy-plugin').filter(name => name.endsWith('.zip')) : [];
   const paths = [...files.map(name => `dist-package/${name}`), ...plugins.map(name => `dist-oaiy-plugin/${name}`)];
   for (const path of paths) {

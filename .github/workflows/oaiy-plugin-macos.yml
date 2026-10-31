@@ -1,0 +1,50 @@
+name: OAIY plugin for macOS (manual)
+
+# The Mac zip of FormLogic Backups, on its own and by hand, because Mac minutes cost
+# several times what the others do. Nothing else starts it or waits for it.
+#
+#   Actions → "OAIY plugin for macOS (manual)" → Run workflow
+#
+# Run from a branch, the zip is kept as an artifact of the run. Run from a tag, it is
+# also attached to that tag's release, so run Package from the tag first: it makes
+# the release.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/oaiy-plugin.yml
+    with:
+      platform: macos
+
+  attach:
+    name: Attach to the release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release upload
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: '.node-version'
+
+      - name: Fetch the zip
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: oaiy-plugin-macos
+          path: dist-oaiy-plugin
+
+      - name: Attach the zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" dist-oaiy-plugin/*.zip --repo "$GITHUB_REPOSITORY" --clobber
+          node scripts/check-published-release.mjs --plugin-zips-only
