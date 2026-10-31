@@ -113,6 +113,7 @@ jobs:
           DB_PASSWORD=root
           JWT_SECRET=$(php -r 'echo bin2hex(random_bytes(32));')
           AUDIT_HMAC_KEY=$(php -r 'echo bin2hex(random_bytes(32));')
+          DATA_ENCRYPTION_KEY=$(php -r 'echo bin2hex(random_bytes(32));')
           CORS_ALLOWED_ORIGINS=$(node ../../scripts/session-request.mjs "$E2E_BASE_URL")
           APP_URL=$(node ../../scripts/session-request.mjs "$E2E_BASE_URL")
           # The suite logs in once per test from one address; the production limit

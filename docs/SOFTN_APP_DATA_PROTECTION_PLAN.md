@@ -1,6 +1,6 @@
 # Protecting SoftN app data: plan
 
-Status: proposal, nothing here is built. Written 2026-10-31 after a read of the code at `a6324760`.
+Status: Phase 1 is built, except where it says otherwise below (`docs/DATA_ENCRYPTION.md` is how to run it). Phases 2 to 4 are proposals. Written 2026-10-31 after a read of the code at `a6324760`.
 
 ## The short version
 
@@ -32,8 +32,8 @@ Being plain about this matters more than the algorithms.
 
 | If this happens | Public | Private | Sealed |
 | --- | --- | --- | --- |
-| A stolen disk or backup | Exposed, and meant to be | **Protected** | **Protected** |
-| A stolen database dump with the server's keys too | Exposed | Exposed | **Protected** |
+| A copied database, storage folder or sealed backup, without `.env` | Exposed, and meant to be | **Protected** | **Protected** |
+| A stolen disk, or a dump with the server's keys too. The key is in `.env` on that disk | Exposed | Exposed, unless the disk itself is encrypted | **Protected** |
 | A site administrator looks | Exposed | Exposed if they go around the app | **Protected** |
 | The server is taken over, and serves altered JavaScript | Exposed | Exposed | **Exposed from then on**, for people who unlock after that |
 | The app's own author wants the data | Exposed | Exposed | **Exposed**: their code displays it |
@@ -89,8 +89,10 @@ It goes in the top-level manifest, because `softn-host-rust` refuses unknown key
 1. A master key outside the database and storage folders, `DATA_ENCRYPTION_KEY`, with a per-app data key wrapped under it, and a rotation command.
 2. Encrypt hosted app `records.data` under that key. PHP only fetches by id, so nothing else changes.
 3. Encrypt `users.mfa_secret` and `webhooks.secret` the same way.
-4. Encrypt backups: nightly ZIPs to an operator's public key, using the sealed lane `DataAccountBackupService` already has, and stop putting `keyHex` next to the data. Account downloads get an optional passphrase.
-5. A health check in the admin panel for a missing key or an unencrypted disk.
+4. Encrypt backups: nightly ZIPs to an operator's public key, and stop putting `keyHex` next to the data. Account downloads get an optional passphrase.
+5. A health check in the admin panel for a missing key. An unencrypted disk can't be detected from PHP, so that is a reminder.
+
+As built: sealing nightly backups is opt-in. The server can't open what it seals, so with it on the admin panel can't restore a day until an operator has opened it, and a lost secret key loses those backups. Recycle bin snapshots, which also hold app records in plain form, are encrypted under the master key. Backups carry hosted records plain inside them, because a restore can be under a new id or on another server: at rest is what this phase encrypts. `private/config.json` still sits beside a native app's database, because the runtime reads it: that goes with Phase 2.
 
 The risk is real and worth saying: **lose the master key and the data is gone.** It must be backed up apart from the database, and the installer has to say so.
 

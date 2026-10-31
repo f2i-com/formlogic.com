@@ -259,8 +259,11 @@ Manual install (no wizard)
 2. Create the backend config: copy api/.env.example to api/.env, then set
      DB_HOST, DB_DATABASE, DB_USERNAME, DB_PASSWORD  — your MySQL details
      JWT_SECRET                                      — a long random string
-   Generate a strong secret with:
+     DATA_ENCRYPTION_KEY                             — encrypts stored secrets and app records
+   Generate a strong value for each with:
      php -r "echo bin2hex(random_bytes(32));"
+   Keep a copy of DATA_ENCRYPTION_KEY away from this server. Without it, what it
+   encrypted can never be read.
    The .env.example file documents every other (optional) setting.
 3. Create the MySQL database named in api/.env (an empty database is fine —
    the schema is created automatically on first run).

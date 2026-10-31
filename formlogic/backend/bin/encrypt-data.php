@@ -49,8 +49,16 @@ if (!$crypto->enabled()) {
     exit(2);
 }
 
-$result = (new DataEncryptionMigrator($mysql->getConnection(), __DIR__ . '/../storage/hosted-apps'))->run($crypto);
-printf("%d secrets and %d records in %d apps moved onto key %s\n", $result['secrets'], $result['records'], $result['apps'], $crypto->currentKeyId());
+$trashPath = $config['settings']['trash']['dir'] ?? __DIR__ . '/../storage/trash';
+$result = (new DataEncryptionMigrator($mysql->getConnection(), __DIR__ . '/../storage/hosted-apps', $trashPath))->run($crypto);
+printf(
+    "%d secrets, %d records in %d apps and %d recycle bin snapshots moved onto key %s\n",
+    $result['secrets'],
+    $result['records'],
+    $result['apps'],
+    $result['snapshots'],
+    $crypto->currentKeyId()
+);
 foreach ($result['failed'] as $failure) {
     fwrite(STDERR, "FAILED: {$failure}\n");
 }

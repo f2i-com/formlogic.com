@@ -307,6 +307,8 @@ final class InstallerReliabilityTest extends TestCase
         self::assertMatchesRegularExpression('/^APP_ENV=production$/m', $env);
         self::assertMatchesRegularExpression('/^DB_HOST=db\.internal$/m', $env);
         self::assertMatchesRegularExpression('/^AUDIT_HMAC_KEY=[0-9a-f]{64}$/m', $env);
+        self::assertMatchesRegularExpression('/^DATA_ENCRYPTION_KEY=[0-9a-f]{64}$/m', $env);
+        self::assertContains('warn:Data encryption key', self::steps($result), 'the operator is told to keep a copy');
     }
     /**
      * A copy of .env.example that nobody filled in has no JWT secret and cannot run the site. The

@@ -401,7 +401,7 @@ function envEncode(string $value): string
  * development install mode — so a deployment can never silently inherit
  * .env.example's development defaults.
  *
- * @param array{devMode:bool,betaMode?:bool,dbHost:string,dbPort:string,dbName:string,dbUser:string,dbPass:string,corsOrigin:string,jwtSecret:string,auditKey:string} $values
+ * @param array{devMode:bool,betaMode?:bool,dbHost:string,dbPort:string,dbName:string,dbUser:string,dbPass:string,corsOrigin:string,jwtSecret:string,auditKey:string,dataKey?:string} $values
  */
 function flRenderEnvContent(string $template, array $values): string
 {
@@ -416,6 +416,7 @@ function flRenderEnvContent(string $template, array $values): string
         '/^JWT_SECRET=.*/m' => 'JWT_SECRET=' . $values['jwtSecret'],    // generated hex
         '/^CORS_ORIGIN=.*/m' => 'CORS_ORIGIN=' . envEncode($values['corsOrigin']),
         '/^# AUDIT_HMAC_KEY=.*/m' => 'AUDIT_HMAC_KEY=' . $values['auditKey'], // generated hex
+        '/^# DATA_ENCRYPTION_KEY=.*/m' => 'DATA_ENCRYPTION_KEY=' . ($values['dataKey'] ?? ''), // generated hex
         // .env.example ships the key commented out; write it explicitly either way so the
         // deployment's sign-up policy is visible in .env rather than inherited from a default.
         '/^# BETA_MODE=.*/m' => 'BETA_MODE=' . (!empty($values['betaMode']) ? 'true' : 'false'),
@@ -749,7 +750,10 @@ function runInstall(array $data): array
     // 2. Generate secrets
     $jwtSecret = bin2hex(random_bytes(32));
     $auditKey = bin2hex(random_bytes(32));
+    $dataKey = bin2hex(random_bytes(32));
     $steps[] = ['label' => 'Generate security keys', 'status' => 'ok'];
+    $steps[] = ['label' => 'Data encryption key', 'status' => 'warn',
+        'message' => 'Saved in .env as DATA_ENCRYPTION_KEY. Copy it somewhere safe, away from this server, now. Without it, what it encrypted can never be read: no one can reset it.'];
 
     // 3. Validate and sanitize inputs
     $parsedHost = flParseDbHost($data['db_host'] ?? 'localhost'); // not text: a TypeError, reported with a reference
@@ -874,6 +878,7 @@ function runInstall(array $data): array
         'corsOrigin' => $corsOrigin,
         'jwtSecret' => $jwtSecret,
         'auditKey' => $auditKey,
+        'dataKey' => $dataKey,
     ]);
     $steps[] = $devMode
         ? ['label' => 'Application mode', 'status' => 'warn',

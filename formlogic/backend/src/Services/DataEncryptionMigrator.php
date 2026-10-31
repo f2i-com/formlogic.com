@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Services;
 
+use FormLogic\Support\BackupEnvelope;
 use FormLogic\Support\DataEncryption;
 use FormLogic\Support\DataEncryptionException;
 use PDO;
@@ -18,11 +19,14 @@ use PDO;
  */
 final class DataEncryptionMigrator
 {
-    public function __construct(private readonly PDO $mysql, private readonly string $hostedPath)
-    {
+    public function __construct(
+        private readonly PDO $mysql,
+        private readonly string $hostedPath,
+        private readonly ?string $trashPath = null,
+    ) {
     }
 
-    /** @return array{secrets: int, apps: int, records: int, failed: list<string>} */
+    /** @return array{secrets: int, apps: int, records: int, snapshots: int, failed: list<string>} */
     public function run(DataEncryption $crypto): array
     {
         if (!$crypto->enabled()) {
@@ -43,10 +47,39 @@ final class DataEncryptionMigrator
                 $failed[] = 'hosted app database ' . basename($path) . ': ' . $e->getMessage();
             }
         }
+        $snapshots = $this->moveSnapshots($crypto, $failed);
         if ($failed === []) {
             $crypto->recordMigrated($this->mysql);
         }
-        return ['secrets' => $secrets, 'apps' => $apps, 'records' => $records, 'failed' => $failed];
+        return ['secrets' => $secrets, 'apps' => $apps, 'records' => $records, 'snapshots' => $snapshots, 'failed' => $failed];
+    }
+
+    /**
+     * Recycle bin snapshots: seals the plain ones, and moves the sealed ones onto the current key.
+     *
+     * @param list<string> $failed
+     */
+    private function moveSnapshots(DataEncryption $crypto, array &$failed): int
+    {
+        $moved = 0;
+        foreach ($this->trashPath === null ? [] : (glob($this->trashPath . '/*/*.zip') ?: []) as $path) {
+            try {
+                if (BackupEnvelope::isSealed($path)) {
+                    $moved += BackupEnvelope::rewrap($path, $crypto) ? 1 : 0;
+                    continue;
+                }
+                $staged = $path . '.sealing';
+                BackupEnvelope::seal($path, $staged, ['server' => $crypto]);
+                if (!rename($staged, $path)) {
+                    @unlink($staged);
+                    throw new DataEncryptionException('Could not replace the snapshot');
+                }
+                $moved++;
+            } catch (\Throwable $e) {
+                $failed[] = 'recycle bin snapshot ' . basename($path) . ': ' . $e->getMessage();
+            }
+        }
+        return $moved;
     }
 
     /**

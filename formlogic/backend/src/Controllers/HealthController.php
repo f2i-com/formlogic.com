@@ -100,6 +100,21 @@ class HealthController
             $checks['data_encryption'] = ['ok' => false, 'critical' => true, 'detail' => 'check failed'];
         }
 
+        $sealingKey = \FormLogic\Support\Environment::nonEmpty(\FormLogic\Services\ScheduledBackupService::SEALING_KEY_ENV);
+        if ($sealingKey === null) {
+            $checks['backup_sealing'] = [
+                'ok' => true, 'critical' => false, 'detail' => 'off',
+                'warning' => 'nightly backups hold app data and host keys unsealed: make a key pair with bin/open-backup.php and set BACKUP_PUBLIC_KEY',
+            ];
+        } else {
+            $sealingOk = \FormLogic\Support\BackupEnvelope::parseKey($sealingKey) !== null;
+            $checks['backup_sealing'] = [
+                'ok' => $sealingOk,
+                'critical' => false,
+                'detail' => $sealingOk ? 'nightly backups are sealed to your public key' : 'BACKUP_PUBLIC_KEY is not a valid public key, so nightly backups are failing',
+            ];
+        }
+
         // Writable storage/log directories.
         $dirs = [
             'storage/forms' => $this->settings['sqlite']['storage_path'] ?? ($base . '/storage/forms'),

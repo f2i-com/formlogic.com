@@ -300,6 +300,8 @@ export function Settings() {
   const [isExportingBackup, setIsExportingBackup] = useState(false);
   const [isImportingBackup, setIsImportingBackup] = useState(false);
   const [pendingBackupFile, setPendingBackupFile] = useState<File | null>(null);
+  const [backupPassphrase, setBackupPassphrase] = useState('');
+  const [restorePassphrase, setRestorePassphrase] = useState('');
   const [backupResult, setBackupResult] = useState<AccountBackupImportResult | null>(null);
 
   // ── Recycle bin (count for the card; the /trash page is the real surface) ──
@@ -315,8 +317,9 @@ export function Settings() {
   const handleExportBackup = async () => {
     setIsExportingBackup(true);
     try {
-      await api.exportAccountBackup();
-      toast.success('Backup downloaded', 'Apps, forms, flows, records and files — all in one zip.');
+      await api.exportAccountBackup(backupPassphrase || undefined);
+      toast.success('Backup downloaded', backupPassphrase ? 'Keep the passphrase safe. Nobody can open this file without it.' : 'Apps, forms, flows, records and files — all in one zip.');
+      setBackupPassphrase('');
     } catch (e) {
       toast.error('Backup failed', e instanceof Error ? e.message : 'Could not build the backup.');
     } finally {
@@ -326,12 +329,14 @@ export function Settings() {
 
   const handleImportBackupConfirmed = async () => {
     const file = pendingBackupFile;
+    const passphrase = restorePassphrase;
     setPendingBackupFile(null);
+    setRestorePassphrase('');
     if (!file) return;
     setIsImportingBackup(true);
     setBackupResult(null);
     try {
-      const r = await api.importAccountBackup(file);
+      const r = await api.importAccountBackup(file, passphrase || undefined);
       if (r.error || !r.data) {
         toast.error('Restore failed', typeof r.error === 'string' ? r.error : 'Could not import the backup.');
         return;
@@ -1271,8 +1276,26 @@ export function Settings() {
                     and each hosted native app&apos;s source, media and private database.
                     Webhook secrets, members, API keys and native app host keys are not included — a restore from this download re-issues native app keys.
                   </p>
+                  <div className="mt-3 max-w-sm">
+                    <PasswordInput
+                      label="Passphrase (optional)"
+                      value={backupPassphrase}
+                      onChange={(e) => setBackupPassphrase(e.target.value)}
+                      placeholder="At least 12 characters"
+                      autoComplete="new-password"
+                    />
+                    <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
+                      Encrypts the file. Without the passphrase nobody can open it, and we can&apos;t recover it for you.
+                    </p>
+                  </div>
                 </div>
-                <Button variant="outline" onClick={handleExportBackup} isLoading={isExportingBackup} leftIcon={<Archive className="h-4 w-4" />}>
+                <Button
+                  variant="outline"
+                  onClick={handleExportBackup}
+                  isLoading={isExportingBackup}
+                  disabled={backupPassphrase.length > 0 && backupPassphrase.length < 12}
+                  leftIcon={<Archive className="h-4 w-4" />}
+                >
                   Download backup
                 </Button>
               </div>
@@ -1288,7 +1311,7 @@ export function Settings() {
                   {isImportingBackup ? 'Restoring…' : 'Restore backup'}
                   <input
                     type="file"
-                    accept=".zip,application/zip"
+                    accept=".zip,.flbk,application/zip"
                     className="hidden"
                     disabled={isImportingBackup}
                     onChange={(e) => { const f = e.target.files?.[0]; if (f) setPendingBackupFile(f); e.target.value = ''; }}
@@ -1364,12 +1387,23 @@ export function Settings() {
 
       <ConfirmDialog
         isOpen={pendingBackupFile !== null}
-        onClose={() => setPendingBackupFile(null)}
+        onClose={() => { setPendingBackupFile(null); setRestorePassphrase(''); }}
         onConfirm={handleImportBackupConfirmed}
         title="Restore this backup?"
         message={`"${pendingBackupFile?.name ?? ''}" will be restored as NEW apps and forms alongside your existing ones — nothing is overwritten. Large backups can take a minute.`}
         confirmLabel="Restore backup"
-      />
+        confirmDisabled={pendingBackupFile?.name.endsWith('.flbk') === true && !restorePassphrase}
+      >
+        {pendingBackupFile?.name.endsWith('.flbk') && (
+          <PasswordInput
+            label="Passphrase"
+            value={restorePassphrase}
+            onChange={(e) => setRestorePassphrase(e.target.value)}
+            placeholder="The passphrase set when this backup was made"
+            autoComplete="off"
+          />
+        )}
+      </ConfirmDialog>
 
       <Modal isOpen={deleteAccountOpen} onClose={() => setDeleteAccountOpen(false)} title="Delete account" size="sm">
         <div className="p-6 space-y-4">

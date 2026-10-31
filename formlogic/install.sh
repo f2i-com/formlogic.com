@@ -115,15 +115,19 @@ if [[ ! -f .env ]]; then
     # Generate random secrets
     JWT_SECRET=$(php -r 'echo bin2hex(random_bytes(32));')
     AUDIT_KEY=$(php -r 'echo bin2hex(random_bytes(32));')
+    DATA_KEY=$(php -r 'echo bin2hex(random_bytes(32));')
     if [[ "$(uname -s)" == "Darwin" ]]; then
         sed -i '' "s/^JWT_SECRET=$/JWT_SECRET=$JWT_SECRET/" .env
         sed -i '' "s/^# AUDIT_HMAC_KEY=$/AUDIT_HMAC_KEY=$AUDIT_KEY/" .env
+        sed -i '' "s/^# DATA_ENCRYPTION_KEY=$/DATA_ENCRYPTION_KEY=$DATA_KEY/" .env
     else
         sed -i "s/^JWT_SECRET=$/JWT_SECRET=$JWT_SECRET/" .env
         sed -i "s/^# AUDIT_HMAC_KEY=$/AUDIT_HMAC_KEY=$AUDIT_KEY/" .env
+        sed -i "s/^# DATA_ENCRYPTION_KEY=$/DATA_ENCRYPTION_KEY=$DATA_KEY/" .env
     fi
     chmod 600 .env # in case this sed did not keep the mode it replaced the file with
     warn "Created .env from .env.example — please update DB_PASSWORD and other settings"
+    warn "Copy DATA_ENCRYPTION_KEY from .env somewhere safe, away from this server. Without it, what it encrypted can never be read."
 else
     ok ".env already exists"
 fi

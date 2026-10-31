@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
+use FormLogic\Support\BackupEnvelope;
+use FormLogic\Support\DataEncryption;
 use FormLogic\Database\SQLiteConnection;
 use PDO;
 use Psr\Log\LoggerInterface;
@@ -298,11 +300,16 @@ final class TrashService
         }
 
         $zipAbs = $this->trashDir . '/' . $item['zip_path'];
+        $opened = null;
         try {
             if (!is_file($zipAbs)) {
                 throw new \RuntimeException('The snapshot file for this item is missing from the server');
             }
-            $summary = $this->backup->importAccount($zipAbs, $userId, [
+            if (BackupEnvelope::isSealed($zipAbs)) {
+                $opened = sys_get_temp_dir() . '/fl-trash-' . bin2hex(random_bytes(8)) . '.zip';
+                BackupEnvelope::open($zipAbs, $opened, ['server' => DataEncryption::fromEnvironment()]);
+            }
+            $summary = $this->backup->importAccount($opened ?? $zipAbs, $userId, [
                 'serverHeld' => true,
                 'preserveIds' => true,
                 'attachExistingForms' => true,
@@ -314,6 +321,10 @@ final class TrashService
             $release = $this->pdo->prepare("UPDATE trash_items SET status = 'trashed' WHERE id = :id");
             $release->execute(['id' => $trashId]);
             throw $e;
+        } finally {
+            if ($opened !== null) {
+                @unlink($opened);
+            }
         }
 
         // Consumed ONLY after the crypto lifecycle succeeded (security review):
@@ -579,7 +590,12 @@ final class TrashService
             }
             $rel = $this->safeSegment((string) $row['user_id']) . '/' . $row['id'] . '.zip';
             $dest = $this->trashDir . '/' . $rel;
-            if (!@rename($pending['zipTmp'], $dest)) {
+            // A snapshot holds an app's records plain, so it stays encrypted for as long as it waits here.
+            $crypto = DataEncryption::fromEnvironment();
+            if ($crypto->enabled()) {
+                BackupEnvelope::seal($pending['zipTmp'], $dest, ['server' => $crypto]);
+                @unlink($pending['zipTmp']);
+            } elseif (!@rename($pending['zipTmp'], $dest)) {
                 // Cross-device or locked-handle fallback.
                 if (!copy($pending['zipTmp'], $dest)) {
                     throw new \RuntimeException('Could not move the snapshot into the trash directory');

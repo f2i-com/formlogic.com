@@ -1224,11 +1224,18 @@ class ApiClient {
   // mode must refuse both directions: /account/* is default-denied by
   // actingRoute, and these raw-fetch methods carry their own explicit guards.
 
-  /** Download the full account backup zip (apps/forms/flows + records + files). */
-  async exportAccountBackup(): Promise<void> {
+  /** Download the full account backup zip (apps/forms/flows + records + files), sealed when given a passphrase. */
+  async exportAccountBackup(passphrase?: string): Promise<void> {
     const generation = currentSessionGeneration();
     if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
-    const response = await fetch(`${this.baseUrl}/account/backup/export`, { credentials: 'include' });
+    const sealing: RequestInit = passphrase
+      ? {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(this.getCsrfToken() ? { 'X-CSRF-Token': this.getCsrfToken() as string } : {}) },
+          body: JSON.stringify({ passphrase }),
+        }
+      : {};
+    const response = await fetch(`${this.baseUrl}/account/backup/export`, { ...sealing, credentials: 'include' });
     if (!response.ok) {
       if (response.status === 401) this.handleUnauthorized(generation);
       let message = 'Failed to export the backup';
@@ -1239,7 +1246,7 @@ class ApiClient {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `formlogic-backup-${new Date().toISOString().slice(0, 10)}.zip`;
+    a.download = `formlogic-backup-${new Date().toISOString().slice(0, 10)}.zip${passphrase ? '.flbk' : ''}`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -1247,11 +1254,12 @@ class ApiClient {
   }
 
   /** Restore a backup zip — creates COPIES of everything (never overwrites). */
-  async importAccountBackup(file: File): Promise<ApiResponse<AccountBackupImportResult>> {
+  async importAccountBackup(file: File, passphrase?: string): Promise<ApiResponse<AccountBackupImportResult>> {
     const generation = currentSessionGeneration();
     if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
     const formData = new FormData();
     formData.append('file', file);
+    if (passphrase) formData.append('passphrase', passphrase);
     try {
       const fetchHeaders: Record<string, string> = {};
       const csrfToken = this.getCsrfToken();

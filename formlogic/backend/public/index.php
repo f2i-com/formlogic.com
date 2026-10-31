@@ -1679,6 +1679,9 @@ $backupRateLimiter = new RateLimitMiddleware($rateLimiter, 3, 60, 'account_backu
 $app->get('/api/account/backup/export', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\AccountBackupController::class)->export($request, $response);
 })->add($backupRateLimiter)->add($authRequired);
+$app->post('/api/account/backup/export', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AccountBackupController::class)->export($request, $response);
+})->add($backupRateLimiter)->add($authRequired);
 $app->post('/api/account/backup/import', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\AccountBackupController::class)->import($request, $response);
 })->add($cloudWriteGate)->add($backupRateLimiter)->add($authRequired);

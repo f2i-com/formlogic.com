@@ -38,6 +38,10 @@ if ($folder === '' || !is_dir($folder . '/accounts')) {
     fwrite(STDERR, "Usage: php backend/bin/restore-app-storage.php <scheduled backup folder>\n");
     exit(2);
 }
+if ((glob($folder . '/accounts/*.zip') ?: []) === [] && (glob($folder . '/accounts/*.flbk') ?: []) !== []) {
+    fwrite(STDERR, "This backup is sealed. Open it first: php backend/bin/open-backup.php {$folder} --secret-key-file=<your secret key file>\n");
+    exit(2);
+}
 
 if (class_exists(\Dotenv\Dotenv::class) && is_file(__DIR__ . '/../.env')) {
     \Dotenv\Dotenv::createImmutable(__DIR__ . '/..')->safeLoad();

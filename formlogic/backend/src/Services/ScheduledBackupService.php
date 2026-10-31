@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
+use FormLogic\Support\BackupEnvelope;
+use FormLogic\Support\Environment;
 use PDO;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -34,6 +36,8 @@ use Psr\Log\NullLogger;
  */
 final class ScheduledBackupService
 {
+    /** Set it, and every nightly file is sealed to this key: the server can write them and can't read them. */
+    public const SEALING_KEY_ENV = 'BACKUP_PUBLIC_KEY';
     public const LAST_RUN_KEY = 'scheduled_backup_last_run';
     public const LAST_STATUS_KEY = 'scheduled_backup_last_status';
 
@@ -131,9 +135,38 @@ final class ScheduledBackupService
         return $summary;
     }
 
+    /**
+     * The key nightly files are sealed to, or null when they stay plain. A key that is set but
+     * wrong stops the run: an operator who asked for sealed backups must not quietly get plain ones.
+     */
+    private function sealingKey(): ?string
+    {
+        $text = Environment::nonEmpty(self::SEALING_KEY_ENV);
+        if ($text === null) {
+            return null;
+        }
+        $key = BackupEnvelope::parseKey($text);
+        if ($key === null) {
+            throw new \RuntimeException(self::SEALING_KEY_ENV . ' is not a valid public key');
+        }
+        return $key;
+    }
+
+    /** Seals $path and removes the plain file. @return string the sealed file */
+    private function sealFile(string $path, string $publicKey): string
+    {
+        $sealed = $path . BackupEnvelope::EXTENSION;
+        BackupEnvelope::seal($path, $sealed, ['publicKey' => $publicKey]);
+        if (!unlink($path)) {
+            throw new \RuntimeException('Could not remove the plain copy of a sealed backup');
+        }
+        return $sealed;
+    }
+
     /** @return array<string,mixed> the summary (without prunedDays) */
     private function buildInto(string $stagingDir, string $accountsDir, string $date, string $startedAt): array
     {
+        $sealTo = $this->sealingKey();
         $demoEmail = strtolower((string) ($_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local'));
         $stmt = $this->pdo->query('SELECT id, email FROM users ORDER BY created_at ASC, id ASC');
         $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -161,13 +194,17 @@ final class ScheduledBackupService
                 }
                 @unlink($tmpZip); // no-op after a successful rename
                 $verified = $this->verifyAccountZip($dest);
+                if ($sealTo !== null) {
+                    $dest = $this->sealFile($dest, $sealTo);
+                }
                 $this->syncFile($dest);
                 $size = (int) filesize($dest);
                 $totalBytes += $size;
                 $manifestUsers[] = [
                     'id' => $userId,
-                    'email' => $email,
-                    'file' => 'accounts/' . $userId . '.zip',
+                    // The manifest stays readable, so it shouldn't list who has an account here.
+                    'email' => $sealTo === null ? $email : null,
+                    'file' => 'accounts/' . basename($dest),
                     'sizeBytes' => $size,
                     'sha256' => hash_file('sha256', $dest),
                     // What the zip actually carries (from ITS manifest) — a restore
@@ -180,7 +217,7 @@ final class ScheduledBackupService
             } catch (\Throwable $e) {
                 // Record + continue: one broken account must not kill the site backup.
                 $this->logger->error('Scheduled backup: account export failed', ['userId' => $userId, 'error' => $e->getMessage()]);
-                $err = ['userId' => $userId, 'email' => $email, 'error' => substr($e->getMessage(), 0, 300)];
+                $err = ['userId' => $userId, 'email' => $sealTo === null ? $email : null, 'error' => substr($e->getMessage(), 0, 300)];
                 $errors[] = $err;
                 $manifestUsers[] = $err + ['file' => null, 'sizeBytes' => 0, 'sha256' => null];
             }
@@ -190,8 +227,12 @@ final class ScheduledBackupService
         // carry the record databases; together they are a complete site backup).
         // dumpDatabase itself is snapshot-consistent, checked, verified, and
         // atomically renamed into place (review FL-004).
-        $this->upgrade->dumpDatabase($stagingDir . '/database.sql.gz');
-        $totalBytes += (int) filesize($stagingDir . '/database.sql.gz');
+        $dump = $stagingDir . '/database.sql.gz';
+        $this->upgrade->dumpDatabase($dump);
+        if ($sealTo !== null) {
+            $dump = $this->sealFile($dump, $sealTo);
+        }
+        $totalBytes += (int) filesize($dump);
 
         $finishedAt = gmdate('c');
         $summary = [
@@ -201,6 +242,7 @@ final class ScheduledBackupService
             'failed' => count($errors),
             'totalBytes' => $totalBytes,
             'includeFiles' => $this->includeFiles,
+            'sealed' => $sealTo !== null,
             'startedAt' => $startedAt,
             'finishedAt' => $finishedAt,
         ];
@@ -367,6 +409,7 @@ final class ScheduledBackupService
                 'totalBytes' => is_array($manifest) ? (int) ($manifest['totalBytes'] ?? 0) : 0,
                 'finishedAt' => is_array($manifest) ? ($manifest['finishedAt'] ?? null) : null,
                 'includeFiles' => is_array($manifest) ? (bool) ($manifest['includeFiles'] ?? true) : true,
+                'sealed' => is_array($manifest) && ($manifest['sealed'] ?? false) === true,
                 // Which accounts this day can restore (id/email/size — structure only).
                 'accounts' => is_array($manifest)
                     ? array_values(array_map(
@@ -413,6 +456,9 @@ final class ScheduledBackupService
             throw new \InvalidArgumentException('Invalid backup date');
         }
         $zip = $this->scheduledDir() . '/' . $date . '/accounts/' . basename($userId) . '.zip';
+        if (!is_file($zip) && is_file($zip . BackupEnvelope::EXTENSION)) {
+            throw new \RuntimeException('This backup is sealed, and the server cannot open it. Open the day\'s folder with backend/bin/open-backup.php and your secret key, then restore it again.');
+        }
         if (!is_file($zip)) {
             throw new \RuntimeException("No backup for this account exists on {$date}");
         }
@@ -500,6 +546,13 @@ final class ScheduledBackupService
         return <<<TXT
 FormLogic scheduled backup — how to restore
 ===========================================
+
+0) SEALED FILES
+   If the files here end in .flbk, the backup is sealed to your BACKUP_PUBLIC_KEY.
+   Open it first, on a machine that has the secret key:
+      php backend/bin/open-backup.php <this folder> --secret-key-file=<your secret key file>
+   That writes the .zip and database.sql.gz beside the sealed files. Everything
+   below then applies as written. The server can't open these itself.
 
 1) ONE ACCOUNT (self-service or via the admin panel)
    accounts/<userId>.zip is a complete account backup in the same format the

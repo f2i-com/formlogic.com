@@ -506,6 +506,9 @@ Start with **`backend/.env.example`** for local configuration. The defaults belo
 | `JWT_SECRET` | | JWT signing secret, min 32 chars (**required in production**) |
 | `JWT_EXPIRY` | `86400` | Token lifetime in seconds (24h) |
 | `AUDIT_HMAC_KEY` | | HMAC key for audit-log integrity (**required in production**) |
+| `DATA_ENCRYPTION_KEY` | | Encrypts hosted app records and stored secrets. Keep a copy away from the server: see `docs/DATA_ENCRYPTION.md` |
+| `DATA_ENCRYPTION_KEY_PREVIOUS` | | Old keys while changing the key |
+| `BACKUP_PUBLIC_KEY` | | Seals nightly backups to this key (`bin/open-backup.php --new-key-pair`) |
 | `CORS_ORIGIN` | `http://localhost:5173` | Allowed CORS origin |
 | `CORS_ALLOWED_ORIGINS` | | Additional CORS origins (comma-separated) |
 | `COOKIE_DOMAIN` | | Cookie domain (empty = current domain) |

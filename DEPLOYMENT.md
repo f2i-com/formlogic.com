@@ -57,6 +57,9 @@ Work top to bottom before exposing the app publicly. Most of these live in
 - [ ] `APP_DEBUG=false`
 - [ ] `JWT_SECRET` set to a strong, unique 32+ char value (`openssl rand -base64 32`)
 - [ ] `AUDIT_HMAC_KEY` set to a strong, unique value
+- [ ] `DATA_ENCRYPTION_KEY` set, and **a copy kept away from this server**: without it, what it
+      encrypted can never be read (see `docs/DATA_ENCRYPTION.md`)
+- [ ] Nightly backups sealed with `BACKUP_PUBLIC_KEY`, and the secret key kept off this server
 - [ ] `DB_PASSWORD` set to a strong value (the app refuses to boot in production with the
       default `password`)
 
@@ -125,13 +128,13 @@ Example:
 ```bash
 mysqldump -u USER -p formlogic | gzip > backups/db-$(date +%F).sql.gz
 tar czf backups/storage-$(date +%F).tar.gz -C formlogic/backend storage
-cp formlogic/backend/.env backups/env-$(date +%F)   # keep this somewhere safe
+cp formlogic/backend/.env backups/env-$(date +%F)   # keep this somewhere safe, and NOT with the backups above
 ```
 
 **Restore:**
 1. Restore the MySQL dump into an empty database.
 2. Restore the `storage/` directories with the **same paths and permissions** (dirs `0700`).
-3. Restore `.env` (the `AUDIT_HMAC_KEY` must match the original or audit-chain verification fails).
+3. Restore `.env` (the `AUDIT_HMAC_KEY` must match the original or audit-chain verification fails, and `DATA_ENCRYPTION_KEY` must be the original or what it encrypted can't be read).
 4. Sign in as a platform admin and run `GET /api/health/deep` with that session's token (the deep check needs an authenticated platform-admin session; the unauthenticated `GET /api/health` only says the API is up) and confirm `status: ok`.
 
 > Keep MySQL and `storage/` backups in sync — a form row in MySQL points at a SQLite file on
