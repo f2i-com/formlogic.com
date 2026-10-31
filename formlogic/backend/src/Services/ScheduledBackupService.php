@@ -129,7 +129,8 @@ final class ScheduledBackupService
         }
         @unlink($base . '/.failed-' . $date . '.json');
 
-        $summary['prunedDays'] = $this->prune();
+        // While apps can't be decrypted, older days may be the last copies of them.
+        $summary['prunedDays'] = ($summary['undecryptableApps'] ?? 0) > 0 ? [] : $this->prune();
         // Heartbeat ONLY after atomic publication (review FL-003).
         $this->stampHeartbeat((string) $summary['finishedAt'], $summary);
         return $summary;
@@ -174,6 +175,7 @@ final class ScheduledBackupService
         $manifestUsers = [];
         $errors = [];
         $ok = 0;
+        $undecryptable = 0;
         $totalBytes = 0;
         foreach ($users as $user) {
             $userId = (string) $user['id'];
@@ -214,9 +216,17 @@ final class ScheduledBackupService
                     'warnings' => $verified['warnings'],
                 ];
                 $ok++;
+                if ($verified['undecryptable'] > 0) {
+                    $undecryptable += $verified['undecryptable'];
+                    $errors[] = ['userId' => $userId, 'email' => $sealTo === null ? $email : null, 'error' => 'Left out apps that could not be decrypted: check DATA_ENCRYPTION_KEY'];
+                }
             } catch (\Throwable $e) {
                 // Record + continue: one broken account must not kill the site backup.
                 $this->logger->error('Scheduled backup: account export failed', ['userId' => $userId, 'error' => $e->getMessage()]);
+                // What didn't pass must not be published, least of all plain in a sealed day.
+                foreach ([$accountsDir . '/' . $userId . '.zip', $accountsDir . '/' . $userId . '.zip' . BackupEnvelope::EXTENSION] as $left) {
+                    @unlink($left);
+                }
                 $err = ['userId' => $userId, 'email' => $sealTo === null ? $email : null, 'error' => substr($e->getMessage(), 0, 300)];
                 $errors[] = $err;
                 $manifestUsers[] = $err + ['file' => null, 'sizeBytes' => 0, 'sha256' => null];
@@ -240,6 +250,7 @@ final class ScheduledBackupService
             'users' => count($manifestUsers),
             'ok' => $ok,
             'failed' => count($errors),
+            'undecryptableApps' => $undecryptable,
             'totalBytes' => $totalBytes,
             'includeFiles' => $this->includeFiles,
             'sealed' => $sealTo !== null,
@@ -325,7 +336,7 @@ final class ScheduledBackupService
      * verified snapshot record (audit FL-01): a checksum alone is not evidence
      * that the archived database is a complete logical snapshot.
      *
-     * @return array{counts: array<string,int>, warnings: list<string>} the zip's own manifest counts, and what it left out
+     * @return array{counts: array<string,int>, warnings: list<string>, undecryptable: int} the zip's own manifest counts, what it left out, and how many apps because they would not decrypt
      */
     private function verifyAccountZip(string $path): array
     {
@@ -354,7 +365,7 @@ final class ScheduledBackupService
             $counts[(string) $key] = (int) $value;
         }
         $warnings = array_values(array_filter(is_array($manifest['warnings'] ?? null) ? $manifest['warnings'] : [], 'is_string'));
-        return ['counts' => $counts, 'warnings' => $warnings];
+        return ['counts' => $counts, 'warnings' => $warnings, 'undecryptable' => (int) ($manifest['undecryptableApps'] ?? 0)];
     }
 
     private function writeChecked(string $path, string $content): void

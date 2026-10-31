@@ -2934,7 +2934,7 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     })->add($sourceBackupLimiter)->add($dataNodeAuth);
     $group->post('/data-node/restores', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\DataNodeController::class)->restoreSource($request, $response);
-    })->add($sourceBackupLimiter)->add($dataNodeAuth);
+    })->add($cloudWriteGate)->add($sourceBackupLimiter)->add($dataNodeAuth);
 
     // AI preferences (plan Phase 2 + section 5.6): the desktop flow runner reads the ACCOUNT
     // OWNER's AI source settings. The controller accepts ai:relay or the grandfathered

@@ -15,6 +15,8 @@ class HostedAppService
     /** Encrypted text takes a third more room, so the 128 MB an app could hold is this many pages now. */
     private const MAX_PAGES = 43700;
     private const COPY_BATCH = 200;
+    private const MAX_RECORDS = 10000;
+    private const MAX_RECORD_BYTES = 16384;
 
     public function __construct(private SandboxRunner $runner, private ?string $storagePath = null) {}
 
@@ -45,6 +47,10 @@ class HostedAppService
         if (!is_dir($root) && !@mkdir($root, 0700, true) && !is_dir($root)) {
             throw new RuntimeException('App storage is unavailable');
         }
+        // A worker killed part way skips the finally below.
+        foreach (glob($path . '.restore-*') ?: [] as $stale) {
+            if ((int) filemtime($stale) < time() - 3600) @unlink($stale);
+        }
         $staged = $path . '.restore-' . bin2hex(random_bytes(4));
         try {
             self::copyRows($appId, $snapshot, $staged, $validate);
@@ -60,7 +66,11 @@ class HostedAppService
         $source = new PDO('sqlite:' . $snapshot, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
         $source->exec('PRAGMA trusted_schema=OFF');
         $source->exec('PRAGMA query_only=1');
+        // A file can make either of these a view that never ends: they have to be tables.
+        $tables = $source->query("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('deployment','records')")->fetchColumn();
+        if ((int) $tables !== 2) throw new InvalidArgumentException('This backup does not hold an app database');
         $target = new PDO('sqlite:' . $staged, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $target->exec('PRAGMA max_page_count=' . self::MAX_PAGES);
         self::createTables($target);
         $cipher = HostedRecordCipher::forApp($target, $appId);
         $target->exec('BEGIN IMMEDIATE');
@@ -71,9 +81,13 @@ class HostedAppService
                 ->execute([(int) $deployment['version'], (string) $deployment['package'], (string) $deployment['updated_at']]);
         }
         $insert = $target->prepare('INSERT INTO records (collection, id, data, updated_at) VALUES (?, ?, ?, ?)');
+        $copied = 0;
         foreach ($source->query('SELECT collection, id, data, updated_at FROM records') as $record) {
             $data = (string) $record['data'];
             if (HostedRecordCipher::isEncrypted($data)) throw new InvalidArgumentException('This backup holds records encrypted on another server');
+            if ($validate && (++$copied > self::MAX_RECORDS || strlen($data) > self::MAX_RECORD_BYTES)) {
+                throw new InvalidArgumentException('This backup holds more than an app can');
+            }
             $insert->execute([(string) $record['collection'], (string) $record['id'], $cipher->seal((string) $record['collection'], (string) $record['id'], $data), (string) $record['updated_at']]);
         }
         $target->exec('COMMIT');
@@ -180,8 +194,9 @@ class HostedAppService
             $db->exec('ROLLBACK');
             throw $error;
         }
-        // The plain text is still in the file's free pages until this.
-        if ($changed > 0) $db->exec('VACUUM');
+        // Plain text stays in the file's free pages until this, from this run or from an earlier
+        // one that stopped before it got here, or from rows that normal writes have since replaced.
+        if ($changed > 0 || (int) $db->query('PRAGMA freelist_count')->fetchColumn() > 0) $db->exec('VACUUM');
         return $changed;
     }
 
@@ -447,10 +462,10 @@ LOGIC;
         if ($op['op'] === 'put') {
             if (!is_array($op['data'] ?? null)) throw new InvalidArgumentException('Record data must be an object');
             $data = json_encode($op['data'], JSON_THROW_ON_ERROR);
-            if (strlen($data) > 16384) throw new InvalidArgumentException('Record exceeds 16 KB');
+            if (strlen($data) > self::MAX_RECORD_BYTES) throw new InvalidArgumentException('Record exceeds 16 KB');
             $exists = $db->prepare('SELECT 1 FROM records WHERE collection=? AND id=?');
             $exists->execute([$collection, $id]);
-            if (!$exists->fetchColumn() && (int) $db->query('SELECT COUNT(*) FROM records')->fetchColumn() >= 10000) throw new RuntimeException('App record limit reached');
+            if (!$exists->fetchColumn() && (int) $db->query('SELECT COUNT(*) FROM records')->fetchColumn() >= self::MAX_RECORDS) throw new RuntimeException('App record limit reached');
             $stmt = $db->prepare('INSERT INTO records VALUES(?,?,?,?) ON CONFLICT(collection,id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at');
             $stmt->execute([$collection, $id, $cipher->seal($collection, $id, $data), gmdate('c')]);
             return ['id' => $id];

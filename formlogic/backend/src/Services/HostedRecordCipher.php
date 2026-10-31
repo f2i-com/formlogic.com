@@ -50,6 +50,11 @@ final class HostedRecordCipher
     {
         $context = $this->context($collection, $id);
         if (!$this->crypto->enabled()) {
+            // This app's records are encrypted and the key has gone from .env: a plain one beside
+            // them would hide that until someone reads them.
+            if ($this->wrappedKey() !== null) {
+                throw new DataEncryptionException('Stored data cannot be read');
+            }
             return $this->crypto->seal($data, $context);
         }
         $nonce = random_bytes(SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_NPUBBYTES);

@@ -211,20 +211,53 @@ final class BackupEnvelopeTest extends TestCase
         BackupEnvelope::open($sealed, $this->dir . '/opened.zip', ['secretKey' => $secret]);
     }
 
+    /** @param callable(array<string, mixed>): array<string, mixed> $change */
+    private function withHeader(string $sealed, callable $change): void
+    {
+        $file = (string) file_get_contents($sealed);
+        $magic = strlen(BackupEnvelope::MAGIC);
+        $length = unpack('N', substr($file, $magic, 4))[1];
+        $json = json_encode($change(json_decode(substr($file, $magic + 4, $length), true)));
+        file_put_contents($sealed, BackupEnvelope::MAGIC . pack('N', strlen($json)) . $json . substr($file, $magic + 4 + $length));
+    }
+
     public function testAnUploadCannotAskForUnlimitedMemory(): void
     {
         $sealed = $this->dir . '/sealed.flbk';
         BackupEnvelope::seal($this->source(), $sealed, ['passphrase' => 'correct horse battery']);
-        $file = (string) file_get_contents($sealed);
-        $magic = strlen(BackupEnvelope::MAGIC);
-        $length = unpack('N', substr($file, $magic, 4))[1];
-        $header = json_decode(substr($file, $magic + 4, $length), true);
-        $header['recipients'][0]['memLimit'] = 1 << 40;
-        $json = json_encode($header);
-        file_put_contents($sealed, BackupEnvelope::MAGIC . pack('N', strlen($json)) . $json . substr($file, $magic + 4 + $length));
+        $this->withHeader($sealed, static function (array $header): array {
+            $header['recipients'][0]['memLimit'] = 1 << 40;
+            return $header;
+        });
 
         $this->expectExceptionMessage('This backup is damaged');
         BackupEnvelope::open($sealed, $this->dir . '/opened.zip', ['passphrase' => 'correct horse battery']);
+    }
+
+    public function testAnUploadCannotAskForMoreThanThisCodeWrites(): void
+    {
+        $sealed = $this->dir . '/sealed.flbk';
+        BackupEnvelope::seal($this->source(), $sealed, ['passphrase' => 'correct horse battery']);
+        $this->withHeader($sealed, static function (array $header): array {
+            $header['recipients'][0]['memLimit'] = SODIUM_CRYPTO_PWHASH_MEMLIMIT_MODERATE * 2;
+            return $header;
+        });
+
+        $this->expectExceptionMessage('This backup is damaged');
+        BackupEnvelope::open($sealed, $this->dir . '/opened.zip', ['passphrase' => 'correct horse battery']);
+    }
+
+    public function testAnUploadGetsOnePassphraseTry(): void
+    {
+        $sealed = $this->dir . '/sealed.flbk';
+        BackupEnvelope::seal($this->source(), $sealed, ['passphrase' => 'correct horse battery']);
+        $this->withHeader($sealed, static function (array $header): array {
+            $header['recipients'] = array_fill(0, 400, $header['recipients'][0]);
+            return $header;
+        });
+
+        $this->expectExceptionMessage('This backup is damaged');
+        BackupEnvelope::open($sealed, $this->dir . '/opened.zip', ['passphrase' => 'wrong horse battery']);
     }
 
     public function testAPlainFileIsNotSealed(): void

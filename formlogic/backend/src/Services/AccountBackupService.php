@@ -435,7 +435,20 @@ final class AccountBackupService
             throw new \RuntimeException('Form not found');
         }
         $structure['encryption'] = $this->encryptionBlock($userId, array_map(static fn (array $form): string => (string) $form['id'], $structure['forms']));
-        return $this->buildZip($structure, true, false, true);
+        // Strict: a backup of one app that leaves that app out is no backup.
+        return $this->buildZip($structure, true, false, false);
+    }
+
+    /** A private path for a file that holds plain backup data. An old one is swept if a worker dies. */
+    public function scratchFile(string $suffix): string
+    {
+        return $this->tmpDir() . '/scratch-' . bin2hex(random_bytes(8)) . $suffix;
+    }
+
+    /** The largest zip a restore that isn't server-held takes. */
+    public function maxImportBytes(): int
+    {
+        return (int) $this->config['maxZipSize'];
     }
 
     /**
@@ -472,6 +485,7 @@ final class AccountBackupService
             $fileTotal = 0;
             $nativeTotal = 0;
             $hostedTotal = 0;
+            $undecryptable = 0;
             $warnings = [];
 
             // Per-form record databases: ONE consistent snapshot each (audit FL-01).
@@ -587,6 +601,7 @@ final class AccountBackupService
                 } catch (SqliteSnapshotException $e) {
                     if ($leaveOutStuckApps && $e->getPrevious() instanceof DataEncryptionException) {
                         $warnings[] = "Hosted app '" . ($ba['name'] ?? $appId) . "' could not be decrypted, so its records are not in this backup.";
+                        $undecryptable++;
                         continue;
                     }
                     throw new \RuntimeException("Could not snapshot the database for hosted app {$appId}: " . $e->getMessage(), 0, $e);
@@ -621,6 +636,7 @@ final class AccountBackupService
                     'hostedApps' => $hostedTotal,
                 ],
                 'warnings' => $warnings,
+                'undecryptableApps' => $undecryptable,
                 'entries' => $entries,
                 // Audit FL-01: snapshot provenance lives BESIDE the checksums, never
                 // inside them — a sha256 proves which bytes were archived; the
@@ -1146,7 +1162,7 @@ final class AccountBackupService
                 $stagedDbs[$oldFormId] = $staged;
             }
 
-            $nativePayloads = $this->stageNativePayloads($zip, $structure, $manifest['entries'], $stagingDir);
+            $nativePayloads = $this->stageNativePayloads($zip, $structure, $manifest['entries'], $stagingDir, $serverHeld);
             $hostedDatabases = $this->stageHostedDatabases($zip, $manifest['entries'], $stagingDir);
             $nativeMode = (($options['nativeApps'] ?? 'restore') === 'skip') ? 'skip' : 'restore';
             // Only an app with a backend needs the runtime; one that runs in the browser alone
@@ -1284,7 +1300,7 @@ final class AccountBackupService
                 throw new \RuntimeException('backup.json is not valid JSON');
             }
             $this->validateStructure($structure, $manifest['entries']);
-            $native = $this->stageNativePayloads($zip, $structure, $manifest['entries'], $stagingDir);
+            $native = $this->stageNativePayloads($zip, $structure, $manifest['entries'], $stagingDir, true);
             $hosted = $this->stageHostedDatabases($zip, $manifest['entries'], $stagingDir);
 
             $result = ['restored' => [], 'kept' => [], 'noApp' => [], 'warnings' => array_values(array_filter(is_array($structure['warnings'] ?? null) ? $structure['warnings'] : [], 'is_string'))];
@@ -1325,9 +1341,11 @@ final class AccountBackupService
      * partial restore.
      *
      * @param array<string,string> $entries
+     * @param bool $keysRequired an archive this server kept: new keys there would silently cost
+     *        every value the app sealed, so a key that won't open is a refusal, not a warning
      * @return array<string,array{name:string, project:array, database:?string, hostConfig:?array}>
      */
-    private function stageNativePayloads(\ZipArchive $zip, array $structure, array $entries, string $stagingDir): array
+    private function stageNativePayloads(\ZipArchive $zip, array $structure, array $entries, string $stagingDir, bool $keysRequired): array
     {
         $payloads = [];
         foreach ($this->nativeAppsIn($structure) as $oldAppId => $nativeBlock) {
@@ -1360,7 +1378,10 @@ final class AccountBackupService
                     if (!is_array($hostConfig)) {
                         throw new \RuntimeException("Native host configuration for app {$oldAppId} is not valid JSON");
                     }
-                } catch (DataEncryptionException) {
+                } catch (DataEncryptionException $e) {
+                    if ($keysRequired) {
+                        throw new \RuntimeException("This backup's native app keys were encrypted under another key. Restore the site's .env, or add that key to DATA_ENCRYPTION_KEY_PREVIOUS, and try again.", 0, $e);
+                    }
                     $hostConfig = null;
                 }
             }

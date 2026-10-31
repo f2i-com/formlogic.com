@@ -311,6 +311,51 @@ final class DataSourceBackupTest extends E2eeTestCase
         }
     }
 
+    public function testABackupTooLargeToRestoreIsNotMade(): void
+    {
+        $small = new AccountBackupService(
+            self::$mysql,
+            self::$sqlite,
+            self::$forms,
+            self::$apps,
+            self::$appUsers,
+            self::$flows,
+            self::$responses,
+            ['maxZipSize' => 10],
+            self::$tmpRoot . '/sqlite',
+            self::$uploadsPath,
+        );
+        $service = new DataAccountBackupService($small, self::$signer, self::$tmpRoot . '/data-snapshots', self::$mysql);
+        $form = $this->makeDraftForm();
+        ['node' => $node, 'sk' => $sk] = $this->node();
+        [$public] = $this->recipient();
+
+        $this->expectExceptionMessage('account_backup_too_large');
+        $service->createSource($this->userId, $this->request('form', (string) $form['id'], $public, $sk), $node);
+    }
+
+    public function testASlowRestoreStillArrivesInTime(): void
+    {
+        $form = $this->makeDraftForm();
+        ['node' => $node, 'sk' => $sk] = $this->node();
+        [$public, $secret] = $this->recipient();
+        $result = self::$service->createSource($this->userId, $this->request('form', (string) $form['id'], $public, $sk), $node);
+        $zip = $this->opened($this->userId, $result['backupId'], $secret);
+
+        [$requestedAt, $signature] = $this->sign($zip, $sk, gmdate('Y-m-d\TH:i:s\Z', time() - 1800));
+        self::assertCount(1, self::$service->restoreSource($this->userId, $zip, $requestedAt, $signature, $node)['forms']);
+
+        [$requestedAt, $signature] = $this->sign($zip, $sk, gmdate('Y-m-d\TH:i:s\Z', time() - 7200));
+        try {
+            self::$service->restoreSource($this->userId, $zip, $requestedAt, $signature, $node);
+            self::fail('an old signature was taken');
+        } catch (\RuntimeException $e) {
+            self::assertSame('account_backup_key_unbound', $e->getMessage());
+        } finally {
+            unlink($zip);
+        }
+    }
+
     public function testAnotherAccountCannotFetchOrDeleteTheStagedFile(): void
     {
         $form = $this->makeDraftForm();

@@ -258,6 +258,17 @@ definition); instead the transfer and local storage are sealed:
 - Errors: `account_backup_bad_ephemeral_key`, `account_backup_too_large`,
   `account_backup_not_found`.
 
+### One app or form at a time
+
+OAIY's FormLogic backups (`docs/FORMLOGIC_BACKUPS.md` in OAIY). The same tier as above: `DATA_NODES`, and a key bound to an approved node.
+
+- `GET /api/v1/data-node/backup-sources` lists the account's apps and forms: names and dates, no contents.
+- `POST /api/v1/data-node/source-backups` {kind: `app` | `form`, id, recipientPk, requestedAt, recipientPkSignature} seals one to `recipientPk` as a `BackupEnvelope` (`docs/DATA_ENCRYPTION.md`), and answers with a signed header (`kind: source-backup`). The node signs `flsourcebackup:1|<requestedAt>|<recipientPk>|<kind>|<id>`.
+- The file is fetched and dropped through the `account-backups` routes above.
+- `POST /api/v1/data-node/restores`: the body is the plain zip, `Content-Type: application/zip`, with `X-Data-Requested-At` and `X-Data-Signature`, a signature over `flsourcerestore:1|<requestedAt>|<sha256 of the body>`. It restores as new copies.
+
+Unlike `.flaccount`, `recipientPk` is a long-term key, because a backup kept for years has to open after the computer has gone. The desktop derives it from twelve words the person keeps. The signature is what stops a stolen API key naming a key of its own. Both writes are audited (`data.source_backup`, `data.source_restore`), and like every download, these carry no native host keys.
+
 ## 11. N3a — node enrolment, owner approval, placement baseline
 
 - **Enrolment** (`POST /api/v1/data-node/register`, desktop flk_ channel; also the

@@ -117,7 +117,7 @@ final class AccountBackupController
                 if ($passphrase === '') {
                     return $this->jsonResponse($response, ['error' => true, 'message' => 'This backup needs its passphrase', 'code' => 'backup_passphrase_required'], 400);
                 }
-                $openedPath = $tmpPath . '.zip';
+                $openedPath = $this->backup->scratchFile('.zip');
                 BackupEnvelope::open($tmpPath, $openedPath, ['passphrase' => $passphrase]);
             }
             $result = $this->backup->importAccount($openedPath ?? $tmpPath, $userId);

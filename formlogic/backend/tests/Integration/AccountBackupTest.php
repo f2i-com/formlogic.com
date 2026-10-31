@@ -15,6 +15,7 @@ use FormLogic\Services\FormService;
 use FormLogic\Services\NativeAppService;
 use FormLogic\Services\ReconcileService;
 use FormLogic\Services\ResponseService;
+use FormLogic\Support\DataEncryption;
 use PDO;
 use PHPUnit\Framework\TestCase;
 
@@ -866,6 +867,56 @@ class AccountBackupTest extends TestCase
             $this->assertCount(1, $listed['body']['notes']);
         } finally {
             @unlink($snapshot);
+        }
+    }
+
+    public function testNativeKeysUnderAnotherMasterKeyAreRefusedHereAndReissuedElsewhere(): void
+    {
+        $native = $this->makeNativeService();
+        if ($native === null) {
+            $this->markTestSkipped('Prepare the native runtime and set FORMLOGIC_NODE_BIN.');
+        }
+        $backup = self::makeService([], $native);
+        $native->install($this->app1, self::nativeProject(), 0);
+        $saved = [$_ENV[DataEncryption::KEY_ENV] ?? null, $_ENV[DataEncryption::PREVIOUS_KEYS_ENV] ?? null];
+        $old = str_repeat('ab', 32);
+        $_ENV[DataEncryption::KEY_ENV] = $old;
+        unset($_ENV[DataEncryption::PREVIOUS_KEYS_ENV]);
+        $zip = $backup->exportAccount($this->userId, ['includeHostSecrets' => true]);
+        try {
+            $archive = new \ZipArchive();
+            $this->assertTrue($archive->open($zip) === true);
+            $this->assertStringStartsWith('fle1.', (string) $archive->getFromName("native/{$this->app1}/host-config.json"), 'the app\'s key is not beside its data');
+            $archive->close();
+
+            $_ENV[DataEncryption::KEY_ENV] = str_repeat('cd', 32);
+            foreach ([
+                'an operator\'s restore' => fn () => $backup->restoreAppStorage($zip),
+                'a server-held import' => fn () => $backup->importAccount($zip, $this->otherId, ['serverHeld' => true]),
+            ] as $what => $restore) {
+                try {
+                    $restore();
+                    $this->fail($what . ' gave an app new keys without saying so');
+                } catch (\RuntimeException $e) {
+                    $this->assertStringContainsString('DATA_ENCRYPTION_KEY_PREVIOUS', $e->getMessage(), $what);
+                }
+            }
+
+            $result = $backup->importAccount($zip, $this->otherId);
+            $this->assertSame(NativeAppService::CRYPTO_REISSUED, $result['nativeApps'][0]['cryptoMaterial'], 'an upload to another server gets new keys, and says so');
+
+            $_ENV[DataEncryption::PREVIOUS_KEYS_ENV] = $old;
+            $result = $backup->importAccount($zip, $this->otherId, ['serverHeld' => true]);
+            $this->assertSame(NativeAppService::CRYPTO_RESTORED, $result['nativeApps'][0]['cryptoMaterial']);
+        } finally {
+            @unlink($zip);
+            unset($_ENV[DataEncryption::KEY_ENV], $_ENV[DataEncryption::PREVIOUS_KEYS_ENV]);
+            if ($saved[0] !== null) {
+                $_ENV[DataEncryption::KEY_ENV] = $saved[0];
+            }
+            if ($saved[1] !== null) {
+                $_ENV[DataEncryption::PREVIOUS_KEYS_ENV] = $saved[1];
+            }
         }
     }
 

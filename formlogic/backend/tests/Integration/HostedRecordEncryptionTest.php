@@ -311,6 +311,78 @@ final class HostedRecordEncryptionTest extends TestCase
         self::assertFileDoesNotExist(HostedAppService::databasePath('app-new', $this->root));
     }
 
+    public function testABackupWhoseRecordsAreAViewThatNeverEndsIsRefused(): void
+    {
+        $this->publish();
+        $crafted = $this->root . '/crafted.sqlite';
+        $db = new PDO('sqlite:' . $crafted);
+        $db->exec('CREATE TABLE deployment (id INTEGER PRIMARY KEY, version INTEGER, package TEXT, updated_at TEXT)');
+        $db->exec("CREATE VIEW records AS WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT 'a' AS collection, x AS id, '{}' AS data, 'now' AS updated_at FROM c");
+        $db = null;
+
+        $this->expectExceptionMessage('does not hold an app database');
+        HostedAppService::restoreDatabase('app-new', $crafted, $this->root);
+    }
+
+    public function testAnUploadCannotHoldMoreThanAnAppCan(): void
+    {
+        $this->publish();
+        $this->save();
+        $path = $this->host->snapshot('app-a');
+        $db = new PDO('sqlite:' . $path);
+        $db->prepare('UPDATE records SET data = ?')->execute([str_repeat('x', 16385)]);
+        $db = null;
+        try {
+            try {
+                HostedAppService::restoreDatabase('app-new', $path, $this->root);
+                self::fail('an upload brought in a record no app could write');
+            } catch (\InvalidArgumentException $e) {
+                self::assertStringContainsString('more than an app can', $e->getMessage());
+            }
+            self::assertTrue(HostedAppService::restoreDatabase('app-new', $path, $this->root, false), 'a backup this server kept is not held to it');
+        } finally {
+            unlink($path);
+        }
+    }
+
+    public function testWritingAfterTheKeyHasGoneIsRefused(): void
+    {
+        $this->publish();
+        $this->save();
+
+        $this->keys(null);
+        try {
+            $this->save('two', 'plain beside encrypted');
+            self::fail('a plain record was written beside encrypted ones');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('Stored data cannot be read', $e->getMessage());
+        }
+        $this->keys(self::KEY);
+        self::assertSame('', $this->stored('two'));
+    }
+
+    public function testPlainTextLeftInFreePagesGoesWhenTheMigrationRuns(): void
+    {
+        $this->keys(null);
+        $this->publish();
+        $db = $this->database();
+        $db->exec('PRAGMA secure_delete=OFF');
+        $db->exec('BEGIN');
+        $insert = $db->prepare("INSERT INTO records VALUES ('notes', ?, ?, 'now')");
+        for ($i = 0; $i < 200; $i++) {
+            $insert->execute(['r' . $i, json_encode(['text' => self::PLANTED . str_repeat('x', 3000)])]);
+        }
+        $db->exec('COMMIT');
+        $db->exec('DELETE FROM records');
+        $db = null;
+        self::assertTrue($this->fileHolds(self::PLANTED), 'a deleted row stays in the file');
+
+        $this->keys(self::KEY);
+        self::assertSame(0, HostedAppService::encryptDatabase(HostedAppService::databasePath('app-a', $this->root), DataEncryption::fromEnvironment()));
+
+        self::assertFalse($this->fileHolds(self::PLANTED));
+    }
+
     public function testAPageIsMeasuredBeforeEncryption(): void
     {
         $this->publish();

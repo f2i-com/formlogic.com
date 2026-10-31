@@ -241,6 +241,32 @@ final class DataEncryptionSecretsTest extends TestCase
         self::assertTrue($gone['critical']);
     }
 
+    public function testHealthChecksAWrongKeyBeforeWritingItsCheckValue(): void
+    {
+        self::$mfa->beginSetup($this->userId, 'x@test.local');
+
+        $this->key(self::OTHER);
+        $wrong = $this->health();
+
+        self::assertFalse($wrong['ok']);
+        self::assertTrue($wrong['critical']);
+        self::assertFalse(self::$pdo->query("SELECT 1 FROM system_meta WHERE meta_key = 'data_encryption_check'")->fetchColumn(), 'a wrong key is not blessed');
+
+        $this->key(self::KEY);
+        self::assertTrue($this->health()['ok']);
+    }
+
+    public function testHealthNoticesSealedSecretsWithNoKeyBeforeAnyCheckValueExists(): void
+    {
+        self::$mfa->beginSetup($this->userId, 'x@test.local');
+
+        $this->key(null);
+        $health = $this->health();
+
+        self::assertFalse($health['ok']);
+        self::assertTrue($health['critical']);
+    }
+
     public function testHealthRefusesAnUnusableKey(): void
     {
         $this->key('too-short');

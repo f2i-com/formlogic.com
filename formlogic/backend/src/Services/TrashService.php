@@ -306,7 +306,7 @@ final class TrashService
                 throw new \RuntimeException('The snapshot file for this item is missing from the server');
             }
             if (BackupEnvelope::isSealed($zipAbs)) {
-                $opened = sys_get_temp_dir() . '/fl-trash-' . bin2hex(random_bytes(8)) . '.zip';
+                $opened = $this->backup->scratchFile('.zip');
                 BackupEnvelope::open($zipAbs, $opened, ['server' => DataEncryption::fromEnvironment()]);
             }
             $summary = $this->backup->importAccount($opened ?? $zipAbs, $userId, [
@@ -544,6 +544,10 @@ final class TrashService
     /** @return array{zipTmp:string, row:array} */
     private function capture(string $kind, string $id, string $userId, string $name, array $extraMeta): array
     {
+        // Refused here, while nothing has been deleted: past this point a snapshot has to be kept.
+        if (!DataEncryption::fromEnvironment()->usable()) {
+            throw new \FormLogic\Support\DataEncryptionException('DATA_ENCRYPTION_KEY is not a valid key');
+        }
         $zipTmp = $this->backup->exportScoped($userId, $kind, $id);
 
         // The zip's own manifest already counted everything worth showing.

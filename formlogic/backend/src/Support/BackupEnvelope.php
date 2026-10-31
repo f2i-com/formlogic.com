@@ -19,8 +19,9 @@ namespace FormLogic\Support;
  * Recipients:
  *   - publicKey: a libsodium sealed box to an X25519 key. The server can seal to it and can't
  *     open it, so a thief who takes the whole server gets nothing from the file.
- *   - passphrase: Argon2id. The file carries its cost, which is capped on the way in, because an
- *     uploaded file must not be able to ask this server for a terabyte of memory.
+ *   - passphrase: Argon2id. The file carries its cost, and on the way in that is capped at what
+ *     this code writes, with one try to a file, because an upload must not be able to spend this
+ *     server's memory: Argon2 sits outside PHP's memory_limit.
  *   - server: wrapped under DATA_ENCRYPTION_KEY, for files only this server needs to read back.
  */
 final class BackupEnvelope
@@ -35,8 +36,8 @@ final class BackupEnvelope
     /** libsodium's own floor for Argon2id, which PHP doesn't name. */
     private const MIN_PWHASH_OPS = 1;
     private const MIN_PWHASH_MEMORY = 8192;
-    private const MAX_PWHASH_OPS = 10;
-    private const MAX_PWHASH_MEMORY = 1_073_741_824;
+    private const MAX_PWHASH_OPS = SODIUM_CRYPTO_PWHASH_OPSLIMIT_MODERATE;
+    private const MAX_PWHASH_MEMORY = SODIUM_CRYPTO_PWHASH_MEMLIMIT_MODERATE;
 
     public static function isSealed(string $path): bool
     {
@@ -197,11 +198,13 @@ final class BackupEnvelope
             }
             @chmod($staged, 0600);
             self::writeHeader($out, $header);
-            stream_copy_to_stream($in, $out);
+            $remaining = (int) filesize($path) - (int) ftell($in);
+            $copied = stream_copy_to_stream($in, $out);
             fclose($out);
             fclose($in);
             $in = null;
-            if (!rename($staged, $path)) {
+            // A short copy on a full disk must not replace the only copy of this file.
+            if ($copied !== $remaining || !rename($staged, $path)) {
                 throw new DataEncryptionException('This backup cannot be read');
             }
             return true;
@@ -279,6 +282,7 @@ final class BackupEnvelope
     private static function fileKey(array $header, array $with): string
     {
         $id = (string) $header['id'];
+        $passphraseTried = false;
         foreach ($header['recipients'] as $recipient) {
             $kind = $recipient['kind'] ?? '';
             if ($kind === 'publicKey' && isset($with['secretKey'])) {
@@ -291,6 +295,10 @@ final class BackupEnvelope
                 }
             }
             if ($kind === 'passphrase' && isset($with['passphrase'])) {
+                if ($passphraseTried) {
+                    throw new DataEncryptionException('This backup is damaged');
+                }
+                $passphraseTried = true;
                 $key = self::openPassphrase($id, $recipient, $with['passphrase']);
                 if ($key !== null) {
                     return $key;

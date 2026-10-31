@@ -20,6 +20,7 @@ use FormLogic\Services\TrashService;
 use FormLogic\Services\UpgradeService;
 use FormLogic\Support\BackupEnvelope;
 use FormLogic\Support\DataEncryption;
+use FormLogic\Support\DataEncryptionException;
 use PDO;
 use PHPUnit\Framework\TestCase;
 use Slim\Psr7\Factory\ServerRequestFactory;
@@ -206,6 +207,20 @@ final class SealedBackupsTest extends TestCase
 
         $trash->restore((string) $trash->listTrash($this->userId)[0]['id'], $this->userId);
         self::assertSame(self::PLANTED, self::$forms->getForm($formId)['title']);
+    }
+
+    public function testAnInvalidKeyRefusesADeleteRatherThanKeepingAPlainSnapshot(): void
+    {
+        $formId = $this->form();
+        $_ENV[DataEncryption::KEY_ENV] = 'too-short';
+        try {
+            $this->trash()->trashForm($formId, $this->userId);
+            self::fail('a form was deleted with no way to seal its snapshot');
+        } catch (DataEncryptionException $e) {
+            self::assertStringContainsString('not a valid key', $e->getMessage());
+        }
+        unset($_ENV[DataEncryption::KEY_ENV]);
+        self::assertSame(self::PLANTED, self::$forms->getForm($formId)['title'], 'nothing was deleted');
     }
 
     public function testNightlyFilesAreSealedAndTheServerCannotOpenThem(): void

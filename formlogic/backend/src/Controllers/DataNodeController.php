@@ -221,12 +221,13 @@ final class DataNodeController
                 'account_backup_key_unbound' => ['The request must carry a fresh signature by this node\'s enrolled signing key', 403],
                 'account_backup_too_large' => ['This backup exceeds the transfer cap', 413],
                 'App not found', 'Form not found' => ['Unknown app or form', 404],
-                default => null,
+                // Its own words can name a path on this server.
+                default => ['This could not be backed up', 422],
             };
-            if ($known === null) {
-                throw $e;
+            if ($known[1] === 422) {
+                $this->record($request, 'data.source_backup_failed', ['kind' => $body['kind'] ?? null, 'sourceId' => $body['id'] ?? null, 'error' => substr($e->getMessage(), 0, 300)]);
             }
-            return $this->jsonError($response, $known[0], $known[1], $e->getMessage());
+            return $this->jsonError($response, $known[0], $known[1], $known[1] === 422 ? 'source_backup_failed' : $e->getMessage());
         }
         $this->record($request, 'data.source_backup', [
             'nodeId' => $node['id'] ?? null,
@@ -251,9 +252,9 @@ final class DataNodeController
         if ($node instanceof Response) {
             return $node;
         }
-        $tmp = (string) tempnam(sys_get_temp_dir(), 'flnoderestore_');
+        $tmp = $this->accountBackups->scratchFile('.zip');
         try {
-            $out = fopen($tmp, 'wb');
+            $out = fopen($tmp, 'xb');
             $body = $request->getBody();
             if ($out === false) {
                 return $this->jsonError($response, 'Could not stage the backup', 500);

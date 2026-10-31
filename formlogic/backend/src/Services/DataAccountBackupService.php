@@ -48,6 +48,8 @@ final class DataAccountBackupService
     public const RESTORE_SIGNATURE_DOMAIN = 'flsourcerestore:1';
     /** Freshness window for the signed challenge, either direction. */
     public const REQUEST_SIGNATURE_WINDOW_SECONDS = 600;
+    /** A restore is signed before it is sent, and a large one on a slow line takes a while to arrive. */
+    public const RESTORE_SIGNATURE_WINDOW_SECONDS = 3600;
 
     private DataStagedArtifactIndex $artifacts;
 
@@ -239,12 +241,14 @@ final class DataAccountBackupService
             $requestedAt,
             self::SOURCE_SIGNATURE_DOMAIN . '|' . $requestedAt . '|' . $recipientB64 . '|' . $kind . '|' . $id,
             (string) ($request['recipientPkSignature'] ?? ''),
+            self::REQUEST_SIGNATURE_WINDOW_SECONDS,
         );
 
         $zipPath = $this->backups->exportSource($userId, $kind, $id);
         try {
             $zipBytes = (int) filesize($zipPath);
-            if ($zipBytes <= 0 || $zipBytes > self::MAX_ZIP_BYTES) {
+            // Not more than a restore takes: a backup that can't be put back is no backup.
+            if ($zipBytes <= 0 || $zipBytes > min(self::MAX_ZIP_BYTES, $this->backups->maxImportBytes())) {
                 throw new \RuntimeException('account_backup_too_large');
             }
             $backupId = 'acct-' . bin2hex(random_bytes(16));
@@ -298,15 +302,22 @@ final class DataAccountBackupService
             $requestedAt,
             self::RESTORE_SIGNATURE_DOMAIN . '|' . $requestedAt . '|' . hash_file('sha256', $zipPath),
             $signature,
+            self::RESTORE_SIGNATURE_WINDOW_SECONDS,
         );
         return $this->backups->importAccount($zipPath, $userId);
     }
 
+    /** See AccountBackupService::scratchFile. */
+    public function scratchFile(string $suffix): string
+    {
+        return $this->backups->scratchFile($suffix);
+    }
+
     /** @param array<string,mixed> $node */
-    private function assertSignedByNode(array $node, string $requestedAt, string $message, string $signature): void
+    private function assertSignedByNode(array $node, string $requestedAt, string $message, string $signature, int $window): void
     {
         $ts = DataNodeService::parseRfc3339Utc($requestedAt);
-        if ($ts === null || abs(time() - $ts) > self::REQUEST_SIGNATURE_WINDOW_SECONDS) {
+        if ($ts === null || abs(time() - $ts) > $window) {
             throw new \RuntimeException('account_backup_key_unbound');
         }
         $sig = base64_decode($signature, true);

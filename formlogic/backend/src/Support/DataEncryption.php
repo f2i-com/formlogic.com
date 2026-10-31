@@ -161,8 +161,11 @@ final class DataEncryption
             return ['ok' => false, 'critical' => true, 'detail' => 'a data encryption key is set but is not a 32-byte hex or base64 value'];
         }
         $check = self::readMeta($mysql, self::CHECK_META_KEY);
+        // The check value is first written here or by the migration, and until then a wrong key
+        // must not be the one it gets written under, so a secret that is already sealed goes first.
+        $sealed = $check === null ? $this->sealedSecret($mysql) : null;
         if ($this->currentId === null) {
-            if ($check !== null) {
+            if ($check !== null || $sealed !== null) {
                 return ['ok' => false, 'critical' => true, 'detail' => 'data here is encrypted, but DATA_ENCRYPTION_KEY is not set'];
             }
             return [
@@ -170,11 +173,14 @@ final class DataEncryption
                 'warning' => 'hosted app records and two-factor and webhook secrets are stored unencrypted: set DATA_ENCRYPTION_KEY, then run bin/encrypt-data.php',
             ];
         }
-        if ($check === null) {
-            $this->recordKeyCheck($mysql);
-            $check = self::readMeta($mysql, self::CHECK_META_KEY);
-        }
         try {
+            if ($sealed !== null) {
+                $this->open($sealed[0], $sealed[1]);
+            }
+            if ($check === null) {
+                $this->recordKeyCheck($mysql);
+                $check = self::readMeta($mysql, self::CHECK_META_KEY);
+            }
             if ($check === null || !hash_equals(self::CHECK_TEXT, $this->open($check, self::CHECK_CONTEXT))) {
                 throw new DataEncryptionException('Stored data cannot be read');
             }
@@ -187,6 +193,26 @@ final class DataEncryption
             $health['warning'] = 'data stored before this key is not encrypted under it yet: run bin/encrypt-data.php';
         }
         return $health;
+    }
+
+    /** @return array{0: string, 1: string}|null one sealed secret and where it lives */
+    private function sealedSecret(PDO $mysql): ?array
+    {
+        $like = self::PREFIX . '%';
+        try {
+            $user = $mysql->prepare('SELECT id, mfa_secret FROM users WHERE mfa_secret LIKE ? LIMIT 1');
+            $user->execute([$like]);
+            $row = $user->fetch(PDO::FETCH_NUM);
+            if (is_array($row)) {
+                return [(string) $row[1], \FormLogic\Services\MfaService::secretContext((string) $row[0])];
+            }
+            $webhook = $mysql->prepare('SELECT id, secret FROM webhooks WHERE secret LIKE ? LIMIT 1');
+            $webhook->execute([$like]);
+            $row = $webhook->fetch(PDO::FETCH_NUM);
+            return is_array($row) ? [(string) $row[1], \FormLogic\Services\WebhookService::secretContext((string) $row[0])] : null;
+        } catch (\PDOException) {
+            return null;
+        }
     }
 
     private function sealedByCurrentKey(string $stored): bool

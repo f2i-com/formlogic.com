@@ -13,6 +13,9 @@ use FormLogic\Services\FlowService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\HostedAppService;
 use FormLogic\Services\HostedRecordCipher;
+use FormLogic\Services\MaintenanceService;
+use FormLogic\Services\ScheduledBackupService;
+use FormLogic\Services\UpgradeService;
 use FormLogic\Support\DataEncryption;
 use FormLogic\Services\NativeAppService;
 use FormLogic\Services\ResponseService;
@@ -305,7 +308,49 @@ class AppStorageBackupTest extends TestCase
 
             self::assertNotContains('hosted/' . $appId . '/application.sqlite', $this->entries($zip));
             self::assertStringContainsString('could not be decrypted', implode(' ', $this->manifest($zip)['warnings']));
+            self::assertSame(1, $this->manifest($zip)['undecryptableApps']);
             unlink($zip);
+
+            try {
+                $this->service()->exportSource($this->userId, 'app', $appId);
+                self::fail('a backup of one app left that app out');
+            } catch (\RuntimeException $e) {
+                self::assertStringContainsString('Could not snapshot the database', $e->getMessage());
+            }
+        } finally {
+            unset($_ENV[DataEncryption::KEY_ENV]);
+            if ($saved !== null) {
+                $_ENV[DataEncryption::KEY_ENV] = $saved;
+            }
+        }
+    }
+
+    public function testANightlyRunThatLeftAppsOutKeepsOlderDaysAndSaysSo(): void
+    {
+        $saved = $_ENV[DataEncryption::KEY_ENV] ?? null;
+        $_ENV[DataEncryption::KEY_ENV] = str_repeat('ab', 32);
+        try {
+            $appId = $this->app();
+            $this->hostedDatabase($appId);
+            HostedAppService::encryptDatabase(HostedAppService::databasePath($appId, $this->hostedPath), DataEncryption::fromEnvironment());
+            $_ENV[DataEncryption::KEY_ENV] = str_repeat('cd', 32);
+
+            $dir = self::$root . '/nightly-' . bin2hex(random_bytes(4));
+            mkdir($dir . '/2001-01-01', 0700, true);
+            mkdir($dir . '/2001-01-02', 0700, true);
+            $scheduled = new ScheduledBackupService(
+                self::$mysql,
+                $this->service(),
+                new UpgradeService(self::$root . '/nowhere', self::$mysql, new MaintenanceService(self::$root . '/maintenance-' . bin2hex(random_bytes(3)) . '.json')),
+                ['scheduledDir' => $dir, 'retentionDays' => 1, 'scheduledIncludeFiles' => false],
+            );
+
+            $summary = $scheduled->run();
+
+            self::assertGreaterThanOrEqual(1, $summary['undecryptableApps']);
+            self::assertGreaterThanOrEqual(1, $summary['failed']);
+            self::assertDirectoryExists($dir . '/2001-01-01', 'the last copy of those apps may be in an older day');
+            self::assertSame([], $summary['prunedDays']);
         } finally {
             unset($_ENV[DataEncryption::KEY_ENV]);
             if ($saved !== null) {

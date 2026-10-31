@@ -46,7 +46,7 @@ php backend/bin/encrypt-data.php --new-key      # prints a key; put it in .env a
 php backend/bin/encrypt-data.php                # encrypts what is already stored
 ```
 
-Back the key up first. The second command is safe to run on a live site and safe to run again. It says what it could not move and exits non-zero. Old plain text is gone from the SQLite files, but MySQL may keep old row versions in its own files for a while, and backups taken earlier still hold it.
+Back the key up first. The second command is safe to run on a live site and safe to run again. It says what it could not move and exits non-zero. Old plain text is gone from the SQLite files, and recycle bin snapshots are sealed too, but MySQL may keep old row versions in its own files for a while, and backups taken earlier still hold it.
 
 ## Changing the key
 
@@ -55,9 +55,9 @@ Do this if `.env` may have been seen.
 1. Make a new key with `--new-key`.
 2. Set `DATA_ENCRYPTION_KEY` to the new key and `DATA_ENCRYPTION_KEY_PREVIOUS` to the old one (several, comma-separated, if you need).
 3. Run `php backend/bin/encrypt-data.php`.
-4. Remove `DATA_ENCRYPTION_KEY_PREVIOUS`.
+4. Keep `DATA_ENCRYPTION_KEY_PREVIOUS` until the nightly backups and recycle bin items from before the change have aged out, then remove it.
 
-Each app's own key is rewrapped, so records aren't rewritten.
+Each app's own key is rewrapped, so records aren't rewritten. Native app keys inside older backups and bin items stay under the old key, and restoring one on this server is refused while that key is missing, rather than giving the app new keys and losing what it sealed.
 
 ## Sealed nightly backups
 
@@ -103,9 +103,13 @@ The file key is wrapped once per recipient:
 | `kind` | Wrapped how |
 | --- | --- |
 | `publicKey` | `crypto_box_seal` to an X25519 key |
-| `passphrase` | XChaCha20-Poly1305 under Argon2id13, associated data `flbk-passphrase:1|<id>`. The file names its cost; a server caps what it will spend (10 passes, 1 GiB) |
+| `passphrase` | XChaCha20-Poly1305 under Argon2id13, associated data `flbk-passphrase:1|<id>`. The file names its cost; a server takes one passphrase recipient per file and no more than it writes itself (3 passes, 256 MiB) |
 | `server` | `DataEncryption::seal` under the master key |
+
+## Backups kept in OAIY
+
+OAIY can keep sealed backups of an account's apps and forms on the owner's own computer. It needs `PRIVATE_FORMS` and `DATA_NODES` on, and the owner approving that computer. See `docs/FORMLOGIC_DATA_NODES.md`, section 10.
 
 ## The Doctor
 
-**Encryption of stored data** is critical when a key is set but invalid, when the key is not the one this data was encrypted with, or when data is encrypted and no key is set. It warns when no key is set, and until `encrypt-data.php` has run for the current key. **Sealed nightly backups** warns while sealing is off.
+**Encryption of stored data** is critical when a key is set but invalid, when the key is not the one this data was encrypted with, or when data is encrypted and no key is set. It proves the key against a sealed value in the database, so hosted app records alone, with no two-factor or webhook secret and before the first check, aren't covered until `encrypt-data.php` has run. While a key is invalid, deleting a form or app is refused, because its recycle bin snapshot couldn't be sealed. A nightly run that left apps out because they wouldn't decrypt counts them as failed, and keeps older days. It warns when no key is set, and until `encrypt-data.php` has run for the current key. **Sealed nightly backups** warns while sealing is off.
