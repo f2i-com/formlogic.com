@@ -78,6 +78,27 @@ class HostedAppTest extends TestCase
         }
         self::assertSame([], $this->host->run('app-a', 'list', [], 'owner', true));
     }
+    public function testNoOperationRunsAfterOneHasFailed(): void
+    {
+        // What matters is the case no script can stage: SQLite ended the transaction itself, so a
+        // write that ran now would commit on its own. The rollback at the end can't undo that.
+        $this->host->publish('app-a', $this->package(), 0);
+        $runner = $this->createMock(SandboxRunner::class);
+        $after = null;
+        $runner->method('runScript')->willReturnCallback(function (string $script, array $context, callable $handler) use (&$after): array {
+            $operation = static fn (string $collection): array => [json_encode(['op' => 'list', 'collection' => $collection])];
+            try { $handler('db', 'getField', $operation('not a collection!')); } catch (\Throwable) { /* The script carries on. */ }
+            try { $handler('db', 'getField', $operation('notes')); } catch (\Throwable $refused) { $after = $refused->getMessage(); }
+            return ['result' => 'done'];
+        });
+        try {
+            (new HostedAppService($runner, $this->root))->run('app-a', 'list', [], 'owner', true);
+            self::fail('The action should have failed');
+        } catch (\RuntimeException $failed) {
+            self::assertStringContainsString('Invalid collection', $failed->getMessage());
+        }
+        self::assertSame('An earlier operation failed', $after);
+    }
     public function testFailedScriptRollsBack(): void
     {
         $p = $this->package();
