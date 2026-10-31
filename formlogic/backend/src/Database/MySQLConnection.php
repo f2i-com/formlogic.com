@@ -2731,6 +2731,17 @@ class MySQLConnection
                 ADD UNIQUE KEY uq_data_node_backup_client (backup_client_id)');
         }
 
+        // Two indexes only the CREATE TABLEs here ever made, so every install from schema.sql went
+        // without them. A key hash repeating would be a fluke, but the site still has to boot.
+        if ($pdo->query("SHOW INDEX FROM forms WHERE Key_name = 'idx_user_updated'")->rowCount() === 0) {
+            $pdo->exec('ALTER TABLE forms ADD INDEX idx_user_updated (user_id, updated_at, id)');
+        }
+        $hashIndex = $pdo->query("SHOW INDEX FROM api_keys WHERE Key_name = 'idx_api_keys_hash'")->fetch(PDO::FETCH_ASSOC);
+        if (is_array($hashIndex) && (int) $hashIndex['Non_unique'] === 1
+            && $pdo->query('SELECT 1 FROM api_keys GROUP BY key_hash HAVING COUNT(*) > 1 LIMIT 1')->fetchColumn() === false) {
+            $pdo->exec('ALTER TABLE api_keys DROP INDEX idx_api_keys_hash, ADD UNIQUE INDEX idx_api_keys_hash (key_hash)');
+        }
+
         // Seed the first-party OAuth clients (idempotent) now that mcp_oauth_clients exists.
         $this->seedFirstPartyOAuthClients($pdo);
     }
