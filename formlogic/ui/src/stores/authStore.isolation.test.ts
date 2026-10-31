@@ -10,9 +10,9 @@ const calls = vi.hoisted(() => ({
 vi.mock('../lib/api', () => ({ api: {
   logout: calls.logout, login: calls.login, getMe: calls.getMe, updateProfile: calls.updateProfile,
   onSessionExpired: (cb: () => void) => { calls.expiry = cb; }, removeSessionExpiredCallback: vi.fn(),
-  setAuthenticated: vi.fn(), setDemoMode: vi.fn(),
+  setAuthenticated: vi.fn(), setDemoMode: vi.fn(), isDemoMode: () => false,
 } }));
-vi.mock('./formStore', () => ({ useFormStore: { setState: calls.forms }, clearAllDebounceTimers: vi.fn() }));
+vi.mock('./formStore', () => ({ useFormStore: { setState: calls.forms, getState: () => ({ storageMode: 'api', forms: [], deviceFormsOwner: null }) }, clearAllDebounceTimers: vi.fn() }));
 vi.mock('./appStore', () => ({ useAppStore: { setState: calls.apps } }));
 vi.mock('./appUserStore', () => ({ useAppUserStore: { getState: () => ({ reset: calls.appUsers }) } }));
 vi.mock('./appRuntimeStore', () => ({ useAppRuntimeStore: { getState: () => ({ reset: calls.runtime }) } }));

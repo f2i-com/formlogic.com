@@ -38,6 +38,8 @@ const demoDashboardKey = (appId: string) => `formlogic-demo-dashboard-${appId}`;
 const demoFormDashboardKey = (formId: string) => `formlogic-demo-form-dashboard-${formId}`;
 const demoCustomLogicKey = (appId: string) => `formlogic-demo-logic-${appId}`;
 
+const toRecentRow = (r: Record<string, unknown>) => ({ id: String(r.id ?? ''), answers: (r.answers as Record<string, unknown>) ?? {}, submittedAt: String(r.submittedAt ?? '') });
+
 interface AppRuntimeState {
   config: AppRuntimeConfig | null;
   appSlug: string | null;
@@ -62,6 +64,8 @@ interface AppRuntimeState {
   fetchResponsePage: (formId: string, options: { limit: number; offset: number; search?: string; resolve?: boolean; sort?: string; sortDir?: 'asc' | 'desc' }) => Promise<{ rows: unknown[]; total: number }>;
   /** Newest rows of a form as {id, answers, submittedAt} — demo-aware; powers dashboard list/activity widgets. */
   fetchRecentRows: (formId: string, limit: number) => Promise<Array<{ id: string; answers: Record<string, unknown>; submittedAt: string }>>;
+  /** One record by id, however old; null when it doesn't exist. Any other failure throws. */
+  fetchRecord: (formId: string, responseId: string) => Promise<{ id: string; answers: Record<string, unknown>; submittedAt: string } | null>;
   /**
    * `flowRunId` names the flow run writing the record (the flow runtime passes it): the server
    * makes the runs the record starts that run's children, so a flow writing into the form it is
@@ -230,16 +234,24 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
       },
 
       fetchRecentRows: async (formId, limit) => {
-        const map = (r: Record<string, unknown>) => ({ id: String(r.id ?? ''), answers: (r.answers as Record<string, unknown>) ?? {}, submittedAt: String(r.submittedAt ?? '') });
         // Let a 403/404/network failure THROW (matches fetchResponses/fetchResponsePage) instead of
         // swallowing it to [] — callers (dashboard list/activity widgets, the SDK's useResponses) need
         // to tell "form deleted or no permission" apart from a genuinely empty form.
         if (!api.isDemoMode()) {
           const { rows } = await get().fetchResponsePage(formId, { limit, offset: 0 });
-          return (rows as Record<string, unknown>[]).map(map);
+          return (rows as Record<string, unknown>[]).map(toRecentRow);
         }
         const rows = (await get().fetchResponses(formId, { limit })) as Record<string, unknown>[];
-        return rows.map(map);
+        return rows.map(toRecentRow);
+      },
+
+      fetchRecord: async (formId, responseId) => {
+        const slug = get().appSlug;
+        if (!slug) return null;
+        const result = await api.getAppResponseById(slug, formId, responseId);
+        if (result.status === 404) return null;
+        if (result.error) throw new Error(typeof result.error === 'string' ? result.error : 'Failed to load the record');
+        return result.data?.response ? toRecentRow(result.data.response as Record<string, unknown>) : null;
       },
 
       createResponse: async (formId, answers, options) => {

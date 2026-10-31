@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { v4 as uuidv4 } from 'uuid';
 import type { LocalFormResponse } from '../types/form';
+import { besideDeviceForms, frozenWhen } from '../lib/adminFrozenStorage';
 import { useFormStore } from './formStore';
 
 interface ResponseState {
@@ -135,6 +136,7 @@ export const useResponseStore = create<ResponseState>()(
     }),
     {
       name: 'formlogic-responses',
+      storage: frozenWhen(() => besideDeviceForms(useFormStore.getState().storageMode)),
       partialize: (state) => {
         // Read storageMode safely — default to 'local' if formStore isn't hydrated yet
         let storageMode = 'local';

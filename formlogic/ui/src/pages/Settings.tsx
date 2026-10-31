@@ -317,8 +317,12 @@ export function Settings() {
   const handleExportBackup = async () => {
     setIsExportingBackup(true);
     try {
-      await api.exportAccountBackup(backupPassphrase || undefined);
-      toast.success('Backup downloaded', backupPassphrase ? 'Keep the passphrase safe. Nobody can open this file without it.' : 'Apps, forms, flows, records and files — all in one zip.');
+      const restoreLimit = await api.exportAccountBackup(backupPassphrase || undefined);
+      if (restoreLimit) {
+        toast.warning('Backup downloaded, but it is too big to upload here', `This site takes back up to ${Math.round(restoreLimit / 1048576)} MB. Ask whoever runs it to raise BACKUP_MAX_ZIP_SIZE before you need this file.`);
+      } else {
+        toast.success('Backup downloaded', backupPassphrase ? 'Keep the passphrase safe. Nobody can open this file without it.' : 'Apps, forms, flows, records and files — all in one zip.');
+      }
       setBackupPassphrase('');
     } catch (e) {
       toast.error('Backup failed', e instanceof Error ? e.message : 'Could not build the backup.');
@@ -581,7 +585,7 @@ export function Settings() {
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{activeTab.label}</h2>
           <p className="mt-1 text-sm leading-relaxed text-gray-500 dark:text-slate-400">{activeTab.description}</p>
           <nav aria-label="Settings sections" className="mt-3 flex flex-wrap gap-2">
-            {activeTab.sections.map(section => <Link key={section} to={`#${section}`} aria-current={activeSection === section ? 'location' : undefined} className={`inline-flex min-h-11 items-center rounded-lg border px-3 text-xs font-medium focus-visible:outline-2 focus-visible:outline-primary-500 ${activeSection === section ? 'border-primary-200 bg-primary-50 text-primary-700 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-300' : 'border-gray-200 bg-white text-gray-600 hover:border-primary-300 dark:border-white/10 dark:bg-slate-900/50 dark:text-slate-300'}`}>{SECTION_LABELS[section]}</Link>)}
+            {activeTab.sections.filter(section => section !== 'trash' || !user?.isDemo).map(section => <Link key={section} to={`#${section}`} aria-current={activeSection === section ? 'location' : undefined} className={`inline-flex min-h-11 items-center rounded-lg border px-3 text-xs font-medium focus-visible:outline-2 focus-visible:outline-primary-500 ${activeSection === section ? 'border-primary-200 bg-primary-50 text-primary-700 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-300' : 'border-gray-200 bg-white text-gray-600 hover:border-primary-300 dark:border-white/10 dark:bg-slate-900/50 dark:text-slate-300'}`}>{SECTION_LABELS[section]}</Link>)}
           </nav>
         </div>
         <div id="settings-panel-account" role="tabpanel" aria-labelledby="settings-tab-account" hidden={activeTab.id !== 'account'} className="space-y-5" tabIndex={0}>
@@ -1339,6 +1343,8 @@ export function Settings() {
           </CardContent>
         </Card>
 
+        {/* The demo's route table has no /trash, and the shared account has nothing of its own to restore. */}
+        {!user?.isDemo && (
         <Card id="trash" className="overflow-hidden rounded-2xl scroll-mt-24">
           <CardContent className="p-5 sm:p-6">
             <SectionHeader
@@ -1365,6 +1371,7 @@ export function Settings() {
             </div>
           </CardContent>
         </Card>
+        )}
 
         <Card id="danger" className="overflow-hidden rounded-2xl scroll-mt-24 border-red-200/70 dark:border-red-500/30">
           <CardContent className="p-5 sm:p-6">

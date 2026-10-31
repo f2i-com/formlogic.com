@@ -58,7 +58,7 @@ var validators = {
 };
 var format = {
   currency: function(value, cur) {
-    if (typeof value != "number") { return ""; }
+    if (typeof value != "number" || value != value || value == Infinity || value == -Infinity) { return ""; }
     let prefix = "$";
     if (cur == "EUR") { prefix = "\u20AC"; }
     if (cur == "GBP") { prefix = "\u00A3"; }

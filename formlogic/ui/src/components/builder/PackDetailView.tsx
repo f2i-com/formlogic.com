@@ -27,6 +27,7 @@ import { reviewableConnectorGrants } from '../../lib/packTrust';
 import { toast } from '../../stores/toastStore';
 import { useFormStore } from '../../stores/formStore';
 import { useAppStore } from '../../stores/appStore';
+import { useInstalledNodeStore } from '../../stores/installedNodeStore';
 
 interface PackDetailViewProps {
   slug: string;
@@ -165,6 +166,14 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
     }
   }, [refreshForms, fetchApps, onInstalled]);
 
+  const toggleGrant = useCallback((grant: string, next: boolean) => {
+    setApprovedGrants((prev) => {
+      const nextSet = new Set(prev);
+      if (next) nextSet.add(grant); else nextSet.delete(grant);
+      return nextSet;
+    });
+  }, []);
+
   const handleInstall = useCallback(async () => {
     if (!pack || installing) return;
     setInstalling(true);
@@ -182,7 +191,7 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
       // then a digest-bound confirm. Routing it down the v1 import would be refused by the
       // server, which is safe but a dead end for the person trying to install it.
       if ((dl as { formatVersion?: unknown }).formatVersion === 2) {
-        const planResult = await api.proposePackageInstallPlan(dl as unknown as Record<string, unknown>);
+        const planResult = await api.proposePackageInstallPlan({ package: dl as unknown as Record<string, unknown> });
         const plan = planResult.data ?? null;
         if (!plan) {
           toast.error(
@@ -194,6 +203,7 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
           setInstalling(false);
           return;
         }
+        setApprovedGrants(new Set(reviewableConnectorGrants(plan.capabilities)));
         setV2Plan(plan);
         setInstalling(false); // the plan's review panel takes it from here
         return;
@@ -286,6 +296,8 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
     </div>
   );
 
+  const planGrants = v2Plan ? reviewableConnectorGrants(v2Plan.capabilities) : [];
+
   return (
     <div className="space-y-4">
       {/* Back button */}
@@ -362,32 +374,20 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
             </span>
           </div>
 
-          {(v2Plan.capabilities.packageV2?.nodes.length ?? 0) > 0 && (
-            <div className="text-xs text-gray-700 dark:text-slate-200">
-              <p className="font-semibold">Adds {v2Plan.capabilities.packageV2!.nodes.length} flow node(s)</p>
-              <ul className="mt-1 flex flex-wrap gap-1.5">
-                {v2Plan.capabilities.packageV2!.nodes.map((node) => (
-                  <li key={node.type} className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] dark:bg-slate-800/70">
-                    {node.label || node.type}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {/* The same review the template page shows: nodes, service slots, and the connector
+              grants this person approves. Without it every grant would be silently denied. */}
+          <CapabilityReview
+            caps={v2Plan.capabilities}
+            trust={v2Plan.trust}
+            selectedGrants={planGrants.length > 0 ? approvedGrants : undefined}
+            onToggleGrant={planGrants.length > 0 ? toggleGrant : undefined}
+          />
 
           {(v2Plan.capabilities.packageV2?.requirementSlots.length ?? 0) > 0 && (
-            <div className="text-xs text-gray-700 dark:text-slate-200">
-              <p className="font-semibold">Needs a service for</p>
-              <ul className="mt-1 flex flex-wrap gap-1.5">
-                {v2Plan.capabilities.packageV2!.requirementSlots.map((slot) => (
-                  <li key={slot} className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] dark:bg-slate-800/70">{slot}</li>
-                ))}
-              </ul>
-              <p className="mt-1 text-[11px] text-gray-500 dark:text-slate-400">
-                You choose which service fills each one after installing. A node whose slot is
-                unfilled refuses to compile rather than failing at run time.
-              </p>
-            </div>
+            <p className="text-[11px] text-gray-500 dark:text-slate-400">
+              You choose which service fills each one after installing. A node whose slot is
+              unfilled refuses to compile rather than failing at run time.
+            </p>
           )}
 
           {(v2Plan.plannedInstalls?.length ?? 0) > 0 && (
@@ -437,12 +437,20 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
                   // approved" rather than omitting the field and letting the server decide.
                   const result = await api.confirmPackageInstallPlan(v2Plan.planId, {
                     planDigest: v2Plan.planDigest,
-                    approvedConnectorGrants: [],
+                    approvedConnectorGrants: planGrants.length > 0 ? [...approvedGrants] : [],
                   });
                   if (result.data) {
                     setInstalled(true);
                     setV2Plan(null);
-                    toast.success('Extension installed', 'Its nodes are available in the flow editor.');
+                    const withheld = result.data.withheldGrants ?? [];
+                    toast.success(
+                      'Extension installed',
+                      'Its nodes are available in the flow editor.'
+                        + (withheld.length > 0 ? ` ${withheld.length} connector grant(s) were not approved.` : '')
+                    );
+                    // The flow editor loads the store once a session, so a new node would stay
+                    // out of the palette until a reload.
+                    void useInstalledNodeStore.getState().refresh();
                     onInstalled?.();
                   } else {
                     toast.error('Install failed', typeof result.error === 'string' ? result.error : 'Unknown error');
@@ -491,13 +499,7 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
                 trust={consent.review.trust}
                 vendorSigning={consent.review.vendorSigning}
                 selectedGrants={connectorGrants.length > 0 ? approvedGrants : undefined}
-                onToggleGrant={connectorGrants.length > 0 ? (grant, next) => {
-                  setApprovedGrants((prev) => {
-                    const nextSet = new Set(prev);
-                    if (next) nextSet.add(grant); else nextSet.delete(grant);
-                    return nextSet;
-                  });
-                } : undefined}
+                onToggleGrant={connectorGrants.length > 0 ? toggleGrant : undefined}
               />
             );
           })()}

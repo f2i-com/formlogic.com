@@ -158,6 +158,17 @@ describe('logic_block frozen ctx', () => {
     expect(Object.isFrozen(seen)).toBe(true);
     expect((seen as unknown as { kv: unknown }).kv).toEqual({ total: 7 });
   });
+
+  it('gives code nodes the typed data port values', async () => {
+    const evaluateExpression = vi.fn(async () => null);
+    const evaluateBoolean = vi.fn(async () => true);
+    const deps = fakeDeps({ evaluateExpression, evaluateBoolean });
+    const scope = { data: { text: 'hello' } };
+    await executeNode(ctxFor({ id: 'lb', type: 'logic_block', data: { expr: 'data.text' } }, deps, { scope }));
+    await executeNode(ctxFor({ id: 'c', type: 'condition', data: { expr: 'data.text' } }, deps, { scope }));
+    expect(evaluateExpression).toHaveBeenCalledWith('data.text', expect.objectContaining({ data: { text: 'hello' } }), expect.anything(), 'javascript');
+    expect(evaluateBoolean).toHaveBeenCalledWith('data.text', expect.objectContaining({ data: { text: 'hello' } }), undefined, 'javascript');
+  });
 });
 
 // Cross-runtime timeout parity (docs/FORMLOGIC_FLOWS.md §4): a declared data.timeoutMs

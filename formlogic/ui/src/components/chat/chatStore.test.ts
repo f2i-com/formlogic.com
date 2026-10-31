@@ -54,15 +54,36 @@ class FakeObjectStore {
 
 class FakeDb {
   private readonly stores = new Map<string, Map<string, Row>>();
+  /** 'commit': the put reports success, then the transaction aborts (how quota errors arrive). */
+  failWrites: 'commit' | 'throw' | null = null;
   readonly objectStoreNames = { contains: (name: string) => this.stores.has(name) };
   createObjectStore(name: string): FakeObjectStore {
     this.stores.set(name, new Map());
     return new FakeObjectStore(this.stores.get(name)!);
   }
-  transaction(name: string): { objectStore: (n: string) => FakeObjectStore } {
+  transaction(name: string, mode = 'readonly'): {
+    objectStore: (n: string) => FakeObjectStore;
+    oncomplete: (() => void) | null;
+    onabort: (() => void) | null;
+    error: Error | null;
+  } {
     const rows = this.stores.get(name);
     if (!rows) throw new Error(`no object store ${name}`);
-    return { objectStore: () => new FakeObjectStore(rows) };
+    const writing = mode === 'readwrite';
+    if (writing && this.failWrites === 'throw') throw new Error('connection closing');
+    const aborts = writing && this.failWrites === 'commit';
+    const tx = {
+      objectStore: () => new FakeObjectStore(aborts ? new Map(rows) : rows),
+      oncomplete: null as (() => void) | null,
+      onabort: null as (() => void) | null,
+      error: null as Error | null,
+    };
+    queueMicrotask(() => {
+      if (!aborts) return tx.oncomplete?.();
+      tx.error = new Error('QuotaExceededError');
+      tx.onabort?.();
+    });
+    return tx;
   }
 }
 
@@ -232,5 +253,68 @@ describe('in-memory fallback', () => {
     await store.createThread('Still works');
     expect(store.persistent).toBe(false);
     expect((await store.listThreads()).map((t) => t.title)).toEqual(['Still works']);
+  });
+
+  it.each(['commit', 'throw'] as const)('moves to memory when a write fails (%s), keeping the history', async (failure) => {
+    const store = new ChatStore('u1');
+    const thread = await store.createThread('Before the disk filled');
+    await store.appendMessage(thread.id, 'user', 'saved', 1_000);
+    expect(store.persistent).toBe(true);
+
+    factory.dbs.get('formlogic-chat:u1')!.failWrites = failure;
+    const message = await store.appendMessage(thread.id, 'user', 'not lost', 2_000);
+
+    expect(message.seq).toBe(2);
+    expect(store.persistent).toBe(false);
+    expect((await store.listMessages(thread.id)).messages.map((m) => m.content)).toEqual(['saved', 'not lost']);
+    expect((await store.listThreads())[0]).toMatchObject({ title: 'Before the disk filled', updatedAt: 2_000 });
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a new thread when its first write fails', async () => {
+    const store = new ChatStore('u1');
+    await store.createThread('Opens the database');
+    factory.dbs.get('formlogic-chat:u1')!.failWrites = 'commit';
+    await store.createThread('Second');
+    expect((await store.listThreads()).map((t) => t.title).sort()).toEqual(['Opens the database', 'Second']);
+  });
+
+  it('does not pretend a thread is deleted when the database refuses', async () => {
+    const store = new ChatStore('u1');
+    const thread = await store.createThread('Stays');
+    factory.dbs.get('formlogic-chat:u1')!.failWrites = 'throw';
+    await expect(store.deleteThread(thread.id)).rejects.toThrow();
+    expect(store.persistent).toBe(true);
+  });
+
+  it('still deletes from the database after a fallback, so the thread stays gone on reload', async () => {
+    const store = new ChatStore('u1');
+    const thread = await store.createThread('Delete me');
+    await store.appendMessage(thread.id, 'user', 'in the database', 1_000);
+    const db = factory.dbs.get('formlogic-chat:u1')!;
+    db.failWrites = 'commit';
+    await store.appendMessage(thread.id, 'user', 'only in memory', 2_000);
+    expect(store.persistent).toBe(false);
+
+    db.failWrites = null; // a full disk still takes deletes
+    await store.deleteThread(thread.id);
+
+    expect(await store.listThreads()).toEqual([]);
+    const reloaded = new ChatStore('u1');
+    expect(await reloaded.listThreads()).toEqual([]);
+    expect((await reloaded.listMessages(thread.id)).messages).toEqual([]);
+  });
+
+  it('keeps a thread showing when the database refuses its delete after a fallback', async () => {
+    const store = new ChatStore('u1');
+    const thread = await store.createThread('Stays');
+    const db = factory.dbs.get('formlogic-chat:u1')!;
+    db.failWrites = 'throw';
+    await store.appendMessage(thread.id, 'user', 'moves to memory');
+    expect(store.persistent).toBe(false);
+
+    await expect(store.deleteThread(thread.id)).rejects.toThrow();
+
+    expect((await store.listThreads()).map((t) => t.title)).toEqual(['Stays']);
   });
 });

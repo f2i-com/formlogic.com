@@ -35,6 +35,7 @@ import { toast } from '../stores/toastStore';
 import { useFormStore } from '../stores/formStore';
 import { useAppStore } from '../stores/appStore';
 import { useAuthStore } from '../stores/authStore';
+import { useInstalledNodeStore } from '../stores/installedNodeStore';
 import { useMarketplaceChrome } from '../lib/marketplaceChrome';
 import { deferEffect } from '../lib/deferredEffect';
 
@@ -212,17 +213,24 @@ function PackDetailContent() {
         setInstalled(true);
         setConsent(null);
         const withheld = importResult.data.withheldGrants ?? [];
-        toast.success(
-          'Pack installed',
-          `Imported ${importResult.data.forms.length} form(s) and ${importResult.data.apps.length} app(s).`
-            + (withheld.length > 0 ? ` ${withheld.length} connector grant(s) were not approved.` : '')
-        );
+        const withheldNote = withheld.length > 0 ? ` ${withheld.length} connector grant(s) were not approved.` : '';
+        if (planId) {
+          toast.success('Extension installed', `Its nodes are available in the flow editor.${withheldNote}`);
+          // The flow editor loads the store once a session, so a new node would stay out of
+          // the palette until a reload.
+          void useInstalledNodeStore.getState().refresh();
+        } else {
+          toast.success('Pack installed', `Imported ${importResult.data.forms.length} form(s) and ${importResult.data.apps.length} app(s).${withheldNote}`);
+        }
         await Promise.all([refreshForms(), fetchApps()]);
       } else {
         toast.error('Install failed', importResult.error || 'Unknown error');
+        // A plan is single-use, so Install on this panel could only fail from here on.
+        if (planId) setConsent(null);
       }
     } catch (err) {
       toast.error('Install failed', err instanceof Error ? err.message : 'Unknown error');
+      if (planId) setConsent(null);
     } finally {
       setInstalling(false);
     }

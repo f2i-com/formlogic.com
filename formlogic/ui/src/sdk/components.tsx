@@ -13,7 +13,7 @@ import {
   useNativeRuntime,
   useOfflineQueue,
   usePermissions,
-  useResponse,
+  useResponseRecord,
   useResponses,
   useSubmitResponse,
   type SdkFailedSubmission,
@@ -23,6 +23,7 @@ import {
 import { FAILED_RETENTION_MS } from '../client-runtime/offlineQueue';
 import type { ConnectorStatusInfo } from '../client-runtime/connectors/connectorTypes';
 import type { PermissionAction } from '../types/app';
+import { formatValue } from '../components/responses/recordFormat';
 import { parseServerDate } from '../lib/utils';
 
 /** Live status pill for a connector (green = connected, grey = unavailable). */
@@ -345,7 +346,14 @@ export function SubmitButton({
 
 /** All answers of one response as label/value rows. */
 export function ResponseDetail({ form, id }: { form: string; id: string }) {
-  const row = useResponse(form, id);
+  const { row, loading, error } = useResponseRecord(form, id);
+  const fields = useForm(form)?.fields as Array<{ id: string; type: string }> | undefined;
+  if (loading) {
+    return <div className="text-sm text-gray-400 dark:text-slate-500">Loading…</div>;
+  }
+  if (error) {
+    return <div className="text-sm text-red-600 dark:text-red-400">{error}</div>;
+  }
   if (!row) return <EmptyState title="Record not found" />;
   const entries = Object.entries(row.answers);
   if (entries.length === 0) return <EmptyState title="No data in this record" />;
@@ -354,7 +362,7 @@ export function ResponseDetail({ form, id }: { form: string; id: string }) {
       {entries.map(([k, v]) => (
         <div key={k} className="flex justify-between gap-4 py-2">
           <dt className="text-sm text-gray-500 dark:text-slate-400">{k}</dt>
-          <dd className="min-w-0 truncate text-right text-sm font-medium text-gray-900 dark:text-white">{String(v)}</dd>
+          <dd className="min-w-0 truncate text-right text-sm font-medium text-gray-900 dark:text-white">{formatValue(v, fields?.find((f) => f.id === k)?.type)}</dd>
         </div>
       ))}
     </dl>

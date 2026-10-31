@@ -6,6 +6,7 @@ import {
   resolveDeep,
   resolvePath,
   resolveSelector,
+  scopeToContext,
   whenPasses,
 } from './selectors';
 
@@ -52,6 +53,20 @@ describe('resolveSelector', () => {
   it('missing paths resolve to undefined', () => {
     expect(resolveSelector('$event.data.nope', scope)).toBeUndefined();
     expect(resolveSelector('$result.record.answers.x', scope)).toBeUndefined();
+  });
+  it('reads a typed data port through $.data', () => {
+    const wired = { ...scope, data: { text: 'hello', image: { ref: 'artifact-1' } } };
+    expect(isSelector('$.data.text')).toBe(true);
+    expect(resolveSelector('$.data.text', wired)).toBe('hello');
+    expect(resolveSelector('$.data.image.ref', wired)).toBe('artifact-1');
+    expect(resolveSelector('$.data', wired)).toEqual(wired.data);
+    expect(resolveSelector('$.data.missing', wired)).toBeUndefined();
+    expect(resolveDeep({ text: '$.data.text' }, wired)).toEqual({ text: 'hello' });
+    expect(interpolateTemplate('Said {{data.text}}', scopeToContext(wired))).toBe('Said hello');
+  });
+  it('leaves other $. strings as literals', () => {
+    expect(isSelector('$.database')).toBe(false);
+    expect(resolveSelector('$.other', scope)).toBe('$.other');
   });
   it('passes literals (including plain and $-unknown strings) through untouched', () => {
     expect(resolveSelector('hello', scope)).toBe('hello');

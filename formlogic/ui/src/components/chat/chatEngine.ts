@@ -607,6 +607,7 @@ async function runSiteSource(
 
   opts.events?.onState?.({ state: 'streaming' });
   let failed: ChatTurnError | null = null;
+  let finished = false;
   let finalContent: string | undefined;
   let accumulated = '';
   const parser = createSiteChatSseParser({
@@ -616,6 +617,7 @@ async function runSiteSource(
     },
     onToolActivity: (activity) => opts.events?.onToolActivity?.(activity),
     onDone: (info) => {
+      finished = true;
       if (info.content !== undefined) finalContent = info.content;
     },
     onError: (error) => {
@@ -644,6 +646,12 @@ async function runSiteSource(
     reader.releaseLock();
   }
 
+  // The server ends every turn with `done` or `error`, so a stream that just stops was cut off
+  // (a proxy or PHP timing out). A tool round's text arrives in one piece at its end, so what
+  // came through may be nothing at all, and tools may already have run.
+  if (!failed && !finished) {
+    failed = { code: 'transport', message: 'The connection dropped before the reply finished. Anything it already did stays done, so check that before you retry.' };
+  }
   if (failed) {
     const err = failed as ChatTurnError;
     opts.events?.onState?.({ state: 'failed', code: err.code, message: err.message });

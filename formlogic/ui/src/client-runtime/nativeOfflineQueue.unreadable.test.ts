@@ -41,7 +41,7 @@ describe('the native flush and an answer that is not FormLogic\'s', () => {
     const result = await flushNativeQueue();
     expect(sync.fail).toHaveBeenCalledWith(['q_1'], 'The server answered in a way FormLogic does not recognise');
     expect(sync.ack).not.toHaveBeenCalled();
-    expect(result).toEqual({ flushed: 0, failed: 1 });
+    expect(result).toEqual({ flushed: 0, failed: 0 });
   });
 
   it('still uses none when the server was not reached at all', async () => {

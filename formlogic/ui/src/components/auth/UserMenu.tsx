@@ -28,7 +28,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
   const { user } = useAuthStore();
-  const { storageMode, setStorageMode, syncToApi, setSyncConflicts } = useFormStore();
+  const { storageMode, setStorageMode, syncToApi, setSyncConflicts, loadAllFullForms } = useFormStore();
 
   useEffect(() => {
     if (!isOpen) return;
@@ -55,7 +55,6 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
   // Return to the home/landing page after signing out. Without this the URL stays on an
   // authed-only route (e.g. /forms), which no longer exists in the logged-out route table
   // and renders the 404 page. (AuthRedirector is a safety net for session expiry.)
-  // Storage mode preference is preserved so it restores on next login.
   const signOut = useSignOutWithUnsentCheck(() => navigate('/', { replace: true }));
   const handleLogout = async () => {
     setIsOpen(false);
@@ -110,11 +109,27 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
         setIsOpen(false);
       }
     } else {
-      // api -> local keeps the currently-loaded forms (persist writes them back to
-      // localStorage in local mode), so there's no data-loss risk this direction.
-      setStorageMode('local');
-      toast.success('Local storage enabled', 'Your forms are now stored on this device.');
-      setIsOpen(false);
+      // api -> local keeps the forms in the store (persist writes them back to localStorage in
+      // local mode), and local mode takes those as the whole form. In cloud mode most are rows of
+      // the forms list with no fields, so every form is loaded first, and a form that can't be
+      // keeps the account where it is. Stored as rows, they opened empty here, and whatever was
+      // built on that went over the real fields at the next sync.
+      setIsSyncing(true);
+      try {
+        if (!(await loadAllFullForms())) {
+          toast.error('Could not keep forms on this device', 'Some forms could not be loaded, so your forms stay in your account. Try again in a moment.');
+          return;
+        }
+        setStorageMode('local');
+        toast.success('Local storage enabled', 'Your forms are now stored on this device.');
+      } catch {
+        // Whole forms are far larger than list rows, and this browser's storage can run out.
+        setStorageMode('api');
+        toast.error('Could not keep forms on this device', 'They do not fit in this browser’s storage, so your forms stay in your account.');
+      } finally {
+        setIsSyncing(false);
+        setIsOpen(false);
+      }
     }
   };
 
@@ -229,10 +244,10 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
               disabled={isSyncing}
               className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
             >
-              {isSyncing && storageMode === 'local' ? (
+              {isSyncing ? (
                 <>
                   <RefreshCw className="h-4 w-4 text-gray-400 dark:text-slate-500 animate-spin" />
-                  Moving forms to your account…
+                  {storageMode === 'local' ? 'Moving forms to your account…' : 'Copying forms to this device…'}
                 </>
               ) : storageMode === 'api' ? (
                 <>

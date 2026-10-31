@@ -49,6 +49,22 @@ function bindingReferencesFlow(binding: FlowBinding, flow: FlowDefinition): bool
   return binding.flowDefinitionId === flow.id || binding.flow === flow.slug;
 }
 
+/**
+ * Dedupe a new flow's slug against its scope (and mirror any suffix onto an auto/duplicate name)
+ * so repeated creates — several "Untitled flow"s, or copies of a copy — never collide on the
+ * server's slug uniqueness.
+ */
+function uniqueFlowIdentity(name: string, slug: string, siblings: FlowDefinition[]): { name: string; slug: string } {
+  const takenSlugs = new Set(siblings.map((f) => f.slug));
+  let uniqueSlug = slug;
+  let n = 1;
+  while (takenSlugs.has(uniqueSlug)) {
+    n += 1;
+    uniqueSlug = `${slug.slice(0, 60 - String(n).length - 1)}-${n}`;
+  }
+  return { name: n > 1 && !name.trim().match(/\d$/) ? `${name} ${n}` : name, slug: uniqueSlug };
+}
+
 export function FlowsWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams();
   const libraryVisible = searchParams.get('view') === 'existing' && searchParams.get('new') !== '1';
@@ -385,17 +401,8 @@ export function FlowsWorkspace() {
 
   const createFlow = async ({ name, slug, description, template, appId }: { name: string; slug: string; description: string; template: FlowStarterTemplate; appId: string | null }) => {
     setCreating(true);
-    // Dedupe the slug (and mirror any suffix onto an auto/duplicate name) so quick repeated
-    // creates — e.g. several "Untitled flow"s — never collide on the workspace slug uniqueness.
-    const takenSlugs = new Set((groups.find((g) => (g.app?.id ?? null) === appId)?.flows ?? []).map((f) => f.slug));
-    let uniqueSlug = slug;
-    let n = 1;
-    while (takenSlugs.has(uniqueSlug)) {
-      n += 1;
-      uniqueSlug = `${slug.slice(0, 60 - String(n).length - 1)}-${n}`;
-    }
-    const uniqueName = n > 1 && !name.trim().match(/\d$/) ? `${name} ${n}` : name;
-    const body = { name: uniqueName, slug: uniqueSlug, description, flowJson: template.flowJson, enabled: true, nodeCapabilities: template.nodeCapabilities };
+    const identity = uniqueFlowIdentity(name, slug, groups.find((g) => (g.app?.id ?? null) === appId)?.flows ?? []);
+    const body = { ...identity, description, flowJson: template.flowJson, enabled: true, nodeCapabilities: template.nodeCapabilities };
     let flow: FlowDefinition;
     try {
       if (api.isDemoMode()) {
@@ -430,18 +437,27 @@ export function FlowsWorkspace() {
 
   const duplicateFlow = async (flow: FlowDefinition) => {
     const payload = {
-      name: `${flow.name} copy`,
-      slug: `${flow.slug}-copy`.slice(0, 60),
+      ...uniqueFlowIdentity(
+        `${flow.name} copy`,
+        `${flow.slug}-copy`.slice(0, 60),
+        groups.find((g) => (g.app?.id ?? null) === (flow.appId ?? null))?.flows ?? [],
+      ),
       description: flow.description ?? undefined,
       flowJson: flow.flowJson,
       enabled: false,
       nodeCapabilities: flow.nodeCapabilities ?? undefined,
     };
-    const created = api.isDemoMode()
-      ? await demoCreateFlow({ ...payload, appId: flow.appId ?? null })
-      : (flow.appId ? await api.createFlow(flow.appId, payload) : await api.createWorkspaceFlow(payload)).data?.flow;
-    if (!created) {
-      toast.error('Failed to duplicate flow');
+    let created: FlowDefinition;
+    try {
+      if (api.isDemoMode()) {
+        created = await demoCreateFlow({ ...payload, appId: flow.appId ?? null });
+      } else {
+        const response = flow.appId ? await api.createFlow(flow.appId, payload) : await api.createWorkspaceFlow(payload);
+        if (response.error || !response.data?.flow) throw new Error(typeof response.error === 'string' ? response.error : 'Please try again.');
+        created = response.data.flow;
+      }
+    } catch (error) {
+      toast.error('Failed to duplicate flow', error instanceof Error ? error.message : 'Please try again.');
       return;
     }
     setGroups((gs) => gs.map((g) => (g.app?.id ?? null) === (flow.appId ?? null) ? { ...g, flows: [created, ...g.flows] } : g));

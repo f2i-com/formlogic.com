@@ -203,7 +203,7 @@ export function CustomScreenRuntime({
   formTitle?: string;
   fields?: Array<{ id: string; label: string; type: string; options?: Array<{ label: string; value: string }> }>;
   className?: string;
-  /** Public link/embed context (anonymous): records() uses the gated public endpoint, not the owner API. */
+  /** Public link/embed context (anyone but the form's owner): records() uses the gated public endpoint, not the owner API. */
   publicMode?: boolean;
   /** The screen's author isn't told who is looking: a public link, opened by someone signed in. */
   hideViewer?: boolean;

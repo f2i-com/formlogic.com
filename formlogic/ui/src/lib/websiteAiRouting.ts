@@ -75,6 +75,20 @@ export function clearCachedAiPreferences(): void {
   cachedPreferences = null;
 }
 
+// Counts saves for aiDefault's 60s preferences cache: it imports lib/api, so api.putAiPreferences
+// can't reach it directly, and this module imports nothing at run time.
+let aiPreferenceSaves = 0;
+
+/** Called by api.putAiPreferences once a save has answered. */
+export function noteAiPreferencesSaved(): void {
+  aiPreferenceSaves += 1;
+}
+
+/** How many saves have answered in this tab. A read cached under an older count is stale. */
+export function aiPreferenceSaveCount(): number {
+  return aiPreferenceSaves;
+}
+
 /**
  * The acting user's default AI source (Site AI plan §5.6), resolved from the
  * cached preferences. Fails closed with a typed reason — an unresolvable default

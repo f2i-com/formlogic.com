@@ -7,6 +7,7 @@ import {
 } from '../lib/formlogic';
 import type { FormField } from '../types/form';
 import { deferEffect } from '../lib/deferredEffect';
+import { isUnsafePattern } from '../lib/patternGuard';
 
 /**
  * Hook for evaluating conditional logic on fields
@@ -196,17 +197,7 @@ export function useFieldValidation(
         } else if (rule.type === 'pattern' && typeof value === 'string') {
           try {
             const pattern = rule.value as string;
-            // Limit pattern length and reject catastrophic backtracking constructs
-            if (pattern.length > 500) {
-              if (mountedRef.current) { setError(rule.message || 'Invalid validation pattern'); setIsValidating(false); }
-              return false;
-            }
-            if (/(\+|\*|\{[^}]*\})\s*(\+|\*|\{[^}]*\})/.test(pattern) || /\([^)]*\|[^)]*\)\+/.test(pattern)) {
-              if (mountedRef.current) { setError(rule.message || 'Invalid validation pattern'); setIsValidating(false); }
-              return false;
-            }
-            const regex = new RegExp(pattern);
-            if (!regex.test(value)) {
+            if (!isUnsafePattern(pattern) && !new RegExp(pattern).test(value)) {
               if (mountedRef.current) { setError(rule.message || 'Invalid format'); setIsValidating(false); }
               return false;
             }

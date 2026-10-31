@@ -38,3 +38,18 @@ describe('zipp-host JavaScript program text', () => {
     expect(program.replace(PRELUDE, '<PRELUDE>')).toMatchSnapshot();
   }, CASE_TIMEOUT_MS);
 });
+
+// sanitizeOut() passes numbers through, and the backend guest's __sanitize turns these into null.
+// They agree only because the engine hands the host null for them. If it ever hands over Infinity,
+// `total / count` with a count of 0 is true here and false on the server, and a required field is
+// hidden in the browser and demanded by the server.
+describe('zipp-host numbers that are not finite', () => {
+  it.each(['1 / 0', '-1 / 0', '0 / 0'])('%s comes out as null, as on the server', async (source) => {
+    await expect(runEval('condition', source, {})).resolves.toBeNull();
+  }, CASE_TIMEOUT_MS);
+
+  it('does so inside what a script returns as well', async () => {
+    const source = 'function run(ctx) { return { ratio: 1 / 0, list: [0 / 0, 2] }; }';
+    await expect(runEval('applogic', source, {})).resolves.toEqual({ ratio: null, list: [null, 2] });
+  }, CASE_TIMEOUT_MS);
+});

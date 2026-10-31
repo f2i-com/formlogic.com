@@ -423,10 +423,36 @@ export function useAppTheme(): Record<string, unknown> {
   return useAppRuntimeStore((s) => (s.config?.app.theme as Record<string, unknown> | undefined) ?? EMPTY_OBJ);
 }
 
-/** A single response by id (from the recent set for `formKey`), or null. */
+export interface UseResponseRecordResult {
+  /** Null while loading, on an error, and when the record doesn't exist: check the others. */
+  row: SdkResponseRow | null;
+  loading: boolean;
+  error: string | null;
+  reload: () => void;
+}
+
+/** One response by id, however old it is, with its load state. */
+export function useResponseRecord(formKey: string, id: string): UseResponseRecordResult {
+  const fetchRecord = useAppRuntimeStore((s) => s.fetchRecord);
+  const [nonce, setNonce] = useState(0);
+  const request = `${formKey}\n${id}\n${nonce}`;
+  const [settled, setSettled] = useState<{ request: string; row: SdkResponseRow | null; error: string | null } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchRecord(formKey, id)
+      .then((row) => { if (!cancelled) setSettled({ request, row, error: null }); })
+      .catch((e) => { if (!cancelled) setSettled({ request, row: null, error: e instanceof Error ? e.message : 'Failed to load' }); });
+    return () => { cancelled = true; };
+  }, [fetchRecord, formKey, id, request]);
+
+  const current = settled?.request === request ? settled : null;
+  return { row: current?.row ?? null, loading: current === null, error: current?.error ?? null, reload: () => setNonce((n) => n + 1) };
+}
+
+/** A single response by id, or null. useResponseRecord also says why it is null. */
 export function useResponse(formKey: string, id: string): SdkResponseRow | null {
-  const { rows } = useResponses(formKey, { limit: 100 });
-  return rows.find((r) => r.id === id) ?? null;
+  return useResponseRecord(formKey, id).row;
 }
 
 /** Live status for a connector (fetched once on mount / when the connector changes). */

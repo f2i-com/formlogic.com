@@ -20,6 +20,8 @@ interface CameraFieldProps {
   primaryColor: string;
   formId?: string;
   appSlug?: string;
+  /** Told when an upload starts and when it ends, however it ends (see FileUploadField). */
+  onUploadingChange?: (uploading: boolean) => void;
 }
 
 /** Longest edge of an uploaded photo — plenty for records/exports, kind to bandwidth. */
@@ -54,7 +56,7 @@ async function resizeImage(source: Blob): Promise<Blob> {
  * downscales the shot client-side, and uploads through the normal file pipeline, so the
  * answer shape (and therefore records, exports, backups and restore) matches file uploads.
  */
-export function CameraField({ field, value, onChange, primaryColor, formId, appSlug }: CameraFieldProps) {
+export function CameraField({ field, value, onChange, primaryColor, formId, appSlug, onUploadingChange }: CameraFieldProps) {
   const [uploading, setUploading] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -93,20 +95,25 @@ export function CameraField({ field, value, onChange, primaryColor, formId, appS
       return;
     }
     setUploading(true);
-    const resized = await resizeImage(blob);
-    const file = new File([resized], `photo-${Date.now()}.jpg`, { type: resized.type || 'image/jpeg' });
-    const result = appSlug
-      ? await api.uploadAppFile(appSlug, formId, file, field.id)
-      : await api.uploadFile(formId, file, field.id);
-    setUploading(false);
-    if (result.error || !result.data) {
-      toast.error('Upload Failed', typeof result.error === 'string' ? result.error : undefined);
-      return;
+    onUploadingChange?.(true);
+    try {
+      const resized = await resizeImage(blob);
+      const file = new File([resized], `photo-${Date.now()}.jpg`, { type: resized.type || 'image/jpeg' });
+      const result = appSlug
+        ? await api.uploadAppFile(appSlug, formId, file, field.id)
+        : await api.uploadFile(formId, file, field.id);
+      if (result.error || !result.data) {
+        toast.error('Upload Failed', typeof result.error === 'string' ? result.error : undefined);
+        return;
+      }
+      const newId = result.data.id;
+      setPreviews((p) => ({ ...p, [newId]: URL.createObjectURL(resized) }));
+      onChange(field.properties.allowMultiple ? [...photos, result.data] : [result.data]);
+    } finally {
+      setUploading(false);
+      onUploadingChange?.(false);
     }
-    const newId = result.data.id;
-    setPreviews((p) => ({ ...p, [newId]: URL.createObjectURL(resized) }));
-    onChange(field.properties.allowMultiple ? [...photos, result.data] : [result.data]);
-  }, [formId, appSlug, field.id, field.properties.allowMultiple, photos, onChange]);
+  }, [formId, appSlug, field.id, field.properties.allowMultiple, photos, onChange, onUploadingChange]);
 
   const openCamera = useCallback(async () => {
     setCameraError(null);

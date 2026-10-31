@@ -75,7 +75,7 @@ describe('flushNativeQueue', () => {
     ]);
     expect(bridge.sync.ack).toHaveBeenCalledWith(['i1']);
     expect(bridge.sync.fail).toHaveBeenCalledWith(['i2'], 'Validation failed');
-    expect(result).toEqual({ flushed: 1, failed: 1 });
+    expect(result).toEqual({ flushed: 1, failed: 0 }); // i2 used an attempt and is still queued
   });
 
   it('keeps every item (fail, retryable) when the server refuses the whole batch', async () => {
@@ -87,7 +87,18 @@ describe('flushNativeQueue', () => {
 
     expect(bridge.sync.ack).not.toHaveBeenCalled();
     expect(bridge.sync.fail).toHaveBeenCalledWith(['i1', 'i2'], 'Server error (500)');
-    expect(result).toEqual({ flushed: 0, failed: 2 });
+    expect(result).toEqual({ flushed: 0, failed: 0 });
+  });
+
+  // "Sync now" says "N submissions failed to sync", so only an item that has run out of attempts
+  // counts; the runtime alone knows which those are, and says so in the item's status.
+  it('counts as failed only the items the runtime has given up on', async () => {
+    const bridge = makeBridge();
+    bridge.sync.getQueue.mockResolvedValue([{ ...item('i1', 'k1', {}), status: 'failed' }, item('i2', 'k2', {})]);
+    setBridge(bridge);
+    vi.mocked(api.syncBatch).mockResolvedValueOnce({ error: 'Server error (500)', status: 500 });
+
+    expect(await flushNativeQueue()).toEqual({ flushed: 0, failed: 1 });
   });
 
   // The server was not reached (the api layer gives no status), or asked to be tried later: nothing
@@ -136,5 +147,96 @@ describe('flushNativeQueue', () => {
     const result = await flushNativeQueue();
     expect(api.syncBatch).not.toHaveBeenCalled();
     expect(result).toEqual({ flushed: 0, failed: 0 });
+  });
+
+  // The runtime holds 500 items or 10 MB for an app, and the server takes 100 items or 2 MB in one
+  // POST. Sent in one, a backlog was refused whole and every item used an attempt, until all of it
+  // read "could not be sent after several tries".
+  describe('a group larger than one POST', () => {
+    function bridgeHolding(items: ReturnType<typeof item>[]): Bridge {
+      const bridge = makeBridge();
+      bridge.sync.flush.mockResolvedValue({ pending: [{ appSlug: 'demo', items }] });
+      setBridge(bridge);
+      return bridge;
+    }
+    function acceptEverything(): void {
+      vi.mocked(api.syncBatch).mockImplementation(async (_slug, items) => ({
+        data: { results: items.map((i) => ({ idempotencyKey: i.idempotencyKey, success: true, responseId: 'r', error: null })) },
+      }));
+    }
+    const sizes = () => vi.mocked(api.syncBatch).mock.calls.map(([, items]) => items.length);
+    const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+
+    it('goes in POSTs of at most 100 items, in queue order', async () => {
+      const items = Array.from({ length: 250 }, (_, n) => item(`i${n}`, `k${n}`, { n }));
+      const bridge = bridgeHolding(items);
+      acceptEverything();
+
+      expect(await flushNativeQueue()).toEqual({ flushed: 250, failed: 0 });
+
+      expect(sizes()).toEqual([100, 100, 50]);
+      const sent = vi.mocked(api.syncBatch).mock.calls.flatMap(([, batch]) => batch.map((i) => i.idempotencyKey));
+      expect(sent).toEqual(items.map((i) => i.idempotencyKey));
+      expect(bridge.sync.fail).not.toHaveBeenCalled();
+    });
+
+    it('goes in POSTs under the size limit, measured in bytes', async () => {
+      // 1.2 MB as UTF-8 and 400 KB as UTF-16 code units, so a count of characters would put all
+      // three in one POST of 3.6 MB.
+      const answers = { text: '語'.repeat(400_000) };
+      bridgeHolding([item('i1', 'k1', answers), item('i2', 'k2', answers), item('i3', 'k3', answers)]);
+      acceptEverything();
+
+      expect(await flushNativeQueue()).toEqual({ flushed: 3, failed: 0 });
+
+      expect(sizes()).toEqual([1, 1, 1]);
+      for (const [, batch] of vi.mocked(api.syncBatch).mock.calls) {
+        expect(bytes({ items: batch })).toBeLessThan(2 * 1024 * 1024);
+      }
+    });
+
+    it.each([
+      ['413, over the body limit', { error: 'Request body too large', status: 413 }],
+      ['400, too many items', { error: 'Too many items (max 100 per batch)', status: 400 }],
+    ])('uses no attempt on a POST refused as a whole (%s), and sends the two halves', async (_name, refusal) => {
+      const bridge = bridgeHolding([item('i1', 'k1', {}), item('i2', 'k2', {}), item('i3', 'k3', {}), item('i4', 'k4', {})]);
+      acceptEverything();
+      vi.mocked(api.syncBatch).mockResolvedValueOnce(refusal);
+
+      expect(await flushNativeQueue()).toEqual({ flushed: 4, failed: 0 });
+
+      expect(sizes()).toEqual([4, 2, 2]);
+      expect(bridge.sync.fail).not.toHaveBeenCalled();
+    });
+
+    it('uses an attempt on one item refused alone: that refusal is of the item', async () => {
+      const bridge = bridgeHolding([item('i1', 'k1', {}), item('i2', 'k2', {})]);
+      acceptEverything();
+      vi.mocked(api.syncBatch)
+        .mockResolvedValueOnce({ error: 'Request body too large', status: 413 })
+        .mockResolvedValueOnce({ error: 'Request body too large', status: 413 });
+
+      expect(await flushNativeQueue()).toEqual({ flushed: 1, failed: 0 });
+
+      expect(bridge.sync.fail).toHaveBeenCalledWith(['i1'], 'Request body too large');
+      expect(bridge.sync.ack).toHaveBeenCalledWith(['i2']);
+    });
+  });
+
+  it('uses no attempt, and stops, when the session has ended', async () => {
+    const bridge = makeBridge();
+    bridge.sync.flush.mockResolvedValueOnce({
+      pending: [
+        { appSlug: 'one', items: [item('i1', 'k1', { a: 1 })] },
+        { appSlug: 'two', items: [item('i2', 'k2', { a: 2 })] },
+      ],
+    });
+    setBridge(bridge);
+    vi.mocked(api.syncBatch).mockResolvedValue({ error: 'Authentication required', status: 401 });
+
+    expect(await flushNativeQueue()).toEqual({ flushed: 0, failed: 0 });
+
+    expect(api.syncBatch).toHaveBeenCalledTimes(1);
+    expect(bridge.sync.fail).not.toHaveBeenCalled();
   });
 });

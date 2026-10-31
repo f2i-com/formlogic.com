@@ -3,11 +3,14 @@
 // The FormLogic Native Runtime persists queued submissions across process restarts and exposes them
 // over window.FormLogicNative.sync (contract 2). This module drives that queue from the web layer:
 //   flush()   -> returns pending items grouped by appSlug (read-only: nothing removed, attempts untouched)
-//   POST       /api/app/{slug}/sync/batch { items: [{ idempotencyKey, formId, answers }] }
+//   POST       /api/app/{slug}/sync/batch { items: [{ idempotencyKey, formId, answers }] }, as many
+//              POSTs as a group needs (splitIntoBatches): the runtime holds more than the server
+//              takes in one
 //   ack(ids)  -> remove the items the server accepted
 //   fail(ids) -> record a RETRYABLE failure (burns one attempt; terminal at the native attempt cap).
 //                Not called when the batch never reached the server (no status, 408, 429, or a
-//                502/503/504: maintenance mode, a gateway with no app server behind it).
+//                502/503/504: maintenance mode, a gateway with no app server behind it), when the
+//                session has ended (401), or when the POST as a whole was refused for its size.
 //   failTerminal(ids) -> mark 'failed' immediately (a conflict can never succeed on retry);
 //                        feature-detected, falls back to fail() on older runtimes
 //
@@ -195,6 +198,40 @@ export async function purgeNativeQueue(userId?: string | null): Promise<void> {
   }
 }
 
+// What one POST to /sync/batch may hold: the server refuses more than 100 items
+// (AppPublicController::syncBatch) and a body over 2 MiB (BodySizeLimitMiddleware's default in
+// index.php). The byte figure stays under that by enough to cover the envelope.
+const BATCH_MAX_ITEMS = 100;
+const BATCH_MAX_BYTES = 2_000_000;
+
+interface BatchEntry {
+  item: NativeSyncQueueItem;
+  sent: { idempotencyKey: string; formId: string; answers: Record<string, unknown> };
+}
+
+/**
+ * A group's items as POSTs the server takes, in queue order. An item too large for any POST still
+ * goes, alone, so that the server's refusal of it uses its attempts and it ends as failed.
+ */
+function splitIntoBatches(entries: BatchEntry[]): BatchEntry[][] {
+  const encoder = new TextEncoder();
+  const batches: BatchEntry[][] = [];
+  let batch: BatchEntry[] = [];
+  let bytes = 0;
+  for (const entry of entries) {
+    const size = encoder.encode(JSON.stringify(entry.sent)).length + 1; // the comma after it
+    if (batch.length > 0 && (batch.length >= BATCH_MAX_ITEMS || bytes + size > BATCH_MAX_BYTES)) {
+      batches.push(batch);
+      batch = [];
+      bytes = 0;
+    }
+    batch.push(entry);
+    bytes += size;
+  }
+  if (batch.length > 0) batches.push(batch);
+  return batches;
+}
+
 /** The pass over the native queue under way, if any (see flushNativeQueue). */
 let nativePass: Promise<{ flushed: number; failed: number }> | null = null;
 
@@ -204,6 +241,9 @@ let nativePass: Promise<{ flushed: number; failed: number }> | null = null;
  * native bridge/sync surface is absent. Never throws — transport/bridge failures leave items queued.
  * Another account's items are not sent through this session's cookies: they wait, untouched, for
  * that account to sign in again.
+ *
+ * `failed` counts the items that ended as failed in this pass, as the browser queue's does. One that
+ * used an attempt and has more left is still queued, and "Sync now" must not call it failed.
  */
 export async function flushNativeQueue(): Promise<{ flushed: number; failed: number }> {
   const sync = nativeSync();
@@ -253,7 +293,9 @@ async function drainNativeQueue(sync: NonNullable<FormLogicNativeBridge['sync']>
 
   let flushed = 0;
   let failed = 0;
-  for (const group of groups) {
+  // Items that used an attempt in this pass: only the runtime knows which of them it was the last of.
+  const attempted: string[] = [];
+  pass: for (const group of groups) {
     const slug = group?.appSlug;
     const items = (Array.isArray(group?.items) ? group.items : []).filter(ownedByCurrentSession);
     if (!slug || items.length === 0) continue;
@@ -261,8 +303,7 @@ async function drainNativeQueue(sync: NonNullable<FormLogicNativeBridge['sync']>
     // Build the POST payload. An item whose answers can't be resolved is NOT delivered as an empty
     // submission (that would poison its idempotency key) — it's failed and left queued for a later
     // flush that carries its answers.
-    const payload: Array<{ idempotencyKey: string; formId: string; answers: Record<string, unknown> }> = [];
-    const payloadItems: NativeSyncQueueItem[] = [];
+    const entries: BatchEntry[] = [];
     const unresolvedIds: string[] = [];
     for (const it of items) {
       const answers = await resolveAnswers(it);
@@ -270,104 +311,121 @@ async function drainNativeQueue(sync: NonNullable<FormLogicNativeBridge['sync']>
         unresolvedIds.push(it.id);
         continue;
       }
-      payload.push({ idempotencyKey: it.idempotencyKey, formId: it.formId, answers });
-      payloadItems.push(it);
+      entries.push({ item: it, sent: { idempotencyKey: it.idempotencyKey, formId: it.formId, answers } });
     }
     if (unresolvedIds.length) {
       try { await sync.fail?.(unresolvedIds, 'answers unavailable at flush'); } catch { /* ignore */ }
-      failed += unresolvedIds.length;
-    }
-    if (payload.length === 0) continue;
-
-    const res = await api.syncBatch(slug, payload);
-    if (res.unreadable) {
-      // A 2xx whose body is not JSON: not FormLogic's answer (a Wi-Fi sign-in page, an SPA
-      // fallback serving index.html for /api). It carries no status, which read as "not reached"
-      // below and used no attempt, so a server that always answers this way kept the items
-      // waiting for ever. Each uses an attempt, as the browser queue's do, with the same reason.
-      try { await sync.fail?.(payloadItems.map((i) => i.id), 'The server answered in a way FormLogic does not recognise'); } catch { /* ignore */ }
-      failed += payloadItems.length;
-      continue;
-    }
-    if ((res.error || !res.data) && (res.status === undefined || isUnreachableStatus(res.status))) {
-      // The server was not reached (the api layer gives no status then), or asked to be tried
-      // later (isUnreachableStatus): nothing was judged, so nothing is failed — sync.fail would use up one of
-      // the runtime's attempts, and an outage would turn queued submissions into failed ones.
-      // The items stay queued as they are, and the other groups would meet the same outage, so
-      // this flush ends here; the next reconnect or "Sync now" tries again.
-      break;
-    }
-    if (res.error || !res.data) {
-      // Whole-batch transport failure — keep every delivered item (retryable) with the error recorded.
-      const err = typeof res.error === 'string' ? res.error : 'Sync failed';
-      try { await sync.fail?.(payloadItems.map((i) => i.id), err); } catch { /* ignore */ }
-      failed += payloadItems.length;
-      continue;
+      attempted.push(...unresolvedIds);
     }
 
-    // Map the server's per-item results (keyed by idempotencyKey) back to queue-item ids, preserving
-    // the idempotency distinctions so ack / fail / keep can be decided precisely (see syncBatch).
-    const byKey = new Map<string, { success: boolean; idempotent: boolean; conflict: boolean; processing: boolean; error: string | null }>();
-    for (const r of res.data.results ?? []) {
-      if (r && typeof r.idempotencyKey === 'string') {
-        byKey.set(r.idempotencyKey, {
-          success: r.success === true,
-          idempotent: r.idempotent === true,
-          conflict: r.conflict === true,
-          processing: r.processing === true,
-          error: r.error ?? null,
-        });
-      }
-    }
-    const ackIds: string[] = [];
-    const failIds: string[] = [];
-    const terminalIds: string[] = [];
-    let failError = 'Sync failed';
-    let terminalError = 'Idempotency conflict';
-    for (const it of payloadItems) {
-      const r = byKey.get(it.idempotencyKey);
-      // ACK a fresh success OR an idempotent replay — in both cases the server already holds this exact
-      // submission, so the item can be removed from the queue.
-      if (r?.success || r?.idempotent) {
-        ackIds.push(it.id);
+    const batches = splitIntoBatches(entries);
+    while (batches.length > 0) {
+      const batch = batches.shift() as BatchEntry[];
+      const payloadItems = batch.map((e) => e.item);
+      const res = await api.syncBatch(slug, batch.map((e) => e.sent));
+      if (res.unreadable) {
+        // A 2xx whose body is not JSON: not FormLogic's answer (a Wi-Fi sign-in page, an SPA
+        // fallback serving index.html for /api). It carries no status, which read as "not reached"
+        // below and used no attempt, so a server that always answers this way kept the items
+        // waiting for ever. Each uses an attempt, as the browser queue's do, with the same reason.
+        try { await sync.fail?.(payloadItems.map((i) => i.id), 'The server answered in a way FormLogic does not recognise'); } catch { /* ignore */ }
+        attempted.push(...payloadItems.map((i) => i.id));
         continue;
       }
-      // KEEP a `processing` item: an in-flight duplicate is being handled server-side. Leave it queued
-      // untouched (no ack, no fail) so the next flush retries it — recording a failure would burn an
-      // attempt toward the native terminal-failure cap for something that just needs a retry. This is
-      // genuinely attempt-neutral: the native flush() never mutates attempts.
-      if (r?.processing) {
+      if ((res.error || !res.data) && (res.status === undefined || res.status === 401 || isUnreachableStatus(res.status))) {
+        // The server was not reached (the api layer gives no status then), asked to be tried
+        // later (isUnreachableStatus), or has no session to take them under (401): nothing was
+        // judged, so nothing is failed — sync.fail would use up one of the runtime's attempts, and
+        // an outage would turn queued submissions into failed ones. The items stay queued as they
+        // are, and the other groups would meet the same outage, so this flush ends here; the next
+        // reconnect or "Sync now" tries again.
+        break pass;
+      }
+      if ((res.status === 400 || res.status === 413) && batch.length > 1) {
+        // The POST was refused as a whole for its size, and nothing in it was judged, so nothing
+        // uses an attempt. A proxy in front of the server can have a lower limit than the ones
+        // above: the two halves go on their own, down to one item, whose refusal is its own.
+        const half = Math.ceil(batch.length / 2);
+        batches.unshift(batch.slice(0, half), batch.slice(half));
         continue;
       }
-      // TERMINAL-fail a `conflict` (this key was already used with a DIFFERENT submission): no retry
-      // can ever succeed, so burning attempts across flushes would only delay the inevitable while
-      // re-POSTing a doomed item. Mark it 'failed' immediately.
-      if (r?.conflict) {
-        terminalIds.push(it.id);
-        if (r.error) terminalError = r.error;
+      if (res.error || !res.data) {
+        // Whole-batch transport failure — keep every delivered item (retryable) with the error recorded.
+        const err = typeof res.error === 'string' ? res.error : 'Sync failed';
+        try { await sync.fail?.(payloadItems.map((i) => i.id), err); } catch { /* ignore */ }
+        attempted.push(...payloadItems.map((i) => i.id));
         continue;
       }
-      // FAIL everything else (retryable): validation/quota rejections and missing per-item results
-      // burn one attempt each and stay queued until the native cap promotes a poison item to 'failed'.
-      failIds.push(it.id);
-      if (r?.error) failError = r.error;
+
+      // Map the server's per-item results (keyed by idempotencyKey) back to queue-item ids, preserving
+      // the idempotency distinctions so ack / fail / keep can be decided precisely (see syncBatch).
+      const byKey = new Map<string, { success: boolean; idempotent: boolean; conflict: boolean; processing: boolean; error: string | null }>();
+      for (const r of res.data.results ?? []) {
+        if (r && typeof r.idempotencyKey === 'string') {
+          byKey.set(r.idempotencyKey, {
+            success: r.success === true,
+            idempotent: r.idempotent === true,
+            conflict: r.conflict === true,
+            processing: r.processing === true,
+            error: r.error ?? null,
+          });
+        }
+      }
+      const ackIds: string[] = [];
+      const failIds: string[] = [];
+      const terminalIds: string[] = [];
+      let failError = 'Sync failed';
+      let terminalError = 'Idempotency conflict';
+      for (const it of payloadItems) {
+        const r = byKey.get(it.idempotencyKey);
+        // ACK a fresh success OR an idempotent replay — in both cases the server already holds this exact
+        // submission, so the item can be removed from the queue.
+        if (r?.success || r?.idempotent) {
+          ackIds.push(it.id);
+          continue;
+        }
+        // KEEP a `processing` item: an in-flight duplicate is being handled server-side. Leave it queued
+        // untouched (no ack, no fail) so the next flush retries it — recording a failure would burn an
+        // attempt toward the native terminal-failure cap for something that just needs a retry. This is
+        // genuinely attempt-neutral: the native flush() never mutates attempts.
+        if (r?.processing) {
+          continue;
+        }
+        // TERMINAL-fail a `conflict` (this key was already used with a DIFFERENT submission): no retry
+        // can ever succeed, so burning attempts across flushes would only delay the inevitable while
+        // re-POSTing a doomed item. Mark it 'failed' immediately.
+        if (r?.conflict) {
+          terminalIds.push(it.id);
+          if (r.error) terminalError = r.error;
+          continue;
+        }
+        // FAIL everything else (retryable): validation/quota rejections and missing per-item results
+        // burn one attempt each and stay queued until the native cap promotes a poison item to 'failed'.
+        failIds.push(it.id);
+        if (r?.error) failError = r.error;
+      }
+      if (ackIds.length && sync.ack) {
+        try { await sync.ack(ackIds); } catch { /* ignore — items remain for the next flush */ }
+      }
+      if (terminalIds.length) {
+        // Feature-detect failTerminal: an older runtime without it falls back to a plain retryable
+        // fail, which still terminals the conflict once the native attempt cap is exhausted.
+        try {
+          if (sync.failTerminal) await sync.failTerminal(terminalIds, terminalError);
+          else if (sync.fail) await sync.fail(terminalIds, terminalError);
+        } catch { /* ignore */ }
+      }
+      if (failIds.length && sync.fail) {
+        try { await sync.fail(failIds, failError); } catch { /* ignore */ }
+      }
+      flushed += ackIds.length;
+      failed += terminalIds.length;
+      attempted.push(...failIds);
     }
-    if (ackIds.length && sync.ack) {
-      try { await sync.ack(ackIds); } catch { /* ignore — items remain for the next flush */ }
-    }
-    if (terminalIds.length) {
-      // Feature-detect failTerminal: an older runtime without it falls back to a plain retryable
-      // fail, which still terminals the conflict once the native attempt cap is exhausted.
-      try {
-        if (sync.failTerminal) await sync.failTerminal(terminalIds, terminalError);
-        else if (sync.fail) await sync.fail(terminalIds, terminalError);
-      } catch { /* ignore */ }
-    }
-    if (failIds.length && sync.fail) {
-      try { await sync.fail(failIds, failError); } catch { /* ignore */ }
-    }
-    flushed += ackIds.length;
-    failed += failIds.length + terminalIds.length;
+  }
+  if (attempted.length > 0) {
+    const used = new Set(attempted);
+    failed += (await nativeItems()).filter((i) => used.has(i.id) && i.status === 'failed').length;
   }
   return { flushed, failed };
 }

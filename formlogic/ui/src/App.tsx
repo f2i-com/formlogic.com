@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate, matchPath } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { isFormLogicMainHost } from './client-runtime/detectEnvironment';
+import { isPublicPath } from './lib/publicPaths';
 import { AppShell } from './components/layout/AppShell';
 // Landing stays eager so the unauthenticated marketing page paints immediately;
 // the authed pages below are lazy so unauthenticated visitors don't download the
@@ -238,34 +239,6 @@ function AppInitializer({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-// Routes that render for logged-out users. When a user logs out (or their session
-// expires), AppRoutes swaps to the logged-out route table — so any authed-only URL
-// they were sitting on (e.g. /forms) would fall through to the 404 page. This sends
-// them home instead, while leaving them in place on genuinely public routes (a
-// shared /form/:id link, an /app/:slug runtime, legal/marketing pages, etc.).
-const PUBLIC_PATHS = [
-  '/',
-  '/login',
-  '/signup',
-  '/connect-ai',
-  '/forgot-password',
-  '/reset-password',
-  '/accept-invite',
-  '/form/:formId',
-  '/packs',
-  '/packs/:slug',
-  '/docs',
-  '/ai-setup',
-  '/aokie',
-  '/privacy',
-  '/terms',
-  '/app/:appSlug/*',
-  '/download',
-  // OAuth consent renders signed-out too (it routes through login and back) — don't bounce
-  // a mid-flow visitor to the landing page on logout/session expiry.
-  '/oauth/authorize',
-];
-
 function AuthRedirector() {
   const user = useAuthStore((state) => state.user);
   const isInitialized = useAuthStore((state) => state.isInitialized);
@@ -277,7 +250,7 @@ function AuthRedirector() {
     if (!isInitialized) return;
     const justLoggedOut = wasAuthed.current && !user;
     wasAuthed.current = !!user;
-    if (justLoggedOut && !PUBLIC_PATHS.some((pattern) => matchPath(pattern, location.pathname))) {
+    if (justLoggedOut && !isPublicPath(location.pathname)) {
       navigate('/', { replace: true });
     }
   }, [user, isInitialized, location.pathname, navigate]);

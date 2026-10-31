@@ -13,14 +13,15 @@ import { chatPrivacyBadge, chatThreadTitle, chatToolLinkPath } from './siteChatV
 import { __resetChatStoresForTests, __setChatStoreIndexedDbForTests, getChatStore } from './chatStore';
 import type { ChatTurnOutcome, SendChatTurnOptions } from './chatEngine';
 import { useAuthStore } from '../../stores/authStore';
+import { useToastStore } from '../../stores/toastStore';
 import { useUIStore } from '../../stores/uiStore';
+import { api } from '../../lib/api';
 import { logger } from '../../lib/logger';
 
 const h = vi.hoisted(() => ({
   sendChatTurn: vi.fn(),
   answerToolProposal: vi.fn(),
   getAiPreferences: vi.fn(),
-  invalidateAiPreferencesCache: vi.fn(),
   demoAttach: vi.fn(),
   demoRespond: vi.fn(),
   lastLocation: '',
@@ -56,7 +57,6 @@ vi.mock('./demoChatDirector', () => {
 
 vi.mock('../../client-runtime/flows/aiDefault', () => ({
   getAiPreferences: h.getAiPreferences,
-  invalidateAiPreferencesCache: h.invalidateAiPreferencesCache,
 }));
 
 // framer-motion is drag/animation plumbing the widget test doesn't exercise — render
@@ -282,6 +282,36 @@ describe('mounting', () => {
 });
 
 describe('send path', () => {
+  it('keeps the reply on screen and leaves Send usable when the reply cannot be saved', async () => {
+    const store = getChatStore('u1');
+    const append = store.appendMessage.bind(store);
+    vi.spyOn(store, 'appendMessage').mockImplementation(async (threadId, role, ...rest) => {
+      if (role === 'assistant') throw new Error('disk full');
+      return append(threadId, role, ...rest);
+    });
+    await renderWidget();
+    await openPanel();
+
+    await send('first');
+    expect(panel()!.textContent).toContain('Hi there');
+    await send('second');
+
+    expect(h.sendChatTurn).toHaveBeenCalledTimes(2);
+  });
+
+  it('tells the person when history moved to memory during the session', async () => {
+    const persistent = vi.spyOn(getChatStore('u1'), 'persistent', 'get').mockReturnValue(true);
+    await renderWidget();
+    await openPanel();
+    await send('first');
+    expect(panel()!.textContent).not.toContain('lasts for this session only');
+
+    persistent.mockReturnValue(false);
+    await send('second');
+
+    expect(panel()!.textContent).toContain('lasts for this session only');
+  });
+
   it('keeps a Dashboard launch queued until the chat user is ready', async () => {
     useAuthStore.setState({ user: null, isLoading: true, isInitialized: false, error: null });
     useUIStore.setState({
@@ -442,6 +472,55 @@ describe('send path', () => {
     const threads = await store.listThreads();
     const { messages } = await store.listMessages(threads[0].id);
     expect(messages.map((m) => m.content)).toEqual(['hello?', 'back online']);
+  });
+});
+
+describe('Ask first / Auto toggle', () => {
+  const toggle = () =>
+    Array.from(panel()!.querySelectorAll('button')).find((b) => /^(Auto|Ask first)$/.test(b.textContent ?? ''))!;
+  const errors = () => useToastStore.getState().toasts.filter((t) => t.type === 'error');
+
+  beforeEach(() => useToastStore.getState().clearToasts());
+
+  it('sends back what is saved now, not what chat opened with', async () => {
+    const put = vi.spyOn(api, 'putAiPreferences').mockResolvedValue({ data: { ...PREFS, chatToolMode: 'confirm' } } as never);
+    await renderWidget();
+    await openPanel();
+    // Settings moves the account to Desktop while the widget stays mounted.
+    h.getAiPreferences.mockResolvedValue({ ok: true, data: { ...PREFS, aiSource: 'desktop', desktopProviderId: 'picked-in-settings' } });
+
+    await act(async () => toggle().click());
+    await flush();
+
+    expect(h.getAiPreferences).toHaveBeenLastCalledWith({ fresh: true });
+    expect(put).toHaveBeenCalledWith(expect.objectContaining({ aiSource: 'desktop', desktopProviderId: 'picked-in-settings', chatToolMode: 'confirm' }));
+    expect(toggle().textContent).toBe('Ask first');
+  });
+
+  it('saves nothing and says so when the fresh read fails', async () => {
+    const put = vi.spyOn(api, 'putAiPreferences');
+    await renderWidget();
+    await openPanel();
+    h.getAiPreferences.mockResolvedValue({ ok: false, error: { code: 'transport', message: 'offline' } });
+
+    await act(async () => toggle().click());
+    await flush();
+
+    expect(put).not.toHaveBeenCalled();
+    expect(errors()).toEqual([expect.objectContaining({ message: 'offline' })]);
+    expect(toggle().textContent).toBe('Auto');
+  });
+
+  it('says so when the save is refused', async () => {
+    vi.spyOn(api, 'putAiPreferences').mockResolvedValue({ error: 'refused' } as never);
+    await renderWidget();
+    await openPanel();
+
+    await act(async () => toggle().click());
+    await flush();
+
+    expect(errors()).toEqual([expect.objectContaining({ message: 'refused' })]);
+    expect(toggle().textContent).toBe('Auto');
   });
 });
 

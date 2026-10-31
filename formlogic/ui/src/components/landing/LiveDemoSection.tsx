@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, ChevronLeft, ChevronRight, Loader2, Search, Sparkles, X } from 'lucide-react';
 import { api } from '../../lib/api';
+import { toast } from '../../stores/toastStore';
 import { DynamicIcon } from '../ui/DynamicIcon';
 
 const PAGE_SIZE = 9;
@@ -193,7 +194,10 @@ export function LiveDemoSection() {
       // No slug → open the whole FormLogic platform (Dashboard at /dashboard, since "/" is the
       // marketing landing for the demo). A slug → jump straight into that business app.
       const res = await api.startDemo();
-      if (res.error || !res.data) return;
+      if (res.error || !res.data) {
+        toast.error('Could not start the demo', typeof res.error === 'string' ? res.error : 'Please try again.');
+        return;
+      }
       window.open(slug ? `/app/${slug}` : '/dashboard', '_blank', 'noopener');
     } finally {
       setLaunching(null);

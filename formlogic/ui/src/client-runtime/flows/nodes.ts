@@ -514,6 +514,7 @@ function exprContext(ctx: FlowNodeContext): Record<string, unknown> {
     app: ctx.scope.app ?? null,
     nodes: ctx.scope.nodes ?? {},
     upstream: ctx.scope.upstream ?? null,
+    ...(ctx.scope.data !== undefined ? { data: ctx.scope.data } : {}),
   };
 }
 

@@ -62,6 +62,7 @@ import {
   updateDemoAppRole,
 } from './demoLocalApps';
 import { API_BASE_URL } from './apiBase';
+import { noteAiPreferencesSaved } from './websiteAiRouting';
 import { copyHostedActor, HOSTED_ACTOR_ERROR, type HostedActor } from './hostedActor';
 import type { ResponseEnvelope } from './crypto/envelope';
 import type {
@@ -1226,8 +1227,11 @@ class ApiClient {
   // mode must refuse both directions: /account/* is default-denied by
   // actingRoute, and these raw-fetch methods carry their own explicit guards.
 
-  /** Download the full account backup zip (apps/forms/flows + records + files), sealed when given a passphrase. */
-  async exportAccountBackup(passphrase?: string): Promise<void> {
+  /**
+   * Download the full account backup zip (apps/forms/flows + records + files), sealed when given a
+   * passphrase. Returns the upload limit in bytes when this backup is over it, else null.
+   */
+  async exportAccountBackup(passphrase?: string): Promise<number | null> {
     const generation = currentSessionGeneration();
     if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
     const sealing: RequestInit = passphrase
@@ -1253,6 +1257,7 @@ class ApiClient {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    return Number(response.headers.get('X-Backup-Restore-Limit')) || null;
   }
 
   /** Restore a backup zip — creates COPIES of everything (never overwrites). */
@@ -4465,6 +4470,7 @@ class ApiClient {
   /** PUT /api/ai/preferences — save the AI source + chat tool mode. Returns the saved state. */
   async putAiPreferences(input: AiPreferencesInput): Promise<DesktopAiApiResponse<AiPreferencesState>> {
     const res = await this.desktopAiRequest<unknown>('/ai/preferences', { method: 'PUT', body: JSON.stringify(input) });
+    noteAiPreferencesSaved(); // even on a failure: a lost answer can follow a write that landed
     if (res.error) return desktopAiErrorOnly(res);
     return { data: normalizeAiPreferences(res.data), status: res.status };
   }
@@ -4773,8 +4779,8 @@ class ApiClient {
   }
 
   /** Apply is bound to the EXACT reviewed package (review FL-008): id + digest ride along. */
-  async adminUpgradeApply(packageId: string, digest: string, keepMaintenanceOn = false): Promise<ApiResponse<{ ok: boolean; fromVersion: string; toVersion: string; backupId: string; journal: string[] }>> {
-    return this.request('/admin/upgrade/apply', { method: 'POST', body: JSON.stringify({ confirm: true, keepMaintenanceOn, packageId, digest }) });
+  async adminUpgradeApply(packageId: string, digest: string, keepMaintenanceOn = false, allowDowngrade = false): Promise<ApiResponse<{ ok: boolean; fromVersion: string; toVersion: string; backupId: string; journal: string[] }>> {
+    return this.request('/admin/upgrade/apply', { method: 'POST', body: JSON.stringify({ confirm: true, keepMaintenanceOn, packageId, digest, allowDowngrade }) });
   }
 
   async adminUpgradeRollback(backupId: string): Promise<ApiResponse<{ ok: boolean; restoredVersion: string; journal: string[] }>> {

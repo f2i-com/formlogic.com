@@ -53,7 +53,8 @@ export function resolvePath(root: unknown, path: string[]): unknown {
 export function isSelector(value: unknown): value is string {
   if (typeof value !== 'string' || !value.startsWith('$')) return false;
   const root = value.split('.', 1)[0];
-  return ['$event', '$app', '$result', '$input', '$inputs', '$nodes', '$upstream'].includes(root);
+  return ['$event', '$app', '$result', '$input', '$inputs', '$nodes', '$upstream'].includes(root)
+    || value === '$.data' || value.startsWith('$.data.');
 }
 
 /**
@@ -63,8 +64,10 @@ export function isSelector(value: unknown): value is string {
 export function resolveSelector(value: unknown, scope: SelectorScope): unknown {
   if (!isSelector(value)) return value;
   const [root, ...path] = value.split('.');
+  if (root === '$') path.shift(); // '$.data.<port>': the root is the two segments together
   let base: unknown;
   switch (root) {
+    case '$': base = scope.data; break;
     case '$event': base = scope.event; break;
     case '$app': base = scope.app; break;
     case '$result': base = scope.result; break;
@@ -150,5 +153,6 @@ export function scopeToContext(scope: SelectorScope): Record<string, unknown> {
     inputs: scope.inputs,
     nodes: scope.nodes,
     upstream: scope.upstream,
+    data: scope.data,
   };
 }

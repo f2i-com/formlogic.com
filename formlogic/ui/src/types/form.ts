@@ -225,6 +225,8 @@ export interface Form {
   description?: string;
   fields: FormField[];
   fieldCount?: number;
+  /** Which state of the fields this copy holds, from the server: see FormService::fieldsRevision. */
+  fieldsRevision?: string;
   settings: FormSettings;
   theme: FormTheme;
   logicScript?: string;

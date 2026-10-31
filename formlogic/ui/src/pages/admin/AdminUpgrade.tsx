@@ -79,7 +79,7 @@ export function AdminUpgrade() {
     setJournal(null);
     // Bind the apply to the exact reviewed package (id + digest) so a
     // concurrent re-stage 409s instead of silently applying other bytes.
-    const r = await api.adminUpgradeApply(staged.packageId, staged.digest);
+    const r = await api.adminUpgradeApply(staged.packageId, staged.digest, false, staged.isDowngrade);
     setApplying(false);
     if (r.error) {
       toast.error('Upgrade failed', r.error);
@@ -282,8 +282,8 @@ export function AdminUpgrade() {
         onClose={() => setConfirmApply(false)}
         onConfirm={apply}
         title={`Install v${status.staged?.version}?`}
-        message="The site closes for maintenance, the database is exported and the current code is snapshotted automatically, then the new files are applied and the site reopens. User form data (SQLite databases, uploads) and your .env are never touched. You can roll the code back from the backup afterwards."
-        confirmLabel="Install upgrade"
+        message={`${status.staged?.isDowngrade ? `This is OLDER than the running v${status.staged.currentVersion}, and can bring back problems a newer release fixed. ` : ''}The site closes for maintenance, the database is exported and the current code is snapshotted automatically, then the new files are applied and the site reopens. User form data (SQLite databases, uploads) and your .env are never touched. You can roll the code back from the backup afterwards.`}
+        confirmLabel={status.staged?.isDowngrade ? 'Install older version' : 'Install upgrade'}
       />
       <ConfirmDialog
         isOpen={rollbackId !== null}

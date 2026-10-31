@@ -247,7 +247,14 @@ export function DesktopConnectionPopover() {
     if (!prefsApi || !aiPrefs || aiSaving || source === aiPrefs.aiSource) return;
     setAiSaving(true);
     try {
-      const res = await prefsApi.putAiPreferences({ ...aiPrefs, aiSource: source });
+      // The PUT replaces the whole row and `aiPrefs` is from when the popover opened: read
+      // what is saved now, or this would undo anything changed in Settings since.
+      const fresh = await prefsApi.getAiPreferences();
+      if (!fresh.data) {
+        addToast({ type: 'error', title: 'AI source could not be saved.', message: fresh.error });
+        return;
+      }
+      const res = await prefsApi.putAiPreferences({ ...fresh.data, aiSource: source });
       if (res.data) {
         setAiPrefs(res.data);
         addToast({ type: 'success', title: `AI source set to ${source === 'site' ? 'Site AI' : source === 'desktop' ? 'Desktop AI' : 'Custom'}.` });

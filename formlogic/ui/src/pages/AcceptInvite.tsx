@@ -28,6 +28,18 @@ export function AcceptInvite() {
   );
   const attempted = useRef(false);
 
+  // The trip to /apps is only for someone still on this page: anyone who has moved on stays
+  // where they went. Not cleaned up in the effect below, which also re-runs when `user` changes.
+  const leftPage = useRef(false);
+  const redirectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    leftPage.current = false;
+    return () => {
+      leftPage.current = true;
+      clearTimeout(redirectTimer.current);
+    };
+  }, []);
+
   useEffect(() => {
     if (!token || !user || attempted.current) return;
     attempted.current = true;
@@ -35,7 +47,7 @@ export function AcceptInvite() {
     acceptInvitation(token)
       .then(() => {
         setStatus('success');
-        setTimeout(() => navigate('/apps'), 1500);
+        if (!leftPage.current) redirectTimer.current = setTimeout(() => navigate('/apps'), 1500);
       })
       .catch((e) => {
         setStatus('error');

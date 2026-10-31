@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { isUnsafePattern } from '../lib/patternGuard';
 import type { FormField } from '../types/form';
 
 export type FieldStatus = 'green' | 'yellow' | 'red';
@@ -40,10 +41,7 @@ function hasPatternError(field: FormField, value: unknown): string | null {
   if (typeof value !== 'string') return null;
   try {
     const pat = patternRule.value;
-    if (pat.length > 500) return patternRule.message || 'Value does not match the required pattern';
-    if (/(\+|\*|\{[^}]*\})\s*(\+|\*|\{[^}]*\})/.test(pat) || /\([^)]*\|[^)]*\)\+/.test(pat)) return patternRule.message || 'Value does not match the required pattern';
-    const regex = new RegExp(pat);
-    if (!regex.test(value)) {
+    if (!isUnsafePattern(pat) && !new RegExp(pat).test(value)) {
       return patternRule.message || 'Value does not match the required pattern';
     }
   } catch {

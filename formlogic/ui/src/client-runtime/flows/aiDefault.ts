@@ -21,6 +21,7 @@
 import { api } from '../../lib/api';
 import { resolveBackendApiUrl } from '../../lib/apiBase';
 import { logger } from '../../lib/logger';
+import { aiPreferenceSaveCount } from '../../lib/websiteAiRouting';
 import { useAuthStore } from '../../stores/authStore';
 import {
   chatViaTunnel,
@@ -119,12 +120,10 @@ function stringOrNull(value: unknown): string | null {
 
 const PREFS_CACHE_TTL_MS = 60_000;
 
-let prefsCache: { userId: string | null; at: number; prefs: AiPreferences } | null = null;
-
-/** Drop the cached preferences (e.g. after the user saves Settings → AI). */
-export function invalidateAiPreferencesCache(): void {
-  prefsCache = null;
-}
+// `saves` is the count when the read BEGAN, so any api.putAiPreferences outdates this entry,
+// and a read a save overtook can't cache the old values after it. Someone who switches to
+// Desktop for privacy, or to Ask first, gets that on the very next turn.
+let prefsCache: { userId: string | null; at: number; saves: number; prefs: AiPreferences } | null = null;
 
 interface RawFetchOutcome {
   ok: boolean;
@@ -277,13 +276,14 @@ export function __resetAiDefaultForTests(): void {
  */
 export async function getAiPreferences(options: { fresh?: boolean } = {}): Promise<AiDefaultResult<AiPreferences>> {
   const userId = useAuthStore.getState().user?.id ?? null;
-  if (!options.fresh && prefsCache && prefsCache.userId === userId && Date.now() - prefsCache.at < PREFS_CACHE_TTL_MS) {
+  const saves = aiPreferenceSaveCount();
+  if (!options.fresh && prefsCache && prefsCache.userId === userId && prefsCache.saves === saves && Date.now() - prefsCache.at < PREFS_CACHE_TTL_MS) {
     return { ok: true, data: prefsCache.prefs };
   }
   const fetcher = prefsFetcherForTests ?? fetchAiPreferencesUncached;
   const res = await fetcher();
   if (res.ok) {
-    prefsCache = { userId, at: Date.now(), prefs: res.data };
+    prefsCache = { userId, at: Date.now(), saves, prefs: res.data };
   }
   return res;
 }

@@ -13,7 +13,6 @@ import {
   editorAiLabel,
   explainDesktopAiError,
   getAiPreferences,
-  invalidateAiPreferencesCache,
   resolveDefaultLlm,
   type AiDefaultResult,
   type AiPreferences,
@@ -21,6 +20,7 @@ import {
 } from './aiDefault';
 import type { ResolvedAiProvider } from './aiProviders';
 import type { ChatViaTunnelSuccess, DesktopTunnelResult } from '../desktop/desktopTunnel';
+import { api } from '../../lib/api';
 import { useAuthStore } from '../../stores/authStore';
 
 const MESSAGES = [{ role: 'user', content: 'hello' }];
@@ -298,10 +298,36 @@ describe('getAiPreferences — 60s cache', () => {
     await getAiPreferences();
     await getAiPreferences();
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
 
-    invalidateAiPreferencesCache();
+  it('every save through api.putAiPreferences outdates the cache, whoever made it', async () => {
+    const fetcher = vi.fn(async () => prefsOk(prefs()));
+    __setAiPreferencesFetcherForTests(fetcher);
+    vi.stubGlobal('document', { cookie: '' });
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ data: prefs({ aiSource: 'desktop' }) })));
+
     await getAiPreferences();
+    await api.putAiPreferences({ ...prefs({ aiSource: 'desktop' }), chatToolMode: 'auto' });
+    await getAiPreferences();
+
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not cache a read that a save overtook', async () => {
+    let answerRead: (value: AiDefaultResult<AiPreferences>) => void = () => undefined;
+    const fetcher = vi.fn<() => Promise<AiDefaultResult<AiPreferences>>>()
+      .mockImplementationOnce(() => new Promise((resolve) => { answerRead = resolve; }))
+      .mockResolvedValue(prefsOk(prefs({ aiSource: 'desktop' })));
+    __setAiPreferencesFetcherForTests(fetcher);
+    vi.stubGlobal('document', { cookie: '' });
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ data: prefs({ aiSource: 'desktop' }) })));
+
+    const overtaken = getAiPreferences();
+    await api.putAiPreferences({ ...prefs({ aiSource: 'desktop' }), chatToolMode: 'auto' });
+    answerRead(prefsOk(prefs({ aiSource: 'site' })));
+    await overtaken;
+
+    expect(await getAiPreferences()).toMatchObject({ ok: true, data: { aiSource: 'desktop' } });
   });
 
   it('keys the cache by user id — an account switch refetches', async () => {
@@ -416,7 +442,7 @@ describe('editorAiLabel (which AI answers an embedded editor)', () => {
     useAuthStore.setState({ user: { id: 'user-1', email: 'u@example.com' } });
   });
   const labelFor = async (value: AiPreferences) => {
-    invalidateAiPreferencesCache();
+    __resetAiDefaultForTests();
     __setAiPreferencesFetcherForTests(async () => prefsOk(value));
     return editorAiLabel();
   };
@@ -433,7 +459,7 @@ describe('editorAiLabel (which AI answers an embedded editor)', () => {
   });
 
   it('is null when the settings cannot be read', async () => {
-    invalidateAiPreferencesCache();
+    __resetAiDefaultForTests();
     __setAiPreferencesFetcherForTests(async () => ({ ok: false, error: { code: 'ai_default_unresolved', message: 'down' } }));
     expect(await editorAiLabel()).toBeNull();
   });

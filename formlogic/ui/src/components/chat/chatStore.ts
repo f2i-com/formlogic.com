@@ -4,7 +4,7 @@
 // shows another user's threads.
 //
 // Honest degradation: IndexedDB can be unavailable (private windows, storage-blocked
-// embeds, quota errors). Any failure at open or first use falls back to an in-memory
+// embeds, quota errors). A failure at open or on a write falls back to an in-memory
 // store for the session with ONE console note — chat keeps working, history just does
 // not persist. `persistent` exposes which mode the store landed in.
 //
@@ -126,8 +126,18 @@ class IdbBackend implements Backend {
     return this.db.transaction(name, mode).objectStore(name);
   }
 
+  /** Settles when the write commits: a full disk can abort it there, after the request succeeded. */
+  private commit(name: 'threads' | 'messages', write: (store: IDBObjectStore) => unknown): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(name, 'readwrite');
+      transaction.oncomplete = () => resolve();
+      transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB write aborted'));
+      write(transaction.objectStore(name));
+    });
+  }
+
   async putThread(thread: ChatThread): Promise<void> {
-    await requestToPromise(this.store('threads', 'readwrite').put(thread));
+    await this.commit('threads', (store) => store.put(thread));
   }
 
   async allThreads(): Promise<ChatThread[]> {
@@ -135,11 +145,11 @@ class IdbBackend implements Backend {
   }
 
   async deleteThread(threadId: string): Promise<void> {
-    await requestToPromise(this.store('threads', 'readwrite').delete(threadId));
+    await this.commit('threads', (store) => store.delete(threadId));
   }
 
   async putMessage(message: ChatMessage): Promise<void> {
-    await requestToPromise(this.store('messages', 'readwrite').put(message));
+    await this.commit('messages', (store) => store.put(message));
   }
 
   async allMessages(): Promise<ChatMessage[]> {
@@ -149,7 +159,7 @@ class IdbBackend implements Backend {
   async deleteMessagesForThread(threadId: string): Promise<void> {
     const doomed = (await this.allMessages()).filter((m) => m.threadId === threadId);
     for (const message of doomed) {
-      await requestToPromise(this.store('messages', 'readwrite').delete(message.id));
+      await this.commit('messages', (store) => store.delete(message.id));
     }
   }
 }
@@ -194,6 +204,9 @@ export class ChatStore {
   readonly userId: string;
   private backend: Backend | null = null;
   private initPromise: Promise<Backend> | null = null;
+  private memoryFallback: Promise<Backend> | null = null;
+  /** The database a memory fallback left behind: it still holds the history a reload shows. */
+  private leftDatabase: Backend | null = null;
   private seq = 0;
 
   constructor(userId: string) {
@@ -230,6 +243,35 @@ export class ChatStore {
     return this.backend;
   }
 
+  /** Run a write; if it fails (quota, a lost connection) repeat it in memory instead. */
+  private async write(run: (backend: Backend) => Promise<void>): Promise<void> {
+    const backend = await this.ready();
+    try {
+      await run(backend);
+    } catch (e) {
+      if (!backend.persistent) throw e;
+      await run(await this.fallBackToMemory(backend, e));
+    }
+  }
+
+  /** Carries over what the database can still read, or the session would lose its history. */
+  private fallBackToMemory(failed: Backend, cause: unknown): Promise<Backend> {
+    this.memoryFallback ??= (async () => {
+      logger.warn('[chat-store] IndexedDB write failed — chat history stays in memory for this session only.', cause);
+      const memory = new MemoryBackend();
+      try {
+        for (const thread of await failed.allThreads()) await memory.putThread(thread);
+        for (const message of await failed.allMessages()) await memory.putMessage(message);
+      } catch {
+        /* unreadable as well: the session starts from what it writes next */
+      }
+      this.leftDatabase = failed;
+      this.backend = memory;
+      return memory;
+    })();
+    return this.memoryFallback;
+  }
+
   private nextSeq(): number {
     this.seq += 1;
     return this.seq;
@@ -251,24 +293,29 @@ export class ChatStore {
   }
 
   async createThread(title = 'New chat', now = Date.now()): Promise<ChatThread> {
-    const backend = await this.ready();
     const thread: ChatThread = { id: generateId(), title, createdAt: now, updatedAt: now };
-    await backend.putThread(thread);
+    await this.write((backend) => backend.putThread(thread));
     return thread;
   }
 
   async renameThread(threadId: string, title: string): Promise<void> {
-    const backend = await this.ready();
-    const threads = await backend.allThreads();
-    const thread = threads.find((t) => t.id === threadId);
-    if (!thread) return;
-    await backend.putThread({ ...thread, title });
+    await this.write(async (backend) => {
+      const threads = await backend.allThreads();
+      const thread = threads.find((t) => t.id === threadId);
+      if (thread) await backend.putThread({ ...thread, title });
+    });
   }
 
+  /**
+   * A delete has to reach the database even after a fallback: a thread deleted only in memory is
+   * back on the next load. The database goes first, so a refusal leaves the thread showing.
+   */
   async deleteThread(threadId: string): Promise<void> {
     const backend = await this.ready();
-    await backend.deleteMessagesForThread(threadId);
-    await backend.deleteThread(threadId);
+    for (const target of this.leftDatabase ? [this.leftDatabase, backend] : [backend]) {
+      await target.deleteMessagesForThread(threadId);
+      await target.deleteThread(threadId);
+    }
   }
 
   async appendMessage(
@@ -289,12 +336,14 @@ export class ChatStore {
       createdAt: now,
       seq: this.nextSeq(),
     };
-    await backend.putMessage(message);
-    // Bump the thread's activity stamp so the list re-sorts; tolerate a missing thread
-    // (a message must never fail because its thread row is gone).
-    const threads = await backend.allThreads();
-    const thread = threads.find((t) => t.id === threadId);
-    if (thread) await backend.putThread({ ...thread, updatedAt: now });
+    await this.write(async (target) => {
+      await target.putMessage(message);
+      // Bump the thread's activity stamp so the list re-sorts; tolerate a missing thread
+      // (a message must never fail because its thread row is gone).
+      const threads = await target.allThreads();
+      const thread = threads.find((t) => t.id === threadId);
+      if (thread) await target.putThread({ ...thread, updatedAt: now });
+    });
     return message;
   }
 

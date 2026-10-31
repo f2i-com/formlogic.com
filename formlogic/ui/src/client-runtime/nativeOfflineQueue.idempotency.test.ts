@@ -108,7 +108,8 @@ describe('flushNativeQueue — idempotency-aware ack / fail / keep (task #10)', 
     expect(bridge.sync.ack.mock.calls.flat(2)).not.toContain('i-proc');
     expect(bridge.sync.failTerminal!.mock.calls.flat(2)).not.toContain('i-proc');
 
-    expect(result).toEqual({ flushed: 2, failed: 2 });
+    // The conflict has failed; i-fail has used an attempt and is still queued.
+    expect(result).toEqual({ flushed: 2, failed: 1 });
   });
 
   it('acks an idempotent replay even if success is false (a 200 replay carries idempotent:true)', async () => {
@@ -169,7 +170,7 @@ describe('flushNativeQueue — idempotency-aware ack / fail / keep (task #10)', 
     expect(bridge.sync.ack).not.toHaveBeenCalled();
     expect(bridge.sync.fail).toHaveBeenCalledWith(['i-fail'], 'Failed');
     expect(bridge.sync.failTerminal).not.toHaveBeenCalled();
-    expect(result).toEqual({ flushed: 0, failed: 1 });
+    expect(result).toEqual({ flushed: 0, failed: 0 });
   });
 
   it('terminal-fails a conflict immediately via failTerminal (never a retryable fail)', async () => {
@@ -226,6 +227,6 @@ describe('flushNativeQueue — idempotency-aware ack / fail / keep (task #10)', 
     expect(bridge.sync.fail).toHaveBeenCalledWith(['i1', 'i2'], 'Server error (500)');
     expect(bridge.sync.failTerminal).not.toHaveBeenCalled();
     expect(bridge.sync.ack).not.toHaveBeenCalled();
-    expect(result).toEqual({ flushed: 0, failed: 2 });
+    expect(result).toEqual({ flushed: 0, failed: 0 });
   });
 });

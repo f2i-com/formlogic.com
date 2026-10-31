@@ -329,7 +329,7 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
   // runs for EVERY source (flat pack, legacy zip, signed envelope, binary archive) and is blocking —
   // the previous version was best-effort and only ran for signed envelopes, so a failed or skipped
   // review still allowed an import that activated every requested connector grant.
-  const loadPackageReview = useCallback(async (source: ReviewSource) => {
+  const loadPackageReview = useCallback(async (source: ReviewSource, keepGrants?: Set<string>) => {
     const seq = ++reviewSeqRef.current;
     reviewSourceRef.current = source;
     setPackageReview(null);
@@ -369,7 +369,9 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
             };
             setV2Plan(v2PlanRef.current);
             setPackageReview({ trust: proposal.data.trust, formatVersion: 2, capabilities: proposal.data.capabilities });
-            setApprovedGrants(new Set(reviewableConnectorGrants(proposal.data.capabilities)));
+            // A review restarted after a failed confirm keeps what was unticked: a grant someone
+            // refused must not come back ticked behind the error they just read.
+            setApprovedGrants(new Set(reviewableConnectorGrants(proposal.data.capabilities).filter((grant) => !keepGrants || keepGrants.has(grant))));
           } else {
             setReviewError(typeof proposal.error === 'string' && proposal.error !== '' ? proposal.error : 'The install-plan review failed.');
           }
@@ -647,8 +649,15 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
     } catch (err) {
       toast.error('Import failed', err instanceof Error ? err.message : 'Unknown error');
     }
+    // A plan is single-use: the server spends it on a failed confirm, so keeping it would make
+    // every later Import fail with "propose it again". A fresh review does that. The cancel is
+    // for the cases that never reached the plan, such as a lost connection.
+    if (v2Plan) {
+      await api.cancelPackageInstallPlan(v2Plan.planId).catch(() => undefined);
+      if (reviewSourceRef.current) void loadPackageReview(reviewSourceRef.current, approvedGrants);
+    }
     setImporting(false);
-  }, [uploadedPack, pendingArchiveFile, signedEnvelope, v2Plan, importing, packageReview, approvedGrants, refreshForms, fetchApps, loadInstallations, handleClose]);
+  }, [uploadedPack, pendingArchiveFile, signedEnvelope, v2Plan, importing, packageReview, approvedGrants, refreshForms, fetchApps, loadInstallations, handleClose, loadPackageReview]);
 
   const handleUninstall = useCallback(async (installationId: string) => {
     setUninstallingId(installationId);

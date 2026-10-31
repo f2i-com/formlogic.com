@@ -22,6 +22,7 @@ import { cn } from '../../../lib/utils';
 import { usePersistentBoolean } from '../../../hooks/usePersistentBoolean';
 import { Button } from '../../ui/Button';
 import { BottomSheet } from '../../ui/BottomSheet';
+import { ConfirmDialog } from '../../ui/ConfirmDialog';
 import { FlowCanvas } from './FlowCanvas';
 import { EMPTY_DESKTOP_PRESENCE, FlowDesktopPresenceContext, FlowFormsContext, FlowNodeSignalsContext, FlowTriggerBindingsContext } from './flowNodeContext';
 import { NodePalette } from './NodePalette';
@@ -47,6 +48,7 @@ import '../registry/installedNodeProvider';
 import { setServiceCatalogForProjections } from '../registry/serviceNodeProvider';
 import { fetchServiceCatalogOnce } from '../../../hooks/useServiceCatalog';
 import { useInstalledNodeStore } from '../../../stores/installedNodeStore';
+import { toast } from '../../../stores/toastStore';
 import { lintNodeIssues } from '../flowGraphLint';
 import type { NodeStatusMap } from '../runStatus';
 import type { FlowBinding, FlowDefinition, WorkflowGraph } from '../../../types/flows';
@@ -101,15 +103,49 @@ interface FlowEditorProps {
   cloudUnsupportedNodes?: string[] | null;
 }
 
+/** A save on its way: the serialized graph it carries, and whether it landed. Never rejects. */
+interface RunningSave {
+  snapshot: string;
+  done: Promise<boolean>;
+}
+
+/**
+ * Saves still on their way from an editor that has closed, by flow id. Reopening before the answer
+ * would seed from the flow's old copy: the last edit gone from the screen, nothing marked unsaved,
+ * and the next edit autosaving the old graph over it. This lives at module level because leaving
+ * by the sidebar takes the whole workspace, and its copy of the flow, with it.
+ */
+const savesFromClosedEditors = new Map<string, RunningSave>();
+
+/** Send a serialized graph. A rejected save counts as a failed one, so nothing waits on it forever. */
+async function sendGraph(onSave: FlowEditorProps['onSave'], snapshot: string): Promise<boolean> {
+  // Intentional save = the graph-v2 write point: every edge gains a stable persisted id
+  // (stored ids kept, legacy edges get deterministic endpoint ids). The dirty baseline
+  // keeps comparing the id-less serialization, so this never re-dirties the editor.
+  const graph = assignEdgeIds(JSON.parse(snapshot) as WorkflowGraph);
+  try {
+    return await onSave({ flowJson: graph, nodeCapabilities: computeCapabilitiesFromGraph(graph) });
+  } catch (e) {
+    toast.error('Failed to save flow', e instanceof Error ? e.message : undefined);
+    return false;
+  }
+}
+
 function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory, onToggleTriggers, historyOpen, triggersOpen = false, triggerCount = 0, forms = [], context = EMPTY_FLOW_EDITOR_CONTEXT, nodeStatus, desktopPresence = EMPTY_DESKTOP_PRESENCE, bindings = [], scopeLabel, onExecutionLocationChange, cloudDisabledReason = null, cloudUnsupportedNodes = null }: FlowEditorProps) {
   // Seed React Flow state once (the parent renders this keyed by flow.id, so a flow switch
   // remounts with a fresh initial graph). A lazy useState initializer runs exactly on mount.
-  const [initialGraph] = useState(() => graphToReactFlow(flow.flowJson ?? { nodes: [], edges: [] }));
+  const [leftBehind] = useState(() => savesFromClosedEditors.get(flow.id) ?? null);
+  const [initialGraph] = useState(() => graphToReactFlow(
+    leftBehind ? (JSON.parse(leftBehind.snapshot) as WorkflowGraph) : (flow.flowJson ?? { nodes: [], edges: [] }),
+  ));
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<FlowRFNode>(initialGraph.nodes);
   const [edges, setEdges, onEdgesChangeBase] = useEdgesState<FlowRFEdge>(initialGraph.edges);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [failedSaveGraph, setFailedSaveGraph] = useState<string | null>(null);
+  const [confirmingLeave, setConfirmingLeave] = useState(false);
+  const runningSaveRef = useRef<RunningSave | null>(null);
+  const discardOnLeaveRef = useRef(false);
   const reactFlow = useReactFlow<FlowRFNode, FlowRFEdge>();
 
   // FLOW-204: fetch the owner's installed contributed node definitions once per session so the
@@ -159,6 +195,15 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
   const [savedGraph, setSavedGraph] = useState<string>(() => JSON.stringify(reactFlowToGraph(initialGraph.nodes, initialGraph.edges)));
   const dirty = serialized !== savedGraph;
   const saveFailed = dirty && failedSaveGraph === serialized;
+
+  // The save this editor opened on failed, so that graph now exists only here: mark it unsaved,
+  // which also has autosave try again.
+  useEffect(() => {
+    if (!leftBehind) return;
+    let current = true;
+    void leftBehind.done.then((landed) => { if (!landed && current) setSavedGraph(''); });
+    return () => { current = false; };
+  }, [leftBehind]);
 
   // --- coarse undo/redo (structural edits) --------------------------------
   // The stacks are refs (mutated inside callbacks, never read during render); canUndo/canRedo
@@ -357,12 +402,12 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
   const save = useCallback(async () => {
     if (saving) return;
     const snapshot = serialized;
-    // Intentional save = the graph-v2 write point: every edge gains a stable persisted id
-    // (stored ids kept, legacy edges get deterministic endpoint ids). The dirty baseline
-    // keeps comparing the id-less serialization, so this never re-dirties the editor.
-    const graph = assignEdgeIds(JSON.parse(snapshot) as WorkflowGraph);
     setSaving(true);
-    const ok = await onSave({ flowJson: graph, nodeCapabilities: computeCapabilitiesFromGraph(graph) });
+    // After the save this editor opened on, or the older graph could land last.
+    const done = leftBehind ? leftBehind.done.then(() => sendGraph(onSave, snapshot)) : sendGraph(onSave, snapshot);
+    runningSaveRef.current = { snapshot, done };
+    const ok = await done;
+    runningSaveRef.current = null;
     setSaving(false);
     if (ok) {
       setSavedGraph(snapshot);
@@ -371,7 +416,7 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
       setFailedSaveGraph(snapshot);
     }
     return ok;
-  }, [saving, serialized, onSave]);
+  }, [saving, serialized, onSave, leftBehind]);
 
   // Debounced autosave.
   useEffect(() => {
@@ -381,6 +426,49 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
   }, [dirty, saving, saveFailed, serialized, save]);
 
   if (failedSaveGraph !== null && failedSaveGraph !== serialized) setFailedSaveGraph(null);
+
+  // Unmounting kills that timer, and the sidebar or any other route can't be held up from here
+  // (BrowserRouter has no navigation blocker), so what the timer held goes out now. It runs after
+  // a save in flight, or the older graph could land last, and stays on record until it answers so
+  // a reopen starts from it. The ref is how a cleanup registered on the first render sees the
+  // last commit.
+  const latestRef = useRef({ serialized, savedGraph, onSave });
+  useEffect(() => {
+    latestRef.current = { serialized, savedGraph, onSave };
+  });
+  useEffect(() => () => {
+    const { serialized: latest, savedGraph: saved, onSave: persist } = latestRef.current;
+    const running = runningSaveRef.current;
+    if (discardOnLeaveRef.current || (!running && latest === saved)) return;
+    const before = running?.done ?? leftBehind?.done;
+    const leaving = latest === running?.snapshot ? running : {
+      snapshot: latest,
+      done: before ? before.then(() => sendGraph(persist, latest)) : sendGraph(persist, latest),
+    };
+    savesFromClosedEditors.set(flow.id, leaving);
+    void leaving.done.then(() => {
+      if (savesFromClosedEditors.get(flow.id) === leaving) savesFromClosedEditors.delete(flow.id);
+    });
+  }, [flow.id, leftBehind]);
+
+  // Autosave waits, and stops after a failure, so closing the tab can lose edits: warn before unload.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+
+  // Back waits for the graph to land, and only asks if it can't: leaving first would show the
+  // failure as a toast on the list page, with the edits already gone.
+  const leave = useCallback(async () => {
+    const saved = saving ? await runningSaveRef.current?.done : dirty ? await save() : true;
+    if (saved === false) setConfirmingLeave(true);
+    else onBack?.();
+  }, [saving, dirty, save, onBack]);
 
   // Keyboard: undo / redo + copy / paste / duplicate / select-all (ignore while typing in a field,
   // which also lets Monaco/textarea handle their own Ctrl+C/V). Delete is React Flow's native,
@@ -496,7 +584,7 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
             {onBack && (
               <button
                 type="button"
-                onClick={onBack}
+                onClick={() => void leave()}
                 aria-label="Back to flows"
                 title="Back to flows"
                 className="flex h-10 w-10 flex-none items-center justify-center rounded-xl text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
@@ -544,7 +632,7 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
       ) : (
       <div className="border-b border-gray-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <div className="flex min-h-18 items-center gap-3 px-4 py-3">
-          {onBack && <button type="button" onClick={onBack} aria-label="Back to flows" title="Back to flows"
+          {onBack && <button type="button" onClick={() => void leave()} aria-label="Back to flows" title="Back to flows"
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gray-200 text-gray-500 transition-colors hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"><ArrowLeft className="h-4 w-4" /></button>}
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-base font-semibold tracking-tight text-gray-900 dark:text-white" title={flow.name}>{flow.name}</h2>
@@ -679,6 +767,20 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
           />
         </BottomSheet>
       )}
+      <ConfirmDialog
+        isOpen={confirmingLeave}
+        onClose={() => setConfirmingLeave(false)}
+        onConfirm={() => {
+          discardOnLeaveRef.current = true;
+          setConfirmingLeave(false);
+          onBack?.();
+        }}
+        title="Leave without saving?"
+        message="Your latest changes to this flow could not be saved. If you leave now, they are lost."
+        confirmLabel="Leave without saving"
+        cancelLabel="Stay"
+        variant="danger"
+      />
     </div>
     </FlowNodeSignalsContext.Provider>
     </FlowTriggerBindingsContext.Provider>

@@ -10,8 +10,8 @@
 //   Small viewports get a fixed bottom sheet instead (docked above the mobile nav).
 // - Privacy badge (§7): the last turn's source (or the preference before a first turn)
 //   names where content goes — Desktop is E2E, Site is hosted, Custom names the service.
-// - Auto/Confirm tool-mode toggle round-trips the full preferences via
-//   api.putAiPreferences and invalidates the aiDefault cache the engine reads.
+// - Auto/Confirm tool-mode toggle reads the saved preferences afresh and round-trips
+//   them via api.putAiPreferences, which also outdates the cache the engine reads.
 // - Z-order: z-40, under the z-50 offline/maintenance banners and mobile nav (plan
 //   Phase 6 step 5), matching the DesktopConnectionPopover trigger.
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
@@ -43,11 +43,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
 import { pathClaimsBottomEdge } from '../../lib/bottomEdgeClaim';
 import { toast } from '../../stores/toastStore';
-import {
-  getAiPreferences,
-  invalidateAiPreferencesCache,
-  type AiPreferences,
-} from '../../client-runtime/flows/aiDefault';
+import { getAiPreferences, type AiPreferences } from '../../client-runtime/flows/aiDefault';
 import {
   answerToolProposal,
   sendChatTurn,
@@ -506,10 +502,18 @@ function AccountChatWidget() {
 
       if (outcome.ok) {
         setLastSource(outcome.source);
-        const assistant = await getChatStore(userId).appendMessage(threadId, 'assistant', outcome.content);
-        if (activeThreadIdRef.current === threadId) setMessages((prev) => [...prev, assistant]);
-        patchTurn((turn) => ({ ...turn, streamText: '', note: outcome.note ?? null, status: 'done' }));
-        setThreads(await getChatStore(userId).listThreads());
+        try {
+          const store = getChatStore(userId);
+          const assistant = await store.appendMessage(threadId, 'assistant', outcome.content);
+          setStorePersistent(store.persistent);
+          if (activeThreadIdRef.current === threadId) setMessages((prev) => [...prev, assistant]);
+          patchTurn((turn) => ({ ...turn, streamText: '', note: outcome.note ?? null, status: 'done' }));
+          setThreads(await store.listThreads());
+        } catch (e) {
+          // Only saving failed: the reply stays on screen, and Send must not stay locked.
+          patchTurn((turn) => ({ ...turn, streamText: outcome.content, note: outcome.note ?? null, status: 'done' }));
+          toast.error('Could not save this reply', e instanceof Error ? e.message : undefined);
+        }
       } else {
         if (outcome.source) setLastSource(outcome.source);
         patchTurn((turn) => ({ ...turn, streamText: '', error: outcome.error, status: 'failed' }));
@@ -557,9 +561,9 @@ function AccountChatWidget() {
       setThreads((existing) => [thread, ...existing]);
       setActiveThread(thread.id);
       setHasMore(false);
-      setStorePersistent(store.persistent);
     }
     const userMessage = await store.appendMessage(threadId, 'user', text, undefined, images);
+    setStorePersistent(store.persistent);
     const next = [...prior, userMessage];
     setMessages(next);
     // Demo account: the scripted director answers (guided builds / honest steering) —
@@ -620,6 +624,7 @@ function AccountChatWidget() {
       }
       const store = getChatStore(userId);
       const marker = await store.appendMessage(activeThreadId, 'assistant', `${SUMMARY_PREFIX}\n${outcome.content.trim()}`);
+      setStorePersistent(store.persistent);
       setMessages((current) => [...current, marker]);
       toast.success('Chat compacted', 'Earlier messages stay in the thread; the summary carries the context forward.');
     } finally {
@@ -688,20 +693,28 @@ function AccountChatWidget() {
     const next = prefs.chatToolMode === 'confirm' ? 'auto' : 'confirm';
     setSavingToolMode(true);
     try {
+      // Read what is saved NOW: this widget stays mounted across Settings, and `prefs` is from
+      // when chat opened, so sending it back would quietly undo a change of AI source there.
+      const fresh = await getAiPreferences({ fresh: true });
+      if (!fresh.ok) {
+        toast.error('Could not change the setting', fresh.error.message);
+        return;
+      }
       // Round-trip the COMPLETE preferences: PUT /api/ai/preferences replaces the row —
       // omitting desktopReasoning here silently cleared the user's chosen Codex
       // reasoning effort on every Ask-first/Auto toggle (audit FL-21).
       const res = await api.putAiPreferences({
-        aiSource: prefs.aiSource,
-        desktopProviderId: prefs.desktopProviderId,
-        desktopModel: prefs.desktopModel,
-        customProviderId: prefs.customProviderId,
+        aiSource: fresh.data.aiSource,
+        desktopProviderId: fresh.data.desktopProviderId,
+        desktopModel: fresh.data.desktopModel,
+        customProviderId: fresh.data.customProviderId,
         chatToolMode: next,
-        desktopReasoning: prefs.desktopReasoning ?? null,
+        desktopReasoning: fresh.data.desktopReasoning ?? null,
       });
       if (res.data) {
-        invalidateAiPreferencesCache(); // the engine reads the aiDefault cache — keep it honest
-        setPrefs({ ...prefs, chatToolMode: res.data.chatToolMode });
+        setPrefs({ ...fresh.data, chatToolMode: res.data.chatToolMode });
+      } else {
+        toast.error('Could not change the setting', res.error);
       }
     } finally {
       setSavingToolMode(false);

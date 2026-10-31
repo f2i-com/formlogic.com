@@ -232,6 +232,17 @@ describe('sendChatTurn — routing', () => {
     expect(out).toEqual({ ok: false, source: 'site', error: { code: 'request_failed', message: 'upstream died' } });
   });
 
+  it('site source fails a turn whose stream stops with no done or error', async () => {
+    const fetchFn = vi.fn(async () =>
+      sseResponse(['data: {"content":"partial"}\n\n', 'data: {"type":"tool_call","name":"create_app","status":"done"}\n\n'])
+    );
+    const states: string[] = [];
+    const out = await sendChatTurn(turn({ events: { onState: (s) => states.push(s.state) } }), prefsDeps(prefs(), { fetchFn }));
+    expect(out).toMatchObject({ ok: false, source: 'site', error: { code: 'transport' } });
+    expect(states).toContain('failed');
+    expect(states).not.toContain('done');
+  });
+
   it('site source maps a non-2xx refusal to its typed code (ai_allowance_exceeded)', async () => {
     const fetchFn = vi.fn(async () =>
       jsonResponse({ error: true, code: 'ai_allowance_exceeded', message: 'Monthly allowance used up.' }, 402)

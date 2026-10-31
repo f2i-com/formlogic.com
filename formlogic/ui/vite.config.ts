@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { replayKeepingUnanswered } from './src/lib/swReplay'
+import { isPublicFormNavigation } from './src/lib/swRoutes'
 
 // Baseline Content-Security-Policy for the app shell (E2EE plan §14 — a P3 gate).
 // Injected at BUILD time only: dev mode needs Vite's inline React-refresh preamble,
@@ -184,7 +185,9 @@ export default defineConfig(({ mode }) => {
         // iframe must load — serving index.html there would break every screen).
         // Was limited to '/app/', which broke offline routing for the platform
         // shell now that scope is '/'.
-        navigateFallbackAllowlist: [/^\/(?!api\/|app-editors\/|hosted-runtime\/|screen-host\.html)/],
+        // Public forms have a route of their own below: this fallback would answer
+        // them from the precache even online, and an embed needs the network's headers.
+        navigateFallbackAllowlist: [/^\/(?!api\/|app-editors\/|form\/|hosted-runtime\/|screen-host\.html)/],
         runtimeCaching: [
           // SECURITY: authenticated, tenant-scoped GET responses (/api/app/{slug},
           // .../forms/{id}, .../responses) are intentionally NOT cached. Workbox
@@ -194,6 +197,15 @@ export default defineConfig(({ mode }) => {
           // the image cache). Offline submission still works via the background-sync
           // POST queues below; the app shell + static assets are precached.
 
+          // Public forms: the network online, for its frame headers, the app shell offline
+          // (src/lib/swRoutes.ts).
+          {
+            urlPattern: isPublicFormNavigation,
+            handler: 'NetworkOnly',
+            options: {
+              precacheFallback: { fallbackURL: 'index.html' },
+            },
+          },
           // Queue failed app form submissions for background sync (no response cached).
           // NOTE: this queue is emptied by teardownUserSession — Workbox replays with
           // whatever cookies exist at sync time, and the server attributes the

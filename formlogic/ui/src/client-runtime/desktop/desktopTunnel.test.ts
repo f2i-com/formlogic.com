@@ -565,6 +565,282 @@ describe('chatViaTunnel state machine', () => {
     expect(res.ok).toBe(true);
   });
 
+  // Plays a relay whose read of frames was overtaken: the first stream carries only some frames
+  // and `done`, and the rest are readable after the cursor. `opens` replaces a stream outright.
+  function mockOvertakenRelay(
+    firstStream: (eph: string) => string[],
+    laterStream: (eph: string, pass: number) => string[],
+    opens: { first?: (init: RequestInit) => Promise<Response>; later?: () => Promise<Response> } = {}
+  ) {
+    let captured: Record<string, unknown> = {};
+    const streams: string[] = [];
+    setFetch(
+      vi.fn((...args: unknown[]) => {
+        const url = String(args[0]);
+        const init = (args[1] ?? {}) as RequestInit;
+        if (url.includes('/api/desktop/ai/pubkey')) {
+          return jsonResponse({ instanceId: INSTANCE, publicKey: DESKTOP.publicKeyB64, deviceName: 'Test Box' });
+        }
+        if (url.endsWith('/api/desktop/ai/requests') && init.method === 'POST') {
+          captured = JSON.parse(String(init.body)) as Record<string, unknown>;
+          DESKTOP.reset();
+          return jsonResponse({ requestId: 'req-1', status: 'pending', queuePos: 0 }, 201);
+        }
+        if (url.includes('/stream')) {
+          streams.push(url);
+          if (streams.length === 1 && opens.first) return opens.first(init);
+          if (streams.length > 1 && opens.later) return opens.later();
+          const eph = String(captured.ephPub);
+          return sseResponse(streams.length === 1 ? firstStream(eph) : laterStream(eph, streams.length));
+        }
+        return jsonResponse({ request: { requestId: 'req-1', status: 'done' } });
+      })
+    );
+    return streams;
+  }
+
+  it('reads the frames a relay done overtook before reporting complete', async () => {
+    const streams = mockOvertakenRelay(
+      (eph) => [
+        `data: ${DESKTOP.sealOutFrame(eph, { v: 1, type: 'delta', text: 'Hello' })}\n\n`,
+        'event: status\ndata: {"status":"done"}\n\n',
+        'event: end\ndata: {}\n\n',
+      ],
+      (eph) => [
+        `data: ${DESKTOP.sealOutFrame(eph, { v: 1, type: 'delta', text: ', world' })}\n\n`,
+        `data: ${DESKTOP.sealOutFrame(eph, { v: 1, type: 'done', text: 'Hello, world' })}\n\n`,
+      ]
+    );
+    const states: DesktopTunnelState[] = [];
+
+    const res = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'openai-codex-agent',
+      messages: [{ role: 'user', content: 'hi' }],
+      onState: (s) => states.push(s),
+    });
+
+    expect(res).toEqual({ ok: true, data: { threadId: expect.any(String), finalText: 'Hello, world' } });
+    expect(streams).toHaveLength(2);
+    expect(streams[1]).toContain('?since=1');
+    expect(states.filter((s) => s.state === 'done')).toHaveLength(1);
+  });
+
+  it('accepts a relay done with no frames left, and stops there', async () => {
+    const streams = mockOvertakenRelay(
+      () => ['event: status\ndata: {"status":"done"}\n\n'],
+      () => ['event: status\ndata: {"status":"done"}\n\n']
+    );
+
+    const res = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'openai-codex-agent',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+
+    expect(res.ok).toBe(true);
+    expect(streams).toHaveLength(2);
+  });
+
+  it('reads what is left when the status read is what says done', async () => {
+    const streams = mockOvertakenRelay(
+      () => [], // the connection ended before any status arrived
+      (eph) => [`data: ${DESKTOP.sealOutFrame(eph, { v: 1, type: 'done', text: 'late' })}\n\n`]
+    );
+
+    const res = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'openai-codex-agent',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+
+    expect(res).toEqual({ ok: true, data: { threadId: expect.any(String), finalText: 'late' } });
+    expect(streams).toHaveLength(2);
+  });
+
+  it.each([
+    ['refused', () => Promise.resolve(new Response('{}', { status: 503 }))],
+    ['signed out', () => Promise.resolve(new Response('{}', { status: 401 }))],
+    ['unreachable', () => Promise.reject(new Error('offline'))],
+  ])('keeps a confirmed done when the extra stream is %s', async (_how, later) => {
+    mockOvertakenRelay(
+      (eph) => [
+        `data: ${DESKTOP.sealOutFrame(eph, { v: 1, type: 'delta', text: 'Hello' })}\n\n`,
+        'event: status\ndata: {"status":"done"}\n\n',
+      ],
+      () => [],
+      { later }
+    );
+
+    const res = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'openai-codex-agent',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+
+    expect(res).toEqual({ ok: true, data: { threadId: expect.any(String), finalText: 'Hello' } });
+  });
+
+  it('keeps a confirmed done when the extra stream drops partway', async () => {
+    const dropped = new ReadableStream<Uint8Array>({ pull: (controller) => controller.error(new Error('reset')) });
+    mockOvertakenRelay(
+      () => ['event: status\ndata: {"status":"done"}\n\n'],
+      () => [],
+      { later: () => Promise.resolve(new Response(dropped, { status: 200 })) }
+    );
+
+    const res = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'openai-codex-agent',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+
+    expect(res.ok).toBe(true);
+  });
+
+  it('keeps a confirmed done when the stream drops before it closes', async () => {
+    const encoder = new TextEncoder();
+    const dropsAfterDone = new ReadableStream<Uint8Array>({
+      start: (controller) => controller.enqueue(encoder.encode('event: status\ndata: {"status":"done"}\n\n')),
+      pull: (controller) => controller.error(new Error('reset')),
+    });
+    mockOvertakenRelay(() => [], () => [], { first: () => Promise.resolve(new Response(dropsAfterDone, { status: 200 })) });
+
+    const res = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'openai-codex-agent',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+
+    expect(res.ok).toBe(true);
+  });
+
+  it('keeps a confirmed done when the stream times out before it closes', async () => {
+    vi.useFakeTimers();
+    try {
+      const encoder = new TextEncoder();
+      mockOvertakenRelay(() => [], () => [], {
+        first: (init) => Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode('event: status\ndata: {"status":"done"}\n\n'));
+            init.signal?.addEventListener('abort', () => controller.error(new Error('aborted')));
+          },
+        }), { status: 200 })),
+      });
+
+      const reply = chatViaTunnel({
+        instanceId: INSTANCE,
+        providerId: 'openai-codex-agent',
+        messages: [{ role: 'user', content: 'hi' }],
+        timeoutMs: 5_000,
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect((await reply).ok).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still reports a cancel by the caller after the relay said done', async () => {
+    const encoder = new TextEncoder();
+    const abort = new AbortController();
+    mockOvertakenRelay(() => [], () => [], {
+      first: (init) => Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode('event: status\ndata: {"status":"done"}\n\n'));
+          init.signal?.addEventListener('abort', () => controller.error(new Error('aborted')));
+          queueMicrotask(() => setTimeout(() => abort.abort(), 0));
+        },
+      }), { status: 200 })),
+    });
+
+    const res = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'openai-codex-agent',
+      messages: [{ role: 'user', content: 'hi' }],
+      signal: abort.signal,
+    });
+
+    expect(res).toMatchObject({ ok: false, error: { code: 'uncertain' } });
+  });
+
+  it('keeps reading a backlog until a pass adds nothing, however many passes it takes', async () => {
+    const streams = mockOvertakenRelay(
+      (eph) => [
+        `data: ${DESKTOP.sealOutFrame(eph, { v: 1, type: 'delta', text: 'a' })}\n\n`,
+        'event: status\ndata: {"status":"done"}\n\n',
+      ],
+      (eph, pass) => [
+        ...(pass <= 4 ? [`data: ${DESKTOP.sealOutFrame(eph, { v: 1, type: 'delta', text: `${pass}` })}\n\n`] : []),
+        'event: status\ndata: {"status":"done"}\n\n',
+      ]
+    );
+    const deltas: string[] = [];
+
+    const res = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'openai-codex-agent',
+      messages: [{ role: 'user', content: 'hi' }],
+      onDelta: (delta) => deltas.push(delta),
+    });
+
+    expect(res.ok).toBe(true);
+    expect(deltas).toEqual(['a', '2', '3', '4']);
+    expect(streams).toHaveLength(5);
+    expect(streams[3]).toContain('?since=3');
+  });
+
+  it('stops at the cap and does not call a reply it could not finish complete', async () => {
+    const streams = mockOvertakenRelay(
+      () => ['event: status\ndata: {"status":"done"}\n\n'],
+      (eph) => [
+        `data: ${DESKTOP.sealOutFrame(eph, { v: 1, type: 'delta', text: 'x' })}\n\n`,
+        'event: status\ndata: {"status":"done"}\n\n',
+      ]
+    );
+
+    const res = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'openai-codex-agent',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+
+    expect(res).toMatchObject({ ok: false, error: { code: 'uncertain' } });
+    expect(streams.length).toBeLessThan(60);
+  });
+
+  it('still fails closed when the extra stream carries a bad frame', async () => {
+    mockOvertakenRelay(
+      () => ['event: status\ndata: {"status":"done"}\n\n'],
+      () => ['data: {"seq":1,"envelope":"not a sealed envelope"}\n\n']
+    );
+
+    const res = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'openai-codex-agent',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+
+    expect(res).toMatchObject({ ok: false, error: { code: 'sealed_envelope_invalid' } });
+  });
+
+  it('does not reopen the stream after the desktop sealed its own final frame', async () => {
+    const streams = mockOvertakenRelay(
+      (eph) => [`data: ${DESKTOP.sealOutFrame(eph, { v: 1, type: 'done', text: 'fine' })}\n\n`],
+      () => []
+    );
+
+    const res = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'openai-codex-agent',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+
+    expect(res.ok).toBe(true);
+    expect(streams).toHaveLength(1);
+  });
+
   it('fails closed with sealed_envelope_invalid when a frame counter is replayed', async () => {
     mockTunnelBackend(DESKTOP, (eph) => [
       `data: ${DESKTOP.sealOutFrame(eph, { v: 1, type: 'delta', text: 'a' }, 0)}\n\n`,

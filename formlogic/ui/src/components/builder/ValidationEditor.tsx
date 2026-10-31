@@ -4,6 +4,7 @@ import { Trash2 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Dropdown } from '../ui/Dropdown';
+import { isUnsafePattern } from '../../lib/patternGuard';
 import { cn } from '../../lib/utils';
 import type { ValidationRule, FieldType } from '../../types/form';
 
@@ -190,6 +191,8 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
                     let patternError: string | undefined;
                     const raw = String(rule.value ?? '');
                     if (raw) { try { new RegExp(raw); } catch { patternError = 'Not a valid regular expression'; } }
+                    // The browser will not run it (patternGuard), so an answer hears only at submit.
+                    if (!patternError && isUnsafePattern(raw)) patternError = 'This pattern could freeze a visitor’s browser, so it is checked only when the answer is sent. To check it as they type, give a repeated group a fixed step, such as a separator.';
                     return (
                       <Input
                         label="Pattern (Regular Expression)"

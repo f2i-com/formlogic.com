@@ -49,6 +49,19 @@ it('says a custom expression rule is not checked, and offers no test run', () =>
   expect(host!.querySelector('textarea')).toBeNull();
 });
 
+// Every screen refuses all answers to such a pattern rather than run it, so the author has to be told.
+it('says when a pattern is one the browser will not run', () => {
+  render([{ id: 'p1', type: 'pattern', value: '^(a+)+$', message: 'Letters only' }]);
+  expand('Pattern:');
+  expect(host!.textContent).toContain('could freeze a visitor’s browser');
+});
+
+it('says nothing against an ordinary pattern', () => {
+  render([{ id: 'p1', type: 'pattern', value: '^[a-z]+(-[a-z]+)*$', message: 'A slug' }]);
+  expand('Pattern:');
+  expect(host!.textContent).not.toContain('could freeze');
+});
+
 it('still lets the author remove it', () => {
   render([custom, { id: 'm1', type: 'minLength', value: 2, message: 'Too short' }]);
   const remove = host!.querySelectorAll<HTMLButtonElement>('button[aria-label="Remove validation rule"]');

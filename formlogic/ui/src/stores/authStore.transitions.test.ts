@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const calls = vi.hoisted(() => ({ login: vi.fn(), logout: vi.fn(async () => ({})), getMe: vi.fn(), lockVault: vi.fn(), lockLocalVault: vi.fn(), vaultState: vi.fn(), oaiy: vi.fn() }));
 vi.mock('../lib/api', () => ({ api: { login: calls.login, logout: calls.logout, getMe: calls.getMe, onSessionExpired: vi.fn(), removeSessionExpiredCallback: vi.fn(), setAuthenticated: vi.fn(), setDemoMode: vi.fn() } }));
-vi.mock('./formStore', () => ({ useFormStore: { setState: vi.fn() }, clearAllDebounceTimers: vi.fn() }));
+vi.mock('./formStore', () => ({ useFormStore: { setState: vi.fn(), getState: () => ({ storageMode: 'api', forms: [], deviceFormsOwner: null }) }, clearAllDebounceTimers: vi.fn() }));
 vi.mock('./appStore', () => ({ useAppStore: { setState: vi.fn() } }));
 vi.mock('./appUserStore', () => ({ useAppUserStore: { getState: () => ({ reset: vi.fn() }) } }));
 vi.mock('./appRuntimeStore', () => ({ useAppRuntimeStore: { getState: () => ({ reset: vi.fn() }) } }));

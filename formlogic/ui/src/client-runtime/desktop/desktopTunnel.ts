@@ -52,6 +52,8 @@ const MAX_SSE_EVENT_CHARS = 8 * 1024 * 1024;
 const MAX_STREAM_ERROR_BODY_BYTES = 64 * 1024;
 /** Pause before resuming a cleanly-ended stream while the request is still live. */
 const RECONNECT_BACKOFF_MS = 1_000;
+/** Passes over a finished request's frames: at the relay's 200 a pass, a backlog of 10,000. */
+const MAX_DRAIN_PASSES = 50;
 
 // ---------------------------------------------------------------------------
 // Errors, results, states.
@@ -873,10 +875,19 @@ async function streamTunnelResponses(
     controller.abort();
   }, timeoutMs);
 
-  const cancelled = (): Terminal =>
-    abortKind === 'external'
-      ? { kind: 'uncertain', message: 'The stream was cancelled; the desktop may still complete the request.' }
-      : { kind: 'uncertain', message: 'Timed out waiting for the desktop; the request may still complete.' };
+  // The relay's own `done` isn't the end of the reply. It reads frames, then the status, so the
+  // desktop can post its last frames and complete in between, and once the status is terminal it
+  // stops after a single read of 200. Frames outlive completion by a grace period, so streams from
+  // the cursor collect the rest: the reply is whole when a stream that began after `done` adds
+  // nothing. The request did finish, so if one of those streams fails the outcome stays `done`,
+  // with what already arrived.
+  let relayDone = false;
+  let drainPasses = 0;
+
+  const cancelled = (): Terminal => {
+    if (abortKind === 'external') return { kind: 'uncertain', message: 'The stream was cancelled; the desktop may still complete the request.' };
+    return relayDone ? { kind: 'done' } : { kind: 'uncertain', message: 'Timed out waiting for the desktop; the request may still complete.' };
+  };
 
   try {
     // The backend bounds one SSE connection's lifetime and ends it cleanly — a still-live
@@ -884,6 +895,8 @@ async function streamTunnelResponses(
     let sinceCursor = 0;
     for (;;) {
       if (controller.signal.aborted) return cancelled();
+      const beganAfterDone = relayDone;
+      const cursorAtStart = sinceCursor;
       const url =
         resolveBackendApiUrl(`/desktop/ai/requests/${encodeURIComponent(requestId)}/stream`) +
         (sinceCursor > 0 ? `?since=${sinceCursor}` : '');
@@ -897,9 +910,11 @@ async function streamTunnelResponses(
         });
       } catch {
         if (abortKind !== null) return cancelled();
+        if (relayDone) return { kind: 'done' };
         return { kind: 'uncertain', message: 'Could not open the desktop stream; the request may still complete.' };
       }
 
+      if (relayDone && (!res.ok || !res.body)) return { kind: 'done' };
       if (res.status === 401) {
         return { kind: 'failed', code: 'auth_required', message: 'Sign in again to follow the desktop request.' };
       }
@@ -995,13 +1010,18 @@ async function streamTunnelResponses(
 
         // Unsealed status event (queue position / lifecycle — routing metadata only, §7).
         if (typeof obj.status === 'string') {
-          return statusToTerminal(
+          const terminal = statusToTerminal(
             obj.status,
             typeof obj.queuePos === 'number' ? obj.queuePos : undefined,
             firstString(obj.code),
             firstString(obj.message),
             onState
           );
+          if (terminal?.kind === 'done') {
+            relayDone = true;
+            return null;
+          }
+          return terminal;
         }
         return null;
       };
@@ -1049,7 +1069,18 @@ async function streamTunnelResponses(
 
       // Clean stream end without a terminal frame: one authoritative status read decides
       // between done / failed(code) / uncertain (§5.8) — or a resume when still live.
-      const settled = await settleFromStatus(requestId, onState);
+      const settled = relayDone
+        ? { terminal: { kind: 'done' } as Terminal, waiting: false }
+        : await settleFromStatus(requestId, onState);
+      if (settled.terminal?.kind === 'done') {
+        relayDone = true;
+        if (beganAfterDone && sinceCursor === cursorAtStart) return settled.terminal;
+        drainPasses += 1;
+        if (drainPasses > MAX_DRAIN_PASSES) {
+          return { kind: 'uncertain', message: 'The reply was too long to read to its end, so part of it may be missing.' };
+        }
+        continue;
+      }
       if (settled.terminal) return settled.terminal;
       if (!settled.waiting) {
         return { kind: 'uncertain', message: 'The stream ended before the desktop reported an outcome.' };
@@ -1062,6 +1093,7 @@ async function streamTunnelResponses(
       return { kind: 'failed', code: 'sealed_envelope_invalid', message: errorMessage(e) };
     }
     if (abortKind !== null) return cancelled();
+    if (relayDone) return { kind: 'done' };
     logger.error('[desktop-tunnel] stream failed:', e);
     return { kind: 'uncertain', message: 'The desktop stream dropped mid-request; the request may still complete.' };
   } finally {

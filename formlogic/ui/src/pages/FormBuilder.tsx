@@ -525,6 +525,21 @@ export default function FormBuilder() {
   useLayoutEffect(() => { flushRef.current = flushTitle; }, [flushTitle]);
   useEffect(() => () => { flushRef.current(); }, []);
 
+  // A typed title reaches the store on blur or unmount, and closing the tab is neither: with the
+  // cursor still in the box it would go without a word. Both sides read as flushTitle would write
+  // them, or a stored title that is empty or has outer spaces would look edited from the start.
+  const titleAsSaved = (title: string) => title.trim() || 'Untitled Form';
+  const titleUnsaved = !!form && titleAsSaved(localTitle) !== titleAsSaved(form.title);
+  useEffect(() => {
+    if (!titleUnsaved) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [titleUnsaved]);
+
   // Track latest form for cleanup ref (avoids stale closure in unmount effect)
   const formRef = useRef(form);
   useEffect(() => { formRef.current = form; }, [form]);
@@ -1086,7 +1101,8 @@ export default function FormBuilder() {
       }
       // A new schema version may have landed — refetch the encryption state next use.
       fc.forgetFormKeys(form.id);
-      useFormStore.getState().setFormLocal(form.id, { status: 'published' });
+      const fieldsRevision = (res.body?.form as { fieldsRevision?: string } | undefined)?.fieldsRevision;
+      useFormStore.getState().setFormLocal(form.id, { status: 'published', fieldsRevision });
     } else {
       await updateForm(form.id, { status: 'published' });
       // FL-SAVE-001: updateForm only SCHEDULES the server write - flush it and

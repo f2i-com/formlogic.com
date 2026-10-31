@@ -26,9 +26,15 @@ interface FileUploadFieldProps {
   primaryColor: string;
   formId?: string;
   appSlug?: string;
+  /**
+   * Told when an upload starts and when it ends, however it ends. The answer only exists once the
+   * upload has finished, so a submit in between goes without the file: the form holds it off.
+   * Focused forms unmount a field on every step, so this comes from the upload, not from a render.
+   */
+  onUploadingChange?: (uploading: boolean) => void;
 }
 
-export function FileUploadField({ field, value, onChange, primaryColor, formId, appSlug }: FileUploadFieldProps) {
+export function FileUploadField({ field, value, onChange, primaryColor, formId, appSlug, onUploadingChange }: FileUploadFieldProps) {
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
@@ -102,24 +108,28 @@ export function FileUploadField({ field, value, onChange, primaryColor, formId, 
     }
 
     setUploading(true);
+    onUploadingChange?.(true);
 
-    const newFiles: FileMetadata[] = [];
-    for (const file of files) {
-      const result = appSlug
-        ? await api.uploadAppFile(appSlug, formId, file, field.id)
-        : await api.uploadFile(formId, file, field.id);
+    try {
+      const newFiles: FileMetadata[] = [];
+      for (const file of files) {
+        const result = appSlug
+          ? await api.uploadAppFile(appSlug, formId, file, field.id)
+          : await api.uploadFile(formId, file, field.id);
 
-      if (result.error) {
-        toast.error('Upload Failed', result.error);
-      } else if (result.data) {
-        newFiles.push(result.data);
+        if (result.error) {
+          toast.error('Upload Failed', result.error);
+        } else if (result.data) {
+          newFiles.push(result.data);
+        }
       }
-    }
 
-    setUploading(false);
-
-    if (newFiles.length > 0) {
-      onChange(field.properties.allowMultiple ? [...uploadedFiles, ...newFiles] : newFiles);
+      if (newFiles.length > 0) {
+        onChange(field.properties.allowMultiple ? [...uploadedFiles, ...newFiles] : newFiles);
+      }
+    } finally {
+      setUploading(false);
+      onUploadingChange?.(false);
     }
   };
 

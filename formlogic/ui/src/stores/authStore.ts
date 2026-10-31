@@ -14,6 +14,7 @@ import { lockVaultForSessionTeardown, useVaultStore } from './vaultStore';
 import { forgetAppLocalAccessOf, setAppLocalAccessAccount } from '../client-runtime/appLocalAccess';
 import { clearDesktopToken } from '../client-runtime/desktop/desktopPairing';
 import { forgetOaiyTokenOf, setOaiyToken, setOaiyTokenAccount } from '../client-runtime/oaiy/oaiyRuntime';
+import { clearAiCatalogCaches } from '../components/settings/aiModelCatalog';
 
 interface User {
   id: string;
@@ -120,6 +121,12 @@ function withMemoryOnlyPersistence(run: () => void): void {
  * with no backend it is the only copy of their records, and a session ends by itself every
  * day. Only asking to leave erases it. Until then it stays under their id, which no other
  * account can open (nativeAppStorage's assertScope).
+ *
+ * The forms of someone working in device-only mode stay for the same reasons, with their
+ * responses and their choice of mode: 'session-expired' keeps them. They have no owner of their
+ * own, so they stay in the name of this account, and another account's sign-in erases them
+ * (settleDeviceForms) as the sign-out they never had would have. A demo session leaves them
+ * alone (parkDeviceForms).
  */
 export async function teardownUserSession(
   userId: string | null,
@@ -144,7 +151,8 @@ export async function teardownUserSession(
   // newer boundary after B has signed in and published its transition.
   if (broadcast) publishSessionTransition('fl-teardown', userId, reason);
 
-  await clearUserSessionData(generation, memoryOnly);
+  const keepFormsFor = reason === 'session-expired' && !api.isDemoMode() && takeUpDeviceMode() ? userId : null;
+  await clearUserSessionData(generation, memoryOnly, keepFormsFor);
 
   if (reason !== 'session-expired') await forgetQueuedSubmissions(userId, generation);
 
@@ -217,6 +225,119 @@ export async function unsentSubmissionsOnSignOut(): Promise<number> {
   }
 }
 
+/** The store's forms, without another owner's that a platform admin's acting session loaded. */
+function ownForms() {
+  return useFormStore.getState().forms.filter((form) => !(form as { _adminForeign?: boolean })._adminForeign);
+}
+
+/**
+ * The form store as stored. Storage mode is held per tab, so this tab's memory can be in the cloud
+ * while a tab beside it keeps forms on this device, in this one storage, which a sign-out clears.
+ */
+function storedFormState(): { storageMode?: string; forms?: unknown[] } | null {
+  try {
+    const entry = JSON.parse(localStorage.getItem('formlogic-forms') ?? 'null') as { state?: { storageMode?: string; forms?: unknown[] } } | null;
+    return entry?.state ?? null;
+  } catch {
+    return null; // no storage here, or nothing this version can read
+  }
+}
+
+/**
+ * How many forms signing out would take off this device: in device-only mode the copy here may be
+ * the only one. The sign-out buttons say so first when it is not zero.
+ */
+export function deviceFormsOnSignOut(): number {
+  if (api.isDemoMode()) return 0;
+  const stored = storedFormState();
+  const inStorage = stored?.storageMode === 'local' ? stored.forms?.length ?? 0 : 0;
+  // Memory counts as well: a cloud tab's writes go over the stored entry, and only this tab has them then.
+  return Math.max(inStorage, useFormStore.getState().storageMode === 'local' ? ownForms().length : 0);
+}
+
+/**
+ * Whether this browser is in device-only mode, by this tab or by another. If it is another's, this
+ * tab takes up what is stored first: its own writes as a cloud tab would go over those forms.
+ */
+function takeUpDeviceMode(): boolean {
+  const here = useFormStore.getState().storageMode === 'local';
+  if (storedFormState()?.storageMode !== 'local') return here;
+  if (!here) {
+    withMemoryOnlyPersistence(() => {
+      void useFormStore.persist.rehydrate();
+      void useResponseStore.persist.rehydrate();
+    });
+  }
+  return true;
+}
+
+const PARKED_FOR = 'formlogic-device-forms-parked-for';
+const PARKED_KEYS = ['formlogic-forms', 'formlogic-responses', 'formlogic_storage_mode'];
+
+/**
+ * A demo session arrives at the stores and keys kept device-only forms are in. It can't use them,
+ * its writes would go over them and its sign-out would clear them, and the shared account has no
+ * business showing them. So they wait under keys of their own for the next real sign-in
+ * (settleDeviceForms), and the demo starts as it does in any browser.
+ */
+function parkDeviceForms(): void {
+  const owner = useFormStore.getState().deviceFormsOwner;
+  if (owner === null) return;
+  try {
+    for (const key of PARKED_KEYS) {
+      const value = localStorage.getItem(key);
+      if (value === null) continue;
+      localStorage.removeItem(key); // first: storage may not hold them twice
+      localStorage.setItem(`${key}.parked`, value);
+    }
+    localStorage.setItem(PARKED_FOR, owner);
+  } catch {
+    // private browsing
+  }
+  useFormStore.setState({ forms: [], pendingDeletions: [], deviceFormsOwner: null, isInitialized: false });
+  useResponseStore.setState({ responses: [] });
+}
+
+/** Parked forms go back for the account they were left for, and go for good for any other. */
+function unparkDeviceForms(userId: string): void {
+  try {
+    const owner = localStorage.getItem(PARKED_FOR);
+    if (owner === null) return;
+    for (const key of PARKED_KEYS) {
+      const value = localStorage.getItem(`${key}.parked`);
+      localStorage.removeItem(`${key}.parked`);
+      if (owner !== userId) continue;
+      if (value === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, value);
+    }
+    localStorage.removeItem(PARKED_FOR);
+    if (owner === userId) {
+      void useFormStore.persist.rehydrate();
+      void useResponseStore.persist.rehydrate();
+    }
+  } catch {
+    // private browsing
+  }
+}
+
+/**
+ * `userId` has signed in: device-only forms a session left behind stay if they are that account's
+ * and are erased if not, because nothing else keeps them from the next person on the device, and
+ * "Save my forms to my account" would move them into that person's account.
+ */
+function settleDeviceForms(userId: string, memoryOnly = false): void {
+  if (!memoryOnly) unparkDeviceForms(userId);
+  const owner = useFormStore.getState().deviceFormsOwner;
+  if (owner === null) return;
+  if (owner === userId) {
+    useFormStore.setState({ deviceFormsOwner: null });
+    return;
+  }
+  useFormStore.setState({ forms: [], pendingDeletions: [], deviceFormsOwner: null, isInitialized: false });
+  useResponseStore.setState({ responses: [] });
+  if (!memoryOnly) try { localStorage.removeItem('formlogic_storage_mode'); } catch { /* private browsing */ }
+}
+
 /**
  * Purge all user-specific in-memory state + persisted localStorage + cached app data.
  * Prefer teardownUserSession() — it adds the FL-11 generation bump, per-user database
@@ -266,29 +387,39 @@ async function purgeBackgroundSyncQueue(queueName: string): Promise<void> {
   });
 }
 
-async function clearUserSessionData(generation: number, memoryOnly: boolean): Promise<void> {
+async function clearUserSessionData(generation: number, memoryOnly: boolean, keepFormsFor: string | null): Promise<void> {
   // Cancel pending debounced saves so stale callbacks can't fire after the purge.
   clearAllDebounceTimers();
 
   // Complete shared synchronous cleanup before any await can let a new identity
   // populate these stores. Asynchronous cleanup below checks the same boundary.
   const resetStores = () => {
-    useFormStore.setState({ forms: [], isInitialized: false, isLoading: false, activeFormId: null, selectedFieldId: null, error: null, savingFormIds: {} });
+    // Kept forms stay in memory as well as in storage: the persist layer writes these stores out,
+    // so an empty one here would empty storage, at once or at the next edit in a sibling tab.
+    useFormStore.setState({
+      ...(keepFormsFor ? { forms: ownForms(), deviceFormsOwner: keepFormsFor } : { forms: [], deviceFormsOwner: null }),
+      isInitialized: false, isLoading: false, activeFormId: null, selectedFieldId: null, error: null, savingFormIds: {},
+    });
     useAppStore.setState({ apps: [], activeAppId: null, isLoading: false, _loadingCount: 0, error: null });
     useAppUserStore.getState().reset();
     useAppRuntimeStore.getState().reset();
-    useResponseStore.setState({ responses: [], currentFormId: null, currentAnswers: {}, currentStep: 0, startTime: null });
+    useResponseStore.setState({ ...(keepFormsFor ? {} : { responses: [] }), currentFormId: null, currentAnswers: {}, currentStep: 0, startTime: null });
   };
   if (memoryOnly) withMemoryOnlyPersistence(resetStores);
   else resetStores();
 
+  // What this account's desktop offers: the next account's AI pickers read the same module caches.
+  clearAiCatalogCaches();
+
   if (!memoryOnly) try {
     localStorage.removeItem('formlogic-auth');
-    localStorage.removeItem('formlogic-forms');
+    if (!keepFormsFor) {
+      localStorage.removeItem('formlogic-forms');
+      localStorage.removeItem('formlogic-responses');
+      localStorage.removeItem('formlogic_storage_mode');
+    }
     localStorage.removeItem('formlogic-apps');
-    localStorage.removeItem('formlogic-responses');
     localStorage.removeItem('formlogic-app-runtime');
-    localStorage.removeItem('formlogic_storage_mode');
     // App-logic `storage.set` state is keyed by APP, not by user; the next
     // account's scripts would read the previous member's values.
     for (let i = localStorage.length - 1; i >= 0; i--) {
@@ -374,7 +505,8 @@ export const useAuthStore = create<AuthState>()(
             const expiredUserId = current.user.id;
             set({ user: null, error: null, isLoading: false, isInitialized: true });
             // Purge the same data logout() does, so an expired session doesn't leave the
-            // previous user's forms/apps/responses to flash to the next person.
+            // previous user's forms/apps/responses to flash to the next person. (Device-only
+            // forms stay, out of the next person's reach: see teardownUserSession.)
             void teardownUserSession(expiredUserId, 'session-expired');
             // Tell the user why they were bounced to the landing page.
             toast.warning('Session expired', 'Please sign in again to continue.');
@@ -610,7 +742,11 @@ setSessionOwner(useAuthStore.getState().user?.id ?? null);
 useAuthStore.subscribe((state) => {
   const next = state.user?.id ?? null;
   setSessionOwner(next); // Fences the old owner: its private storage opens to nobody else.
-  if (next) unconfirmedMemberOwner = null;
+  if (next) {
+    unconfirmedMemberOwner = null;
+    if (state.user?.isDemo) parkDeviceForms();
+    else settleDeviceForms(next);
+  }
 });
 
 // Cross-tab teardown (audit FL-10): when another tab ends the session (logout,
@@ -630,11 +766,15 @@ export async function handleSessionBroadcast(data: SessionMessage | null): Promi
   const user = useAuthStore.getState().user;
   if (data.type === 'fl-session-transition') {
     if (typeof data.userId !== 'string' || data.userId.length === 0) return;
-    if (user === null || user.id === data.userId) {
-      if (unconfirmedMemberOwner !== data.userId) unconfirmedMemberOwner = null;
+    const signedIn = data.userId;
+    if (user === null || user.id === signedIn) {
+      if (unconfirmedMemberOwner !== signedIn) unconfirmedMemberOwner = null;
       // Refetch admission, never install the broadcast's claimed identity.
       bumpSessionGeneration();
-      withMemoryOnlyPersistence(() => useAuthStore.setState({ isLoading: false, error: null }));
+      withMemoryOnlyPersistence(() => {
+        useAuthStore.setState({ isLoading: false, error: null });
+        settleDeviceForms(signedIn, true); // the tab it happened in has settled storage
+      });
       return;
     }
   } else if (user !== null && typeof data.userId === 'string' && data.userId !== user.id) return;

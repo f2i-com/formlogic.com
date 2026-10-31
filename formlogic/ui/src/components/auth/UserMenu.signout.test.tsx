@@ -7,11 +7,11 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const auth = vi.hoisted(() => ({ unsent: 0, logout: vi.fn(async () => {}) }));
+const auth = vi.hoisted(() => ({ unsent: 0, forms: 0, logout: vi.fn(async () => {}) }));
 vi.mock('../../stores/authStore', async (original) => {
   const actual = await original<typeof import('../../stores/authStore')>();
   actual.useAuthStore.setState({ user: { id: 'u1', email: 'a@example.test', name: 'Ann' }, logout: auth.logout });
-  return { ...actual, unsentSubmissionsOnSignOut: async () => auth.unsent };
+  return { ...actual, unsentSubmissionsOnSignOut: async () => auth.unsent, deviceFormsOnSignOut: () => auth.forms };
 });
 
 import { UserMenu } from './UserMenu';
@@ -23,6 +23,7 @@ let host: HTMLElement;
 
 beforeEach(() => {
   auth.unsent = 0;
+  auth.forms = 0;
   auth.logout.mockClear();
   host = document.createElement('div');
   document.body.appendChild(host);
@@ -68,5 +69,26 @@ describe('Sign Out with submissions still on the device', () => {
     await click('Sign Out');
     await click('Sign out anyway');
     expect(auth.logout).toHaveBeenCalledTimes(1);
+  });
+
+  // Signing out erases the forms a person keeps on this device, as it does what they have queued.
+  it('names the forms kept on this device, and signs out only when the person confirms', async () => {
+    auth.forms = 3;
+    await openMenu();
+    await click('Sign Out');
+    expect(auth.logout).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('3 forms are kept on this device');
+    expect(document.body.textContent).not.toContain('submissions have not been sent');
+    await click('Sign out anyway');
+    expect(auth.logout).toHaveBeenCalledTimes(1);
+  });
+
+  it('names both when both would be lost', async () => {
+    auth.unsent = 1;
+    auth.forms = 1;
+    await openMenu();
+    await click('Sign Out');
+    expect(document.body.textContent).toContain('1 submission has not been sent');
+    expect(document.body.textContent).toContain('1 form is kept on this device');
   });
 });

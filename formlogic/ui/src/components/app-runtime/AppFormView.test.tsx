@@ -9,12 +9,13 @@ import { DEFAULT_APP_SETTINGS, DEFAULT_APP_THEME } from '../../types/app';
 
 const h = vi.hoisted(() => ({
   getAppForm: vi.fn(),
+  uploadAppFile: vi.fn(),
   createResponse: vi.fn(),
   runScreenEnter: vi.fn(async () => undefined),
   runBeforeSubmit: vi.fn(async () => ({ rejected: false, values: {}, warnings: [] })),
   runAfterSubmit: vi.fn(async () => undefined),
 }));
-vi.mock('../../lib/api', () => ({ api: { getAppForm: h.getAppForm } }));
+vi.mock('../../lib/api', () => ({ api: { getAppForm: h.getAppForm, uploadAppFile: h.uploadAppFile } }));
 vi.mock('../custom-screen/screenBridge', () => ({ useScreenBridge: () => undefined, resolveScreenTarget: () => null }));
 vi.mock('../custom-screen/screenCeremonies', () => ({ useScreenCeremonies: () => ({ onCeremony: () => undefined, ceremonyUi: null }) }));
 vi.mock('../../client-runtime/logic/useCustomAppLogic', () => ({ useCustomAppLogic: () => ({
@@ -107,5 +108,26 @@ describe('app form visit state', () => {
     await act(async () => button('Submit').click());
     expect(h.createResponse).toHaveBeenCalledWith('a', { name: 'Saved draft', source: 'app', parent: ['record-1'] });
     expect(sessionStorage.getItem('formlogic.runtimeDraft.demo.a')).toBeNull();
+  });
+
+  // An upload's answer only exists once it ends, so a submit in between went without the file.
+  it('holds the submit until a file has finished uploading', async () => {
+    let finishUpload!: (value: unknown) => void;
+    h.uploadAppFile.mockImplementation(() => new Promise((resolve) => { finishUpload = resolve; }));
+    h.getAppForm.mockResolvedValue({ data: { form: form('a', [{ id: 'cv', type: 'file_upload', label: 'CV', properties: {} }]) } });
+    await mount('/app/demo/form/a');
+
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, 'files', { value: [new File(['x'], 'cv.pdf')], configurable: true });
+    await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
+
+    expect(button('Uploading...').disabled).toBe(true);
+    expect(h.createResponse).not.toHaveBeenCalled();
+
+    const file = { id: 'file-1', originalFilename: 'cv.pdf', storedFilename: 'x', size: 1, mimeType: 'application/pdf', url: '/f' };
+    await act(async () => { finishUpload({ data: file }); });
+    await act(async () => button('Submit').click());
+
+    expect(h.createResponse).toHaveBeenCalledWith('a', { cv: [file] });
   });
 });

@@ -538,4 +538,45 @@ describe('DesktopConnectionPopover — AI-source quick-switch', () => {
       (Array.from(panel()!.querySelectorAll('[role="radio"]')).find((el) => el.textContent?.includes('Desktop AI')) as HTMLElement).getAttribute('aria-checked')
     ).toBe('true');
   });
+
+  it('keeps a setting changed elsewhere after the popover opened', async () => {
+    let current: Record<string, unknown> = { aiSource: 'site', desktopModel: null };
+    (api as unknown as Record<string, unknown>).getAiPreferences = async () => ({ data: { ...current } });
+    (api as unknown as Record<string, unknown>).putAiPreferences = async (prefs: Record<string, unknown>) => {
+      current = { ...prefs };
+      return { data: { ...current } };
+    };
+
+    await renderPopover();
+    await openPanel();
+    current = { ...current, desktopModel: 'chosen-in-settings' }; // Settings saves behind the open popover
+
+    await act(async () => {
+      (Array.from(panel()!.querySelectorAll('[role="radio"]')).find((el) => el.textContent?.includes('Desktop AI')) as HTMLElement).click();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(current).toEqual({ aiSource: 'desktop', desktopModel: 'chosen-in-settings' });
+  });
+
+  it('saves nothing and says so when the fresh read fails', async () => {
+    let reads = 0;
+    const put = vi.fn(async () => ({ data: {} }));
+    (api as unknown as Record<string, unknown>).getAiPreferences = async () => (reads++ === 0 ? { data: { aiSource: 'site' } } : { error: 'offline' });
+    (api as unknown as Record<string, unknown>).putAiPreferences = put;
+
+    await renderPopover();
+    await openPanel();
+    await act(async () => {
+      (Array.from(panel()!.querySelectorAll('[role="radio"]')).find((el) => el.textContent?.includes('Desktop AI')) as HTMLElement).click();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(put).not.toHaveBeenCalled();
+    expect(useToastStore.getState().toasts).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'error', message: 'offline' })]));
+  });
 });

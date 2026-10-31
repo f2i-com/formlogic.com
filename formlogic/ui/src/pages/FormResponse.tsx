@@ -27,6 +27,7 @@ import type { FormField } from '../types/form';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { usePublicConfig } from '../hooks/usePublicConfig';
 import { handleRovingKeys } from '../lib/a11y';
+import { isUnsafePattern } from '../lib/patternGuard';
 import { DEFAULT_FORM_SETTINGS, DEFAULT_FORM_THEME, normalizeFieldType } from '../types/form';
 
 // Field Response Component
@@ -43,6 +44,7 @@ export function FieldResponse({
   formId,
   error,
   autoFocus = true,
+  onUploadingChange,
 }: {
   field: FormField;
   value: unknown;
@@ -56,6 +58,7 @@ export function FieldResponse({
   formId?: string;
   error?: string;
   autoFocus?: boolean;
+  onUploadingChange?: (uploading: boolean) => void;
 }) {
   const required = isRequired ?? field.required;
 
@@ -427,6 +430,7 @@ export function FieldResponse({
                 onChange={onChange}
                 primaryColor={primaryColor}
                 formId={formId}
+                onUploadingChange={onUploadingChange}
               />
             ) : (
               <FileUploadField
@@ -435,6 +439,7 @@ export function FieldResponse({
                 onChange={onChange}
                 primaryColor={primaryColor}
                 formId={formId}
+                onUploadingChange={onUploadingChange}
               />
             )}
           </div>
@@ -962,8 +967,18 @@ function FormResponseContent() {
   const submitIdemKeyRef = useRef<string | null>(null);
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [publicForm, setPublicForm] = useState<ReturnType<typeof getForm> | null>(null);
+  // publicForm came from the owner API, which answers the form's owner alone: signed in is not
+  // the same thing, and a screen on a public link opened by anyone else must read as public.
+  const [readAsOwner, setReadAsOwner] = useState(false);
   const [isLoadingForm, setIsLoadingForm] = useState(false);
   const [formLoadError, setFormLoadError] = useState(false);
+  // Files on their way: an upload's answer only exists once it ends, so submitting before then
+  // would go without the file and leave it orphaned on the server. Advancing waits as well, or
+  // a required question whose file is still uploading reads as unanswered.
+  const [uploadsRunning, setUploadsRunning] = useState(0);
+  const handleUploadingChange = useCallback((uploading: boolean) => {
+    setUploadsRunning((running) => Math.max(0, running + (uploading ? 1 : -1)));
+  }, []);
   const [responseMode, setResponseMode] = useState<'focused' | 'classic'>('focused');
   const [calculatedValues, setCalculatedValues] = useState<Record<string, unknown>>({});
   // When a custom screen owns this form's view but "allow new records" is on, this flips the
@@ -1005,6 +1020,7 @@ function FormResponseContent() {
             const raw = result.data.form;
             const normalized = normalizeFormData(raw);
             setPublicForm(normalized as ReturnType<typeof getForm>);
+            setReadAsOwner(true);
             setIsLoadingForm(false);
             return;
           }
@@ -1271,7 +1287,8 @@ function FormResponseContent() {
     );
   }
 
-  if (isLoadingForm) {
+  // The load starts in an effect, so the first paint comes before it: no form yet isn't a failure.
+  if (isLoadingForm || (formId && !form && !publicForm && !formLoadError)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400" />
@@ -1348,6 +1365,11 @@ function FormResponseContent() {
     );
   }
 
+  // The store holds the viewer's own forms, and readAsOwner says the rest. Anyone else reads a
+  // screen's records and reports through the public endpoints, signed in or not: the owner API
+  // refuses them, and a screen read that as no records at all.
+  const viewedAsPublic = !api.isAuthenticated() || !(readAsOwner || rawForm === storeForm);
+
   // A section-screen widget dashboard takes over the public/embed view (host-rendered recharts;
   // aggregates come from the whitelisted public endpoint).
   if (form.customScreen?.enabled && form.customScreen.kind === 'dashboard' && form.customScreen.dashboard && !showFormView) {
@@ -1373,7 +1395,7 @@ function FormResponseContent() {
             formId={form.id}
             fields={form.fields}
             formTitle={form.title}
-            publicMode={!api.isAuthenticated()}
+            publicMode={viewedAsPublic}
             accent={form.theme.primaryColor}
             onOpenForm={allowNew ? () => setShowFormView(true) : undefined}
           />
@@ -1400,7 +1422,7 @@ function FormResponseContent() {
           formId={form.id}
           formTitle={form.title}
           fields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type, options: (f.properties?.options as Array<{ label: string; value: string }> | undefined) }))}
-          publicMode={!api.isAuthenticated()}
+          publicMode={viewedAsPublic}
           hideViewer
           accentColor={form.theme.primaryColor}
           onOpenForm={allowNew ? () => setShowFormView(true) : undefined}
@@ -1464,7 +1486,7 @@ function FormResponseContent() {
     // In-flight guard: pressing Enter twice or double-clicking Submit must not
     // POST the same answers twice (the server has no dedup, so it would create
     // duplicate responses).
-    if (isSubmitting) return;
+    if (isSubmitting || uploadsRunning > 0) return;
     // Never reached while the page refuses to show such a form; kept so that no later change
     // to what is shown can turn into answers sent in the clear.
     if (strippedOfEncryption) return;
@@ -1730,7 +1752,7 @@ function FormResponseContent() {
     setSubmitError(null);
 
     // Don't advance/submit while a submission is in flight (prevents a double Enter).
-    if (isSubmitting) return;
+    if (isSubmitting || uploadsRunning > 0) return;
 
     // Skip the required/validation gate for non-input field types — a calculated
     // or layout step has nothing for the user to fill in, so requiring it would
@@ -1770,9 +1792,7 @@ function FormResponseContent() {
           if (rule.type === 'pattern' && typeof answer === 'string') {
             try {
               const pat = String(rule.value);
-              if (pat.length > 500) { setFieldError(rule.message || 'Invalid format'); return; }
-              if (/(\+|\*|\{[^}]*\})\s*(\+|\*|\{[^}]*\})/.test(pat) || /\([^)]*\|[^)]*\)\+/.test(pat)) { setFieldError(rule.message || 'Invalid format'); return; }
-              if (!new RegExp(pat).test(answer)) {
+              if (!isUnsafePattern(pat) && !new RegExp(pat).test(answer)) {
                 setFieldError(rule.message || 'Invalid format');
                 return;
               }
@@ -1878,9 +1898,7 @@ function FormResponseContent() {
           if (rule.type === 'pattern' && typeof answer === 'string') {
             try {
               const pat = String(rule.value);
-              if (pat.length > 500) { failClassic(f.id, `${f.label}: ${rule.message || 'Invalid format'}`); return; }
-              if (/(\+|\*|\{[^}]*\})\s*(\+|\*|\{[^}]*\})/.test(pat) || /\([^)]*\|[^)]*\)\+/.test(pat)) { failClassic(f.id, `${f.label}: ${rule.message || 'Invalid format'}`); return; }
-              if (!new RegExp(pat).test(answer)) {
+              if (!isUnsafePattern(pat) && !new RegExp(pat).test(answer)) {
                 failClassic(f.id, `${f.label}: ${rule.message || 'Invalid format'}`);
                 return;
               }
@@ -2143,6 +2161,7 @@ function FormResponseContent() {
               onCalculated={handleCalculated}
               formId={formId}
               error={fieldError || undefined}
+              onUploadingChange={handleUploadingChange}
             />
 
             {/* (The validation message is rendered by FieldResponse itself, under the
@@ -2155,14 +2174,16 @@ function FormResponseContent() {
               <Button
                 size="lg"
                 onClick={handleNext}
-                disabled={isSubmitting}
+                disabled={isSubmitting || uploadsRunning > 0}
                 isLoading={isLastStep && isSubmitting}
                 style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }}
                 className="px-8"
               >
-                {isLastStep
-                  ? 'Submit'
-                  : (currentField?.type === 'welcome_screen' && currentField.properties.buttonText) || 'OK'} <Check className="ml-2 h-4 w-4" />
+                {uploadsRunning > 0
+                  ? 'Uploading…'
+                  : isLastStep
+                    ? 'Submit'
+                    : (currentField?.type === 'welcome_screen' && currentField.properties.buttonText) || 'OK'} <Check className="ml-2 h-4 w-4" />
               </Button>
               <span className="hidden sm:inline text-sm opacity-50">
                 press <kbd className="px-2 py-1 bg-current/10 rounded opacity-80">Enter</kbd>
@@ -2238,6 +2259,7 @@ function FormResponseContent() {
                     formId={formId}
                     autoFocus={false}
                     error={errorFieldId === field.id ? (submitError || undefined) : undefined}
+                    onUploadingChange={handleUploadingChange}
                   />
                 </div>
               ))}
@@ -2252,12 +2274,12 @@ function FormResponseContent() {
               <Button
                 size="lg"
                 onClick={handleClassicSubmit}
-                disabled={isSubmitting}
+                disabled={isSubmitting || uploadsRunning > 0}
                 isLoading={isSubmitting}
                 style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }}
                 className="w-full"
               >
-                {form.settings.submitButtonText || 'Submit'}
+                {uploadsRunning > 0 ? 'Uploading…' : form.settings.submitButtonText || 'Submit'}
               </Button>
             </div>
           </div>

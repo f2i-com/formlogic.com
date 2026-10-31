@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import { v4 as uuidv4 } from 'uuid';
 import type { Form, FormField, FormSettings, FormTheme } from '../types/form';
 import { api } from '../lib/api';
-import { frozenWhileActing } from '../lib/adminFrozenStorage';
+import { besideDeviceForms, frozenWhileActing } from '../lib/adminFrozenStorage';
 import { currentSessionGeneration, isSessionGenerationCurrent } from '../lib/sessionGeneration';
 import { logger } from '../lib/logger';
 import { isReservedExpressionName } from '../lib/utils';
@@ -27,6 +27,28 @@ function dedupeFormsById(forms: Form[]): Form[] {
     seen.add(form.id);
     return true;
   });
+}
+
+/**
+ * Whether the store holds this form's fields. GET /forms leaves them out, so a row from the list
+ * has too few for its `fieldCount`; a form made on this device has no count at all. A form that
+ * is complete says so before its first edit (pushHistory): `fieldCount` goes stale with a deleted
+ * field, and only the mark then tells that form from a row.
+ */
+function hasItsFields(form: Form): boolean {
+  return (form as Form & { _fieldsLoaded?: boolean })._fieldsLoaded === true || form.fields.length >= (form.fieldCount ?? 0);
+}
+
+/**
+ * A form as a PUT may carry it over the server's copy. The server replaces the fields with whatever
+ * a PUT holds, an empty list included, so a copy that lacks them leaves the key out: the rest of its
+ * changes still arrive, and the fields stay as they are.
+ */
+function forServer(form: Form): Partial<Form> {
+  if (hasItsFields(form)) return form;
+  const withoutFields: Partial<Form> = { ...form };
+  delete withoutFields.fields;
+  return withoutFields;
 }
 
 async function fetchAllForms(): Promise<Form[] | null> {
@@ -113,6 +135,9 @@ interface FormState {
   storageMode: StorageMode;
   // Forms deleted while offline — deleted from the server on the next sync so they don't reappear.
   pendingDeletions: string[];
+  // The account a session ended under by itself, leaving its device-only forms here for it to come
+  // back to (authStore). Null when nothing is waiting.
+  deviceFormsOwner: string | null;
   isInitialized: boolean;
   // Per-form count of in-flight saves (field/settings/theme/meta can overlap)
   savingFormIds: Record<string, number>;
@@ -134,6 +159,8 @@ interface FormState {
   duplicateForm: (id: string) => Promise<Form | null>;
   getForm: (id: string) => Form | undefined;
   loadFullForm: (id: string, opts?: { force?: boolean }) => Promise<Form | undefined>;
+  // Load the fields of every form in the store. False when any could not be loaded.
+  loadAllFullForms: () => Promise<boolean>;
   setActiveForm: (id: string | null) => void;
   refreshForms: () => Promise<void>;
 
@@ -326,13 +353,20 @@ export const useFormStore = create<FormState>()(
       });
     };
 
+    const keepFieldsRevision = (formId: string, saved?: Form) => {
+      const fieldsRevision = saved?.fieldsRevision;
+      if (fieldsRevision) {
+        set((s) => ({ forms: s.forms.map((f) => (f.id === formId ? { ...f, fieldsRevision } : f)) }));
+      }
+    };
+
     // THE one server write for a form slice — every debounced sync and every retry/flush
     // funnels through here so success/failure is recorded exactly once per attempt.
     // api.updateForm returns { error } as a VALUE on HTTP/network/quota failure (it doesn't
     // throw), so failures are checked explicitly — otherwise they were silent and the
     // indicator falsely flipped to "saved" while the optimistic edit (not persisted in API
     // mode; dropped on reload) was lost.
-    const saveFormPart = async (formId: string, part: SavePart): Promise<boolean> => {
+    const writeFormPart = async (formId: string, part: SavePart): Promise<boolean> => {
       const form = get().forms.find((f) => f.id === formId);
       if (!form) {
         return true; // deleted meanwhile — nothing left to save
@@ -368,6 +402,9 @@ export const useFormStore = create<FormState>()(
         } else {
           result = await api.updateForm(formId, {
             [part]: form[part],
+            // What the fields were when this copy got them: a save from a copy another tab or
+            // device has since moved on from is refused, not left to overwrite what they did.
+            ...(part === 'fields' && form.fieldsRevision ? { expectedFieldsRevision: form.fieldsRevision } : {}),
             ...(encryptionSchema ? { encryptionSchema } : {}),
           } as Partial<Form>);
         }
@@ -375,8 +412,14 @@ export const useFormStore = create<FormState>()(
           logger.error(`Failed to save form ${part} to server:`, result.error);
           toast.error('Failed to save changes', typeof result.error === 'string' ? result.error : 'Your changes may not be saved. Please try again.');
           recordSaveResult(formId, part, false);
+          // No answer came back, so this may have landed, and the retry would be refused as
+          // someone else's change. The retry doesn't say what it started from.
+          if (part === 'fields' && result.status === undefined) {
+            set((s) => ({ forms: s.forms.map((f) => (f.id === formId ? { ...f, fieldsRevision: undefined } : f)) }));
+          }
           return false;
         }
+        if (part === 'fields') keepFieldsRevision(formId, result.data?.form);
         recordSaveResult(formId, part, true);
         return true;
       } catch (error) {
@@ -385,6 +428,16 @@ export const useFormStore = create<FormState>()(
         recordSaveResult(formId, part, false);
         return false;
       }
+    };
+
+    // One save of a form's fields at a time, in order: each names the state it started from, so
+    // one sent before the last came back would be refused as if another tab had made it.
+    const fieldSaves = new Map<string, Promise<boolean>>();
+    const saveFormPart = (formId: string, part: SavePart): Promise<boolean> => {
+      if (part !== 'fields') return writeFormPart(formId, part);
+      const turn = (fieldSaves.get(formId) ?? Promise.resolve(true)).then(() => writeFormPart(formId, part));
+      fieldSaves.set(formId, turn);
+      return turn;
     };
 
     // Whether edits sync to the server: cloud mode, OR a platform admin acting on
@@ -423,15 +476,21 @@ export const useFormStore = create<FormState>()(
     // label isn't one history step per keystroke. Structural ops + selection reset it.
     let historyCoalesceKey: string | null = null;
     const cloneFields = (fields: FormField[]): FormField[] => JSON.parse(JSON.stringify(fields));
-    // Snapshot the current field array before a mutation so it can be undone.
+    // Snapshot the current field array before a mutation so it can be undone. Every field mutation
+    // comes through here first (undo and redo only after one that did), so it is also where a
+    // complete form records that it is, before the edit can leave it short of its `fieldCount`.
     const pushHistory = (formId: string) => {
       const form = get().forms.find((f) => f.id === formId);
       if (!form) return;
+      const complete = hasItsFields(form);
       set((state) => {
         const h = state.fieldHistory[formId] ?? { past: [], future: [] };
         const past = [...h.past, cloneFields(form.fields)];
         if (past.length > HISTORY_CAP) past.shift();
-        return { fieldHistory: { ...state.fieldHistory, [formId]: { past, future: [] } } };
+        return {
+          fieldHistory: { ...state.fieldHistory, [formId]: { past, future: [] } },
+          ...(complete ? { forms: state.forms.map((f) => (f.id === formId ? ({ ...f, _fieldsLoaded: true } as Form) : f)) } : {}),
+        };
       });
     };
 
@@ -444,6 +503,7 @@ export const useFormStore = create<FormState>()(
       error: null,
       storageMode: 'local' as StorageMode,
       pendingDeletions: [],
+      deviceFormsOwner: null,
       isInitialized: false,
       savingFormIds: {} as Record<string, number>,
       saveErrors: {} as Record<string, SavePart[]>,
@@ -491,8 +551,10 @@ export const useFormStore = create<FormState>()(
             return;
           }
 
-          // Fallback to localStorage (already loaded by persist middleware)
-          set({ isLoading: false, isInitialized: true });
+          // Fallback to localStorage (already loaded by persist middleware). Cloud mode keeps no
+          // forms there, so reaching this with the API down is the failed read above by another
+          // road, and an owner would be shown the new-account screen.
+          set({ isLoading: false, isInitialized: true, ...(state.storageMode === 'api' ? { error: 'Failed to load forms' } : {}) });
         } catch (error) {
           logger.error('Failed to initialize form store:', error);
           toast.error('Loading Error', 'Failed to load forms. Using local storage.');
@@ -830,10 +892,13 @@ export const useFormStore = create<FormState>()(
         // Acting mode ALWAYS fetches (the owner's form via the acting-as mirror) —
         // the admin's own local-mode/demo shortcuts don't apply to foreign forms.
         if (!acting) {
-          // In local mode, the form is already fully loaded
-          if (state.storageMode !== 'api') return state.forms.find((f) => f.id === id);
+          const held = state.forms.find((f) => f.id === id);
           // Demo-local forms exist only in the browser — never fetch them from the server (404).
-          if (isDemoLocalFormId(id)) return state.forms.find((f) => f.id === id);
+          if (isDemoLocalFormId(id)) return held;
+          // In local mode, the form is already fully loaded, unless it is a row of the forms list
+          // from a switch to this device that did not load the fields first: shown as it is, it
+          // reads as an empty form, and what the owner builds on that replaces the real one.
+          if (state.storageMode !== 'api' && (!held || hasItsFields(held) || !api.isAuthenticated())) return held;
         }
 
         // Check if the form already has fields loaded (use _fieldsLoaded flag
@@ -841,9 +906,10 @@ export const useFormStore = create<FormState>()(
         // `force` bypasses the cache so callers (e.g. after a version restore)
         // can pull the server's current state.
         const existing = state.forms.find((f) => f.id === id);
+        const keepsLocalEdits = !acting && state.storageMode !== 'api';
         if (!opts?.force) {
           if (existing && (existing as Form & { _fieldsLoaded?: boolean })._fieldsLoaded) return existing;
-          if (existing && existing.fields.length > 0) return existing;
+          if (existing && existing.fields.length > 0 && !keepsLocalEdits) return existing;
         }
 
         // Fetch full form (with fields) from API
@@ -864,9 +930,11 @@ export const useFormStore = create<FormState>()(
               // Upsert: a foreign form (or a deep-linked one) isn't in the list yet —
               // .map() alone would silently drop it and the builder would 404.
               const exists = s.forms.some((f) => f.id === id);
+              // On this device the fields are all a row lacks: what the owner changed here stays.
+              const merged = (f: Form) => (keepsLocalEdits ? { ...f, fields: fullForm.fields, _fieldsLoaded: true } as Form : { ...f, ...fullForm });
               return {
                 forms: exists
-                  ? s.forms.map((f) => (f.id === id ? { ...f, ...fullForm } : f))
+                  ? s.forms.map((f) => (f.id === id ? merged(f) : f))
                   : [...s.forms, fullForm],
                 fieldHistory,
               };
@@ -878,6 +946,25 @@ export const useFormStore = create<FormState>()(
           logger.error('Failed to load full form:', error);
         }
         return existing;
+      },
+
+      loadAllFullForms: async () => {
+        if (api.isDemoMode()) return true;
+        // While the list is loading, or after it failed, `forms` is not the account's forms.
+        const listIsIn = () => { const { isInitialized, isLoading, error } = get(); return isInitialized && !isLoading && !error; };
+        if (!listIsIn()) return false;
+        const loaded = new Set<string>();
+        for (const { id } of get().forms) {
+          const form = await get().loadFullForm(id);
+          if (!form || !hasItsFields(form)) return false;
+          loaded.add(id);
+        }
+        // This takes one request per form, and a refresh in that time (a pack installed, a Retry)
+        // puts rows without fields back. So what counts is the store now, not what the loop saw.
+        if (!listIsIn() || get().forms.some((f) => !hasItsFields(f))) return false;
+        // Marked, so a field deleted later doesn't read as a copy with too few.
+        set((s) => ({ forms: s.forms.map((f) => (loaded.has(f.id) ? ({ ...f, _fieldsLoaded: true } as Form) : f)) }));
+        return true;
       },
 
       setActiveForm: (id) => { historyCoalesceKey = null; set({ activeFormId: id, selectedFieldId: null }); },
@@ -1264,10 +1351,11 @@ export const useFormStore = create<FormState>()(
 
             if (localIsNewer) {
               // Local holds the most recent edit → push it.
-              const updateResult = await api.updateForm(form.id, form);
+              const updateResult = await api.updateForm(form.id, forServer(form));
               if (updateResult.error) {
                 errors.push(`Failed to update "${form.title}": ${updateResult.error}`);
               } else {
+                keepFieldsRevision(form.id, updateResult.data?.form);
                 synced++;
               }
             } else if (wasEditedOffline(localStr)) {
@@ -1337,12 +1425,13 @@ export const useFormStore = create<FormState>()(
               // Keep the offline version → push it over the cloud copy.
               const form = get().forms.find((f) => f.id === c.id);
               if (form) {
-                const result = await api.updateForm(form.id, form);
+                const result = await api.updateForm(form.id, forServer(form));
                 if (result.error) {
                   unresolved.push(c);
                   failures.push(`"${c.title}": ${result.error}`);
                   continue;
                 }
+                keepFieldsRevision(form.id, result.data?.form);
               }
             } else {
               // Keep the cloud version → pull it into the local store so it reflects the choice.
@@ -1352,7 +1441,7 @@ export const useFormStore = create<FormState>()(
                 failures.push(`"${c.title}": ${res.error ?? 'cloud copy unavailable'}`);
                 continue;
               }
-              set((s) => ({ forms: s.forms.map((f) => (f.id === c.id ? (res.data!.form as Form) : f)) }));
+              set((s) => ({ forms: s.forms.map((f) => (f.id === c.id ? ({ ...res.data!.form, _fieldsLoaded: true } as Form) : f)) }));
             }
           } catch (e) {
             logger.error(`Failed to resolve conflict for "${c.title}":`, e);
@@ -1387,7 +1476,8 @@ export const useFormStore = create<FormState>()(
             const createResult = await api.createForm(form);
             return !createResult.error;
           } else {
-            const updateResult = await api.updateForm(formId, form);
+            const updateResult = await api.updateForm(formId, forServer(form));
+            keepFieldsRevision(formId, updateResult.data?.form);
             return !updateResult.error;
           }
         } catch {
@@ -1400,7 +1490,7 @@ export const useFormStore = create<FormState>()(
       name: 'formlogic-forms',
       // Writes are frozen while a platform admin is acting on another user's
       // account — the owner's forms must never land in the admin's snapshot.
-      storage: frozenWhileActing(),
+      storage: frozenWhileActing((): boolean => besideDeviceForms(useFormStore.getState().storageMode)),
       partialize: (state) => ({
         // The shared demo catalogue is server-backed even when the wider session
         // uses local mode. Persist only forms this browser actually created there;
@@ -1417,6 +1507,7 @@ export const useFormStore = create<FormState>()(
         storageMode: state.storageMode,
         // Persist offline deletions so they survive a refresh until the next sync propagates them.
         pendingDeletions: state.pendingDeletions,
+        deviceFormsOwner: state.deviceFormsOwner,
       }),
       onRehydrateStorage: () => {
         return (state) => {

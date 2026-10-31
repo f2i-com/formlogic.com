@@ -17,6 +17,7 @@ const onPrimaryFor = (c: string): string =>
   (typeof c === 'string' && c.startsWith('#')) ? readableForegroundColor(c) : 'var(--app-on-primary)';
 import { LinkedRecordInput } from './LinkedRecordInput';
 import { api } from '../../lib/api';
+import { isUnsafePattern } from '../../lib/patternGuard';
 import { currentSessionOwner } from '../../lib/sessionGeneration';
 import { cn } from '../../lib/utils';
 import { PhoneInput } from '../ui/PhoneInput';
@@ -211,6 +212,7 @@ function FieldInput({
   error,
   autoFocus = true,
   isRequired,
+  onUploadingChange,
 }: {
   field: FormField;
   value: unknown;
@@ -224,6 +226,7 @@ function FieldInput({
   error?: string;
   autoFocus?: boolean;
   isRequired?: boolean;
+  onUploadingChange?: (uploading: boolean) => void;
 }) {
   // Conditional logic can make a field required dynamically; fall back to the static flag.
   const required = isRequired ?? field.required;
@@ -557,6 +560,7 @@ function FieldInput({
           primaryColor={primaryColor}
           formId={formId}
           appSlug={appSlug}
+          onUploadingChange={onUploadingChange}
         />
       );
     }
@@ -568,6 +572,7 @@ function FieldInput({
         primaryColor={primaryColor}
         formId={formId}
         appSlug={appSlug}
+        onUploadingChange={onUploadingChange}
       />
     );
   }
@@ -683,9 +688,7 @@ function validateField(field: FormField, value: unknown): string | null {
       case 'pattern':
         if (typeof value === 'string' && value.length > 0 && rule.value) {
           const pat = String(rule.value);
-          // ReDoS protection: limit length and reject catastrophic backtracking patterns
-          if (pat.length > 500) return msg;
-          if (/(\+|\*|\{[^}]*\})\s*(\+|\*|\{[^}]*\})/.test(pat) || /\([^)]*\|[^)]*\)\+/.test(pat)) return msg;
+          if (isUnsafePattern(pat)) break;
           try { if (!new RegExp(pat).test(value)) return msg; } catch { return msg; }
         }
         break;
@@ -749,6 +752,12 @@ function FormVisit() {
   });
   const [currentStep, setCurrentStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  // Files on their way: an upload's answer only exists once it ends, so submitting before then
+  // would go without the file. Advancing waits as well, or a required question reads as unanswered.
+  const [uploadsRunning, setUploadsRunning] = useState(0);
+  const handleUploadingChange = useCallback((uploading: boolean) => {
+    setUploadsRunning((running) => Math.max(0, running + (uploading ? 1 : -1)));
+  }, []);
   const [submitted, setSubmitted] = useState(false);
   // Distinct sync-pending outcome (audit FL-12): the submission is durably queued
   // on this device, not yet accepted by the server.
@@ -976,7 +985,7 @@ function FormVisit() {
 
   const submittingRef = useRef(false);
   const handleSubmit = useCallback(async () => {
-    if (!formId || submittingRef.current) return;
+    if (!formId || submittingRef.current || uploadsRunning > 0) return;
     submittingRef.current = true;
     setSubmitting(true);
     setError(null);
@@ -1034,9 +1043,10 @@ function FormVisit() {
     setSubmitting(false);
     submittingRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- canViewOwn/canViewAll are stable store actions
-  }, [formId, appSlug, createResponse, runBeforeSubmit, runAfterSubmit, singleRecord, navigate]);
+  }, [formId, appSlug, createResponse, runBeforeSubmit, runAfterSubmit, singleRecord, navigate, uploadsRunning]);
 
   const handleNext = useCallback(() => {
+    if (uploadsRunning > 0) return;
     if (currentField && isFieldRequired(currentField.id) && !['statement', 'calculated', 'welcome_screen'].includes(currentField.type)) {
       const answer = answersRef.current[currentField.id];
       // `typed:` is an empty typed-signature (no name entered yet).
@@ -1060,7 +1070,7 @@ function FormVisit() {
     } else {
       setCurrentStep((s) => Math.min(s + 1, fields.length - 1));
     }
-  }, [currentField, isLastStep, fields.length, handleSubmit, isFieldRequired]);
+  }, [currentField, isLastStep, fields.length, handleSubmit, isFieldRequired, uploadsRunning]);
 
   const handlePrev = useCallback(() => {
     setError(null);
@@ -1530,6 +1540,7 @@ function FormVisit() {
                 onCalculated={handleCalculated}
                 error={error || undefined}
                 isRequired={isFieldRequired(currentField.id)}
+                onUploadingChange={handleUploadingChange}
               />
 
               {/* Error */}
@@ -1550,15 +1561,17 @@ function FormVisit() {
                 <button
                   type="button"
                   onClick={handleNext}
-                  disabled={submitting}
+                  disabled={submitting || uploadsRunning > 0}
                   className="inline-flex items-center gap-2 px-6 py-2.5 rounded-control text-sm font-semibold transition-all duration-200 hover:shadow-lg disabled:opacity-50 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-current/50"
                   style={{ backgroundColor: primaryColor, color: onPrimaryFor(primaryColor) }}
                 >
                   {submitting
                     ? 'Submitting...'
-                    : isLastStep
-                      ? 'Submit'
-                      : (currentField?.type === 'welcome_screen' && (currentField.properties?.buttonText as string | undefined)) || 'OK'}
+                    : uploadsRunning > 0
+                      ? 'Uploading...'
+                      : isLastStep
+                        ? 'Submit'
+                        : (currentField?.type === 'welcome_screen' && (currentField.properties?.buttonText as string | undefined)) || 'OK'}
                   {!submitting && <Check className="h-4 w-4" />}
                 </button>
                 {!submitting && (
@@ -1608,7 +1621,7 @@ function FormVisit() {
           <button
             type="button"
             onClick={handleNext}
-            disabled={submitting}
+            disabled={submitting || uploadsRunning > 0}
             aria-label="Next field"
             className="min-h-11 min-w-11 inline-flex items-center justify-center bg-white dark:bg-slate-800 rounded-lg shadow-sm text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 transition-all duration-200 border border-gray-200/80 dark:border-slate-700 hover:shadow-md cursor-pointer"
           >
@@ -1660,6 +1673,7 @@ function FormVisit() {
                     autoFocus={false}
                     isRequired={isFieldRequired(field.id)}
                     error={errorFieldId === field.id ? (error || undefined) : undefined}
+                    onUploadingChange={handleUploadingChange}
                   />
                 </div>
               ))}
@@ -1680,11 +1694,11 @@ function FormVisit() {
               <button
                 type="button"
                 onClick={handleClassicSubmit}
-                disabled={submitting}
+                disabled={submitting || uploadsRunning > 0}
                 className="w-full inline-flex items-center justify-center gap-2 px-6 py-3 rounded-control text-sm font-semibold transition-all duration-200 hover:shadow-lg disabled:opacity-50 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-current/50"
                 style={{ backgroundColor: primaryColor, color: onPrimaryFor(primaryColor) }}
               >
-                {submitting ? 'Submitting...' : (formSettings?.submitButtonText as string) || 'Submit'}
+                {submitting ? 'Submitting...' : uploadsRunning > 0 ? 'Uploading...' : (formSettings?.submitButtonText as string) || 'Submit'}
                 {!submitting && <Check className="h-4 w-4" />}
               </button>
             </div>

@@ -72,6 +72,12 @@ export function clearProviderCatalogCacheForTests(): void {
   providerCatalogCache = null;
 }
 
+/** The end of a session: both lists are what one account's desktop offers, and module scope outlives it. */
+export function clearAiCatalogCaches(): void {
+  modelCatalogCache.clear();
+  providerCatalogCache = null;
+}
+
 /**
  * One tunnel provider row → the /api/ai/sources union shape the card's dropdown
  * consumes. Rows without an id are dropped; a missing capability list means
