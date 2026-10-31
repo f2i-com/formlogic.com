@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace FormLogic\Tests\Integration;
 
 use FormLogic\Services\AccountErasureService;
+use FormLogic\Services\ApiKeyService;
 use FormLogic\Services\AuthService;
+use FormLogic\Services\DataNodeService;
 
 /**
  * Erasure purge (security review, blocker 6): account deletion must explicitly
@@ -58,6 +60,23 @@ class E2eeErasureTest extends E2eeTestCase
         $this->assertNull($this->row('SELECT 1 AS x FROM users WHERE id = ?', [$this->userId]));
 
         // Prevent tearDown from re-deleting the already-erased user's rows.
+        $this->userId = '';
+    }
+
+    public function testErasureTakesTheAccountsDataNodesAndBackupLinks(): void
+    {
+        $apiKeys = new ApiKeyService(self::$mysql);
+        $link = $apiKeys->createBackupClient($this->userId, 'Office PC');
+        (new DataNodeService(self::$mysql))->register($this->userId, $link['apiKeyId'], [
+            'signingPublicKey' => base64_encode(sodium_crypto_sign_publickey(sodium_crypto_sign_keypair())),
+        ]);
+        $this->assertNotNull($this->row('SELECT 1 AS x FROM data_nodes WHERE owner_user_id = ?', [$this->userId]));
+
+        $this->assertTrue($this->erasure()->erase($this->userId)['completed']);
+
+        $this->assertNull($this->row('SELECT 1 AS x FROM data_nodes WHERE owner_user_id = ?', [$this->userId]));
+        $this->assertNull($this->row('SELECT 1 AS x FROM backup_clients WHERE owner_user_id = ?', [$this->userId]));
+        $this->assertNull($apiKeys->validateKey($link['key']));
         $this->userId = '';
     }
 

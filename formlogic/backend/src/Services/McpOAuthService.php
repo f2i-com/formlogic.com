@@ -79,6 +79,15 @@ class McpOAuthService
         'offline_access',
     ];
 
+    /**
+     * The FormLogic Backups plugin for OAIY (formlogic/oaiy-plugin), a public native client. It is
+     * not a desktop runtime and is deliberately left out of DESKTOP_CLIENTS: it relays nothing and
+     * runs no flows, so it gets one scope and a backup_clients row, not a desktop connection.
+     */
+    public const BACKUP_PLUGIN_CLIENT_ID = 'formlogic-backups-plugin';
+
+    public const BACKUP_PLUGIN_SCOPES = ['data:snapshot'];
+
     /** @var list<string> Scopes that no dynamically registered/MCP client may obtain. */
     private const AOKIE_COMPANION_ONLY_SCOPES = [
         'aokie:state',
@@ -229,6 +238,11 @@ class McpOAuthService
         return $clientId === self::AOKIE_COMPANION_CLIENT_ID;
     }
 
+    public static function isBackupPluginClient(string $clientId): bool
+    {
+        return $clientId === self::BACKUP_PLUGIN_CLIENT_ID;
+    }
+
     /**
      * The scope vocabulary + default a given client draws from. The desktop client uses the
      * ApiKeyService DESKTOP_SCOPES; every other client keeps the unchanged MCP session scopes.
@@ -241,6 +255,9 @@ class McpOAuthService
         }
         if (self::isAokieCompanionClient($clientId)) {
             return [self::AOKIE_COMPANION_SCOPES, self::AOKIE_COMPANION_SCOPES];
+        }
+        if (self::isBackupPluginClient($clientId)) {
+            return [self::BACKUP_PLUGIN_SCOPES, self::BACKUP_PLUGIN_SCOPES];
         }
         return [self::supportedScopes(), McpTokenService::DEFAULT_SCOPES];
     }
@@ -260,6 +277,7 @@ class McpOAuthService
             'flows:read' => 'Read your flows, bindings and runs',
             'flows:write' => 'Run and complete flows',
             'connector:relay' => 'Act as a desktop runtime for connector commands',
+            'data:snapshot' => 'Back up your apps and forms, and restore them from a backup, once you approve this computer',
             'aokie:realtime' => 'Connect the assigned Aokie Desktop plugin to Companion realtime calls',
             'aokie:state' => 'See live Aokie call state, caller details and captions for the selected app',
             'aokie:monitor' => 'Listen to a live Aokie call without microphone access',

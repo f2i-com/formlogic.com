@@ -260,7 +260,7 @@ definition); instead the transfer and local storage are sealed:
 
 ### One app or form at a time
 
-OAIY's FormLogic backups (`docs/FORMLOGIC_BACKUPS.md` in OAIY). The same tier as above: `DATA_NODES`, and a key bound to an approved node.
+The FormLogic Backups plugin for OAIY (`docs/FORMLOGIC_BACKUPS.md`). The same tier as above: `DATA_NODES`, and a key bound to an approved node.
 
 - `GET /api/v1/data-node/backup-sources` lists the account's apps and forms: names and dates, no contents.
 - `POST /api/v1/data-node/source-backups` {kind: `app` | `form`, id, recipientPk, requestedAt, recipientPkSignature} seals one to `recipientPk` as a `BackupEnvelope` (`docs/DATA_ENCRYPTION.md`), and answers with a signed header (`kind: source-backup`). The node signs `flsourcebackup:1|<requestedAt>|<recipientPk>|<kind>|<id>`.
@@ -277,6 +277,16 @@ Unlike `.flaccount`, `recipientPk` is a long-term key, because a backup kept for
   owning the API key — never a self-reported instance id. One node per connection.
   A changed signing key = rotation: status drops to `pending`, the certificate is
   cleared, the key generation increments — owner re-approval is mandatory.
+- **Backup clients.** The FormLogic Backups plugin links with the public OAuth client
+  `formlogic-backups-plugin`, whose only scope is `data:snapshot`. Its key is tied to a
+  `backup_clients` row, not to `desktop_connections`: that table is the relay roster, and
+  the command queue, the connector lists and the desktop picker all read it. The node binds
+  to the row through `data_nodes.backup_client_id`, so `desktop_connection_id` is now
+  nullable, and a node has one or the other. `connectionId` on the wire, and in the signed
+  certificate, is whichever it has; `kind` says `desktop` or `backup`. A key that holds
+  `data:snapshot` and has neither row can't register. Revoking or forgetting a backup node
+  also ends its key, because the key does nothing else; `DELETE /api/v1/data-node/self` is
+  the plugin doing that from its end, and a desktop key can't use it.
 - **Approval** (`POST /api/data-nodes/{id}/approve`, session): the browser vault worker
   signs an **flnodecert:1** node-authority certificate (op `signDataStructure`, domain
   ALLOWLISTED to flnodecert:1/flplacement:1 so the vault can never mint an

@@ -144,6 +144,8 @@ class AccountErasureService
             ];
         }
 
+        // No FK to users: a node's history outlives an unlink, but not the account.
+        $this->pdo?->prepare('DELETE FROM data_nodes WHERE owner_user_id = :u')->execute(['u' => $userId]);
         $this->authService->deleteAccount($userId);
         return ['completed' => true, 'failedApps' => 0, 'failedForms' => 0, 'pendingCleanup' => 0, 'pendingTrash' => 0, 'pendingEncryption' => 0];
     }

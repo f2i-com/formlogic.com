@@ -42,6 +42,9 @@ class ApiKeyService
         'aokie:realtime',
     ];
 
+    /** Scopes a key only gets from the link that makes it, never from Settings or the API. */
+    private const BACKUP_CLIENT_SCOPES = ['data:snapshot'];
+
     public function __construct(MySQLConnection $db)
     {
         $this->db = $db;
@@ -52,6 +55,12 @@ class ApiKeyService
      * Returns the full key (only time it's available) plus key metadata.
      */
     public function createKey(string $userId, string $name, array $scopes, ?array $formIds = null, ?string $expiresAt = null): array
+    {
+        return $this->mintKey($userId, $name, $scopes, self::VALID_SCOPES, $formIds, $expiresAt);
+    }
+
+    /** @param list<string> $allowedScopes */
+    private function mintKey(string $userId, string $name, array $scopes, array $allowedScopes, ?array $formIds = null, ?string $expiresAt = null): array
     {
         $pdo = $this->db->getConnection();
 
@@ -66,7 +75,7 @@ class ApiKeyService
             throw new \InvalidArgumentException('At least one scope is required');
         }
         foreach ($scopes as $scope) {
-            if (!in_array($scope, self::VALID_SCOPES, true)) {
+            if (!in_array($scope, $allowedScopes, true)) {
                 throw new \InvalidArgumentException("Invalid scope: $scope");
             }
         }
@@ -257,6 +266,37 @@ class ApiKeyService
         $stmt = $pdo->prepare('UPDATE api_keys SET is_active = 0 WHERE id = ? AND user_id = ?');
         $stmt->execute([$keyId, $userId]);
         return $stmt->rowCount() > 0;
+    }
+
+    /**
+     * The backup-only key for one computer running the FormLogic Backups plugin. Returned once.
+     *
+     * @return array{id:string, apiKeyId:string, key:string, accountEmail:string}
+     */
+    public function createBackupClient(string $userId, ?string $device): array
+    {
+        $key = $this->mintKey(
+            $userId,
+            substr($device !== null ? "FormLogic Backups on {$device}" : 'FormLogic Backups', 0, 255),
+            self::BACKUP_CLIENT_SCOPES,
+            self::BACKUP_CLIENT_SCOPES,
+        );
+        $pdo = $this->db->getConnection();
+        $id = $this->generateId();
+        try {
+            $pdo->prepare(
+                'INSERT INTO backup_clients (id, owner_user_id, api_key_id, device_name, created_at)
+                 VALUES (?, ?, ?, ?, ?)'
+            )->execute([$id, $userId, $key['id'], $device, gmdate('Y-m-d H:i:s')]);
+            $stmt = $pdo->prepare('SELECT email FROM users WHERE id = ?');
+            $stmt->execute([$userId]);
+            $email = (string) $stmt->fetchColumn();
+        } catch (\Throwable $e) {
+            // A failed link must not leave an active key nobody was ever given.
+            $this->revokeKey($key['id'], $userId);
+            throw $e;
+        }
+        return ['id' => $id, 'apiKeyId' => $key['id'], 'key' => $key['key'], 'accountEmail' => $email];
     }
 
     private function generateId(): string

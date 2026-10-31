@@ -4,7 +4,7 @@
 // node-authority certificate with the vault Ed25519 key — the fingerprint is
 // shown in the confirm so the user approves a KEY, not just a device name.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { HardDrive, ShieldCheck, ShieldOff } from 'lucide-react';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
@@ -29,6 +29,8 @@ export function DataNodesPanel() {
   const [revokeTarget, setRevokeTarget] = useState<DataNodeWire | null>(null);
   const [forgetTarget, setForgetTarget] = useState<DataNodeWire | null>(null);
   const [showUnlock, setShowUnlock] = useState(false);
+  // The dialog's onClose runs on every way out, so it can't tell a cancel from an unlock.
+  const unlockingFor = useRef<DataNodeWire | null>(null);
 
   const load = useCallback(async (isCurrent: () => boolean = () => true) => {
     const res = await api.getDataNodes();
@@ -58,7 +60,12 @@ export function DataNodesPanel() {
       }
       const { approveDataNode } = await import('../../lib/dataPlacement');
       await approveDataNode(node, user.id, vault.ed25519Pk);
-      toast.success('Data node approved', `${node.displayName} can now be assigned encrypted datasets.`);
+      toast.success(
+        'Data node approved',
+        node.kind === 'backup'
+          ? `${node.displayName} can now back up and restore your apps and forms.`
+          : `${node.displayName} can now be assigned encrypted datasets.`,
+      );
       await load();
     } catch (e) {
       toast.error('Approval failed', e instanceof Error ? e.message : String(e));
@@ -70,10 +77,9 @@ export function DataNodesPanel() {
 
   const startApprove = (node: DataNodeWire) => {
     const status = useVaultStore.getState().status;
-    if (status === 'unlocked') {
-      setApproveTarget(node);
-    } else {
-      setApproveTarget(node);
+    setApproveTarget(node);
+    if (status !== 'unlocked') {
+      unlockingFor.current = node;
       setShowUnlock(true);
     }
   };
@@ -87,8 +93,9 @@ export function DataNodesPanel() {
         Data nodes
       </h4>
       <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
-        Desktops enrolled to host encrypted form data. Approving signs a certificate with your
-        vault key binding this exact device key — a storage node never receives decryption keys.
+        Desktops enrolled to host encrypted form data, and computers that only keep backups.
+        Approving signs a certificate with your vault key binding this exact device key — a storage
+        node never receives decryption keys.
       </p>
       <ul className="mt-3 space-y-2">
         {nodes.map((node) => (
@@ -99,6 +106,11 @@ export function DataNodesPanel() {
             <div className="min-w-0">
               <div className="flex items-center gap-2 text-sm text-gray-800 dark:text-slate-200">
                 {node.displayName}
+                {node.kind === 'backup' && (
+                  <span className="rounded bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 text-[11px] font-medium text-gray-600 dark:text-slate-300">
+                    Backups only
+                  </span>
+                )}
                 {node.status === 'approved' && (
                   <span className="inline-flex items-center gap-1 rounded bg-green-50 dark:bg-green-500/10 px-1.5 py-0.5 text-[11px] font-medium text-green-700 dark:text-green-300">
                     <ShieldCheck className="h-3 w-3" />Approved
@@ -144,7 +156,10 @@ export function DataNodesPanel() {
 
       <VaultUnlockDialog
         isOpen={showUnlock}
-        onUnlocked={() => setShowUnlock(false)}
+        onUnlocked={() => {
+          setShowUnlock(false);
+          setApproveTarget(unlockingFor.current);
+        }}
         onClose={() => {
           setShowUnlock(false);
           setApproveTarget(null);
@@ -155,7 +170,9 @@ export function DataNodesPanel() {
         isOpen={approveTarget !== null && !showUnlock}
         title={approveTarget ? `Approve "${approveTarget.displayName}" as a data node?` : ''}
         message={approveTarget
-          ? `Verify this fingerprint on the desktop's Data page before approving:\n\n${displayFingerprint(approveTarget.fingerprint)}\n\nApproval signs a certificate with your vault key. The node can then be assigned encrypted datasets — it never receives decryption keys.`
+          ? approveTarget.kind === 'backup'
+            ? `Verify this fingerprint in the FormLogic Backups plugin before approving:\n\n${displayFingerprint(approveTarget.fingerprint)}\n\nApproval signs a certificate with your vault key. That computer can then take backups of your apps and forms, sealed to its own key, and can restore one here as new copies. Whoever has its twelve words can read those backups.`
+            : `Verify this fingerprint on the desktop's Data page before approving:\n\n${displayFingerprint(approveTarget.fingerprint)}\n\nApproval signs a certificate with your vault key. The node can then be assigned encrypted datasets — it never receives decryption keys.`
           : ''}
         confirmLabel="Approve node"
         isLoading={busy}
@@ -167,7 +184,9 @@ export function DataNodesPanel() {
       <ConfirmDialog
         isOpen={revokeTarget !== null}
         title={revokeTarget ? `Revoke "${revokeTarget.displayName}"?` : ''}
-        message="The node loses all data-plane authority. Its local files are NOT deleted (request a wipe separately once that ships), and copies it already exported cannot be recalled."
+        message={revokeTarget?.kind === 'backup'
+          ? "That computer can't take or restore backups any more, and its sign-in stops working. Backups it already holds stay on it and cannot be recalled."
+          : 'The node loses all data-plane authority. Its local files are NOT deleted (request a wipe separately once that ships), and copies it already exported cannot be recalled.'}
         confirmLabel="Revoke"
         variant="danger"
         onConfirm={() => {
@@ -185,7 +204,9 @@ export function DataNodesPanel() {
       <ConfirmDialog
         isOpen={forgetTarget !== null}
         title={forgetTarget ? `Remove "${forgetTarget.displayName}" from the list?` : ''}
-        message="This only clears the record of a node you already revoked — it has no authority to lose. If that desktop is still installed and linked, it will enrol again as a new pending node."
+        message={forgetTarget?.kind === 'backup'
+          ? 'This only clears the record of a computer you already revoked. Linking the plugin again starts a new pending node.'
+          : 'This only clears the record of a node you already revoked — it has no authority to lose. If that desktop is still installed and linked, it will enrol again as a new pending node.'}
         confirmLabel="Remove"
         variant="danger"
         onConfirm={() => {

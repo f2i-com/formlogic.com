@@ -174,6 +174,7 @@ class McpOAuthController
             // ignore both.
             'scopeLabels' => McpOAuthService::scopeLabels($scopes),
             'isDesktopLink' => McpOAuthService::isDesktopClient($v['client']['clientId']),
+            'isBackupLink' => McpOAuthService::isBackupPluginClient($v['client']['clientId']),
             'isAokieCompanionLink' => McpOAuthService::isAokieCompanionClient($v['client']['clientId']),
             'appBindingRequired' => McpOAuthService::isAokieCompanionClient($v['client']['clientId']),
             'device' => $v['device'] ?? null,
@@ -200,6 +201,9 @@ class McpOAuthController
         $appId = (is_string($p['appId'] ?? null) && $p['appId'] !== '') ? $p['appId'] : null;
         if (McpOAuthService::isAokieCompanionClient($v['client']['clientId']) && $appId === null) {
             return $this->oauthError($response, 'invalid_request', 'Aokie Companion authorization must select an app', 400);
+        }
+        if (McpOAuthService::isBackupPluginClient($v['client']['clientId']) && $appId !== null) {
+            return $this->oauthError($response, 'invalid_request', 'A backup link covers the whole account and cannot be limited to one app', 400);
         }
         $grantedScopes = $v['scopes'];
         if ($appId !== null) {
@@ -370,6 +374,9 @@ class McpOAuthController
             if (McpOAuthService::isDesktopClient($client['clientId'])) {
                 return $this->issueDesktopKey($request, $response, $r);
             }
+            if (McpOAuthService::isBackupPluginClient($client['clientId'])) {
+                return $this->issueBackupKey($request, $response, $r);
+            }
             $deviceId = McpOAuthService::isAokieCompanionClient($client['clientId'])
                 ? ($r['deviceLabel'] ?? null)
                 : null;
@@ -501,6 +508,47 @@ class McpOAuthController
             'api_key_id' => $key['id'],
             'desktop_connection_id' => $connection['id'],
             'device_name' => $connection['deviceName'],
+        ]);
+    }
+
+    /**
+     * FormLogic Backups plugin link: mint a long-lived key holding only data:snapshot, tied to a
+     * backup_clients row, and return it ONCE. The key moves no data until the owner approves the
+     * node it registers, under Settings → Linked Desktops → Data nodes.
+     */
+    private function issueBackupKey(Request $request, Response $response, array $grant): Response
+    {
+        if ($this->apiKeys === null) {
+            return $this->oauthError($response, 'server_error', 'Backup linking is not available', 500);
+        }
+        $userId = (string) $grant['userId'];
+        // Same fail-closed rule as a desktop key: the scope reaches every app the account owns,
+        // so a grant carrying an app limit is refused rather than silently widened.
+        if (isset($grant['appId']) && $grant['appId'] !== null && $grant['appId'] !== '') {
+            return $this->oauthError($response, 'invalid_grant', 'A backup link covers the whole account; an app-restricted authorization cannot mint one', 400);
+        }
+        $device = isset($grant['deviceLabel']) && $grant['deviceLabel'] !== null ? (string) $grant['deviceLabel'] : null;
+        try {
+            $client = $this->apiKeys->createBackupClient($userId, $device);
+        } catch (\Throwable $e) {
+            $this->logger?->warning('Backup link failed', ['reason' => $e->getMessage()]);
+            return $this->oauthError($response, 'server_error', 'Could not complete linking', 500);
+        }
+        $this->audit($request, 'backup.oauth.link', $userId, [
+            'clientId' => McpOAuthService::BACKUP_PLUGIN_CLIENT_ID,
+            'backupClientId' => $client['id'],
+            'apiKeyId' => $client['apiKeyId'],
+        ]);
+        return $this->tokenResponse($response, [
+            'access_token' => $client['key'],
+            'token_type' => 'Bearer',
+            'scope' => implode(' ', McpOAuthService::BACKUP_PLUGIN_SCOPES),
+            'formlogic_api_key' => $client['key'],
+            'api_key_id' => $client['apiKeyId'],
+            'backup_client_id' => $client['id'],
+            // The plugin names the account in every confirmation it shows.
+            'account_id' => $userId,
+            'account_email' => $client['accountEmail'],
         ]);
     }
 

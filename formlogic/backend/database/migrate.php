@@ -276,7 +276,8 @@ if ($stateColumn !== '' && !str_contains($stateColumn, 'enabling')) {
 //    unlinking a connection revokes the node (status), it never silently deletes history.
 $pdo->exec("CREATE TABLE IF NOT EXISTS `data_nodes` (
   `id` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `desktop_connection_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `desktop_connection_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `backup_client_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `workspace_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `display_name` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -299,6 +300,7 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS `data_nodes` (
   `updated_at` datetime DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_data_node_connection` (`desktop_connection_id`),
+  UNIQUE KEY `uq_data_node_backup_client` (`backup_client_id`),
   KEY `idx_data_node_owner` (`owner_user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 $applied[] = 'data_nodes table ensured';
@@ -806,6 +808,31 @@ if (!$columnExists($pdo, $db, 'pack_versions', 'node_count')) {
     $applied[] = 'pack_versions.node_count added';
 } else {
     $applied[] = 'pack_versions.node_count already present';
+}
+
+// 26. Backup clients: a computer that only keeps backups (the FormLogic Backups plugin for OAIY).
+//     Not a desktop_connections row, because that table is the relay roster. A data node now
+//     belongs to one or the other.
+$pdo->exec("CREATE TABLE IF NOT EXISTS `backup_clients` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `api_key_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `device_name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_backup_client_key` (`api_key_id`),
+  KEY `idx_backup_client_owner` (`owner_user_id`),
+  CONSTRAINT `fk_backup_client_owner` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'backup_clients table ensured';
+if (!$columnExists($pdo, $db, 'data_nodes', 'backup_client_id')) {
+    $pdo->exec("ALTER TABLE `data_nodes`
+        MODIFY `desktop_connection_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+        ADD COLUMN `backup_client_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL AFTER `desktop_connection_id`,
+        ADD UNIQUE KEY `uq_data_node_backup_client` (`backup_client_id`)");
+    $applied[] = 'data_nodes.backup_client_id added';
+} else {
+    $applied[] = 'data_nodes.backup_client_id already present';
 }
 
 echo "Migrations complete for database '{$db}':\n";

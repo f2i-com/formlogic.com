@@ -664,9 +664,26 @@ CREATE TABLE `data_dataset_high_water` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
+-- A computer that only keeps backups (the FormLogic Backups plugin for OAIY). Not a row in
+-- desktop_connections: that table is the relay roster, and this client takes no part in it.
+CREATE TABLE `backup_clients` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `api_key_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `device_name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_backup_client_key` (`api_key_id`),
+  KEY `idx_backup_client_owner` (`owner_user_id`),
+  CONSTRAINT `fk_backup_client_owner` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `data_nodes` (
   `id` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `desktop_connection_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `desktop_connection_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `backup_client_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `workspace_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `display_name` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -689,6 +706,7 @@ CREATE TABLE `data_nodes` (
   `updated_at` datetime DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_data_node_connection` (`desktop_connection_id`),
+  UNIQUE KEY `uq_data_node_backup_client` (`backup_client_id`),
   KEY `idx_data_node_owner` (`owner_user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;

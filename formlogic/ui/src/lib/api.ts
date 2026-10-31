@@ -662,6 +662,8 @@ export interface OAuthAuthorizeInfo {
   scopeLabels?: Record<string, string>;
   /** True when this consent is for linking a FormLogic Desktop install (client_id=formlogic-desktop). */
   isDesktopLink?: boolean;
+  /** True when this consent is for linking the FormLogic Backups plugin. */
+  isBackupLink?: boolean;
   /** Hostname the desktop sent, when `isDesktopLink` is true (may be null). */
   device?: string | null;
 }

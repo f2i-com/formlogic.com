@@ -23,6 +23,7 @@ vi.mock('../lib/api', () => ({
   newIdempotencyKey: () => 'key',
 }));
 
+import { api } from '../lib/api';
 import { OAuthAuthorize } from './OAuthAuthorize';
 import { SignedInRedirect } from '../components/auth/SignedInRedirect';
 import { useAuthStore } from '../stores/authStore';
@@ -99,4 +100,23 @@ it('does not follow a return address that is itself the sign-in page', async () 
   await open(`/login?redirect=${encodeURIComponent(SIGN_IN)}`);
   expect(here()).toBe('/');
   expect(container.textContent).toContain('Dashboard');
+});
+
+it('a backup plugin is named as one, says it needs approving, and offers no app limit', async () => {
+  // A backup link covers the whole account, and the server refuses a limit.
+  vi.mocked(api.getOAuthAuthorizeInfo).mockResolvedValueOnce({
+    data: {
+      clientId: 'formlogic-backups-plugin', clientName: 'FormLogic Backups', isBackupLink: true, device: 'FRONT-DESK', redirectHost: '127.0.0.1', scopes: ['data:snapshot'], scopeLabels: {},
+    },
+  } as never);
+  useAuthStore.setState({ user: owner });
+  useAppStore.setState({ apps: [{ id: 'a1', name: 'Bookings' }] as never, fetchApps: async () => {} });
+
+  await open(CONSENT.replace('oaiy-desktop', 'formlogic-backups-plugin'));
+
+  expect(container.textContent).toContain('Link FormLogic Backups');
+  expect(container.textContent).toContain('FRONT-DESK');
+  expect(container.textContent).toContain('Back up your apps and forms');
+  expect(container.textContent).toContain('Data nodes');
+  expect(container.querySelector('#oauth-app-limit')).toBeNull();
 });

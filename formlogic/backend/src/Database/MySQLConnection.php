@@ -1449,11 +1449,13 @@ class MySQLConnection
         // Encrypted data nodes — N0/N3a skeleton (docs/FORMLOGIC_DATA_NODES.md;
         // mirrored in schema.sql + database/migrate.php block 6). data_nodes has
         // no FK to desktop_connections on purpose: unlinking revokes (status),
-        // it never silently deletes enrolment history.
+        // it never silently deletes enrolment history. A node belongs to a
+        // desktop connection or to a backup client, never both.
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS data_nodes (
                 id VARCHAR(40) PRIMARY KEY,
-                desktop_connection_id VARCHAR(36) NOT NULL,
+                desktop_connection_id VARCHAR(36) NULL,
+                backup_client_id VARCHAR(36) NULL,
                 owner_user_id VARCHAR(36) NOT NULL,
                 workspace_id VARCHAR(36) NULL,
                 display_name VARCHAR(120) NOT NULL,
@@ -1475,7 +1477,25 @@ class MySQLConnection
                 created_at DATETIME NULL,
                 updated_at DATETIME NULL,
                 UNIQUE KEY uq_data_node_connection (desktop_connection_id),
+                UNIQUE KEY uq_data_node_backup_client (backup_client_id),
                 KEY idx_data_node_owner (owner_user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // A computer that only keeps backups (the FormLogic Backups plugin for OAIY). Not a row
+        // in desktop_connections: that table is the relay roster, and the command queue, the
+        // connector lists and the desktop picker all read it. This client takes no part in any
+        // of them, and being absent is what keeps it out.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS backup_clients (
+                id VARCHAR(36) PRIMARY KEY,
+                owner_user_id VARCHAR(36) NOT NULL,
+                api_key_id VARCHAR(36) NOT NULL,
+                device_name VARCHAR(100) NULL,
+                created_at DATETIME NULL,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE KEY uq_backup_client_key (api_key_id),
+                KEY idx_backup_client_owner (owner_user_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
         // Staged artifact ownership (review FL-002; mirrored in schema.sql +
@@ -2679,6 +2699,14 @@ class MySQLConnection
             $pdo->exec('ALTER TABLE apps ADD COLUMN client_engine VARCHAR(16) NULL DEFAULT NULL');
         }
 
+        // A data node can now belong to a backup client instead of a desktop connection.
+        if ($pdo->query("SHOW COLUMNS FROM data_nodes LIKE 'backup_client_id'")->rowCount() === 0) {
+            $pdo->exec('ALTER TABLE data_nodes
+                MODIFY desktop_connection_id VARCHAR(36) NULL,
+                ADD COLUMN backup_client_id VARCHAR(36) NULL AFTER desktop_connection_id,
+                ADD UNIQUE KEY uq_data_node_backup_client (backup_client_id)');
+        }
+
         // Seed the first-party OAuth clients (idempotent) now that mcp_oauth_clients exists.
         $this->seedFirstPartyOAuthClients($pdo);
     }
@@ -2921,6 +2949,11 @@ class MySQLConnection
                     'http://127.0.0.1/oauth/callback',
                     'http://localhost/oauth/callback',
                 ],
+            ],
+            [
+                'id' => \FormLogic\Services\McpOAuthService::BACKUP_PLUGIN_CLIENT_ID,
+                'name' => 'FormLogic Backups',
+                'redirects' => ['http://127.0.0.1/callback', 'http://localhost/callback'],
             ],
         ]);
         foreach ($clients as $client) {

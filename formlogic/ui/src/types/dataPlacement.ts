@@ -4,6 +4,8 @@
 export interface DataNodeWire {
   id: string;
   connectionId: string;
+  /** A desktop that can host data, or a computer that only keeps backups. */
+  kind?: 'desktop' | 'backup';
   displayName: string;
   signingPublicKey: string;
   signingKeyId: string;

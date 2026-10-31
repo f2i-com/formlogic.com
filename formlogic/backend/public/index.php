@@ -2914,6 +2914,9 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     $group->get('/data-node/self', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\DataNodeController::class)->self($request, $response);
     })->add($dataNodeAuth);
+    $group->delete('/data-node/self', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\DataNodeController::class)->unlink($request, $response);
+    })->add($dataNodeAuth);
     $group->post('/data-node/account-backups', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\DataNodeController::class)->createAccountBackup($request, $response);
     })->add($dataNodeAuth);

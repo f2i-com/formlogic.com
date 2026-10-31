@@ -15,7 +15,8 @@ use FormLogic\Support\DataCanonicalJson;
  * flk_ channel; the server derives keyId/fingerprint from the raw key itself
  * (never trusting client-computed values) and binds the node to the
  * desktop_connections row that owns the API key — never to a self-reported
- * instance id (plan §8.2). A node starts `pending` and grants NOTHING until
+ * instance id (plan §8.2). A backup client (the FormLogic Backups plugin) does
+ * the same through its backup_clients row. A node starts `pending` and grants NOTHING until
  * the owner approves it in the browser by signing an flnodecert:1
  * node-authority certificate with their VAULT Ed25519 key. A changed signing
  * key on re-registration is a rotation: the node drops back to `pending`,
@@ -67,15 +68,9 @@ final class DataNodeService
      */
     public function resolveApprovedNode(string $userId, string $apiKeyId): array
     {
-        $stmt = $this->mysql->getConnection()->prepare(
-            'SELECT n.* FROM data_nodes n
-             JOIN desktop_connections c ON c.id = n.desktop_connection_id
-             WHERE n.owner_user_id = ? AND c.owner_user_id = ? AND c.api_key_id = ?'
-        );
-        $stmt->execute([$userId, $userId, $apiKeyId]);
-        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+        $row = $this->rowForKey($userId, $apiKeyId);
         if (
-            !is_array($row)
+            $row === null
             || $row['status'] !== 'approved'
             || !is_string($row['owner_signed_certificate'])
             || $row['owner_signed_certificate'] === ''
@@ -107,7 +102,9 @@ final class DataNodeService
         $stmt = $pdo->prepare('SELECT id FROM desktop_connections WHERE owner_user_id = ? AND api_key_id = ?');
         $stmt->execute([$userId, $apiKeyId]);
         $connectionId = $stmt->fetchColumn();
-        if (!is_string($connectionId)) {
+        $connectionId = is_string($connectionId) ? $connectionId : null;
+        $backupClientId = $connectionId === null ? $this->backupClientId($userId, $apiKeyId) : null;
+        if ($connectionId === null && $backupClientId === null) {
             throw new \RuntimeException('data_node_no_connection');
         }
 
@@ -129,8 +126,10 @@ final class DataNodeService
         ));
         $now = gmdate('Y-m-d H:i:s');
 
-        $stmt = $pdo->prepare('SELECT * FROM data_nodes WHERE desktop_connection_id = ?');
-        $stmt->execute([$connectionId]);
+        $stmt = $connectionId !== null
+            ? $pdo->prepare('SELECT * FROM data_nodes WHERE desktop_connection_id = ?')
+            : $pdo->prepare('SELECT * FROM data_nodes WHERE backup_client_id = ?');
+        $stmt->execute([$connectionId ?? $backupClientId]);
         $existing = $stmt->fetch(\PDO::FETCH_ASSOC);
 
         if (is_array($existing)) {
@@ -165,13 +164,13 @@ final class DataNodeService
 
         $id = 'dn_' . bin2hex(random_bytes(16));
         $pdo->prepare(
-            'INSERT INTO data_nodes (id, desktop_connection_id, owner_user_id, display_name,
+            'INSERT INTO data_nodes (id, desktop_connection_id, backup_client_id, owner_user_id, display_name,
                 signing_public_key, signing_key_id, signing_key_generation, fingerprint,
                 transport_key_fingerprint, protocol_min, protocol_max, capabilities_json,
                 roster_revision, last_seen_at, last_storage_heartbeat_at, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 1, ?, ?, "pending", ?, ?)'
+             VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 1, ?, ?, "pending", ?, ?)'
         )->execute([
-            $id, $connectionId, $userId, $displayName, $pkB64, $keyId, $fingerprint,
+            $id, $connectionId, $backupClientId, $userId, $displayName, $pkB64, $keyId, $fingerprint,
             $transportFp, $protocolMin, $protocolMax, json_encode($capabilities),
             $now, $now, $now, $now,
         ]);
@@ -187,17 +186,44 @@ final class DataNodeService
         return array_map(fn(array $r) => $this->format($r), $stmt->fetchAll(\PDO::FETCH_ASSOC));
     }
 
-    /** The node bound to the calling desktop's API key, or null. */
+    /** The node bound to the calling API key, or null. */
     public function selfForConnection(string $userId, string $apiKeyId): ?array
     {
-        $stmt = $this->mysql->getConnection()->prepare(
-            'SELECT n.* FROM data_nodes n
-             JOIN desktop_connections c ON c.id = n.desktop_connection_id
-             WHERE n.owner_user_id = ? AND c.api_key_id = ?'
-        );
-        $stmt->execute([$userId, $apiKeyId]);
-        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
-        return is_array($row) ? $this->format($row) : null;
+        $row = $this->rowForKey($userId, $apiKeyId);
+        return $row !== null ? $this->format($row) : null;
+    }
+
+    /**
+     * A backup client ends its own link: its node loses authority and its key stops working.
+     * Desktop links are ended from the desktop connection instead, so a desktop key gets false.
+     */
+    public function unlinkBackupClient(string $userId, string $apiKeyId): bool
+    {
+        $backupClientId = $this->backupClientId($userId, $apiKeyId);
+        if ($backupClientId === null) {
+            return false;
+        }
+        $this->together(function (\PDO $pdo) use ($backupClientId, $userId) {
+            $now = gmdate('Y-m-d H:i:s');
+            $revoked = $pdo->prepare(
+                'UPDATE data_nodes SET status = "revoked", revoked_at = ?,
+                    roster_revision = roster_revision + 1, updated_at = ?
+                 WHERE backup_client_id = ? AND owner_user_id = ?'
+            );
+            $revoked->execute([$now, $now, $backupClientId, $userId]);
+            $this->endBackupKey($backupClientId, $userId);
+            // With no node there is nothing for the owner to remove later, so it goes now.
+            if ($revoked->rowCount() === 0) {
+                $pdo->prepare('DELETE FROM backup_clients WHERE id = ? AND owner_user_id = ?')->execute([$backupClientId, $userId]);
+            }
+        });
+        return true;
+    }
+
+    /** Whether this API key is a backup client's. */
+    public function isBackupClient(string $userId, string $apiKeyId): bool
+    {
+        return $this->backupClientId($userId, $apiKeyId) !== null;
     }
 
     /**
@@ -220,7 +246,7 @@ final class DataNodeService
             'protocol' => self::PROTOCOL,
             'kind' => 'node-authority',
             'nodeId' => $row['id'],
-            'connectionId' => $row['desktop_connection_id'],
+            'connectionId' => $row['desktop_connection_id'] ?? $row['backup_client_id'],
             'ownerUserId' => $userId,
             'signingKeyId' => $row['signing_key_id'],
             'signingKeyGeneration' => (int) $row['signing_key_generation'],
@@ -284,10 +310,16 @@ final class DataNodeService
         if ($row === null || $row['owner_user_id'] !== $userId) {
             throw new \RuntimeException('data_node_not_found');
         }
-        $this->mysql->getConnection()->prepare(
-            'UPDATE data_nodes SET status = "revoked", revoked_at = ?,
-                roster_revision = roster_revision + 1, updated_at = ? WHERE id = ?'
-        )->execute([gmdate('Y-m-d H:i:s'), gmdate('Y-m-d H:i:s'), $nodeId]);
+        $this->together(function (\PDO $pdo) use ($row, $nodeId, $userId) {
+            $pdo->prepare(
+                'UPDATE data_nodes SET status = "revoked", revoked_at = ?,
+                    roster_revision = roster_revision + 1, updated_at = ? WHERE id = ?'
+            )->execute([gmdate('Y-m-d H:i:s'), gmdate('Y-m-d H:i:s'), $nodeId]);
+            // A backup client's key does nothing else, so it ends with the node's authority.
+            if ($row['backup_client_id'] !== null) {
+                $this->endBackupKey((string) $row['backup_client_id'], $userId);
+            }
+        });
         return $this->format($this->rowById($nodeId));
     }
 
@@ -312,9 +344,68 @@ final class DataNodeService
         if (($row['status'] ?? '') !== 'revoked') {
             throw new \RuntimeException('data_node_not_revoked');
         }
-        $this->mysql->getConnection()
-            ->prepare('DELETE FROM data_nodes WHERE id = ? AND status = "revoked"')
-            ->execute([$nodeId]);
+        $this->together(function (\PDO $pdo) use ($row, $nodeId, $userId) {
+            $pdo->prepare('DELETE FROM data_nodes WHERE id = ? AND status = "revoked"')->execute([$nodeId]);
+            if ($row['backup_client_id'] !== null) {
+                $this->endBackupKey((string) $row['backup_client_id'], $userId);
+                $pdo->prepare('DELETE FROM backup_clients WHERE id = ? AND owner_user_id = ?')->execute([$row['backup_client_id'], $userId]);
+            }
+        });
+    }
+
+    /** A node and its key never end up apart: a node without authority holding a live key. */
+    private function together(callable $work): void
+    {
+        $pdo = $this->mysql->getConnection();
+        $pdo->beginTransaction();
+        try {
+            $work($pdo);
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            throw $e;
+        }
+    }
+
+    /** The node this API key is bound to, through its desktop connection or its backup client. */
+    private function rowForKey(string $userId, string $apiKeyId): ?array
+    {
+        $pdo = $this->mysql->getConnection();
+        $stmt = $pdo->prepare(
+            'SELECT n.* FROM data_nodes n
+             JOIN desktop_connections c ON c.id = n.desktop_connection_id
+             WHERE n.owner_user_id = ? AND c.owner_user_id = ? AND c.api_key_id = ?'
+        );
+        $stmt->execute([$userId, $userId, $apiKeyId]);
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+        if (is_array($row)) {
+            return $row;
+        }
+        $stmt = $pdo->prepare(
+            'SELECT n.* FROM data_nodes n
+             JOIN backup_clients b ON b.id = n.backup_client_id
+             WHERE n.owner_user_id = ? AND b.owner_user_id = ? AND b.api_key_id = ?'
+        );
+        $stmt->execute([$userId, $userId, $apiKeyId]);
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+        return is_array($row) ? $row : null;
+    }
+
+    private function backupClientId(string $userId, string $apiKeyId): ?string
+    {
+        $stmt = $this->mysql->getConnection()
+            ->prepare('SELECT id FROM backup_clients WHERE owner_user_id = ? AND api_key_id = ?');
+        $stmt->execute([$userId, $apiKeyId]);
+        $id = $stmt->fetchColumn();
+        return is_string($id) ? $id : null;
+    }
+
+    private function endBackupKey(string $backupClientId, string $userId): void
+    {
+        $this->mysql->getConnection()->prepare(
+            'UPDATE api_keys k JOIN backup_clients b ON b.api_key_id = k.id
+             SET k.is_active = 0 WHERE b.id = ? AND k.user_id = ?'
+        )->execute([$backupClientId, $userId]);
     }
 
     private function rowById(string $id): ?array
@@ -333,7 +424,8 @@ final class DataNodeService
         }
         return [
             'id' => $row['id'],
-            'connectionId' => $row['desktop_connection_id'],
+            'connectionId' => $row['desktop_connection_id'] ?? $row['backup_client_id'],
+            'kind' => $row['backup_client_id'] !== null ? 'backup' : 'desktop',
             'displayName' => $row['display_name'],
             'signingPublicKey' => $row['signing_public_key'],
             'signingKeyId' => $row['signing_key_id'],

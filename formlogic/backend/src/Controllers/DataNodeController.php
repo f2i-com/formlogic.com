@@ -90,6 +90,20 @@ final class DataNodeController
         return $this->jsonResponse($response, ['data' => ['node' => $this->nodes->selfForConnection($userId, $apiKeyId)]]);
     }
 
+    /** DELETE /api/v1/data-node/self — a backup client ends its own link. */
+    public function unlink(Request $request, Response $response): Response
+    {
+        if (($gate = $this->gate($request, $response)) !== null) {
+            return $gate;
+        }
+        $userId = (string) $request->getAttribute('userId');
+        $apiKeyId = (string) $request->getAttribute('apiKeyId');
+        if (!$this->nodes->unlinkBackupClient($userId, $apiKeyId)) {
+            return $this->jsonError($response, 'Only a backup client can end its link here', 409, 'not_a_backup_client');
+        }
+        return $this->jsonResponse($response, ['data' => ['ok' => true]]);
+    }
+
     public function signingKey(Request $request, Response $response): Response
     {
         if (($gate = $this->gate($request, $response)) !== null) {
@@ -100,7 +114,7 @@ final class DataNodeController
 
     public function eligibleForms(Request $request, Response $response): Response
     {
-        if (($gate = $this->gate($request, $response)) !== null) {
+        if (($gate = $this->desktopGate($request, $response)) !== null) {
             return $gate;
         }
         $userId = (string) $request->getAttribute('userId');
@@ -109,7 +123,7 @@ final class DataNodeController
 
     public function createSnapshot(Request $request, Response $response): Response
     {
-        if (($gate = $this->gate($request, $response)) !== null) {
+        if (($gate = $this->desktopGate($request, $response)) !== null) {
             return $gate;
         }
         $node = $this->approvedNode($request, $response);
@@ -143,7 +157,7 @@ final class DataNodeController
 
     public function snapshotFile(Request $request, Response $response, array $args): Response
     {
-        if (($gate = $this->gate($request, $response)) !== null) {
+        if (($gate = $this->desktopGate($request, $response)) !== null) {
             return $gate;
         }
         $node = $this->approvedNode($request, $response);
@@ -167,7 +181,7 @@ final class DataNodeController
 
     public function deleteSnapshot(Request $request, Response $response, array $args): Response
     {
-        if (($gate = $this->gate($request, $response)) !== null) {
+        if (($gate = $this->desktopGate($request, $response)) !== null) {
             return $gate;
         }
         $node = $this->approvedNode($request, $response);
@@ -297,7 +311,7 @@ final class DataNodeController
 
     public function createAccountBackup(Request $request, Response $response): Response
     {
-        if (($gate = $this->gate($request, $response)) !== null) {
+        if (($gate = $this->desktopGate($request, $response)) !== null) {
             return $gate;
         }
         $node = $this->approvedNode($request, $response);
@@ -382,6 +396,23 @@ final class DataNodeController
         $scopes = (array) $request->getAttribute('apiKeyScopes', []);
         if (!in_array('data:snapshot', $scopes, true) && !in_array('connector:relay', $scopes, true)) {
             return $this->jsonError($response, 'This API key lacks the data:snapshot scope', 403, 'insufficient_scope');
+        }
+        return null;
+    }
+
+    /**
+     * For what only a desktop does. A backup client's key is for backups of apps and forms and
+     * nothing else a data node can do: no snapshots, no whole-account backup, and no list of
+     * forms to place. Most of those ask for no signature from the node, so a stolen key would
+     * reach them on its own. The same refusal as any other key that isn't entitled.
+     */
+    private function desktopGate(Request $request, Response $response): ?Response
+    {
+        if (($gate = $this->gate($request, $response)) !== null) {
+            return $gate;
+        }
+        if ($this->nodes->isBackupClient((string) $request->getAttribute('userId'), (string) $request->getAttribute('apiKeyId'))) {
+            return $this->jsonError($response, 'This API key is not bound to an approved data node', 403, 'data_node_unauthorized');
         }
         return null;
     }

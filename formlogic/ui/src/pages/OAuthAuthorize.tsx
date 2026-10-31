@@ -18,6 +18,7 @@ const SCOPE_LABELS: Record<string, string> = {
   'responses:read': 'Read submitted form responses',
   'responses:write': 'Submit and edit form responses',
   'connector:command': 'Control your FormLogic Desktop connectors (e.g. the Aokie phone) — account-wide',
+  'data:snapshot': 'Back up your apps and forms, and restore them from a backup, once you approve this computer',
   'offline_access': 'Stay connected without asking you again',
 };
 
@@ -173,7 +174,7 @@ export function OAuthAuthorize() {
       <>
         <div className="text-center">
           <div className="w-12 h-12 mx-auto rounded-full bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center mb-4">
-            {info.isDesktopLink ? (
+            {info.isDesktopLink || info.isBackupLink ? (
               <Laptop className="h-6 w-6 text-primary-600 dark:text-primary-400" />
             ) : (
               <Plug className="h-6 w-6 text-primary-600 dark:text-primary-400" />
@@ -182,6 +183,8 @@ export function OAuthAuthorize() {
           <h1 className="text-xl font-semibold text-gray-900 dark:text-white tracking-tight">
             {info.isDesktopLink ? (
               'Link FormLogic Desktop'
+            ) : info.isBackupLink ? (
+              'Link FormLogic Backups'
             ) : (
               <>
                 <span className="text-primary-700 dark:text-primary-300">{info.clientName}</span> wants to connect
@@ -194,6 +197,12 @@ export function OAuthAuthorize() {
                 <>This will connect the desktop app on <span className="font-semibold text-gray-900 dark:text-white">{info.device}</span> to your FormLogic account ({user.email}).</>
               ) : (
                 <>This will connect FormLogic Desktop to your account ({user.email}).</>
+              )
+            ) : info.isBackupLink ? (
+              info.device ? (
+                <>This will connect the backup plugin on <span className="font-semibold text-gray-900 dark:text-white">{info.device}</span> to your FormLogic account ({user.email}).</>
+              ) : (
+                <>This will connect the backup plugin to your FormLogic account ({user.email}).</>
               )
             ) : (
               `to your FormLogic account (${user.email})`
@@ -222,7 +231,14 @@ export function OAuthAuthorize() {
           </ul>
         </div>
 
-        {apps.length > 0 && (
+        {info.isBackupLink && (
+          <p className="mt-3 text-xs text-gray-500 dark:text-slate-400">
+            It can't reach any data yet. You approve it afterwards under Settings, Linked Desktops, Data nodes.
+          </p>
+        )}
+
+        {/* A backup link always covers the whole account, and the server refuses a limit. */}
+        {apps.length > 0 && !info.isBackupLink && (
           <div className="mt-5">
             <label htmlFor="oauth-app-limit" className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1.5">
               Limit access to one app <span className="font-normal text-gray-400 dark:text-slate-500">(optional)</span>
