@@ -44,7 +44,7 @@ class CompositionForms extends FormService
 function compositionFixture(string $dsn='sqlite::memory:'): array
 {
     $db=new CompositionPDO($dsn,null,null,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
-    $db->exec('CREATE TABLE IF NOT EXISTS apps(id TEXT PRIMARY KEY,data TEXT); CREATE TABLE IF NOT EXISTS forms(id TEXT PRIMARY KEY,data TEXT); CREATE TABLE IF NOT EXISTS app_forms(app_id TEXT,form_id TEXT,data TEXT,UNIQUE(app_id,form_id)); CREATE TABLE IF NOT EXISTS flow_definitions(id TEXT PRIMARY KEY,app_id TEXT,slug TEXT,node_capabilities TEXT,version INT); CREATE TABLE IF NOT EXISTS app_flow_bindings(id TEXT PRIMARY KEY,app_id TEXT,flow_slug TEXT); CREATE TABLE IF NOT EXISTS flow_run_logs(id TEXT PRIMARY KEY,app_id TEXT,status TEXT);');
+    $db->exec('CREATE TABLE IF NOT EXISTS apps(id TEXT PRIMARY KEY,data TEXT); CREATE TABLE IF NOT EXISTS forms(id TEXT PRIMARY KEY,data TEXT); CREATE TABLE IF NOT EXISTS app_forms(app_id TEXT,form_id TEXT,data TEXT,UNIQUE(app_id,form_id)); CREATE TABLE IF NOT EXISTS flow_definitions(id TEXT PRIMARY KEY,app_id TEXT,slug TEXT,node_capabilities TEXT,version INT); CREATE TABLE IF NOT EXISTS app_flow_bindings(id TEXT PRIMARY KEY,app_id TEXT,flow_slug TEXT); CREATE TABLE IF NOT EXISTS flow_run_logs(id TEXT PRIMARY KEY,app_id TEXT,status TEXT); CREATE TABLE IF NOT EXISTS flow_kv(id TEXT PRIMARY KEY,owner_user_id TEXT,app_id TEXT,scope TEXT,k TEXT,v TEXT);');
     $apps=new CompositionApps($db); $forms=new CompositionForms($db);
     if(!$apps->getApp('aokie')) {
         $logic=['version'=>1,'permissions'=>['connector.aokie.phone.status'],'scripts'=>[['id'=>'call-record','hook'=>'onConnectorEvent','source'=>'function run(ctx) { return {}; }','enabled'=>true]],'connector'=>['manifest'=>['connectorId'=>'aokie']]];

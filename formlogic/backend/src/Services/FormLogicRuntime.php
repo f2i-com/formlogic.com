@@ -622,7 +622,7 @@ class FormLogicRuntime
      *
      * @return array{isPrivate: bool, resolvedIp: ?string}
      */
-    private function checkHostSecurity(string $host): array
+    protected function checkHostSecurity(string $host): array
     {
         $host = strtolower($host);
 

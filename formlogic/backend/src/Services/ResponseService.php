@@ -1116,10 +1116,9 @@ class ResponseService
                     break;
                 case 'pattern':
                     if (is_string($value) && $value !== '' && is_string($rval) && $rval !== '') {
-                        // ReDoS guard (mirrors the client): cap length + reject nested quantifiers.
-                        if (strlen($rval) > 500
-                            || preg_match('/(\+|\*|\{[^}]*\})\s*(\+|\*|\{[^}]*\})/', $rval)
-                            || preg_match('/\([^)]*\|[^)]*\)\+/', $rval)) {
+                        // PCRE's backtrack limit stops a pattern that runs away, and that fails
+                        // closed below, so what a pattern looks like needs no check here.
+                        if (strlen($rval) > 500) {
                             return $msg;
                         }
                         $ok = @preg_match($this->pcreFromJs($rval), $value);

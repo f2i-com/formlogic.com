@@ -239,7 +239,7 @@ class FormController
                 ->withHeader('Cache-Control', 'no-store');
         }
 
-        return $this->jsonResponse($response, ['form' => $form]);
+        return $this->jsonResponse($response, ['form' => $form + ['fieldsRevision' => FormService::fieldsRevision($form['fields'] ?? [])]]);
     }
 
     /**
@@ -354,6 +354,15 @@ class FormController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid request body'], 422);
         }
 
+        // A save replaces the whole list of fields, so one made from an older copy (another tab, a
+        // second device, an AI client) would take out what was added since. A caller that doesn't
+        // say what it started from isn't checked.
+        $startedFrom = $data['expectedFieldsRevision'] ?? null;
+        unset($data['expectedFieldsRevision']);
+        if (is_string($startedFrom) && isset($data['fields']) && $startedFrom !== FormService::fieldsRevision($form['fields'] ?? [])) {
+            return $this->jsonError($response, 'This form was changed somewhere else since you opened it. Reload the page to get the latest version, then make your change again.', 409, 'form_changed');
+        }
+
         // Validate input types
         if (isset($data['title']) && !is_string($data['title'])) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Title must be a string'], 422);
@@ -426,7 +435,7 @@ class FormController
             $action = (isset($data['status']) && $data['status'] === 'published') ? 'form.publish' : 'form.update';
             $this->audit($request, $action, 'form', $formId);
 
-            return $this->jsonResponse($response, ['form' => $updatedForm]);
+            return $this->jsonResponse($response, ['form' => $updatedForm + ['fieldsRevision' => FormService::fieldsRevision($updatedForm['fields'] ?? [])]]);
         } catch (\FormLogic\Services\EncryptionEnablingException $e) {
             // Enable-race gate: the form is mid-enable — publish/field saves fail closed.
             return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\EncryptionEnablingException::ERROR_CODE);

@@ -84,7 +84,12 @@ class AppCompositionService
                 $move = $this->db->prepare('UPDATE flow_definitions SET app_id = ?, version = version + 1 WHERE app_id = ?'); $move->execute([$targetId, $sourceId]); $moved = $move->rowCount();
                 $move = $this->db->prepare('UPDATE app_flow_bindings SET app_id = ? WHERE app_id = ?'); $move->execute([$targetId, $sourceId]);
                 // A flow's state goes with it. A key the destination already has stays as it is.
-                $this->db->prepare('UPDATE IGNORE flow_kv SET app_id = ? WHERE app_id = ?')->execute([$targetId, $sourceId]);
+                $this->db->prepare(
+                    'UPDATE flow_kv SET app_id = ? WHERE app_id = ? AND NOT EXISTS (
+                        SELECT 1 FROM (SELECT DISTINCT owner_user_id, scope, k FROM flow_kv WHERE app_id = ?) held
+                        WHERE held.owner_user_id = flow_kv.owner_user_id AND held.scope = flow_kv.scope AND held.k = flow_kv.k
+                    )'
+                )->execute([$targetId, $sourceId, $targetId]);
             }
             $this->db->commit();
             return ['appId' => $targetId, 'addedFormIds' => $added, 'sharedFormIds' => array_values($formIds), 'movedFlows' => $moved, 'automationMoved' => $moveAutomation];

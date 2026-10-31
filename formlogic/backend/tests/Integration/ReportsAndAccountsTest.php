@@ -108,14 +108,20 @@ final class ReportsAndAccountsTest extends E2eeTestCase
 
     public function testTheAddressesThatCarryAuthorityCannotBeTaken(): void
     {
-        foreach (['official@formlogic.local', 'DEMO@formlogic.local', ' official@formlogic.local '] as $address) {
-            $refused = '';
-            try {
-                $this->auth()->register($address, 'a-strong-password-123');
-            } catch (\RuntimeException $e) {
-                $refused = $e->getMessage();
+        $configured = array_intersect_key($_ENV, ['OFFICIAL_EMAIL' => 1, 'DEMO_EMAIL' => 1]);
+        unset($_ENV['OFFICIAL_EMAIL'], $_ENV['DEMO_EMAIL']);
+        try {
+            foreach (['official@formlogic.local', 'DEMO@formlogic.local', ' official@formlogic.local '] as $address) {
+                $refused = '';
+                try {
+                    $this->auth()->register($address, 'a-strong-password-123');
+                } catch (\RuntimeException $e) {
+                    $refused = $e->getMessage();
+                }
+                $this->assertStringContainsString('reserved', $refused, $address);
             }
-            $this->assertStringContainsString('reserved', $refused, $address);
+        } finally {
+            $_ENV += $configured;
         }
     }
 

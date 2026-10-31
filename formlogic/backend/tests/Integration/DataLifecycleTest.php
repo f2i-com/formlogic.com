@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Tests\Integration;
 
+use FormLogic\Controllers\FormController;
 use FormLogic\Controllers\ResponseController;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\WebhookService;
@@ -188,6 +189,42 @@ final class DataLifecycleTest extends E2eeTestCase
         $this->assertArrayHasKey('answers', $submit($this->userId), 'the owner still gets the record');
     }
 
+    public function testASaveFromAnOlderCopyOfTheFieldsIsRefused(): void
+    {
+        $formId = $this->aForm();
+        $controller = new FormController(self::$forms);
+        $call = function (string $method, array $body = []) use ($controller, $formId): array {
+            $request = (new ServerRequestFactory())->createServerRequest($method, 'http://localhost/x')
+                ->withAttribute('userId', $this->userId)->withParsedBody($body);
+            $response = $method === 'GET'
+                ? $controller->show($request, (new ResponseFactory())->createResponse(), ['id' => $formId])
+                : $controller->update($request, (new ResponseFactory())->createResponse(), ['id' => $formId]);
+            $response->getBody()->rewind();
+            return [$response->getStatusCode(), json_decode((string) $response->getBody(), true)];
+        };
+        $field = static fn (string $id): array => ['id' => $id, 'type' => 'short_text', 'label' => $id, 'required' => false];
+
+        $tabA = $call('GET')[1]['form']['fieldsRevision'];
+        $tabB = $tabA;
+        [$status, $saved] = $call('PUT', ['fields' => [$field('name'), $field('from_b')], 'expectedFieldsRevision' => $tabB]);
+        $this->assertSame(200, $status);
+        $tabB = $saved['form']['fieldsRevision'];
+        $this->assertNotSame($tabA, $tabB);
+
+        [$status, $refused] = $call('PUT', ['fields' => [$field('name')], 'expectedFieldsRevision' => $tabA]);
+        $this->assertSame(409, $status);
+        $this->assertSame('form_changed', $refused['code']);
+        $this->assertSame(['name', 'from_b'], array_column(self::$forms->getForm($formId)['fields'], 'id'));
+
+        $this->assertSame(200, $call('PUT', ['fields' => [$field('name'), $field('from_b'), $field('more')], 'expectedFieldsRevision' => $tabB])[0], 'its own last save is where it is now');
+        $this->assertSame(200, $call('PUT', ['title' => 'Renamed', 'expectedFieldsRevision' => $tabA])[0], 'a save that leaves the fields alone takes nothing out');
+        $this->assertSame(200, $call('PUT', ['fields' => [$field('name')]])[0], 'nor is a caller checked that names no revision');
+        self::$responses->createResponse($formId, ['answers' => ['name' => 'x']], null);
+        $here = $call('GET')[1]['form']['fieldsRevision'];
+        self::$responses->createResponse($formId, ['answers' => ['name' => 'y']], null);
+        $this->assertSame($here, $call('GET')[1]['form']['fieldsRevision'], 'a submission changes nothing about the fields');
+    }
+
     public function testAPurgedFieldReachesACopySyncingByTime(): void
     {
         $formId = $this->aForm();
@@ -236,6 +273,10 @@ final class DataLifecycleTest extends E2eeTestCase
             'too many characters' => ['^.{1,2}$', '日本語', false],
             'no trailing newline' => ['^\\d{3}$', "123\n", false],
             'a plain match' => ['^\\d{3}$', '123', true],
+            'a class of quantifier characters' => ['^[+*]+$', '+*', true],
+            'a choice repeated' => ['^(foo|bar)*$', 'foobar', true],
+            'a shape the browser will not run' => ['^(a+)+$', 'aaaa', true],
+            'and on an answer that would run away' => ['^(a+)+$', str_repeat('a', 40) . '!', false],
         ];
     }
 

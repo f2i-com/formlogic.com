@@ -12,6 +12,15 @@ use PDO;
 class FormService
 {
     /**
+     * Names one state of a form's fields, for a save to say which one it started from. It isn't
+     * updated_at, which moves with every submission to the form.
+     */
+    public static function fieldsRevision(array $fields): string
+    {
+        return substr(hash('sha256', (string) json_encode($fields)), 0, 16);
+    }
+
+    /**
      * Field-id slugs must not collide with the FormLogic expression prelude's globals
      * (a field id like "count"/"sum"/"format" would shadow that builtin in generated
      * expressions). The editor's EXPRESSION_GLOBAL_NAMES (ui/src/lib/utils.ts).

@@ -84,6 +84,11 @@ final class AccountBackupController
             @unlink($zipPath);
         });
 
+        // Written regardless, as a copy of everything, but say so now: it can't be uploaded back.
+        if ($size > $this->backup->maxImportBytes()) {
+            $response = $response->withHeader('X-Backup-Restore-Limit', (string) $this->backup->maxImportBytes());
+        }
+
         return $response
             ->withBody(new \Slim\Psr7\Stream($stream))
             ->withHeader('Content-Type', $passphrase === null ? 'application/zip' : 'application/octet-stream')
