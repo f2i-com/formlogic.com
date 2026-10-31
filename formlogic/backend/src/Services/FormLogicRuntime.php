@@ -465,11 +465,11 @@ class FormLogicRuntime
             $curlOptions[CURLOPT_CAINFO] = $caBundle;
         }
 
-        curl_setopt_array($ch, $curlOptions);
-
         if ($bodyString !== null && in_array($method, ['POST', 'PUT', 'PATCH'], true)) {
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $bodyString);
+            $curlOptions[CURLOPT_POSTFIELDS] = $bodyString;
         }
+
+        curl_setopt_array($ch, $curlOptions);
 
         $response = curl_exec($ch);
         $error = curl_error($ch);
@@ -555,6 +555,7 @@ class FormLogicRuntime
             $redirectOptions[CURLOPT_CONNECTTIMEOUT_MS] = min($remainingMs, 3000);
 
             curl_setopt_array($ch, $redirectOptions);
+            $curlOptions = $redirectOptions;
 
             $response = curl_exec($ch);
             $error = curl_error($ch);

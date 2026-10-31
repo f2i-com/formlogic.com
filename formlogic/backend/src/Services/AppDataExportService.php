@@ -6,6 +6,8 @@ namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
+use FormLogic\Database\SqliteSnapshot;
+use FormLogic\Database\SqliteSnapshotException;
 use PDO;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -185,19 +187,13 @@ class AppDataExportService
                 ];
 
                 if ($this->sqlite->formDatabaseExists($formId)) {
-                    // Consistent snapshot: checkpoint the WAL, then copy the main file
-                    // (same recipe as account backups — a live copy without the
-                    // checkpoint could miss recent writes still in the -wal).
-                    try {
-                        $this->sqlite->getFormDatabase($formId)->exec('PRAGMA wal_checkpoint(FULL)');
-                    } catch (\Throwable $e) {
-                        $this->logger->warning('App data export: WAL checkpoint failed (continuing)', [
-                            'formId' => $formId, 'error' => $e->getMessage(),
-                        ]);
-                    }
+                    // One read transaction, as account backups do: a checkpoint and a copy can
+                    // leave out committed rows, and catch the file mid-write.
                     $staged = $staging . '/' . $ef['table'] . '.sqlite';
-                    if (!copy($this->sqlite->getFormDbPath($formId), $staged)) {
-                        throw new \RuntimeException("Could not snapshot the database for \"{$ef['displayName']}\"");
+                    try {
+                        (new SqliteSnapshot())->snapshot($this->sqlite->getFormDbPath($formId), $staged, ['responses']);
+                    } catch (SqliteSnapshotException $e) {
+                        throw new \RuntimeException("Could not snapshot the database for \"{$ef['displayName']}\"", 0, $e);
                     }
                     try {
                         $entry['responseCount'] = (int) (new PDO('sqlite:' . $staged))->query('SELECT COUNT(*) FROM responses')->fetchColumn();

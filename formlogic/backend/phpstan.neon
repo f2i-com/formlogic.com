@@ -12,9 +12,3 @@ parameters:
         -
             identifier: class.notFound
             path: src/Services/EmailService.php
-        # $curlOptions conditionally carries CURLOPT_POSTFIELDS; unsetting a
-        # maybe-absent key on a redirect downgrade is the intended RFC 7231
-        # behaviour, not a bug.
-        -
-            identifier: unset.offset
-            path: src/Services/FormLogicRuntime.php

@@ -1,0 +1,252 @@
+<?php
+
+declare(strict_types=1);
+
+namespace FormLogic\Tests\Integration;
+
+use FormLogic\Controllers\ResponseController;
+use FormLogic\Services\ResponseService;
+use FormLogic\Services\WebhookService;
+use Slim\Psr7\Factory\ResponseFactory;
+use Slim\Psr7\Factory\ServerRequestFactory;
+
+/**
+ * Where a record's data goes after the record: logs, retention, exports, what a submitter gets
+ * back, and what a syncing copy hears.
+ */
+final class DataLifecycleTest extends E2eeTestCase
+{
+    private function aForm(array $settings = [], array $fields = []): string
+    {
+        $form = self::$forms->createForm([
+            'title' => 'Lifecycle',
+            'userId' => $this->userId,
+            'status' => 'published',
+            'settings' => $settings,
+            'fields' => $fields ?: [['id' => 'name', 'type' => 'short_text', 'label' => 'Name', 'required' => false]],
+        ]);
+        return (string) $form['id'];
+    }
+
+    private function delivery(string $status, string $age = '0'): string
+    {
+        $formId = $this->aForm();
+        $webhookId = 'wh-' . bin2hex(random_bytes(12));
+        self::$pdo->prepare("INSERT INTO webhooks (id, form_id, user_id, url, secret, events, is_active) VALUES (?, ?, ?, 'https://example.com/hook', 'whsec', '[]', 1)")
+            ->execute([$webhookId, $formId, $this->userId]);
+        $id = 'whd-' . bin2hex(random_bytes(12));
+        self::$pdo->prepare("INSERT INTO webhook_deliveries (id, webhook_id, event, payload, success, status, created_at) VALUES (?, ?, 'response.created', '{\"answers\":1}', 0, ?, NOW() - INTERVAL {$age} DAY)")
+            ->execute([$id, $webhookId, $status]);
+        return $id;
+    }
+
+    private function payloadOf(string $id): mixed
+    {
+        $stmt = self::$pdo->prepare('SELECT payload FROM webhook_deliveries WHERE id = ?');
+        $stmt->execute([$id]);
+        return $stmt->fetchColumn();
+    }
+
+    public function testADeliveryKeepsItsAnswersOnlyWhileItCanBeRetried(): void
+    {
+        $service = new WebhookService(self::$mysql);
+        $update = new \ReflectionMethod($service, 'updateDeliveryResult');
+
+        $retrying = $this->delivery('failed');
+        $update->invoke($service, $retrying, false, 500, null, 1, 'HTTP 500', 'failed', 2, date('Y-m-d H:i:s'));
+        $this->assertNotNull($this->payloadOf($retrying), 'the next attempt needs it');
+
+        foreach (['success', 'exhausted', 'abandoned'] as $status) {
+            $id = $this->delivery('retrying');
+            $update->invoke($service, $id, $status === 'success', 200, null, 1, null, $status, 3, null);
+            $this->assertNull($this->payloadOf($id), $status);
+        }
+
+        $log = new \ReflectionMethod($service, 'logDelivery');
+        foreach (['success' => false, 'failed' => true] as $status => $kept) {
+            $id = 'whd-' . bin2hex(random_bytes(12));
+            $webhookId = (string) self::$pdo->query('SELECT webhook_id FROM webhook_deliveries LIMIT 1')->fetchColumn();
+            $log->invoke($service, $id, $webhookId, 'response.created', '{"answers":1}', 200, null, 1, $status === 'success', null, $status);
+            $this->assertSame($kept, $this->payloadOf($id) !== null, $status);
+        }
+    }
+
+    public function testTheNightlyJobClearsOldDeliveries(): void
+    {
+        $old = $this->delivery('success');
+        $stale = $this->delivery('failed', '31');
+        $waiting = $this->delivery('failed');
+
+        $this->assertSame(1, (new WebhookService(self::$mysql))->purgeDeliveries());
+
+        $this->assertNull($this->payloadOf($old), 'one written before they stopped being kept');
+        $this->assertFalse($this->payloadOf($stale), 'gone: nothing retries after a month');
+        $this->assertNotNull($this->payloadOf($waiting));
+    }
+
+    public function testRetentionReachesAFormThatHasGoneQuiet(): void
+    {
+        $formId = $this->aForm(['retentionDays' => 30]);
+        self::$responses->createResponse($formId, ['answers' => ['name' => 'new']], null);
+        $db = self::$sqlite->getFormDatabase($formId);
+        $db->beginTransaction();
+        $insert = $db->prepare("INSERT INTO responses (id, answers, metadata, status, submitted_at, updated_at) VALUES (?, '{}', '{}', 'submitted', '2001-01-01 00:00:00', '2001-01-01 00:00:00')");
+        for ($i = 0; $i < 501; $i++) {
+            $insert->execute(['old-' . $i]);
+        }
+        $db->commit();
+
+        $this->assertSame(501, self::$responses->purgeAllExpired($formId), 'past one batch, and with nothing new arriving');
+        $this->assertSame(1, (int) $db->query('SELECT COUNT(*) FROM responses')->fetchColumn());
+        $this->assertSame(0, self::$responses->purgeAllExpired($this->aForm()), 'no retention set');
+    }
+
+    public function testTheSqliteDownloadHasEveryCommittedRowWhileAReaderHoldsTheWal(): void
+    {
+        $formId = $this->aForm();
+        self::$responses->createResponse($formId, ['answers' => ['name' => 'first']], null);
+        $path = self::$sqlite->getFormDbPath($formId);
+        $reader = new \PDO('sqlite:' . $path);
+        $reader->beginTransaction();
+        $reader->query('SELECT COUNT(*) FROM responses')->fetchColumn();
+        self::$responses->createResponse($formId, ['answers' => ['name' => 'second']], null);
+
+        $controller = new ResponseController(self::$responses, self::$forms, self::$sqlite);
+        $request = (new ServerRequestFactory())->createServerRequest('GET', 'http://localhost/x')->withAttribute('userId', $this->userId);
+        $response = $controller->exportSqlite($request, (new ResponseFactory())->createResponse(), ['formId' => $formId]);
+        $reader->rollBack();
+
+        $this->assertSame(200, $response->getStatusCode());
+        $copy = tempnam(self::$tmpRoot, 'export');
+        $response->getBody()->rewind();
+        file_put_contents($copy, (string) $response->getBody());
+        $this->assertSame((string) strlen((string) file_get_contents($copy)), $response->getHeaderLine('Content-Length'));
+        $this->assertSame(2, (int) (new \PDO('sqlite:' . $copy))->query('SELECT COUNT(*) FROM responses')->fetchColumn());
+    }
+
+    public function testACsvCutShortSaysSo(): void
+    {
+        $formId = $this->aForm();
+        $db = self::$sqlite->getFormDatabase($formId);
+        $db->beginTransaction();
+        $insert = $db->prepare("INSERT INTO responses (id, answers, metadata, status, submitted_at, updated_at) VALUES (?, '{}', '{}', 'submitted', '2001-01-01 00:00:00', '2001-01-01 00:00:00')");
+        for ($i = 0; $i < 501; $i++) {
+            $insert->execute(['row-' . $i]);
+        }
+        $db->commit();
+        $fields = self::$forms->getForm($formId)['fields'];
+        $export = function (int $max) use ($formId, $fields): string {
+            $out = fopen('php://memory', 'w+b');
+            self::$responses->exportResponsesStreaming($formId, $fields, $out, null, null, $max);
+            rewind($out);
+            return (string) stream_get_contents($out);
+        };
+
+        $this->assertStringNotContainsString('Export stopped', $export(1000));
+        $this->assertStringContainsString('Export stopped at 500 rows', $export(500));
+    }
+
+    public function testCsvImportValidatesOutsideTheWriteTransaction(): void
+    {
+        $formId = $this->aForm([], [['id' => 'name', 'type' => 'short_text', 'label' => 'Name', 'required' => true]]);
+        $fields = self::$forms->getForm($formId)['fields'];
+        $service = new class (self::$mysql, self::$sqlite) extends ResponseService {
+            public array $inTransaction = [];
+            public ?\PDO $watching = null;
+            public function validateSubmittedAnswers(array $fields, array $answers): array
+            {
+                $this->inTransaction[] = $this->watching?->inTransaction();
+                return parent::validateSubmittedAnswers($fields, $answers);
+            }
+        };
+        $service->watching = self::$sqlite->getFormDatabase($formId);
+
+        $result = $service->importResponses($formId, [['n' => 'one'], ['n' => ''], ['n' => 'three']], ['n' => 'name'], $fields);
+
+        $this->assertSame([false, false], $service->inTransaction);
+        $this->assertSame(2, $result['created']);
+    }
+
+    public function testASubmitterSeesNothingAScriptStored(): void
+    {
+        $formId = $this->aForm();
+        $controller = new ResponseController(self::$responses, self::$forms, self::$sqlite);
+        $submit = function (?string $userId) use ($controller, $formId): array {
+            $request = (new ServerRequestFactory())->createServerRequest('POST', 'http://localhost/x')
+                ->withParsedBody(['answers' => ['name' => 'someone']]);
+            if ($userId !== null) {
+                $request = $request->withAttribute('userId', $userId);
+            }
+            $response = $controller->create($request, (new ResponseFactory())->createResponse(), ['formId' => $formId]);
+            $response->getBody()->rewind();
+            return json_decode((string) $response->getBody(), true)['response'];
+        };
+
+        $public = $submit(null);
+        $this->assertNotEmpty($public['id']);
+        $this->assertSame([], array_diff(array_keys($public), ['id', 'formId', 'status', 'stored', 'submittedAt', 'updatedAt']));
+        $this->assertArrayHasKey('answers', $submit($this->userId), 'the owner still gets the record');
+    }
+
+    public function testAPurgedFieldReachesACopySyncingByTime(): void
+    {
+        $formId = $this->aForm();
+        $row = self::$responses->createResponse($formId, ['answers' => ['name' => 'x']], null);
+        self::$sqlite->getFormDatabase($formId)->exec("UPDATE responses SET updated_at = '2001-01-01 00:00:00'");
+
+        self::$responses->purgeFieldData($formId, 'name');
+
+        $stmt = self::$sqlite->getFormDatabase($formId)->prepare('SELECT updated_at FROM responses WHERE id = ?');
+        $stmt->execute([$row['id']]);
+        $this->assertNotSame('2001-01-01 00:00:00', $stmt->fetchColumn());
+    }
+
+    public function testARestoredFormDoesNotClaimADeletionHistoryItLost(): void
+    {
+        $formId = $this->aForm();
+        self::$responses->restoreResponses($formId, [[
+            'id' => 'restored-1', 'answers' => [], 'metadata' => [], 'status' => 'submitted',
+            'submittedAt' => '2020-01-01 00:00:00', 'updatedAt' => '2020-01-01 00:00:00',
+        ]]);
+        $history = self::$responses->getResponseTombstones($formId, '2000-01-01 00:00:00');
+        $this->assertGreaterThan('2020-01-01 00:00:00', $history['since'], 'a copy older than this has to read everything again');
+    }
+
+    /** @dataProvider patterns */
+    public function testAPatternGivesTheBrowsersVerdict(string $pattern, string $value, bool $passes): void
+    {
+        $formId = $this->aForm([], [[
+            'id' => 'name', 'type' => 'short_text', 'label' => 'Name', 'required' => false,
+            'validation' => [['type' => 'pattern', 'value' => $pattern, 'message' => 'no']],
+        ]]);
+        $fields = self::$forms->getForm($formId)['fields'];
+        $this->assertSame($passes, self::$responses->validateSubmittedAnswers($fields, ['name' => $value]) === [], "{$pattern} on " . json_encode($value));
+    }
+
+    public static function patterns(): array
+    {
+        return [
+            'an escaped slash' => ['^\\d{2}\\/\\d{2}\\/\\d{4}$', '01/02/2024', true],
+            'a bare slash' => ['^\\d{2}/\\d{2}$', '01/02', true],
+            'an escaped backslash then a slash' => ['^a\\\\/b$', 'a\\/b', true],
+            'a slash in a class' => ['^[/]+$', '//', true],
+            '\\u in a class' => ['^[A-Za-z\\u00C0-\\u017F ]+$', 'José', true],
+            '\\u outside the class' => ['^[A-Za-z\\u00C0-\\u017F ]+$', 'Jos9', false],
+            'characters not bytes' => ['^.{1,5}$', '日本語', true],
+            'too many characters' => ['^.{1,2}$', '日本語', false],
+            'no trailing newline' => ['^\\d{3}$', "123\n", false],
+            'a plain match' => ['^\\d{3}$', '123', true],
+        ];
+    }
+
+    public function testLengthIsMeasuredAsTheBrowserMeasuresIt(): void
+    {
+        $formId = $this->aForm([], [[
+            'id' => 'name', 'type' => 'short_text', 'label' => 'Name', 'required' => false,
+            'validation' => [['type' => 'minLength', 'value' => 3, 'message' => 'short'], ['type' => 'maxLength', 'value' => 4, 'message' => 'long']],
+        ]]);
+        $fields = self::$forms->getForm($formId)['fields'];
+        $this->assertSame([], self::$responses->validateSubmittedAnswers($fields, ['name' => '😀😀']), 'four units to the browser');
+        $this->assertNotSame([], self::$responses->validateSubmittedAnswers($fields, ['name' => '😀😀😀']), 'six');
+    }
+}

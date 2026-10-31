@@ -939,7 +939,8 @@ class CloudFlowRunner
             return false;
         }
         $root = explode('.', $value, 2)[0];
-        return in_array($root, ['$event', '$app', '$result', '$input', '$inputs', '$nodes', '$upstream'], true);
+        return in_array($root, ['$event', '$app', '$result', '$input', '$inputs', '$nodes', '$upstream'], true)
+            || $value === '$.data' || str_starts_with($value, '$.data.');
     }
 
     private function resolveSelector(mixed $value, array $scope): mixed
@@ -949,7 +950,11 @@ class CloudFlowRunner
         }
         $parts = explode('.', $value);
         $root = array_shift($parts);
+        if ($root === '$') {
+            array_shift($parts);
+        }
         $base = match ($root) {
+            '$' => $scope['data'] ?? null,
             '$event' => $scope['event'] ?? null,
             '$app' => $scope['app'] ?? null,
             '$result' => $scope['result'] ?? null,
@@ -1036,6 +1041,7 @@ class CloudFlowRunner
             'inputs' => $scope['inputs'] ?? null,
             'nodes' => $scope['nodes'] ?? null,
             'upstream' => $scope['upstream'] ?? null,
+            'data' => $scope['data'] ?? null,
         ];
     }
 
@@ -1402,7 +1408,7 @@ class CloudFlowRunner
                 $this->finalizeRun($childRunId, 'done', $childResult, null);
             } catch (CloudFlowNodeError $e) {
                 $childError = ['code' => $e->flowErrorCode, 'message' => $e->getMessage(), 'nodeId' => $e->nodeId];
-                $this->finalizeRun($childRunId, 'error', null, $childError);
+                $this->finalizeRun($childRunId, $e->flowErrorCode === 'timeout' ? 'timeout' : 'error', null, $childError);
             } catch (\Throwable $e) {
                 error_log('CloudFlowRunner: flow_call child ' . $childRunId . ' failed unexpectedly: ' . $e->getMessage());
                 $childError = ['code' => 'node_failed', 'message' => 'The child flow run failed'];
@@ -1417,7 +1423,7 @@ class CloudFlowRunner
             return ['status' => 'failed', 'error' => $childError, 'runId' => $childRunId];
         }
         throw new CloudFlowNodeError(
-            'node_failed',
+            $childError['code'] === 'timeout' ? 'timeout' : 'node_failed', // the child spent the parent's deadline too
             "Node '{$node['id']}': child_flow_failed: flow '{$targetId}' {$childError['code']}: {$childError['message']}",
             $node['id']
         );

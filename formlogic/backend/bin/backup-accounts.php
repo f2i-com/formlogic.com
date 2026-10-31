@@ -162,4 +162,21 @@ try {
     fwrite(STDERR, sprintf("[%s] upload GC FAILED: %s\n", date('c'), $e->getMessage()));
 }
 
+// Records past a form's retention period, and old webhook deliveries.
+try {
+    $retentionResponses = new ResponseService($mysql, $sqlite, null, new NullLogger(), null, $fileStorage ?? null);
+    $expired = 0;
+    foreach ($mysql->getConnection()->query("SELECT id FROM forms WHERE settings LIKE '%retentionDays%'")->fetchAll(\PDO::FETCH_COLUMN) as $retentionFormId) {
+        try {
+            $expired += $retentionResponses->purgeAllExpired((string) $retentionFormId);
+        } catch (\Throwable $e) {
+            fwrite(STDERR, sprintf("[%s] retention FAILED for form %s: %s\n", date('c'), $retentionFormId, $e->getMessage()));
+        }
+    }
+    $oldDeliveries = (new \FormLogic\Services\WebhookService($mysql, new NullLogger()))->purgeDeliveries();
+    printf("[%s] retention: %d expired record(s), %d old webhook deliverie(s)\n", date('c'), $expired, $oldDeliveries);
+} catch (\Throwable $e) {
+    fwrite(STDERR, sprintf("[%s] retention FAILED: %s\n", date('c'), $e->getMessage()));
+}
+
 exit($summary['failed'] > 0 ? 1 : 0);

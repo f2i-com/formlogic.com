@@ -1095,12 +1095,12 @@ class ResponseService
             $rval = $rule['value'] ?? null;
             switch ($rule['type'] ?? '') {
                 case 'minLength':
-                    if (is_string($value) && $value !== '' && mb_strlen($value) < (int) $rval) {
+                    if (is_string($value) && $value !== '' && $this->browserLength($value) < (int) $rval) {
                         return $msg;
                     }
                     break;
                 case 'maxLength':
-                    if (is_string($value) && mb_strlen($value) > (int) $rval) {
+                    if (is_string($value) && $this->browserLength($value) > (int) $rval) {
                         return $msg;
                     }
                     break;
@@ -1122,7 +1122,7 @@ class ResponseService
                             || preg_match('/\([^)]*\|[^)]*\)\+/', $rval)) {
                             return $msg;
                         }
-                        $ok = @preg_match('/' . str_replace('/', '\\/', $rval) . '/', $value);
+                        $ok = @preg_match($this->pcreFromJs($rval), $value);
                         if ($ok !== 1) {
                             return $msg; // fail closed on no-match or an uncompilable pattern
                         }
@@ -1480,6 +1480,8 @@ class ResponseService
         }
         return $this->formatResponses($db, $rows);
     }
+
+    private const RETENTION_BATCH = 500;
 
     /** How long a deleted record's tombstone is kept. */
     public const TOMBSTONE_DAYS = 180;
@@ -2600,10 +2602,11 @@ class ResponseService
         $db->beginTransaction();
         try {
             $upd = $db->prepare(
-                "UPDATE responses SET answers = json_remove(answers, :path)
+                "UPDATE responses SET answers = json_remove(answers, :path), updated_at = :now
                  WHERE json_extract(answers, :path2) IS NOT NULL"
             );
-            $upd->execute(['path' => $path, 'path2' => $path]);
+            // A new updated_at is how a copy syncing by updatedSince hears of it.
+            $upd->execute(['path' => $path, 'path2' => $path, 'now' => date('Y-m-d H:i:s')]);
             $purged = $upd->rowCount();
             $db->prepare('DELETE FROM computed WHERE field_name = :f')->execute(['f' => $fieldId]);
             $db->commit();
@@ -2992,10 +2995,7 @@ class ResponseService
             // the next submission retries this hour rather than letting expired PII
             // linger an extra hour. (deleteResponse tolerates a concurrent
             // double-purge, so reading before claiming introduces no race.)
-            $settingsStmt = $this->mysql->prepare("SELECT settings FROM forms WHERE id = :id");
-            $settingsStmt->execute(['id' => $formId]);
-            $settings = json_decode((string) ($settingsStmt->fetchColumn() ?: '{}'), true);
-            $days = (int) (is_array($settings) ? ($settings['retentionDays'] ?? 0) : 0);
+            $days = $this->retentionDaysOf($formId);
 
             // Claim this hour's slot now — concurrent submitters skip the work below.
             $claim = $db->prepare(
@@ -3007,16 +3007,7 @@ class ResponseService
                 return 0;
             }
 
-            $cutoff = date('Y-m-d H:i:s', time() - $days * 86400);
-            $sel = $db->prepare("SELECT id FROM responses WHERE submitted_at < :cutoff LIMIT 500");
-            $sel->execute(['cutoff' => $cutoff]);
-            $ids = $sel->fetchAll(PDO::FETCH_COLUMN) ?: [];
-            $deleted = 0;
-            foreach ($ids as $rid) {
-                if ($this->deleteResponse($formId, (string) $rid)) {
-                    $deleted++;
-                }
-            }
+            $deleted = $this->deleteExpiredBatch($db, $formId, $days);
             if ($deleted > 0) {
                 $this->logger->info('Retention purge removed expired responses', [
                     'formId' => $formId,
@@ -3032,6 +3023,76 @@ class ResponseService
             ]);
             return 0;
         }
+    }
+
+    /** How the browser measures a string: in UTF-16 units, so an emoji is two. */
+    private function browserLength(string $value): int
+    {
+        return (int) (strlen(mb_convert_encoding($value, 'UTF-16LE', 'UTF-8')) / 2);
+    }
+
+    /**
+     * A rule's pattern is written for the browser's RegExp, so the same answer has to get the same
+     * verdict here: characters rather than bytes, `$` not matching before a trailing newline,
+     * \uXXXX (which PCRE lacks), and a `/` the author may or may not have escaped.
+     */
+    private function pcreFromJs(string $pattern): string
+    {
+        $out = '';
+        for ($i = 0, $n = strlen($pattern); $i < $n; $i++) {
+            if ($pattern[$i] === '\\' && $i + 1 < $n) {
+                if ($pattern[$i + 1] === 'u' && preg_match('/\G[0-9a-fA-F]{4}/', $pattern, $hex, 0, $i + 2)) {
+                    $out .= '\\x{' . $hex[0] . '}';
+                    $i += 5;
+                    continue;
+                }
+                $out .= $pattern[$i] . $pattern[++$i];
+                continue;
+            }
+            $out .= $pattern[$i] === '/' ? '\\/' : $pattern[$i];
+        }
+        return '/' . $out . '/uD';
+    }
+
+    /**
+     * Everything past a form's retention period, for the nightly job: the purge above only runs
+     * when a new record arrives, so a form that has gone quiet would keep its old records.
+     */
+    public function purgeAllExpired(string $formId): int
+    {
+        $days = $this->retentionDaysOf($formId);
+        if ($days <= 0 || !$this->sqlite->formDatabaseExists($formId)) {
+            return 0;
+        }
+        $db = $this->sqlite->getFormDatabase($formId);
+        $total = 0;
+        do {
+            $deleted = $this->deleteExpiredBatch($db, $formId, $days);
+            $total += $deleted;
+        } while ($deleted === self::RETENTION_BATCH);
+        return $total;
+    }
+
+    private function retentionDaysOf(string $formId): int
+    {
+        $stmt = $this->mysql->prepare("SELECT settings FROM forms WHERE id = :id");
+        $stmt->execute(['id' => $formId]);
+        $settings = json_decode((string) ($stmt->fetchColumn() ?: '{}'), true);
+        return (int) (is_array($settings) ? ($settings['retentionDays'] ?? 0) : 0);
+    }
+
+    private function deleteExpiredBatch(PDO $db, string $formId, int $days): int
+    {
+        $cutoff = date('Y-m-d H:i:s', time() - $days * 86400);
+        $sel = $db->prepare("SELECT id FROM responses WHERE submitted_at < :cutoff LIMIT " . self::RETENTION_BATCH);
+        $sel->execute(['cutoff' => $cutoff]);
+        $deleted = 0;
+        foreach ($sel->fetchAll(PDO::FETCH_COLUMN) ?: [] as $rid) {
+            if ($this->deleteResponse($formId, (string) $rid)) {
+                $deleted++;
+            }
+        }
+        return $deleted;
     }
 
     /**
@@ -3472,7 +3533,7 @@ class ResponseService
      *   or the user id whose own records only (view-own); a target not in the map gives no label.
      *   Null: the owner, whose own forms all resolve.
      */
-    public function exportResponsesStreaming(string $formId, array $fields, $outputStream, ?string $submittedByUserId = null, ?array $readableTargets = null): int
+    public function exportResponsesStreaming(string $formId, array $fields, $outputStream, ?string $submittedByUserId = null, ?array $readableTargets = null, int $maxExportRows = 100000): int
     {
         // §9.2 gate: CSV assembly interprets answers per field — refuse for private
         // forms (client-side decrypt-and-export replaces it; sqlite-bundle and
@@ -3537,7 +3598,6 @@ class ResponseService
         $batchSize = 500;
         $offset = 0;
         $totalWritten = 0;
-        $maxExportRows = 100000; // Hard limit to prevent DoS
 
         $batchOptions = ['limit' => $batchSize];
         if ($submittedByUserId !== null) {
@@ -3618,6 +3678,11 @@ class ResponseService
 
             $offset += $batchSize;
         } while (count($batch) === $batchSize && $totalWritten < $maxExportRows);
+
+        // Stopping has to show in the file, or the owner takes it for the whole form.
+        if ($totalWritten >= $maxExportRows && $this->getFormResponses($formId, ['limit' => 1, 'offset' => $offset] + $batchOptions) !== []) {
+            fputcsv($outputStream, ["Export stopped at {$totalWritten} rows. This form has more: use the SQLite export."], ',', '"', '');
+        }
 
         return $totalWritten;
     }
@@ -3939,10 +4004,11 @@ class ResponseService
         $errors = [];
         $total = count($rows);
         $mysqlInsertedIds = []; // Track for cleanup if SQLite commit fails
-
-        $db->beginTransaction();
+        $ready = [];
 
         try {
+            // Validation can run the sandbox for each row, so it happens before the transaction:
+            // holding the write lock across it, public submissions wait, then fail as locked.
             foreach ($rows as $rowIndex => $row) {
                 $rowErrors = [];
                 $answers = [];
@@ -4018,7 +4084,11 @@ class ResponseService
                     $errors[] = ['row' => $rowIndex + 1, 'errors' => ['Row contains values that cannot be encoded (invalid character data)']];
                     continue;
                 }
+                $ready[] = [$rowIndex, $answersJson];
+            }
 
+            $db->beginTransaction();
+            foreach ($ready as [$rowIndex, $answersJson]) {
                 try {
                     $id = $this->generateUuid();
                     $now = date('Y-m-d H:i:s');
@@ -4065,19 +4135,21 @@ class ResponseService
                     $created++;
                 } catch (\Exception $e) {
                     $skipped++;
-                    $rowErrors[] = $e->getMessage();
-                    $errors[] = ['row' => $rowIndex + 1, 'errors' => $rowErrors];
+                    $errors[] = ['row' => $rowIndex + 1, 'errors' => [$e->getMessage()]];
                 }
             }
 
             $db->commit();
+            usort($errors, static fn (array $a, array $b): int => $a['row'] <=> $b['row']);
             // Keep the denormalized forms.response_count current after a bulk import
             // (the per-row insert path above bypasses createResponse's own sync).
             if ($created > 0) {
                 $this->syncResponseCount($formId);
             }
         } catch (\Exception $e) {
-            $db->rollBack();
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
             // Clean up orphaned MySQL rows from successful inserts before the failure
             if (!empty($mysqlInsertedIds)) {
                 try {
@@ -4165,6 +4237,10 @@ class ResponseService
 
         $db->beginTransaction();
         try {
+            // What was deleted before the backup isn't in it, so a copy that synced before now
+            // has to be told this database can't answer for that time.
+            $db->prepare("INSERT OR REPLACE INTO form_data (key, value, updated_at) VALUES ('tombstones_since', :now, datetime('now'))")
+                ->execute(['now' => gmdate('Y-m-d H:i:s')]);
             $respStmt = $db->prepare("
                 INSERT INTO responses (id, answers, metadata, status, submitted_at, updated_at)
                 VALUES (:id, :answers, :metadata, :status, :submitted_at, :updated_at)

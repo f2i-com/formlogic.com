@@ -426,7 +426,9 @@ class WebhookService
                 'id' => $deliveryId,
                 'webhook_id' => $webhookId,
                 'event' => $event,
-                'payload' => $payload,
+                // Kept only while a retry needs it: this copy of the answers would otherwise
+                // outlive the record, its deletion and the form's retention period.
+                'payload' => $status === 'failed' ? $payload : null,
                 'response_status' => $responseStatus,
                 'response_body' => $responseBody !== null ? substr($responseBody, 0, 2000) : null,
                 'duration_ms' => $durationMs,
@@ -439,6 +441,18 @@ class WebhookService
         } catch (\Exception $e) {
             $this->logger->error('Failed to log webhook delivery', ['exception' => $e->getMessage()]);
         }
+    }
+
+    /**
+     * Nightly: the delivery log is kept for a month, and no finished delivery holds its payload
+     * (rows from before they stopped being stored are cleared here).
+     */
+    public function purgeDeliveries(int $keepDays = 30): int
+    {
+        $this->mysql->exec("UPDATE webhook_deliveries SET payload = NULL WHERE payload IS NOT NULL AND status NOT IN ('failed', 'retrying')");
+        $stmt = $this->mysql->prepare('DELETE FROM webhook_deliveries WHERE created_at < NOW() - INTERVAL ' . max(1, $keepDays) . ' DAY');
+        $stmt->execute();
+        return $stmt->rowCount();
     }
 
     /** Exponential backoff schedule (seconds) for retry attempt N (1-based). */
@@ -624,7 +638,8 @@ class WebhookService
             $stmt = $this->mysql->prepare("
                 UPDATE webhook_deliveries
                 SET success = :success, response_status = :rs, response_body = :rb, duration_ms = :dm,
-                    error_message = :err, status = :status, attempt = :attempt, next_retry_at = :nr
+                    error_message = :err, status = :status, attempt = :attempt, next_retry_at = :nr,
+                    payload = IF(:keep = 1, payload, NULL)
                 WHERE id = :id
             ");
             $stmt->execute([
@@ -636,6 +651,7 @@ class WebhookService
                 'status' => $status,
                 'attempt' => $attempt,
                 'nr' => $nextRetryAt,
+                'keep' => $status === 'failed' ? 1 : 0,
                 'id' => $id,
             ]);
         } catch (\Exception $e) {

@@ -21,6 +21,7 @@ use FormLogic\Services\AuditService;
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
+use FormLogic\Database\SqliteSnapshot;
 use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -936,7 +937,12 @@ class ResponseController
             }
 
             $this->audit($request, 'response.create', 'response', $result['id'] ?? '', ['formId' => $formId, 'stored' => $stored]);
-            return ['status' => 201, 'payload' => ['response' => $result]];
+            // What a script stored on the record (a score, a value it fetched) is the owner's to
+            // read, not the submitter's.
+            $isOwner = is_string($callerId) && $callerId !== '' && ($form['userId'] ?? null) === $callerId;
+            return ['status' => 201, 'payload' => ['response' => $isOwner ? $result : array_intersect_key($result, array_flip([
+                'id', 'formId', 'status', 'stored', 'submittedAt', 'updatedAt',
+            ]))]];
         } catch (EncryptionEnablingException $e) {
             // Enable-race gate: a concurrent enable committed between the dispatch
             // check and the atomic write — fail closed with the contract shape.
@@ -2179,39 +2185,43 @@ class ResponseController
         $dbPath = $this->sqlite->getFormDbPath($formId);
         $filename = $this->sanitizeFilename($form['title']) . '.sqlite';
 
-        // Flush WAL to the main database file so the download is self-contained
+        // One read transaction, WAL included. A checkpoint and then a copy can leave out committed
+        // rows, and can catch the file while it is being written (see SqliteSnapshot).
+        $dir = dirname(__DIR__, 2) . '/storage/tmp/form-exports';
+        $snapshot = $dir . '/' . bin2hex(random_bytes(12)) . '.sqlite';
         try {
-            $db = $this->sqlite->getFormDatabase($formId);
-            $db->exec('PRAGMA wal_checkpoint(FULL)');
+            if (!is_dir($dir) && !mkdir($dir, 0700, true) && !is_dir($dir)) {
+                throw new \RuntimeException('Could not create the export temp directory');
+            }
+            foreach (glob($dir . '/*') ?: [] as $old) {
+                if (is_file($old) && filemtime($old) < time() - 7200) {
+                    @unlink($old);
+                }
+            }
+            $fileSize = (new SqliteSnapshot())->snapshot($dbPath, $snapshot, ['responses'])['sizeBytes'];
         } catch (\Exception $e) {
-            // Non-fatal — the DB is still readable, just may be missing recent WAL data
-            $this->logger->warning('WAL checkpoint failed before SQLite export', ['formId' => $formId, 'error' => $e->getMessage()]);
-        }
-
-        // Verify file exists and get size
-        if (!is_file($dbPath)) {
+            $this->logger->error('SQLite export failed', ['formId' => $formId, 'error' => $e->getMessage()]);
             return $this->jsonResponse($response, [
                 'error' => true,
-                'message' => 'Database file not found',
-            ], 404);
-        }
-
-        $fileSize = filesize($dbPath);
-        if ($fileSize === false) {
-            return $this->jsonResponse($response, [
-                'error' => true,
-                'message' => 'Failed to read database file size',
+                'message' => 'Export failed — please try again',
             ], 500);
         }
 
         // Stream file contents to avoid memory exhaustion for large files
-        $stream = fopen($dbPath, 'rb');
+        $stream = fopen($snapshot, 'rb');
         if ($stream === false) {
+            @unlink($snapshot);
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'Failed to open database file',
             ], 500);
         }
+        register_shutdown_function(static function () use ($stream, $snapshot): void {
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
+            @unlink($snapshot);
+        });
 
         // Create a PSR-7 stream from the file handle
         $body = new \Slim\Psr7\Stream($stream);

@@ -706,6 +706,41 @@ class CloudFlowRunnerTest extends TestCase
         $this->assertSame('timeout', $outcome['error']['code']);
     }
 
+    public function testAChildPastTheDeadlineTimesOutAndSoDoesItsParent(): void
+    {
+        $userId = $this->makeUser();
+        $slow = static function (): array {
+            usleep(1100000);
+            return ['status' => 200, 'body' => '{}'];
+        };
+        $child = $this->flowRow($userId, [
+            ['id' => 'http', 'type' => 'http_request', 'data' => ['url' => 'https://site.example/api/health']],
+            ['id' => 't', 'type' => 'template', 'data' => ['template' => 'x']],
+        ], [['source' => 'http', 'target' => 't']]);
+        $parent = $this->flowRow($userId, [['id' => 'call', 'type' => 'flow_call', 'data' => ['flowId' => $child['id']]]]);
+
+        $outcome = $this->runner($slow, 'https://site.example', 1)->run($parent, $userId, []);
+
+        $this->assertSame('timeout', $outcome['status'], json_encode($outcome));
+        $stmt = self::$pdo->prepare("SELECT status FROM flow_run_logs WHERE trigger_event = 'flow.call' AND parent_run_id = ?");
+        $stmt->execute([$outcome['runId']]);
+        $this->assertSame('timeout', $stmt->fetchColumn(), 'a binding on flow.timed_out fires for the child too');
+    }
+
+    public function testATypedDataPortReachesTheNode(): void
+    {
+        $runner = $this->runner();
+        $resolve = new \ReflectionMethod($runner, 'resolveSelector');
+        $scope = ['data' => ['text' => 'hello'], 'inputs' => []];
+
+        $this->assertSame('hello', $resolve->invoke($runner, '$.data.text', $scope));
+        $this->assertSame(['text' => 'hello'], $resolve->invoke($runner, '$.data', $scope));
+        $this->assertNull($resolve->invoke($runner, '$.data.missing', $scope));
+        $this->assertSame('$.other', $resolve->invoke($runner, '$.other', $scope), 'not a selector, so a literal');
+        $context = (new \ReflectionMethod($runner, 'scopeToContext'))->invoke($runner, $scope);
+        $this->assertSame(['text' => 'hello'], $context['data']);
+    }
+
     // ── run dispatcher (POST /api/flows/{id}/run) ──
 
     private function dispatcher(): FlowRunController
