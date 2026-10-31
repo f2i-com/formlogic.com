@@ -283,7 +283,7 @@ final class ScheduledBackupService
      * verified snapshot record (audit FL-01): a checksum alone is not evidence
      * that the archived database is a complete logical snapshot.
      *
-     * @return array<string,int> the zip's own manifest counts
+     * @return array{counts: array<string,int>, warnings: list<string>} the zip's own manifest counts, and what it left out
      */
     private function verifyAccountZip(string $path): array
     {
