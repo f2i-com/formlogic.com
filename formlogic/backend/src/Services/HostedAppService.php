@@ -59,7 +59,7 @@ class HostedAppService
         $target->exec('BEGIN IMMEDIATE');
         $deployments = $source->query('SELECT version, package, updated_at FROM deployment WHERE id=1')->fetchAll();
         foreach ($deployments as $deployment) {
-            if ($validate) self::validate(json_decode((string) $deployment['package'], true, 64, JSON_THROW_ON_ERROR));
+            if ($validate) self::checkedPackage(json_decode((string) $deployment['package'], true, 64, JSON_THROW_ON_ERROR));
             $target->prepare('INSERT INTO deployment (id, version, package, updated_at) VALUES (1, ?, ?, ?)')
                 ->execute([(int) $deployment['version'], (string) $deployment['package'], (string) $deployment['updated_at']]);
         }
@@ -122,8 +122,13 @@ class HostedAppService
         } catch (\Throwable $e) { @unlink($path); throw $e; }
     }
 
+    public function validate(array $package): array
+    {
+        return self::checkedPackage($package);
+    }
+
     /** Strict text bundle for the first hosting version; no executable JS/HTML or private files in client output. */
-    public static function validate(array $package): array
+    private static function checkedPackage(array $package): array
     {
         if (($package['version'] ?? null) !== 1 || !is_array($package['client'] ?? null) || !is_array($package['actions'] ?? null)) {
             throw new InvalidArgumentException('Expected version 1, client files and backend actions');

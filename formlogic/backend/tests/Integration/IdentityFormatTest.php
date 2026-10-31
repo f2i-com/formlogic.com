@@ -111,7 +111,8 @@ class IdentityFormatTest extends TestCase
 
     public function testAClientsOrdinaryFormIdIsKept(): void
     {
-        foreach (['3f2b8c1e-7a44-4d21-9f0e-1c2d3e4f5a6b', 'form_' . bin2hex(random_bytes(4)), 'l9x' . bin2hex(random_bytes(6))] as $id) {
+        $uuid = substr(bin2hex(random_bytes(4)), 0, 8) . '-7a44-4d21-9f0e-1c2d3e4f5a6b';
+        foreach ([$uuid, 'form_' . bin2hex(random_bytes(4)), 'l9x' . bin2hex(random_bytes(6))] as $id) {
             self::assertSame($id, self::$forms->createForm(['id' => $id, 'title' => 'Offline', 'userId' => $this->userId])['id']);
         }
     }
