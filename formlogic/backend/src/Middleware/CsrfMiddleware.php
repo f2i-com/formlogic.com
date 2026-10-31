@@ -85,14 +85,19 @@ class CsrfMiddleware implements MiddlewareInterface
             if ($this->secret === '') {
                 return $this->forbidden('CSRF protection is misconfigured (no signing secret) - set JWT_SECRET');
             }
-            if (!$this->sessionOriginPolicy->allows($request)) {
-                // Not on the configured list, which stays exactly that. A connected domain
-                // signs in too, but only ever to the one app (AppDomainSession).
-                $domain = $this->connectedDomainOf($request, $path);
-                if ($domain === null) {
-                    return $this->forbidden('Session creation requires an explicitly trusted request origin');
+            // A connected domain signs in only ever to its one app (AppDomainSession), and is
+            // asked about first: listing a domain used to be the only way to sign in on it, and
+            // a server set up that way must not go on handing out platform sessions there.
+            $domain = $this->connectedDomainOf($request);
+            if ($domain !== null) {
+                // The shared demo is a platform session and has no place on a customer's domain.
+                if ($path === '/api/demo/start') {
+                    return $this->forbidden('The demo is not available on this domain');
                 }
-                $request = $request->withAttribute(AppDomainSession::SIGN_IN_ATTRIBUTE, $domain);
+                return $handler->handle($request->withAttribute(AppDomainSession::SIGN_IN_ATTRIBUTE, $domain));
+            }
+            if (!$this->sessionOriginPolicy->allows($request)) {
+                return $this->forbidden('Session creation requires an explicitly trusted request origin');
             }
             return $handler->handle($request);
         }
@@ -138,14 +143,13 @@ class CsrfMiddleware implements MiddlewareInterface
     }
 
     /**
-     * The connected domain a sign-in came from, or null. The shared demo is a platform session
-     * and has no place on a customer's domain.
+     * The connected domain a sign-in came from, or null.
      *
      * @return array{appId: string, host: string}|null
      */
-    private function connectedDomainOf(Request $request, string $path): ?array
+    private function connectedDomainOf(Request $request): ?array
     {
-        if ($this->connectedDomain === null || $path === '/api/demo/start') {
+        if ($this->connectedDomain === null) {
             return null;
         }
         $host = SessionOriginPolicy::sameHostOrigin($request, $this->domainsRequireHttps);

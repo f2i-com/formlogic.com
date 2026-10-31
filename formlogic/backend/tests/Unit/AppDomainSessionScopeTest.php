@@ -38,7 +38,7 @@ final class AppDomainSessionScopeTest extends TestCase
     }
 
     /** @return array{int, ?ServerRequestInterface, ?array<string, mixed>} */
-    private function visit(string $path, bool $optional = false, string $host = self::HOST): array
+    private function visit(string $path, bool $optional = false, string $host = self::HOST, string $method = 'GET'): array
     {
         $handler = new class implements RequestHandlerInterface {
             public ?ServerRequestInterface $request = null;
@@ -48,7 +48,7 @@ final class AppDomainSessionScopeTest extends TestCase
                 return new Response(204);
             }
         };
-        $request = (new ServerRequestFactory())->createServerRequest('GET', 'https://' . $host . $path)
+        $request = (new ServerRequestFactory())->createServerRequest($method, 'https://' . $host . $path)
             ->withHeader('Host', $host)
             ->withHeader('Authorization', 'Bearer scoped-sentinel');
         $sessions = new AppDomainSession(fn (string $seen): ?array => $seen === self::HOST ? $this->connected : null);
@@ -68,8 +68,24 @@ final class AppDomainSessionScopeTest extends TestCase
 
     public function testKeepsTheSignedInStateOfTheApp(): void
     {
-        foreach (['/api/auth/me', '/api/auth/logout'] as $path) {
-            self::assertSame(204, $this->visit($path)[0], $path);
+        self::assertSame(204, $this->visit('/api/auth/me')[0]);
+        self::assertSame(204, $this->visit('/api/auth/logout', false, self::HOST, 'POST')[0]);
+    }
+
+    public function testCannotTouchTheAccountItBelongsTo(): void
+    {
+        // PUT changes the email and password and mints a platform cookie; DELETE erases the
+        // account. The path alone is not the permission.
+        foreach (['PUT', 'PATCH', 'DELETE', 'POST'] as $method) {
+            [$status, $request] = $this->visit('/api/auth/me', false, self::HOST, $method);
+            self::assertSame(403, $status, $method);
+            self::assertNull($request, $method . ' reached its handler');
+        }
+        foreach (['GET', 'PUT', 'DELETE'] as $method) {
+            self::assertSame(403, $this->visit('/api/auth/logout', false, self::HOST, $method)[0], $method);
+        }
+        foreach (['/api/auth/me/export', '/api/auth/mfa', '/api/auth/mfa/setup', '/api/auth/mfa/disable', '/api/auth/change-password'] as $path) {
+            self::assertSame(403, $this->visit($path, false, self::HOST, 'POST')[0], $path);
         }
     }
 

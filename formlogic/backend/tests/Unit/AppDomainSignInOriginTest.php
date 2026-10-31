@@ -25,7 +25,7 @@ final class AppDomainSignInOriginTest extends TestCase
     private const DOMAIN = 'https://shop.acme.com';
 
     /** @return array{int, mixed} status, and the sign-in attribute the handler saw */
-    private function guard(ServerRequestInterface $request, bool $httpsOnly = true): array
+    private function guard(ServerRequestInterface $request, bool $httpsOnly = true, array $listed = [self::PLATFORM]): array
     {
         $handler = new class implements RequestHandlerInterface {
             public ?ServerRequestInterface $request = null;
@@ -36,7 +36,7 @@ final class AppDomainSignInOriginTest extends TestCase
             }
         };
         $connected = static fn (string $host): ?array => $host === 'shop.acme.com' ? ['appId' => 'app-1', 'host' => $host] : null;
-        $middleware = new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', 'formlogic_auth', self::SECRET, [self::PLATFORM], $connected, $httpsOnly);
+        $middleware = new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', 'formlogic_auth', self::SECRET, $listed, $connected, $httpsOnly);
         $response = $middleware->process($request, $handler);
         return [$response->getStatusCode(), $handler->request?->getAttribute(AppDomainSession::SIGN_IN_ATTRIBUTE)];
     }
@@ -60,6 +60,14 @@ final class AppDomainSignInOriginTest extends TestCase
     public function testTheConfiguredOriginStaysAPlatformSignIn(): void
     {
         self::assertSame([204, null], $this->guard($this->signIn(self::PLATFORM, 'formlogic.example')));
+    }
+
+    public function testListingAConnectedDomainGivesItNoPlatformSession(): void
+    {
+        // Listing one was the only way to sign in on it before: such a server must not go on.
+        $listed = [self::PLATFORM, self::DOMAIN];
+        self::assertSame([204, ['appId' => 'app-1', 'host' => 'shop.acme.com']], $this->guard($this->signIn(self::DOMAIN), true, $listed));
+        self::assertSame(403, $this->guard($this->signIn(self::DOMAIN, path: '/api/demo/start'), true, $listed)[0]);
     }
 
     public function testAHostThatIsNotConnectedIsRefused(): void

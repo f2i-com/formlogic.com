@@ -48,8 +48,13 @@ final class AppDomainSession
         }
         // Percent-decoded, as the router matches it (see CsrfMiddleware::process).
         $path = rawurldecode($request->getUri()->getPath());
-        if ($path === '/api/auth/me' || $path === '/api/auth/logout') {
-            return true;
+        // By method too: PUT and DELETE on /api/auth/me change the account and erase it, and a
+        // credential change there mints a platform cookie.
+        if ($path === '/api/auth/me') {
+            return $request->getMethod() === 'GET';
+        }
+        if ($path === '/api/auth/logout') {
+            return $request->getMethod() === 'POST';
         }
         return preg_match('~^/api/app/([^/]+)(?:/|$)~D', $path, $match) === 1
             && strcasecmp($match[1], $app['slug']) === 0;

@@ -923,13 +923,15 @@ owns a domain controls where its name points, so a platform cookie on it could b
 repointing the name and replayed as a Bearer token: every member's whole account, for any app owner
 who wanted it. `Support/AppDomainSession.php` explains the rest; in short:
 
-- **Who may sign in.** `CsrfMiddleware` still admits the configured origins, unchanged. Outside that
-  list a sign-in needs an `Origin` naming the host the request reached, Fetch Metadata that agrees,
-  HTTPS outside development, and that host being a connected domain of a published app. The shared
-  demo never starts on a domain.
+- **Who may sign in.** `CsrfMiddleware` admits a sign-in whose `Origin` names the host the request
+  reached, with Fetch Metadata that agrees, over HTTPS outside development, when that host is a
+  connected domain of a published app. It asks that first, so listing a connected domain in
+  `CORS_ALLOWED_ORIGINS` gives it no platform session. Any other host needs a configured origin, as
+  ever. The shared demo never starts on a domain.
 - **What it can do.** The token has its own audience, so `validateToken()`, and with it every platform
   route, refuses it. `AuthMiddleware` accepts it only on that host, for `/api/app/<that app>/…`,
-  `/api/auth/me` and `/api/auth/logout`, while the domain stays connected. A refusal is a 403 with the
+  `GET /api/auth/me` and `POST /api/auth/logout`, while the domain stays connected. By method:
+  `PUT` and `DELETE` on `/api/auth/me` change and erase the account. A refusal is a 403 with the
   code `app_domain_session_scope`, because a 401 would sign the visitor out of the app.
 - **What it never carries.** The cookies are host-only, ignoring `COOKIE_DOMAIN`, and no trusted-browser
   token is set, since one would skip the code on the platform too. Leaving a domain ends that session

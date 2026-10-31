@@ -154,6 +154,14 @@ test('a SoftN app runs full screen on its own domain, and a sign-in there opens 
     expect(response.status(), `${path} on the domain`).toBe(403);
     expect((await response.json()).code).toBe('app_domain_session_scope');
   }
+  // Nor can it touch the account it belongs to. Each of these would be a takeover, or an erasure.
+  const domainCall = { headers: { ...stolen, ...asDomain(MEMBERS_DOMAIN), 'X-CSRF-Token': (await visitor.cookies(site(MEMBERS_DOMAIN))).find(cookie => cookie.name === 'formlogic_csrf')!.value, Cookie: `formlogic_auth=${auth.value}` } };
+  const changed = await onPlatform.request.put(`${E2E_FRONTEND_BASE_URL}/api/auth/me`, { ...domainCall, data: { email: `stolen-${RUN}@e2e-apps.com`, password: 'stolen-password-1', currentPassword: PASSWORD } });
+  expect(changed.status()).toBe(403);
+  expect((await changed.json()).code).toBe('app_domain_session_scope');
+  expect(changed.headers()['set-cookie'] ?? '').toBe('');
+  expect((await onPlatform.request.delete(`${E2E_FRONTEND_BASE_URL}/api/auth/me`, { ...domainCall, data: { password: PASSWORD } })).status()).toBe(403);
+  expect((await home.evaluate(() => fetch('/api/auth/me').then(response => response.json()))).user.email).toBe(member);
   // Another app's page takes visitors too, so there this session is nobody: no scope to report.
   const elsewhere = await onPlatform.request.get(`${E2E_FRONTEND_BASE_URL}/api/app/${other.app.slug}/native`, { headers: { ...stolen, Host: asDomain(MEMBERS_DOMAIN).Host } });
   expect(elsewhere.status()).toBe(403);
