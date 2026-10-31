@@ -747,6 +747,19 @@ export function actingRoute(endpoint: string, ownerId: string): { endpoint: stri
   return { endpoint, blocked: true };
 }
 
+/**
+ * A value inside an API path: one segment, whatever it holds. Ids here come from code that isn't
+ * ours (a flow, a custom screen, app logic, a form id or slug someone stored), and these calls
+ * carry the viewer's session. Left as they were, `../../forms/x` walked out of the app's routes
+ * and a `?` cut the rest of the path off. The server can't see it: the browser collapses `..`
+ * before the request leaves. A bare `.` or `..` survives encoding, so it is refused here.
+ */
+function seg(value: string | number): string {
+  const text = String(value);
+  if (text === '.' || text === '..') throw new Error('Invalid id in an API path');
+  return encodeURIComponent(text);
+}
+
 class ApiClient {
   private baseUrl: string;
   // Track authentication state without storing the token (it's in HttpOnly cookie)
@@ -1353,7 +1366,7 @@ class ApiClient {
         ? { data: { form } }
         : { error: 'This demo form was not found in this browser (demo forms are never saved to the server).', status: 404 };
     }
-    return this.request(`/forms/${id}`);
+    return this.request(`/forms/${seg(id)}`);
   }
 
   async createForm(data: Partial<Form>): Promise<ApiResponse<{ form: Form }>> {
@@ -1378,7 +1391,7 @@ class ApiClient {
         ? { data: { form } }
         : { error: 'This demo form was not found in this browser (demo forms are never saved to the server).', status: 404 };
     }
-    return this.request(`/forms/${id}`, {
+    return this.request(`/forms/${seg(id)}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
@@ -1392,32 +1405,32 @@ class ApiClient {
     id: string,
     data: Partial<Form> & { encryptionSchema?: PublishSchemaPayload },
   ): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
-    return this.requestWithMeta(`/forms/${id}`, {
+    return this.requestWithMeta(`/forms/${seg(id)}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
 
   async deleteForm(id: string): Promise<ApiResponse<{ success: boolean; trashed?: boolean }>> {
-    return this.request(`/forms/${id}`, {
+    return this.request(`/forms/${seg(id)}`, {
       method: 'DELETE',
     });
   }
 
   async duplicateForm(id: string): Promise<ApiResponse<{ form: Form }>> {
-    return this.request(`/forms/${id}/duplicate`, {
+    return this.request(`/forms/${seg(id)}/duplicate`, {
       method: 'POST',
     });
   }
 
   // Public form endpoint (for form submission)
   async getPublicForm(id: string): Promise<ApiResponse<{ form: Form }>> {
-    return this.request(`/public/forms/${id}`);
+    return this.request(`/public/forms/${seg(id)}`);
   }
 
   /** Public, opt-in records for a custom screen's leaderboard (answers only). */
   async getScreenRecords(id: string, opts?: { limit?: number }): Promise<ApiResponse<{ records: Array<{ id: string; answers: Record<string, unknown>; submittedAt: string }> }>> {
-    return this.request(`/public/forms/${id}/screen-records${opts?.limit ? `?limit=${opts.limit}` : ''}`);
+    return this.request(`/public/forms/${seg(id)}/screen-records${opts?.limit ? `?limit=${opts.limit}` : ''}`);
   }
 
   // Response endpoints
@@ -1457,7 +1470,7 @@ class ApiClient {
     }
 
     const query = params.toString();
-    return this.request(`/forms/${formId}/responses${query ? `?${query}` : ''}`);
+    return this.request(`/forms/${seg(formId)}/responses${query ? `?${query}` : ''}`);
   }
 
   async getResponse(formId: string, responseId: string): Promise<ApiResponse<{ response: FormResponse }>> {
@@ -1467,7 +1480,7 @@ class ApiClient {
         ? { data: { response: response as unknown as FormResponse } }
         : { error: 'Record not found', status: 404 };
     }
-    return this.request(`/forms/${formId}/responses/${responseId}`);
+    return this.request(`/forms/${seg(formId)}/responses/${seg(responseId)}`);
   }
 
   async submitResponse(formId: string, data: { answers: Record<string, unknown>; completionTime?: number; idempotencyKey?: string; flowRunId?: string }): Promise<ApiResponse<{ response: FormResponse }>> {
@@ -1483,7 +1496,7 @@ class ApiClient {
     // createAppResponseResult above. The key rides in the same JSON body Workbox captures + replays,
     // so a replay of this exact request is byte-identical and hits the server's dedup by design.
     const body = data.idempotencyKey == null ? { ...data, idempotencyKey: newIdempotencyKey() } : data;
-    return this.request(`/forms/${formId}/responses`, {
+    return this.request(`/forms/${seg(formId)}/responses`, {
       method: 'POST',
       body: JSON.stringify(body),
     });
@@ -1493,7 +1506,7 @@ class ApiClient {
   async recordFormStart(formId: string): Promise<void> {
     if (this.isAdminActing()) return; // never pollute an owner's analytics funnel
     try {
-      await fetch(`${this.baseUrl}/forms/${formId}/start`, { method: 'POST', credentials: 'include' });
+      await fetch(`${this.baseUrl}/forms/${seg(formId)}/start`, { method: 'POST', credentials: 'include' });
     } catch { /* best-effort: never block the fill on an analytics ping */ }
   }
 
@@ -1522,7 +1535,7 @@ class ApiClient {
         ? { data: { response: response as unknown as FormResponse } }
         : { error: 'Record not found', status: 404 };
     }
-    return this.request(`/forms/${formId}/responses/${responseId}`, {
+    return this.request(`/forms/${seg(formId)}/responses/${seg(responseId)}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
@@ -1535,7 +1548,7 @@ class ApiClient {
       await deleteDemoRecord(formId, responseId);
       return { data: { success: true } };
     }
-    return this.request(`/forms/${formId}/responses/${responseId}`, {
+    return this.request(`/forms/${seg(formId)}/responses/${seg(responseId)}`, {
       method: 'DELETE',
     });
   }
@@ -1592,14 +1605,14 @@ class ApiClient {
   async enableFormEncryption(formId: string, payload: EnableEncryptionPayload): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
     const blocked = this.privateFormsBlocked();
     if (blocked) return { ok: false, status: 403, body: { error: true, message: blocked } };
-    return this.requestWithMeta(`/forms/${formId}/encryption`, { method: 'POST', body: JSON.stringify(payload) });
+    return this.requestWithMeta(`/forms/${seg(formId)}/encryption`, { method: 'POST', body: JSON.stringify(payload) });
   }
 
   /** GET /api/forms/{id}/encryption — owner state: grant + ingestion keys + manifest rows. */
   async getFormEncryptionState(formId: string): Promise<ApiResponse<FormEncryptionStateWire>> {
     const blocked = this.privateFormsBlocked();
     if (blocked) return { error: blocked, status: 403 };
-    const res = await this.requestWithMeta(`/forms/${formId}/encryption`);
+    const res = await this.requestWithMeta(`/forms/${seg(formId)}/encryption`);
     if (!res.ok) {
       return { error: (res.body?.message as string) ?? `Server error (${res.status})`, status: res.status };
     }
@@ -1610,7 +1623,7 @@ class ApiClient {
   async publishFormSchemaVersion(formId: string, payload: PublishSchemaPayload): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
     const blocked = this.privateFormsBlocked();
     if (blocked) return { ok: false, status: 403, body: { error: true, message: blocked } };
-    return this.requestWithMeta(`/forms/${formId}/encryption/schema`, { method: 'POST', body: JSON.stringify(payload) });
+    return this.requestWithMeta(`/forms/${seg(formId)}/encryption/schema`, { method: 'POST', body: JSON.stringify(payload) });
   }
 
   // --- Encrypted data nodes (docs/FORMLOGIC_DATA_NODES.md §11) ---
@@ -1626,7 +1639,7 @@ class ApiClient {
 
   /** POST /api/data-nodes/{id}/approve — store the owner-signed flnodecert:1. */
   async approveDataNode(nodeId: string, certificate: Record<string, unknown>): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
-    return this.requestWithMeta(`/data-nodes/${nodeId}/approve`, {
+    return this.requestWithMeta(`/data-nodes/${seg(nodeId)}/approve`, {
       method: 'POST',
       body: JSON.stringify({ certificate }),
     });
@@ -1634,19 +1647,19 @@ class ApiClient {
 
   /** DELETE /api/data-nodes/{id} — revoke node authority (credentials/data are separate actions). */
   async revokeDataNode(nodeId: string): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
-    return this.requestWithMeta(`/data-nodes/${nodeId}`, { method: 'DELETE' });
+    return this.requestWithMeta(`/data-nodes/${seg(nodeId)}`, { method: 'DELETE' });
   }
 
   /** DELETE /api/data-nodes/{id}/record — remove a REVOKED node's record.
    *  Separate from revoking: the server refuses a node that still holds
    *  authority, so this can only ever tidy up one that is already dead. */
   async forgetDataNode(nodeId: string): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
-    return this.requestWithMeta(`/data-nodes/${nodeId}/record`, { method: 'DELETE' });
+    return this.requestWithMeta(`/data-nodes/${seg(nodeId)}/record`, { method: 'DELETE' });
   }
 
   /** GET /api/forms/{id}/data-placement — signed placement state for a Private form. */
   async getDataPlacement(formId: string): Promise<ApiResponse<import('../types/dataPlacement').DataPlacementState>> {
-    const res = await this.requestWithMeta(`/forms/${formId}/data-placement`);
+    const res = await this.requestWithMeta(`/forms/${seg(formId)}/data-placement`);
     if (!res.ok) {
       return { error: (res.body?.message as string) ?? `Server error (${res.status})`, status: res.status };
     }
@@ -1655,7 +1668,7 @@ class ApiClient {
 
   /** PUT /api/forms/{id}/data-placement — the owner-signed epoch-1 baseline (CAS). */
   async putDataPlacement(formId: string, manifest: Record<string, unknown>): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
-    return this.requestWithMeta(`/forms/${formId}/data-placement`, {
+    return this.requestWithMeta(`/forms/${seg(formId)}/data-placement`, {
       method: 'PUT',
       body: JSON.stringify({ manifest }),
     });
@@ -1663,7 +1676,7 @@ class ApiClient {
 
   /** POST /api/forms/{id}/responses with {envelope} — the only private-mode create shape (§6). */
   async submitEncryptedResponse(formId: string, envelope: ResponseEnvelope, idempotencyKey?: string): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
-    const res = await this.requestWithMeta(`/forms/${formId}/responses`, {
+    const res = await this.requestWithMeta(`/forms/${seg(formId)}/responses`, {
       method: 'POST',
       body: JSON.stringify({ envelope, idempotencyKey: idempotencyKey ?? newIdempotencyKey() }),
     });
@@ -1677,7 +1690,7 @@ class ApiClient {
   async updateEncryptedResponse(formId: string, responseId: string, envelope: ResponseEnvelope, expectedRev: number, idempotencyKey?: string): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
     const blocked = this.privateFormsBlocked();
     if (blocked) return { ok: false, status: 403, body: { error: true, message: blocked } };
-    return this.requestWithMeta(`/forms/${formId}/responses/${responseId}`, {
+    return this.requestWithMeta(`/forms/${seg(formId)}/responses/${seg(responseId)}`, {
       method: 'PUT',
       body: JSON.stringify({ envelope, expectedRev, idempotencyKey: idempotencyKey ?? newIdempotencyKey() }),
     });
@@ -1685,7 +1698,7 @@ class ApiClient {
 
   // Re-run the form's logic script against a stored response
   async recomputeResponse(formId: string, responseId: string): Promise<ApiResponse<{ success: boolean; computed?: Record<string, unknown>; status?: string; tags?: string[]; error?: string }>> {
-    return this.request(`/forms/${formId}/responses/${responseId}/recompute`, {
+    return this.request(`/forms/${seg(formId)}/responses/${seg(responseId)}/recompute`, {
       method: 'POST',
     });
   }
@@ -1697,7 +1710,7 @@ class ApiClient {
   // omitting it (or passing undefined) preserves the exact pre-existing UTC-bucketed behavior.
   async getFormAnalytics(formId: string, tzOffsetMinutes?: number): Promise<ApiResponse<{ analytics: FormAnalytics }>> {
     const query = tzOffsetMinutes === undefined ? '' : `?tzOffsetMinutes=${encodeURIComponent(tzOffsetMinutes)}`;
-    return this.request(`/forms/${formId}/analytics${query}`);
+    return this.request(`/forms/${seg(formId)}/analytics${query}`);
   }
 
   // Export
@@ -1705,7 +1718,7 @@ class ApiClient {
     const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
-    const url = `${this.baseUrl}/forms/${formId}/responses/export`;
+    const url = `${this.baseUrl}/forms/${seg(formId)}/responses/export`;
     const response = await fetch(url, { credentials: 'include' });
 
     if (!response.ok) {
@@ -1722,7 +1735,7 @@ class ApiClient {
     const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
-    const url = `${this.baseUrl}/forms/${formId}/export/sqlite`;
+    const url = `${this.baseUrl}/forms/${seg(formId)}/export/sqlite`;
     const response = await fetch(url, { credentials: 'include' });
 
     if (!response.ok) {
@@ -1748,7 +1761,7 @@ class ApiClient {
     const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
-    const url = `${this.baseUrl}/forms/${formId}/export/json`;
+    const url = `${this.baseUrl}/forms/${seg(formId)}/export/json`;
     const response = await fetch(url, { credentials: 'include' });
 
     if (!response.ok) {
@@ -1912,7 +1925,7 @@ class ApiClient {
     script: string,
     answers: Record<string, unknown>
   ): Promise<ApiResponse<{ result: ScriptTestResult }>> {
-    return this.request(`/forms/${formId}/script/test`, {
+    return this.request(`/forms/${seg(formId)}/script/test`, {
       method: 'POST',
       body: JSON.stringify({ script, answers }),
     });
@@ -1920,12 +1933,12 @@ class ApiClient {
 
   /** How many responses hold a value for a field — powers the builder's delete-field warning. */
   async getFieldUsage(formId: string, fieldId: string): Promise<ApiResponse<{ fieldId: string; responsesWithValue: number }>> {
-    return this.request(`/forms/${formId}/fields/${encodeURIComponent(fieldId)}/usage`);
+    return this.request(`/forms/${seg(formId)}/fields/${encodeURIComponent(fieldId)}/usage`);
   }
 
   /** Permanently remove a DELETED field's data from every response (post-structure-save step). */
   async purgeFieldData(formId: string, fieldId: string): Promise<ApiResponse<{ purged: number }>> {
-    return this.request(`/forms/${formId}/fields/${encodeURIComponent(fieldId)}/purge-data`, { method: 'POST' });
+    return this.request(`/forms/${seg(formId)}/fields/${encodeURIComponent(fieldId)}/purge-data`, { method: 'POST' });
   }
 
   // App Admin endpoints
@@ -1967,7 +1980,7 @@ class ApiClient {
     if (this._demoMode && isDemoLocalId(formId)) {
       return { data: { contexts: await listDemoFormAppContexts(formId) } };
     }
-    return this.request(`/forms/${formId}/app-contexts`);
+    return this.request(`/forms/${seg(formId)}/app-contexts`);
   }
 
   /**
@@ -2071,7 +2084,7 @@ class ApiClient {
         ? { data: { app: stored.app } }
         : { error: 'This browser-only demo app was not found.', status: 404 };
     }
-    return this.request(`/apps/${id}`);
+    return this.request(`/apps/${seg(id)}`);
   }
 
   async updateApp(id: string, data: Record<string, unknown>): Promise<ApiResponse<{ app: unknown }>> {
@@ -2081,7 +2094,7 @@ class ApiClient {
         ? { data: { app: stored.app } }
         : { error: 'This browser-only demo app was not found.', status: 404 };
     }
-    return this.request(`/apps/${id}`, {
+    return this.request(`/apps/${seg(id)}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
@@ -2092,7 +2105,7 @@ class ApiClient {
       await deleteDemoApp(id);
       return { data: { success: true } };
     }
-    return this.request(`/apps/${id}`, {
+    return this.request(`/apps/${seg(id)}`, {
       method: 'DELETE',
     });
   }
@@ -2108,7 +2121,7 @@ class ApiClient {
         ? { data: { app: published.app, version: published.version.version } }
         : { error: 'This browser-only demo app was not found.', status: 404 };
     }
-    return this.request(`/apps/${id}/publish`, {
+    return this.request(`/apps/${seg(id)}/publish`, {
       method: 'POST',
       body: JSON.stringify(label ? { label } : {}),
     });
@@ -2119,7 +2132,7 @@ class ApiClient {
     if (this._demoMode && isDemoLocalId(id)) {
       return { data: { versions: await listDemoAppVersions(id) } };
     }
-    return this.request(`/apps/${id}/versions`);
+    return this.request(`/apps/${seg(id)}/versions`);
   }
 
   /**
@@ -2152,7 +2165,7 @@ class ApiClient {
     if (typeof opts?.copyLogic === 'boolean') body.copyLogic = opts.copyLogic;
     if (opts?.appKind) body.appKind = opts.appKind;
     if (opts?.rolePreset) body.rolePreset = opts.rolePreset;
-    return this.request(`/apps/${appId}/companion`, {
+    return this.request(`/apps/${seg(appId)}/companion`, {
       method: 'POST',
       body: JSON.stringify(body),
     });
@@ -2161,17 +2174,17 @@ class ApiClient {
   // Custom domains (owner-gated)
   async getAppDomains(appId: string): Promise<ApiResponse<{ domains: AppDomain[] }>> {
     if (this._demoMode && isDemoLocalId(appId)) return { data: { domains: [] } };
-    return this.request(`/apps/${appId}/domains`);
+    return this.request(`/apps/${seg(appId)}/domains`);
   }
   async createAppDomain(appId: string, data: { domain: string; mode?: string }): Promise<ApiResponse<{ domain: AppDomain }>> {
-    return this.request(`/apps/${appId}/domains`, { method: 'POST', body: JSON.stringify(data) });
+    return this.request(`/apps/${seg(appId)}/domains`, { method: 'POST', body: JSON.stringify(data) });
   }
   async updateAppDomain(appId: string, domainId: string, data: Record<string, unknown>): Promise<ApiResponse<{ domain: AppDomain }>> {
-    return this.request(`/apps/${appId}/domains/${domainId}`, { method: 'PUT', body: JSON.stringify(data) });
+    return this.request(`/apps/${seg(appId)}/domains/${seg(domainId)}`, { method: 'PUT', body: JSON.stringify(data) });
   }
   /** The app's signed client manifest ({payload, signature, alg, keyId}). Public for a published app. */
   async getClientManifest(slug: string): Promise<ApiResponse<{ payload: Record<string, unknown>; signature: string; alg: string; keyId: string }>> {
-    return this.request(`/app/${slug}/client-manifest`, { method: 'GET' });
+    return this.request(`/app/${seg(slug)}/client-manifest`, { method: 'GET' });
   }
   /**
    * The same signed client manifest, discovered at the CURRENT origin's root:
@@ -2212,10 +2225,10 @@ class ApiClient {
     }
   }
   async verifyAppDomain(appId: string, domainId: string): Promise<ApiResponse<{ ok: boolean; status: string; message: string; domain: AppDomain | null }>> {
-    return this.request(`/apps/${appId}/domains/${domainId}/verify`, { method: 'POST' });
+    return this.request(`/apps/${seg(appId)}/domains/${seg(domainId)}/verify`, { method: 'POST' });
   }
   async deleteAppDomain(appId: string, domainId: string): Promise<ApiResponse<{ success: boolean }>> {
-    return this.request(`/apps/${appId}/domains/${domainId}`, { method: 'DELETE' });
+    return this.request(`/apps/${seg(appId)}/domains/${seg(domainId)}`, { method: 'DELETE' });
   }
 
   /**
@@ -2234,7 +2247,7 @@ class ApiClient {
 
   /** Export the app as a signed .formlogic package (payload + Ed25519 signature + capabilities). */
   async exportAppSignedPackage(appId: string): Promise<ApiResponse<Record<string, unknown>>> {
-    return this.request(`/apps/${appId}/export/signed`);
+    return this.request(`/apps/${seg(appId)}/export/signed`);
   }
 
   // App Form management
@@ -2245,7 +2258,7 @@ class ApiClient {
         ? { data: { forms: stored.forms } }
         : { error: 'This browser-only demo app was not found.', status: 404 };
     }
-    return this.request(`/apps/${appId}/forms`);
+    return this.request(`/apps/${seg(appId)}/forms`);
   }
 
   /**
@@ -2254,7 +2267,7 @@ class ApiClient {
    * the remove-form dependency warning.
    */
   async getAppFormRelations(appId: string): Promise<ApiResponse<{ forms: AppFormRelations[] }>> {
-    return this.request(`/apps/${appId}/forms/relations`);
+    return this.request(`/apps/${seg(appId)}/forms/relations`);
   }
 
   // MCP: ephemeral tokens that let an external AI drive the API via the MCP server.
@@ -2275,7 +2288,7 @@ class ApiClient {
     return this.request(`/mcp/tokens${appId ? `?appId=${appId}` : ''}`);
   }
   async revokeMcpToken(id: string): Promise<ApiResponse<{ success: boolean }>> {
-    return this.request(`/mcp/tokens/${id}`, { method: 'DELETE' });
+    return this.request(`/mcp/tokens/${seg(id)}`, { method: 'DELETE' });
   }
 
   /**
@@ -2331,7 +2344,7 @@ class ApiClient {
         ? { data: { forms } }
         : { error: 'This browser-only demo app was not found.', status: 404 };
     }
-    return this.request(`/apps/${appId}/forms`, {
+    return this.request(`/apps/${seg(appId)}/forms`, {
       method: 'POST',
       body: JSON.stringify({ formId, displayName }),
     });
@@ -2344,7 +2357,7 @@ class ApiClient {
         ? { data: { forms } }
         : { error: 'This form is not attached to the browser-only demo app.', status: 404 };
     }
-    return this.request(`/apps/${appId}/forms/${formId}`, {
+    return this.request(`/apps/${seg(appId)}/forms/${seg(formId)}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
@@ -2356,7 +2369,7 @@ class ApiClient {
         ? { data: { success: true } }
         : { error: 'This browser-only demo app was not found.', status: 404 };
     }
-    return this.request(`/apps/${appId}/forms/${formId}`, {
+    return this.request(`/apps/${seg(appId)}/forms/${seg(formId)}`, {
       method: 'DELETE',
     });
   }
@@ -2368,7 +2381,7 @@ class ApiClient {
         ? { data: { forms } }
         : { error: 'This browser-only demo app was not found.', status: 404 };
     }
-    return this.request(`/apps/${appId}/forms/reorder`, {
+    return this.request(`/apps/${seg(appId)}/forms/reorder`, {
       method: 'PUT',
       body: JSON.stringify({ formIds }),
     });
@@ -2379,7 +2392,7 @@ class ApiClient {
     if (this._demoMode && isDemoLocalId(appId)) {
       return { data: { roles: await listDemoAppRoles(appId) } };
     }
-    return this.request(`/apps/${appId}/roles`);
+    return this.request(`/apps/${seg(appId)}/roles`);
   }
 
   async createAppRole(appId: string, data: { name: string; description?: string }): Promise<ApiResponse<{ role: unknown }>> {
@@ -2389,7 +2402,7 @@ class ApiClient {
         ? { data: { role } }
         : { error: 'This browser-only demo app was not found.', status: 404 };
     }
-    return this.request(`/apps/${appId}/roles`, {
+    return this.request(`/apps/${seg(appId)}/roles`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -2402,7 +2415,7 @@ class ApiClient {
         ? { data: { roles } }
         : { error: 'This browser-only demo app was not found.', status: 404 };
     }
-    return this.request(`/apps/${appId}/roles/${roleId}`, {
+    return this.request(`/apps/${seg(appId)}/roles/${seg(roleId)}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
@@ -2414,7 +2427,7 @@ class ApiClient {
         ? { data: { success: true } }
         : { error: 'System roles cannot be deleted from a demo app.' };
     }
-    return this.request(`/apps/${appId}/roles/${roleId}`, {
+    return this.request(`/apps/${seg(appId)}/roles/${seg(roleId)}`, {
       method: 'DELETE',
     });
   }
@@ -2424,7 +2437,7 @@ class ApiClient {
     if (this._demoMode && isDemoLocalId(appId)) {
       return { data: { permissions: await getDemoAppRolePermissions(appId, roleId) } };
     }
-    return this.request(`/apps/${appId}/roles/${roleId}/permissions`);
+    return this.request(`/apps/${seg(appId)}/roles/${seg(roleId)}/permissions`);
   }
 
   async setAppRolePermissions(appId: string, roleId: string, permissions: unknown[]): Promise<ApiResponse<{ permissions: unknown[] }>> {
@@ -2438,7 +2451,7 @@ class ApiClient {
         ? { data: { permissions: saved } }
         : { error: 'This browser-only demo role was not found.', status: 404 };
     }
-    return this.request(`/apps/${appId}/roles/${roleId}/permissions`, {
+    return this.request(`/apps/${seg(appId)}/roles/${seg(roleId)}/permissions`, {
       method: 'PUT',
       body: JSON.stringify({ permissions }),
     });
@@ -2452,18 +2465,18 @@ class ApiClient {
         ? { data: { users: stored.users, count: stored.users.length } }
         : { error: 'This browser-only demo app was not found.', status: 404 };
     }
-    return this.request(`/apps/${appId}/users`);
+    return this.request(`/apps/${seg(appId)}/users`);
   }
 
   async updateAppUser(appId: string, appUserId: string, data: Record<string, unknown>): Promise<ApiResponse<{ users: unknown[] }>> {
-    return this.request(`/apps/${appId}/users/${appUserId}`, {
+    return this.request(`/apps/${seg(appId)}/users/${seg(appUserId)}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
 
   async removeAppUser(appId: string, appUserId: string): Promise<ApiResponse<{ success: boolean }>> {
-    return this.request(`/apps/${appId}/users/${appUserId}`, {
+    return this.request(`/apps/${seg(appId)}/users/${seg(appUserId)}`, {
       method: 'DELETE',
     });
   }
@@ -2471,14 +2484,14 @@ class ApiClient {
   // App Invitations
   async getAppInvitations(appId: string): Promise<ApiResponse<{ invitations: unknown[] }>> {
     if (this._demoMode && isDemoLocalId(appId)) return { data: { invitations: [] } };
-    return this.request(`/apps/${appId}/invitations`);
+    return this.request(`/apps/${seg(appId)}/invitations`);
   }
 
   async createAppInvitation(appId: string, email: string, roleId: string): Promise<ApiResponse<{ invitation: unknown }>> {
     if (this._demoMode && isDemoLocalId(appId)) {
       return { error: 'Browser-only demo apps cannot send email invitations. Sign up free to invite real people.' };
     }
-    return this.request(`/apps/${appId}/invitations`, {
+    return this.request(`/apps/${seg(appId)}/invitations`, {
       method: 'POST',
       body: JSON.stringify({ email, roleId }),
     });
@@ -2486,7 +2499,7 @@ class ApiClient {
 
   async revokeAppInvitation(appId: string, invitationId: string): Promise<ApiResponse<{ success: boolean }>> {
     if (this._demoMode && isDemoLocalId(appId)) return { data: { success: true } };
-    return this.request(`/apps/${appId}/invitations/${invitationId}`, {
+    return this.request(`/apps/${seg(appId)}/invitations/${seg(invitationId)}`, {
       method: 'DELETE',
     });
   }
@@ -2500,41 +2513,41 @@ class ApiClient {
 
   // App Groups
   async getAppGroups(appId: string): Promise<ApiResponse<{ groups: unknown[] }>> {
-    return this.request(`/apps/${appId}/groups`);
+    return this.request(`/apps/${seg(appId)}/groups`);
   }
 
   async createAppGroup(appId: string, data: { name: string; description?: string }): Promise<ApiResponse<{ group: unknown }>> {
-    return this.request(`/apps/${appId}/groups`, {
+    return this.request(`/apps/${seg(appId)}/groups`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   async updateAppGroup(appId: string, groupId: string, data: Record<string, unknown>): Promise<ApiResponse<{ success: boolean }>> {
-    return this.request(`/apps/${appId}/groups/${groupId}`, {
+    return this.request(`/apps/${seg(appId)}/groups/${seg(groupId)}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
 
   async deleteAppGroup(appId: string, groupId: string): Promise<ApiResponse<{ success: boolean }>> {
-    return this.request(`/apps/${appId}/groups/${groupId}`, {
+    return this.request(`/apps/${seg(appId)}/groups/${seg(groupId)}`, {
       method: 'DELETE',
     });
   }
 
   async getAppGroupMembers(appId: string, groupId: string): Promise<ApiResponse<{ members: Array<{ appUserId: string; name: string; email: string }> }>> {
-    return this.request(`/apps/${appId}/groups/${groupId}/members`);
+    return this.request(`/apps/${seg(appId)}/groups/${seg(groupId)}/members`);
   }
 
   async addAppGroupMember(appId: string, groupId: string, appUserId: string): Promise<ApiResponse<{ success: boolean }>> {
-    return this.request(`/apps/${appId}/groups/${groupId}/members/${appUserId}`, {
+    return this.request(`/apps/${seg(appId)}/groups/${seg(groupId)}/members/${seg(appUserId)}`, {
       method: 'POST',
     });
   }
 
   async removeAppGroupMember(appId: string, groupId: string, appUserId: string): Promise<ApiResponse<{ success: boolean }>> {
-    return this.request(`/apps/${appId}/groups/${groupId}/members/${appUserId}`, {
+    return this.request(`/apps/${seg(appId)}/groups/${seg(groupId)}/members/${seg(appUserId)}`, {
       method: 'DELETE',
     });
   }
@@ -2577,14 +2590,14 @@ class ApiClient {
     }
     // formlogic-python/1: the app-logic languages this client runs (APP_LOGIC_LANGUAGES). A
     // client that names none gets JavaScript scripts only.
-    return this.request(`/app/${slug}?languages=${APP_LOGIC_LANGUAGES.join(',')}`);
+    return this.request(`/app/${seg(slug)}?languages=${APP_LOGIC_LANGUAGES.join(',')}`);
   }
 
   async getAppMyPermissions(slug: string): Promise<ApiResponse<{ permissions: unknown }>> {
     if (this._demoMode && await getDemoAppBySlug(slug)) {
       return { data: { permissions: { appLevel: [...APP_LEVEL_PERMISSIONS], formLevel: {} } } };
     }
-    return this.request(`/app/${slug}/my-permissions`);
+    return this.request(`/app/${seg(slug)}/my-permissions`);
   }
 
   /**
@@ -2732,7 +2745,7 @@ class ApiClient {
    */
   async getAppActivity(slug: string, limit?: number): Promise<ApiResponse<{ activity: AppActivityItem[] }>> {
     if (this._demoMode && await getDemoAppBySlug(slug)) return { data: { activity: [] } };
-    return this.request(`/app/${slug}/activity${limit ? `?limit=${limit}` : ''}`);
+    return this.request(`/app/${seg(slug)}/activity${limit ? `?limit=${limit}` : ''}`);
   }
 
   async getAppMembership(slug: string): Promise<ApiResponse<{ appName: string; status: string; isMember: boolean; canSelfRegister: boolean }>> {
@@ -2749,21 +2762,21 @@ class ApiClient {
         };
       }
     }
-    return this.request(`/app/${slug}/membership`);
+    return this.request(`/app/${seg(slug)}/membership`);
   }
 
   async joinApp(slug: string): Promise<ApiResponse<{ success: boolean; status: string }>> {
-    return this.request(`/app/${slug}/join`, { method: 'POST' });
+    return this.request(`/app/${seg(slug)}/join`, { method: 'POST' });
   }
 
   async getAppForm(slug: string, formId: string): Promise<ApiResponse<{ form: unknown }>> {
     if (this._demoMode && await getDemoAppBySlug(slug)) return this.getForm(formId);
     // The form-level scripts the runtime runs come from here: named languages, as getAppRuntime.
-    return this.request(`/app/${slug}/forms/${formId}?languages=${APP_LOGIC_LANGUAGES.join(',')}`);
+    return this.request(`/app/${seg(slug)}/forms/${seg(formId)}?languages=${APP_LOGIC_LANGUAGES.join(',')}`);
   }
 
   async getAppAnalytics(slug: string, formId: string): Promise<ApiResponse<{ analytics: FormAnalytics }>> {
-    return this.request(`/app/${slug}/forms/${formId}/analytics`);
+    return this.request(`/app/${seg(slug)}/forms/${seg(formId)}/analytics`);
   }
 
   /** Merge server-seeded rows with this browser's local demo records (local shown first, newest). */
@@ -2794,7 +2807,7 @@ class ApiClient {
     // or a manual retry after a dropped ack) returns the SAME response instead of
     // creating a duplicate. The key is part of the body Workbox captures + replays.
     const body = data.idempotencyKey == null ? { ...data, idempotencyKey: newIdempotencyKey() } : data;
-    return this.request(`/app/${slug}/forms/${formId}/responses`, {
+    return this.request(`/app/${seg(slug)}/forms/${seg(formId)}/responses`, {
       method: 'POST',
       body: JSON.stringify(body),
     });
@@ -2812,7 +2825,7 @@ class ApiClient {
       return { ok: true, response, status: 200 };
     }
     const body = data.idempotencyKey == null ? { ...data, idempotencyKey: newIdempotencyKey() } : data;
-    const res = await this.requestWithMeta(`/app/${slug}/forms/${formId}/responses`, {
+    const res = await this.requestWithMeta(`/app/${seg(slug)}/forms/${seg(formId)}/responses`, {
       method: 'POST',
       body: JSON.stringify(body),
     });
@@ -2856,7 +2869,7 @@ class ApiClient {
     /** Idempotent replay: the server already holds this exact submission — ack it (do NOT re-queue). */
     idempotent?: boolean;
   }> }>> {
-    return this.request(`/app/${slug}/sync/batch`, {
+    return this.request(`/app/${seg(slug)}/sync/batch`, {
       method: 'POST',
       body: JSON.stringify({ items }),
     });
@@ -2869,7 +2882,7 @@ class ApiClient {
       await Promise.all(records.map((record) => deleteDemoRecord(formId, record.id)));
       return { data: { success: true, deleted: records.length } };
     }
-    return this.request(`/app/${slug}/forms/${formId}/responses`, { method: 'DELETE' });
+    return this.request(`/app/${seg(slug)}/forms/${seg(formId)}/responses`, { method: 'DELETE' });
   }
 
   async getAppResponses(slug: string, formId: string, options?: { limit?: number; offset?: number; answersEq?: Record<string, string>; answersPhoneEq?: Record<string, string>; answersGte?: Record<string, string>; answersLte?: Record<string, string> }): Promise<ApiResponse<{ responses: unknown[]; count: number; scope: string }>> {
@@ -2912,7 +2925,7 @@ class ApiClient {
       return { data: { responses: page, count, scope: 'all' } };
     }
     const query = params.toString();
-    const res = await this.request<{ responses: unknown[]; count: number; scope: string }>(`/app/${slug}/forms/${formId}/responses${query ? `?${query}` : ''}`);
+    const res = await this.request<{ responses: unknown[]; count: number; scope: string }>(`/app/${seg(slug)}/forms/${seg(formId)}/responses${query ? `?${query}` : ''}`);
     return this._demoMode ? this._mergeDemoResponses(res, formId) : res;
   }
 
@@ -2950,7 +2963,7 @@ class ApiClient {
       params.set('sort', options.sort);
       params.set('dir', options.sortDir ?? 'desc');
     }
-    return this.request(`/app/${slug}/forms/${formId}/responses?${params.toString()}`);
+    return this.request(`/app/${seg(slug)}/forms/${seg(formId)}/responses?${params.toString()}`);
   }
 
   async getAppResponseById(slug: string, formId: string, responseId: string): Promise<ApiResponse<{ response: unknown }>> {
@@ -2958,7 +2971,7 @@ class ApiClient {
       const response = await getDemoRecord(formId, responseId);
       return response ? { data: { response } } : { error: 'Record not found' };
     }
-    return this.request(`/app/${slug}/forms/${formId}/responses/${responseId}`);
+    return this.request(`/app/${seg(slug)}/forms/${seg(formId)}/responses/${seg(responseId)}`);
   }
 
   async updateAppResponse(slug: string, formId: string, responseId: string, data: Record<string, unknown>): Promise<ApiResponse<{ response: unknown }>> {
@@ -2969,7 +2982,7 @@ class ApiClient {
       }
       return { error: 'This is a shared live demo — the seeded data is read-only. Your own entries can be edited.' };
     }
-    return this.request(`/app/${slug}/forms/${formId}/responses/${responseId}`, {
+    return this.request(`/app/${seg(slug)}/forms/${seg(formId)}/responses/${seg(responseId)}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
@@ -2983,7 +2996,7 @@ class ApiClient {
       }
       return { error: 'This is a shared live demo — the seeded data is read-only.' };
     }
-    return this.request(`/app/${slug}/forms/${formId}/responses/${responseId}`, {
+    return this.request(`/app/${seg(slug)}/forms/${seg(formId)}/responses/${seg(responseId)}`, {
       method: 'DELETE',
     });
   }
@@ -3005,7 +3018,7 @@ class ApiClient {
     const localApp = this._demoMode ? await getDemoAppBySlug(slug) : null;
     const serverResult = localApp
       ? { data: { records: [] as LinkedRecord[], count: 0 } }
-      : await this.request<{ records: LinkedRecord[]; count: number }>(`/app/${slug}/forms/${formId}/lookup?${params.toString()}`);
+      : await this.request<{ records: LinkedRecord[]; count: number }>(`/app/${seg(slug)}/forms/${seg(formId)}/lookup?${params.toString()}`);
     // Demo: records created in this browser live only in the IndexedDB overlay — merge them into
     // the picker so a locally-added client is selectable on a new appointment (local first).
     if (this._demoMode) {
@@ -3080,7 +3093,7 @@ class ApiClient {
     if (this._demoMode && isDemoLocalId(appId)) {
       return { data: { flows: await demoApplyFlowOverlay(appId, []) } };
     }
-    return this.request(`/apps/${appId}/flows`);
+    return this.request(`/apps/${seg(appId)}/flows`);
   }
 
   async createFlow(
@@ -3109,7 +3122,7 @@ class ApiClient {
       });
       return { data: { flow } };
     }
-    return this.request(`/apps/${appId}/flows`, { method: 'POST', body: JSON.stringify(data) });
+    return this.request(`/apps/${seg(appId)}/flows`, { method: 'POST', body: JSON.stringify(data) });
   }
 
   async updateFlow(
@@ -3122,7 +3135,7 @@ class ApiClient {
       if (!flow) return { error: 'This browser-only automation was not found.', status: 404 };
       return { data: { flow: await demoUpdateFlow(flow, data) } };
     }
-    return this.request(`/apps/${appId}/flows/${flowId}`, { method: 'PUT', body: JSON.stringify(data) });
+    return this.request(`/apps/${seg(appId)}/flows/${seg(flowId)}`, { method: 'PUT', body: JSON.stringify(data) });
   }
 
   async deleteFlow(appId: string, flowId: string): Promise<ApiResponse<{ success: boolean; trashed?: boolean }>> {
@@ -3132,7 +3145,7 @@ class ApiClient {
       await demoDeleteFlow(flow);
       return { data: { success: true } };
     }
-    return this.request(`/apps/${appId}/flows/${flowId}`, { method: 'DELETE' });
+    return this.request(`/apps/${seg(appId)}/flows/${seg(flowId)}`, { method: 'DELETE' });
   }
 
   /** Records a 'running' run log with trigger_event 'test'; the builder executes locally and PATCHes the result in. */
@@ -3172,14 +3185,14 @@ class ApiClient {
         },
       };
     }
-    return this.request(`/apps/${appId}/flows/${flowId}/test-run`, { method: 'POST', body: JSON.stringify({}) });
+    return this.request(`/apps/${seg(appId)}/flows/${seg(flowId)}/test-run`, { method: 'POST', body: JSON.stringify({}) });
   }
 
   async listFlowBindings(appId: string): Promise<ApiResponse<{ bindings: FlowBinding[] }>> {
     if (this._demoMode && isDemoLocalId(appId)) {
       return { data: { bindings: await listDemoAppBindings(appId) } };
     }
-    return this.request(`/apps/${appId}/flow-bindings`);
+    return this.request(`/apps/${seg(appId)}/flow-bindings`);
   }
 
   async createFlowBinding(appId: string, data: Record<string, unknown>): Promise<ApiResponse<{ binding: FlowBinding }>> {
@@ -3189,7 +3202,7 @@ class ApiClient {
         ? { data: { binding } }
         : { error: 'This browser-only demo app was not found.', status: 404 };
     }
-    return this.request(`/apps/${appId}/flow-bindings`, { method: 'POST', body: JSON.stringify(data) });
+    return this.request(`/apps/${seg(appId)}/flow-bindings`, { method: 'POST', body: JSON.stringify(data) });
   }
 
   async updateFlowBinding(appId: string, bindingId: string, data: Record<string, unknown>): Promise<ApiResponse<{ binding: FlowBinding }>> {
@@ -3199,7 +3212,7 @@ class ApiClient {
         ? { data: { binding } }
         : { error: 'This browser-only trigger was not found.', status: 404 };
     }
-    return this.request(`/apps/${appId}/flow-bindings/${bindingId}`, { method: 'PUT', body: JSON.stringify(data) });
+    return this.request(`/apps/${seg(appId)}/flow-bindings/${seg(bindingId)}`, { method: 'PUT', body: JSON.stringify(data) });
   }
 
   async deleteFlowBinding(appId: string, bindingId: string): Promise<ApiResponse<{ success: boolean }>> {
@@ -3208,7 +3221,7 @@ class ApiClient {
         ? { data: { success: true } }
         : { error: 'This browser-only demo app was not found.', status: 404 };
     }
-    return this.request(`/apps/${appId}/flow-bindings/${bindingId}`, { method: 'DELETE' });
+    return this.request(`/apps/${seg(appId)}/flow-bindings/${seg(bindingId)}`, { method: 'DELETE' });
   }
 
   /** Paginated run history, newest first (owner-scoped; filter by flowId / bindingId / status). */
@@ -3226,7 +3239,7 @@ class ApiClient {
     if (options?.page) params.set('page', String(options.page));
     if (options?.limit) params.set('limit', String(options.limit));
     const query = params.toString();
-    return this.request(`/apps/${appId}/flow-runs${query ? `?${query}` : ''}`);
+    return this.request(`/apps/${seg(appId)}/flow-runs${query ? `?${query}` : ''}`);
   }
 
   /** Enabled flow definitions + bindings for the app runtime's browser runner (member-gated). */
@@ -3724,7 +3737,7 @@ class ApiClient {
     if (options.limit) params.set('limit', String(options.limit));
     if (options.offset) params.set('offset', String(options.offset));
     if (options.ids?.length) params.set('ids', options.ids.join(','));
-    return this.request(`/forms/${formId}/lookup?${params.toString()}`);
+    return this.request(`/forms/${seg(formId)}/lookup?${params.toString()}`);
   }
 
   // Related records (inverse relations)
@@ -3738,7 +3751,7 @@ class ApiClient {
     if (options?.limit) params.set('limit', String(options.limit));
     if (options?.offset) params.set('offset', String(options.offset));
     const qs = params.toString();
-    return this.request(`/app/${slug}/forms/${formId}/responses/${responseId}/related${qs ? `?${qs}` : ''}`);
+    return this.request(`/app/${seg(slug)}/forms/${seg(formId)}/responses/${seg(responseId)}/related${qs ? `?${qs}` : ''}`);
   }
 
   /** Owner-scoped inverse related records (the builder responses page). Same shape as
@@ -3748,7 +3761,7 @@ class ApiClient {
     if (options?.limit) params.set('limit', String(options.limit));
     if (options?.offset) params.set('offset', String(options.offset));
     const qs = params.toString();
-    return this.request(`/forms/${formId}/responses/${responseId}/related${qs ? `?${qs}` : ''}`);
+    return this.request(`/forms/${seg(formId)}/responses/${seg(responseId)}/related${qs ? `?${qs}` : ''}`);
   }
 
   // Get app responses with resolve option
@@ -3760,7 +3773,7 @@ class ApiClient {
     params.set('resolve', 'linked');
     if (options?.limit) params.set('limit', String(options.limit));
     if (options?.offset) params.set('offset', String(options.offset));
-    const res = await this.request<{ responses: unknown[]; count: number; scope: string }>(`/app/${slug}/forms/${formId}/responses?${params.toString()}`);
+    const res = await this.request<{ responses: unknown[]; count: number; scope: string }>(`/app/${seg(slug)}/forms/${seg(formId)}/responses?${params.toString()}`);
     return this._demoMode ? this._mergeDemoResponses(res, formId) : res;
   }
 
@@ -3770,36 +3783,36 @@ class ApiClient {
       const response = await getDemoRecord(formId, responseId);
       return response ? { data: { response } } : { error: 'Record not found' };
     }
-    return this.request(`/app/${slug}/forms/${formId}/responses/${responseId}?resolve=linked`);
+    return this.request(`/app/${seg(slug)}/forms/${seg(formId)}/responses/${seg(responseId)}?resolve=linked`);
   }
 
   // Webhook endpoints
   async getWebhooks(formId: string): Promise<ApiResponse<{ webhooks: Webhook[] }>> {
-    return this.request(`/forms/${formId}/webhooks`);
+    return this.request(`/forms/${seg(formId)}/webhooks`);
   }
 
   async createWebhook(formId: string, data: { url: string; events: string[]; description?: string }): Promise<ApiResponse<{ webhook: Webhook & { secret: string } }>> {
-    return this.request(`/forms/${formId}/webhooks`, {
+    return this.request(`/forms/${seg(formId)}/webhooks`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   async updateWebhook(formId: string, webhookId: string, data: Partial<{ url: string; events: string[]; is_active: boolean; description: string }>): Promise<ApiResponse<{ webhook: Webhook }>> {
-    return this.request(`/forms/${formId}/webhooks/${webhookId}`, {
+    return this.request(`/forms/${seg(formId)}/webhooks/${seg(webhookId)}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
 
   async deleteWebhook(formId: string, webhookId: string): Promise<ApiResponse<{ success: boolean }>> {
-    return this.request(`/forms/${formId}/webhooks/${webhookId}`, {
+    return this.request(`/forms/${seg(formId)}/webhooks/${seg(webhookId)}`, {
       method: 'DELETE',
     });
   }
 
   async getWebhookDeliveries(formId: string, webhookId: string): Promise<ApiResponse<{ deliveries: WebhookDelivery[] }>> {
-    return this.request(`/forms/${formId}/webhooks/${webhookId}/deliveries`);
+    return this.request(`/forms/${seg(formId)}/webhooks/${seg(webhookId)}/deliveries`);
   }
 
   // Pack management. catalogId/versionId (from downloadPack) link the install to
@@ -3860,7 +3873,7 @@ class ApiClient {
     const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — app exports can embed seeded records, so acting mode refuses.
     if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
-    const response = await fetch(`${this.baseUrl}/apps/${appId}/export/package`, { credentials: 'include' });
+    const response = await fetch(`${this.baseUrl}/apps/${seg(appId)}/export/package`, { credentials: 'include' });
     if (!response.ok) {
       if (response.status === 401) this.handleUnauthorized(generation);
       let message = 'Failed to export application package';
@@ -3887,7 +3900,7 @@ class ApiClient {
     const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — record data is never exposed to acting admins.
     if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
-    const response = await fetch(`${this.baseUrl}/apps/${appId}/export/data?format=${format}`, { credentials: 'include' });
+    const response = await fetch(`${this.baseUrl}/apps/${seg(appId)}/export/data?format=${format}`, { credentials: 'include' });
     if (!response.ok) {
       if (response.status === 401) this.handleUnauthorized(generation);
       let message = 'Failed to export app data';
@@ -3959,7 +3972,7 @@ class ApiClient {
    * nodes (the compiler is the ONLY lowering authority; there is no client-side compile path).
    */
   async compileFlow(flowId: string): Promise<ApiResponse<FlowCompileResult>> {
-    return this.request(`/flows/${flowId}/compile`, { method: 'POST' });
+    return this.request(`/flows/${seg(flowId)}/compile`, { method: 'POST' });
   }
 
   /**
@@ -3973,12 +3986,12 @@ class ApiClient {
 
   /** PKG-106: confirm (commit) a proposed plan — digest-bound, single-use, grants required. */
   async confirmPackageInstallPlan(planId: string, opts: { planDigest: string; approvedConnectorGrants: string[] }): Promise<ApiResponse<ApplicationPackageImportResult>> {
-    return this.request(`/packages/install-plans/${planId}/confirm`, { method: 'POST', body: JSON.stringify(opts) });
+    return this.request(`/packages/install-plans/${seg(planId)}/confirm`, { method: 'POST', body: JSON.stringify(opts) });
   }
 
   /** PKG-106: discard a proposed plan (fire-and-forget from review UIs). */
   async cancelPackageInstallPlan(planId: string): Promise<ApiResponse<{ success: boolean }>> {
-    return this.request(`/packages/install-plans/${planId}/cancel`, { method: 'POST' });
+    return this.request(`/packages/install-plans/${seg(planId)}/cancel`, { method: 'POST' });
   }
 
   /**
@@ -3986,7 +3999,7 @@ class ApiClient {
    * dependency directions. Management surface — readable even while the v2 kill switch is off.
    */
   async getPackageInstallation(installationId: string): Promise<ApiResponse<{ installation: PackageInstallationDetail }>> {
-    return this.request(`/package-installations/${installationId}`);
+    return this.request(`/package-installations/${seg(installationId)}`);
   }
 
   /**
@@ -3994,7 +4007,7 @@ class ApiClient {
    * A contributed service-action node stays refused at compile until its slot is bound.
    */
   async getPackageServiceBindings(installationId: string): Promise<ApiResponse<{ slots: PackageServiceSlot[] }>> {
-    return this.request(`/package-installations/${installationId}/service-bindings`);
+    return this.request(`/package-installations/${seg(installationId)}/service-bindings`);
   }
 
   /** SRV-405: fill a declared slot with a service definition on a connection. */
@@ -4003,7 +4016,7 @@ class ApiClient {
     slot: string,
     binding: { definitionId: string; connection: string },
   ): Promise<ApiResponse<{ success: boolean }>> {
-    return this.request(`/package-installations/${installationId}/service-bindings/${encodeURIComponent(slot)}`, {
+    return this.request(`/package-installations/${seg(installationId)}/service-bindings/${encodeURIComponent(slot)}`, {
       method: 'PUT',
       body: JSON.stringify(binding),
     });
@@ -4015,21 +4028,21 @@ class ApiClient {
   }
 
   async getPackageJob(jobId: string): Promise<ApiResponse<{ job: PackageInstallJob }>> {
-    return this.request(`/package-jobs/${jobId}`);
+    return this.request(`/package-jobs/${seg(jobId)}`);
   }
 
   async cancelPackageJob(jobId: string): Promise<ApiResponse<{ success: boolean }>> {
-    return this.request(`/package-jobs/${jobId}/cancel`, { method: 'POST' });
+    return this.request(`/package-jobs/${seg(jobId)}/cancel`, { method: 'POST' });
   }
 
   /** SRV-405: clear a slot's binding (its nodes go back to refusing at compile). */
   async unbindPackageServiceSlot(installationId: string, slot: string): Promise<ApiResponse<{ success: boolean }>> {
-    return this.request(`/package-installations/${installationId}/service-bindings/${encodeURIComponent(slot)}`, { method: 'DELETE' });
+    return this.request(`/package-installations/${seg(installationId)}/service-bindings/${encodeURIComponent(slot)}`, { method: 'DELETE' });
   }
 
   /** Export a whole app (forms + screens + scripts + roles) as a self-contained pack. */
   async exportApp(appId: string): Promise<ApiResponse<{ pack: PackData }>> {
-    return this.request(`/apps/${appId}/export`);
+    return this.request(`/apps/${seg(appId)}/export`);
   }
 
   /** Bundled sample apps for the "Try a sample app" gallery. */
@@ -4038,7 +4051,7 @@ class ApiClient {
   }
   /** Install a bundled sample app into the current account (a fresh copy). */
   async installSampleApp(id: string): Promise<ApiResponse<{ success: boolean; apps: Array<{ id: string; name: string }>; forms: Array<{ id: string; title: string }> }>> {
-    return this.request(`/sample-apps/${id}/install`, { method: 'POST' });
+    return this.request(`/sample-apps/${seg(id)}/install`, { method: 'POST' });
   }
 
   async getInstalledPacks(): Promise<ApiResponse<{ installations: PackInstallation[] }>> {
@@ -4046,7 +4059,7 @@ class ApiClient {
   }
 
   async uninstallPack(installationId: string): Promise<ApiResponse<PackUninstallResult>> {
-    return this.request(`/packs/${installationId}`, { method: 'DELETE' });
+    return this.request(`/packs/${seg(installationId)}`, { method: 'DELETE' });
   }
 
   // Pack Marketplace
@@ -4067,7 +4080,7 @@ class ApiClient {
   }
 
   async getPackDetail(slug: string): Promise<ApiResponse<{ pack: CatalogPack & { versions: PackVersionInfo[]; formTitles?: string[]; appNames?: string[] } }>> {
-    return this.request(`/packs/catalog/${slug}`);
+    return this.request(`/packs/catalog/${seg(slug)}`);
   }
 
   async publishPack(data: { pack: PackData; name: string; description?: string; tags?: string[]; icon?: string; category?: string; visibility?: string; version?: string; changelog?: string; slug?: string }): Promise<ApiResponse<{ success: boolean; catalogId: string; versionId: string; slug: string }>> {
@@ -4078,21 +4091,21 @@ class ApiClient {
   }
 
   async publishPackVersion(slug: string, data: { pack: PackData; version: string; changelog?: string }): Promise<ApiResponse<{ success: boolean; versionId: string; version: string }>> {
-    return this.request(`/packs/catalog/${slug}/versions`, {
+    return this.request(`/packs/catalog/${seg(slug)}/versions`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   async updatePackMeta(slug: string, meta: Partial<{ name: string; description: string; icon: string; tags: string[]; category: string; visibility: string }>): Promise<ApiResponse<{ success: boolean }>> {
-    return this.request(`/packs/catalog/${slug}`, {
+    return this.request(`/packs/catalog/${seg(slug)}`, {
       method: 'PUT',
       body: JSON.stringify(meta),
     });
   }
 
   async archivePack(slug: string): Promise<ApiResponse<{ success: boolean }>> {
-    return this.request(`/packs/catalog/${slug}`, { method: 'DELETE' });
+    return this.request(`/packs/catalog/${seg(slug)}`, { method: 'DELETE' });
   }
 
   async getMyPacks(): Promise<ApiResponse<{ packs: CatalogPack[] }>> {
@@ -4101,7 +4114,7 @@ class ApiClient {
 
   async downloadPack(slug: string, versionId?: string): Promise<ApiResponse<{ pack: PackData; version: string; catalogId: string | null; versionId: string | null }>> {
     const qs = versionId ? `?version=${encodeURIComponent(versionId)}` : '';
-    return this.request(`/packs/catalog/${slug}/download${qs}`);
+    return this.request(`/packs/catalog/${seg(slug)}/download${qs}`);
   }
 
   async uploadPackZip(file: File): Promise<ApiResponse<{ success: boolean; pack: PackData; formCount: number; appCount: number }>> {
@@ -4145,7 +4158,7 @@ class ApiClient {
 
   // Pack Ratings
   async ratePack(slug: string, rating: number, review?: string): Promise<ApiResponse<{ success: boolean; rating: { id: string; rating: number; review: string | null } }>> {
-    return this.request(`/packs/catalog/${slug}/ratings`, {
+    return this.request(`/packs/catalog/${seg(slug)}/ratings`, {
       method: 'POST',
       body: JSON.stringify({ rating, review }),
     });
@@ -4153,11 +4166,11 @@ class ApiClient {
 
   async getPackRatings(slug: string, page?: number): Promise<ApiResponse<PackRatingsResult>> {
     const qs = page ? `?page=${page}` : '';
-    return this.request(`/packs/catalog/${slug}/ratings${qs}`);
+    return this.request(`/packs/catalog/${seg(slug)}/ratings${qs}`);
   }
 
   async deletePackRating(slug: string): Promise<ApiResponse<{ success: boolean }>> {
-    return this.request(`/packs/catalog/${slug}/ratings`, { method: 'DELETE' });
+    return this.request(`/packs/catalog/${seg(slug)}/ratings`, { method: 'DELETE' });
   }
 
   // File upload for form responses
@@ -4165,7 +4178,7 @@ class ApiClient {
     const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
-    const url = `${this.baseUrl}/forms/${formId}/upload`;
+    const url = `${this.baseUrl}/forms/${seg(formId)}/upload`;
     const formData = new FormData();
     formData.append('file', file);
     if (fieldId) formData.append('fieldId', fieldId);
@@ -4199,7 +4212,7 @@ class ApiClient {
     const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
-    const url = `${this.baseUrl}/app/${slug}/forms/${formId}/upload`;
+    const url = `${this.baseUrl}/app/${seg(slug)}/forms/${seg(formId)}/upload`;
     const formData = new FormData();
     formData.append('file', file);
     if (fieldId) formData.append('fieldId', fieldId);
@@ -4234,7 +4247,7 @@ class ApiClient {
     const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
-    const url = `${this.baseUrl}/forms/${formId}/responses/import`;
+    const url = `${this.baseUrl}/forms/${seg(formId)}/responses/import`;
     const formData = new FormData();
     formData.append('file', file);
 
@@ -4267,7 +4280,7 @@ class ApiClient {
     const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
-    const url = `${this.baseUrl}/forms/${formId}/responses/import`;
+    const url = `${this.baseUrl}/forms/${seg(formId)}/responses/import`;
     const formData = new FormData();
     formData.append('file', file);
     formData.append('columnMapping', JSON.stringify(columnMapping));
@@ -4304,15 +4317,15 @@ class ApiClient {
 
   // Form version endpoints
   async getFormVersions(formId: string): Promise<ApiResponse<{ versions: FormVersion[] }>> {
-    return this.request(`/forms/${formId}/versions`);
+    return this.request(`/forms/${seg(formId)}/versions`);
   }
 
   async getFormVersion(formId: string, version: number): Promise<ApiResponse<{ version: FormVersion }>> {
-    return this.request(`/forms/${formId}/versions/${version}`);
+    return this.request(`/forms/${seg(formId)}/versions/${seg(version)}`);
   }
 
   async restoreFormVersion(formId: string, version: number, force = false): Promise<ApiResponse<{ form: Form }>> {
-    return this.request(`/forms/${formId}/versions/${version}/restore`, {
+    return this.request(`/forms/${seg(formId)}/versions/${seg(version)}/restore`, {
       method: 'POST',
       body: JSON.stringify({ force }),
     });
@@ -4331,7 +4344,7 @@ class ApiClient {
   }
 
   async revokeApiKey(id: string): Promise<ApiResponse<{ success: boolean }>> {
-    return this.request(`/api-keys/${id}`, {
+    return this.request(`/api-keys/${seg(id)}`, {
       method: 'DELETE',
     });
   }
@@ -4342,7 +4355,7 @@ class ApiClient {
   }
 
   async revokeDesktopConnection(id: string): Promise<ApiResponse<{ success: boolean }>> {
-    return this.request(`/desktop-connections/${id}`, { method: 'DELETE' });
+    return this.request(`/desktop-connections/${seg(id)}`, { method: 'DELETE' });
   }
 
   // ── Desktop AI E2E tunnel relay (docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md §5, Phase 1) ──

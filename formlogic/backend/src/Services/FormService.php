@@ -379,6 +379,11 @@ class FormService
     public function createForm(array $data): array
     {
         $id = $data['id'] ?? $this->generateUuid();
+        // Clients choose form ids, and an id goes into every URL of this form: it is one
+        // path segment, never a path. Checked before anything looks the id up.
+        if (!is_string($id) || !preg_match('/^[a-zA-Z0-9_-]{1,64}$/D', $id)) {
+            throw new \InvalidArgumentException('Invalid form id');
+        }
         $now = date('Y-m-d H:i:s');
 
         // Check if form already exists

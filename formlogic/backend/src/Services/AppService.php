@@ -19,6 +19,8 @@ class AppService
     public const APP_KINDS = ['admin', 'client', 'staff', 'public', 'internal', 'custom'];
 
     /** apps.name and app_forms.display_name are VARCHAR(255): characters. */
+    public const SLUG_FORMAT = '/^[a-z0-9][a-z0-9-]{0,60}$/D';
+
     public const MAX_NAME_CHARS = 255;
     /** apps.description is TEXT: bytes. */
     public const MAX_DESCRIPTION_BYTES = 65535;
@@ -362,8 +364,10 @@ class AppService
             ? $data['id']
             : $this->generateUuid();
         $now = date('Y-m-d H:i:s');
-        $preferredSlug = $data['slug'] ?? null;
-        $slug = (is_string($preferredSlug) && $preferredSlug !== '' && !$this->slugExists($preferredSlug))
+        // Held to the format updateApp holds a rename to. A slug goes into URLs, and one that
+        // carried a path walked a member's requests out of this app and into another.
+        $preferredSlug = is_string($data['slug'] ?? null) ? strtolower(trim($data['slug'])) : '';
+        $slug = (preg_match(self::SLUG_FORMAT, $preferredSlug) === 1 && !$this->slugExists($preferredSlug))
             ? $preferredSlug
             : $this->generateSlug($data['name'] ?? 'untitled');
 
@@ -629,7 +633,7 @@ class AppService
 
         if (isset($data['slug'])) {
             $slug = strtolower(trim((string) $data['slug']));
-            if (!preg_match('/^[a-z0-9][a-z0-9-]{0,60}$/', $slug)) {
+            if (!preg_match(self::SLUG_FORMAT, $slug)) {
                 throw new \InvalidArgumentException('Invalid slug — use lowercase letters, digits, and hyphens (start alphanumeric, max 61 chars)');
             }
             $chk = $this->mysql->prepare("SELECT 1 FROM apps WHERE slug = :slug AND id != :id LIMIT 1");
