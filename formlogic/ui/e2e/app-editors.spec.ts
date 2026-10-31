@@ -91,6 +91,8 @@ test('Builder and Studio return an editable native app without losing its backen
     await expect(page.getByRole('dialog', { name: 'Native app hosting', exact: true })).toBeVisible({ timeout: 20000 });
     await page.getByRole('button', { name: 'Publish changes', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Publish changes', exact: true })).toBeDisabled({ timeout: 20000 });
+    // On a server with more than one worker the publish is still running as the button greys.
+    await expect.poll(async () => (await context.request.get(`/api/apps/${app.id}/native`)).status(), { timeout: 20000 }).toBe(200);
     const returned = (await (await context.request.get(`/api/apps/${app.id}/native`)).json()).project;
     expect(returned.files['server/main.logic']).toBe(project.files['server/main.logic']);
     expect(returned.files['server/migrations/001.sql']).toBe(project.files['server/migrations/001.sql']);

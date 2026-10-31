@@ -415,6 +415,8 @@ function flRenderEnvContent(string $template, array $values): string
         '/^DB_PASSWORD=.*/m' => 'DB_PASSWORD=' . envEncode($values['dbPass']),
         '/^JWT_SECRET=.*/m' => 'JWT_SECRET=' . $values['jwtSecret'],    // generated hex
         '/^CORS_ORIGIN=.*/m' => 'CORS_ORIGIN=' . envEncode($values['corsOrigin']),
+        // Connecting a domain needs this, and the wizard has just been told the site's address.
+        '/^# APP_URL=.*/m' => 'APP_URL=' . envEncode($values['corsOrigin']),
         '/^# AUDIT_HMAC_KEY=.*/m' => 'AUDIT_HMAC_KEY=' . $values['auditKey'], // generated hex
         '/^# DATA_ENCRYPTION_KEY=.*/m' => 'DATA_ENCRYPTION_KEY=' . ($values['dataKey'] ?? ''), // generated hex
         // .env.example ships the key commented out; write it explicitly either way so the

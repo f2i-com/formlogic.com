@@ -80,6 +80,7 @@ class ProductionConfigTest extends TestCase
         $this->assertStringNotContainsString('APP_ENV=development', $env);
         $this->assertMatchesRegularExpression('/^JWT_SECRET=a{64}$/m', $env);
         $this->assertMatchesRegularExpression('/^AUDIT_HMAC_KEY=b{64}$/m', $env);
+        $this->assertMatchesRegularExpression('/^APP_URL="?https:\/\/forms\.example\.com"?$/m', $env, 'a domain can\'t be connected without it');
     }
 
     public function testInstallerWritesTheSignupPolicyExplicitly(): void

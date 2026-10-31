@@ -383,6 +383,10 @@ class AppController
             $this->audit($request, 'app.delete', 'app', $args['id']);
             return $this->jsonResponse($response, ['success' => true, 'message' => 'App deleted successfully', 'trashed' => $this->trashService !== null]);
         } catch (\Exception $e) {
+            // Its publish is holding its files for a moment: nothing was deleted, and nothing is wrong.
+            if ($e instanceof \RuntimeException && $e->getCode() === 409) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 409);
+            }
             $this->logger->error('App delete error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to delete app'], 500);
         }
