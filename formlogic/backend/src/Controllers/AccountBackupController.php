@@ -84,7 +84,9 @@ final class AccountBackupController
 
         $tmpPath = (string) tempnam(sys_get_temp_dir(), 'flbakimp_');
         try {
+            // moveTo() replaces the file, and with it tempnam()'s private mode.
             $file->moveTo($tmpPath);
+            chmod($tmpPath, 0600);
             $result = $this->backup->importAccount($tmpPath, $userId);
             $this->audit($request, 'account.backup_import', [
                 'apps' => count($result['apps']),

@@ -141,6 +141,14 @@ class AppDomainService
     public function createDomain(string $appId, string $ownerId, string $host, string $mode = 'launch_page'): array
     {
         $domain = $this->assertValidPublicDomain($host);
+        // This site's own name, connected to an app, would turn every sign-in here into one
+        // limited to that app. Other listed origins stay claimable: connecting one is how an
+        // operator who listed a customer's domain moves it off that list.
+        foreach (['APP_URL', 'CORS_ORIGIN'] as $setting) {
+            if ($this->normalizeDomain((string) Environment::nonEmpty($setting, '')) === $domain) {
+                throw new \InvalidArgumentException('That domain is not allowed (localhost, private, or reserved).');
+            }
+        }
         if (!in_array($mode, self::MODES, true)) {
             $mode = 'launch_page';
         }

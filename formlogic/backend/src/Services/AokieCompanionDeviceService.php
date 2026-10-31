@@ -129,6 +129,18 @@ final class AokieCompanionDeviceService
                         throw new \DomainException('This Companion installation is pinned to another endpoint key; revoke and re-authorize it before key rotation');
                     }
                 }
+                // A mobile's relay mailbox is named by its key's thumbprint, which is no secret, so
+                // within an app a key is one installation's for good: revoked, or the mailbox opens
+                // to whoever enrols with it next.
+                $sameKey = $pdo->prepare(
+                    "SELECT 1 FROM aokie_companion_devices
+                     WHERE app_id = :app AND role = 'mobile' AND subject_id <> :subject
+                       AND holder_key_thumbprint = :thumbprint LIMIT 1"
+                );
+                $sameKey->execute(['app' => $appId, 'subject' => $subjectId, 'thumbprint' => $holderKeyThumbprint]);
+                if ($sameKey->fetchColumn() !== false) {
+                    throw new \DomainException('This endpoint key already belongs to another Companion installation');
+                }
             }
             $existing = $pdo->prepare(
                 'SELECT id, user_id, approved_at, revoked_at, holder_key_thumbprint,

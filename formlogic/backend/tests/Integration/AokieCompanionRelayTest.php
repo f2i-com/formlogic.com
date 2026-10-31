@@ -1063,20 +1063,51 @@ final class AokieCompanionRelayTest extends TestCase
 
     public function testBackpressureRefusesOverCapWithTyped429(): void
     {
-        $deviceId = 'device_' . bin2hex(random_bytes(4));
-        $mobile = $this->mobileToken($deviceId);
         $batch = array_fill(0, AokieCompanionRelayService::MAX_FRAMES_PER_POST, ['v' => 2, 'kind' => 'flood']);
-        $posts = intdiv(
+        $phones = intdiv(
             AokieCompanionRelayService::MAX_LIVE_FRAMES_PER_APP,
+            AokieCompanionRelayService::MAX_LIVE_FRAMES_PER_MOBILE,
+        );
+        $posts = intdiv(
+            AokieCompanionRelayService::MAX_LIVE_FRAMES_PER_MOBILE,
             AokieCompanionRelayService::MAX_FRAMES_PER_POST,
         );
-        for ($i = 0; $i < $posts; $i++) {
-            $ok = $this->post($mobile, ['to' => 'plugin', 'frames' => $batch]);
-            $this->assertSame(200, $ok->getStatusCode(), (string) $ok->getBody());
+        // Each phone stops at its own share, and that leaves room for the next.
+        for ($phone = 0; $phone < $phones; $phone++) {
+            $mobile = $this->mobileToken('device_' . bin2hex(random_bytes(4)));
+            for ($i = 0; $i < $posts; $i++) {
+                $ok = $this->post($mobile, ['to' => 'plugin', 'frames' => $batch]);
+                $this->assertSame(200, $ok->getStatusCode(), (string) $ok->getBody());
+            }
+            $over = $this->post($mobile, ['to' => 'plugin', 'frames' => [['v' => 2]]]);
+            $this->assertSame(429, $over->getStatusCode());
+            $this->assertSame('relay_backpressure', self::decode($over)['code']);
         }
-        $over = $this->post($mobile, ['to' => 'plugin', 'frames' => [['v' => 2]]]);
+        // The app's mailbox is full now, for a phone that has sent nothing.
+        $over = $this->post($this->mobileToken('device_' . bin2hex(random_bytes(4))), ['to' => 'plugin', 'frames' => [['v' => 2]]]);
         $this->assertSame(429, $over->getStatusCode());
         $this->assertSame('relay_backpressure', self::decode($over)['code']);
+    }
+
+    public function testAnEndpointKeyIsOneInstallationsForGood(): void
+    {
+        $first = 'device_' . bin2hex(random_bytes(4));
+        $second = 'device_' . bin2hex(random_bytes(4));
+        $key = ['holderKeyThumbprint' => $this->mobileThumbprint($first)];
+        $enrolled = self::$devices->enrollOrTouch($this->userId, $this->appId, $first, 'mobile', 'First', [], $key);
+        $refused = function () use ($second, $key): void {
+            try {
+                self::$devices->enrollOrTouch($this->userId, $this->appId, $second, 'mobile', 'Second', [], $key);
+                $this->fail('Another installation took the key, and with it the mailbox');
+            } catch (\DomainException $e) {
+                $this->assertStringContainsString('another Companion installation', $e->getMessage());
+            }
+        };
+        $refused();
+        self::$devices->revoke($this->userId, (string) $enrolled['id']);
+        $refused();
+        // A key of its own is fine.
+        $this->assertSame($second, self::$devices->enrollOrTouch($this->userId, $this->appId, $second, 'mobile', 'Second', [], ['holderKeyThumbprint' => $this->mobileThumbprint($second)])['subjectId']);
     }
 
     public function testChallengeIsDerivedOnlyFromThePresentedBearersOwnClaims(): void

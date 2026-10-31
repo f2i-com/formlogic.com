@@ -125,6 +125,9 @@ class ChatToolsController
         if (!in_array('ai:relay', $scopes, true) && !in_array('connector:relay', $scopes, true)) {
             return $this->jsonError($response, 'Insufficient scope. Required: ai:relay — relink FormLogic Desktop to grant it.', 403, 'insufficient_scope');
         }
+        if ($request->getAttribute('apiKeyFormIds') !== null) {
+            return $this->jsonError($response, 'A key limited to certain forms cannot run account tools.', 403, 'insufficient_scope');
+        }
 
         $body = $request->getParsedBody() ?? [];
         if (!is_array($body)) {
@@ -150,6 +153,11 @@ class ChatToolsController
         // routes enforce. A grant minted for another workspace's desktop never executes.
         if (!$this->grants->instanceBelongsTo((string) $keyOwnerId, $grant['desktopInstanceId'])) {
             return $this->jsonError($response, 'The grant is bound to a desktop instance outside this key\'s workspace.', 403, 'grant_instance_mismatch');
+        }
+        // An instance id is only as unique as whoever registered it. A grant acts as the person
+        // who minted it, so only that person's own key spends it.
+        if ($grant['userId'] !== (string) $keyOwnerId) {
+            return $this->jsonError($response, 'The grant belongs to another account.', 403, 'grant_user_mismatch');
         }
 
         // Execute AS THE GRANTING USER (account-wide, subset-restricted); audit every execution.
@@ -208,6 +216,9 @@ class ChatToolsController
             $scopes = is_array($keyData['scopes'] ?? null) ? $keyData['scopes'] : [];
             if (!in_array('ai:relay', $scopes, true) && !in_array('connector:relay', $scopes, true)) {
                 return [null, $this->jsonError($response, 'Insufficient scope. Required: ai:relay — relink FormLogic Desktop to grant it.', 403, 'insufficient_scope')];
+            }
+            if ($keyData['formIds'] !== null) {
+                return [null, $this->jsonError($response, 'A key limited to certain forms cannot use the account\'s AI.', 403, 'insufficient_scope')];
             }
             return [(string) $keyData['userId'], null];
         }

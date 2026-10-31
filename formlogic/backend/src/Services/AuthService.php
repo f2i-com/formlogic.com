@@ -731,6 +731,11 @@ class AuthService
             throw $e;
         }
 
+        // A reset link sent earlier, perhaps to the old address, must not undo this.
+        if ($bumpTokenVersion ?? false) {
+            $this->mysql->prepare("DELETE FROM password_resets WHERE user_id = :id")->execute(['id' => $userId]);
+        }
+
         return $this->getUserById($userId);
     }
 
@@ -878,6 +883,15 @@ class AuthService
                 'now' => date('Y-m-d H:i:s'),
                 'uid' => $userId,
             ]);
+            // Someone resets a password when they fear it is known, and whoever knew it could
+            // have made these. Unlike a session they outlive the password unless ended here.
+            foreach ([
+                "UPDATE api_keys SET is_active = 0 WHERE user_id = :uid",
+                "UPDATE mcp_sessions SET revoked_at = NOW() WHERE user_id = :uid AND revoked_at IS NULL",
+                "UPDATE mcp_oauth_refresh_tokens SET revoked_at = NOW() WHERE user_id = :uid AND revoked_at IS NULL",
+            ] as $revoke) {
+                $this->mysql->prepare($revoke)->execute(['uid' => $userId]);
+            }
             $this->mysql->commit();
         } catch (\Throwable $e) {
             if ($this->mysql->inTransaction()) {

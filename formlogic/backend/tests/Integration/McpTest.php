@@ -1540,6 +1540,32 @@ class McpTest extends TestCase
      * A draft form serves no public records. Publishing one whose screen already has them on
      * opens its answers to visitors as much as turning them on does, so it needs the same scope.
      */
+    public function testChangingLogicOnAFormPeopleHaveAnsweredNeedsTheResponsesReadScope(): void
+    {
+        $builder = self::$tokens->create($this->userId)['token'];
+        $draft = $this->makeForm();
+        self::$forms->updateForm($draft, ['status' => 'draft']);
+        self::$pdo->prepare('UPDATE forms SET ever_published_at = NULL WHERE id = ?')->execute([$draft]);
+        $this->assertFalse($this->tool($builder, 'update_form', ['formId' => $draft, 'logicScript' => 'function onSubmit() {}'])['isError'], 'nobody has answered a draft');
+
+        $answered = $this->makeForm();
+        self::$forms->updateForm($answered, ['status' => 'draft', 'logicScript' => 'function onSubmit() {}']);
+        self::$forms->updateForm($answered, ['status' => 'published']);
+        $refused = $this->tool($builder, 'update_form', ['formId' => $answered, 'logicScript' => 'function onSubmit() { steal(); }']);
+        $this->assertTrue($refused['isError'], $refused['text']);
+        $this->assertStringContainsString('responses:read', $refused['text']);
+        $this->assertStringNotContainsString('steal', (string) self::$forms->getForm($answered)['logicScript']);
+
+        // Unpublishing it changes nothing: people have still answered.
+        self::$forms->updateForm($answered, ['status' => 'draft']);
+        $this->assertTrue($this->tool($builder, 'update_form', ['formId' => $answered, 'logicScript' => 'function onSubmit() { steal(); }'])['isError']);
+
+        // Its other edits are untouched, and so is logic sent back as it was.
+        $this->assertFalse($this->tool($builder, 'update_form', ['formId' => $answered, 'title' => 'Renamed', 'logicScript' => 'function onSubmit() {}'])['isError']);
+        $reader = self::$tokens->create($this->userId, null, 3600, 900, array_merge(McpTokenService::DEFAULT_SCOPES, ['responses:read']))['token'];
+        $this->assertFalse($this->tool($reader, 'update_form', ['formId' => $answered, 'logicScript' => 'function onSubmit() { /* new */ }'])['isError']);
+    }
+
     public function testPublishingAFormWithPublicRecordsNeedsTheResponsesReadScope(): void
     {
         $formId = $this->makeForm();

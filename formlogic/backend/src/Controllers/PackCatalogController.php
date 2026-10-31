@@ -393,6 +393,7 @@ class PackCatalogController
             // Move to temp location for processing
             $tmpPath = tempnam(sys_get_temp_dir(), 'pack_');
             $file->moveTo($tmpPath);
+            chmod($tmpPath, 0600);
 
             $packData = $this->fileService->processZipUpload([
                 'tmp_name' => $tmpPath,

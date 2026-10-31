@@ -1043,6 +1043,14 @@ class AIController
                     'message' => 'Insufficient scope. Required: ai:relay — relink FormLogic Desktop to grant it.',
                 ], 403)];
             }
+            // The account's AI is the whole account's, and this key only has some of its forms.
+            if ($keyData['formIds'] !== null) {
+                return [null, $this->jsonResponse($response, [
+                    'error' => true,
+                    'code' => 'insufficient_scope',
+                    'message' => 'A key limited to certain forms cannot use the account\'s AI.',
+                ], 403)];
+            }
             return [(string) $keyData['userId'], null];
         }
         return [null, $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401)];

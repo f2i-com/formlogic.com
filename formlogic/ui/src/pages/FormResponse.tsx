@@ -1400,6 +1400,7 @@ function FormResponseContent() {
           formTitle={form.title}
           fields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type, options: (f.properties?.options as Array<{ label: string; value: string }> | undefined) }))}
           publicMode={!api.isAuthenticated()}
+          hideViewer
           accentColor={form.theme.primaryColor}
           onOpenForm={allowNew ? () => setShowFormView(true) : undefined}
           className="w-full h-full border-0"

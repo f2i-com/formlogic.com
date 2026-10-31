@@ -102,6 +102,7 @@ class PackageInstallPlanController
             try {
                 $tmpPath = (string) tempnam(sys_get_temp_dir(), 'flplanarc_');
                 $uploaded->moveTo($tmpPath);
+                chmod($tmpPath, 0600);
                 $parsed = $this->packService->parseApplicationPackageArchive($tmpPath, $this->signingService);
                 $parsed['trust'] = PackService::trustForImporter($parsed['trust'], $parsed['exporter'], (string) $userId);
                 $aggregate = $parsed['pack'];

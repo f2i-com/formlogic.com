@@ -200,6 +200,7 @@ class PackController
             try {
                 $tmpPath = (string) tempnam(sys_get_temp_dir(), 'flappimp_');
                 $uploaded->moveTo($tmpPath);
+                chmod($tmpPath, 0600);
                 $result = $this->packService->importApplicationPackage($tmpPath, $userId, $this->signingService, null, null, $approvedConnectorGrants);
                 $this->auditImport($request, $userId, $result, ['package' => true, 'trust' => $result['trust'] ?? null]);
                 return $this->jsonResponse($response, [
@@ -410,6 +411,7 @@ class PackController
             try {
                 $tmpPath = (string) tempnam(sys_get_temp_dir(), 'flappdesc_');
                 $uploaded->moveTo($tmpPath);
+                chmod($tmpPath, 0600);
                 $parsed = $this->packService->parseApplicationPackageArchive($tmpPath, $this->signingService);
                 $parsed['trust'] = PackService::trustForImporter($parsed['trust'], $parsed['exporter'], (string) $request->getAttribute('userId'));
                 // ADR-010: an archive may carry a v2 AGGREGATE (its entry-path contributions were

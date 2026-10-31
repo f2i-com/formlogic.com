@@ -185,6 +185,7 @@ export function CustomScreenRuntime({
   fields,
   className,
   publicMode = false,
+  hideViewer = false,
   appSlug,
   accentColor,
   onOpenForm,
@@ -203,6 +204,8 @@ export function CustomScreenRuntime({
   className?: string;
   /** Public link/embed context (anonymous): records() uses the gated public endpoint, not the owner API. */
   publicMode?: boolean;
+  /** The screen's author isn't told who is looking: a public link, opened by someone signed in. */
+  hideViewer?: boolean;
   /** App-runtime context: route submit/records through the app API (membership + permission checks). */
   appSlug?: string;
   /** Accent for the injected --fl-* palette: the app accent in-app, else the form theme's primary. */
@@ -398,7 +401,7 @@ export function CustomScreenRuntime({
             break;
           }
           case 'currentUser':
-            result = user ? { id: user.id, name: user.name, email: user.email } : null;
+            result = user && !hideViewer ? { id: user.id, name: user.name, email: user.email } : null;
             break;
           case 'context':
             result = { formId, title: formTitle || '', fields: fields || [] };
@@ -609,7 +612,7 @@ export function CustomScreenRuntime({
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [formId, formTitle, fields, user, publicMode, appSlug, onOpenForm, onOpenRecords, record, fetchRelated, bridge, onOpenScreen, onOpenRecord, onCeremony, screen._trust, generation]);
+  }, [formId, formTitle, fields, user, publicMode, hideViewer, appSlug, onOpenForm, onOpenRecords, record, fetchRelated, bridge, onOpenScreen, onOpenRecord, onCeremony, screen._trust, generation]);
 
   return (
     <iframe

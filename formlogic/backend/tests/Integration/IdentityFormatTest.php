@@ -97,6 +97,18 @@ class IdentityFormatTest extends TestCase
         self::assertNotSame($slug, self::$apps->createApp(['name' => 'Second', 'slug' => $slug], $this->userId)['slug']);
     }
 
+    public function testAnAppAnswersToItsOwnSlugAlone(): void
+    {
+        $slug = 'spelled-' . bin2hex(random_bytes(4));
+        $app = self::$apps->createApp(['name' => 'Spelled', 'slug' => $slug], $this->userId);
+        self::assertSame($app['id'], self::$apps->getAppBySlug($slug)['id']);
+        self::assertSame($app['id'], self::$apps->getAppBySlug(strtoupper($slug))['id']);
+        // All of these reach the row under the column's collation.
+        foreach ([$slug . ' ', $slug . '   ', str_replace('e', 'é', $slug)] as $spelling) {
+            self::assertNull(self::$apps->getAppBySlug($spelling), json_encode($spelling));
+        }
+    }
+
     public function testAFormIdIsOneSegment(): void
     {
         foreach (['../../forms/x', 'a/b', 'a\\b', "a\tb", 'a?b', 'a#b', 'a b', '.', '..', '', str_repeat('a', 65)] as $id) {

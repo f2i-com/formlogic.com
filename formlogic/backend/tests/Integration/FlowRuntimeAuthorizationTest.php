@@ -196,6 +196,31 @@ class FlowRuntimeAuthorizationTest extends TestCase
         return self::$flows->reserveRun($this->appId, $this->ownerId, $data)['run'];
     }
 
+    public function testOnlyTheOwnerQueuesARun(): void
+    {
+        $this->grant($this->roleId, 'execute_flows');
+        $reserve = fn (string $userId, array $extra) => $this->call('POST', $userId, fn ($rq, $rs) => self::$ctrl->reserveRun($rq, $rs, ['slug' => $this->slug]), $extra + [
+            'flowSlug' => 'triage',
+            'triggerEvent' => 'manual',
+            'correlationId' => 'c-' . bin2hex(random_bytes(6)),
+            'idempotencyKey' => 'k-' . bin2hex(random_bytes(10)),
+            'inputSnapshot' => ['event' => ['name' => 'manual', 'data' => ['forged' => true]]],
+        ]);
+        [$refused] = $reserve($this->memberId, ['queued' => true]);
+        $this->assertSame(403, $refused);
+        $count = self::$pdo->prepare('SELECT COUNT(*) FROM flow_run_logs WHERE app_id = ?');
+        $count->execute([$this->appId]);
+        $this->assertSame(0, (int) $count->fetchColumn());
+
+        // What a member reserves runs in their own session, as it always did.
+        [$running, $body] = $reserve($this->memberId, []);
+        $this->assertSame(201, $running);
+        $this->assertSame('running', $body['run']['status']);
+        [$owner, $ownerBody] = $reserve($this->ownerId, ['queued' => true]);
+        $this->assertSame(201, $owner);
+        $this->assertSame('queued', $ownerBody['run']['status']);
+    }
+
     // ── A native app's records are not any member's to read ─────────────────────────────────
 
     private function enqueueNativeRecord(): array

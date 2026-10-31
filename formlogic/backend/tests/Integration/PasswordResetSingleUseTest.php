@@ -72,7 +72,9 @@ class PasswordResetSingleUseTest extends TestCase
         if (self::$pdo === null || $this->userId === '') {
             return;
         }
-        self::$pdo->prepare('DELETE FROM password_resets WHERE user_id = ?')->execute([$this->userId]);
+        foreach (['password_resets', 'api_keys', 'mcp_sessions', 'mcp_oauth_refresh_tokens'] as $table) {
+            self::$pdo->prepare("DELETE FROM $table WHERE user_id = ?")->execute([$this->userId]);
+        }
         self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$this->userId]);
     }
 
@@ -100,6 +102,43 @@ class PasswordResetSingleUseTest extends TestCase
         $afterSecond = $this->userRow();
         $this->assertTrue(password_verify('FirstNewPass!42', $afterSecond['password_hash']), 'the losing redemption changed nothing');
         $this->assertSame(4, (int) $afterSecond['token_version']);
+    }
+
+    public function testAResetEndsWhatTheOldPasswordCouldHaveMade(): void
+    {
+        $other = 'u-' . bin2hex(random_bytes(12));
+        self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, 'x', 'T')")->execute([$other, $other . '@test.local']);
+        foreach ([$this->userId, $other] as $uid) {
+            $key = bin2hex(random_bytes(16));
+            self::$pdo->prepare("INSERT INTO api_keys (id, user_id, name, key_prefix, key_hash, scopes) VALUES (UUID(), ?, 'k', 'flk_x', ?, '[]')")->execute([$uid, hash('sha256', $key)]);
+            self::$pdo->prepare("INSERT INTO mcp_sessions (id, user_id, token_hash, expires_at) VALUES (UUID(), ?, ?, DATE_ADD(NOW(), INTERVAL 1 DAY))")->execute([$uid, hash('sha256', 'session' . $key)]);
+            self::$pdo->prepare("INSERT INTO mcp_oauth_refresh_tokens (id, token_hash, family_id, client_id, user_id, scopes, expires_at) VALUES (UUID(), ?, UUID(), 'c', ?, '[]', DATE_ADD(NOW(), INTERVAL 1 DAY))")->execute([hash('sha256', 'refresh' . $key), $uid]);
+        }
+        try {
+            self::$auth->resetPassword($this->token, 'FirstNewPass!42');
+            $live = fn (string $uid): array => [
+                (int) self::$pdo->query("SELECT COUNT(*) FROM api_keys WHERE is_active = 1 AND user_id = '$uid'")->fetchColumn(),
+                (int) self::$pdo->query("SELECT COUNT(*) FROM mcp_sessions WHERE revoked_at IS NULL AND user_id = '$uid'")->fetchColumn(),
+                (int) self::$pdo->query("SELECT COUNT(*) FROM mcp_oauth_refresh_tokens WHERE revoked_at IS NULL AND user_id = '$uid'")->fetchColumn(),
+            ];
+            $this->assertSame([0, 0, 0], $live($this->userId));
+            $this->assertSame([1, 1, 1], $live($other), 'another account is untouched');
+        } finally {
+            self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$other]);
+        }
+    }
+
+    public function testChangingThePasswordEndsAResetLinkAlreadySent(): void
+    {
+        self::$pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?')->execute([password_hash('OldPass!42abc', PASSWORD_DEFAULT), $this->userId]);
+        self::$auth->updateUser($this->userId, ['password' => 'ChangedPass!42', 'currentPassword' => 'OldPass!42abc']);
+        try {
+            self::$auth->resetPassword($this->token, 'FromTheOldLink!42');
+            $this->fail('the link must have ended with the change');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('invalid or has expired', $e->getMessage());
+        }
+        $this->assertTrue(password_verify('ChangedPass!42', $this->userRow()['password_hash']));
     }
 
     public function testExpiredTokenIsRejectedWithoutBurningIt(): void

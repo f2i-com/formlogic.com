@@ -2136,9 +2136,11 @@ $app->get('/api/public/launch/by-host', function ($request, $response) use ($con
 })->add($publicFormRateLimiter);
 
 // Public: whether this server may obtain a certificate for a host (Caddy's on-demand TLS asks here).
+// Caddy asks from one address, once per new name, and a name costs a stranger nothing to send: in
+// the forms' budget, a few dozen made-up names a minute would hold back real certificates.
 $app->get('/api/public/domains/certificate', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\AppDomainController::class)->certificateAllowed($request, $response);
-})->add($publicFormRateLimiter);
+})->add(new RateLimitMiddleware($rateLimiter, 1200, 60, 'domain_certificate'));
 
 // Public: signature verification key (so the native runtime / package verifiers can check manifests).
 $app->get('/api/public/signing-key', function ($request, $response) use ($container) {

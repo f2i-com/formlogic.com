@@ -152,12 +152,12 @@ class ChatToolGrantTest extends TestCase
     }
 
     /** POST /api/ai/chat-tools/execute with simulated ApiKeyMiddleware attributes. */
-    private function execute(?string $keyOwnerId, array $scopes, array $body): array
+    private function execute(?string $keyOwnerId, array $scopes, array $body, ?array $formIds = null): array
     {
         $req = (new ServerRequestFactory())->createServerRequest('POST', self::BASE . '/api/ai/chat-tools/execute')
             ->withParsedBody($body);
         if ($keyOwnerId !== null) {
-            $req = $req->withAttribute('userId', $keyOwnerId)->withAttribute('apiKeyScopes', $scopes);
+            $req = $req->withAttribute('userId', $keyOwnerId)->withAttribute('apiKeyScopes', $scopes)->withAttribute('apiKeyFormIds', $formIds);
         }
         $resp = self::$ctrl->execute($req, (new ResponseFactory())->createResponse());
         return ['status' => $resp->getStatusCode(), 'body' => self::decode($resp)];
@@ -319,6 +319,33 @@ class ChatToolGrantTest extends TestCase
         $this->assertSame(403, $scoped['status']);
         $this->assertSame('insufficient_scope', $scoped['body']['code']);
         $this->assertSame(401, $this->execute(null, [], ['grantToken' => $fresh2, 'tool' => 'list_forms', 'input' => []])['status']);
+    }
+
+    public function testAGrantIsSpentOnlyByItsOwnersFullKey(): void
+    {
+        $this->addConnection($this->userId, 'inst-spend');
+        $grant = $this->mint($this->userId)['body']['data']['grantToken'];
+        $call = ['grantToken' => $grant, 'tool' => 'list_forms', 'input' => []];
+
+        // Another account's key, even on the same desktop instance id.
+        $this->addConnection($this->otherId, 'inst-spend');
+        $foreign = $this->execute($this->otherId, ['ai:relay'], $call);
+        $this->assertSame(403, $foreign['status']);
+        $this->assertSame('grant_user_mismatch', $foreign['body']['code']);
+
+        $limited = $this->execute($this->userId, ['ai:relay'], $call, ['3f2b8c1e-7a44-4d21-9f0e-1c2d3e4f5a6b']);
+        $this->assertSame(403, $limited['status']);
+        $this->assertSame('insufficient_scope', $limited['body']['code']);
+
+        $this->assertSame(200, $this->execute($this->userId, ['ai:relay'], $call)['status']);
+
+        // The catalog's flk_ path holds the same line.
+        $key = self::$apiKeys->createKey($this->userId, 'Limited', ['ai:relay'], ['3f2b8c1e-7a44-4d21-9f0e-1c2d3e4f5a6b'])['key'];
+        $request = (new ServerRequestFactory())->createServerRequest('GET', self::BASE . '/api/ai/chat-tools/catalog')
+            ->withHeader('Authorization', 'Bearer ' . $key);
+        $catalog = self::$ctrl->catalog($request, (new ResponseFactory())->createResponse());
+        $this->assertSame(403, $catalog->getStatusCode());
+        $this->assertSame('insufficient_scope', self::decode($catalog)['code']);
     }
 
     public function testScreenToolsRunFromChatAndUpdateAppNeverArchives(): void

@@ -6,6 +6,7 @@ namespace FormLogic\Middleware;
 
 use FormLogic\Helpers\IpResolver;
 use FormLogic\Services\ApiKeyService;
+use FormLogic\Services\AppService;
 use FormLogic\Services\RateLimiter;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -157,7 +158,9 @@ class RateLimitMiddleware implements MiddlewareInterface
     {
         $key = $this->subjectKey($request);
         if ($this->perApp && preg_match('~^/api/app/([^/]+)~', rawurldecode($request->getUri()->getPath()), $match) === 1) {
-            return $key . ':a:' . hash('sha256', strtolower($match[1]));
+            // What no app can be called shares one bucket, so a made-up spelling buys no budget.
+            $slug = strtolower($match[1]);
+            return $key . ':a:' . (preg_match(AppService::SLUG_FORMAT, $slug) === 1 ? hash('sha256', $slug) : 'other');
         }
         return $key;
     }

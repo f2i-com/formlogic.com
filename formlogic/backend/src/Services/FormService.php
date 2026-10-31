@@ -503,6 +503,14 @@ class FormService
      *
      * @throws EncryptionEnablingException|EncryptionRequestException|PrivateFormEncryptedException
      */
+    /** Whether anyone could ever have answered this form. */
+    public function everPublished(string $formId): bool
+    {
+        $stmt = $this->mysql->prepare("SELECT 1 FROM forms WHERE id = :id AND ever_published_at IS NOT NULL");
+        $stmt->execute(['id' => $formId]);
+        return $stmt->fetchColumn() !== false;
+    }
+
     public function updateForm(string $formId, array $data, ?string $actorUserId = null): ?array
     {
         // Check form exists

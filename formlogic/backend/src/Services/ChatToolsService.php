@@ -268,6 +268,13 @@ class ChatToolsService
                 if (self::publishesPublicRecords($args, $current)) {
                     $ctx->requireScope('responses:read');
                 }
+                // Form logic sees everything typed into the form, so changing it on a form people
+                // have answered takes the scope that reads those answers.
+                if (array_key_exists('logicScript', $args)
+                    && $args['logicScript'] !== ($current['logicScript'] ?? null)
+                    && (($current['status'] ?? null) === 'published' || $this->formService->everPublished((string) $args['formId']))) {
+                    $ctx->requireScope('responses:read');
+                }
                 $input = $this->formInput($args);
                 if (is_array($input['customScreen'] ?? null)) {
                     $input['customScreen'] = $this->sanitizeSectionScreen($input['customScreen'], (string) $args['formId']);

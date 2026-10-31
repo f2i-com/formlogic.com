@@ -293,8 +293,9 @@ class HostedAppService
                     return $this->recordOperation($db, $operation, $action['mode'] === 'write');
                 } catch (\Throwable $e) {
                     // These are this file's own words ("App record limit reached"). A database
-                    // error's may name paths, so it stays general.
-                    if (!$failed && !$e instanceof \PDOException) $reason = $e->getMessage();
+                    // error's, or PHP's own when a script sends the wrong shape, may name paths, so
+                    // those stay general.
+                    if (!$failed && !$e instanceof \PDOException && !$e instanceof \Error) $reason = $e->getMessage();
                     $failed = true;
                     throw $e;
                 }

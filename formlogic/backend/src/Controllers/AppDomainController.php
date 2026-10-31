@@ -7,6 +7,7 @@ namespace FormLogic\Controllers;
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Services\AppDomainService;
 use FormLogic\Services\AppService;
+use FormLogic\Support\Environment;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
@@ -47,9 +48,22 @@ class AppDomainController
         return [$userId, $app];
     }
 
+    /** Every APP_ENV but development is production to the rest of the server (config/settings.php). */
     private function devOverrideAllowed(): bool
     {
-        return (($_ENV['APP_ENV'] ?? getenv('APP_ENV') ?: 'production')) !== 'production';
+        return ($_ENV['APP_ENV'] ?? getenv('APP_ENV') ?: 'production') === 'development';
+    }
+
+    /**
+     * A site without APP_URL takes the address for emailed reset links from the request's Origin,
+     * and a domain's owner can repoint a name that once passed for this site. Domains wait for it.
+     */
+    private function refuseWithoutAppUrl(Response $response): ?Response
+    {
+        if (Environment::nonEmpty('APP_URL') !== null) {
+            return null;
+        }
+        return $this->jsonResponse($response, ['error' => true, 'message' => 'This server needs APP_URL set before a domain can be connected'], 409);
     }
 
     public function index(Request $request, Response $response, array $args): Response
@@ -66,6 +80,9 @@ class AppDomainController
         [$userId] = $this->requireOwner($request, $args['id']);
         if (!$userId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
+        }
+        if ($refused = $this->refuseWithoutAppUrl($response)) {
+            return $refused;
         }
         $data = $request->getParsedBody() ?? [];
         $domain = trim((string) ($data['domain'] ?? ''));
@@ -107,6 +124,9 @@ class AppDomainController
         [$userId] = $this->requireOwner($request, $args['id']);
         if (!$userId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
+        }
+        if ($refused = $this->refuseWithoutAppUrl($response)) {
+            return $refused;
         }
         $result = $this->domains->verifyDomain($args['domainId'], $userId, $this->devOverrideAllowed());
         $status = $result['ok'] ? 200 : ($result['status'] === 'not_found' ? 404 : 200);

@@ -51,6 +51,13 @@ final class RateLimitPerAppTest extends TestCase
         self::assertCount(1, array_unique($seen));
     }
 
+    public function testASpellingNoAppCouldHaveBuysNoBudget(): void
+    {
+        $seen = $this->buckets(true, ['/api/app/shop%20/native/request', '/api/app/sh%C3%B3p/native/request', '/api/app/shop%0A/entry', '/api/app/made%20up/entry']);
+        self::assertCount(1, array_unique($seen));
+        self::assertNotSame($this->buckets(true, ['/api/app/shop/native'])[0], $seen[0]);
+    }
+
     public function testAnEveryAppBucketIsUntouched(): void
     {
         [$first, $second] = $this->buckets(false, ['/api/app/one/native', '/api/app/two/native']);

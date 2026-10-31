@@ -305,7 +305,9 @@ class AppService
         $stmt->execute(['slug' => $slug]);
         $row = $stmt->fetch();
 
-        if (!$row) {
+        // The column's collation also folds trailing spaces and accents, and each spelling would
+        // reach this app with a rate limit of its own.
+        if (!$row || strcasecmp((string) $row['slug'], $slug) !== 0) {
             return null;
         }
 

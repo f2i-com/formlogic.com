@@ -974,8 +974,15 @@ class FlowController
         if ($error) {
             return $error;
         }
+        $body = $request->getParsedBody() ?? [];
+        // Whichever runtime claims a queued run runs it, the owner's included, on input the
+        // reserver wrote. The queue is the server's and the owner's: a member runs what they
+        // reserve themselves, in their own session.
+        if (($body['queued'] ?? false) === true && $app['ownerId'] !== $userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Only the app owner can queue a run'], 403);
+        }
         try {
-            $result = $this->flows->reserveRun($app['id'], $userId, $request->getParsedBody() ?? []);
+            $result = $this->flows->reserveRun($app['id'], $userId, $body);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\RuntimeException $e) {

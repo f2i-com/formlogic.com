@@ -28,6 +28,8 @@ final class AokieCompanionRelayService
     public const MAX_FRAME_BYTES = 32768;
     /** Frames accepted per POST. */
     public const MAX_FRAMES_PER_POST = 64;
+    /** What one phone may have waiting, so a stalled or hostile one leaves the mailbox to the rest. */
+    public const MAX_LIVE_FRAMES_PER_MOBILE = 128;
     /** Frames returned per long-poll/SSE fetch. */
     public const MAX_FETCH_LIMIT = 128;
     /** Mirrors the admission signer's hard scope-list bound. */
@@ -125,6 +127,17 @@ final class AokieCompanionRelayService
             throw new \OverflowException(
                 'The relay mailbox for this app is full — consumers are not draining frames',
             );
+        }
+        if ($fromParty !== self::PARTY_PLUGIN) {
+            $sent = $this->mysql->prepare(
+                'SELECT COUNT(*) FROM aokie_companion_relay_frames WHERE app_id = ? AND from_party = ?',
+            );
+            $sent->execute([$appId, $fromParty]);
+            if ((int) $sent->fetchColumn() + count($frames) > self::MAX_LIVE_FRAMES_PER_MOBILE) {
+                throw new \OverflowException(
+                    'This device has too many frames waiting — consumers are not draining them',
+                );
+            }
         }
         $insert = $this->mysql->prepare(
             'INSERT INTO aokie_companion_relay_frames
