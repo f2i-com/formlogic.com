@@ -59,6 +59,14 @@ class ApiKeyService
         return $this->mintKey($userId, $name, $scopes, self::VALID_SCOPES, $formIds, $expiresAt);
     }
 
+    /** Whether the account can hold one more key. */
+    public function hasRoom(string $userId): bool
+    {
+        $stmt = $this->db->getConnection()->prepare('SELECT COUNT(*) FROM api_keys WHERE user_id = ? AND is_active = 1');
+        $stmt->execute([$userId]);
+        return (int) $stmt->fetchColumn() < self::MAX_KEYS_PER_USER;
+    }
+
     /** @param list<string> $allowedScopes */
     private function mintKey(string $userId, string $name, array $scopes, array $allowedScopes, ?array $formIds = null, ?string $expiresAt = null): array
     {

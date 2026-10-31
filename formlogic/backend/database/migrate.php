@@ -825,6 +825,23 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS `backup_clients` (
   CONSTRAINT `fk_backup_client_owner` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 $applied[] = 'backup_clients table ensured';
+$pdo->exec("CREATE TABLE IF NOT EXISTS `backup_link_codes` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `code_hash` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `device_name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `command_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `backup_client_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `expires_at` datetime NOT NULL,
+  `used_at` datetime DEFAULT NULL,
+  `failure` varchar(300) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_backup_link_code` (`code_hash`),
+  KEY `idx_backup_link_owner` (`owner_user_id`),
+  CONSTRAINT `fk_backup_link_owner` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'backup_link_codes table ensured';
 if (!$columnExists($pdo, $db, 'data_nodes', 'backup_client_id')) {
     $pdo->exec("ALTER TABLE `data_nodes`
         MODIFY `desktop_connection_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,

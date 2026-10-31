@@ -2,7 +2,12 @@
 //!
 //! OAIY's relay passes a command that isn't journalled to the linked FormLogic, and stores the
 //! answer there, so only `status.get` and `settings.get` go without: they say how things stand and
-//! name no app, file or person. Everything else is journalled, which keeps the relay out.
+//! name no app, file or person. Everything else is journalled, which keeps the relay out, with one
+//! exception on purpose. `link.accept` is how FormLogic reaches the plugin to set it up through
+//! that link, so it is open, does nothing until the person answers its window, and answers with a
+//! job id and nothing else. FormLogic sends it only from the owner's Settings page, but a flow that
+//! runs on this computer can send it too, with a code from another account and any name it likes.
+//! So the window names the account, and the swap is held to that name.
 //!
 //! A flow, an app script or the agent on this computer can still send a journalled command. So
 //! anything that could do harm in the wrong hands (showing or setting the key, deleting, saving a
@@ -37,6 +42,9 @@ const WATCH_PAGE: Duration = Duration::from_secs(10);
 const HEARTBEAT: Duration = Duration::from_secs(3600);
 /// The most backups in one answer: a line to OAIY can't be longer than 1 MiB.
 const MAX_PAGE: usize = 500;
+/// Between windows that FormLogic asks for. Whoever is signed in to the account on the website can
+/// ask, and they must not be able to fill this computer's screen with them.
+const ACCEPT_GAP: Duration = Duration::from_secs(15);
 
 const NOT_NOW: &str = "Nothing was changed.";
 
@@ -46,6 +54,7 @@ struct Standing {
     node: Option<client::Node>,
     relink: bool,
     not_offered: bool,
+    offer_failed: bool,
 }
 
 pub struct App {
@@ -54,11 +63,12 @@ pub struct App {
     standing: Mutex<Standing>,
     signing_in: AtomicBool,
     last_asked: Mutex<Option<Instant>>,
+    last_accept: Mutex<Option<Instant>>,
 }
 
 impl App {
     fn new(data: PathBuf) -> App {
-        App { data, jobs: Jobs::default(), standing: Mutex::new(Standing::default()), signing_in: AtomicBool::new(false), last_asked: Mutex::new(None) }
+        App { data, jobs: Jobs::default(), standing: Mutex::new(Standing::default()), signing_in: AtomicBool::new(false), last_asked: Mutex::new(None), last_accept: Mutex::new(None) }
     }
 
     /// Called once, when OAIY says the plugin may begin.
@@ -109,7 +119,7 @@ impl App {
             client::self_node(account)
         };
         match asked {
-            Ok(node) => self.note(|standing| *standing = Standing { node, relink: false, not_offered: false }),
+            Ok(node) => self.note(|standing| *standing = Standing { node, ..Standing::default() }),
             Err(Refusal::Relink) => self.note(|standing| standing.relink = true),
             Err(Refusal::NotOffered) => self.note(|standing| standing.not_offered = true),
             Err(_) => {}
@@ -124,6 +134,7 @@ impl App {
         let running = run::running();
         let approved = standing.node.as_ref().is_some_and(|node| node.approved);
         let (state, detail) = match () {
+            () if account.is_none() && standing.offer_failed => ("needs-link", "That didn't connect. Start again from FormLogic"),
             () if account.is_none() => ("needs-link", "Not connected to FormLogic"),
             () if standing.relink => ("needs-link", "FormLogic no longer accepts this link"),
             () if standing.not_offered => ("not-offered", "This FormLogic doesn't offer backups"),
@@ -222,7 +233,7 @@ impl App {
     }
 
     fn sign_in(&self, job: &str, server: &str) -> Result<Value, String> {
-        if link::load(&self.data).ok().flatten().is_some() && !self.standing().relink {
+        if self.linked_for_good() {
             return Err("This computer is linked already. Forget that link first.".to_string());
         }
         let asked = format!(
@@ -237,6 +248,64 @@ impl App {
         self.note(|standing| *standing = Standing::default());
         self.ask_formlogic(&account, true);
         Ok(json!({"server": account.base_url, "accountEmail": account.account_email}))
+    }
+
+    /// Whether this computer holds a link FormLogic still takes.
+    fn linked_for_good(&self) -> bool {
+        link::load(&self.data).ok().flatten().is_some() && !self.standing().relink
+    }
+
+    /// Whether FormLogic may offer a link now. Said before any job starts, because a job's answer
+    /// is the only thing FormLogic never hears.
+    fn may_offer(&self) -> Result<(), String> {
+        if self.linked_for_good() {
+            return Err("This computer's backups are connected already.".to_string());
+        }
+        if self.signing_in.load(Ordering::Acquire) {
+            return Err("That computer is already waiting for you. Answer its window first.".to_string());
+        }
+        if let Ok(mut last) = self.last_accept.lock() {
+            if last.is_some_and(|at| at.elapsed() < ACCEPT_GAP) {
+                return Err("That was too soon after the last one. Try again in a few seconds.".to_string());
+            }
+            *last = Some(Instant::now());
+        }
+        Ok(())
+    }
+
+    /// FormLogic, through OAIY's link, offers a one-time code for this plugin's own key.
+    fn accept(&self, server: &str, code: &str, owner: &str) -> Result<Value, String> {
+        if self.signing_in.swap(true, Ordering::AcqRel) {
+            return Err("That computer is already waiting for you. Answer its window first.".to_string());
+        }
+        let result = self.accept_code(server, code, owner);
+        self.signing_in.store(false, Ordering::Release);
+        result
+    }
+
+    fn accept_code(&self, server: &str, code: &str, owner: &str) -> Result<Value, String> {
+        let asked = format!(
+            "Keep FormLogic backups on this computer?\n\n{owner}\n{server}\n\nOnly go on if you just asked for this in FormLogic, and that is your account and your server: restoring a backup sends everything in it there."
+        );
+        if !native::confirm(&asked)? {
+            return Err(NOT_NOW.to_string());
+        }
+        let account = Self::redeemed(server, code, owner).inspect_err(|_| self.note(|standing| standing.offer_failed = true))?;
+        link::save(&self.data, &account)?;
+        self.note(|standing| *standing = Standing::default());
+        self.ask_formlogic(&account, true);
+        Ok(json!({"server": account.base_url, "accountEmail": account.account_email}))
+    }
+
+    /// Swaps the code, and holds the answer to the account the window named: what is offered can
+    /// say anything, and only the server knows whose code this is.
+    fn redeemed(server: &str, code: &str, owner: &str) -> Result<Account, String> {
+        let account = link::redeem(server, code)?;
+        if account.account_email.eq_ignore_ascii_case(owner) {
+            return Ok(account);
+        }
+        let _ = client::unlink(&account);
+        Err("That code belongs to a different account, so nothing was changed.".to_string())
     }
 
     fn forget(&self) -> Result<Value, String> {
@@ -440,6 +509,19 @@ fn route(app: &Arc<App>, command: &str, payload: &Value, request: Option<&str>) 
             let server = link::normalise_server(&text(payload, "server")?)?;
             app.job(request, command, move |app, job| app.connect(job, &server))
         }
+        "link.accept" => {
+            let server = link::normalise_server(&text(payload, "server")?)?;
+            let code = text(payload, "code")?;
+            if code.len() > 128 || !code.chars().all(|c| c.is_ascii_alphanumeric()) {
+                return Err("That code can't be right.".to_string());
+            }
+            let owner = text(payload, "account")?;
+            if !link::plain_name(&owner) {
+                return Err("That account can't be right.".to_string());
+            }
+            app.may_offer()?;
+            app.job(request, command, move |app, _| app.accept(&server, &code, &owner))
+        }
         "link.forget" => app.job(request, command, |app, _| app.forget()),
         "sources.list" => app.job(request, command, |app, _| app.sources()),
         "backup.run" => {
@@ -550,14 +632,15 @@ mod tests {
         serde_json::from_str(include_str!("../manifest.json")).unwrap()
     }
 
-    /// The relay can reach what isn't journalled, and FormLogic stores the answer.
+    /// The relay can reach what isn't journalled, and FormLogic stores the answer. `link.accept`
+    /// is the one that does anything, and it only opens a window.
     #[test]
-    fn only_the_two_reads_are_left_unjournalled() {
+    fn only_the_two_reads_and_the_offer_of_a_link_are_left_unjournalled() {
         let manifest = manifest();
         let declared: Vec<&str> = manifest["connectors"][0]["commands"].as_array().unwrap().iter().map(|c| c.as_str().unwrap()).collect();
         let journalled: Vec<&str> = manifest["commands"]["journalled"].as_array().unwrap().iter().map(|c| c.as_str().unwrap()).collect();
         let open: Vec<&str> = declared.iter().filter(|command| !journalled.contains(command)).copied().collect();
-        assert_eq!(open, ["status.get", "settings.get"]);
+        assert_eq!(open, ["status.get", "settings.get", "link.accept"]);
     }
 
     #[test]

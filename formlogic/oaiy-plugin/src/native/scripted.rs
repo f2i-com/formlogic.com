@@ -2,7 +2,8 @@
 //! which a package never has: scripts/package-oaiy-plugin.mjs looks for the name below in the
 //! binary and refuses it.
 //!
-//! `FORMLOGIC_BACKUPS_SCRIPTED` names a folder. `answers.txt` holds one answer a line (`yes`, `no`,
+//! `FORMLOGIC_BACKUPS_SCRIPTED` names a folder, or under OAIY, which passes a plugin only its own
+//! variables, it is `scripted` in the plugin's data folder. `answers.txt` holds one answer a line (`yes`, `no`,
 //! `save <path>`, `folder <path>`, or `slow <ms>`, a yes that takes that long), each used once; with none left the
 //! answer is no. Everything asked goes in `asked.txt`, and an address that would have opened in
 //! `opened.txt`.
@@ -13,7 +14,10 @@ use std::path::PathBuf;
 pub const CAN_ASK: bool = true;
 
 fn folder() -> Result<PathBuf, String> {
-    std::env::var_os("FORMLOGIC_BACKUPS_SCRIPTED").map(PathBuf::from).ok_or_else(|| "FORMLOGIC_BACKUPS_SCRIPTED is not set.".to_string())
+    std::env::var_os("FORMLOGIC_BACKUPS_SCRIPTED")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("OAIY_PLUGIN_DATA_DIR").map(|data| PathBuf::from(data).join("scripted")))
+        .ok_or_else(|| "FORMLOGIC_BACKUPS_SCRIPTED is not set.".to_string())
 }
 
 fn note(file: &str, text: &str) -> Result<(), String> {

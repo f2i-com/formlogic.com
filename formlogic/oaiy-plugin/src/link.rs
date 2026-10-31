@@ -1,7 +1,10 @@
-//! The plugin's own link to a FormLogic account, separate from OAIY's: a sign-in in the browser with
-//! a one-time code (PKCE, RFC 8252), which FormLogic turns into a key good for backups and nothing
-//! else. The plugin opens the browser itself, so the sign-in address never appears in a command's
-//! answer. The key is kept in `link.json` and goes with the plugin.
+//! The plugin's own link to a FormLogic account, separate from OAIY's: a key good for backups and
+//! nothing else, kept in `link.json`, which goes with the plugin. There are two ways to get one.
+//!
+//! - [`sign_in`]: a sign-in in the browser with a one-time code (PKCE, RFC 8252). The plugin opens
+//!   the browser itself, so the sign-in address never appears in a command's answer.
+//! - [`redeem`]: FormLogic sends a one-time code through OAIY's link to this computer, and the
+//!   plugin swaps it. OAIY's own key stays with OAIY: the link only carries the message.
 
 use std::io::{Read as _, Write as _};
 use std::net::{Shutdown, TcpListener, TcpStream};
@@ -13,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::{client, native, secret_file};
+use crate::{client, native, run, secret_file};
 
 const FILE: &str = "link.json";
 const CLIENT_ID: &str = "formlogic-backups-plugin";
@@ -226,22 +229,20 @@ fn wait_for_code(listener: &TcpListener, state: &str, until: Instant) -> Result<
     Err("The sign-in timed out. Try again.".to_string())
 }
 
-fn exchange(server: &str, code: &str, verifier: &str, redirect: &str) -> Result<Account, String> {
-    let sent = client::agent(Duration::from_secs(30)).post(&format!("{server}/api/oauth/token")).send_form(&[
-        ("grant_type", "authorization_code"),
-        ("client_id", CLIENT_ID),
-        ("code", code),
-        ("code_verifier", verifier),
-        ("redirect_uri", redirect),
-    ]);
-    let refused = "FormLogic did not finish the sign-in. Check that this server has the backup connection (FormLogic 0.1.18 or later), and try again.".to_string();
+/// What a FormLogic that knows this plugin answers with: a key, and whose it is.
+fn account_from(server: &str, sent: Result<ureq::Response, ureq::Error>) -> Result<Account, String> {
+    const REFUSED: &str = "FormLogic did not finish connecting. Try again.";
     let body: Value = match sent {
-        Ok(response) if response.status() == 200 => client::read_json(response).ok_or_else(|| refused.clone())?,
-        _ => return Err(refused),
+        Ok(response) if response.status() == 200 => client::read_json(response).ok_or(REFUSED)?,
+        Err(ureq::Error::Status(_, response)) => {
+            let said = client::read_json(response).and_then(|body| body.get("message").and_then(Value::as_str).map(run::short));
+            return Err(said.unwrap_or_else(|| REFUSED.to_string()));
+        }
+        _ => return Err(REFUSED.to_string()),
     };
     let text = |field: &str| body.get(field).and_then(Value::as_str).map(str::to_string).filter(|value| !value.is_empty());
     let (Some(credential), Some(api_key_id), Some(account_id)) = (text("formlogic_api_key"), text("api_key_id"), text("account_id")) else {
-        return Err(refused);
+        return Err(REFUSED.to_string());
     };
     Ok(Account {
         base_url: server.to_string(),
@@ -253,8 +254,56 @@ fn exchange(server: &str, code: &str, verifier: &str, redirect: &str) -> Result<
     })
 }
 
+fn exchange(server: &str, code: &str, verifier: &str, redirect: &str) -> Result<Account, String> {
+    account_from(
+        server,
+        client::agent(Duration::from_secs(30)).post(&format!("{server}/api/oauth/token")).send_form(&[
+            ("grant_type", "authorization_code"),
+            ("client_id", CLIENT_ID),
+            ("code", code),
+            ("code_verifier", verifier),
+            ("redirect_uri", redirect),
+        ]),
+    )
+}
+
+/// Swaps a one-time code FormLogic sent through OAIY's link for this plugin's key.
+pub fn redeem(server: &str, code: &str) -> Result<Account, String> {
+    account_from(server, client::agent(Duration::from_secs(30)).post(&format!("{server}/api/oauth/backup-link")).send_form(&[("code", code)]))
+}
+
+/// Whether an account's name is one line of plain text, fit for a window. Whoever sends it chose it.
+pub fn plain_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 254
+        && !name.chars().any(|c| c.is_control() || c.is_whitespace() || matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{feff}'))
+}
+
+/// Whether this server knows the plugin, before a browser opens on a page that says it doesn't.
+fn check_server(server: &str) -> Result<(), String> {
+    let probe = format!(
+        "{server}/api/oauth/authorize-info?client_id={CLIENT_ID}&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method=S256",
+        encode("http://127.0.0.1/callback"),
+        encode(SCOPE),
+        "a".repeat(43),
+    );
+    const NOT_FORMLOGIC: &str = "That server didn't answer as FormLogic does. Check the address.";
+    match client::agent(Duration::from_secs(15)).get(&probe).call() {
+        Ok(response) if response.status() == 200 => client::read_json(response).map(|_| ()).ok_or_else(|| NOT_FORMLOGIC.to_string()),
+        Err(ureq::Error::Status(_, response)) => match client::read_json(response) {
+            Some(body) if body.get("error").and_then(Value::as_str) == Some("invalid_client") => {
+                Err("This FormLogic doesn't know the backup plugin yet. It needs updating to a version that has FormLogic Backups.".to_string())
+            }
+            _ => Err(NOT_FORMLOGIC.to_string()),
+        },
+        Err(ureq::Error::Transport(failure)) => Err(format!("Could not reach that server: {}", failure.kind())),
+        _ => Err(NOT_FORMLOGIC.to_string()),
+    }
+}
+
 /// The whole sign-in, from opening the browser to holding the key. `server` is already normal.
 pub fn sign_in(server: &str, device: Option<&str>) -> Result<Account, String> {
+    check_server(server)?;
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| format!("Could not listen for the sign-in: {e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let redirect = format!("http://127.0.0.1:{port}/callback");

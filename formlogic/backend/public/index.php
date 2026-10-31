@@ -452,6 +452,21 @@ $container->set(\FormLogic\Controllers\DataNodeController::class, function (Cont
         $c->get(\FormLogic\Services\AuditService::class)
     );
 });
+$container->set(\FormLogic\Services\BackupLinkService::class, function (Container $c) {
+    return new \FormLogic\Services\BackupLinkService(
+        $c->get(MySQLConnection::class),
+        $c->get(\FormLogic\Services\DesktopCommandService::class),
+        $c->get(ApiKeyService::class),
+    );
+});
+$container->set(\FormLogic\Controllers\BackupLinkController::class, function (Container $c) {
+    return new \FormLogic\Controllers\BackupLinkController(
+        $c->get(\FormLogic\Services\BackupLinkService::class),
+        (bool) ($c->get('settings')['cloud']['dataNodes'] ?? false),
+        $c->get(AuditService::class),
+    );
+});
+
 $container->set(\FormLogic\Controllers\DataPlacementController::class, function (Container $c) {
     return new \FormLogic\Controllers\DataPlacementController(
         $c->get(\FormLogic\Services\DataNodeService::class),
@@ -1851,6 +1866,15 @@ $app->group('/api/forms/{id}/flow-bindings', function (RouteCollectorProxy $grou
 $app->get('/api/data-nodes', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\DataPlacementController::class)->listNodes($request, $response);
 })->add($authRequired);
+// Setting the FormLogic Backups plugin up through a linked computer (BackupLinkService). Each start
+// is a window on someone's desktop, so these are few to a minute.
+$backupLinkStartLimiter = new RateLimitMiddleware($rateLimiter, 6, 60, 'backup_link_start', true, true);
+$app->post('/api/data-nodes/backup-link', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\BackupLinkController::class)->start($request, $response);
+})->add($backupLinkStartLimiter)->add($authRequired);
+$app->get('/api/data-nodes/backup-link/{id}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\BackupLinkController::class)->status($request, $response, $getArgs($request));
+})->add($authRequired);
 $app->post('/api/data-nodes/{id}/approve', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\DataPlacementController::class)->approveNode($request, $response, $getArgs($request));
 })->add($authRequired);
@@ -2662,6 +2686,13 @@ $oauthTokenRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'oauth_to
 $app->post('/api/oauth/token', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\McpOAuthController::class)->token($request, $response);
 })->add($oauthTokenRateLimiter);
+
+// The plugin's half of setting up through a link: it has no key yet, and the one-time code is its
+// credential. Public, no CSRF, rate-limited, like the token endpoint it stands in for.
+$backupLinkRedeemLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'backup_link_redeem', false, true); // fail closed: credential issuance (RATE-001)
+$app->post('/api/oauth/backup-link', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\BackupLinkController::class)->redeem($request, $response);
+})->add($backupLinkRedeemLimiter);
 
 // Consent support for the SPA /oauth/authorize page. On a split deployment the canonical API-host
 // authorization endpoint validates the request, then redirects only to APP_URL's fixed SPA route;

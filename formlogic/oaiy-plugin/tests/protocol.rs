@@ -5,11 +5,12 @@
 
 #![cfg(feature = "scripted-dialogs")]
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{channel, Receiver};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -398,8 +399,9 @@ fn saying_no_to_a_server_opens_no_browser() {
 #[test]
 fn the_browser_opens_and_the_sign_in_comes_back_through_the_plugin() {
     let mut plugin = Plugin::start();
+    let formlogic = fake_formlogic(&[("/api/oauth/authorize-info", 200, json!({"clientName": "FormLogic Backups"}))]);
     plugin.answer(&["yes"]);
-    let started = plugin.data("link.connect", json!({"server": "http://127.0.0.1:9"}));
+    let started = plugin.data("link.connect", json!({"server": formlogic.base}));
     let opened = plugin.windows().join("opened.txt");
     let until = Instant::now() + IN_TIME;
     while !opened.exists() {
@@ -407,7 +409,7 @@ fn the_browser_opens_and_the_sign_in_comes_back_through_the_plugin() {
         std::thread::sleep(Duration::from_millis(20));
     }
     let url = std::fs::read_to_string(&opened).unwrap();
-    assert!(url.starts_with("http://127.0.0.1:9/oauth/authorize?"), "{url}");
+    assert!(url.starts_with(&format!("{}/oauth/authorize?", formlogic.base)), "{url}");
     assert!(url.contains("device=Test%20Computer"), "{url}");
     assert!(!started.to_string().contains("oauth/authorize"), "the address is not in an answer");
 
@@ -420,6 +422,243 @@ fn the_browser_opens_and_the_sign_in_comes_back_through_the_plugin() {
     assert_eq!(job["state"], "failed");
     assert!(job["message"].as_str().unwrap().contains("refused"), "{job}");
     assert_eq!(plugin.data("link.get", json!({})), json!({"linked": false}));
+}
+
+/// A stand-in for FormLogic: answers each path it is given, and says what it was sent.
+struct FakeFormLogic {
+    base: String,
+    seen: Arc<Mutex<Vec<String>>>,
+}
+
+impl FakeFormLogic {
+    fn saw(&self, what: &str) -> bool {
+        self.seen.lock().unwrap().iter().any(|line| line.contains(what))
+    }
+}
+
+fn fake_formlogic(answers: &[(&str, u16, Value)]) -> FakeFormLogic {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    let answers: Vec<(String, u16, String)> = answers.iter().map(|(path, status, body)| (path.to_string(), *status, body.to_string())).collect();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = seen.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().map_while(Result::ok) {
+            let mut stream = stream;
+            let mut bytes = Vec::new();
+            let mut chunk = [0u8; 4096];
+            while !bytes.windows(4).any(|end| end == b"\r\n\r\n") {
+                match stream.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => bytes.extend_from_slice(&chunk[..read]),
+                }
+            }
+            let head_end = bytes.windows(4).position(|end| end == b"\r\n\r\n").map_or(bytes.len(), |at| at + 4);
+            let head = String::from_utf8_lossy(&bytes[..head_end]).to_string();
+            let length = head.lines().find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length: ").and_then(|n| n.trim().parse::<usize>().ok())).unwrap_or(0);
+            while bytes.len() < head_end + length {
+                match stream.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => bytes.extend_from_slice(&chunk[..read]),
+                }
+            }
+            let request = head.lines().next().unwrap_or_default().to_string();
+            log.lock().unwrap().push(format!("{request} {}", String::from_utf8_lossy(&bytes[head_end..])));
+            let path = request.split(' ').nth(1).unwrap_or_default();
+            let (status, body) = answers.iter().find(|(known, _, _)| path.starts_with(known.as_str())).map_or((404, "{}".to_string()), |(_, status, body)| (*status, body.clone()));
+            let _ = write!(stream, "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+        }
+    });
+    FakeFormLogic { base, seen }
+}
+
+fn formlogic_that_takes_a_code() -> FakeFormLogic {
+    fake_formlogic(&[
+        ("/api/oauth/backup-link", 200, json!({"formlogic_api_key": "flk_test", "api_key_id": "k1", "account_id": "u1", "account_email": "owner@example.test"})),
+        ("/api/v1/data-node/register", 200, json!({"data": {"node": {"status": "pending", "approved": false}}})),
+    ])
+}
+
+const A_CODE: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const OWNER: &str = "owner@example.test";
+
+fn offer(server: &str) -> Value {
+    json!({"server": server, "code": A_CODE, "account": OWNER})
+}
+
+#[test]
+fn a_code_through_the_link_becomes_the_plugins_own_key_once_the_person_agrees() {
+    let mut plugin = Plugin::start();
+    let formlogic = formlogic_that_takes_a_code();
+    plugin.answer(&["yes"]);
+
+    let job = plugin.job("link.accept", offer(&formlogic.base));
+
+    assert_eq!(job["state"], "done", "{job}");
+    assert!(plugin.asked().contains(&formlogic.base), "the window names the server: {}", plugin.asked());
+    assert!(plugin.asked().contains(OWNER), "and the account: {}", plugin.asked());
+    assert!(plugin.asked().contains("If you didn't ask for this, cancel it."));
+    assert!(formlogic.saw(&format!("code={A_CODE}")));
+    assert!(formlogic.saw("/api/v1/data-node/register"), "and it tells FormLogic who it is");
+    assert_eq!(plugin.data("link.get", json!({})), json!({"linked": true, "server": formlogic.base, "accountEmail": "owner@example.test"}));
+    assert_eq!(plugin.data("status.get", json!({}))["nodeStatus"], "pending");
+}
+
+#[test]
+fn what_the_relay_is_told_is_a_job_and_nothing_else() {
+    let mut plugin = Plugin::start();
+    let formlogic = formlogic_that_takes_a_code();
+    plugin.answer(&["slow 200"]);
+    let answer = plugin.data("link.accept", offer(&formlogic.base));
+    assert_eq!(answer.as_object().unwrap().keys().collect::<Vec<_>>(), ["jobId"]);
+}
+
+#[test]
+fn saying_no_to_the_offer_spends_nothing() {
+    let mut plugin = Plugin::start();
+    let formlogic = formlogic_that_takes_a_code();
+    plugin.answer(&["no"]);
+
+    assert_eq!(plugin.job("link.accept", offer(&formlogic.base))["message"], "Nothing was changed.");
+
+    assert!(!formlogic.saw("backup-link"));
+    assert_eq!(plugin.data("link.get", json!({})), json!({"linked": false}));
+}
+
+#[test]
+fn an_offer_to_a_computer_already_connected_is_refused_where_formlogic_can_hear() {
+    let mut plugin = Plugin::start();
+    linked(&plugin);
+    assert!(plugin.refused("link.accept", offer("https://forms.example.com")).contains("connected already"));
+    assert_eq!(plugin.asked(), "");
+}
+
+#[test]
+fn an_offer_that_could_not_be_meant_opens_no_window() {
+    let mut plugin = Plugin::start();
+    assert!(plugin.refused("link.accept", offer("http://forms.example.com")).contains("https"));
+    let server = "https://forms.example.com";
+    assert!(plugin.refused("link.accept", json!({"server": server, "code": "not a code", "account": OWNER})).contains("can't be right"));
+    assert!(plugin.refused("link.accept", json!({"server": server, "code": "a".repeat(129), "account": OWNER})).contains("can't be right"));
+    assert!(plugin.refused("link.accept", json!({"server": server, "account": OWNER})).contains("required"));
+    assert!(plugin.refused("link.accept", json!({"server": server, "code": A_CODE})).contains("required"));
+    for account in ["", "two\nlines@example.test", "bell\u{7}@example.test", "a b@example.test", "owner\u{202e}@example.test", "\u{200b}owner@example.test"] {
+        assert!(plugin.refused("link.accept", json!({"server": server, "code": A_CODE, "account": account})).contains("can't be right") || account.is_empty(), "{account}");
+    }
+    assert!(plugin.refused("link.accept", json!({"server": server, "code": A_CODE, "account": "a".repeat(255)})).contains("can't be right"));
+    assert_eq!(plugin.asked(), "");
+}
+
+#[test]
+fn an_offer_does_not_cut_in_on_a_sign_in() {
+    let mut plugin = Plugin::start();
+    let formlogic = fake_formlogic(&[("/api/oauth/authorize-info", 200, json!({"clientName": "FormLogic Backups"}))]);
+    plugin.answer(&["yes"]);
+    plugin.data("link.connect", json!({"server": formlogic.base}));
+    let opened = plugin.windows().join("opened.txt");
+    let until = Instant::now() + IN_TIME;
+    while !opened.exists() {
+        assert!(Instant::now() < until, "the browser never opened");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    assert!(plugin.refused("link.accept", offer(&formlogic.base)).contains("already waiting"));
+    assert!(!plugin.asked().contains("Keep FormLogic backups"), "{}", plugin.asked());
+}
+
+#[test]
+fn a_second_offer_while_the_window_is_open_is_refused_where_formlogic_can_hear() {
+    let mut plugin = Plugin::start();
+    let formlogic = formlogic_that_takes_a_code();
+    plugin.answer(&["slow 1500"]);
+    plugin.data("link.accept", offer(&formlogic.base));
+    let until = Instant::now() + IN_TIME;
+    while !plugin.asked().contains("Keep FormLogic backups") {
+        assert!(Instant::now() < until, "the window never opened");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    assert!(plugin.refused("link.accept", offer(&formlogic.base)).contains("Answer its window first"));
+}
+
+#[test]
+fn a_code_from_another_account_is_given_back_whatever_the_offer_said() {
+    let mut plugin = Plugin::start();
+    let formlogic = fake_formlogic(&[
+        ("/api/oauth/backup-link", 200, json!({"formlogic_api_key": "flk_test", "api_key_id": "k1", "account_id": "u2", "account_email": "someone-else@example.test"})),
+        ("/api/v1/data-node/self", 200, json!({})),
+    ]);
+    plugin.answer(&["yes"]);
+
+    let job = plugin.job("link.accept", offer(&formlogic.base));
+
+    assert!(job["message"].as_str().unwrap().contains("different account"), "{job}");
+    assert!(formlogic.saw("DELETE /api/v1/data-node/self"), "the key it got is ended");
+    assert_eq!(plugin.data("link.get", json!({})), json!({"linked": false}));
+    assert!(!plugin.data_dir().join("link.json").exists());
+    assert_eq!(plugin.data("status.get", json!({}))["detail"], "That didn't connect. Start again from FormLogic");
+}
+
+#[test]
+fn the_account_may_differ_only_in_how_it_is_written() {
+    let mut plugin = Plugin::start();
+    let formlogic = formlogic_that_takes_a_code();
+    plugin.answer(&["yes"]);
+    let job = plugin.job("link.accept", json!({"server": formlogic.base, "code": A_CODE, "account": "Owner@Example.test"}));
+    assert_eq!(job["state"], "done", "{job}");
+}
+
+#[test]
+fn offers_can_not_fill_the_screen_with_windows() {
+    let mut plugin = Plugin::start();
+    let formlogic = formlogic_that_takes_a_code();
+    plugin.answer(&["no", "no"]);
+    assert_eq!(plugin.job("link.accept", offer(&formlogic.base))["message"], "Nothing was changed.");
+
+    assert!(plugin.refused("link.accept", offer(&formlogic.base)).contains("too soon"));
+
+    assert_eq!(plugin.asked().matches("Keep FormLogic backups").count(), 1, "{}", plugin.asked());
+}
+
+#[test]
+fn a_code_formlogic_refuses_says_so_in_its_words() {
+    let mut plugin = Plugin::start();
+    let formlogic = fake_formlogic(&[("/api/oauth/backup-link", 400, json!({"message": "That code is not valid. Start again from FormLogic."}))]);
+    plugin.answer(&["yes"]);
+    let job = plugin.job("link.accept", offer(&formlogic.base));
+    assert_eq!(job["message"], "That code is not valid. Start again from FormLogic.");
+    assert_eq!(plugin.data("link.get", json!({})), json!({"linked": false}));
+    assert_eq!(plugin.data("status.get", json!({}))["detail"], "That didn't connect. Start again from FormLogic", "the plugin's page says so too");
+}
+
+#[test]
+fn an_answer_without_a_key_links_nothing() {
+    let mut plugin = Plugin::start();
+    let formlogic = fake_formlogic(&[("/api/oauth/backup-link", 200, json!({"api_key_id": "k1", "account_id": "u1"}))]);
+    plugin.answer(&["yes"]);
+    let job = plugin.job("link.accept", offer(&formlogic.base));
+    assert_eq!(job["message"], "FormLogic did not finish connecting. Try again.", "{job}");
+    assert_eq!(plugin.data("link.get", json!({})), json!({"linked": false}));
+}
+
+#[test]
+fn a_server_too_old_for_the_plugin_says_so_before_any_browser_opens() {
+    let mut plugin = Plugin::start();
+    let formlogic = fake_formlogic(&[("/api/oauth/authorize-info", 400, json!({"error": "invalid_client"}))]);
+    plugin.answer(&["yes"]);
+    let job = plugin.job("link.connect", json!({"server": formlogic.base}));
+    assert!(job["message"].as_str().unwrap().contains("needs updating"), "{job}");
+    assert!(!plugin.windows().join("opened.txt").exists());
+}
+
+#[test]
+fn a_server_that_is_not_formlogic_says_so_before_any_browser_opens() {
+    let mut plugin = Plugin::start();
+    let formlogic = fake_formlogic(&[]);
+    plugin.answer(&["yes"]);
+    let job = plugin.job("link.connect", json!({"server": formlogic.base}));
+    assert!(job["message"].as_str().unwrap().contains("Check the address"), "{job}");
+    assert!(!plugin.windows().join("opened.txt").exists());
 }
 
 #[test]

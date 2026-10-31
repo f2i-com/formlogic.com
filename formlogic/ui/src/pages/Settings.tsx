@@ -892,7 +892,13 @@ export function Settings() {
               )}
               {/* Encrypted data nodes (docs/FORMLOGIC_DATA_NODES.md §11): enrolment roster +
                   owner approval. Hides itself while the DATA_NODES flag is off. */}
-              <DataNodesPanel />
+              <DataNodesPanel
+                desktops={desktopConnections.map((conn) => ({
+                  id: conn.id,
+                  deviceName: conn.deviceName,
+                  online: conn.lastSeenAt !== null && now - parseServerDate(conn.lastSeenAt).getTime() < 90_000,
+                }))}
+              />
             </div>
           </CardContent>
         </Card>

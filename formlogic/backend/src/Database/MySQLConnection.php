@@ -1498,6 +1498,25 @@ class MySQLConnection
                 KEY idx_backup_client_owner (owner_user_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+
+        // One-time codes that set the plugin up through a computer's link (BackupLinkService).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS backup_link_codes (
+                id VARCHAR(36) PRIMARY KEY,
+                owner_user_id VARCHAR(36) NOT NULL,
+                code_hash CHAR(64) NOT NULL,
+                device_name VARCHAR(100) NULL,
+                command_id VARCHAR(36) NULL,
+                backup_client_id VARCHAR(36) NULL,
+                expires_at DATETIME NOT NULL,
+                used_at DATETIME NULL,
+                failure VARCHAR(300) NULL,
+                created_at DATETIME NULL,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE KEY uq_backup_link_code (code_hash),
+                KEY idx_backup_link_owner (owner_user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
         // Staged artifact ownership (review FL-002; mirrored in schema.sql +
         // database/migrate.php block 15): random IDs are not authorization —
         // every staged snapshot/account backup binds to its owner and node.

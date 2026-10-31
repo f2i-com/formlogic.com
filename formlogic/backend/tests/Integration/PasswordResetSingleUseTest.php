@@ -114,6 +114,7 @@ class PasswordResetSingleUseTest extends TestCase
             self::$pdo->prepare("INSERT INTO mcp_sessions (id, user_id, token_hash, expires_at) VALUES (UUID(), ?, ?, DATE_ADD(NOW(), INTERVAL 1 DAY))")->execute([$uid, hash('sha256', 'session' . $key)]);
             self::$pdo->prepare("INSERT INTO mcp_oauth_refresh_tokens (id, token_hash, family_id, client_id, user_id, scopes, expires_at) VALUES (UUID(), ?, UUID(), 'c', ?, '[]', DATE_ADD(NOW(), INTERVAL 1 DAY))")->execute([hash('sha256', 'refresh' . $key), $uid]);
             self::$pdo->prepare("INSERT INTO mcp_oauth_codes (id, code_hash, client_id, user_id, redirect_uri, scopes, code_challenge, expires_at) VALUES (UUID(), ?, 'c', ?, 'http://127.0.0.1/cb', '[]', 'x', DATE_ADD(NOW(), INTERVAL 1 MINUTE))")->execute([hash('sha256', 'code' . $key), $uid]);
+            self::$pdo->prepare("INSERT INTO backup_link_codes (id, owner_user_id, code_hash, expires_at) VALUES (UUID(), ?, ?, DATE_ADD(NOW(), INTERVAL 5 MINUTE))")->execute([$uid, hash('sha256', 'link' . $key)]);
         }
         try {
             self::$auth->resetPassword($this->token, 'FirstNewPass!42');
@@ -122,9 +123,10 @@ class PasswordResetSingleUseTest extends TestCase
                 (int) self::$pdo->query("SELECT COUNT(*) FROM mcp_sessions WHERE revoked_at IS NULL AND user_id = '$uid'")->fetchColumn(),
                 (int) self::$pdo->query("SELECT COUNT(*) FROM mcp_oauth_refresh_tokens WHERE revoked_at IS NULL AND user_id = '$uid'")->fetchColumn(),
                 (int) self::$pdo->query("SELECT COUNT(*) FROM mcp_oauth_codes WHERE used_at IS NULL AND user_id = '$uid'")->fetchColumn(),
+                (int) self::$pdo->query("SELECT COUNT(*) FROM backup_link_codes WHERE expires_at > NOW() AND owner_user_id = '$uid'")->fetchColumn(),
             ];
-            $this->assertSame([0, 0, 0, 0], $live($this->userId));
-            $this->assertSame([1, 1, 1, 1], $live($other), 'another account is untouched');
+            $this->assertSame([0, 0, 0, 0, 0], $live($this->userId));
+            $this->assertSame([1, 1, 1, 1, 1], $live($other), 'another account is untouched');
         } finally {
             self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$other]);
         }

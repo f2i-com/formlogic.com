@@ -24,6 +24,14 @@ export interface DataNodeWire {
   createdAt: string | null;
 }
 
+/** A one-time code on its way to a linked computer's backup plugin. */
+export interface BackupLinkStatus {
+  state: 'waiting' | 'linked' | 'failed' | 'expired';
+  message: string | null;
+  /** Once the plugin has told FormLogic who it is. */
+  nodeId: string | null;
+}
+
 export interface CloudSignerIdentity {
   publicKey: string;
   keyId: string;

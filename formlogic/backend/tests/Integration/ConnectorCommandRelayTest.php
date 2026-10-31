@@ -254,6 +254,17 @@ class ConnectorCommandRelayTest extends TestCase
         $this->assertSame(0, $this->commandCount());
     }
 
+    public function testNeitherAGrantNorOwningTheAppCanOfferABackupLink(): void
+    {
+        $offer = ['connectorId' => 'formlogic-backups', 'command' => 'link.accept', 'payload' => ['server' => 'https://elsewhere.example', 'code' => str_repeat('a', 64)]];
+        $this->grant('connector.formlogic-backups.*');
+
+        $this->assertSame(400, $this->enqueue($this->memberId, $offer)['status']);
+        $this->assertSame(400, $this->enqueue($this->ownerId, $offer)['status']);
+
+        $this->assertSame(0, $this->commandCount());
+    }
+
     public function testDesktopCommandServiceRejectsPrivateAokieCommandsBeforePersistence(): void
     {
         foreach (['remote.bootstrap', 'call.remoteStatus', 'call.assistance.respond', 'call.takeOver', 'call.resumeBot', 'call.endCaller', 'call.declineWaiting'] as $command) {

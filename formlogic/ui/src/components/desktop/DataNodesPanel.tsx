@@ -16,11 +16,22 @@ import { Button } from '../ui/Button';
 import type { DataNodeWire } from '../../types/dataPlacement';
 import { deferEffect } from '../../lib/deferredEffect';
 
+/** How often, and how many times, to look for the answer: two minutes. The code itself lasts longer. */
+const SETUP_LOOK_MS = 2_000;
+const SETUP_LOOKS = 60;
+
+/** A linked computer, as Settings knows it. */
+export interface LinkedComputer {
+  id: string;
+  deviceName: string;
+  online: boolean;
+}
+
 function displayFingerprint(fp: string): string {
   return (fp.slice(0, 24).match(/.{1,4}/g) ?? []).join(' ');
 }
 
-export function DataNodesPanel() {
+export function DataNodesPanel({ desktops = [] }: { desktops?: LinkedComputer[] }) {
   const user = useAuthStore((s) => s.user);
   const [nodes, setNodes] = useState<DataNodeWire[] | null>(null);
   const [enabled, setEnabled] = useState(true);
@@ -31,6 +42,8 @@ export function DataNodesPanel() {
   const [showUnlock, setShowUnlock] = useState(false);
   // The dialog's onClose runs on every way out, so it can't tell a cancel from an unlock.
   const unlockingFor = useRef<DataNodeWire | null>(null);
+  const [setup, setSetup] = useState<{ id: string; text: string; ended: boolean } | null>(null);
+  const showing = useRef(true);
 
   const load = useCallback(async (isCurrent: () => boolean = () => true) => {
     const res = await api.getDataNodes();
@@ -77,6 +90,10 @@ export function DataNodesPanel() {
 
   const startApprove = (node: DataNodeWire) => {
     const status = useVaultStore.getState().status;
+    if (status === 'none') {
+      toast.warning('Vault required', 'Set up your encryption vault under Settings, Security, then approve this computer.');
+      return;
+    }
     setApproveTarget(node);
     if (status !== 'unlocked') {
       unlockingFor.current = node;
@@ -84,7 +101,51 @@ export function DataNodesPanel() {
     }
   };
 
-  if (!enabled || nodes === null || nodes.length === 0) return null;
+  useEffect(() => {
+    showing.current = true;
+    return () => { showing.current = false; };
+  }, []);
+
+  /**
+   * Sends the plugin on that computer a one-time code through its link, then waits while the person
+   * answers the plugin's window there, and goes straight on to approving the node it registers.
+   */
+  const setUpBackups = async (desktop: LinkedComputer) => {
+    const ended = (text: string) => setSetup({ id: desktop.id, text, ended: true });
+    setSetup({ id: desktop.id, text: `Answer the window on ${desktop.deviceName}.`, ended: false });
+    const started = await api.startBackupLink(desktop.id);
+    if (!started.ok) {
+      ended((started.body as { message?: string } | null)?.message ?? 'That could not be started.');
+      return;
+    }
+    const linkId = (started.body?.data as { id: string }).id;
+    let connected = false;
+    for (let look = 0; look < SETUP_LOOKS && showing.current; look += 1) {
+      await new Promise((done) => setTimeout(done, SETUP_LOOK_MS));
+      const { data: link } = await api.getBackupLink(linkId);
+      if (link?.state === 'failed' || link?.state === 'expired') {
+        ended(link.message ?? 'That did not work.');
+        return;
+      }
+      if (link?.state === 'linked' && link.nodeId) {
+        const listed = await api.getDataNodes();
+        const node = listed.data?.nodes.find((candidate) => candidate.id === link.nodeId);
+        if (listed.data) setNodes(listed.data.nodes);
+        setSetup(null);
+        if (node) startApprove(node);
+        return;
+      }
+      connected = link?.state === 'linked';
+    }
+    if (showing.current) {
+      ended(connected
+        ? 'That computer is connected, but hasn\'t told FormLogic who it is yet. Reload this page in a moment to approve it.'
+        : 'Nothing has come back from that computer yet. If you answer its window, reload this page to approve it.');
+    }
+  };
+
+  const online = desktops.filter((desktop) => desktop.online);
+  if (!enabled || nodes === null || (nodes.length === 0 && online.length === 0)) return null;
 
   return (
     <div className="mt-4 border-t border-gray-200 dark:border-slate-800 pt-4">
@@ -97,6 +158,22 @@ export function DataNodesPanel() {
         Approving signs a certificate with your vault key binding this exact device key — a storage
         node never receives decryption keys.
       </p>
+      {online.length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs text-gray-500 dark:text-slate-400">
+            Keep sealed backups of your apps and forms on a linked computer. Install the FormLogic Backups
+            plugin in OAIY there and start it, then:
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {online.map((desktop) => (
+              <Button key={desktop.id} size="sm" variant="secondary" disabled={setup !== null && !setup.ended} onClick={() => void setUpBackups(desktop)}>
+                Set up backups on {desktop.deviceName}
+              </Button>
+            ))}
+          </div>
+          {setup && <p className="mt-2 text-xs text-gray-600 dark:text-slate-300" role="status">{setup.text}</p>}
+        </div>
+      )}
       <ul className="mt-3 space-y-2">
         {nodes.map((node) => (
           <li

@@ -287,6 +287,21 @@ Unlike `.flaccount`, `recipientPk` is a long-term key, because a backup kept for
   `data:snapshot` and has neither row can't register. Revoking or forgetting a backup node
   also ends its key, because the key does nothing else; `DELETE /api/v1/data-node/self` is
   the plugin doing that from its end, and a desktop key can't use it.
+- **Setting a backup client up through a link.** `POST /api/data-nodes/backup-link`
+  {connectionId} (session, online computer of the owner's) queues `link.accept` for the
+  `formlogic-backups` connector, with the API's address, the account's email and a one-time code.
+  The code lives ten minutes and works once, and its hash is what `backup_link_codes` keeps. A new
+  one leaves earlier ones alone, because a window may still hold one, and a password reset ends
+  them all. The plugin asks the person, then swaps the code at `POST /api/oauth/backup-link`
+  (public, rate limited) for the same key the OAuth client gets. `GET
+  /api/data-nodes/backup-link/{id}` says `waiting`, `linked` (with the node once it has
+  registered), `failed` or `expired`. OAIY doesn't report which plugins it runs, so a computer
+  without this one is found out by the relay refusing.
+  `link.accept` is private to this route: `DesktopCommandService::assertPublicRelayCommand` keeps
+  it out of the app relay, MCP and cloud flows, grants or not. A flow or binding that runs on the
+  desktop reaches the plugin without passing there, and so does anything else that can call OAIY's
+  own commands. So the plugin's window names the account and the server, and the plugin refuses a
+  code whose account isn't the one the window named, ending the key it was given.
 - **Approval** (`POST /api/data-nodes/{id}/approve`, session): the browser vault worker
   signs an **flnodecert:1** node-authority certificate (op `signDataStructure`, domain
   ALLOWLISTED to flnodecert:1/flplacement:1 so the vault can never mint an

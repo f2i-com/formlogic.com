@@ -902,6 +902,7 @@ class AuthService
                 "UPDATE mcp_sessions SET revoked_at = NOW() WHERE user_id = :uid AND revoked_at IS NULL",
                 "UPDATE mcp_oauth_refresh_tokens SET revoked_at = NOW() WHERE user_id = :uid AND revoked_at IS NULL",
                 "UPDATE mcp_oauth_codes SET used_at = NOW() WHERE user_id = :uid AND used_at IS NULL",
+                "UPDATE backup_link_codes SET expires_at = NOW() WHERE owner_user_id = :uid AND expires_at > NOW()",
             ] as $revoke) {
                 $this->mysql->prepare($revoke)->execute(['uid' => $userId]);
             }

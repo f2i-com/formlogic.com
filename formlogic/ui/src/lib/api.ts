@@ -1671,6 +1671,20 @@ class ApiClient {
     return this.requestWithMeta(`/data-nodes/${seg(nodeId)}`, { method: 'DELETE' });
   }
 
+  /** POST /api/data-nodes/backup-link — send a linked computer's backup plugin a one-time code. */
+  async startBackupLink(connectionId: string): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
+    return this.requestWithMeta('/data-nodes/backup-link', { method: 'POST', body: JSON.stringify({ connectionId }) });
+  }
+
+  /** GET /api/data-nodes/backup-link/{id} — how that code is getting on. */
+  async getBackupLink(id: string): Promise<ApiResponse<import('../types/dataPlacement').BackupLinkStatus>> {
+    const res = await this.requestWithMeta(`/data-nodes/backup-link/${seg(id)}`);
+    if (!res.ok) {
+      return { error: (res.body?.message as string) ?? `Server error (${res.status})`, status: res.status };
+    }
+    return { data: res.body?.data as import('../types/dataPlacement').BackupLinkStatus };
+  }
+
   /** DELETE /api/data-nodes/{id}/record — remove a REVOKED node's record.
    *  Separate from revoking: the server refuses a node that still holds
    *  authority, so this can only ever tidy up one that is already dead. */

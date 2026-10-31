@@ -51,6 +51,10 @@ class DesktopCommandService
     public const PRIVATE_AOKIE_RELAY_MESSAGE =
         'This Aokie command is private to the authenticated realtime/bootstrap channel and cannot use the public connector relay';
 
+    public const BACKUP_LINK_CONNECTOR = 'formlogic-backups';
+    public const BACKUP_LINK_COMMAND = 'link.accept';
+    public const PRIVATE_BACKUP_LINK_MESSAGE = 'Backups are set up from your own Settings page, and cannot be asked for through the connector relay';
+
     /** Terminal statuses a desktop may complete a claimed command with. */
     public const COMPLETE_STATUSES = ['done', 'failed'];
 
@@ -91,11 +95,26 @@ class DesktopCommandService
             || in_array($command, self::PRIVATE_AOKIE_RELAY_COMMANDS, true);
     }
 
-    /** @throws \InvalidArgumentException when a private Aokie command reaches a public relay surface. */
+    /**
+     * The offer of a backup link opens a window on the owner's computer, so FormLogic sends one
+     * only from the owner's own Settings page (enqueueBackupLink): hosted apps, AI clients and cloud
+     * flows are refused, whatever they have been granted. A flow or binding that runs on the
+     * computer reaches the plugin without passing here, so this is not what keeps the plugin safe.
+     * Its window is, and its check that a code is for the account the window named.
+     */
+    public static function isBackupLinkCommand(string $connectorId, string $command): bool
+    {
+        return strtolower(trim($connectorId)) === self::BACKUP_LINK_CONNECTOR && strtolower(trim($command)) === self::BACKUP_LINK_COMMAND;
+    }
+
+    /** @throws \InvalidArgumentException when a private command reaches a public relay surface. */
     public static function assertPublicRelayCommand(string $connectorId, string $command): void
     {
         if (self::isPrivateAokieRelayCommand($connectorId, $command)) {
             throw new \InvalidArgumentException(self::PRIVATE_AOKIE_RELAY_MESSAGE);
+        }
+        if (self::isBackupLinkCommand($connectorId, $command)) {
+            throw new \InvalidArgumentException(self::PRIVATE_BACKUP_LINK_MESSAGE);
         }
     }
 
@@ -108,6 +127,27 @@ class DesktopCommandService
      */
     public function enqueue(string $ownerUserId, string $requestedByUserId, ?string $appId, array $data): array
     {
+        return $this->queue($ownerUserId, $requestedByUserId, $appId, $data, true);
+    }
+
+    /**
+     * Offers a computer's backup plugin a one-time code. For BackupLinkService alone.
+     *
+     * @param array{server: string, code: string} $payload
+     * @return array{command: array, created: bool}
+     */
+    public function enqueueBackupLink(string $ownerUserId, string $targetInstanceId, array $payload): array
+    {
+        return $this->queue($ownerUserId, $ownerUserId, null, [
+            'connectorId' => self::BACKUP_LINK_CONNECTOR,
+            'command' => self::BACKUP_LINK_COMMAND,
+            'payload' => $payload,
+            'targetInstanceId' => $targetInstanceId,
+        ], false);
+    }
+
+    private function queue(string $ownerUserId, string $requestedByUserId, ?string $appId, array $data, bool $public): array
+    {
         $connectorId = $data['connectorId'] ?? null;
         if (!is_string($connectorId) || $connectorId === '' || strlen($connectorId) > self::MAX_CONNECTOR_ID) {
             throw new \InvalidArgumentException('connectorId is required (max ' . self::MAX_CONNECTOR_ID . ' chars)');
@@ -118,7 +158,9 @@ class DesktopCommandService
         }
         // Defense in depth for direct callers such as MCP: reject before payload
         // processing, idempotency reservation, targeting, or persistence.
-        self::assertPublicRelayCommand($connectorId, $command);
+        if ($public) {
+            self::assertPublicRelayCommand($connectorId, $command);
+        }
 
         $payloadJson = null;
         if (isset($data['payload']) && $data['payload'] !== null) {

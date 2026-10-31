@@ -132,6 +132,21 @@ async function setUpVault(page: Page) {
   await expect(page.getByText('Unlocked', { exact: true })).toBeVisible({ timeout: 30_000 });
 }
 
+test('the routes that set a computer up keep to who they are for', async ({ playwright, baseURL }) => {
+  const stranger = await playwright.request.newContext({ baseURL });
+  try {
+    expect((await stranger.post('/api/data-nodes/backup-link', { headers: sessionHeaders(), data: { connectionId: 'any' } })).status()).toBe(401);
+    expect((await stranger.get('/api/data-nodes/backup-link/any')).status()).toBe(401);
+    // A code is the plugin's only credential, so this one is open, and a wrong code gets nothing.
+    // Where data nodes are off it is refused for that reason instead.
+    const guess = await stranger.post('/api/oauth/backup-link', { form: { code: 'not-a-code' } });
+    expect([400, 403]).toContain(guess.status());
+    expect(await guess.text()).not.toContain('flk_');
+  } finally {
+    await stranger.dispose();
+  }
+});
+
 test('the plugin links, is approved, backs up, restores and lets go', async ({ page, context, baseURL }) => {
   test.skip(!PROGRAM, 'FORMLOGIC_BACKUPS_BIN names no program');
   test.setTimeout(300_000);

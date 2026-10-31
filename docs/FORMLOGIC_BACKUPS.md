@@ -17,11 +17,17 @@ You need OAIY on Windows or macOS, and a FormLogic whose operator has turned on 
 3. Choose **Trust this plugin**, then **Start**. The plugin isn't signed, so OAIY asks you to trust each new version.
 4. Open **FormLogic Backups** in OAIY's sidebar.
 
-Then, on that page:
+Then connect it. If OAIY on that computer is already linked to your FormLogic, do this in FormLogic:
 
-1. Enter your FormLogic's address and choose **Connect**. A window names the server and asks you to confirm, and your browser opens so you can sign in. This sign-in is the plugin's own. It doesn't use or change OAIY's link to FormLogic, and it can do nothing but backups.
-2. In FormLogic, under **Settings, Linked Desktops, Data nodes**, approve the computer marked **Backups only**. Check that the fingerprint is the one the plugin shows. Approving uses your encryption vault, which you can set up under **Settings, Security**.
-3. Choose **Make my words** and write them down.
+1. Under **Settings, AI & devices, Linked desktops**, choose **Set up backups** for that computer.
+2. On that computer, a window names your account and the server, and asks you to confirm.
+3. Back in FormLogic, approve the computer. Check that the fingerprint is the one the plugin shows. Approving uses your encryption vault, which you can set up under **Settings, Security**.
+
+If it isn't linked, do it from the plugin's page instead: enter your FormLogic's address and choose **Connect**. A window names the server, your browser opens so you can sign in, and then you approve the computer marked **Backups only** under **Settings, AI & devices, Linked desktops, Data nodes**. Check that the fingerprint is the one the plugin shows.
+
+Either way the plugin ends up with a key of its own that can do nothing but backups. OAIY's link and its key aren't changed or shared.
+
+Then choose **Make my words** on the plugin's page and write them down.
 
 ## What it does
 
@@ -39,7 +45,7 @@ From the list you can:
 
 OAIY's commands can come from more than the plugin's page: the agent, and flows and app scripts run on this computer, including ones that come from a linked FormLogic. The relay can also send anything not marked as journalled. So:
 
-- Only `status.get` and `settings.get` are left unjournalled. They say how things stand, and name no app, file or person. The relay refuses everything else.
+- Only `status.get`, `settings.get` and `link.accept` are left unjournalled. The first two say how things stand, and name no app, file or person. `link.accept` is how FormLogic offers a link, so it has to get through. It does nothing until you answer its window, says only that a job started, and opens at most one window every 15 seconds. FormLogic sends it only from your own Settings page: hosted apps, AI clients and cloud flows are refused whatever they have been granted. A flow or binding that runs on the computer can still ask, so what keeps it safe is the window, which names the account and the server, and a check after you say yes that the code really is for that account. If it isn't, the plugin gives the key back and links nothing. The relay refuses everything else.
 - What could do harm in the wrong hands waits for the person in a window of the plugin's own, which no command can answer: connecting to a server, forgetting the link, making or entering the words, saving a plain copy, restoring, deleting, choosing where backups are kept, and any change to the schedule. Each says what it will do, and to cancel it if you didn't ask. Listing and backing up don't ask.
 - The twelve words are never in a command's answer. Words you type to recover a key do pass through a command. If you give them to OAIY's agent rather than typing them on the page, they end up in the agent's log and in what it sends its model, so don't.
 
@@ -69,7 +75,7 @@ A backup sealed to other words is kept, marked as needing them, and is never pru
 
 ## How it is built
 
-The plugin is one Rust program that OAIY starts and speaks to over stdin and stdout (`src/protocol.rs`). It has no share of OAIY's own link, so it links itself: a sign-in in the browser with a one-time code, as the public OAuth client `formlogic-backups-plugin`. On the server that client gets a row in `backup_clients`, not in `desktop_connections`, because the relay, the connector lists and the desktop picker all read that table. See `docs/FORMLOGIC_DATA_NODES.md`, section 11.
+The plugin is one Rust program that OAIY starts and speaks to over stdin and stdout (`src/protocol.rs`). OAIY shares no part of its link with a plugin, and FormLogic's commands can only travel one way along it, so the plugin holds a key of its own. It gets one of two ways. With **Set up backups**, FormLogic sends a one-time code through the link (`link.accept`), and the plugin swaps it at `POST /api/oauth/backup-link`. With **Connect**, it signs in through the browser as the public OAuth client `formlogic-backups-plugin`. On the server that client gets a row in `backup_clients`, not in `desktop_connections`, because the relay, the connector lists and the desktop picker all read that table. See `docs/FORMLOGIC_DATA_NODES.md`, section 11.
 
 The key is derived from the 16 random bytes the words spell: Argon2id13 (3 passes, 64 MiB), then HKDF-SHA256 (`src/keys.rs`). The primitives are OAIY's `oaiy-crypto`, pinned to a commit, because a key must come out the same for as long as there are backups sealed to it. A known answer in the tests guards that. The file format is in `docs/DATA_ENCRYPTION.md`: `src/envelope.rs` opens it, and a fixture made by FormLogic's PHP is in its tests.
 
