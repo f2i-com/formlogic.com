@@ -870,6 +870,29 @@ class AccountBackupTest extends TestCase
         }
     }
 
+    public function testABackupOfOneAppCarriesNoHostKeys(): void
+    {
+        $native = $this->makeNativeService();
+        if ($native === null) {
+            $this->markTestSkipped('Prepare the native runtime and set FORMLOGIC_NODE_BIN.');
+        }
+        $backup = self::makeService([], $native);
+        $native->install($this->app1, self::nativeProject(), 0);
+
+        $zipPath = $backup->exportSource($this->userId, 'app', $this->app1);
+        try {
+            $zip = new \ZipArchive();
+            $this->assertTrue($zip->open($zipPath) === true);
+            $manifest = json_decode((string) $zip->getFromName('manifest.json'), true);
+            $zip->close();
+            $this->assertFalse($manifest['includesHostSecrets']);
+            $this->assertArrayHasKey("native/{$this->app1}/project.json", $manifest['entries']);
+            $this->assertArrayNotHasKey("native/{$this->app1}/host-config.json", $manifest['entries']);
+        } finally {
+            @unlink($zipPath);
+        }
+    }
+
     public function testNativeKeysUnderAnotherMasterKeyAreRefusedHereAndReissuedElsewhere(): void
     {
         $native = $this->makeNativeService();

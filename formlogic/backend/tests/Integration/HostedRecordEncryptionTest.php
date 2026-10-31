@@ -203,12 +203,18 @@ final class HostedRecordEncryptionTest extends TestCase
         $this->host->run('app-a', 'load', ['id' => 'one'], 'member', false);
     }
 
+    /** Someone who can write the file swaps in a key they know, and a record made with it. */
     public function testAKeyStoredInThePlainIsNotBelieved(): void
     {
         $this->publish();
         $this->save();
+        $known = str_repeat('k', 32);
+        $nonce = random_bytes(SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_NPUBBYTES);
+        $context = implode("\0", ['hosted-record', hash('sha256', 'app-a'), 'notes', 'one']);
+        $forged = sodium_crypto_aead_xchacha20poly1305_ietf_encrypt('{"text":"forged"}', $context, $nonce, $known);
         $db = $this->database();
-        $db->prepare('UPDATE app_key SET wrapped = ?')->execute([random_bytes(32)]);
+        $db->prepare('UPDATE app_key SET wrapped = ?')->execute([$known]);
+        $db->prepare("UPDATE records SET data = ? WHERE id = 'one'")->execute([HostedRecordCipher::PREFIX . DataEncryption::encode($nonce . $forged)]);
         $db = null;
 
         $this->expectExceptionMessage('Stored data cannot be read');
