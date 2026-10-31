@@ -338,11 +338,11 @@ class McpController
                     }
                     // The web enqueue path (POST /api/app/{slug}/connector-commands) is gated by a
                     // 30-per-60s-per-user RateLimitMiddleware; this MCP tool calls DesktopCommandService
-                    // directly and would otherwise bypass it entirely. Apply the SAME budget here, keyed
-                    // the same way (keyPrefix 'connector_relay', per-user) so an MCP client can't issue
-                    // connector commands any faster than a web client could.
+                    // directly and would otherwise bypass it entirely. The SAME budget, per person, so an
+                    // MCP client can't issue connector commands any faster than a web client could. Its
+                    // own key: the web's is per app, and one hostile app must not spend this one.
                     if ($this->rateLimiter !== null) {
-                        $hits = $this->rateLimiter->hit('connector_relay:u:' . hash('sha256', $userId), 60);
+                        $hits = $this->rateLimiter->hit('connector_relay_mcp:u:' . hash('sha256', $userId), 60);
                         if ($hits > 30) {
                             throw new \Exception('Too many connector commands — please slow down (max 30 per minute).');
                         }

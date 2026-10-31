@@ -102,12 +102,12 @@ Options -Indexes
   # Only use the bundled API rewrite when its front controller exists. This
   # prevents a split-domain deployment from looping on a missing ./api path.
   RewriteCond %{DOCUMENT_ROOT}/api/public/index.php -f
-  RewriteRule ^api/ api/public/index.php [QSA,L]
+  RewriteRule ^api/ api/public/index.php [NC,QSA,L]
 
   # Never hand a missing same-origin API to the SPA fallback: callers need a
   # real HTTP failure, not index.html (and certainly not recursive rewrites).
   RewriteCond %{DOCUMENT_ROOT}/api/public/index.php !-f
-  RewriteRule ^api/ - [R=404,L]
+  RewriteRule ^api/ - [NC,R=404,L]
 
   # Custom-domain launch endpoints served by the backend at the domain ROOT. Map three top-level
   # paths to the API front controller so the backend can answer them per-Host (signed client

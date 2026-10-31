@@ -111,12 +111,26 @@ class IdentityFormatTest extends TestCase
 
     public function testAFormIdIsOneSegment(): void
     {
-        foreach (['../../forms/x', 'a/b', 'a\\b', "a\tb", 'a?b', 'a#b', 'a b', '.', '..', '', str_repeat('a', 65)] as $id) {
+        foreach (['../../forms/x', 'a/b', 'a\\b', "a\tb", 'a?b', 'a#b', 'a b', '.', '..', '', str_repeat('a', 37)] as $id) {
             try {
                 self::$forms->createForm(['id' => $id, 'title' => 'Refused', 'userId' => $this->userId]);
                 self::fail('Accepted ' . json_encode($id));
             } catch (\InvalidArgumentException $refused) {
                 self::assertSame('Invalid form id', $refused->getMessage());
+            }
+        }
+    }
+
+    public function testTwoFormsNeverShareAnUploadFolder(): void
+    {
+        $base = 'team' . bin2hex(random_bytes(4));
+        self::$forms->createForm(['id' => $base . '_intake', 'title' => 'Theirs', 'userId' => $this->userId]);
+        foreach ([$base . 'intake', $base . 'in_take', '_' . $base . 'intake'] as $id) {
+            try {
+                self::$forms->createForm(['id' => $id, 'title' => 'Mine', 'userId' => 'someone-else']);
+                self::fail('Shares a folder: ' . $id);
+            } catch (\RuntimeException $refused) {
+                self::assertSame('A form with this ID already exists', $refused->getMessage());
             }
         }
     }

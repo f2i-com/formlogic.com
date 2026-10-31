@@ -1,6 +1,13 @@
 <?php
 declare(strict_types=1);
 
+// A web request never runs this. The folder can be reachable on a server without the bundle's
+// rewrites, and a visit would run it with the site's credentials.
+if (isset($_SERVER['REQUEST_METHOD'])) {
+    http_response_code(404);
+    exit;
+}
+
 // Recovery for committed native records whose inline queue delivery was interrupted.
 // Run every minute, or use --watch under a process supervisor. This queues flows;
 // a connected OAIY executor or authenticated app runtime executes them.

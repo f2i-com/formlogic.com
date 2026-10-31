@@ -27,18 +27,26 @@ final class AppDomainSession
     /** Set by AuthMiddleware on a request it admitted with such a session: {user, appId, host, signInId}. */
     public const ATTRIBUTE = 'appDomainSession';
 
+    /**
+     * What drives the app owner's own computer. On the owner's own session these stay shut, as
+     * queued runs do (FlowController): a name can expire or be taken, and whoever holds it then
+     * collects the session of the owner's next visit. A member's grants reach no more than the
+     * app's own connectors, so a member keeps them.
+     */
+    private const OWNER_DESKTOP = '~^/api/app/[^/]+/(connector-commands|connector-capability|service-capability|service-invoke/desktop\.)~';
+
     /** The code on a refusal. A 403, because a 401 would sign the visitor out of the app. */
     public const OUT_OF_SCOPE = 'app_domain_session_scope';
 
     /**
-     * @param \Closure(string): ?array{id: string, slug: string} $connectedApp the live app of a host
+     * @param \Closure(string): ?array{id: string, ownerId?: string, slug: string} $connectedApp the live app of a host
      * @param \Closure(string): bool $openSignIn whether the member is still signed in
      */
     public function __construct(private \Closure $connectedApp, private \Closure $openSignIn)
     {
     }
 
-    /** @param array{appId: string, host: string, signInId: string} $session */
+    /** @param array{user: \FormLogic\Models\User, appId: string, host: string, signInId: string} $session */
     public function admits(Request $request, array $session): bool
     {
         if (self::hostOf($request) !== $session['host']) {
@@ -58,6 +66,9 @@ final class AppDomainSession
         }
         if ($path === '/api/auth/logout') {
             return $request->getMethod() === 'POST';
+        }
+        if (($app['ownerId'] ?? null) === $session['user']->id && preg_match(self::OWNER_DESKTOP, $path) === 1) {
+            return false;
         }
         return preg_match('~^/api/app/([^/]+)(?:/|$)~D', $path, $match) === 1
             && strcasecmp($match[1], $app['slug']) === 0;

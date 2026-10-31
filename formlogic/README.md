@@ -203,9 +203,10 @@ npm run build     # output: ui/dist/
     SSLCertificateFile      /etc/letsencrypt/live/formlogic.example.com/fullchain.pem
     SSLCertificateKeyFile   /etc/letsencrypt/live/formlogic.example.com/privkey.pem
 
-    # Frontend (SPA fallback) — document root is ui/dist ONLY.
+    # Frontend (SPA fallback) — document root is ui/dist ONLY. The bundled .htaccess holds the
+    # framing rules (the shell, /screen-host.html and /app-editors), so it has to apply here.
     <Directory /var/www/formlogic/ui/dist>
-        AllowOverride None
+        AllowOverride All
         FallbackResource /index.html
     </Directory>
 
@@ -257,9 +258,30 @@ server {
     root /var/www/formlogic/ui/dist;
     index index.html;
 
-    # Frontend (SPA fallback)
+    # Frontend (SPA fallback). Nothing else may frame the shell, as in the bundled .htaccess.
     location / {
         try_files $uri $uri/ /index.html;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
+    }
+
+    # The public form runtime is meant to be embedded.
+    location /form/ {
+        try_files $uri /index.html;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Content-Security-Policy "frame-ancestors *; base-uri 'self'; object-src 'none'" always;
+    }
+
+    # The custom-screen host and the app editors are framed by the shell, and by nothing else.
+    location = /screen-host.html {
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" always;
+    }
+    location ^~ /app-editors/ {
+        try_files $uri $uri/ =404;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" always;
     }
 
     # Static hosted runtime only; do not apply permissive CORS to /api.

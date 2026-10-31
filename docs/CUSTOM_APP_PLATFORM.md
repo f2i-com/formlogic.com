@@ -948,7 +948,10 @@ and gets back a one-time code for a session limited to its app. `Support/AppDoma
   route, refuses it. `AuthMiddleware` accepts it only on that host, for `/api/app/<that app>/…`,
   `GET /api/auth/me` and `POST /api/auth/logout`, while the domain stays connected. By method:
   `PUT` and `DELETE` on `/api/auth/me` change and erase the account. A refusal is a 403 with the
-  code `app_domain_session_scope`, because a 401 would sign the visitor out of the app.
+  code `app_domain_session_scope`, because a 401 would sign the visitor out of the app. On the app
+  owner's own session the routes that drive their computer stay shut too (connector commands and
+  capabilities, service capabilities, queued runs): a name can expire or be taken, and its next
+  holder collects the session of the owner's next visit.
 - **What it never carries.** The domain hears the member's id, name and email and nothing else of the
   account, whether they are an administrator or have two-factor on included. The cookies are host-only, ignoring `COOKIE_DOMAIN`. Leaving a domain
   ends that session, on the server too (each sign-in is a row), and that session alone: it is the

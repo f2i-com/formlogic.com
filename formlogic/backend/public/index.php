@@ -2131,7 +2131,7 @@ $app->get('/api/public/forms/{id}/screen-records', function ($request, $response
         'is_string'
     ));
     $limit = max(1, min((int) ($request->getQueryParams()['limit'] ?? 100), 200));
-    $rows = $container->get(\FormLogic\Services\ResponseService::class)->getFormResponses($args['id'], ['limit' => $limit]);
+    $rows = $container->get(\FormLogic\Services\ResponseService::class)->publicRows($args['id'], $limit);
     $records = array_map(static function ($r) use ($allowed) {
         $answers = is_array($r['answers'] ?? null) ? $r['answers'] : [];
         $safe = [];
@@ -3343,10 +3343,10 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
 $appSubmissionRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'app_submission');
 
 // Rate limiter for flow-run reserve/complete (60 per minute; keyed by user so IP rotation can't bypass it)
-$flowRunRateLimiter = new RateLimitMiddleware($rateLimiter, 60, 60, 'flow_run', true);
+$flowRunRateLimiter = new RateLimitMiddleware($rateLimiter, 60, 60, 'flow_run', true, perApp: true);
 
 // Rate limiter for connector-command enqueue (30 per minute; keyed by user).
-$connectorRelayRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'connector_relay', true);
+$connectorRelayRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'connector_relay', true, perApp: true);
 
 // Owner service-capability issuance is credential minting: keep a tighter
 // per-user budget and fail closed if the persistent limiter store is down.

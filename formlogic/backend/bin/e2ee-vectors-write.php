@@ -2,6 +2,13 @@
 
 declare(strict_types=1);
 
+// A web request never runs this. The folder can be reachable on a server without the bundle's
+// rewrites, and a visit would run it with the site's credentials.
+if (isset($_SERVER['REQUEST_METHOD'])) {
+    http_response_code(404);
+    exit;
+}
+
 /**
  * Writes docs/contracts/e2ee-sealed-php.json — sealed-box fixtures sealed BY PHP,
  * opened by vitest (PHP-seal -> JS-open interop; docs/E2EE_PRIVATE_FORMS_PLAN.md §16-P1).

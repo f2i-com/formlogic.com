@@ -2,6 +2,13 @@
 
 declare(strict_types=1);
 
+// A web request never runs this. The folder can be reachable on a server without the bundle's
+// rewrites, and a visit would run it with the site's credentials.
+if (isset($_SERVER['REQUEST_METHOD'])) {
+    http_response_code(404);
+    exit;
+}
+
 /**
  * Whole-site recovery: puts native and hosted apps back on disk from a scheduled backup, under
  * their original ids (RESTORE.txt in the backup, step 2c). Run it after database.sql.gz is back.

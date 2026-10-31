@@ -219,6 +219,16 @@ class FlowRuntimeAuthorizationTest extends TestCase
         [$owner, $ownerBody] = $reserve($this->ownerId, ['queued' => true]);
         $this->assertSame(201, $owner);
         $this->assertSame('queued', $ownerBody['run']['status']);
+
+        // Not from a session a domain's next holder could have collected, the owner's included.
+        [$onADomain] = $this->call('POST', $this->ownerId, fn ($rq, $rs) => self::$ctrl->reserveRun($rq->withAttribute(\FormLogic\Support\AppDomainSession::ATTRIBUTE, ['appId' => $this->appId]), $rs, ['slug' => $this->slug]), [
+            'flowSlug' => 'triage',
+            'triggerEvent' => 'manual',
+            'correlationId' => 'c-' . bin2hex(random_bytes(6)),
+            'idempotencyKey' => 'k-' . bin2hex(random_bytes(10)),
+            'queued' => true,
+        ]);
+        $this->assertSame(403, $onADomain);
     }
 
     // ── A native app's records are not any member's to read ─────────────────────────────────

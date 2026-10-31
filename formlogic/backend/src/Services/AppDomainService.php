@@ -405,7 +405,7 @@ class AppDomainService
      * packageName + fingerprints). Public-safe — never form schemas, fields, reports, or scripts.
      * Returns null when the host isn't a connected+active domain of a published app.
      *
-     * @return array{id:string, slug:string, name:string, status:string, nativeConfig:array<string,mixed>}|null
+     * @return array{id:string, ownerId:string, slug:string, name:string, status:string, nativeConfig:array<string,mixed>}|null
      */
     public function resolveAppSlugByHost(string $host): ?array
     {
@@ -415,7 +415,7 @@ class AppDomainService
         }
         $stmt = $this->mysql->prepare(
             "SELECT a.id AS app_id, a.slug AS app_slug, a.name AS app_name, a.status AS app_status,
-                    d.native_config AS native_config
+                    a.owner_id AS owner_id, d.native_config AS native_config
              FROM app_domains d JOIN apps a ON a.id = d.app_id
              WHERE d.normalized_domain = :d AND d.status = 'active' LIMIT 1"
         );
@@ -426,6 +426,7 @@ class AppDomainService
         }
         return [
             'id' => (string) $row['app_id'],
+            'ownerId' => (string) $row['owner_id'],
             'slug' => (string) $row['app_slug'],
             'name' => (string) $row['app_name'],
             'status' => (string) $row['app_status'],

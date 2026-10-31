@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Middleware;
 
+use FormLogic\Support\Environment;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Http\Server\MiddlewareInterface;
@@ -52,9 +53,13 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
 
         // HSTS - only in production and over HTTPS
         if ($this->isProduction) {
+            // The subdomains of a customer's domain are the customer's to decide about, and one
+            // API call there would hold them to HTTPS for a year in that browser.
+            $site = parse_url((string) Environment::nonEmpty('APP_URL', ''), PHP_URL_HOST);
+            $ownName = is_string($site) && strcasecmp($site, $request->getUri()->getHost()) === 0;
             $response = $response->withHeader(
                 'Strict-Transport-Security',
-                'max-age=31536000; includeSubDomains'
+                'max-age=31536000' . ($ownName ? '; includeSubDomains' : '')
             );
         }
 

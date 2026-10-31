@@ -444,7 +444,7 @@ class FileController
                 'is_string'
             ));
             if ($publicFields !== [] && $this->responseService !== null
-                && array_intersect($publicFields, $this->responseService->fileAttachedFieldIds($formId, $fileId, $form['fields'] ?? [])) !== []) {
+                && array_intersect($publicFields, $this->responseService->fileAttachedFieldIds($formId, $fileId, $form['fields'] ?? [], true)) !== []) {
                 return 'public';
             }
         }

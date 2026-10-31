@@ -15,6 +15,7 @@ use FormLogic\Services\Flows\FlowLogicLanguages;
 use FormLogic\Services\Flows\LogicLanguageUnsupportedException;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
+use FormLogic\Support\AppDomainSession;
 
 /**
  * FormLogic Flows (docs/FORMLOGIC_FLOWS.md):
@@ -978,7 +979,8 @@ class FlowController
         // Whichever runtime claims a queued run runs it, the owner's included, on input the
         // reserver wrote. The queue is the server's and the owner's: a member runs what they
         // reserve themselves, in their own session.
-        if (($body['queued'] ?? false) === true && $app['ownerId'] !== $userId) {
+        // Nor on a custom domain, whose session a domain's next holder can collect (AppDomainSession).
+        if (($body['queued'] ?? false) === true && ($app['ownerId'] !== $userId || $request->getAttribute(AppDomainSession::ATTRIBUTE) !== null)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Only the app owner can queue a run'], 403);
         }
         try {

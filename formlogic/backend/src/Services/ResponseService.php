@@ -12,6 +12,9 @@ use PDO;
 
 class ResponseService
 {
+    /** Statuses that keep a record out of anything the public sees (ReportService hides the same). */
+    public const NOT_PUBLIC_STATUSES = ['draft', 'archived'];
+
     private PDO $mysql;
     private SQLiteConnection $sqlite;
     private ?FormLogicRuntime $runtime;
@@ -1359,6 +1362,20 @@ class ResponseService
         }
     }
 
+    /**
+     * The rows public records may draw from: as the reports they sit beside, never a draft or
+     * something the owner archived.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function publicRows(string $formId, int $limit): array
+    {
+        return array_values(array_filter(
+            $this->getFormResponses($formId, ['limit' => $limit]),
+            static fn (array $row): bool => !in_array($row['status'] ?? null, self::NOT_PUBLIC_STATUSES, true)
+        ));
+    }
+
     public function getFormResponses(string $formId, array $options = []): array
     {
         $this->assertOptionsReadableOnPrivate($formId, $options);
@@ -1712,7 +1729,7 @@ class ResponseService
      * @param array<int, array<string, mixed>> $fields
      * @return string[]
      */
-    public function fileAttachedFieldIds(string $formId, string $fileId, array $fields): array
+    public function fileAttachedFieldIds(string $formId, string $fileId, array $fields, bool $shownPublicly = false): array
     {
         $fileFields = self::fileFieldIdSet($fields);
         if ($fileId === '' || $fileFields === [] || !$this->sqlite->formDatabaseExists($formId)) {
@@ -1720,7 +1737,8 @@ class ResponseService
         }
         $db = $this->sqlite->getFormDatabase($formId);
         $needle = '%' . strtr($fileId, ['\\' => '\\\\', '%' => '\\%', '_' => '\\_']) . '%';
-        $stmt = $db->prepare("SELECT answers FROM responses WHERE answers LIKE :needle ESCAPE '\\'");
+        $hidden = $shownPublicly ? " AND (status IS NULL OR status NOT IN ('" . implode("', '", self::NOT_PUBLIC_STATUSES) . "'))" : '';
+        $stmt = $db->prepare("SELECT answers FROM responses WHERE answers LIKE :needle ESCAPE '\\'" . $hidden);
         $stmt->bindValue('needle', $needle);
         $stmt->execute();
         $fieldIds = [];

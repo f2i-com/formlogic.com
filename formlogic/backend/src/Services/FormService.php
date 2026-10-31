@@ -381,7 +381,7 @@ class FormService
         $id = $data['id'] ?? $this->generateUuid();
         // Clients choose form ids, and an id goes into every URL of this form: it is one
         // path segment, never a path. Checked before anything looks the id up.
-        if (!is_string($id) || !preg_match('/^[a-zA-Z0-9_-]{1,64}$/D', $id)) {
+        if (!is_string($id) || !preg_match('/^[a-zA-Z0-9_-]{1,36}$/D', $id)) {
             throw new \InvalidArgumentException('Invalid form id');
         }
         $now = date('Y-m-d H:i:s');
@@ -404,6 +404,13 @@ class FormService
             $binned = $this->mysql->prepare("SELECT 1 FROM trash_items WHERE kind = 'form' AND original_id = :id AND user_id != :user LIMIT 1");
             $binned->execute(['id' => $id, 'user' => (string) ($data['userId'] ?? '')]);
             if ($binned->fetchColumn() !== false) {
+                throw new \RuntimeException('A form with this ID already exists');
+            }
+            // Upload folders are named by the id without its underscores (FileStorageService),
+            // so `team_intake` and `teamintake` would share one, exports and deletion included.
+            $sameFolder = $this->mysql->prepare("SELECT 1 FROM forms WHERE REPLACE(id, '_', '') = :folder LIMIT 1");
+            $sameFolder->execute(['folder' => str_replace('_', '', $id)]);
+            if ($sameFolder->fetchColumn() !== false) {
                 throw new \RuntimeException('A form with this ID already exists');
             }
         }

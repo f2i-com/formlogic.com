@@ -25,7 +25,7 @@ final class AppDomainSessionScopeTest extends TestCase
     private const SESSION = ['appId' => 'app-1', 'host' => self::HOST, 'signInId' => 'sign-in-1'];
 
     /** @var array{id: string, slug: string}|null */
-    private ?array $connected = ['id' => 'app-1', 'slug' => 'shop'];
+    private ?array $connected = ['id' => 'app-1', 'ownerId' => 'owner-1', 'slug' => 'shop'];
     private bool $signedIn = true;
 
     private function auth(): AuthService
@@ -129,6 +129,21 @@ final class AppDomainSessionScopeTest extends TestCase
         foreach (['/api/app/shop/native', '/api/auth/me'] as $path) {
             self::assertSame(403, $this->visit($path)[0], $path);
         }
+    }
+
+    public function testTheOwnersOwnSessionKeepsAwayFromTheirComputer(): void
+    {
+        $desktop = ['/api/app/shop/connector-commands', '/api/app/shop/connector-commands/1', '/api/app/shop/connector-capability', '/api/app/shop/service-capability', '/api/app/shop/service-invoke/desktop.connections.list', '/api/app/shop/connector-c%6Fmmands'];
+        foreach ($desktop as $path) {
+            self::assertSame(204, $this->visit($path, false, self::HOST, 'POST')[0], 'a member keeps ' . $path);
+        }
+        $this->connected['ownerId'] = 'member-1';
+        foreach ($desktop as $path) {
+            self::assertSame(403, $this->visit($path, false, self::HOST, 'POST')[0], $path);
+        }
+        // The rest of their own app stays open to them.
+        self::assertSame(204, $this->visit('/api/app/shop/native')[0]);
+        self::assertSame(204, $this->visit('/api/app/shop/service-invoke/aokie.calls.recent', false, self::HOST, 'POST')[0]);
     }
 
     public function testEndsWhenTheMemberLeaves(): void
