@@ -107,7 +107,7 @@ class WebhookService
         return $webhook;
     }
 
-    private static function secretContext(string $webhookId): string
+    public static function secretContext(string $webhookId): string
     {
         return 'webhooks.secret:' . $webhookId;
     }

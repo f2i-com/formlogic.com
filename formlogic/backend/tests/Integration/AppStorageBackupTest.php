@@ -12,6 +12,8 @@ use FormLogic\Services\AppUserService;
 use FormLogic\Services\FlowService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\HostedAppService;
+use FormLogic\Services\HostedRecordCipher;
+use FormLogic\Support\DataEncryption;
 use FormLogic\Services\NativeAppService;
 use FormLogic\Services\ResponseService;
 use PDO;
@@ -146,8 +148,9 @@ class AppStorageBackupTest extends TestCase
         if (!is_file($path)) {
             return null;
         }
-        $value = (new PDO('sqlite:' . $path))->query("SELECT data FROM records WHERE id = 'r1'")->fetchColumn();
-        return $value === false ? null : (string) $value;
+        $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $value = $db->query("SELECT data FROM records WHERE id = 'r1'")->fetchColumn();
+        return $value === false ? null : HostedRecordCipher::forApp($db, $appId)->open('orders', 'r1', (string) $value);
     }
 
     private function entries(string $zipPath): array
@@ -243,9 +246,72 @@ class AppStorageBackupTest extends TestCase
         $restored = array_values(array_diff($this->appsOf($this->userId), [$appId]));
         $copy = new PDO('sqlite:' . HostedAppService::databasePath($restored[0], $this->hostedPath));
         $names = $copy->query("SELECT name FROM sqlite_master WHERE type IN ('table', 'trigger', 'view') ORDER BY name")->fetchAll(PDO::FETCH_COLUMN);
-        self::assertSame(['deployment', 'records'], $names);
+        self::assertSame(['app_key', 'deployment', 'records'], $names);
         self::assertSame('{"total":42}', $this->hostedRecord($restored[0]));
         unlink($zip);
+    }
+
+    public function testAnEncryptedAppIsPlainInItsBackupAndEncryptedAgainWhenRestored(): void
+    {
+        $saved = $_ENV[DataEncryption::KEY_ENV] ?? null;
+        $_ENV[DataEncryption::KEY_ENV] = str_repeat('ab', 32);
+        try {
+            $appId = $this->app();
+            $this->hostedDatabase($appId);
+            $source = HostedAppService::databasePath($appId, $this->hostedPath);
+            self::assertSame(1, HostedAppService::encryptDatabase($source, DataEncryption::fromEnvironment()));
+            self::assertStringNotContainsString('"total":42', (string) file_get_contents($source));
+
+            $zipPath = $this->service()->exportAccount($this->userId);
+
+            $name = 'hosted/' . $appId . '/application.sqlite';
+            $staged = self::$root . '/from-zip-' . bin2hex(random_bytes(4)) . '.sqlite';
+            $zip = new \ZipArchive();
+            $zip->open($zipPath);
+            file_put_contents($staged, (string) $zip->getFromName($name));
+            $zip->close();
+            self::assertSame(hash_file('sha256', $staged), $this->manifest($zipPath)['entries'][$name], 'the manifest describes what is in the zip');
+            $copy = new PDO('sqlite:' . $staged);
+            self::assertSame('{"total":42}', $copy->query('SELECT data FROM records')->fetchColumn());
+            self::assertFalse($copy->query("SELECT 1 FROM sqlite_master WHERE name = 'app_key'")->fetchColumn());
+            $copy = null;
+            unlink($staged);
+
+            $this->service()->importAccount($zipPath, $this->userId);
+            $restored = array_values(array_diff($this->appsOf($this->userId), [$appId]));
+            self::assertSame('{"total":42}', $this->hostedRecord($restored[0]));
+            self::assertStringNotContainsString('"total":42', (string) file_get_contents(HostedAppService::databasePath($restored[0], $this->hostedPath)));
+            unlink($zipPath);
+        } finally {
+            unset($_ENV[DataEncryption::KEY_ENV]);
+            if ($saved !== null) {
+                $_ENV[DataEncryption::KEY_ENV] = $saved;
+            }
+        }
+    }
+
+    public function testAnAppThatCannotBeDecryptedDoesNotCostTheRestOfANightlyBackup(): void
+    {
+        $saved = $_ENV[DataEncryption::KEY_ENV] ?? null;
+        $_ENV[DataEncryption::KEY_ENV] = str_repeat('ab', 32);
+        try {
+            $appId = $this->app();
+            $this->hostedDatabase($appId);
+            $source = HostedAppService::databasePath($appId, $this->hostedPath);
+            HostedAppService::encryptDatabase($source, DataEncryption::fromEnvironment());
+
+            $_ENV[DataEncryption::KEY_ENV] = str_repeat('cd', 32);
+            $zip = $this->service()->exportAccount($this->userId, ['includeHostSecrets' => true]);
+
+            self::assertNotContains('hosted/' . $appId . '/application.sqlite', $this->entries($zip));
+            self::assertStringContainsString('could not be decrypted', implode(' ', $this->manifest($zip)['warnings']));
+            unlink($zip);
+        } finally {
+            unset($_ENV[DataEncryption::KEY_ENV]);
+            if ($saved !== null) {
+                $_ENV[DataEncryption::KEY_ENV] = $saved;
+            }
+        }
     }
 
     public function testAnUploadedDeploymentHasToPassWhatPublishingAsks(): void

@@ -79,6 +79,7 @@ final class SqliteSnapshot
      * Snapshot $sourcePath into $destinationPath (which must not exist yet).
      *
      * @param list<string> $requiredTables tables that must exist in the verified copy
+     * @param (callable(string): void)|null $prepare changes the copy before it is verified and hashed
      * @return array{
      *   path: string, method: string, startedAt: string, completedAt: string,
      *   consistency: string, quickCheck: string, pageCount: int, pageSize: int,
@@ -86,7 +87,7 @@ final class SqliteSnapshot
      * }
      * @throws SqliteSnapshotException on any failure (partial files are removed)
      */
-    public function snapshot(string $sourcePath, string $destinationPath, array $requiredTables = []): array
+    public function snapshot(string $sourcePath, string $destinationPath, array $requiredTables = [], ?callable $prepare = null): array
     {
         if (!is_file($sourcePath)) {
             throw new SqliteSnapshotException("Source database does not exist: {$sourcePath}");
@@ -134,6 +135,9 @@ final class SqliteSnapshot
                     0,
                     $lastError
                 );
+            }
+            if ($prepare !== null) {
+                $prepare($partial);
             }
             $completedAt = gmdate('c');
 

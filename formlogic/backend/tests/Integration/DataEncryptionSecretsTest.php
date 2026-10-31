@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace FormLogic\Tests\Integration;
 
 use FormLogic\Database\MySQLConnection;
+use FormLogic\Services\DataEncryptionMigrator;
+use FormLogic\Services\HostedAppService;
 use FormLogic\Services\MfaService;
 use FormLogic\Services\TotpService;
 use FormLogic\Services\WebhookService;
@@ -67,6 +69,9 @@ final class DataEncryptionSecretsTest extends TestCase
         }
         $_ENV[DataEncryption::KEY_ENV] = self::KEY;
         self::$pdo->exec("DELETE FROM system_meta WHERE meta_key IN ('data_encryption_check', 'data_encryption_last_run')");
+        // The migration walks whole tables, and a run with another key leaves its rows behind.
+        self::$pdo->exec('DELETE FROM webhooks');
+        self::$pdo->exec("UPDATE users SET mfa_secret = NULL WHERE mfa_secret LIKE 'fle1.%'");
         $this->userId = 'u-' . bin2hex(random_bytes(12));
         self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, ?, 'T')")
             ->execute([$this->userId, $this->userId . '@test.local', 'x']);
@@ -240,6 +245,79 @@ final class DataEncryptionSecretsTest extends TestCase
     {
         $this->key('too-short');
         self::assertFalse($this->health()['ok']);
+    }
+
+    private function migrator(string $hostedPath = '/nowhere'): DataEncryptionMigrator
+    {
+        return new DataEncryptionMigrator(self::$pdo, $hostedPath);
+    }
+
+    public function testTheMigrationEncryptsWhatWasStoredBeforeTheKey(): void
+    {
+        $hosted = sys_get_temp_dir() . '/fl-migrate-' . bin2hex(random_bytes(6));
+        mkdir($hosted);
+        $path = HostedAppService::databasePath('app-a', $hosted);
+        $db = new PDO('sqlite:' . $path);
+        $db->exec('CREATE TABLE records (collection TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(collection,id))');
+        $db->exec("INSERT INTO records VALUES ('notes', 'one', '{\"text\":\"planted-note\"}', 'now')");
+        $db = null;
+
+        $this->key(null);
+        $setup = self::$mfa->beginSetup($this->userId, 'x@test.local');
+        self::$mfa->enable($this->userId, $this->code($setup['secret']));
+        $this->key(self::KEY);
+
+        try {
+            $result = $this->migrator($hosted)->run(DataEncryption::fromEnvironment());
+
+            self::assertSame([], $result['failed']);
+            self::assertGreaterThanOrEqual(1, $result['secrets']);
+            self::assertSame(1, $result['apps']);
+            self::assertSame(1, $result['records']);
+            self::assertTrue(DataEncryption::isSealed($this->storedSecret()));
+            self::assertTrue(self::$mfa->verifyChallenge($this->userId, $this->code($setup['secret'])));
+            self::assertStringNotContainsString('planted-note', (string) file_get_contents($path));
+            self::assertArrayNotHasKey('warning', $this->health());
+
+            self::assertSame(0, $this->migrator($hosted)->run(DataEncryption::fromEnvironment())['secrets'], 'running it again changes nothing');
+        } finally {
+            unlink($path);
+            rmdir($hosted);
+        }
+    }
+
+    public function testTheMigrationMovesSecretsOntoANewKey(): void
+    {
+        $setup = self::$mfa->beginSetup($this->userId, 'x@test.local');
+        self::$mfa->enable($this->userId, $this->code($setup['secret']));
+
+        $_ENV[DataEncryption::PREVIOUS_KEYS_ENV] = self::KEY;
+        $this->key(self::OTHER);
+        self::assertSame([], $this->migrator()->run(DataEncryption::fromEnvironment())['failed']);
+
+        unset($_ENV[DataEncryption::PREVIOUS_KEYS_ENV]);
+        self::assertTrue(self::$mfa->verifyChallenge($this->userId, $this->code($setup['secret'])));
+        self::assertTrue($this->health()['ok'], 'the check value moved too');
+    }
+
+    public function testAValueThatCannotBeMovedIsNamedAndTheRunIsNotCountedAsDone(): void
+    {
+        self::$mfa->beginSetup($this->userId, 'x@test.local');
+        $before = (string) $this->storedSecret();
+
+        $this->key(self::OTHER);
+        $result = $this->migrator()->run(DataEncryption::fromEnvironment());
+
+        self::assertStringContainsString($this->userId, implode(' ', $result['failed']));
+        self::assertSame($before, $this->storedSecret(), 'what cannot be read is left alone');
+        self::assertFalse(self::$pdo->query("SELECT 1 FROM system_meta WHERE meta_key = 'data_encryption_last_run'")->fetchColumn());
+    }
+
+    public function testTheMigrationNeedsAKey(): void
+    {
+        $this->key(null);
+        $this->expectExceptionMessage('Set DATA_ENCRYPTION_KEY');
+        $this->migrator()->run(DataEncryption::fromEnvironment());
     }
 
     public function testHealthAsksForTheMigrationUntilItHasRun(): void

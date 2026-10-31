@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Services;
 
+use FormLogic\Support\DataEncryption;
 use PDO;
 use RuntimeException;
 use InvalidArgumentException;
@@ -11,6 +12,10 @@ use InvalidArgumentException;
 /** Private app deployment + database. App identity is resolved by the controller, never the bundle. */
 class HostedAppService
 {
+    /** Encrypted text takes a third more room, so the 128 MB an app could hold is this many pages now. */
+    private const MAX_PAGES = 43700;
+    private const COPY_BATCH = 200;
+
     public function __construct(private SandboxRunner $runner, private ?string $storagePath = null) {}
 
     /** Where an app's database is, or would be. Unlike opening it, this creates nothing. */
@@ -29,7 +34,8 @@ class HostedAppService
      * Only rows cross, into a database made here, because a backup can be an upload and a SQLite
      * file carries triggers and views as well as data. An upload's deployment also has to pass
      * what publishing asks ($validate). An archive this server kept was checked when published,
-     * and later rules must not stop a disaster recovery.
+     * and later rules must not stop a disaster recovery. Rows arrive plain and are encrypted under
+     * the new app's own key.
      */
     public static function restoreDatabase(string $appId, string $snapshot, ?string $storagePath = null, bool $validate = true): bool
     {
@@ -41,7 +47,7 @@ class HostedAppService
         }
         $staged = $path . '.restore-' . bin2hex(random_bytes(4));
         try {
-            self::copyRows($snapshot, $staged, $validate);
+            self::copyRows($appId, $snapshot, $staged, $validate);
             if (!rename($staged, $path)) throw new RuntimeException('Cannot restore the app database');
         } finally {
             if (is_file($staged)) unlink($staged);
@@ -49,13 +55,14 @@ class HostedAppService
         return true;
     }
 
-    private static function copyRows(string $snapshot, string $staged, bool $validate): void
+    private static function copyRows(string $appId, string $snapshot, string $staged, bool $validate): void
     {
         $source = new PDO('sqlite:' . $snapshot, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
         $source->exec('PRAGMA trusted_schema=OFF');
         $source->exec('PRAGMA query_only=1');
         $target = new PDO('sqlite:' . $staged, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
         self::createTables($target);
+        $cipher = HostedRecordCipher::forApp($target, $appId);
         $target->exec('BEGIN IMMEDIATE');
         $deployments = $source->query('SELECT version, package, updated_at FROM deployment WHERE id=1')->fetchAll();
         foreach ($deployments as $deployment) {
@@ -65,7 +72,9 @@ class HostedAppService
         }
         $insert = $target->prepare('INSERT INTO records (collection, id, data, updated_at) VALUES (?, ?, ?, ?)');
         foreach ($source->query('SELECT collection, id, data, updated_at FROM records') as $record) {
-            $insert->execute([(string) $record['collection'], (string) $record['id'], (string) $record['data'], (string) $record['updated_at']]);
+            $data = (string) $record['data'];
+            if (HostedRecordCipher::isEncrypted($data)) throw new InvalidArgumentException('This backup holds records encrypted on another server');
+            $insert->execute([(string) $record['collection'], (string) $record['id'], $cipher->seal((string) $record['collection'], (string) $record['id'], $data), (string) $record['updated_at']]);
         }
         $target->exec('COMMIT');
     }
@@ -75,6 +84,7 @@ class HostedAppService
         $db->exec('CREATE TABLE IF NOT EXISTS deployment (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL, package TEXT NOT NULL, updated_at TEXT NOT NULL)');
         $db->exec('CREATE TABLE IF NOT EXISTS records (collection TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(collection,id))');
         $db->exec('CREATE INDEX IF NOT EXISTS records_recent ON records(collection,updated_at DESC,id DESC)');
+        $db->exec('CREATE TABLE IF NOT EXISTS app_key (id INTEGER PRIMARY KEY CHECK(id=1), wrapped TEXT NOT NULL)');
     }
 
     private function database(string $appId): PDO
@@ -89,7 +99,8 @@ class HostedAppService
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         ]);
         $db->exec('PRAGMA busy_timeout=2000');
-        $db->exec('PRAGMA max_page_count=32768');
+        $db->exec('PRAGMA max_page_count=' . self::MAX_PAGES);
+        $db->exec('PRAGMA secure_delete=ON');
         self::createTables($db);
         return $db;
     }
@@ -118,8 +129,84 @@ class HostedAppService
         if ($path === false) throw new RuntimeException('Cannot prepare database download');
         try {
             $db->prepare('VACUUM INTO ?')->execute([$path]);
+            self::decryptCopy($path, $appId);
             return $path;
         } catch (\Throwable $e) { @unlink($path); throw $e; }
+    }
+
+    /**
+     * Makes a copy of an app's database plain, ready to leave the server: a backup has to open under
+     * a new id or on another server, where this app's key means nothing. The key doesn't go with it.
+     */
+    public static function decryptCopy(string $copy, string $appId): void
+    {
+        $db = new PDO('sqlite:' . $copy, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
+        $db->exec('PRAGMA trusted_schema=OFF');
+        $cipher = HostedRecordCipher::forApp($db, $appId);
+        $db->exec('BEGIN IMMEDIATE');
+        try {
+            self::eachRecord($db, static function (array $row) use ($cipher): string {
+                return $cipher->open((string) $row['collection'], (string) $row['id'], (string) $row['data']);
+            });
+            $db->exec('DROP TABLE IF EXISTS app_key');
+            $db->exec('COMMIT');
+        } catch (\Throwable $error) {
+            $db->exec('ROLLBACK');
+            throw $error;
+        }
+        $db->exec('VACUUM');
+    }
+
+    /**
+     * Brings one app's stored records and key onto the current master key.
+     *
+     * @return int how many records changed
+     */
+    public static function encryptDatabase(string $path, DataEncryption $crypto): int
+    {
+        $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
+        $db->exec('PRAGMA busy_timeout=5000');
+        $db->exec('PRAGMA secure_delete=ON');
+        self::createTables($db);
+        $cipher = new HostedRecordCipher($db, basename($path, '.sqlite'), $crypto);
+        $db->exec('BEGIN IMMEDIATE');
+        try {
+            $cipher->rewrapKey();
+            $changed = self::eachRecord($db, static function (array $row) use ($cipher): string {
+                return $cipher->seal((string) $row['collection'], (string) $row['id'], (string) $row['data']);
+            }, true);
+            $db->exec('COMMIT');
+        } catch (\Throwable $error) {
+            $db->exec('ROLLBACK');
+            throw $error;
+        }
+        // The plain text is still in the file's free pages until this.
+        if ($changed > 0) $db->exec('VACUUM');
+        return $changed;
+    }
+
+    /**
+     * Rewrites records in batches, because an app's records can be larger than memory. With
+     * $plainOnly it visits rows not yet encrypted, and otherwise only rows that are.
+     *
+     * @param callable(array<string, mixed>): string $next
+     */
+    private static function eachRecord(PDO $db, callable $next, bool $plainOnly = false): int
+    {
+        $select = $db->prepare('SELECT rowid, collection, id, data FROM records WHERE rowid > ? AND substr(data,1,5) ' . ($plainOnly ? '<>' : '=') . ' ? ORDER BY rowid LIMIT ' . self::COPY_BATCH);
+        $update = $db->prepare('UPDATE records SET data=? WHERE rowid=?');
+        $last = 0;
+        $changed = 0;
+        do {
+            $select->execute([$last, HostedRecordCipher::PREFIX]);
+            $rows = $select->fetchAll();
+            foreach ($rows as $row) {
+                $update->execute([$next($row), $row['rowid']]);
+                $last = (int) $row['rowid'];
+                $changed++;
+            }
+        } while (count($rows) === self::COPY_BATCH);
+        return $changed;
     }
 
     public function validate(array $package): array
@@ -283,14 +370,15 @@ class HostedAppService
             $calls = 0;
             $failed = false;
             $reason = 'Backend action failed';
-            $handler = function (string $module, string $method, array $args) use ($db, $action, &$calls, &$failed, &$reason): mixed {
+            $cipher = HostedRecordCipher::forApp($db, $appId);
+            $handler = function (string $module, string $method, array $args) use ($db, $cipher, $action, &$calls, &$failed, &$reason): mixed {
                 try {
                     // A script may catch the error and carry on, but SQLite can already have rolled
                     // back on its own, and a write after that would commit by itself.
                     if ($failed) throw new RuntimeException('An earlier operation failed');
                     if (++$calls > 50 || $module !== 'db' || $method !== 'getField' || !is_string($args[0] ?? null)) throw new RuntimeException('Unsupported backend operation');
                     $operation = json_decode($args[0], true, 32, JSON_THROW_ON_ERROR);
-                    return $this->recordOperation($db, $operation, $action['mode'] === 'write');
+                    return $this->recordOperation($db, $cipher, $operation, $action['mode'] === 'write');
                 } catch (\Throwable $e) {
                     // These are this file's own words ("App record limit reached"). A database
                     // error's, or PHP's own when a script sends the wrong shape, may name paths, so
@@ -328,7 +416,7 @@ LOGIC;
         }
     }
 
-    private function recordOperation(PDO $db, array $op, bool $write): mixed
+    private function recordOperation(PDO $db, HostedRecordCipher $cipher, array $op, bool $write): mixed
     {
         $collection = $op['collection'] ?? '';
         $id = $op['id'] ?? '';
@@ -341,9 +429,10 @@ LOGIC;
             $rows = [];
             $bytes = 0;
             while ($row = $stmt->fetch()) {
-                $bytes += strlen($row['data']);
+                $data = $cipher->open($collection, $row['id'], $row['data']);
+                $bytes += strlen($data);
                 if ($bytes > 200000) throw new RuntimeException('Page too large; request fewer records');
-                $rows[] = ['id' => $row['id'], 'data' => json_decode($row['data'], true), 'updatedAt' => $row['updated_at']];
+                $rows[] = ['id' => $row['id'], 'data' => json_decode($data, true), 'updatedAt' => $row['updated_at']];
             }
             return $rows;
         }
@@ -352,7 +441,7 @@ LOGIC;
             $stmt = $db->prepare('SELECT data FROM records WHERE collection=? AND id=?');
             $stmt->execute([$collection, $id]);
             $data = $stmt->fetchColumn();
-            return $data === false ? null : json_decode($data, true);
+            return $data === false ? null : json_decode($cipher->open($collection, $id, $data), true);
         }
         if (!$write) throw new RuntimeException('This action is read only');
         if ($op['op'] === 'put') {
@@ -363,7 +452,7 @@ LOGIC;
             $exists->execute([$collection, $id]);
             if (!$exists->fetchColumn() && (int) $db->query('SELECT COUNT(*) FROM records')->fetchColumn() >= 10000) throw new RuntimeException('App record limit reached');
             $stmt = $db->prepare('INSERT INTO records VALUES(?,?,?,?) ON CONFLICT(collection,id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at');
-            $stmt->execute([$collection, $id, $data, gmdate('c')]);
+            $stmt->execute([$collection, $id, $cipher->seal($collection, $id, $data), gmdate('c')]);
             return ['id' => $id];
         }
         if ($op['op'] === 'remove') {

@@ -282,7 +282,7 @@ class MfaService
         return $this->consumeRecoveryCode($userId, hash('sha256', $normalized));
     }
 
-    private static function secretContext(string $userId): string
+    public static function secretContext(string $userId): string
     {
         return 'users.mfa_secret:' . $userId;
     }

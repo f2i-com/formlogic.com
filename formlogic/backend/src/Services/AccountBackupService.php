@@ -9,6 +9,8 @@ use FormLogic\Database\SQLiteConnection;
 use FormLogic\Database\SqliteSnapshot;
 use FormLogic\Database\SqliteSnapshotException;
 use FormLogic\Helpers\CustomLogicSanitizer;
+use FormLogic\Support\DataEncryption;
+use FormLogic\Support\DataEncryptionException;
 use PDO;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -466,6 +468,9 @@ final class AccountBackupService
                     if ($configJson === false) {
                         throw new \RuntimeException("Could not serialize the host configuration for app {$appId}");
                     }
+                    // The app's key stays out of reach of whoever holds only this archive. On a
+                    // server without DATA_ENCRYPTION_KEY it can't be read, and the app gets new keys.
+                    $configJson = DataEncryption::fromEnvironment()->seal($configJson, self::hostConfigContext($appId));
                     $name = 'native/' . $appId . '/host-config.json';
                     $entries[$name] = hash('sha256', $configJson);
                     $zip->addFromString($name, $configJson);
@@ -483,12 +488,19 @@ final class AccountBackupService
                 }
                 $staged = $stagingDir . '/hosted-' . $appId . '.sqlite';
                 try {
-                    $snap = $this->snapshots->snapshot($source, $staged, ['deployment', 'records']);
+                    // Plain in the zip: it may be restored under a new id or on another server.
+                    $snap = $this->snapshots->snapshot($source, $staged, ['deployment', 'records'], static function (string $copy) use ($appId): void {
+                        HostedAppService::decryptCopy($copy, $appId);
+                    });
                     if ($this->snapshots->countRows($staged, 'deployment') === 0) {
                         @unlink($staged);
                         continue;
                     }
                 } catch (SqliteSnapshotException $e) {
+                    if ($leaveOutStuckApps && $e->getPrevious() instanceof DataEncryptionException) {
+                        $warnings[] = "Hosted app '" . ($ba['name'] ?? $appId) . "' could not be decrypted, so its records are not in this backup.";
+                        continue;
+                    }
                     throw new \RuntimeException("Could not snapshot the database for hosted app {$appId}: " . $e->getMessage(), 0, $e);
                 }
                 $name = 'hosted/' . $appId . '/application.sqlite';
@@ -1251,14 +1263,27 @@ final class AccountBackupService
             }
             $hostConfig = null;
             if (isset($entries['native/' . $oldAppId . '/host-config.json'])) {
-                $hostConfig = json_decode($this->readEntryBounded($zip, 'native/' . $oldAppId . '/host-config.json', 64 * 1024), true);
-                if (!is_array($hostConfig)) {
-                    throw new \RuntimeException("Native host configuration for app {$oldAppId} is not valid JSON");
+                try {
+                    $configJson = DataEncryption::fromEnvironment()->open(
+                        $this->readEntryBounded($zip, 'native/' . $oldAppId . '/host-config.json', 64 * 1024),
+                        self::hostConfigContext($oldAppId)
+                    );
+                    $hostConfig = json_decode($configJson, true);
+                    if (!is_array($hostConfig)) {
+                        throw new \RuntimeException("Native host configuration for app {$oldAppId} is not valid JSON");
+                    }
+                } catch (DataEncryptionException) {
+                    $hostConfig = null;
                 }
             }
             $payloads[$oldAppId] = ['name' => $nativeBlock['name'], 'project' => $project, 'database' => $dbPath, 'hostConfig' => $hostConfig];
         }
         return $payloads;
+    }
+
+    private static function hostConfigContext(string $appId): string
+    {
+        return 'native-host-config:' . $appId;
     }
 
     /**
