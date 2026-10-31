@@ -389,6 +389,40 @@ class AccountBackupTest extends TestCase
 
     // ── 2. full round trip ───────────────────────────────────────────────────
 
+    public function testFlowStorageComesBackWithABackup(): void
+    {
+        $kv = new \FormLogic\Services\FlowKvService(self::$mysql);
+        $kv->put($this->userId, $this->app1, 'app', 'count', 7);
+        $kv->put($this->userId, null, 'flow:wf', 'seen', ['a' => 1]);
+        $zipPath = self::$backup->exportAccount($this->userId);
+        $kv->delete($this->userId, null, 'flow:wf', 'seen');
+        try {
+            $result = self::$backup->importAccount($zipPath, $this->userId);
+        } finally {
+            @unlink($zipPath);
+        }
+
+        $restored = array_column($result['apps'], 'id', 'name')['Primary App'] ?? null;
+        $this->assertNotNull($restored, json_encode($result['apps']));
+        $this->assertNotSame($this->app1, $restored);
+        $this->assertSame(7, $kv->get($this->userId, (string) $restored, 'app', 'count')['v']);
+        $this->assertSame(['a' => 1], $kv->get($this->userId, null, 'flow:wf', 'seen')['v']);
+    }
+
+    public function testAForgedRowInABackupDoesNotReachFlowStorage(): void
+    {
+        $restore = new \ReflectionMethod(self::$backup, 'restoreFlowKv');
+        $restore->invoke(self::$backup, ['apps' => [], 'workspaceFlowKv' => [
+            ['scope' => 'Not A Scope', 'k' => 'a', 'v' => '1'],
+            ['scope' => 'app', 'k' => '../a', 'v' => '1'],
+            ['scope' => 'app', 'k' => 'huge', 'v' => '"' . str_repeat('x', 70000) . '"'],
+            ['scope' => 'app', 'k' => 'broken', 'v' => '{'],
+            ['scope' => 'app', 'k' => 'kept', 'v' => '1'],
+        ]], [], $this->userId, true);
+
+        $this->assertSame(['kept'], array_column((new \FormLogic\Services\FlowKvService(self::$mysql))->list($this->userId, null), 'k'));
+    }
+
     public function testExportImportRoundTripPreservesRecordsAndRemapsIds(): void
     {
         $zipPath = self::$backup->exportAccount($this->userId);

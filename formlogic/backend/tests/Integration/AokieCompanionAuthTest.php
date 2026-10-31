@@ -2334,6 +2334,23 @@ final class AokieCompanionAuthTest extends TestCase
                 ['deviceId' => $second['id'], 'priority' => 10],
             ],
         ]);
+        $expires = gmdate('Y-m-d H:i:s', time() + 1800);
+        self::$pdo->prepare("UPDATE aokie_companion_routing_members SET availability = 'busy', availability_expires_at = ? WHERE group_id = ? AND device_id = ?")
+            ->execute([$expires, $group['id'], $second['id']]);
+        $service->saveRoutingGroup($this->userId, $this->appId, [
+            'name' => 'Reception',
+            'policy' => 'round_robin',
+            'members' => [
+                ['deviceId' => $firstDevice['id'], 'priority' => 10],
+                ['deviceId' => $second['id'], 'priority' => 10],
+            ],
+        ], $group['id']);
+        $kept = self::$pdo->prepare('SELECT availability, availability_expires_at FROM aokie_companion_routing_members WHERE group_id = ? AND device_id = ?');
+        $kept->execute([$group['id'], $second['id']]);
+        $this->assertSame(['availability' => 'busy', 'availability_expires_at' => $expires], $kept->fetch(\PDO::FETCH_ASSOC), 'saving the group leaves a busy for half an hour as it was');
+        self::$pdo->prepare("UPDATE aokie_companion_routing_members SET availability = 'available', availability_expires_at = NULL WHERE group_id = ?")
+            ->execute([$group['id']]);
+
         $one = $service->resolveRoutingGroup($this->appId, $group['id']);
         $two = $service->resolveRoutingGroup($this->appId, $group['id']);
         $three = $service->resolveRoutingGroup($this->appId, $group['id']);
@@ -2352,6 +2369,10 @@ final class AokieCompanionAuthTest extends TestCase
         $this->assertContains('admission_issued', $activityTypes);
         $this->assertContains('monitor_joined', $activityTypes);
         $this->assertCount(1, self::decode($history)['sessions']);
+        $mine = $service->history($this->appId, 50, null, $firstDevice['id']);
+        $this->assertNotSame([], $mine['activity']);
+        $this->assertSame([$firstDevice['id']], array_values(array_unique(array_column($mine['activity'], 'deviceId'))));
+        $this->assertSame(['activity' => [], 'sessions' => []], $service->history($this->appId, 50, null, 'another-device'));
 
         $revoked = self::$controller->revokeDevice(
             $this->request('DELETE', '/api/aokie-companion/devices/' . $firstDevice['id']),

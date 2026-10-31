@@ -350,13 +350,12 @@ class PackageV2InstallService
                     $declaredSlots[] = $service['slot'];
                 }
             }
-            if ($declaredSlots === []) {
-                $this->mysql->prepare('DELETE FROM package_service_bindings WHERE installation_id = ?')->execute([$installationId]);
-            } else {
-                $placeholders = implode(',', array_fill(0, count($declaredSlots), '?'));
-                $this->mysql->prepare("DELETE FROM package_service_bindings WHERE installation_id = ? AND slot NOT IN ($placeholders)")
-                    ->execute(array_merge([$installationId], $declaredSlots));
-            }
+            $droppedSlots = $declaredSlots === [] ? '' : ' AND slot NOT IN (' . implode(',', array_fill(0, count($declaredSlots), '?')) . ')';
+            $droppedParams = array_merge([$installationId], $declaredSlots);
+            $boundStmt = $this->mysql->prepare("SELECT DISTINCT definition_id FROM package_service_bindings WHERE installation_id = ?{$droppedSlots}");
+            $boundStmt->execute($droppedParams);
+            $unbound = $boundStmt->fetchAll(PDO::FETCH_COLUMN);
+            $this->mysql->prepare("DELETE FROM package_service_bindings WHERE installation_id = ?{$droppedSlots}")->execute($droppedParams);
 
             // PKG-107: the new version re-declares its components. Re-recording replaces the
             // previous set, so a component the old version had and this one does not cannot
@@ -367,6 +366,14 @@ class PackageV2InstallService
         } catch (\Exception $e) {
             $this->mysql->rollBack();
             throw $e;
+        }
+
+        // As on uninstall: a capability for a slot that is gone stops working now, not at its TTL.
+        $authorization = new ServiceAuthorizationService($this->connection);
+        foreach ($unbound as $definitionId) {
+            if (is_string($definitionId) && $definitionId !== '') {
+                $authorization->revoke($userId, $definitionId);
+            }
         }
 
         // A failed activation leaves the update installed but INACTIVE — the previous version's

@@ -66,11 +66,10 @@ if (preg_match('#^/(hosted-runtime|app-editors)/#', $uri)) {
 }
 
 // Mirrors ui/public/.htaccess IS_SCREEN_HOST, so the end-to-end suite runs custom screens
-// under the framing rule they get on a real server: same-origin ancestors only.
+// under the framing rule they get on a real server: sandboxed, and framed by anything.
 if ($uri === '/screen-host.html' && is_file($dist . $uri)) {
     header('Content-Type: text/html; charset=UTF-8');
-    header('X-Frame-Options: SAMEORIGIN');
-    header("Content-Security-Policy: frame-ancestors 'self'; base-uri 'self'; object-src 'none'");
+    header("Content-Security-Policy: sandbox allow-scripts; frame-ancestors *; base-uri 'self'; object-src 'none'");
     readfile($dist . $uri);
     return true;
 }

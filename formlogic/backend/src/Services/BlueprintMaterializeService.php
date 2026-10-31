@@ -87,6 +87,9 @@ class BlueprintMaterializeService
 
         $createdFormIds = [];
         $createdFlowIds = [];
+        $createdBindingIds = [];
+        $createdRoleIds = [];
+        $changedForms = []; // id => its fields before this pass
         $appId = null;
         try {
             // 1. Concept entities → real forms (standalone drafts; attached below).
@@ -183,6 +186,7 @@ class BlueprintMaterializeService
                     continue;
                 }
                 $fieldId = $this->uniqueFieldId($fkName, array_column($fields, 'id'));
+                $changedForms[$targetFormId] ??= $fields;
                 $fields[] = [
                     'id' => $fieldId,
                     'type' => 'linked_record',
@@ -282,12 +286,13 @@ class BlueprintMaterializeService
                     if ($slug === '') {
                         continue;
                     }
-                    $this->flowService->createBinding($appId, [
+                    $binding = $this->flowService->createBinding($appId, [
                         'flow' => $slug,
                         'event' => 'form.submitted',
                         'formId' => $formId,
                         'mode' => 'async',
                     ]);
+                    $createdBindingIds[] = (string) $binding['id'];
                     $bindingsCreated++;
                 }
             }
@@ -322,6 +327,7 @@ class BlueprintMaterializeService
                         continue;
                     }
                     $role = $this->appUsers->createRole($appId, ['name' => $roleName]);
+                    $createdRoleIds[] = (string) $role['id'];
                     $roleByElement[(string) $element['id']] = (string) $role['id'];
                     $existingRoles[mb_strtolower($roleName)] = (string) $role['id'];
                     $rolesCreated++;
@@ -452,8 +458,30 @@ class BlueprintMaterializeService
                 'relations' => $relations,
             ];
         } catch (\Throwable $e) {
-            // Compensation: remove ONLY what this call created; pre-existing forms are
-            // never touched. Best-effort — a failed cleanup logs and moves on.
+            // Compensation: remove ONLY what this call created, and put back the link fields it
+            // added to forms that were already there, which would otherwise stay pointing at
+            // forms deleted below. Best-effort — a failed cleanup logs and moves on.
+            foreach ($changedForms as $changedFormId => $fieldsBefore) {
+                try {
+                    $this->forms->updateForm((string) $changedFormId, ['userId' => $ownerUserId, 'fields' => $fieldsBefore], $ownerUserId);
+                } catch (\Throwable $cleanup) {
+                    error_log("BlueprintMaterializeService: form restore failed ({$changedFormId}): " . $cleanup->getMessage());
+                }
+            }
+            foreach ($delta ? $createdBindingIds : [] as $bindingId) {
+                try {
+                    $this->flowService?->deleteBinding((string) $appId, $bindingId);
+                } catch (\Throwable $cleanup) {
+                    error_log("BlueprintMaterializeService: binding cleanup failed ({$bindingId}): " . $cleanup->getMessage());
+                }
+            }
+            foreach ($delta ? $createdRoleIds : [] as $roleId) {
+                try {
+                    $this->appUsers?->deleteRole($roleId);
+                } catch (\Throwable $cleanup) {
+                    error_log("BlueprintMaterializeService: role cleanup failed ({$roleId}): " . $cleanup->getMessage());
+                }
+            }
             if ($appId !== null && !$delta) {
                 try {
                     $this->apps->deleteApp($appId);

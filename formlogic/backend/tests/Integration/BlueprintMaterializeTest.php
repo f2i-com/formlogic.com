@@ -370,6 +370,38 @@ class BlueprintMaterializeTest extends TestCase
         $this->assertSame(0, (int) $attached->fetchColumn());
     }
 
+    public function testAFailedPassLeavesAFormThatWasAlreadyThereAsItWas(): void
+    {
+        $existing = self::$forms->createForm(['userId' => $this->userId, 'title' => 'Customers', 'fields' => [
+            ['id' => 'name', 'type' => 'short_text', 'label' => 'Name', 'required' => false],
+        ]]);
+        $blueprint = self::$blueprints->createBlueprint($this->userId, ['name' => 'Half done']);
+        self::$blueprints->commitOperations($this->userId, $blueprint['id'], [
+            'baseSemanticRevision' => 0,
+            'operations' => [
+                $this->op('blueprint.element.create', ['targetId' => 'el-orders', 'elementType' => 'form', 'properties' => ['title' => 'Orders', 'fields' => [['name' => 'total', 'type' => 'number']]]]),
+                $this->op('blueprint.element.create', ['targetId' => 'el-customers', 'elementType' => 'form', 'resourceRef' => ['kind' => 'form', 'id' => $existing['id']], 'properties' => ['title' => 'Customers']]),
+                $this->op('blueprint.element.create', ['targetId' => 'el-rel', 'elementType' => 'edge', 'properties' => ['edgeType' => 'relation', 'sourceId' => 'el-orders', 'targetId' => 'el-customers', 'cardinality' => '1:N', 'fkField' => 'order']]),
+            ],
+        ]);
+        $conflicted = new class (self::$mysql) extends BlueprintService {
+            public function commitOperations(string $ownerUserId, string $blueprintId, array $batch): array
+            {
+                throw new \RuntimeException('conflict');
+            }
+        };
+        $materializer = new BlueprintMaterializeService(self::$mysql, $conflicted, self::$forms, self::$apps, new FlowService(self::$mysql), new AppUserService(self::$mysql));
+
+        try {
+            $materializer->materialize($this->userId, $blueprint['id']);
+            $this->fail('expected the conflict');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('conflict', $e->getMessage());
+        }
+
+        $this->assertSame(['name'], array_column(self::$forms->getForm($existing['id'])['fields'], 'id'), 'no link to a form that is gone again');
+    }
+
     public function testADiagramLinkedToTheOwnersAppStillWorks(): void
     {
         $mine = self::$apps->createApp(['name' => 'My shop'], $this->userId);

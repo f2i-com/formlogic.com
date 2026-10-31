@@ -113,6 +113,11 @@ class AppDomainService
         return $domain;
     }
 
+    private function claimProof(string $domain, string $ownerId): string
+    {
+        return 'fl-domain-claim=' . substr(hash('sha256', $domain . '|' . $ownerId), 0, 32);
+    }
+
     public function generateVerificationToken(): string
     {
         return 'fl-domain-verification=' . bin2hex(random_bytes(16));
@@ -158,10 +163,22 @@ class AppDomainService
              AND created_at < NOW() - INTERVAL " . self::UNPROVEN_CLAIM_HOURS . " HOUR"
         )->execute(['d' => $domain]);
 
-        $exists = $this->mysql->prepare("SELECT owner_id FROM app_domains WHERE normalized_domain = :d LIMIT 1");
+        $exists = $this->mysql->prepare("SELECT id, owner_id, verified_at FROM app_domains WHERE normalized_domain = :d LIMIT 1");
         $exists->execute(['d' => $domain]);
-        if ($exists->fetchColumn() !== false) {
-            throw new \InvalidArgumentException('That domain is already connected to an app.');
+        $holder = $exists->fetch(PDO::FETCH_ASSOC);
+        if ($holder !== false) {
+            // A claim nobody proved can be renewed for as long as its maker likes, so whoever
+            // really runs the domain can take it now, by showing that in its DNS. The record
+            // names their account, so it proves nothing for anyone else.
+            $proof = $this->claimProof($domain, $ownerId);
+            $error = null;
+            if ($holder['verified_at'] !== null || $holder['owner_id'] === $ownerId) {
+                throw new \InvalidArgumentException('That domain is already connected to an app.');
+            }
+            if (!$this->dnsTxtContains('_formlogic.' . $domain, $proof, $error)) {
+                throw new \InvalidArgumentException("That domain is already connected to an app, but nobody has proved they own it yet. If it's yours, add a TXT record at _formlogic.{$domain} with the value {$proof}, then try again.");
+            }
+            $this->mysql->prepare('DELETE FROM app_domains WHERE id = :id AND verified_at IS NULL')->execute(['id' => $holder['id']]);
         }
 
         $id = $this->uuid();
@@ -482,7 +499,7 @@ class AppDomainService
         return $stmt->fetch(PDO::FETCH_ASSOC);
     }
 
-    private function dnsTxtContains(string $name, string $needle, ?string &$error): bool
+    protected function dnsTxtContains(string $name, string $needle, ?string &$error): bool
     {
         $error = null;
         if (!function_exists('dns_get_record')) {

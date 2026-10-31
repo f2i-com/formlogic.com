@@ -62,6 +62,9 @@ final class AccountBackupService
     public const KIND = 'formlogic.accountBackup';
 
     /** Uploaded-file basenames inside the zip: uuid-ish stem + short extension. */
+    /** Flow storage carried in backup.json, which restores only up to 64 MiB. */
+    private const FLOW_KV_BYTES = 32 * 1024 * 1024;
+
     private const SAFE_UPLOAD_NAME = '/^[A-Za-z0-9\-]+(\.[A-Za-z0-9]{1,16})?$/';
 
     private PDO $pdo;
@@ -730,6 +733,7 @@ final class AccountBackupService
         $apps = [];
         $appBindings = [];
         $flows = [];
+        $flowKvRoom = self::FLOW_KV_BYTES;
         $appIdsStmt = $this->pdo->prepare('SELECT id FROM apps WHERE owner_id = :o ORDER BY created_at ASC');
         $appIdsStmt->execute(['o' => $userId]);
         foreach ($appIdsStmt->fetchAll(PDO::FETCH_COLUMN) as $appId) {
@@ -737,7 +741,7 @@ final class AccountBackupService
             if (!$app) {
                 continue;
             }
-            $apps[] = $this->buildAppBlock($app, $this->describeNative((string) $appId));
+            $apps[] = $this->buildAppBlock($app, $this->describeNative((string) $appId)) + ['flowKv' => $this->flowKvRows($userId, (string) $appId, $flowKvRoom)];
 
             foreach ($this->flowService->listFlows((string) $appId) as $flow) {
                 $flows[] = $this->serializeFlow($flow);
@@ -785,6 +789,7 @@ final class AccountBackupService
             'flows' => $flows,
             'appBindings' => $appBindings,
             'formBindings' => $formBindings,
+            'workspaceFlowKv' => $this->flowKvRows($userId, '', $flowKvRoom),
             // E2EE (plan §7): vault + per-form key/schema/manifest/grant rows —
             // ciphertext/public material only, required for an id-preserving restore
             // of private forms (their AADs bind these ids byte-for-byte).
@@ -793,8 +798,64 @@ final class AccountBackupService
             'excluded' => [
                 'webhooks (signing secrets)', 'app members and invitations', 'custom domains',
                 'API keys and MCP tokens', 'form version history', 'script logs', 'pack installation records',
+                ...($flowKvRoom < 0 ? ['some flow storage: more than a backup holds'] : []),
             ],
         ];
+    }
+
+    /**
+     * A store's rows, as far as $room bytes go: 5,000 keys of 64 KB each would be past what
+     * backup.json may hold, and then the whole backup couldn't be restored.
+     *
+     * @return list<array{scope: string, k: string, v: ?string}>
+     */
+    private function flowKvRows(string $userId, string $appId, int &$room): array
+    {
+        $stmt = $this->pdo->prepare('SELECT scope, k, v FROM flow_kv WHERE owner_user_id = :o AND app_id = :a ORDER BY scope, k');
+        $stmt->execute(['o' => $userId, 'a' => $appId]);
+        $rows = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $room -= strlen((string) $row['v']);
+            if ($room < 0) {
+                break;
+            }
+            $rows[] = $row;
+        }
+        return $rows;
+    }
+
+    /**
+     * Back into their stores, under the restored app ids. Workspace keys come back with a whole
+     * account, not with one app out of the recycle bin. Nothing here came from this server's own
+     * checks if the backup was uploaded, so each row meets them again.
+     *
+     * @param array<string, string> $appIdMap
+     */
+    private function restoreFlowKv(array $structure, array $appIdMap, string $userId, bool $wholeAccount): void
+    {
+        $insert = $this->pdo->prepare('INSERT IGNORE INTO flow_kv (id, owner_user_id, app_id, scope, k, v) VALUES (:id, :o, :a, :s, :k, :v)');
+        $stores = $wholeAccount ? [['', $structure['workspaceFlowKv'] ?? []]] : [];
+        foreach ($structure['apps'] as $app) {
+            $newId = $appIdMap[(string) ($app['id'] ?? '')] ?? null;
+            if ($newId !== null) {
+                $stores[] = [$newId, $app['flowKv'] ?? []];
+            }
+        }
+        foreach ($stores as [$appId, $rows]) {
+            foreach (array_slice(is_array($rows) ? $rows : [], 0, FlowKvService::MAX_KEYS_PER_STORE) as $row) {
+                $scope = $row['scope'] ?? null;
+                $key = $row['k'] ?? null;
+                $value = $row['v'] ?? null;
+                if (
+                    !is_string($scope) || !preg_match(FlowKvService::SCOPE_PATTERN, $scope)
+                    || !is_string($key) || !preg_match(FlowKvService::KEY_PATTERN, $key)
+                    || !is_string($value) || strlen($value) > FlowKvService::MAX_VALUE_BYTES || json_decode($value) === null
+                ) {
+                    continue;
+                }
+                $insert->execute(['id' => bin2hex(random_bytes(16)), 'o' => $userId, 'a' => $appId, 's' => $scope, 'k' => $key, 'v' => $value]);
+            }
+        }
     }
 
     /** @param array $f a formatted form (getAllForms includeFields / getForm shape) */
@@ -1262,6 +1323,13 @@ final class AccountBackupService
                     $warnings[] = 'Some record links from other forms could not be rebuilt: ' . $e->getMessage();
                     $this->logger->warning('Restore: inbound link rebuild failed', ['error' => $e->getMessage()]);
                 }
+            }
+
+            try {
+                $this->restoreFlowKv($structure, $maps['appIdMap'], $userId, !$opts['preserveIds']);
+            } catch (\Throwable $e) {
+                $warnings[] = 'Flow storage could not be restored: ' . $e->getMessage();
+                $this->logger->warning('Restore: flow storage failed', ['error' => $e->getMessage()]);
             }
 
             return [

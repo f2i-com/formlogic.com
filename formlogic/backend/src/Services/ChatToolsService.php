@@ -145,6 +145,18 @@ class ChatToolsService
                 }
             }
         }
+        // The same line for a native app: who may open it. A route that was for members would
+        // answer anyone, on the strength of text a stranger may have written.
+        if ($name === 'publish_native_app_project') {
+            $stored = $this->appService->getApp((string) ($args['appId'] ?? ''));
+            if (is_array($stored) && ($stored['ownerId'] ?? null) === $ctx->userId
+                && self::opensNativeApp($args['project'] ?? null, ($this->native ??= new NativeAppService())->get((string) $stored['id']))) {
+                throw new ChatToolDeniedException(
+                    'A members-only app is not opened to everyone from chat — change who can open it in the app\'s settings.',
+                    'native_access_refused'
+                );
+            }
+        }
         // The same line for app logic: a script that holds a connector permission texts and calls
         // when the app's events fire. Chat may edit logic around a permission the person gave; it
         // does not add one.
@@ -500,6 +512,7 @@ class ChatToolsService
                         $project['files'] = array_merge($project['files'], $args['files']);
                     }
                     if (!is_array($project)) throw new \InvalidArgumentException('Provide the complete native app project');
+                    if (self::opensNativeApp($project, $native->get($id))) $ctx->requireScope('responses:read');
                     $torch = $this->engines?->torchRefusal($owned, NativeAppService::clientFiles($project));
                     if ($torch !== null) throw new \InvalidArgumentException($torch);
                     $saved = $native->install($id, $project, $args['expectedVersion']);
@@ -1178,6 +1191,13 @@ class ChatToolsService
         if (is_array($screen) && self::widensPublicRecords($screen, $stored)) {
             $ctx->requireScope('responses:read');
         }
+    }
+
+    /** Whether this project lets in visitors a members-only app (the default) keeps out. */
+    private static function opensNativeApp(mixed $project, ?array $installed): bool
+    {
+        $now = $installed['access'] ?? 'members';
+        return is_array($project) && $now === 'members' && ($project['access'] ?? $now) !== 'members';
     }
 
     /**

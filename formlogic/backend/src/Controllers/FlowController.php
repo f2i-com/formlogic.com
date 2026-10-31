@@ -658,6 +658,9 @@ class FlowController
     /** The generated leaf-script profile. Written by formlogic/ui/scripts/build-script-profile.mjs. */
     public const SCRIPT_PROFILE_FILE = __DIR__ . '/../../resources/formlogic-script-profile.json';
 
+    /** How far down the queue a member's listing reads looking for runs they may see. */
+    private const QUEUE_SCAN_ROWS = 2000;
+
     /**
      * The leaf-script profile (GET /api/v1/script-profile) — what FormLogic's logic MEANS, as
      * data, so a Desktop that claims a flow condition, a logic block or an app-logic script means
@@ -1067,13 +1070,27 @@ class FlowController
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }
-        $runs = $this->flows->listQueuedRuns($app['id'], (int) ($q['limit'] ?? 50), $languages);
-        if (($app['ownerId'] ?? null) !== $userId) {
+        $limit = (int) ($q['limit'] ?? 50);
+        if (($app['ownerId'] ?? null) === $userId) {
+            $runs = $this->flows->listQueuedRuns($app['id'], $limit, $languages);
+        } else {
+            // Read on past the runs this member can't see: the oldest in the queue may all be
+            // those, and the newer ones they could take would never reach their tab.
+            $wanted = max(1, min(200, $limit));
             $permCache = [];
-            $runs = array_values(array_filter(
-                $runs,
-                fn (array $run) => $this->canSeeRun($app, $userId, $run, $permCache)
-            ));
+            $runs = [];
+            for ($offset = 0; count($runs) < $wanted && $offset < self::QUEUE_SCAN_ROWS; $offset += 200) {
+                $page = $this->flows->listQueuedRuns($app['id'], 200, $languages, $offset);
+                foreach ($page as $run) {
+                    if ($this->canSeeRun($app, $userId, $run, $permCache)) {
+                        $runs[] = $run;
+                    }
+                }
+                if (count($page) < 200) {
+                    break;
+                }
+            }
+            $runs = array_slice($runs, 0, $wanted);
             foreach ($runs as &$run) {
                 $run['inputSnapshot'] = null;
             }

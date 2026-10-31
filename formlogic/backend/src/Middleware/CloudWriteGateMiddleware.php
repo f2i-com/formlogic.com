@@ -17,8 +17,8 @@ use Slim\Routing\RouteContext;
  * access has expired. Reads, exports, and DELETEs are always allowed so users keep full
  * access to their data and can clean up. No-op unless plan enforcement is enabled.
  *
- * Owner resolution: authenticated routes use the request's userId; public routes
- * (form submission / upload) resolve the form owner from the {formId} route argument.
+ * Owner resolution: a route that names a form or an app bills that form's or app's owner, whoever
+ * is acting; any other route is the request user's own.
  */
 class CloudWriteGateMiddleware implements MiddlewareInterface
 {
@@ -38,14 +38,25 @@ class CloudWriteGateMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         }
 
+        $route = RouteContext::fromRequest($request)->getRoute();
+        // Joining someone's app costs the one who joins nothing, so it isn't theirs to pay for.
+        if ($route !== null && str_ends_with($route->getPattern(), '/invitations/accept')) {
+            return $handler->handle($request);
+        }
+
         // Attribute the write to the account that OWNS the resource. When the route targets
         // a specific form (public submission/upload, or an app-runtime write by a member),
-        // the FORM OWNER's cloud is what's billed — not the acting member's. Fall back to the
-        // request user only for owner-scoped routes with no form id (e.g. creating a form).
+        // the FORM OWNER's cloud is what's billed — not the acting member's — and an app route
+        // with no form (an action, a sync batch) is the app owner's. Fall back to the request
+        // user only for owner-scoped routes (e.g. creating a form).
         $ownerId = null;
-        $formId = $this->routeFormId($request);
+        $formId = $this->routeArgument($request, 'formId');
         if ($formId !== null) {
             $ownerId = $this->planService->ownerOfForm($formId);
+        }
+        $slug = $this->routeArgument($request, 'slug');
+        if (!$ownerId && $slug !== null) {
+            $ownerId = $this->planService->ownerOfAppSlug($slug);
         }
         if (!$ownerId) {
             $ownerId = $request->getAttribute('userId');
@@ -60,14 +71,14 @@ class CloudWriteGateMiddleware implements MiddlewareInterface
         return $handler->handle($request);
     }
 
-    private function routeFormId(Request $request): ?string
+    private function routeArgument(Request $request, string $name): ?string
     {
         $route = RouteContext::fromRequest($request)->getRoute();
         if ($route === null) {
             return null;
         }
-        $formId = $route->getArgument('formId');
-        return is_string($formId) && $formId !== '' ? $formId : null;
+        $value = $route->getArgument($name);
+        return is_string($value) && $value !== '' ? $value : null;
     }
 
     private function paymentRequired(): Response

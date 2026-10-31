@@ -2514,9 +2514,10 @@ class FlowService
      * only). The filter applies before the LIMIT, so runs a caller cannot take never hold the
      * head of its queue. @return array[]
      */
-    public function listQueuedRuns(string $appId, int $limit = 50, ?array $logicLanguages = null): array
+    public function listQueuedRuns(string $appId, int $limit = 50, ?array $logicLanguages = null, int $offset = 0): array
     {
         $limit = max(1, min(200, $limit));
+        $offset = max(0, $offset);
         [$notRunnable, $params] = $this->excludeFlowsCallerCannotRun(
             "SELECT f.id, f.owner_user_id, f.flow_json FROM flow_definitions f
              WHERE f.id IN (SELECT r.flow_definition_id FROM flow_run_logs r WHERE r.app_id = :a AND r.status = 'queued')",
@@ -2529,7 +2530,7 @@ class FlowService
             LEFT JOIN flow_definitions f ON f.id = r.flow_definition_id
             WHERE r.app_id = :a AND r.status = 'queued'{$notRunnable}
             ORDER BY r.created_at ASC, r.id ASC
-            LIMIT {$limit}
+            LIMIT {$limit} OFFSET {$offset}
         ");
         $stmt->execute(['a' => $appId] + $params);
         return array_map([$this, 'formatRun'], $stmt->fetchAll());
@@ -3348,6 +3349,9 @@ class FlowService
             FROM app_flow_bindings b
             JOIN flow_definitions f ON f.id = b.flow_definition_id
             WHERE b.form_id = :form AND b.event_name = 'form.submitted' AND b.enabled = 1 AND f.enabled = 1
+              -- A form taken out of an app stops feeding that app's queue, whose members would
+              -- read its answers in the run. The binding stays, for if the form comes back.
+              AND (b.app_id IS NULL OR EXISTS (SELECT 1 FROM app_forms af WHERE af.app_id = b.app_id AND af.form_id = b.form_id))
             ORDER BY b.sort_order ASC, b.created_at ASC, b.id ASC
             LIMIT " . self::MAX_SUBMIT_BINDINGS_PER_SUBMISSION . "
         ");

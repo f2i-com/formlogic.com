@@ -387,6 +387,64 @@ class AppDomainTokenTest extends TestCase
         self::assertNull(self::$domains->getDomain($claim['id'], $squatter['ownerId']));
     }
 
+    public function testWhoeverRunsTheDomainCanTakeItFromAClaimNobodyProved(): void
+    {
+        $squatter = $this->app();
+        $owner = $this->app();
+        $host = 'claimed-' . bin2hex(random_bytes(4)) . '.acme-apps.com';
+        $claim = self::$domains->createDomain($squatter['id'], $squatter['ownerId'], $host);
+        $mysql = (new \ReflectionProperty(AppDomainService::class, 'mysql'))->getValue(self::$domains);
+
+        try {
+            self::$domains->createDomain($owner['id'], $owner['ownerId'], $host);
+            self::fail('a fresh claim holds the name until someone proves theirs');
+        } catch (\InvalidArgumentException $held) {
+            self::assertSame(1, preg_match('/value (fl-domain-claim=[0-9a-f]{32})/', $held->getMessage(), $proof));
+        }
+
+        $dns = new class ($proof[1]) extends AppDomainService {
+            public function __construct(private string $record)
+            {
+            }
+            protected function dnsTxtContains(string $name, string $needle, ?string &$error): bool
+            {
+                return $needle === $this->record;
+            }
+        };
+        (new \ReflectionProperty(AppDomainService::class, 'mysql'))->setValue($dns, $mysql);
+
+        $taken = $dns->createDomain($owner['id'], $owner['ownerId'], $host);
+        self::assertSame($owner['id'], $taken['appId']);
+        self::assertNull(self::$domains->getDomain($claim['id'], $squatter['ownerId']));
+
+        try {
+            $dns->createDomain($squatter['id'], $squatter['ownerId'], $host);
+            self::fail('the record names one account');
+        } catch (\InvalidArgumentException $e) {
+            self::assertStringContainsString('already connected', $e->getMessage());
+        }
+    }
+
+    public function testAProvenDomainIsNotTakenByARecord(): void
+    {
+        $app = $this->app();
+        $host = $this->connected($app);
+        $other = $this->app();
+        $dns = new class extends AppDomainService {
+            public function __construct()
+            {
+            }
+            protected function dnsTxtContains(string $name, string $needle, ?string &$error): bool
+            {
+                return true;
+            }
+        };
+        (new \ReflectionProperty(AppDomainService::class, 'mysql'))->setValue($dns, (new \ReflectionProperty(AppDomainService::class, 'mysql'))->getValue(self::$domains));
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('already connected');
+        $dns->createDomain($other['id'], $other['ownerId'], $host);
+    }
+
     public function testAProvenDomainNeverLapses(): void
     {
         $app = $this->app();

@@ -77,6 +77,30 @@ final class CreateSoftnAppToolTest extends TestCase
         $tools->call('update_native_app_files', ['appId' => 'app-1', 'expectedVersion' => 1, 'files' => ['manifest.json' => '{"config":{"python":{"packages":["torch"]}}}']], new ChatToolsContext('owner', source: 'mcp'));
     }
 
+    public function testAMembersOnlyAppIsNotOpenedFromChatOrWithoutTheRecordsScope(): void
+    {
+        $apps = $this->createMock(AppService::class);
+        $apps->method('getApp')->willReturn(['id' => 'app-1', 'ownerId' => 'owner']);
+        $native = $this->createMock(NativeAppService::class);
+        $native->method('get')->willReturn(['version' => 1, 'files' => [], 'assets' => [], 'access' => 'members']);
+        $native->expects($this->never())->method('install');
+        $tools = new ChatToolsService($this->createMock(FormService::class), $apps, $this->createMock(ResponseService::class), native: $native);
+        $args = ['appId' => 'app-1', 'expectedVersion' => 1, 'project' => ['files' => [], 'access' => 'application']];
+
+        try {
+            $tools->callChatTool('publish_native_app_project', $args, new ChatToolsContext('owner'));
+            $this->fail('chat opened it');
+        } catch (ChatToolDeniedException $e) {
+            $this->assertStringContainsString('members-only', $e->getMessage());
+        }
+
+        $noRecords = new ChatToolsContext('owner', source: 'mcp', requireScope: static function (string $scope): void {
+            if ($scope === 'responses:read') throw new ChatToolDeniedException('Scope denied', 'scope');
+        });
+        $this->expectException(ChatToolDeniedException::class);
+        $tools->call('publish_native_app_project', $args, $noRecords);
+    }
+
     public function testAnAppIsStillReturnedWhenItsStarterCannotBeInstalled(): void
     {
         [$tools] = $this->tools(new \RuntimeException('The native app runtime is not installed on this server.'));

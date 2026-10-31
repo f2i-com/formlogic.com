@@ -295,10 +295,12 @@ class TrashTest extends TestCase
         $this->assertFileExists($native);
         $this->assertFileExists($hosted);
 
+        (new \FormLogic\Services\FlowKvService(self::$mysql))->put($this->userId, $this->app1, 'app', 'count', 7);
         $this->assertTrue($trash->purgeItem($item, $this->userId));
 
         $this->assertFileDoesNotExist($native);
         $this->assertFileDoesNotExist($hosted);
+        $this->assertSame([], (new \FormLogic\Services\FlowKvService(self::$mysql))->list($this->userId, $this->app1), 'nothing could reach it any more');
     }
 
     public function testExpiryAndErasureTakeAnAppsStorageToo(): void

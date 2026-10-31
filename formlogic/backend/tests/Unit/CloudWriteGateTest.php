@@ -39,6 +39,10 @@ class CloudWriteGateTest extends TestCase
             {
                 return $formId === 'F_ACTIVE' ? 'owner-active' : 'owner-expired';
             }
+            public function ownerOfAppSlug(string $slug): ?string
+            {
+                return ['paid' => 'owner-active', 'lapsed' => 'owner-expired'][$slug] ?? null;
+            }
         };
     }
 
@@ -53,6 +57,9 @@ class CloudWriteGateTest extends TestCase
         $app->post('/api/forms/{formId}/responses', $ok)->add($gate);
         $app->get('/api/forms/{formId}/export', $ok)->add($gate);
         $app->post('/api/app/{slug}/forms/{formId}/responses', $ok)->add($gate);
+        $app->post('/api/app/{slug}/sync/batch', $ok)->add($gate);
+        $app->post('/api/apps/invitations/accept', $ok)->add($gate);
+        $app->post('/api/forms', $ok)->add($gate);
 
         $request = (new ServerRequestFactory())->createServerRequest($method, 'http://api.test' . $path);
         if ($actingUser !== null) {
@@ -79,6 +86,19 @@ class CloudWriteGateTest extends TestCase
         // An active member acting on an EXPIRED owner's app form must still be blocked.
         $res = $this->dispatch($this->planStub(true), 'POST', '/api/app/myapp/forms/F_EXPIRED/responses', 'owner-active');
         $this->assertSame(402, $res->getStatusCode());
+    }
+
+    public function testAnAppRouteWithNoFormIsBilledToTheAppsOwner(): void
+    {
+        $this->assertSame(201, $this->dispatch($this->planStub(true), 'POST', '/api/app/paid/sync/batch', 'owner-expired')->getStatusCode(), 'a lapsed member of a paid app');
+        $this->assertSame(402, $this->dispatch($this->planStub(true), 'POST', '/api/app/lapsed/sync/batch', 'owner-active')->getStatusCode(), 'a paying member of a lapsed app');
+        $this->assertSame(402, $this->dispatch($this->planStub(true), 'POST', '/api/app/gone/sync/batch', 'owner-expired')->getStatusCode(), 'no such app: the caller answers for it');
+    }
+
+    public function testAcceptingAnInvitationIsNotAWriteToPayFor(): void
+    {
+        $this->assertSame(201, $this->dispatch($this->planStub(true), 'POST', '/api/apps/invitations/accept', 'owner-expired')->getStatusCode());
+        $this->assertSame(402, $this->dispatch($this->planStub(true), 'POST', '/api/forms', 'owner-expired')->getStatusCode(), 'and their own writes still are');
     }
 
     public function testReadsAllowedEvenWhenOwnerExpired(): void

@@ -121,6 +121,14 @@ class PlanService
         return is_string($owner) && $owner !== '' ? $owner : null;
     }
 
+    public function ownerOfAppSlug(string $slug): ?string
+    {
+        $stmt = $this->mysql->getConnection()->prepare('SELECT owner_id FROM apps WHERE slug = ?');
+        $stmt->execute([$slug]);
+        $owner = $stmt->fetchColumn();
+        return is_string($owner) && $owner !== '' ? $owner : null;
+    }
+
     /** Usage snapshot for the billing UI. */
     public function usage(string $userId): array
     {

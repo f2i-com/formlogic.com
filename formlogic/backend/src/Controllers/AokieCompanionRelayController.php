@@ -452,6 +452,10 @@ final class AokieCompanionRelayController
             $request->getHeaderLine('Last-Event-ID'),
             $request->getQueryParams()['since'] ?? null,
         );
+        $slot = \FormLogic\Support\StreamSlots::take('aokie:' . $identity['appId'] . ':' . $identity['party'], 4);
+        if ($slot === null) {
+            return $this->error($response, 429, 'too_many_streams', 'Too many open streams for this device');
+        }
         $this->emitStream(
             $identity['appId'],
             $identity['party'],

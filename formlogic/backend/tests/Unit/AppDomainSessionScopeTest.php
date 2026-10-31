@@ -54,6 +54,7 @@ final class AppDomainSessionScopeTest extends TestCase
         $sessions = new AppDomainSession(
             fn (string $seen): ?array => $seen === self::HOST ? $this->connected : null,
             fn (string $id): bool => $id === 'sign-in-1' && $this->signedIn,
+            fn (string $appId, string $formId): bool => $formId === 'form-of-the-app',
         );
         $response = (new AuthMiddleware($this->auth(), $optional, 'formlogic_auth', $sessions))->process($request, $handler);
         return [$response->getStatusCode(), $handler->request, json_decode((string) $response->getBody(), true)];
@@ -67,6 +68,15 @@ final class AppDomainSessionScopeTest extends TestCase
             self::assertSame('member-1', $request?->getAttribute('userId'), $path);
             self::assertNotNull($request?->getAttribute(AppDomainSession::ATTRIBUTE), $path);
         }
+    }
+
+    public function testOpensAFileOfItsOwnAppsFormsAndNoOther(): void
+    {
+        [$status, $request] = $this->visit('/api/files/form-of-the-app/file-1/photo.png');
+        self::assertSame(204, $status);
+        self::assertSame('member-1', $request?->getAttribute('userId'));
+        self::assertSame(403, $this->visit('/api/files/some-other-form/file-1/photo.png')[0]);
+        self::assertSame(403, $this->visit('/api/files/form-of-the-app/file-1/photo.png', false, self::HOST, 'DELETE')[0]);
     }
 
     public function testKeepsTheSignedInStateOfTheApp(): void

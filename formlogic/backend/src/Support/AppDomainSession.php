@@ -41,8 +41,9 @@ final class AppDomainSession
     /**
      * @param \Closure(string): ?array{id: string, ownerId?: string, slug: string} $connectedApp the live app of a host
      * @param \Closure(string): bool $openSignIn whether the member is still signed in
+     * @param (\Closure(string, string): bool)|null $appHasForm whether an app holds a form
      */
-    public function __construct(private \Closure $connectedApp, private \Closure $openSignIn)
+    public function __construct(private \Closure $connectedApp, private \Closure $openSignIn, private ?\Closure $appHasForm = null)
     {
     }
 
@@ -66,6 +67,11 @@ final class AppDomainSession
         }
         if ($path === '/api/auth/logout') {
             return $request->getMethod() === 'POST';
+        }
+        // A file of one of this app's forms, which has one address on every host. FileController
+        // applies the member's permissions on the form, as it does anywhere.
+        if ($request->getMethod() === 'GET' && $this->appHasForm !== null && preg_match('~^/api/files/([^/]+)/~D', $path, $file) === 1) {
+            return ($this->appHasForm)($app['id'], $file[1]);
         }
         if (($app['ownerId'] ?? null) === $session['user']->id && preg_match(self::OWNER_DESKTOP, $path) === 1) {
             return false;

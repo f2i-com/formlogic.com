@@ -1285,7 +1285,8 @@ $app->add(function ($request, $handler) use ($oauthPublicPaths) {
 // Create auth middleware instances
 $appDomainSessions = new \FormLogic\Support\AppDomainSession(
     $connectedApp,
-    static fn (string $id): bool => $container->get(\FormLogic\Services\AppDomainSignInService::class)->isLive($id)
+    static fn (string $id): bool => $container->get(\FormLogic\Services\AppDomainSignInService::class)->isLive($id),
+    static fn (string $appId, string $formId): bool => in_array($formId, array_column($container->get(\FormLogic\Services\AppService::class)->getAppForms($appId), 'formId'), true)
 );
 $authRequired = new AuthMiddleware($container->get(AuthService::class), false, $cookieName, $appDomainSessions);
 $authOptional = new AuthMiddleware($container->get(AuthService::class), true, $cookieName, $appDomainSessions);
@@ -3422,9 +3423,11 @@ $app->post('/api/desktop/ai/requests', function ($request, $response) use ($cont
 $app->get('/api/desktop/ai/requests/{id}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->getRequest($request, $response, $getArgs($request));
 })->add($authRequired);
+// A stream holds a PHP worker while it is open: see StreamSlots for the limit on open ones.
+$relayStreamRateLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'relay_stream', true);
 $app->get('/api/desktop/ai/requests/{id}/stream', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->stream($request, $response, $getArgs($request));
-})->add($authRequired);
+})->add($relayStreamRateLimiter)->add($authRequired);
 $app->post('/api/desktop/ai/requests/{id}/input', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->postInput($request, $response, $getArgs($request));
 })->add($desktopAiRateLimiter)->add($authRequired);
@@ -3444,7 +3447,7 @@ $app->get('/api/desktop/flows/runs/{id}', function ($request, $response) use ($c
 })->add($authRequired);
 $app->get('/api/desktop/flows/runs/{id}/stream', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\DesktopFlowRelayController::class)->stream($request, $response, $getArgs($request));
-})->add($authRequired);
+})->add($relayStreamRateLimiter)->add($authRequired);
 $app->post('/api/desktop/flows/runs/{id}/ack', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\DesktopFlowRelayController::class)->acknowledgeResult($request, $response, $getArgs($request));
 })->add($authRequired);
@@ -3669,7 +3672,7 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
     })->add($flowRunRateLimiter)->add($authRequired);
     $group->put('/flow-kv', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\FlowKvController::class)->runtimePut($request, $response, $getArgs($request));
-    })->add($flowRunRateLimiter)->add($authRequired);
+    })->add($cloudWriteGate)->add($flowRunRateLimiter)->add($authRequired);
 
     // Remote command relay (web side): a member enqueues a connector command for the owner's paired
     // desktop runtime (member + connector.<id>.<command> grant gated), and reads the result back.

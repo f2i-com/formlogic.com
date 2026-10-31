@@ -91,6 +91,9 @@ class NativeAppService
     public const RECORD_PAGE = 50;
     public const RECORD_OFFSET_LIMIT = 100000;
 
+    /** The longest a request runs, and so how long an update waits for those already running. */
+    private const UPDATE_WAIT_SECONDS = 30;
+
     /**
      * Environment variables the Node runtime is allowed to inherit from PHP. Everything else
      * (database credentials, API keys, whatever the operator's .env put in the process
@@ -189,17 +192,34 @@ class NativeAppService
     private function sharedLock(string $root)
     {
         $this->directory($root . '/private');
+        $pending = $root . '/private/update.pending';
+        clearstatcache(true, $pending);
+        if (is_file($pending) && (int) filemtime($pending) > time() - self::UPDATE_WAIT_SECONDS) {
+            throw new RuntimeException('The app is being updated. Try again shortly.', 409);
+        }
         $lock = fopen($root . '/private/manage.lock', 'c');
         if (!$lock || !flock($lock, LOCK_SH | LOCK_NB)) { if ($lock) fclose($lock); throw new RuntimeException('The app is being updated. Try again shortly.', 409); }
         return $lock;
     }
 
     /** Exclusive management lock for an install, restore or removal; a 409 when anyone else holds it. */
-    private function exclusiveLock(string $root, string $busy)
+    private function exclusiveLock(string $root, string $busy, bool $wait = false)
     {
         $this->directory($root . '/private');
         $lock = fopen($root . '/private/manage.lock', 'c');
-        if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) { if ($lock) fclose($lock); throw new RuntimeException($busy, 409); }
+        $held = $lock && flock($lock, LOCK_EX | LOCK_NB);
+        if ($lock && !$held && $wait) {
+            // Requests overlap on a busy app, so a holder could always be found: new ones are
+            // turned away (see sharedLock) while the ones running finish. A crash leaves the
+            // marker behind, and it stops counting after the same time.
+            $pending = $root . '/private/update.pending';
+            touch($pending);
+            for ($until = microtime(true) + self::UPDATE_WAIT_SECONDS; !$held && microtime(true) < $until; $held = flock($lock, LOCK_EX | LOCK_NB)) {
+                usleep(100000);
+            }
+            @unlink($pending);
+        }
+        if (!$held) { if ($lock) fclose($lock); throw new RuntimeException($busy, 409); }
         return $lock;
     }
 
@@ -1447,7 +1467,7 @@ class NativeAppService
         $this->directory($root . '/private');
         $this->directory($root . '/private/data');
         $this->beforeLock($root, 'install');
-        $lock = $this->exclusiveLock($root, 'The app is busy. Try again shortly.');
+        $lock = $this->exclusiveLock($root, 'The app is busy. Try again shortly.', true);
         $operation = bin2hex(random_bytes(8));
         $staging = $root . '/staging-' . $operation;
         $configPath = $root . '/private/config.json';

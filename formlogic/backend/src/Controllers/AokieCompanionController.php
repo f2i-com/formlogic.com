@@ -585,18 +585,7 @@ final class AokieCompanionController
             $this->wantsCurrentDeviceRouting($request) ? (string) $device['id'] : null,
         );
         $staff = $this->appUsers?->getAokieCompanionStaff($appId, $userId) ?? [];
-        $history = $this->devices->history($appId, 50);
-        if (!$this->canAudit($userId, $appId)) {
-            $deviceRecordId = (string) $device['id'];
-            $history['activity'] = array_values(array_filter(
-                $history['activity'],
-                static fn (array $row): bool => ($row['deviceId'] ?? null) === $deviceRecordId,
-            ));
-            $history['sessions'] = array_values(array_filter(
-                $history['sessions'],
-                static fn (array $row): bool => ($row['deviceId'] ?? null) === $deviceRecordId,
-            ));
-        }
+        $history = $this->devices->history($appId, 50, null, $this->canAudit($userId, $appId) ? null : (string) $device['id']);
         return $this->jsonResponse($response, [
             'membership' => [
                 'appId' => $appId,
@@ -655,18 +644,8 @@ final class AokieCompanionController
             $identity['appId'],
             is_int($limit) ? $limit : 50,
             is_int($before) ? $before : null,
+            $this->canAudit($identity['userId'], $identity['appId']) ? null : (string) $identity['device']['id'],
         );
-        if (!$this->canAudit($identity['userId'], $identity['appId'])) {
-            $deviceRecordId = (string) $identity['device']['id'];
-            $history['activity'] = array_values(array_filter(
-                $history['activity'],
-                static fn (array $row): bool => ($row['deviceId'] ?? null) === $deviceRecordId,
-            ));
-            $history['sessions'] = array_values(array_filter(
-                $history['sessions'],
-                static fn (array $row): bool => ($row['deviceId'] ?? null) === $deviceRecordId,
-            ));
-        }
         return $this->jsonResponse($response, $history)->withHeader('Cache-Control', 'no-store');
     }
 

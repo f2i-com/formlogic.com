@@ -47,6 +47,7 @@ class DesktopAiRelayService
     public const MAX_IN_FLIGHT_PER_TARGET = 8;
     public const MAX_ENVELOPE_BYTES = 262144;    // 256 KiB sealed request envelope
     public const MAX_FRAME_BYTES = 4194304;      // 4 MiB per sealed frame
+    public const MAX_REQUEST_BYTES = 67108864;   // 64 MiB across one request's frames, each way
     public const MAX_KIND = 32;
     public const MAX_PROVIDER_ID = 128;
     public const MAX_IDEMPOTENCY_KEY = 255;
@@ -71,7 +72,7 @@ class DesktopAiRelayService
 
     private PDO $mysql;
 
-    public function __construct(MySQLConnection $mysql, private readonly float $sweepIntervalSeconds = self::SWEEP_INTERVAL_SECONDS)
+    public function __construct(MySQLConnection $mysql, private readonly float $sweepIntervalSeconds = self::SWEEP_INTERVAL_SECONDS, private readonly int $maxRequestBytes = self::MAX_REQUEST_BYTES)
     {
         $this->mysql = $mysql->getConnection();
     }
@@ -469,6 +470,7 @@ class DesktopAiRelayService
                 $this->mysql->rollBack();
                 throw new \RuntimeException('not_claimed');
             }
+            $this->assertFrameFits($id, 'out', strlen($envelopeBytes));
             $this->mysql->prepare("
                 UPDATE desktop_ai_requests SET status = 'streaming', claimed_at = NOW() WHERE id = :id
             ")->execute(['id' => $id]);
@@ -485,6 +487,20 @@ class DesktopAiRelayService
             throw $e;
         }
         return ['seq' => $seq, 'status' => 'streaming'];
+    }
+
+    /**
+     * Frames are held in MySQL, which every account shares, until the request ends, and a request
+     * that keeps producing never ends by itself. Refusing one leaves claimed_at alone, so a
+     * desktop that goes on past this is reaped as stale.
+     */
+    private function assertFrameFits(string $id, string $direction, int $bytes): void
+    {
+        $held = $this->mysql->prepare('SELECT COALESCE(SUM(LENGTH(envelope)), 0) FROM desktop_ai_frames WHERE request_id = :id AND direction = :d');
+        $held->execute(['id' => $id, 'd' => $direction]);
+        if ((int) $held->fetchColumn() + $bytes > $this->maxRequestBytes) {
+            throw new \InvalidArgumentException('This request has reached its limit of ' . $this->maxRequestBytes . ' bytes');
+        }
     }
 
     /**
@@ -509,6 +525,7 @@ class DesktopAiRelayService
         if (!in_array($existing['status'] ?? '', ['claimed', 'streaming'], true)) {
             throw new \RuntimeException('not_claimed');
         }
+        $this->assertFrameFits($id, 'in', strlen($envelopeBytes));
         $insert = $this->mysql->prepare("
             INSERT INTO desktop_ai_frames (request_id, direction, envelope) VALUES (:id, 'in', :env)
         ");

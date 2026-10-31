@@ -72,8 +72,8 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
     fail('screen-host.html must refuse cross-origin init messages');
   }
   const htaccess = readFileSync(resolve(root, 'public/.htaccess'), 'utf8');
-  if (!/screen-host\\?\.html[\s\S]{0,400}frame-ancestors 'self'/.test(htaccess)) {
-    fail(".htaccess must scope screen-host.html to frame-ancestors 'self' (never *)");
+  if (!/screen-host\\?\.html[\s\S]{0,400}sandbox allow-scripts; frame-ancestors/.test(htaccess)) {
+    fail('.htaccess must send screen-host.html with sandbox allow-scripts: anything may frame it, so it must never run at this origin');
   }
 }
 

@@ -696,4 +696,19 @@ class DesktopAiRelayTest extends TestCase
         $this->assertSame(404, $missing['status']);
         $this->assertSame('desktop_not_linked', $missing['body']['code']);
     }
+
+    public function testARequestsFramesHaveATotalLimit(): void
+    {
+        $relay = new DesktopAiRelayService(self::$mysql, DesktopAiRelayService::SWEEP_INTERVAL_SECONDS, 10);
+        $id = $relay->enqueue($this->ownerId, $this->ownerId, $this->sealedBody())['request']['requestId'];
+        $relay->claim($id, $this->ownerId, ['instanceId' => 'desk-x']);
+        $relay->appendFrame($id, $this->ownerId, base64_encode('12345678'), 'desk-x');
+        try {
+            $relay->appendFrame($id, $this->ownerId, base64_encode('123'), 'desk-x');
+            $this->fail('past the limit');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('limit', $e->getMessage());
+        }
+        $this->assertSame('streaming', $relay->appendFrame($id, $this->ownerId, base64_encode('12'), 'desk-x')['status'], 'what still fits goes in');
+    }
 }

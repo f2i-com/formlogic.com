@@ -677,25 +677,29 @@ final class AokieCompanionDeviceService
     }
 
     /** @return array{activity:list<array<string,mixed>>,sessions:list<array<string,mixed>>} */
-    public function history(string $appId, int $limit = 100, ?int $before = null): array
+    public function history(string $appId, int $limit = 100, ?int $before = null, ?string $deviceId = null): array
     {
         $limit = max(1, min(200, $limit));
         $params = ['app' => $appId];
         $where = '';
+        $ofDevice = $deviceId !== null ? ' AND device_id = :device' : '';
         if ($before !== null) {
             $where = ' AND occurred_at < :before';
             $params['before'] = gmdate('Y-m-d H:i:s', $before);
         }
+        if ($deviceId !== null) {
+            $params['device'] = $deviceId;
+        }
         $stmt = $this->db()->prepare(
             "SELECT * FROM aokie_companion_activity
-             WHERE app_id = :app{$where} ORDER BY occurred_at DESC, id DESC LIMIT {$limit}"
+             WHERE app_id = :app{$where}{$ofDevice} ORDER BY occurred_at DESC, id DESC LIMIT {$limit}"
         );
         $stmt->execute($params);
         $sessions = $this->db()->prepare(
-            'SELECT * FROM aokie_companion_sessions WHERE app_id = :app
-             ORDER BY updated_at DESC, id DESC LIMIT 200'
+            "SELECT * FROM aokie_companion_sessions WHERE app_id = :app{$ofDevice}
+             ORDER BY updated_at DESC, id DESC LIMIT 200"
         );
-        $sessions->execute(['app' => $appId]);
+        $sessions->execute(array_intersect_key($params, ['app' => 1, 'device' => 1]));
         return [
             'activity' => array_map([$this, 'formatActivity'], $stmt->fetchAll(PDO::FETCH_ASSOC)),
             'sessions' => array_map([$this, 'formatSession'], $sessions->fetchAll(PDO::FETCH_ASSOC)),
@@ -800,11 +804,12 @@ final class AokieCompanionDeviceService
             }
             $available = [];
             $old = $pdo->prepare(
-                'SELECT device_id, availability FROM aokie_companion_routing_members WHERE group_id = :group'
+                'SELECT device_id, availability, availability_expires_at, availability_updated_at
+                 FROM aokie_companion_routing_members WHERE group_id = :group'
             );
             $old->execute(['group' => $id]);
             foreach ($old->fetchAll(PDO::FETCH_ASSOC) as $row) {
-                $available[(string) $row['device_id']] = (string) $row['availability'];
+                $available[(string) $row['device_id']] = $row;
             }
             $pdo->prepare('DELETE FROM aokie_companion_routing_members WHERE group_id = :group')
                 ->execute(['group' => $id]);
@@ -814,8 +819,8 @@ final class AokieCompanionDeviceService
             );
             $insert = $pdo->prepare(
                 'INSERT INTO aokie_companion_routing_members
-                    (group_id, device_id, priority_value, enabled, availability)
-                 VALUES (:group, :device, :priority, :enabled, :availability)'
+                    (group_id, device_id, priority_value, enabled, availability, availability_expires_at, availability_updated_at)
+                 VALUES (:group, :device, :priority, :enabled, :availability, :expires, COALESCE(:updated, NOW()))'
             );
             foreach ($normalized as $device => $member) {
                 $check->execute(['device' => $device, 'app' => $appId]);
@@ -827,7 +832,10 @@ final class AokieCompanionDeviceService
                     'device' => $device,
                     'priority' => $member['priority'],
                     'enabled' => $member['enabled'] ? 1 : 0,
-                    'availability' => $available[$device] ?? 'available',
+                    // A busy for half an hour stays one when an admin saves the group.
+                    'availability' => $available[$device]['availability'] ?? 'available',
+                    'expires' => $available[$device]['availability_expires_at'] ?? null,
+                    'updated' => $available[$device]['availability_updated_at'] ?? null,
                 ]);
             }
             $pdo->commit();

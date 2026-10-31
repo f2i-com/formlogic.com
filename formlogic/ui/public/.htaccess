@@ -41,14 +41,13 @@ Options -Indexes
   # Internal SPA rewrites prefix request environment variables with REDIRECT_.
   Header always unset X-Frame-Options env=REDIRECT_IS_FORM_RUNTIME
   Header always set Content-Security-Policy "frame-ancestors *; base-uri 'self'; object-src 'none'" env=REDIRECT_IS_FORM_RUNTIME
-  # The sandboxed custom-screen host is framed SAME-ORIGIN by the app shell
-  # (CustomScreenRuntime.tsx). 'self' — deliberately NOT * — every ancestor must
-  # be our origin: an externally framed, UNsandboxed screen-host that accepted a
-  # hostile init postMessage would document.write attacker script AT THIS ORIGIN.
-  # The host's boot additionally refuses cross-origin init messages.
+  # The custom-screen host is framed by a form, which a customer's page may be framing in turn, and
+  # frame-ancestors looks at every ancestor, so this can't be 'self': custom screens would be blank
+  # in every embed. The document sandboxes itself instead, so nothing that frames it gets this
+  # origin, and its boot takes a screen only from a parent of this origin (check-security-invariants).
   SetEnvIf Request_URI "^/screen-host\.html$" IS_SCREEN_HOST
-  Header always set X-Frame-Options "SAMEORIGIN" env=IS_SCREEN_HOST
-  Header always set Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" env=IS_SCREEN_HOST
+  Header always unset X-Frame-Options env=IS_SCREEN_HOST
+  Header always set Content-Security-Policy "sandbox allow-scripts; frame-ancestors *; base-uri 'self'; object-src 'none'" env=IS_SCREEN_HOST
   # FormLogic embeds its hosted apps and authoring tools from these entry points.
   # Keep the dashboard protected; only these documents accept same-origin frames.
   # host.html is the hosted runtime's SECOND entry document: it serves the host-js

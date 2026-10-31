@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
+use FormLogic\Support\StreamSlots;
 use FormLogic\Services\DesktopAiRelayService;
 use FormLogic\Services\DesktopCommandService;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -28,6 +29,8 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 class DesktopAiRelayController
 {
     use JsonResponseTrait;
+
+    private const STREAMS_PER_ACCOUNT = 8;
 
     /** SSE hard lifetime; the stream then ends cleanly and clients reconnect. */
     public const STREAM_LIFETIME_SECONDS = 300;
@@ -145,6 +148,10 @@ class DesktopAiRelayController
             $request->getHeaderLine('Last-Event-ID'),
             $request->getQueryParams()['since'] ?? null,
         );
+        $slot = StreamSlots::take('relay:' . $row['ownerUserId'], self::STREAMS_PER_ACCOUNT);
+        if ($slot === null) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => 'too_many_streams', 'message' => 'Too many open streams. Close another tab and try again.'], 429);
+        }
         $this->emitStream($row['requestId'], (string) $row['ownerUserId'], $since);
     }
 

@@ -521,6 +521,8 @@ final class TrashService
         $live->execute(['id' => $appId]);
         if ($live->fetchColumn() === false) {
             $this->appStorage->erase($appId);
+            // No foreign key reaches an app here, and with the app gone nothing can reach these.
+            $this->pdo->prepare('DELETE FROM flow_kv WHERE app_id = :id')->execute(['id' => $appId]);
         }
     }
 
