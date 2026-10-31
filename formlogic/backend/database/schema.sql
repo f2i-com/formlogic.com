@@ -324,6 +324,28 @@ CREATE TABLE `app_domains` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `app_domain_sign_ins` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `code_hash` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `host` varchar(253) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `code_expires_at` timestamp NOT NULL,
+  `exchanged_at` timestamp NULL DEFAULT NULL,
+  `session_expires_at` timestamp NULL DEFAULT NULL,
+  `ended_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_app_domain_sign_ins_code` (`code_hash`),
+  KEY `idx_app_domain_sign_ins_user` (`user_id`),
+  KEY `idx_app_domain_sign_ins_app` (`app_id`),
+  KEY `idx_app_domain_sign_ins_session` (`session_expires_at`),
+  CONSTRAINT `app_domain_sign_ins_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `app_domain_sign_ins_ibfk_2` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `app_flow_bindings` (
   `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `app_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,

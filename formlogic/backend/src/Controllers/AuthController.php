@@ -14,6 +14,8 @@ use FormLogic\Helpers\AppUrl;
 use FormLogic\Middleware\CsrfMiddleware;
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Support\AppDomainSession;
+use FormLogic\Support\Environment;
+use FormLogic\Support\SessionOriginPolicy;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
@@ -35,7 +37,7 @@ class AuthController
     private ?ApiKeyService $apiKeyService;
     private ?\FormLogic\Database\MySQLConnection $db;
 
-    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null, string $csrfSecret = '', ?FormService $formService = null, ?AppService $appService = null, ?ApiKeyService $apiKeyService = null, ?\FormLogic\Database\MySQLConnection $db = null, private ?\FormLogic\Services\TrashService $trashService = null, private ?\FormLogic\Services\MfaService $mfaService = null, private ?\FormLogic\Services\AppUserService $appUserService = null)
+    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null, string $csrfSecret = '', ?FormService $formService = null, ?AppService $appService = null, ?ApiKeyService $apiKeyService = null, ?\FormLogic\Database\MySQLConnection $db = null, private ?\FormLogic\Services\TrashService $trashService = null, private ?\FormLogic\Services\MfaService $mfaService = null, private ?\FormLogic\Services\AppUserService $appUserService = null, private ?\FormLogic\Services\AppDomainService $appDomains = null, private ?\FormLogic\Services\AppDomainSignInService $domainSignIns = null)
     {
         $this->db = $db;
         $this->authService = $authService;
@@ -99,13 +101,13 @@ class AuthController
             );
 
             // Set HttpOnly cookie with the token
-            $response = $this->setSessionCookie($request, $response, (string) ($result['user']['id'] ?? ''), $result['token']);
+            $response = $this->setAuthCookie($response, $result['token']);
 
             $this->audit($request, 'auth.register', 'user', $result['user']['id'] ?? null);
 
             // Return user data without token (token is in cookie)
             return $this->jsonResponse($response, [
-                'user' => $this->signedInUser($request, $result['user']),
+                'user' => $result['user'],
             ], 201);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             // Known validation errors - safe to expose
@@ -177,13 +179,13 @@ class AuthController
             }
 
             // Set HttpOnly cookie with the token
-            $response = $this->setSessionCookie($request, $response, $userId, $result['token']);
+            $response = $this->setAuthCookie($response, $result['token']);
 
             $this->audit($request, 'auth.login', 'user', $result['user']['id'] ?? null);
 
             // Return user data without token (token is in cookie)
             return $this->jsonResponse($response, [
-                'user' => $this->signedInUser($request, $result['user']),
+                'user' => $result['user'],
             ]);
         } catch (\FormLogic\Services\RateLimiterUnavailableException $e) {
             // High-risk limiter outage: fail closed with a retryable 503
@@ -684,8 +686,11 @@ class AuthController
         // Another exception: a session on an app's connected domain ends here alone. It is the
         // one session a domain's owner could be holding, and it must not sign the member out
         // of the platform and every other device for them.
-        $domainSession = $request->getAttribute(AppDomainSession::ATTRIBUTE) !== null;
-        if ($userId && !$isDemo && !$domainSession) {
+        $signIn = $request->getAttribute(AppDomainSession::ATTRIBUTE);
+        $domainSession = is_array($signIn);
+        if ($domainSession) {
+            $this->domainSignIns?->end($signIn['signInId']);
+        } elseif ($userId && !$isDemo) {
             $this->authService->revokeTokens($userId);
         }
 
@@ -698,28 +703,50 @@ class AuthController
     }
 
     /**
-     * The cookie a sign-in ends with: the platform session, or on an app's connected domain the
-     * session limited to that app, which also never takes the platform's cookie Domain (a
-     * browser drops a cookie that names another site).
+     * A one-time code for an app's connected domain, for the member signed in here who agreed to
+     * continue there. POST /api/auth/app-domain/code {origin}
      */
-    private function setSessionCookie(Request $request, Response $response, string $userId, string $platformToken): Response
+    public function appDomainCode(Request $request, Response $response): Response
     {
-        $domain = $request->getAttribute(AppDomainSession::SIGN_IN_ATTRIBUTE);
-        if (!is_array($domain)) {
-            return $this->setAuthCookie($response, $platformToken);
+        if ($this->appDomains === null || $this->domainSignIns === null) {
+            return $this->jsonError($response, 'Custom domains are not available', 503);
         }
-        return $this->setAuthCookie($response, $this->authService->issueAppDomainToken($userId, $domain['appId'], $domain['host']), true);
+        if ($blocked = $this->blockIfDemo($request, $response, 'The demo cannot sign in to other sites.')) {
+            return $blocked;
+        }
+        $data = $request->getParsedBody();
+        $origin = SessionOriginPolicy::normalizeOrigin(is_string($data['origin'] ?? null) ? $data['origin'] : '');
+        $host = $origin === null ? null : parse_url($origin, PHP_URL_HOST);
+        $app = is_string($host) ? $this->appDomains->resolveAppSlugByHost($host) : null;
+        $secure = Environment::get('APP_ENV') === 'development' || str_starts_with((string) $origin, 'https://');
+        if ($app === null || !$secure) {
+            return $this->jsonError($response, 'That domain is not connected to an app', 404);
+        }
+        $code = $this->domainSignIns->issueCode((string) $request->getAttribute('userId'), $app['id'], (string) $host);
+        $this->audit($request, 'auth.app_domain.code', 'app', $app['id'], ['host' => $host]);
+        return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), ['code' => $code]);
     }
 
     /**
-     * The user a sign-in answers with, marked when its session is limited to one app.
-     *
-     * @param array<string, mixed> $user
-     * @return array<string, mixed>
+     * The domain's half of the above: its code for a session limited to its app, in a cookie that
+     * never takes the platform's Domain (a browser drops one that names another site). Admitted by
+     * CsrfMiddleware for a connected domain alone. POST /api/auth/app-domain/exchange {code}
      */
-    private function signedInUser(Request $request, array $user): array
+    public function appDomainExchange(Request $request, Response $response): Response
     {
-        return $request->getAttribute(AppDomainSession::SIGN_IN_ATTRIBUTE) !== null ? $user + ['domainSession' => true] : $user;
+        $domain = $request->getAttribute(AppDomainSession::SIGN_IN_ATTRIBUTE);
+        $data = $request->getParsedBody();
+        $code = is_string($data['code'] ?? null) ? $data['code'] : '';
+        $signIn = is_array($domain) && $code !== ''
+            ? $this->domainSignIns?->exchange($code, $domain['appId'], $domain['host'], $this->jwtExpiry)
+            : null;
+        $user = $signIn !== null ? $this->authService->getUserById($signIn['userId']) : null;
+        if ($user === null) {
+            return $this->jsonError($response, 'This sign-in has expired. Please try again.', 400);
+        }
+        $response = $this->setAuthCookie($response, $this->authService->issueAppDomainToken($user->id, $domain['appId'], $domain['host'], $signIn['id']), true);
+        $this->audit($request, 'auth.app_domain.signed_in', 'app', $domain['appId'], ['host' => $domain['host'], 'userId' => $user->id]);
+        return $this->jsonResponse($response, ['user' => $this->authService->userPayload($user) + ['domainSession' => true]]);
     }
 
     /**
@@ -881,16 +908,14 @@ class AuthController
             return $this->jsonError($response, 'Your sign-in expired — enter your password again', 401);
         }
 
-        $response = $this->setSessionCookie($request, $response, $user->id, $this->authService->issueToken($user));
-        // A trusted-browser token skips the code on the platform too, so it never rests on a
-        // host its owner can repoint.
-        $remember = !empty($data['rememberBrowser']) && $request->getAttribute(AppDomainSession::SIGN_IN_ATTRIBUTE) === null;
+        $response = $this->setAuthCookie($response, $this->authService->issueToken($user));
+        $remember = !empty($data['rememberBrowser']);
         if ($remember) {
             $trustToken = $this->mfaService->mintTrust($user->id, $request->getHeaderLine('User-Agent'));
             $response = $this->setMfaTrustCookie($response, $trustToken);
         }
         $this->audit($request, 'auth.login', 'user', $user->id, ['mfa' => true, 'rememberedBrowser' => $remember]);
-        return $this->jsonResponse($response, ['user' => $this->signedInUser($request, $this->authService->userPayload($user))]);
+        return $this->jsonResponse($response, ['user' => $this->authService->userPayload($user)]);
     }
 
     /** Settings payload: enabled/pending state, recovery-code count, trusted browsers. GET /api/auth/mfa */

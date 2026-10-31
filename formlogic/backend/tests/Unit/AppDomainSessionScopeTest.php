@@ -16,17 +16,17 @@ use Slim\Psr7\Factory\ServerRequestFactory;
 use Slim\Psr7\Response;
 
 /**
- * A session from a sign-in on an app's connected domain, which that domain's owner could be
- * holding: it opens that app on that host, while the domain is still connected to it, and
+ * The session an app's connected domain holds, which that domain's owner could be holding: it opens that app on that host, while the domain is still connected to it, and
  * nothing else. The refusals are the point of these tests.
  */
 final class AppDomainSessionScopeTest extends TestCase
 {
     private const HOST = 'shop.acme.com';
-    private const SESSION = ['appId' => 'app-1', 'host' => self::HOST];
+    private const SESSION = ['appId' => 'app-1', 'host' => self::HOST, 'signInId' => 'sign-in-1'];
 
     /** @var array{id: string, slug: string}|null */
     private ?array $connected = ['id' => 'app-1', 'slug' => 'shop'];
+    private bool $signedIn = true;
 
     private function auth(): AuthService
     {
@@ -51,7 +51,10 @@ final class AppDomainSessionScopeTest extends TestCase
         $request = (new ServerRequestFactory())->createServerRequest($method, 'https://' . $host . $path)
             ->withHeader('Host', $host)
             ->withHeader('Authorization', 'Bearer scoped-sentinel');
-        $sessions = new AppDomainSession(fn (string $seen): ?array => $seen === self::HOST ? $this->connected : null);
+        $sessions = new AppDomainSession(
+            fn (string $seen): ?array => $seen === self::HOST ? $this->connected : null,
+            fn (string $id): bool => $id === 'sign-in-1' && $this->signedIn,
+        );
         $response = (new AuthMiddleware($this->auth(), $optional, 'formlogic_auth', $sessions))->process($request, $handler);
         return [$response->getStatusCode(), $handler->request, json_decode((string) $response->getBody(), true)];
     }
@@ -123,6 +126,14 @@ final class AppDomainSessionScopeTest extends TestCase
     public function testEndsWhenTheDomainIsDisconnected(): void
     {
         $this->connected = null;
+        foreach (['/api/app/shop/native', '/api/auth/me'] as $path) {
+            self::assertSame(403, $this->visit($path)[0], $path);
+        }
+    }
+
+    public function testEndsWhenTheMemberLeaves(): void
+    {
+        $this->signedIn = false;
         foreach (['/api/app/shop/native', '/api/auth/me'] as $path) {
             self::assertSame(403, $this->visit($path)[0], $path);
         }

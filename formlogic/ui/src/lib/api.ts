@@ -2171,6 +2171,16 @@ class ApiClient {
     });
   }
 
+  /** A one-time code for an app's own domain, for the member signed in here (see domainSignIn). */
+  async createAppDomainCode(origin: string): Promise<ApiResponse<{ code: string }>> {
+    return this.request('/auth/app-domain/code', { method: 'POST', body: JSON.stringify({ origin }) });
+  }
+
+  /** The domain's half: spends the code for a session limited to this app, set as a cookie. */
+  async exchangeAppDomainCode(code: string): Promise<ApiResponse<{ user: { id: string } }>> {
+    return this.request('/auth/app-domain/exchange', { method: 'POST', body: JSON.stringify({ code }) });
+  }
+
   // Custom domains (owner-gated)
   async getAppDomains(appId: string): Promise<ApiResponse<{ domains: AppDomain[] }>> {
     if (this._demoMode && isDemoLocalId(appId)) return { data: { domains: [] } };

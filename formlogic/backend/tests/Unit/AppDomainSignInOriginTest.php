@@ -15,14 +15,18 @@ use Slim\Psr7\Factory\ServerRequestFactory;
 use Slim\Psr7\Response;
 
 /**
- * Who may sign in from an app's connected domain, which is on no configured list. The list itself
- * must not change: SessionOriginPolicyTest pins it.
+ * What an app's connected domain may do about sessions, being on no configured list: spend a code
+ * from the platform, and nothing else. The list itself must not change: SessionOriginPolicyTest
+ * pins it.
  */
 final class AppDomainSignInOriginTest extends TestCase
 {
     private const SECRET = 'inert-csrf-unit-context';
     private const PLATFORM = 'https://formlogic.example';
     private const DOMAIN = 'https://shop.acme.com';
+    private const EXCHANGE = '/api/auth/app-domain/exchange';
+    /** Connected, then unpublished or taken offline: proven, but not live. */
+    private const DARK = 'https://dark.acme.com';
 
     /** @return array{int, mixed} status, and the sign-in attribute the handler saw */
     private function guard(ServerRequestInterface $request, bool $httpsOnly = true, array $listed = [self::PLATFORM]): array
@@ -36,12 +40,13 @@ final class AppDomainSignInOriginTest extends TestCase
             }
         };
         $connected = static fn (string $host): ?array => $host === 'shop.acme.com' ? ['appId' => 'app-1', 'host' => $host] : null;
-        $middleware = new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', 'formlogic_auth', self::SECRET, $listed, $connected, $httpsOnly);
+        $proven = static fn (string $host): bool => in_array($host, ['shop.acme.com', 'dark.acme.com'], true);
+        $middleware = new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', 'formlogic_auth', self::SECRET, $listed, $connected, $httpsOnly, $proven);
         $response = $middleware->process($request, $handler);
         return [$response->getStatusCode(), $handler->request?->getAttribute(AppDomainSession::SIGN_IN_ATTRIBUTE)];
     }
 
-    private function signIn(string $origin, string $host = 'shop.acme.com', string $path = '/api/auth/login', ?string $site = 'same-origin'): ServerRequestInterface
+    private function signIn(string $origin, string $host = 'shop.acme.com', string $path = self::EXCHANGE, ?string $site = 'same-origin'): ServerRequestInterface
     {
         $request = (new ServerRequestFactory())->createServerRequest('POST', 'https://' . $host . $path)
             ->withHeader('Host', $host)
@@ -50,29 +55,49 @@ final class AppDomainSignInOriginTest extends TestCase
         return $site === null ? $request : $request->withHeader('Sec-Fetch-Site', $site);
     }
 
-    public function testAConnectedDomainSignsInToItsAppAlone(): void
+    public function testAConnectedDomainSpendsItsCodeForItsAppAlone(): void
     {
-        foreach (['/api/auth/login', '/api/auth/register', '/api/auth/mfa/verify'] as $path) {
-            self::assertSame([204, ['appId' => 'app-1', 'host' => 'shop.acme.com']], $this->guard($this->signIn(self::DOMAIN, path: $path)), $path);
+        self::assertSame([204, ['appId' => 'app-1', 'host' => 'shop.acme.com']], $this->guard($this->signIn(self::DOMAIN)));
+    }
+
+    public function testNoPasswordIsTakenOnAConnectedDomain(): void
+    {
+        foreach (['/api/auth/login', '/api/auth/register', '/api/auth/mfa/verify', '/api/demo/start'] as $path) {
+            self::assertSame([403, null], $this->guard($this->signIn(self::DOMAIN, path: $path)), $path);
         }
     }
 
     public function testTheConfiguredOriginStaysAPlatformSignIn(): void
     {
-        self::assertSame([204, null], $this->guard($this->signIn(self::PLATFORM, 'formlogic.example')));
+        self::assertSame([204, null], $this->guard($this->signIn(self::PLATFORM, 'formlogic.example', '/api/auth/login')));
     }
 
-    public function testListingAConnectedDomainGivesItNoPlatformSession(): void
+    public function testThePlatformSpendsNoCodes(): void
     {
-        // Listing one was the only way to sign in on it before: such a server must not go on.
-        $listed = [self::PLATFORM, self::DOMAIN];
-        self::assertSame([204, ['appId' => 'app-1', 'host' => 'shop.acme.com']], $this->guard($this->signIn(self::DOMAIN), true, $listed));
-        self::assertSame(403, $this->guard($this->signIn(self::DOMAIN, path: '/api/demo/start'), true, $listed)[0]);
+        self::assertSame([403, null], $this->guard($this->signIn(self::PLATFORM, 'formlogic.example')));
+    }
+
+    public function testListingADomainGivesItNoPlatformSession(): void
+    {
+        // Listing one was the only way to sign in on it before: such a server must not go on, live
+        // or not. Unpublishing the app must not turn the listing back into a platform sign-in.
+        $listed = [self::PLATFORM, self::DOMAIN, self::DARK];
+        foreach ([self::DOMAIN, self::DARK] as $origin) {
+            $host = (string) parse_url($origin, PHP_URL_HOST);
+            foreach (['/api/auth/login', '/api/auth/register', '/api/auth/mfa/verify', '/api/demo/start'] as $path) {
+                self::assertSame([403, null], $this->guard($this->signIn($origin, $host, $path), true, $listed), $origin . $path);
+                // A page there, posting across to the platform's own name.
+                self::assertSame([403, null], $this->guard($this->signIn($origin, 'formlogic.example', $path, 'cross-site'), true, $listed), $origin . $path);
+            }
+        }
+        // A listed origin no owner has proven is still the operator's to trust.
+        self::assertSame([204, null], $this->guard($this->signIn('https://staff.acme.com', 'staff.acme.com', '/api/auth/login'), true, [self::PLATFORM, 'https://staff.acme.com']));
     }
 
     public function testAHostThatIsNotConnectedIsRefused(): void
     {
         self::assertSame(403, $this->guard($this->signIn('https://other.acme.com', 'other.acme.com'))[0]);
+        self::assertSame(403, $this->guard($this->signIn(self::DARK, 'dark.acme.com'))[0], 'proven, but not live');
     }
 
     public function testTheOriginMustBeTheHostTheRequestReached(): void
@@ -105,19 +130,15 @@ final class AppDomainSignInOriginTest extends TestCase
 
     public function testNoOriginIsRefused(): void
     {
-        $request = (new ServerRequestFactory())->createServerRequest('POST', self::DOMAIN . '/api/auth/login')
+        $request = (new ServerRequestFactory())->createServerRequest('POST', self::DOMAIN . self::EXCHANGE)
             ->withHeader('Host', 'shop.acme.com')->withHeader('Content-Type', 'application/json');
         self::assertSame(403, $this->guard($request)[0]);
     }
 
-    public function testTheDemoNeverStartsOnADomain(): void
-    {
-        self::assertSame(403, $this->guard($this->signIn(self::DOMAIN, path: '/api/demo/start'))[0]);
-    }
-
     public function testAnEncodedRouteIsJudgedAsTheRouterMatchesIt(): void
     {
-        self::assertSame(403, $this->guard($this->signIn(self::DOMAIN, path: '/api/demo/star%74'))[0]);
+        self::assertSame(403, $this->guard($this->signIn(self::DOMAIN, path: '/api/auth/logi%6E'))[0]);
+        self::assertSame([204, ['appId' => 'app-1', 'host' => 'shop.acme.com']], $this->guard($this->signIn(self::DOMAIN, path: '/api/auth/app-domain/exchang%65')));
     }
 
     public function testADefaultPortIsTheSameHost(): void

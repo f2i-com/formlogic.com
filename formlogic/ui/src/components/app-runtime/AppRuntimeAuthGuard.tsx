@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useContext, useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { useAuthStore } from '../../stores/authStore';
 import { api } from '../../lib/api';
 import { usePublicConfig } from '../../hooks/usePublicConfig';
+import { DomainSignInContext, startDomainSignIn } from '../../lib/domainSignIn';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { PasswordInput } from '../ui/PasswordInput';
@@ -18,6 +19,7 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
   const { user, login, isLoading: authLoading } = useAuthStore();
   const location = useLocation();
   const { supportEmail } = usePublicConfig();
+  const signInAt = useContext(DomainSignInContext);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -99,6 +101,12 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
               <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">Please log in to access this app</p>
             </div>
 
+            {signInAt ? (
+              <div className="space-y-3">
+                <Button className="w-full" onClick={() => startDomainSignIn(signInAt, 'login', location.pathname + location.search)}>Sign in</Button>
+                <Button className="w-full" variant="outline" onClick={() => startDomainSignIn(signInAt, 'signup', location.pathname + location.search)}>Create an account</Button>
+              </div>
+            ) : (<>
             <form onSubmit={handleLogin} className="space-y-4">
               {loginError && (
                 <div role="alert" className="flex items-center gap-2 p-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-xl border border-red-200 dark:border-red-500/20">
@@ -149,6 +157,7 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
               </Link>
               {' '}&mdash; you'll come back to this app after signing up.
             </p>
+            </>)}
 
             <p className="mt-4 text-center text-sm text-gray-500 dark:text-slate-500">
               <a href="/" className="text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white">

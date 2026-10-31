@@ -160,7 +160,9 @@ class AppDomainController
         if (!$config) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Domain not connected'], 404);
         }
-        return $this->jsonResponse($response, $config);
+        // Where a sign-in happens: never on the domain (AppDomainSignInService).
+        $site = Environment::nonEmpty('APP_URL');
+        return $this->jsonResponse($response, $config + ['platformUrl' => $site === null ? null : rtrim($site, '/')]);
     }
 
     /**

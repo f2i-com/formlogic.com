@@ -396,21 +396,23 @@ class AuthService
     }
 
     /**
-     * A session a sign-in on an app's connected domain received: the same checks, but only ever
-     * this audience. Every other caller goes through validateToken(), which refuses it, so a
-     * route is closed to these sessions unless AppDomainSession admits it.
+     * A session an app's connected domain holds: the same checks, but only ever this audience.
+     * Every other caller goes through validateToken(), which refuses it, so a route is closed to
+     * these sessions unless AppDomainSession admits it.
      *
-     * @return array{user: User, appId: string, host: string}|null
+     * @return array{user: User, appId: string, host: string, signInId: string}|null
      */
     public function validateAppDomainToken(string $token): ?array
     {
         $session = $this->sessionFrom($token, AppDomainSession::AUDIENCE);
         $appId = $session['claims']->app ?? null;
         $host = $session['claims']->host ?? null;
-        if ($session === null || !is_string($appId) || $appId === '' || !is_string($host) || $host === '') {
+        $signInId = $session['claims']->sid ?? null;
+        if ($session === null || !is_string($appId) || $appId === '' || !is_string($host) || $host === ''
+            || !is_string($signInId) || $signInId === '') {
             return null;
         }
-        return ['user' => $session['user'], 'appId' => $appId, 'host' => $host];
+        return ['user' => $session['user'], 'appId' => $appId, 'host' => $host, 'signInId' => $signInId];
     }
 
     /** @return array{user: User, claims: object}|null */
@@ -933,8 +935,8 @@ class AuthService
         return $this->generateToken($user);
     }
 
-    /** The session of a sign-in on an app's connected domain: see AppDomainSession. */
-    public function issueAppDomainToken(string $userId, string $appId, string $host): string
+    /** The session an app's connected domain gets for a code: see AppDomainSession. */
+    public function issueAppDomainToken(string $userId, string $appId, string $host, string $signInId): string
     {
         $now = time();
         return JWT::encode([
@@ -943,6 +945,7 @@ class AuthService
             'sub' => $userId,
             'app' => $appId,
             'host' => $host,
+            'sid' => $signInId,
             'iat' => $now,
             'nbf' => $now,
             'exp' => $now + $this->jwtConfig['expiry'],

@@ -2168,6 +2168,27 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // A sign-in to an app on its own domain: the one-time code the platform gives the domain,
+        // then the session it opened, so that leaving ends that session (AppDomainSignInService).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_domain_sign_ins (
+                id VARCHAR(36) NOT NULL PRIMARY KEY,
+                code_hash CHAR(64) NOT NULL,
+                user_id VARCHAR(36) NOT NULL,
+                app_id VARCHAR(36) NOT NULL,
+                host VARCHAR(253) NOT NULL,
+                created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+                code_expires_at TIMESTAMP NOT NULL,
+                exchanged_at TIMESTAMP NULL DEFAULT NULL,
+                session_expires_at TIMESTAMP NULL DEFAULT NULL,
+                ended_at TIMESTAMP NULL DEFAULT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                UNIQUE KEY idx_app_domain_sign_ins_code (code_hash),
+                INDEX idx_app_domain_sign_ins_session (session_expires_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Create rate_limits table for persistent rate limiting / login throttling (R1).
         // Without this on the runtime path, RateLimiter fails open and throttling is a no-op.
         $pdo->exec("

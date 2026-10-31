@@ -93,6 +93,7 @@ const FormResponse = lazyWithRetry(() => import('./pages/FormResponse'));
 const FormResponses = lazyWithRetry(() => import('./pages/FormResponses'));
 const FormResponseView = lazyWithRetry(() => import('./pages/FormResponseView'));
 const Login = lazyWithRetry(() => import('./pages/Login').then(m => ({ default: m.Login })));
+const AppDomainSignIn = lazyWithRetry(() => import('./pages/AppDomainSignIn').then(m => ({ default: m.AppDomainSignIn })));
 const Signup = lazyWithRetry(() => import('./pages/Signup').then(m => ({ default: m.Signup })));
 
 // Lazy load app admin pages
@@ -301,6 +302,8 @@ function AppRoutes() {
         <Route path="/accept-invite" element={<AcceptInvite />} />
         {/* OAuth consent for external AI connectors (sends signed-out visitors through login) */}
         <Route path="/oauth/authorize" element={<OAuthAuthorize />} />
+        {/* Signing in to an app on its own domain (the same way through login) */}
+        <Route path="/sign-in/domain" element={<AppDomainSignIn />} />
         {/* Public form response route - accessible without auth */}
         <Route path="/form/:formId" element={<FormResponse />} />
         {/* Pack marketplace (public) */}
@@ -476,6 +479,8 @@ function AppRoutes() {
       <Route path="/accept-invite" element={<AcceptInvite />} />
       {/* OAuth consent for external AI connectors (full screen, no shell) */}
       <Route path="/oauth/authorize" element={<OAuthAuthorize />} />
+      {/* Continuing to an app on its own domain (full screen, no shell) */}
+      <Route path="/sign-in/domain" element={<AppDomainSignIn />} />
       {/* Logged-in users shouldn't reach password reset; send them home */}
       <Route path="/forgot-password" element={<Navigate to="/" replace />} />
       <Route path="/reset-password" element={<Navigate to="/" replace />} />

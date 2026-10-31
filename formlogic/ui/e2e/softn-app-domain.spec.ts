@@ -78,7 +78,7 @@ async function connectDomain(page: Page, appId: string, domain: string) {
   await expect(page.getByText('Connected', { exact: true })).toBeVisible();
 }
 
-test('a SoftN app runs full screen on its own domain, and a sign-in there opens that app alone', async ({ page, context, browser }) => {
+test('a SoftN app runs full screen on its own domain, and a sign-in for it opens that app alone', async ({ page, context, browser }) => {
   test.setTimeout(240_000);
   const owner = `domain-owner-${RUN}@e2e-apps.com`;
   await signInOnPlatform(context.request, owner);
@@ -95,11 +95,18 @@ test('a SoftN app runs full screen on its own domain, and a sign-in there opens 
   await home.goto(`${site(MEMBERS_DOMAIN)}/`);
   await expect(home.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible();
   expect(new URL(home.url()).pathname).toBe('/');
+  // Nothing on the domain takes a password: the browser would offer it to the next server there.
+  await expect(home.locator('input[type="password"]')).toHaveCount(0);
+  for (const path of ['/api/auth/login', '/api/auth/register', '/api/auth/mfa/verify']) {
+    const refused = await home.evaluate(url => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"email":"a@e2e-apps.com","password":"x"}' }).then(response => response.status), path);
+    expect(refused, path).toBe(403);
+  }
+  refused.length = 0;
 
-  // A new visitor makes an account here and joins, and never leaves the domain.
+  // A new visitor makes an account on FormLogic and comes back with this app alone.
   const member = `domain-member-${RUN}@e2e-apps.com`;
-  await home.getByRole('link', { name: 'Create an account' }).click();
-  await expect(home).toHaveURL(/\/signup/);
+  await home.getByRole('button', { name: 'Create an account' }).click();
+  await expect(home).toHaveURL(new RegExp(`^${E2E_FRONTEND_BASE_URL}/signup`));
   await home.getByLabel(/name/i).first().fill('Domain member');
   await home.getByLabel(/email/i).first().fill(member);
   await home.getByLabel(/password/i).first().fill(PASSWORD);
@@ -108,9 +115,14 @@ test('a SoftN app runs full screen on its own domain, and a sign-in there opens 
   const terms = home.getByRole('checkbox');
   if (await terms.count()) await terms.first().check();
   await home.getByRole('button', { name: /create|sign up/i }).first().click();
+  // Which site is asking is said before it gets anything.
+  await expect(home.getByRole('heading', { name: `Continue to domain-members-${RUN}` })).toBeVisible({ timeout: 30_000 });
+  await expect(home.getByText(MEMBERS_DOMAIN, { exact: true })).toBeVisible();
+  await home.getByRole('button', { name: 'Continue' }).click();
   await expect(home.getByRole('button', { name: 'Join app' })).toBeVisible({ timeout: 30_000 });
   expect(new URL(home.url()).host).toBe(`${MEMBERS_DOMAIN}:${PORT}`);
   expect(new URL(home.url()).pathname).toBe('/');
+  expect(new URL(home.url()).hash).toBe('');
   await home.getByRole('button', { name: 'Join app' }).click();
 
   const frame = home.frameLocator(FRAME);
@@ -140,7 +152,6 @@ test('a SoftN app runs full screen on its own domain, and a sign-in there opens 
   const cookies = await visitor.cookies(site(MEMBERS_DOMAIN));
   const auth = cookies.find(cookie => cookie.name === 'formlogic_auth')!;
   expect(auth.domain).toBe(MEMBERS_DOMAIN);
-  expect(await visitor.cookies(E2E_FRONTEND_BASE_URL)).toEqual([]);
 
   // What a domain's owner could collect by repointing the name opens nothing of the account.
   const stolen = { Authorization: `Bearer ${decodeURIComponent(auth.value)}` };
@@ -176,12 +187,22 @@ test('a SoftN app runs full screen on its own domain, and a sign-in there opens 
   await home.goto(`${site(MEMBERS_DOMAIN)}/`);
   await expect(home.frameLocator(FRAME).getByText('Domain app is running')).toBeVisible({ timeout: 60_000 });
 
-  // An explicit sign-in works too, and the owner gets the same limit.
+  // Leaving ends the session itself: what was collected before stops working.
+  const leaving = await home.evaluate(csrf => fetch('/api/auth/logout', { method: 'POST', headers: { 'X-CSRF-Token': csrf } }).then(response => response.status), (await visitor.cookies(site(MEMBERS_DOMAIN))).find(cookie => cookie.name === 'formlogic_csrf')!.value);
+  expect(leaving).toBe(200);
+  const afterLeaving = await browser.newContext();
+  expect((await afterLeaving.request.get(`${E2E_FRONTEND_BASE_URL}/api/app/${app.slug}/native`, { headers: { ...stolen, Host: asDomain(MEMBERS_DOMAIN).Host } })).status()).toBe(403);
+  await afterLeaving.close();
+
+  // An explicit sign-in goes the same way, and the owner gets the same limit.
   await visitor.clearCookies();
   await home.goto(`${site(MEMBERS_DOMAIN)}/`);
+  await home.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(home).toHaveURL(new RegExp(`^${E2E_FRONTEND_BASE_URL}/login`));
   await home.getByLabel('Email').fill(owner);
   await home.getByRole('textbox', { name: 'Password' }).fill(PASSWORD);
   await home.getByRole('button', { name: 'Sign In' }).click();
+  await home.getByRole('button', { name: 'Continue' }).click();
   await expect(home.frameLocator(FRAME).getByText('Domain app is running')).toBeVisible({ timeout: 60_000 });
   const ownerCookie = (await visitor.cookies(site(MEMBERS_DOMAIN))).find(cookie => cookie.name === 'formlogic_auth')!;
   const ownerToken = { Authorization: `Bearer ${decodeURIComponent(ownerCookie.value)}` };

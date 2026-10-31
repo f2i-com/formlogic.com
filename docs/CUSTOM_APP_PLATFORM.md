@@ -904,41 +904,54 @@ The same SPA loads on every domain. `RootGate` in `App.tsx` sends any host that 
 through `DomainLaunchRouter`, which asks the server what the host is:
 
 - **A connected domain of a SoftN app:** the app is the site. It runs at every path, so no platform
-  page shows on the domain, except the account pages a visitor needs (`/login`, `/signup`, password
-  reset, `/accept-invite`, `/privacy`, `/terms`). In `launch_page` mode the root shows the launch page.
+  page shows on the domain but `/privacy` and `/terms`. In `launch_page` mode the root shows the
+  launch page.
 - **A connected domain of any other app:** the root shows the launch page or redirects, and deeper
   paths (`/app/:slug`, `/form/:id`) render the normal app.
+- **On any connected domain,** `/login`, `/signup`, password reset and `/accept-invite` leave for
+  FormLogic's own address, and `/sign-in/complete` finishes the way back (see below).
 - **A host the server doesn't know:** its root says the domain isn't connected, and every other path
   renders the normal app, because it may be a self-hosted FormLogic built without `VITE_PUBLIC_DOMAIN`.
 
 A `?__flhost=<domain>` **dev override** previews a connected domain on a local host (`localhost`,
 `127.0.0.1`, `*.local`) without DNS. It works nowhere else: a link must not open somebody's app at
-the site's root. It cannot show sign-in on a domain, which needs the real hostname:
+the site's root. It cannot show signing in to a domain, which needs the real hostname:
 `e2e/softn-app-domain.spec.ts` maps names to the test server with Chromium's `--host-resolver-rules`.
 
-### Signing in on a domain
+### Signing in to an app on its domain
 
-A sign-in on a connected domain gets a session for that one app, never a platform session. Whoever
-owns a domain controls where its name points, so a platform cookie on it could be collected by
-repointing the name and replayed as a Bearer token: every member's whole account, for any app owner
-who wanted it. `Support/AppDomainSession.php` explains the rest; in short:
+Nobody signs in on a domain. Whoever owns a domain controls where its name points, which gives them
+two things to collect by repointing it: a platform cookie, which replays as a Bearer token, and the
+password itself, which a browser saves for that origin and offers to whatever answers there next,
+and which a copy of the page can relay to the platform with any `Origin` it likes. Either is every
+member's whole account, for any app owner who wanted it. So a domain sends its visitors to FormLogic
+and gets back a one-time code for a session limited to its app. `Support/AppDomainSession.php` and
+`Services/AppDomainSignInService.php` explain the rest; in short:
 
-- **Who may sign in.** `CsrfMiddleware` admits a sign-in whose `Origin` names the host the request
-  reached, with Fetch Metadata that agrees, over HTTPS outside development, when that host is a
-  connected domain of a published app. It asks that first, so listing a connected domain in
-  `CORS_ALLOWED_ORIGINS` gives it no platform session. Any other host needs a configured origin, as
-  ever. The shared demo never starts on a domain.
-- **What it can do.** The token has its own audience, so `validateToken()`, and with it every platform
+- **The round trip.** The domain's Sign in goes to `APP_URL/sign-in/domain` with its origin and a
+  random `state` kept in that tab. There the member signs in as usual, MFA included, and is told
+  which site is asking. Continue asks `POST /api/auth/app-domain/code`, which refuses anything but a
+  connected domain of a published app (and plain HTTP outside development), and returns to
+  `<domain>/sign-in/complete#code=…&state=…`. The page there checks the state, so a link holding
+  someone else's code signs nobody in, and spends the code at `POST /api/auth/app-domain/exchange`.
+  A code lasts a minute, works once on that host for that app, and is stored only as a hash.
+- **What a domain may post.** `CsrfMiddleware` admits the exchange alone, for an `Origin` naming the
+  host the request reached with Fetch Metadata that agrees, over HTTPS outside development, when that
+  host is a connected domain of a published app. `/api/auth/login`, `register`, `mfa/verify` and
+  `/api/demo/start` are refused from any host an owner has ever proven, live or not, asked before
+  the configured origins, so a domain listed in `CORS_ALLOWED_ORIGINS` gets no platform session even
+  after its app is unpublished. Pending claims don't count: anyone could squat a name to refuse
+  sign-in on it.
+- **What the session can do.** The token has its own audience, so `validateToken()`, and with it every platform
   route, refuses it. `AuthMiddleware` accepts it only on that host, for `/api/app/<that app>/…`,
   `GET /api/auth/me` and `POST /api/auth/logout`, while the domain stays connected. By method:
   `PUT` and `DELETE` on `/api/auth/me` change and erase the account. A refusal is a 403 with the
   code `app_domain_session_scope`, because a 401 would sign the visitor out of the app.
-- **What it never carries.** The cookies are host-only, ignoring `COOKIE_DOMAIN`, and no trusted-browser
-  token is set, since one would skip the code on the platform too. Leaving a domain ends that session
-  alone: it is the one session a domain's owner could be holding, and it must not sign the member out
-  everywhere for them.
+- **What it never carries.** The cookies are host-only, ignoring `COOKIE_DOMAIN`. Leaving a domain
+  ends that session, on the server too (each sign-in is a row), and that session alone: it is the
+  one a domain's owner could be holding, and it must not sign the member out everywhere for them.
 - **What stays the member's.** Their account is the same one, so changing a password ends these
-  sessions too. Account settings are on the platform, and a password reset's link goes there.
+  sessions too. Account settings are on the platform, and so is everything that takes a password.
 
 Browser storage belongs to an origin, so what an app keeps in the browser on its domain is separate
 from what it keeps at `/app/<slug>` on the platform. Moving an app to a domain does not bring that
@@ -948,6 +961,10 @@ data along; records in its server database are the same everywhere.
 
 The panel can only prove ownership. Traffic for the domain still has to reach this server:
 
+- **`APP_URL` must be set.** Sign-ins go there, and without it an emailed reset link takes its address
+  from the request's `Origin`. Connecting a domain is refused until it is.
+- **A domain must not stay in `CORS_ALLOWED_ORIGINS`.** Connecting it is enough; once its row is
+  deleted, a listed host is simply one this server was told to trust with platform sessions.
 - **The site must answer for any hostname:** the default virtual host, or `ServerAlias *`, with the
   bundled `./api`. A split deployment (API on another domain) is not supported for custom domains,
   since sign-in would need third-party cookies.

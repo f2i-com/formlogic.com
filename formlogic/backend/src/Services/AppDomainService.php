@@ -433,6 +433,18 @@ class AppDomainService
         ];
     }
 
+    /**
+     * Whether some app's owner has proven this host, at any point: a lapsed or unpublished domain
+     * is still a name they can point elsewhere. Pending claims don't count, or anyone could
+     * squat a name to refuse sign-in on it.
+     */
+    public function provenByAnOwner(string $host): bool
+    {
+        $stmt = $this->mysql->prepare("SELECT 1 FROM app_domains WHERE normalized_domain = :d AND verified_at IS NOT NULL LIMIT 1");
+        $stmt->execute(['d' => $this->normalizeDomain($host)]);
+        return $stmt->fetchColumn() !== false;
+    }
+
     /** Whether a host's owner has proven it, live or still waiting for HTTPS. */
     public function ownershipProven(string $host): bool
     {

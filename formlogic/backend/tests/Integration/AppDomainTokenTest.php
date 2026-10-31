@@ -8,8 +8,10 @@ use FormLogic\Controllers\AuthController;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Models\User;
 use FormLogic\Services\AppDomainService;
+use FormLogic\Services\AppDomainSignInService;
 use FormLogic\Services\AuthService;
 use FormLogic\Support\AppDomainSession;
+use FormLogic\Support\Environment;
 use Firebase\JWT\JWT;
 use PDO;
 use PHPUnit\Framework\TestCase;
@@ -19,8 +21,8 @@ use Slim\Psr7\Factory\ServerRequestFactory;
 use Slim\Psr7\Factory\StreamFactory;
 
 /**
- * The real tokens and cookies of a sign-in on an app's connected domain, and the domain rows
- * behind it. Skipped without a test database.
+ * The real tokens, codes and cookies of signing in to an app on its connected domain, and the
+ * domain rows behind them. Skipped without a test database.
  */
 class AppDomainTokenTest extends TestCase
 {
@@ -30,6 +32,7 @@ class AppDomainTokenTest extends TestCase
     private static PDO $pdo;
     private static AuthService $auth;
     private static AppDomainService $domains;
+    private static AppDomainSignInService $signIns;
 
     public static function setUpBeforeClass(): void
     {
@@ -57,6 +60,7 @@ class AppDomainTokenTest extends TestCase
         self::$pdo = $conn->getConnection();
         self::$auth = new AuthService($conn, self::JWT);
         self::$domains = new AppDomainService($conn);
+        self::$signIns = new AppDomainSignInService($conn);
     }
 
     protected function setUp(): void
@@ -93,24 +97,70 @@ class AppDomainTokenTest extends TestCase
     {
         return (new ServerRequestFactory())->createServerRequest('POST', 'https://' . $host . '/api/auth/login')
             ->withBody((new StreamFactory())->createStream(json_encode($body)))
-            ->withParsedBody($body)
-            ->withAttribute(AppDomainSession::SIGN_IN_ATTRIBUTE, ['appId' => 'app-x', 'host' => $host]);
+            ->withParsedBody($body);
+    }
+
+    /** The controller as index.php builds it, as far as a domain's sign-in goes. */
+    private function controller(array $cookie = []): AuthController
+    {
+        return new AuthController(self::$auth, $cookie, 3600, null, null, 'csrf-secret', null, null, null, null, null, null, null, self::$domains, self::$signIns);
+    }
+
+    /** POST /api/auth/app-domain/code as this member, from the platform. */
+    private function askForCode(User $user, string $origin): array
+    {
+        $request = (new ServerRequestFactory())->createServerRequest('POST', 'https://formlogic.example/api/auth/app-domain/code')
+            ->withAttribute('user', $user)->withAttribute('userId', $user->id)
+            ->withParsedBody(['origin' => $origin]);
+        $response = $this->controller()->appDomainCode($request, (new ResponseFactory())->createResponse());
+        return [$response->getStatusCode(), json_decode((string) $response->getBody(), true), $response];
+    }
+
+    /** POST /api/auth/app-domain/exchange on the domain, as CsrfMiddleware admitted it. */
+    private function exchange(string $code, array $app, string $host, array $cookie = [])
+    {
+        $request = (new ServerRequestFactory())->createServerRequest('POST', 'https://' . $host . '/api/auth/app-domain/exchange')
+            ->withParsedBody(['code' => $code])
+            ->withAttribute(AppDomainSession::SIGN_IN_ATTRIBUTE, ['appId' => $app['id'], 'host' => $host]);
+        return $this->controller($cookie)->appDomainExchange($request, (new ResponseFactory())->createResponse());
+    }
+
+    /** @param list<string> $cookies */
+    private function tokenIn(array $cookies): string
+    {
+        preg_match('/^formlogic_auth=([^;]+)/', $cookies[0], $match);
+        return urldecode($match[1]);
+    }
+
+    private function withAppEnv(string $value, callable $run): void
+    {
+        $saved = Environment::get('APP_ENV');
+        $_ENV['APP_ENV'] = $value;
+        try {
+            $run();
+        } finally {
+            if ($saved === null) {
+                unset($_ENV['APP_ENV']);
+            } else {
+                $_ENV['APP_ENV'] = $saved;
+            }
+        }
     }
 
     public function testThePlatformRefusesItAndOnlyItsOwnCheckAcceptsIt(): void
     {
         $user = $this->user();
-        $token = self::$auth->issueAppDomainToken($user->id, 'app-1', 'shop.acme.com');
+        $token = self::$auth->issueAppDomainToken($user->id, 'app-1', 'shop.acme.com', 'sign-in-1');
         self::assertNull(self::$auth->validateToken($token), 'every platform route goes through validateToken');
         $session = self::$auth->validateAppDomainToken($token);
-        self::assertSame([$user->id, 'app-1', 'shop.acme.com'], [$session['user']->id ?? null, $session['appId'] ?? null, $session['host'] ?? null]);
+        self::assertSame([$user->id, 'app-1', 'shop.acme.com', 'sign-in-1'], [$session['user']->id ?? null, $session['appId'] ?? null, $session['host'] ?? null, $session['signInId'] ?? null]);
         self::assertNull(self::$auth->validateAppDomainToken(self::$auth->issueToken($user)), 'a platform token is not one of these');
     }
 
     public function testChangingCredentialsEndsIt(): void
     {
         $user = $this->user();
-        $token = self::$auth->issueAppDomainToken($user->id, 'app-1', 'shop.acme.com');
+        $token = self::$auth->issueAppDomainToken($user->id, 'app-1', 'shop.acme.com', 'sign-in-1');
         self::$auth->revokeTokens($user->id);
         self::assertNull(self::$auth->validateAppDomainToken($token));
     }
@@ -119,32 +169,117 @@ class AppDomainTokenTest extends TestCase
     {
         $user = $this->user();
         $claims = ['iss' => 'formlogic', 'aud' => AppDomainSession::AUDIENCE, 'sub' => $user->id, 'iat' => time(), 'exp' => time() + 60, 'tv' => 0, 'sg' => 0];
-        $forged = JWT::encode($claims + ['app' => 'app-1', 'host' => 'shop.acme.com'], 'another-secret-another-secret-another', 'HS256');
+        $forged = JWT::encode($claims + ['app' => 'app-1', 'host' => 'shop.acme.com', 'sid' => 'sign-in-1'], 'another-secret-another-secret-another', 'HS256');
         self::assertNull(self::$auth->validateAppDomainToken($forged));
         self::assertNull(self::$auth->validateAppDomainToken(JWT::encode($claims, self::JWT['secret'], 'HS256')), 'no app, no session');
         self::assertNull(self::$auth->validateAppDomainToken(JWT::encode($claims + ['app' => 'app-1'], self::JWT['secret'], 'HS256')), 'no host, no session');
+        self::assertNull(self::$auth->validateAppDomainToken(JWT::encode($claims + ['app' => 'app-1', 'host' => 'shop.acme.com'], self::JWT['secret'], 'HS256')), 'no sign-in, no session');
     }
 
-    public function testASignInOnADomainEndsWithTheLimitedSessionAndNoCookieDomain(): void
+    public function testACodeBecomesTheLimitedSessionAndNoCookieDomain(): void
     {
-        $email = 'app-domain-signin-' . bin2hex(random_bytes(4)) . '@formlogic.test';
-        self::$auth->register($email, 'a-strong-password-123', 'Member');
-        // The platform's own cookie Domain, which a browser would refuse on this host.
-        $controller = new AuthController(self::$auth, ['domain' => '.formlogic.example'], 3600, null, null, 'csrf-secret');
-        $host = 'shop.acme-apps.com';
-        $response = $controller->login($this->signInRequest(['email' => $email, 'password' => 'a-strong-password-123'], $host), (new ResponseFactory())->createResponse());
+        $app = $this->app();
+        $host = $this->connected($app);
+        $member = $this->user();
+        [$status, $body, $asked] = $this->askForCode($member, 'https://' . $host);
+        self::assertSame(200, $status, json_encode($body));
+        self::assertSame('no-store', $asked->getHeaderLine('Cache-Control'));
 
-        self::assertSame(200, $response->getStatusCode());
+        // The platform's own cookie Domain, which a browser would refuse on this host.
+        $response = $this->exchange($body['code'], $app, $host, ['domain' => '.formlogic.example']);
+        self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
         self::assertTrue(json_decode((string) $response->getBody(), true)['user']['domainSession'] ?? false);
         $cookies = $response->getHeader('Set-Cookie');
         self::assertCount(2, $cookies);
         foreach ($cookies as $cookie) {
             self::assertStringNotContainsString('Domain=', $cookie);
         }
-        preg_match('/^formlogic_auth=([^;]+)/', $cookies[0], $match);
-        $token = urldecode($match[1]);
+        $token = $this->tokenIn($cookies);
         self::assertNull(self::$auth->validateToken($token), 'never a platform session');
-        self::assertSame(['app-x', $host], array_values(array_intersect_key(self::$auth->validateAppDomainToken($token) ?? [], ['appId' => 1, 'host' => 1])));
+        $session = self::$auth->validateAppDomainToken($token);
+        self::assertSame([$member->id, $app['id'], $host], [$session['user']->id, $session['appId'], $session['host']]);
+        self::assertTrue(self::$signIns->isLive($session['signInId']));
+    }
+
+    public function testACodeIsSpentOnceOnItsOwnDomain(): void
+    {
+        $app = $this->app();
+        $host = $this->connected($app);
+        $other = $this->app();
+        $otherHost = $this->connected($other);
+        $member = $this->user();
+        $code = $this->askForCode($member, 'https://' . $host)[1]['code'];
+
+        self::assertSame(400, $this->exchange($code, $other, $otherHost)->getStatusCode(), 'another domain');
+        self::assertSame(400, $this->exchange($code, $other, $host)->getStatusCode(), 'another app');
+        self::assertSame(400, $this->exchange($code . 'x', $app, $host)->getStatusCode(), 'another code');
+        self::assertSame(400, $this->exchange('', $app, $host)->getStatusCode());
+        self::assertSame(200, $this->exchange($code, $app, $host)->getStatusCode(), 'none of that spent it');
+        self::assertSame(400, $this->exchange($code, $app, $host)->getStatusCode(), 'spent');
+    }
+
+    public function testACodeLapsesInAMinute(): void
+    {
+        $app = $this->app();
+        $host = $this->connected($app);
+        $code = $this->askForCode($this->user(), 'https://' . $host)[1]['code'];
+        self::$pdo->prepare('UPDATE app_domain_sign_ins SET code_expires_at = NOW() - INTERVAL 1 SECOND WHERE code_hash = ?')->execute([hash('sha256', $code)]);
+        self::assertSame(400, $this->exchange($code, $app, $host)->getStatusCode());
+    }
+
+    public function testACodeStoresOnlyItsHash(): void
+    {
+        $app = $this->app();
+        $host = $this->connected($app);
+        $code = $this->askForCode($this->user(), 'https://' . $host)[1]['code'];
+        $row = self::$pdo->prepare('SELECT * FROM app_domain_sign_ins WHERE code_hash = ?');
+        $row->execute([hash('sha256', $code)]);
+        self::assertStringNotContainsString($code, (string) json_encode($row->fetch(PDO::FETCH_ASSOC)));
+    }
+
+    public function testOnlyAConnectedDomainGetsACode(): void
+    {
+        $member = $this->user();
+        $app = $this->app();
+        $host = $this->connected($app);
+        $pending = $this->app();
+        $unproven = 'pending-' . bin2hex(random_bytes(4)) . '.acme-apps.com';
+        self::$domains->createDomain($pending['id'], $pending['ownerId'], $unproven);
+        foreach (['https://' . $unproven, 'https://never-heard-of.example.org', 'https://' . $host . '/path', 'not an origin', ''] as $origin) {
+            self::assertSame(404, $this->askForCode($member, $origin)[0], $origin);
+        }
+        self::$pdo->prepare("UPDATE apps SET status = 'draft' WHERE id = ?")->execute([$app['id']]);
+        self::assertSame(404, $this->askForCode($member, 'https://' . $host)[0], 'unpublished');
+    }
+
+    public function testPlainHttpGetsNoCodeOutsideDevelopment(): void
+    {
+        $app = $this->app();
+        $host = $this->connected($app);
+        $member = $this->user();
+        $this->withAppEnv('production', function () use ($member, $host): void {
+            self::assertSame(404, $this->askForCode($member, 'http://' . $host)[0]);
+            self::assertSame(200, $this->askForCode($member, 'https://' . $host)[0]);
+        });
+        $this->withAppEnv('development', function () use ($member, $host): void {
+            self::assertSame(200, $this->askForCode($member, 'http://' . $host . ':8091')[0]);
+        });
+    }
+
+    public function testADarkDomainStaysKnownToBeACustomers(): void
+    {
+        $app = $this->app();
+        $host = $this->connected($app);
+        self::assertTrue(self::$domains->provenByAnOwner($host));
+        self::$pdo->prepare("UPDATE apps SET status = 'draft' WHERE id = ?")->execute([$app['id']]);
+        self::assertTrue(self::$domains->provenByAnOwner(strtoupper($host) . ':8443'), 'unpublished, still a name its owner can repoint');
+        self::$pdo->prepare("UPDATE app_domains SET status = 'failed' WHERE normalized_domain = ?")->execute([$host]);
+        self::assertTrue(self::$domains->provenByAnOwner($host));
+
+        $pending = $this->app();
+        $unproven = 'pending-' . bin2hex(random_bytes(4)) . '.acme-apps.com';
+        self::$domains->createDomain($pending['id'], $pending['ownerId'], $unproven);
+        self::assertFalse(self::$domains->provenByAnOwner($unproven), 'a claim must not refuse sign-in on a name');
     }
 
     public function testAPlatformSignInIsUnchanged(): void
@@ -153,7 +288,7 @@ class AppDomainTokenTest extends TestCase
         self::$auth->register($email, 'a-strong-password-123', 'Member');
         $controller = new AuthController(self::$auth, ['domain' => '.formlogic.example'], 3600, null, null, 'csrf-secret');
         $body = ['email' => $email, 'password' => 'a-strong-password-123'];
-        $request = $this->signInRequest($body, 'formlogic.example')->withoutAttribute(AppDomainSession::SIGN_IN_ATTRIBUTE);
+        $request = $this->signInRequest($body, 'formlogic.example');
         $response = $controller->login($request, (new ResponseFactory())->createResponse());
 
         self::assertArrayNotHasKey('domainSession', json_decode((string) $response->getBody(), true)['user']);
@@ -166,14 +301,18 @@ class AppDomainTokenTest extends TestCase
     {
         $user = $this->user();
         $platform = self::$auth->issueToken($user);
-        $controller = new AuthController(self::$auth);
-        $request = (new ServerRequestFactory())->createServerRequest('POST', 'https://shop.acme-apps.com/api/auth/logout')
+        $app = $this->app();
+        $host = $this->connected($app);
+        $token = $this->tokenIn($this->exchange($this->askForCode($user, 'https://' . $host)[1]['code'], $app, $host)->getHeader('Set-Cookie'));
+        $session = self::$auth->validateAppDomainToken($token);
+        $request = (new ServerRequestFactory())->createServerRequest('POST', 'https://' . $host . '/api/auth/logout')
             ->withAttribute('user', $user)->withAttribute('userId', $user->id)
-            ->withAttribute(AppDomainSession::ATTRIBUTE, ['appId' => 'app-x', 'host' => 'shop.acme-apps.com']);
-        $response = $controller->logout($request, (new ResponseFactory())->createResponse());
+            ->withAttribute(AppDomainSession::ATTRIBUTE, $session);
+        $response = $this->controller()->logout($request, (new ResponseFactory())->createResponse());
 
         self::assertNotNull(self::$auth->validateToken($platform), 'the one session a domain owner could hold cannot sign the member out of FormLogic');
         self::assertStringContainsString('Max-Age=0', $response->getHeader('Set-Cookie')[0]);
+        self::assertFalse(self::$signIns->isLive($session['signInId']), 'and it is over: a copy of the token opens nothing');
     }
 
     public function testMeSaysTheSessionIsLimited(): void
@@ -181,7 +320,7 @@ class AppDomainTokenTest extends TestCase
         $user = $this->user();
         $controller = new AuthController(self::$auth);
         $request = (new ServerRequestFactory())->createServerRequest('GET', 'https://shop.acme-apps.com/api/auth/me')
-            ->withAttribute('user', $user)->withAttribute(AppDomainSession::ATTRIBUTE, ['appId' => 'app-x', 'host' => 'shop.acme-apps.com']);
+            ->withAttribute('user', $user)->withAttribute(AppDomainSession::ATTRIBUTE, ['appId' => 'app-x', 'host' => 'shop.acme-apps.com', 'signInId' => 'sign-in-1']);
         self::assertTrue(json_decode((string) $controller->me($request, (new ResponseFactory())->createResponse())->getBody(), true)['user']['domainSession'] ?? false);
     }
 

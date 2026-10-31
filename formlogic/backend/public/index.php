@@ -339,7 +339,9 @@ $container->set(AuthController::class, function (Container $c) {
         // Erasure wipes the user's recycle bin (fail-closed) — it never trashes.
         $c->get(\FormLogic\Services\TrashService::class),
         $c->get(\FormLogic\Services\MfaService::class),
-        $c->get(AppUserService::class)
+        $c->get(AppUserService::class),
+        $c->get(\FormLogic\Services\AppDomainService::class),
+        $c->get(\FormLogic\Services\AppDomainSignInService::class)
     );
 });
 
@@ -1146,8 +1148,8 @@ $sessionOriginConfig = \FormLogic\Support\Environment::nonEmpty('CORS_ALLOWED_OR
     ?? \FormLogic\Support\Environment::nonEmpty('CORS_ORIGIN');
 $sessionOrigins = $sessionOriginConfig === null ? [] : array_map('trim', explode(',', $sessionOriginConfig));
 
-// The live app of a connected domain. Only sign-ins from a host outside that list, and sessions
-// from such a sign-in, ever run this query.
+// The live app of a connected domain. Only a domain's code exchange, and the session it opens,
+// ever run this query.
 $connectedApp = static fn (string $host): ?array => $container->get(\FormLogic\Services\AppDomainService::class)->resolveAppSlugByHost($host);
 
 // Add CSRF middleware (validates tokens on state-changing requests).
@@ -1156,7 +1158,8 @@ $app->add(new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', $cookieName, $csr
         $app = $connectedApp($host);
         return $app === null ? null : ['appId' => $app['id'], 'host' => $host];
     },
-    $settings['settings']['isProduction'] ?? true
+    $settings['settings']['isProduction'] ?? true,
+    static fn (string $host): bool => $container->get(\FormLogic\Services\AppDomainService::class)->provenByAnOwner($host)
 ));
 
 // Make the shared public "Demo" account read-only on the server (its visitors' data lives in their
@@ -1252,7 +1255,10 @@ $app->add(function ($request, $handler) use ($oauthPublicPaths) {
 });
 
 // Create auth middleware instances
-$appDomainSessions = new \FormLogic\Support\AppDomainSession($connectedApp);
+$appDomainSessions = new \FormLogic\Support\AppDomainSession(
+    $connectedApp,
+    static fn (string $id): bool => $container->get(\FormLogic\Services\AppDomainSignInService::class)->isLive($id)
+);
 $authRequired = new AuthMiddleware($container->get(AuthService::class), false, $cookieName, $appDomainSessions);
 $authOptional = new AuthMiddleware($container->get(AuthService::class), true, $cookieName, $appDomainSessions);
 
@@ -1568,6 +1574,7 @@ $authRateLimiter = new RateLimitMiddleware($rateLimiter, $authLoginLimit, 60, 'a
 $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->post('/register', [AuthController::class, 'register']);
     $group->post('/login', [AuthController::class, 'login']);
+    $group->post('/app-domain/exchange', [AuthController::class, 'appDomainExchange']);
 })->add($authRateLimiter);
 
 $passwordResetRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'auth_password_reset', false, true); // fail closed (RATE-001)
@@ -1593,6 +1600,7 @@ $accountMutationRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'aut
 $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->put('/me', [AuthController::class, 'updateProfile']);
     $group->delete('/me', [AuthController::class, 'deleteAccount']);
+    $group->post('/app-domain/code', [AuthController::class, 'appDomainCode']);
 })->add($accountMutationRateLimiter)->add($authRequired);
 
 // MFA challenge completion (public — it FINISHES a login, so no session yet; the

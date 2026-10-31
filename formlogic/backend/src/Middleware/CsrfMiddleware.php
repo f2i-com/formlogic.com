@@ -25,6 +25,8 @@ use Slim\Psr7\Response as SlimResponse;
  */
 class CsrfMiddleware implements MiddlewareInterface
 {
+    private const DOMAIN_EXCHANGE = '/api/auth/app-domain/exchange';
+
     private string $cookieName;
     private string $headerName;
     private string $authCookieName;
@@ -34,7 +36,9 @@ class CsrfMiddleware implements MiddlewareInterface
     /**
      * @param array<mixed> $trustedSessionOrigins
      * @param (\Closure(string): ?array{appId: string, host: string})|null $connectedDomain the app a
-     *        sign-in on this host is limited to, or null when the host is not a connected domain
+     *        code exchanged on this host is limited to, or null when it is not a connected domain
+     * @param (\Closure(string): bool)|null $customerDomain whether a host's owner has proven it,
+     *        live or not: it is not this site, whatever the configured origins say
      */
     public function __construct(
         string $cookieName = 'formlogic_csrf',
@@ -43,7 +47,8 @@ class CsrfMiddleware implements MiddlewareInterface
         string $secret = '',
         array $trustedSessionOrigins = [],
         private ?\Closure $connectedDomain = null,
-        private bool $domainsRequireHttps = true
+        private bool $domainsRequireHttps = true,
+        private ?\Closure $customerDomain = null
     ) {
         $this->cookieName = $cookieName;
         $this->headerName = $headerName;
@@ -85,16 +90,17 @@ class CsrfMiddleware implements MiddlewareInterface
             if ($this->secret === '') {
                 return $this->forbidden('CSRF protection is misconfigured (no signing secret) - set JWT_SECRET');
             }
-            // A connected domain signs in only ever to its one app (AppDomainSession), and is
-            // asked about first: listing a domain used to be the only way to sign in on it, and
-            // a server set up that way must not go on handing out platform sessions there.
-            $domain = $this->connectedDomainOf($request);
-            if ($domain !== null) {
-                // The shared demo is a platform session and has no place on a customer's domain.
-                if ($path === '/api/demo/start') {
-                    return $this->forbidden('The demo is not available on this domain');
-                }
-                return $handler->handle($request->withAttribute(AppDomainSession::SIGN_IN_ATTRIBUTE, $domain));
+            // The one session a domain gets: its code, for its one app (AppDomainSignInService).
+            if ($path === self::DOMAIN_EXCHANGE) {
+                $domain = $this->connectedDomainOf($request);
+                return $domain === null
+                    ? $this->forbidden('This domain is not connected to an app')
+                    : $handler->handle($request->withAttribute(AppDomainSession::SIGN_IN_ATTRIBUTE, $domain));
+            }
+            // Asked before the configured origins: a domain may be listed there from before, and a
+            // server set up that way must not go on handing out platform sessions on it.
+            if ($this->onCustomerDomain($request)) {
+                return $this->forbidden('Sign in on the main site, not on this domain');
             }
             if (!$this->sessionOriginPolicy->allows($request)) {
                 return $this->forbidden('Session creation requires an explicitly trusted request origin');
@@ -142,8 +148,26 @@ class CsrfMiddleware implements MiddlewareInterface
         return $handler->handle($request);
     }
 
+    /** Whether this request reached, or was posted from, a host some app's owner has proven. */
+    private function onCustomerDomain(Request $request): bool
+    {
+        if ($this->customerDomain === null) {
+            return false;
+        }
+        $hosts = [(string) preg_replace('/:\d+$/D', '', $request->getHeaderLine('Host'))];
+        foreach ($request->getHeader('Origin') as $origin) {
+            $hosts[] = (string) parse_url($origin, PHP_URL_HOST);
+        }
+        foreach (array_unique($hosts) as $host) {
+            if ($host !== '' && ($this->customerDomain)($host)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
-     * The connected domain a sign-in came from, or null.
+     * The connected domain a code exchange came from, or null.
      *
      * @return array{appId: string, host: string}|null
      */
@@ -180,7 +204,7 @@ class CsrfMiddleware implements MiddlewareInterface
         // pre-session), so it gets the same JSON-content-type guard.
         // /api/demo/start mints a session too; without the guard any cross-site
         // <form> POST logs a signed-out visitor into the shared demo account.
-        return in_array($path, ['/api/auth/login', '/api/auth/register', '/api/auth/mfa/verify', '/api/demo/start'], true);
+        return in_array($path, ['/api/auth/login', '/api/auth/register', '/api/auth/mfa/verify', '/api/demo/start', self::DOMAIN_EXCHANGE], true);
     }
 
     /**
