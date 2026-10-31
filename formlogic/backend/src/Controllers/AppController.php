@@ -126,6 +126,9 @@ class AppController
         if (AdminActingLimits::acting($request) && ($refusal = AdminActingLimits::appSettingsRefusal($data['settings'] ?? null)) !== null) {
             return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $refusal], 403);
         }
+        if (($codeRefusal = AdminActingLimits::codeRefusal($request, $data)) !== null) {
+            return $this->jsonResponse($response, $codeRefusal, 403);
+        }
 
         try {
             // A script language outside javascript | python is refused here as on update
@@ -236,6 +239,9 @@ class AppController
         }
         if (AdminActingLimits::acting($request) && ($refusal = AdminActingLimits::appSettingsRefusal($data['settings'] ?? null, $app['settings'] ?? [])) !== null) {
             return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $refusal], 403);
+        }
+        if (($codeRefusal = AdminActingLimits::codeRefusal($request, $data, $app)) !== null) {
+            return $this->jsonResponse($response, $codeRefusal, 403);
         }
 
         if (isset($data['customScreen'])) {

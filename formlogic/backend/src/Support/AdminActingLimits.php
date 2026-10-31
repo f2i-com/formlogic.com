@@ -13,11 +13,22 @@ use Psr\Http\Message\ServerRequestInterface as Request;
  * holds only while the routes it keeps can't open another way to them. An administrator who lets
  * themselves join an app, gives a role the answers, has a form's answers emailed to them or shows
  * them to the public reads them outside the mirror and its redaction. Those edits are the owner's
- * to make. Everything else an owner can do, an administrator acting for them still can.
+ * to make. So is code: a flow, form logic or a screen runs on those records later, in someone
+ * else's session, so an administrator edits it only while the owner allows it, a day at a time
+ * (Settings, Security). Everything else an owner can do, an administrator acting for them still can.
  */
 final class AdminActingLimits
 {
     public const CODE = 'admin_acting_limit';
+
+    /** Set by AdminActAsMiddleware: whether this owner allows code edits right now. */
+    public const CODE_EDITS_ATTRIBUTE = 'adminCodeEdits';
+
+    public const SUPPORT_ACCESS_REFUSAL = [
+        'error' => true,
+        'code' => 'admin_support_access_required',
+        'message' => 'Editing code in this account needs the owner\'s permission. They can allow it in Settings, under Security.',
+    ];
 
     /**
      * What a role may gain at an administrator's hand: none of it shows anyone else's work. The
@@ -35,6 +46,64 @@ final class AdminActingLimits
     {
         $actor = $request->getAttribute('adminActorId');
         return is_string($actor) && $actor !== '';
+    }
+
+    public static function mayEditCode(Request $request): bool
+    {
+        return $request->getAttribute(self::CODE_EDITS_ATTRIBUTE) === true;
+    }
+
+    /**
+     * The refusal to send when an administrator without the owner's permission is changing code
+     * here, or null. Whole-form saves carry the code along, so only a change counts.
+     *
+     * @param array<string, mixed> $input
+     * @param array<string, mixed> $stored
+     * @return array<string, mixed>|null
+     */
+    public static function codeRefusal(Request $request, array $input, array $stored = []): ?array
+    {
+        return self::acting($request) && !self::mayEditCode($request) && self::changesCode($input, $stored)
+            ? self::SUPPORT_ACCESS_REFUSAL
+            : null;
+    }
+
+    /**
+     * @param array<string, mixed> $input
+     * @param array<string, mixed> $stored
+     */
+    public static function changesCode(array $input, array $stored): bool
+    {
+        foreach (['logicScript', 'customLogic', 'customScreen'] as $key) {
+            if (!array_key_exists($key, $input)) {
+                continue;
+            }
+            // A widget dashboard is data the server checks against the app, not code.
+            if ($key === 'customScreen' && is_array($input[$key]) && ($input[$key]['kind'] ?? '') === 'dashboard') {
+                continue;
+            }
+            if (self::comparable($input[$key]) !== self::comparable($stored[$key] ?? null)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Code as a value: no stamps, no key order, and nothing is the same as empty. */
+    private static function comparable(mixed $code): mixed
+    {
+        if (is_string($code)) {
+            return trim($code) === '' ? null : $code;
+        }
+        if (!is_array($code)) {
+            return null;
+        }
+        unset($code['_trust'], $code['_provenance']);
+        $code = array_map(self::comparable(...), $code);
+        if (!array_is_list($code)) {
+            ksort($code);
+        }
+        return $code === [] ? null : $code;
     }
 
     public static function showsRecords(string $permission): bool

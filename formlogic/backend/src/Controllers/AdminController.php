@@ -16,7 +16,9 @@ use FormLogic\Services\MaintenanceService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\ScheduledBackupService;
 use FormLogic\Services\UpgradeService;
+use FormLogic\Helpers\AppUrl;
 use FormLogic\Support\AdminActingLimits;
+use FormLogic\Support\HostedActorContext;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
@@ -52,6 +54,32 @@ class AdminController
         private ?\FormLogic\Services\PlanService $planService = null,
         private ?\FormLogic\Services\RuntimeEngineService $engines = null,
     ) {
+    }
+
+    /**
+     * POST /api/admin/confirm { password, code? }: the administrator proves who they are, password
+     * and two-factor code both, for the next fifteen minutes of this session. See
+     * AdminConfirmationMiddleware. The code is only read after the password, so a guess can't burn
+     * a recovery code.
+     */
+    public function confirm(Request $request, Response $response): Response
+    {
+        $adminId = (string) $request->getAttribute('userId');
+        $session = $request->getAttribute(HostedActorContext::SESSION_ATTRIBUTE);
+        $body = $request->getParsedBody() ?? [];
+        $confirmed = is_string($session) && $this->auth->verifyPassword($adminId, (string) ($body['password'] ?? ''));
+        if ($confirmed && ($this->mfaService?->isEnabled($adminId) ?? false)) {
+            $confirmed = $this->mfaService->verifyChallenge($adminId, (string) ($body['code'] ?? ''));
+        }
+        if (!$confirmed) {
+            $this->audit($request, 'admin.confirm_denied', $adminId);
+            return $this->jsonResponse($response, ['error' => true, 'code' => 'admin_confirmation_failed', 'message' => 'That password or code didn\'t match'], 403);
+        }
+        $this->audit($request, 'admin.confirmed', $adminId);
+        return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), [
+            'confirmation' => $this->auth->issueAdminConfirmation($adminId, $session),
+            'expiresInSeconds' => AuthService::ADMIN_CONFIRMATION_SECONDS,
+        ]);
     }
 
     // ── Overview + users ─────────────────────────────────────────────────────
@@ -256,10 +284,10 @@ class AdminController
     }
 
     /**
-     * POST /api/admin/users/{id}/password — lockout recovery: set a new password
-     * (provided, validated against the policy) or generate a temporary one
-     * (returned ONCE, never stored in plaintext or logged). Every outstanding
-     * session for the user is revoked.
+     * POST /api/admin/users/{id}/password — lockout recovery. A password an administrator has seen
+     * is one they can sign in with, so with mail the owner gets a reset link and chooses their own.
+     * A server that can't send mail has no other way: a temporary password, returned ONCE, never
+     * stored in plaintext or logged, with every outstanding session revoked.
      */
     public function resetPassword(Request $request, Response $response, array $args): Response
     {
@@ -267,24 +295,26 @@ class AdminController
         if ($target instanceof Response) {
             return $target;
         }
-        $body = $request->getParsedBody() ?? [];
-        $provided = (string) ($body['password'] ?? '');
-        $generated = $provided === '';
-        if ($generated) {
-            // Unambiguous alphabet, 16 chars — comfortably past the policy.
-            $alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-            $provided = '';
-            for ($i = 0; $i < 16; $i++) {
-                $provided .= $alphabet[random_int(0, strlen($alphabet) - 1)];
+        if ($this->email?->isConfigured()) {
+            try {
+                $this->auth->requestPasswordReset((string) $target['email'], AppUrl::frontendBase($request) . '/reset-password', false);
+            } catch (\RuntimeException $e) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'The reset link could not be sent: ' . $e->getMessage()], 503);
             }
-        } elseif (($pwError = AuthService::passwordError($provided)) !== null) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => $pwError], 400);
+            $this->audit($request, 'admin.password_reset_link', $target['id']);
+            return $this->jsonResponse($response, ['success' => true, 'emailed' => true]);
         }
-        $this->admin->setUserPassword($target['id'], $provided);
+        // Unambiguous alphabet, 16 chars — comfortably past the policy.
+        $alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+        $temporary = '';
+        for ($i = 0; $i < 16; $i++) {
+            $temporary .= $alphabet[random_int(0, strlen($alphabet) - 1)];
+        }
+        $this->admin->setUserPassword($target['id'], $temporary);
         // Sign the user out everywhere — old sessions must not survive a support reset.
         $this->auth->revokeTokens($target['id']);
-        $this->audit($request, 'admin.password_reset', $target['id'], ['generated' => $generated]);
-        return $this->jsonResponse($response, ['success' => true] + ($generated ? ['tempPassword' => $provided] : []));
+        $this->audit($request, 'admin.password_reset', $target['id'], ['generated' => true]);
+        return $this->jsonResponse($response, ['success' => true, 'tempPassword' => $temporary]);
     }
 
     /** PUT /api/admin/users/{id}/email — change the account's email address (sessions revoked). */
@@ -303,6 +333,16 @@ class AdminController
         }
         $this->auth->revokeTokens($target['id']);
         $this->audit($request, 'admin.email_change', $target['id'], ['from' => $target['email'], 'to' => $email]);
+        // To the address it no longer signs in with: whoever holds that is who should hear.
+        try {
+            $this->email?->send(
+                (string) $target['email'],
+                'Your sign-in email was changed',
+                '<p>A site administrator changed the email address your account signs in with. If you did not ask for this, contact support.</p>'
+            );
+        } catch (\Throwable) {
+            // Best-effort: the change must not fail on mail trouble.
+        }
         return $this->jsonResponse($response, ['success' => true, 'email' => $email]);
     }
 
@@ -579,6 +619,9 @@ class AdminController
         }
         if (($refusal = AdminActingLimits::formRefusal($input, $form)) !== null) {
             return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $refusal], 403);
+        }
+        if (AdminActingLimits::changesCode($input, $form) && $this->auth->supportAccessUntil((string) ($form['userId'] ?? '')) === null) {
+            return $this->jsonResponse($response, AdminActingLimits::SUPPORT_ACCESS_REFUSAL, 403);
         }
         // Same shape/size caps the owner-facing write paths enforce.
         if (isset($input['title']) && (!is_string($input['title']) || strlen($input['title']) > 500)) {

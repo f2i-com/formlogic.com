@@ -10,8 +10,8 @@ import { formatDateTimeInZone, formatDateInZone, useAdminTimezone } from '../../
 import { toast } from '../../stores/toastStore';
 
 /**
- * Support tools on the admin user page: password reset (temp shown once,
- * sessions revoked), email change, the payment ledger with a complimentary-
+ * Support tools on the admin user page: password reset (a link to the user, or
+ * where this server can't send mail a temporary password shown once), email change, the payment ledger with a complimentary-
  * access toggle, and — heavily gated behind a type-the-email confirmation —
  * full account deletion through the same truthful erasure engine as
  * self-service deletion.
@@ -35,12 +35,16 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
     const r = await api.adminResetPassword(userId);
     setPwBusy(false);
     setPwOpen(false);
-    if (r.error || !r.data?.tempPassword) {
+    if (r.error || !r.data) {
       toast.error('Could not reset the password', r.error);
       return;
     }
-    setTempPassword(r.data.tempPassword);
-    toast.success('Password reset', 'Every existing session was signed out.');
+    if (r.data.tempPassword) {
+      setTempPassword(r.data.tempPassword);
+      toast.success('Password reset', 'Every existing session was signed out.');
+    } else {
+      toast.success('Reset link sent', `${email} can choose a new password from the email.`);
+    }
   };
 
   // Email change.
@@ -124,7 +128,7 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2.5">
             <div className="min-w-0">
               <p className="text-sm text-gray-900 dark:text-white">Password</p>
-              <p className="text-xs text-gray-500 dark:text-slate-400">Generate a temporary password (shown once) and sign the user out everywhere.</p>
+              <p className="text-xs text-gray-500 dark:text-slate-400">Email the user a link to choose a new password. A server that can't send mail shows a temporary password instead.</p>
             </div>
             <Button size="sm" variant="outline" onClick={() => setPwOpen(true)}>Reset password</Button>
           </div>
@@ -234,8 +238,8 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
         onClose={() => setPwOpen(false)}
         onConfirm={() => { void resetPassword(); }}
         title="Reset this user's password?"
-        message={`A new temporary password is generated for ${email} and shown to you ONCE. Every existing session is signed out. The reset is audited.`}
-        confirmLabel="Generate temp password"
+        message={`${email} gets a link to choose a new password. If this server can't send mail, a temporary password is shown to you once and every session is signed out. The reset is audited, and the user can see it.`}
+        confirmLabel="Reset password"
         isLoading={pwBusy}
       />
 

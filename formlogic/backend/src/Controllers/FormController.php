@@ -302,6 +302,9 @@ class FormController
 
         $data['userId'] = $userId;
 
+        if (($refusal = AdminActingLimits::codeRefusal($request, $data)) !== null) {
+            return $this->jsonResponse($response, $refusal, 403);
+        }
         if ($overQuota = $this->checkFormQuota($response, $userId)) {
             return $overQuota;
         }
@@ -381,6 +384,9 @@ class FormController
         }
         if (AdminActingLimits::acting($request) && ($refusal = AdminActingLimits::formRefusal($data, $form)) !== null) {
             return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $refusal], 403);
+        }
+        if (($codeRefusal = AdminActingLimits::codeRefusal($request, $data, $form)) !== null) {
+            return $this->jsonResponse($response, $codeRefusal, 403);
         }
 
         try {
@@ -659,6 +665,10 @@ class FormController
             $restored = $this->versionService->getVersion($formId, $version)['data'] ?? [];
             if (($refusal = AdminActingLimits::formRefusal(array_intersect_key($restored, ['customScreen' => true, 'settings' => true]), $form)) !== null) {
                 return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $refusal], 403);
+            }
+            // A restore sets the version's logic even where it held none (FormVersionService).
+            if (($codeRefusal = AdminActingLimits::codeRefusal($request, ['logicScript' => $restored['logicScript'] ?? null] + $restored, $form)) !== null) {
+                return $this->jsonResponse($response, $codeRefusal, 403);
             }
         }
 

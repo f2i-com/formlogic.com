@@ -1,4 +1,4 @@
-import { Navigate, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { Link, Navigate, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { Activity, Package, Stethoscope, ShieldCheck, Users, Wrench } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { useAuthStore } from '../../stores/authStore';
@@ -32,6 +32,7 @@ export function AdminLayout() {
   const section = TABS.find(tab => tab.end ? pathname === tab.to : pathname.startsWith(tab.to)) ?? TABS[0];
   useDocumentTitle(`${section.label} · Admin`);
   const isAdmin = useAuthStore((s) => !!s.user?.isAdmin);
+  const needsMfa = useAuthStore((s) => !!s.user?.adminNeedsMfa && !s.user?.mfaEnabled);
 
   if (!isAdmin) {
     return <Navigate to="/" replace />;
@@ -70,7 +71,13 @@ export function AdminLayout() {
             <h1 className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">{section.label}</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500 dark:text-slate-400">{section.description}</p>
           </div>
-          <Outlet />
+          {needsMfa ? (
+            <section role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-5 dark:border-amber-500/30 dark:bg-amber-500/10">
+              <h2 className="text-sm font-semibold text-amber-900 dark:text-amber-200">Turn on two-factor authentication first</h2>
+              <p className="mt-1 text-sm text-amber-800 dark:text-amber-300">The admin tools reach every account on this server, so they need more than a password. Turn it on, then come back.</p>
+              <Link to="/settings#security" className="mt-3 inline-flex min-h-11 items-center text-sm font-medium text-amber-900 underline dark:text-amber-200">Go to Security settings</Link>
+            </section>
+          ) : <Outlet />}
         </div>
         </div>
       </div>

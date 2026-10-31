@@ -2651,6 +2651,8 @@ class MySQLConnection
         foreach ([
             'code_trust_verified_at' => 'ALTER TABLE users ADD COLUMN code_trust_verified_at DATETIME NULL DEFAULT NULL',
             'code_trust_verified_by' => 'ALTER TABLE users ADD COLUMN code_trust_verified_by VARCHAR(36) NULL DEFAULT NULL',
+            // How long an owner has let support edit code in their account (AdminActingLimits).
+            'support_access_until' => 'ALTER TABLE users ADD COLUMN support_access_until DATETIME NULL DEFAULT NULL',
         ] as $column => $ddl) {
             if ($pdo->query("SHOW COLUMNS FROM users LIKE '{$column}'")->rowCount() === 0) {
                 $pdo->exec($ddl);

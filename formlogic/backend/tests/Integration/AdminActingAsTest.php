@@ -489,6 +489,66 @@ class AdminActingAsTest extends TestCase
         }
     }
 
+    public function testEditingCodeWaitsForTheOwner(): void
+    {
+        $admin = $this->tokenFor($this->adminId);
+        $flagged = array_filter(AdminActingAsRoutes::ROUTES, static fn (array $row): bool => in_array(AdminActingAsRoutes::WRITES_CODE, $row[4] ?? [], true));
+        $this->assertGreaterThanOrEqual(9, count($flagged));
+        foreach ($flagged as $row) {
+            $refused = $this->send($row[0], $this->actingPath($row[1]), ['name' => 'Exfiltrate', 'flowJson' => []], $admin);
+            $this->assertSame(403, $refused->getStatusCode(), $row[1]);
+            $this->assertSame('admin_support_access_required', $this->json($refused)['code'] ?? null, $row[1]);
+        }
+        // Every route that takes a flow or a binding is on that list.
+        foreach (AdminActingAsRoutes::ROUTES as $row) {
+            if (in_array($row[0], ['POST', 'PUT'], true) && preg_match('~flows?(-bindings)?(/|$)~', $row[1]) && !str_contains($row[1], 'flow-runs')) {
+                $this->assertContains(AdminActingAsRoutes::WRITES_CODE, $row[4] ?? [], $row[1]);
+            }
+        }
+
+        $form = "/api/admin/users/{$this->ownerId}/forms/{$this->formId}";
+        $app = "/api/admin/users/{$this->ownerId}/apps/{$this->appId}";
+        $writes = [
+            ['PUT', $form, ['logicScript' => 'function onSubmit() { steal(); }']],
+            ['PUT', $form, ['customLogic' => ['scripts' => [['id' => 'x', 'enabled' => true, 'language' => 'javascript', 'source' => 'steal()']]]]],
+            ['PUT', $form, ['customScreen' => ['enabled' => true, 'html' => '<script>steal()</script>']]],
+            ['PUT', $app, ['customLogic' => ['scripts' => [['id' => 'x', 'enabled' => true, 'language' => 'javascript', 'source' => 'steal()']]]]],
+            ['PUT', $app, ['customScreen' => ['enabled' => true, 'html' => '<script>steal()</script>']]],
+            ['POST', "/api/admin/users/{$this->ownerId}/forms", ['title' => 'New', 'logicScript' => 'steal()']],
+            ['POST', "/api/admin/users/{$this->ownerId}/apps", ['name' => 'New', 'customLogic' => ['scripts' => [['id' => 'x', 'enabled' => true, 'language' => 'javascript', 'source' => 'steal()']]]]],
+        ];
+        foreach ($writes as [$method, $path, $body]) {
+            $refused = $this->send($method, $path, $body, $admin);
+            $this->assertSame(403, $refused->getStatusCode(), json_encode($body) . $this->body($refused));
+            $this->assertSame('admin_support_access_required', $this->json($refused)['code'] ?? null);
+        }
+
+        // A save that carries the code along unchanged is no edit of it.
+        self::$forms->updateForm($this->formId, ['logicScript' => 'function onSubmit() {}', 'customScreen' => ['enabled' => true, 'html' => '<b>Owner</b>']]);
+        $stored = self::$forms->getForm($this->formId);
+        $this->assertSame(200, $this->send('PUT', $form, ['title' => 'Renamed', 'logicScript' => 'function onSubmit() {}', 'customScreen' => $stored['customScreen']], $admin)->getStatusCode());
+        // A widget dashboard is data, checked by the server.
+        $this->assertSame(200, $this->send('PUT', $app, ['customScreen' => ['kind' => 'dashboard', 'enabled' => true, 'dashboard' => ['widgets' => []]]], $admin)->getStatusCode());
+
+        // With the owner's leave it all goes through, until that lapses.
+        self::$auth->setSupportAccess($this->ownerId, true);
+        $this->assertSame(200, $this->send('PUT', $form, ['logicScript' => 'function onSubmit() { /* fixed */ }'], $admin)->getStatusCode());
+        $this->assertSame(201, $this->send('POST', "/api/admin/users/{$this->ownerId}/apps/{$this->appId}/flows", ['name' => 'Fixed'], $admin)->getStatusCode());
+        self::$auth->setSupportAccess($this->ownerId, false);
+        $this->assertSame(403, $this->send('PUT', $form, ['logicScript' => 'function onSubmit() { /* again */ }'], $admin)->getStatusCode());
+    }
+
+    public function testRestoringAVersionWithOtherCodeWaitsForTheOwner(): void
+    {
+        $admin = $this->tokenFor($this->adminId);
+        self::$forms->updateForm($this->formId, ['logicScript' => 'function onSubmit() { /* now */ }']);
+        self::$pdo->prepare('INSERT INTO form_versions (id, form_id, version, data, created_by) VALUES (UUID(), ?, 9, ?, ?)')
+            ->execute([$this->formId, json_encode(['title' => 'Old', 'logicScript' => 'function onSubmit() { /* then */ }']), $this->ownerId]);
+        $refused = $this->send('POST', "/api/admin/users/{$this->ownerId}/forms/{$this->formId}/versions/9/restore", ['force' => true], $admin);
+        $this->assertSame(403, $refused->getStatusCode());
+        $this->assertSame('admin_support_access_required', $this->json($refused)['code'] ?? null);
+    }
+
     public function testAnAdministratorCannotLetThemselvesJoin(): void
     {
         $admin = $this->tokenFor($this->adminId);

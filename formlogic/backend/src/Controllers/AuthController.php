@@ -37,7 +37,7 @@ class AuthController
     private ?ApiKeyService $apiKeyService;
     private ?\FormLogic\Database\MySQLConnection $db;
 
-    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null, string $csrfSecret = '', ?FormService $formService = null, ?AppService $appService = null, ?ApiKeyService $apiKeyService = null, ?\FormLogic\Database\MySQLConnection $db = null, private ?\FormLogic\Services\TrashService $trashService = null, private ?\FormLogic\Services\MfaService $mfaService = null, private ?\FormLogic\Services\AppUserService $appUserService = null, private ?\FormLogic\Services\AppDomainService $appDomains = null, private ?\FormLogic\Services\AppDomainSignInService $domainSignIns = null)
+    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null, string $csrfSecret = '', ?FormService $formService = null, ?AppService $appService = null, ?ApiKeyService $apiKeyService = null, ?\FormLogic\Database\MySQLConnection $db = null, private ?\FormLogic\Services\TrashService $trashService = null, private ?\FormLogic\Services\MfaService $mfaService = null, private ?\FormLogic\Services\AppUserService $appUserService = null, private ?\FormLogic\Services\AppDomainService $appDomains = null, private ?\FormLogic\Services\AppDomainSignInService $domainSignIns = null, private ?\FormLogic\Services\AdminSupportActivity $adminActivity = null)
     {
         $this->db = $db;
         $this->authService = $authService;
@@ -700,6 +700,32 @@ class AuthController
         return $this->jsonResponse($response, [
             'message' => 'Logged out successfully',
         ]);
+    }
+
+    /**
+     * Whether support may edit code in this account, and what administrators have done in it.
+     * GET /api/auth/support-access
+     */
+    public function supportAccess(Request $request, Response $response): Response
+    {
+        $userId = (string) $request->getAttribute('userId');
+        return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), [
+            'until' => $this->authService->supportAccessUntil($userId),
+            'activity' => $this->adminActivity?->recentFor($userId) ?? [],
+        ]);
+    }
+
+    /** PUT /api/auth/support-access {allow}: for a day, or ended now. */
+    public function setSupportAccess(Request $request, Response $response): Response
+    {
+        if ($blocked = $this->blockIfDemo($request, $response)) {
+            return $blocked;
+        }
+        $userId = (string) $request->getAttribute('userId');
+        $allow = ($request->getParsedBody()['allow'] ?? null) === true;
+        $until = $this->authService->setSupportAccess($userId, $allow);
+        $this->audit($request, 'auth.support_access', 'user', $userId, ['allow' => $allow]);
+        return $this->jsonResponse($response, ['until' => $until]);
     }
 
     /**

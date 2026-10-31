@@ -6,6 +6,7 @@ namespace FormLogic\Middleware;
 
 use FormLogic\Services\AuditService;
 use FormLogic\Services\AuthService;
+use FormLogic\Support\AdminActingLimits;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Http\Server\MiddlewareInterface;
@@ -36,7 +37,8 @@ class AdminActAsMiddleware implements MiddlewareInterface
 {
     public function __construct(
         private AuthService $authService,
-        private ?AuditService $auditService = null
+        private ?AuditService $auditService = null,
+        private ?\FormLogic\Services\AdminSupportActivity $activity = null
     ) {
     }
 
@@ -62,10 +64,16 @@ class AdminActAsMiddleware implements MiddlewareInterface
         }
 
         $adminId = $request->getAttribute('userId');
+        try {
+            $this->activity?->opened($owner, (string) $adminId, $request->getServerParams()['REMOTE_ADDR'] ?? null);
+        } catch (\Throwable) {
+            // telling the owner is best-effort, as the audit below is
+        }
         $response = $handler->handle(
             $request
                 ->withAttribute('adminActorId', $adminId)
                 ->withAttribute('adminActor', $request->getAttribute('user'))
+                ->withAttribute(AdminActingLimits::CODE_EDITS_ATTRIBUTE, $this->authService->supportAccessUntil($owner->id) !== null)
                 ->withAttribute('userId', $owner->id)
                 ->withAttribute('user', $owner)
         );

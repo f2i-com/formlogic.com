@@ -8,6 +8,7 @@ use FormLogic\Database\MySQLConnection;
 use FormLogic\Models\User;
 use FormLogic\Services\EmailService;
 use FormLogic\Support\AppDomainSession;
+use FormLogic\Support\Environment;
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
 use PDO;
@@ -171,7 +172,15 @@ class AuthService
             // Advisory only — it tells the app-settings UI whether to offer the host-JavaScript
             // engine. Enforcement re-reads the column server-side (RuntimeEngineService).
             'isCodeTrustVerified' => $this->isCodeTrustVerified($user->id),
+            'adminNeedsMfa' => self::adminMfaRequired() && $this->isPlatformAdmin($user) && !$this->isMfaEnabled($user->id),
         ];
+    }
+
+    /** Administrators must have two-factor on, unless this server says otherwise or is a dev box. */
+    public static function adminMfaRequired(): bool
+    {
+        $set = Environment::nonEmpty('ADMIN_MFA_REQUIRED');
+        return $set !== null ? filter_var($set, FILTER_VALIDATE_BOOLEAN) : Environment::get('APP_ENV', 'production') !== 'development';
     }
 
     /** Whether an admin verified this account for the host-JavaScript client engine. */
@@ -187,7 +196,7 @@ class AuthService
     }
 
     /** Whether TOTP MFA is switched on (drives the Settings card + signup nudge). */
-    private function isMfaEnabled(string $userId): bool
+    public function isMfaEnabled(string $userId): bool
     {
         try {
             $stmt = $this->mysql->prepare("SELECT mfa_enabled FROM users WHERE id = :id");
@@ -953,6 +962,64 @@ class AuthService
             'tv' => $this->getTokenVersion($userId),
             'sg' => $this->getSessionGeneration(),
         ], $this->jwtConfig['secret'], $this->jwtConfig['algorithm']);
+    }
+
+    /** An administrator's proof that they, and not only their open tab, are here. */
+    public const ADMIN_CONFIRMATION_SECONDS = 900;
+    private const ADMIN_CONFIRMATION_AUDIENCE = 'formlogic-admin-confirmation';
+
+    /** See AdminConfirmationMiddleware. Good for this session alone; a sign-out everywhere ends it. */
+    public function issueAdminConfirmation(string $userId, string $session): string
+    {
+        $now = time();
+        return JWT::encode([
+            'iss' => $this->jwtConfig['issuer'] ?? 'formlogic',
+            'aud' => self::ADMIN_CONFIRMATION_AUDIENCE,
+            'sub' => $userId,
+            'ses' => $session,
+            'iat' => $now,
+            'exp' => $now + self::ADMIN_CONFIRMATION_SECONDS,
+            'tv' => $this->getTokenVersion($userId),
+        ], $this->jwtConfig['secret'], $this->jwtConfig['algorithm']);
+    }
+
+    public function adminConfirmed(string $token, string $userId, string $session): bool
+    {
+        if ($token === '') {
+            return false;
+        }
+        try {
+            $claims = JWT::decode($token, new Key($this->jwtConfig['secret'], $this->jwtConfig['algorithm']));
+        } catch (\Exception) {
+            return false;
+        }
+        return ($claims->iss ?? null) === ($this->jwtConfig['issuer'] ?? 'formlogic')
+            && ($claims->aud ?? null) === self::ADMIN_CONFIRMATION_AUDIENCE
+            && ($claims->sub ?? null) === $userId
+            && is_string($claims->ses ?? null) && hash_equals($claims->ses, $session)
+            && (int) ($claims->tv ?? -1) === $this->getTokenVersion($userId);
+    }
+
+    /** Until when this owner lets support edit code in their account, as an ISO date, or null. */
+    public function supportAccessUntil(string $userId): ?string
+    {
+        try {
+            $stmt = $this->mysql->prepare("SELECT UNIX_TIMESTAMP(support_access_until) FROM users WHERE id = :id AND support_access_until > NOW()");
+            $stmt->execute(['id' => $userId]);
+            $until = $stmt->fetchColumn();
+            return $until === false || $until === null ? null : gmdate('c', (int) $until);
+        } catch (\PDOException) {
+            return null; // column not migrated: nobody has allowed it
+        }
+    }
+
+    /** One day at a time: support access that never ends is the thing it exists to avoid. */
+    public function setSupportAccess(string $userId, bool $allow): ?string
+    {
+        $this->mysql->prepare(
+            "UPDATE users SET support_access_until = " . ($allow ? "NOW() + INTERVAL 24 HOUR" : "NULL") . " WHERE id = :id"
+        )->execute(['id' => $userId]);
+        return $this->supportAccessUntil($userId);
     }
 
     /** Lifetime of the password→MFA-code bridge token, in seconds. */

@@ -74,6 +74,7 @@ const AdminUpgrade = lazyWithRetry(() => import('./pages/admin/AdminUpgrade').th
 const AdminDoctor = lazyWithRetry(() => import('./pages/admin/AdminDoctor').then(m => ({ default: m.AdminDoctor })));
 // Acting mode: the REAL owner UIs (app manager, builder, flows) mounted for another
 // user's resources — AdminActingBoundary resolves the owner + rewrites API calls.
+const AdminConfirmHost = lazyWithRetry(() => import('./components/admin/AdminConfirmHost').then(m => ({ default: m.AdminConfirmHost })));
 const AdminActingBoundary = lazyWithRetry(() => import('./components/admin/AdminActingBoundary').then(m => ({ default: m.AdminActingBoundary })));
 const AdminRecordCounts = lazyWithRetry(() => import('./components/admin/AdminRecordCounts').then(m => ({ default: m.AdminRecordCounts })));
 const FlowsWorkspace = lazyWithRetry(() => import('./pages/flows/FlowsWorkspace').then(m => ({ default: m.FlowsWorkspace })));
@@ -574,6 +575,12 @@ function RootGate() {
   return launchHost ? <DomainLaunchRouter host={launchHost}><AppRoutes /></DomainLaunchRouter> : <AppRoutes />;
 }
 
+/** Only an administrator loads the confirmation dialog. */
+function AdminConfirmGate() {
+  const isAdmin = useAuthStore((state) => !!state.user?.isAdmin);
+  return isAdmin ? <React.Suspense fallback={null}><AdminConfirmHost /></React.Suspense> : null;
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
@@ -589,6 +596,7 @@ export default function App() {
           <ToastContainer />
           <SyncConflictDialog />
           <AppLocalAccessPrompt />
+          <AdminConfirmGate />
         </AppInitializer>
       </BrowserRouter>
     </ErrorBoundary>

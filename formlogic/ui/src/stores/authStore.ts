@@ -31,6 +31,8 @@ interface User {
   isAdmin?: boolean;
   /** Two-factor authentication switched on (drives the Settings card + signup nudge). */
   mfaEnabled?: boolean;
+  /** An administrator on a server that requires two-factor, without it yet. */
+  adminNeedsMfa?: boolean;
   /** Verified by an administrator for the host-JavaScript client engine. Advisory only: it decides
    *  whether the app-settings engine select offers that option, never whether it takes effect. */
   isCodeTrustVerified?: boolean;

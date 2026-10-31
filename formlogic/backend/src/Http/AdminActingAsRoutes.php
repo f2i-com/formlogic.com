@@ -11,6 +11,7 @@ use FormLogic\Controllers\FlowController;
 use FormLogic\Controllers\FormController;
 use FormLogic\Controllers\TrashController;
 use FormLogic\Controllers\WebhookController;
+use FormLogic\Middleware\AdminCodeEditGate;
 use FormLogic\Middleware\AdminRunLogRedactionMiddleware;
 use Psr\Container\ContainerInterface;
 use Slim\Routing\RouteCollectorProxy;
@@ -37,6 +38,7 @@ use Slim\Routing\RouteCollectorProxy;
  *     administrator could collect sessions on a name of their own. Editing and removing stay.
  *   - Routes listed here can still reach the same place by the side door (letting themselves
  *     join, widening a role, public records). AdminActingLimits refuses those edits.
+ *   - Routes flagged WRITES_CODE, and the code in a form or app save, wait for the owner's leave.
  *   - Routes that RETURN flow runs are flagged REDACT_RUNS: run metadata is
  *     visible, but inputSnapshot/result/outputActions/error are stripped by
  *     AdminRunLogRedactionMiddleware (submission answers live in there).
@@ -47,6 +49,8 @@ use Slim\Routing\RouteCollectorProxy;
 final class AdminActingAsRoutes
 {
     public const REDACT_RUNS = 'redactRuns';
+    /** Writes code that runs on records later, so it needs the owner's leave (AdminActingLimits). */
+    public const WRITES_CODE = 'writesCode';
 
     /**
      * [method, pattern, controller class, controller method, flags[]]
@@ -77,8 +81,8 @@ final class AdminActingAsRoutes
 
         // ── Standalone-form flow bindings ──
         ['GET',    '/forms/{id}/flow-bindings',                FlowController::class,      'listFormBindings'],
-        ['POST',   '/forms/{id}/flow-bindings',                FlowController::class,      'createFormBinding'],
-        ['PUT',    '/forms/{id}/flow-bindings/{bindingId}',    FlowController::class,      'updateFormBinding'],
+        ['POST',   '/forms/{id}/flow-bindings',                FlowController::class,      'createFormBinding', [self::WRITES_CODE]],
+        ['PUT',    '/forms/{id}/flow-bindings/{bindingId}',    FlowController::class,      'updateFormBinding', [self::WRITES_CODE]],
         ['DELETE', '/forms/{id}/flow-bindings/{bindingId}',    FlowController::class,      'deleteFormBinding'],
 
         // ── Form versions (structure snapshots: fields/settings/theme/logicScript) ──
@@ -102,14 +106,14 @@ final class AdminActingAsRoutes
 
         // ── App flows + bindings + run history (runs REDACTED to metadata) ──
         ['GET',    '/apps/{id}/flows',                         FlowController::class,      'listFlows'],
-        ['POST',   '/apps/{id}/flows',                         FlowController::class,      'createFlow'],
+        ['POST',   '/apps/{id}/flows',                         FlowController::class,      'createFlow', [self::WRITES_CODE]],
         ['GET',    '/apps/{id}/flows/{flowId}',                FlowController::class,      'getFlow'],
-        ['PUT',    '/apps/{id}/flows/{flowId}',                FlowController::class,      'updateFlow'],
+        ['PUT',    '/apps/{id}/flows/{flowId}',                FlowController::class,      'updateFlow', [self::WRITES_CODE]],
         ['DELETE', '/apps/{id}/flows/{flowId}',                FlowController::class,      'deleteFlow'],
-        ['POST',   '/apps/{id}/flows/{flowId}/test-run',       FlowController::class,      'testRun', [self::REDACT_RUNS]],
+        ['POST',   '/apps/{id}/flows/{flowId}/test-run',       FlowController::class,      'testRun', [self::REDACT_RUNS, self::WRITES_CODE]],
         ['GET',    '/apps/{id}/flow-bindings',                 FlowController::class,      'listBindings'],
-        ['POST',   '/apps/{id}/flow-bindings',                 FlowController::class,      'createBinding'],
-        ['PUT',    '/apps/{id}/flow-bindings/{bindingId}',     FlowController::class,      'updateBinding'],
+        ['POST',   '/apps/{id}/flow-bindings',                 FlowController::class,      'createBinding', [self::WRITES_CODE]],
+        ['PUT',    '/apps/{id}/flow-bindings/{bindingId}',     FlowController::class,      'updateBinding', [self::WRITES_CODE]],
         ['DELETE', '/apps/{id}/flow-bindings/{bindingId}',     FlowController::class,      'deleteBinding'],
         ['GET',    '/apps/{id}/flow-runs',                     FlowController::class,      'listRuns', [self::REDACT_RUNS]],
 
@@ -148,10 +152,10 @@ final class AdminActingAsRoutes
 
         // ── Workspace flows (static {flowId}/bindings before {flowId}) ──
         ['GET',    '/flows',                                   FlowController::class,      'listWorkspaceFlows'],
-        ['POST',   '/flows',                                   FlowController::class,      'createWorkspaceFlow'],
+        ['POST',   '/flows',                                   FlowController::class,      'createWorkspaceFlow', [self::WRITES_CODE]],
         ['GET',    '/flows/{flowId}/bindings',                 FlowController::class,      'listFlowBindingsForFlow'],
         ['GET',    '/flows/{flowId}',                          FlowController::class,      'getWorkspaceFlow'],
-        ['PUT',    '/flows/{flowId}',                          FlowController::class,      'updateWorkspaceFlow'],
+        ['PUT',    '/flows/{flowId}',                          FlowController::class,      'updateWorkspaceFlow', [self::WRITES_CODE]],
         ['DELETE', '/flows/{flowId}',                          FlowController::class,      'deleteWorkspaceFlow'],
 
         // ── Owner-wide run history + completion (REDACTED; no /queued, no /claim) ──
@@ -168,6 +172,7 @@ final class AdminActingAsRoutes
     public static function register(RouteCollectorProxy $group, ContainerInterface $container): void
     {
         $redactor = new AdminRunLogRedactionMiddleware();
+        $codeGate = new AdminCodeEditGate();
         foreach (self::ROUTES as $row) {
             [$method, $pattern, $class, $fn] = $row;
             $flags = $row[4] ?? [];
@@ -179,6 +184,9 @@ final class AdminActingAsRoutes
             });
             if (in_array(self::REDACT_RUNS, $flags, true)) {
                 $route->add($redactor);
+            }
+            if (in_array(self::WRITES_CODE, $flags, true)) {
+                $route->add($codeGate);
             }
         }
     }

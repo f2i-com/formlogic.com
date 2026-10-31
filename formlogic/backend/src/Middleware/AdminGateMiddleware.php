@@ -19,7 +19,9 @@ use Slim\Psr7\Response as SlimResponse;
  */
 class AdminGateMiddleware implements MiddlewareInterface
 {
-    public function __construct(private AuthService $authService)
+    public const NEEDS_MFA = 'admin_mfa_required';
+
+    public function __construct(private AuthService $authService, private bool $requireMfa = false)
     {
     }
 
@@ -31,6 +33,17 @@ class AdminGateMiddleware implements MiddlewareInterface
             $response->getBody()->write(json_encode([
                 'error' => true,
                 'message' => 'Administrator access required',
+            ]));
+            return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+        }
+        // A password alone is not enough to reach every account on the server. Turning it on is in
+        // Settings, which this gate doesn't cover, so nobody is locked out by it.
+        if ($this->requireMfa && !$this->authService->isMfaEnabled($user->id)) {
+            $response = new SlimResponse();
+            $response->getBody()->write((string) json_encode([
+                'error' => true,
+                'code' => self::NEEDS_MFA,
+                'message' => 'Turn on two-factor authentication in Settings to use the admin tools',
             ]));
             return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
         }

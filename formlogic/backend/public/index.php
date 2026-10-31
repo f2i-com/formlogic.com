@@ -341,7 +341,15 @@ $container->set(AuthController::class, function (Container $c) {
         $c->get(\FormLogic\Services\MfaService::class),
         $c->get(AppUserService::class),
         $c->get(\FormLogic\Services\AppDomainService::class),
-        $c->get(\FormLogic\Services\AppDomainSignInService::class)
+        $c->get(\FormLogic\Services\AppDomainSignInService::class),
+        $c->get(\FormLogic\Services\AdminSupportActivity::class)
+    );
+});
+$container->set(\FormLogic\Services\AdminSupportActivity::class, function (Container $c) {
+    return new \FormLogic\Services\AdminSupportActivity(
+        $c->get(MySQLConnection::class),
+        $c->get(AuditService::class),
+        $c->get(\FormLogic\Services\EmailService::class)
     );
 });
 
@@ -1305,7 +1313,7 @@ $app->get('/api/health', function ($request, $response) use ($container) {
 // paths, worker staleness, store drift, billing config) are operator concerns; the Doctor
 // page now lives inside the admin panel. AdminGateMiddleware also subsumes the old
 // demo-session refusal (the shared demo account can never be a platform admin).
-$adminGate = new \FormLogic\Middleware\AdminGateMiddleware($container->get(AuthService::class));
+$adminGate = new \FormLogic\Middleware\AdminGateMiddleware($container->get(AuthService::class), AuthService::adminMfaRequired());
 $container->set(\FormLogic\Controllers\HealthController::class, function (Container $c) {
     // DocumentConverter's constructor can throw on a misconfigured temp dir; the Doctor
     // endpoint must degrade gracefully, so pass null on failure (deep() rebuilds defensively).
@@ -1357,8 +1365,14 @@ $adminStepUpRateLimiter = new RateLimitMiddleware($container->get(\FormLogic\Ser
 $adminArgs = function ($request) {
     return \Slim\Routing\RouteContext::fromRequest($request)->getRoute()->getArguments();
 };
-$app->group('/api/admin', function (RouteCollectorProxy $group) use ($container, $adminArgs, $adminStepUpRateLimiter) {
+$adminConfirmation = new \FormLogic\Middleware\AdminConfirmationMiddleware($container->get(AuthService::class));
+$app->group('/api/admin', function (RouteCollectorProxy $group) use ($container, $adminArgs, $adminStepUpRateLimiter, $adminConfirmation) {
     $ctrl = fn () => $container->get(\FormLogic\Controllers\AdminController::class);
+
+    // Proves who the administrator is for the routes below that take over or open an account.
+    $group->post('/confirm', function ($request, $response) use ($ctrl) {
+        return $ctrl()->confirm($request, $response);
+    })->add($adminStepUpRateLimiter);
 
     $group->get('/overview', function ($request, $response) use ($ctrl) {
         return $ctrl()->overview($request, $response);
@@ -1371,7 +1385,7 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     });
     $group->post('/users/{id}/admin', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->setAdmin($request, $response, $adminArgs($request));
-    });
+    })->add($adminConfirmation);
     // Lockout recovery: reset a user's two-factor auth (secret + recovery codes
     // + remembered browsers wiped) so they can sign in and re-enroll. Audited.
     $group->post('/users/{id}/mfa/reset', function ($request, $response) use ($ctrl, $adminArgs) {
@@ -1387,10 +1401,10 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     // complimentary access, and — heavily gated — erase the whole account.
     $group->post('/users/{id}/password', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->resetPassword($request, $response, $adminArgs($request));
-    });
+    })->add($adminConfirmation);
     $group->put('/users/{id}/email', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->updateEmail($request, $response, $adminArgs($request));
-    });
+    })->add($adminConfirmation);
     $group->get('/users/{id}/payments', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->listPayments($request, $response, $adminArgs($request));
     });
@@ -1399,7 +1413,7 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     });
     $group->post('/users/{id}/delete', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->deleteUser($request, $response, $adminArgs($request));
-    });
+    })->add($adminConfirmation);
     // Structure-only backup manifest: the user's schema + per-form sqlite/uploads
     // PATHS and sizes — never record data (the admin panel lists, it never exports).
     $group->get('/users/{id}/backup-manifest', function ($request, $response) use ($ctrl, $adminArgs) {
@@ -1517,11 +1531,12 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
 // must not be blocked by the owner's lapsed cloud plan (fully audited instead).
 $adminActAs = new \FormLogic\Middleware\AdminActAsMiddleware(
     $container->get(AuthService::class),
-    $container->get(AuditService::class)
+    $container->get(AuditService::class),
+    $container->get(\FormLogic\Services\AdminSupportActivity::class)
 );
 $app->group('/api/admin/users/{ownerId}', function (RouteCollectorProxy $group) use ($container) {
     \FormLogic\Http\AdminActingAsRoutes::register($group, $container);
-})->add($adminActAs)->add($adminRateLimiter)->add($adminGate)->add($authRequired);
+})->add($adminActAs)->add($adminConfirmation)->add($adminRateLimiter)->add($adminGate)->add($authRequired);
 
 // Landing hero headlines (public, no auth): the rotating <h1> slides the landing page fetches.
 // Content lives in resources/landing-hero.json so copy edits never need a frontend build. Slides
@@ -1588,6 +1603,8 @@ $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->get('/me', [AuthController::class, 'me']);
     $group->get('/me/export', [AuthController::class, 'exportData']);
     $group->post('/logout', [AuthController::class, 'logout']);
+    $group->get('/support-access', [AuthController::class, 'supportAccess']);
+    $group->put('/support-access', [AuthController::class, 'setSupportAccess']);
 })->add($authRequired);
 
 // PUT/DELETE /me both re-verify the caller's real password via password_verify() with a

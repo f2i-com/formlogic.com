@@ -1861,6 +1861,7 @@ CREATE TABLE `users` (
   `mfa_recovery_codes` text COLLATE utf8mb4_unicode_ci,
   `code_trust_verified_at` datetime DEFAULT NULL,
   `code_trust_verified_by` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `support_access_until` datetime DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `email` (`email`),
   KEY `idx_email` (`email`)

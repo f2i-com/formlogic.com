@@ -2,6 +2,7 @@
  * API Client for FormLogic Backend
  */
 
+import { ADMIN_CONFIRMATION_REQUIRED, adminConfirmationHeaders, askForAdminConfirmation } from './adminConfirmation';
 import type { Form } from '../types/form';
 import type { App, AppForm, AppFormUsageApp, AppListItem, AppSettings, AppVersion, FormAppContext } from '../types/app';
 import { APP_LEVEL_PERMISSIONS, FORM_LEVEL_PERMISSIONS } from '../types/app';
@@ -867,7 +868,8 @@ class ApiClient {
 
   private async request<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    confirmedAgain = false
   ): Promise<ApiResponse<T>> {
     const generation = currentSessionGeneration();
     const routed = this.routeForAdminActing(endpoint);
@@ -878,6 +880,7 @@ class ApiClient {
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      ...(routed.endpoint.startsWith('/admin/') ? adminConfirmationHeaders() : {}),
       ...(options.headers as Record<string, string>),
     };
 
@@ -916,6 +919,9 @@ class ApiClient {
           this.handleUnauthorized(generation);
         }
         const d = data as Record<string, unknown>;
+        if (d?.code === ADMIN_CONFIRMATION_REQUIRED && !confirmedAgain && await askForAdminConfirmation()) {
+          return this.request<T>(endpoint, options, true);
+        }
         let message = (d?.message as string) || 'An error occurred';
         // Surface per-field validation errors so failures are actionable rather
         // than a generic "Validation failed".
@@ -941,7 +947,8 @@ class ApiClient {
    */
   private async requestWithMeta(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    confirmedAgain = false
   ): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null; networkError?: string }> {
     const generation = currentSessionGeneration();
     const routed = this.routeForAdminActing(endpoint);
@@ -951,6 +958,7 @@ class ApiClient {
     const url = `${this.baseUrl}${routed.endpoint}`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      ...(routed.endpoint.startsWith('/admin/') ? adminConfirmationHeaders() : {}),
       ...(options.headers as Record<string, string>),
     };
     const method = (options.method || 'GET').toUpperCase();
@@ -967,6 +975,9 @@ class ApiClient {
         body = null;
       }
       if (response.status === 401) this.handleUnauthorized(generation);
+      if (body?.code === ADMIN_CONFIRMATION_REQUIRED && !confirmedAgain && await askForAdminConfirmation()) {
+        return this.requestWithMeta(endpoint, options, true);
+      }
       return { ok: response.ok, status: response.status, body };
     } catch (error) {
       logger.error('API request failed:', error);
@@ -2169,6 +2180,20 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(body),
     });
+  }
+
+  /** An administrator's password and code, for a short-lived confirmation (adminConfirmation). */
+  async adminConfirm(password: string, code: string): Promise<ApiResponse<{ confirmation: string; expiresInSeconds: number }>> {
+    return this.request('/admin/confirm', { method: 'POST', body: JSON.stringify({ password, code }) });
+  }
+
+  /** Whether support may edit code in this account, and what administrators have done in it. */
+  async getSupportAccess(): Promise<ApiResponse<{ until: string | null; activity: { at: string; what: string }[] }>> {
+    return this.request('/auth/support-access');
+  }
+
+  async setSupportAccess(allow: boolean): Promise<ApiResponse<{ until: string | null }>> {
+    return this.request('/auth/support-access', { method: 'PUT', body: JSON.stringify({ allow }) });
   }
 
   /** A one-time code for an app's own domain, for the member signed in here (see domainSignIn). */
@@ -4595,10 +4620,10 @@ class ApiClient {
   }
 
   /** Set (or generate) a user's password; their sessions are revoked. The temp password is shown ONCE. */
-  async adminResetPassword(id: string, password?: string): Promise<ApiResponse<{ success: boolean; tempPassword?: string }>> {
+  async adminResetPassword(id: string): Promise<ApiResponse<{ success: boolean; emailed?: boolean; tempPassword?: string }>> {
     return this.request(`/admin/users/${encodeURIComponent(id)}/password`, {
       method: 'POST',
-      body: JSON.stringify(password ? { password } : {}),
+      body: '{}',
     });
   }
 
