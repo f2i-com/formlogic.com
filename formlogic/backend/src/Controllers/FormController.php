@@ -656,8 +656,8 @@ class FormController
         }
 
         if (AdminActingLimits::acting($request)) {
-            $screen = $this->versionService->getVersion($formId, $version)['data']['customScreen'] ?? null;
-            if (($refusal = AdminActingLimits::formRefusal(['customScreen' => $screen], $form)) !== null) {
+            $restored = $this->versionService->getVersion($formId, $version)['data'] ?? [];
+            if (($refusal = AdminActingLimits::formRefusal(array_intersect_key($restored, ['customScreen' => true, 'settings' => true]), $form)) !== null) {
                 return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $refusal], 403);
             }
         }

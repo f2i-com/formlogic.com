@@ -188,7 +188,7 @@ class AppDomainTokenTest extends TestCase
         // The platform's own cookie Domain, which a browser would refuse on this host.
         $response = $this->exchange($body['code'], $app, $host, ['domain' => '.formlogic.example']);
         self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
-        self::assertTrue(json_decode((string) $response->getBody(), true)['user']['domainSession'] ?? false);
+        self::assertSame(['id', 'email', 'name', 'domainSession'], array_keys(json_decode((string) $response->getBody(), true)['user']), 'nothing else of the account');
         $cookies = $response->getHeader('Set-Cookie');
         self::assertCount(2, $cookies);
         foreach ($cookies as $cookie) {
@@ -218,6 +218,17 @@ class AppDomainTokenTest extends TestCase
         // A moment later, or the update below would change nothing and pass for a refusal.
         self::$pdo->prepare('UPDATE app_domain_sign_ins SET exchanged_at = NOW() - INTERVAL 5 SECOND WHERE code_hash = ?')->execute([hash('sha256', $code)]);
         self::assertSame(400, $this->exchange($code, $app, $host)->getStatusCode(), 'spent');
+    }
+
+    public function testACodeDiesWithTheSessionsOfItsDay(): void
+    {
+        $app = $this->app();
+        $host = $this->connected($app);
+        $member = $this->user();
+        $code = $this->askForCode($member, 'https://' . $host)[1]['code'];
+        self::$auth->revokeTokens($member->id);
+        self::assertSame(400, $this->exchange($code, $app, $host)->getStatusCode(), 'signed out everywhere');
+        self::assertSame(200, $this->exchange($this->askForCode($member, 'https://' . $host)[1]['code'], $app, $host)->getStatusCode(), 'a code from after it works');
     }
 
     public function testACodeLapsesInAMinute(): void
@@ -261,7 +272,9 @@ class AppDomainTokenTest extends TestCase
         $member = $this->user();
         $this->withAppEnv('production', function () use ($member, $host): void {
             self::assertSame(404, $this->askForCode($member, 'http://' . $host)[0]);
+            self::assertSame(404, $this->askForCode($member, 'https://' . $host . ':8443')[0], 'the member was shown the host, not this port');
             self::assertSame(200, $this->askForCode($member, 'https://' . $host)[0]);
+            self::assertSame(200, $this->askForCode($member, 'https://' . $host . ':443')[0]);
         });
         $this->withAppEnv('development', function () use ($member, $host): void {
             self::assertSame(200, $this->askForCode($member, 'http://' . $host . ':8091')[0]);
@@ -323,7 +336,7 @@ class AppDomainTokenTest extends TestCase
         $controller = new AuthController(self::$auth);
         $request = (new ServerRequestFactory())->createServerRequest('GET', 'https://shop.acme-apps.com/api/auth/me')
             ->withAttribute('user', $user)->withAttribute(AppDomainSession::ATTRIBUTE, ['appId' => 'app-x', 'host' => 'shop.acme-apps.com', 'signInId' => 'sign-in-1']);
-        self::assertTrue(json_decode((string) $controller->me($request, (new ResponseFactory())->createResponse())->getBody(), true)['user']['domainSession'] ?? false);
+        self::assertSame(['id', 'email', 'name', 'domainSession'], array_keys(json_decode((string) $controller->me($request, (new ResponseFactory())->createResponse())->getBody(), true)['user']));
     }
 
     public function testOnlyAConnectedDomainOfAPublishedAppResolves(): void

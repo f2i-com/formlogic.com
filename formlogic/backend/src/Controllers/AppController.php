@@ -362,6 +362,10 @@ class AppController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
         }
 
+        if (AdminActingLimits::acting($request) && $this->appService->leavingOpensPublicRecords($args['id'])) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => 'Deleting this app would show a form\'s answers to the public, which is the owner\'s to turn on'], 403);
+        }
+
         try {
             // Recycle bin: snapshot (app + its flows/bindings/roles, which all
             // cascade-die) before the hard delete. Member forms survive as always.
@@ -537,6 +541,10 @@ class AppController
         $app = $this->authorizeAppOwnership($request, $args['id']);
         if (!$app) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
+        }
+
+        if (AdminActingLimits::acting($request) && $this->appService->leavingOpensPublicRecords($args['id'], $args['formId'])) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => 'Removing this form would show its answers to the public, which is the owner\'s to turn on'], 403);
         }
 
         $this->appService->removeFormFromApp($args['id'], $args['formId']);

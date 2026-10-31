@@ -76,7 +76,7 @@ describe('coming back', () => {
     await expect(finishDomainSignIn('the-code', state)).resolves.toBeNull();
   });
 
-  it.each(['//evil.example', '/\\evil.example', 'https://evil.example', 'orders'])('stays on this site with %s stored', async returnTo => {
+  it.each(['//evil.example', '/\\evil.example', '/\t/evil.example', 'https://evil.example', 'orders'])('stays on this site with %s stored', async returnTo => {
     sessionStorage.setItem(KEY, JSON.stringify({ state: 'abc', returnTo }));
     await expect(finishDomainSignIn('the-code', 'abc')).resolves.toBe('/');
   });

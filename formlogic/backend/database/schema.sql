@@ -330,6 +330,7 @@ CREATE TABLE `app_domain_sign_ins` (
   `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `host` varchar(253) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `token_version` int NOT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `code_expires_at` timestamp NOT NULL,
   `exchanged_at` timestamp NULL DEFAULT NULL,

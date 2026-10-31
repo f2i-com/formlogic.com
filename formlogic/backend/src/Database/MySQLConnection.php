@@ -2177,6 +2177,7 @@ class MySQLConnection
                 user_id VARCHAR(36) NOT NULL,
                 app_id VARCHAR(36) NOT NULL,
                 host VARCHAR(253) NOT NULL,
+                token_version INT NOT NULL,
                 created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
                 code_expires_at TIMESTAMP NOT NULL,
                 exchanged_at TIMESTAMP NULL DEFAULT NULL,

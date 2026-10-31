@@ -32,6 +32,7 @@ export function AppDomainSignIn() {
   const [config, setConfig] = useState<LaunchConfig | null | undefined>(undefined);
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
+  const [armed, setArmed] = useState(false);
 
   useEffect(() => {
     if (user) return;
@@ -44,6 +45,14 @@ export function AppDomainSignIn() {
     void fetchLaunchConfig(host).then(found => { if (!cancelled) setConfig(found); });
     return () => { cancelled = true; };
   }, [user, host]);
+
+  // A site can swap this page in under the second click of a double-click. Nobody reads and
+  // decides in a second.
+  useEffect(() => {
+    if (!config) return;
+    const timer = window.setTimeout(() => setArmed(true), 1000);
+    return () => window.clearTimeout(timer);
+  }, [config]);
 
   if (!user) return null;
   if (host && config === undefined) return <p role="status" className="p-6">Checking this site…</p>;
@@ -83,7 +92,7 @@ export function AppDomainSignIn() {
               </div>
             )}
             <div className="mt-6 flex flex-col gap-2">
-              <Button onClick={proceed} isLoading={working}>Continue</Button>
+              <Button onClick={proceed} isLoading={working} disabled={!armed}>Continue</Button>
               <a href={origin} className="min-h-11 inline-flex items-center justify-center text-sm text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white">Cancel</a>
             </div>
           </>

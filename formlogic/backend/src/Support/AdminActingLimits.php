@@ -54,7 +54,9 @@ final class AdminActingLimits
             return null;
         }
         $opened = !empty($settings['allowSelfRegistration']) && empty($stored['allowSelfRegistration']);
-        $roleChanged = !empty($settings['defaultRoleId']) && $settings['defaultRoleId'] !== ($stored['defaultRoleId'] ?? null);
+        // Leaving the role out changes it too: joiners then get the app's Member role.
+        $role = ($settings['defaultRoleId'] ?? null) ?: null;
+        $roleChanged = $role !== (($stored['defaultRoleId'] ?? null) ?: null) && ($role !== null || !empty($settings['allowSelfRegistration']));
         $approvalDropped = !empty($stored['allowSelfRegistration']) && !empty($stored['requireApproval']) && empty($settings['requireApproval']);
         return $opened || $roleChanged || $approvalDropped ? 'Who can join an app is the owner\'s to change' : null;
     }

@@ -4,6 +4,7 @@
 // this app on this domain (AppDomainSignInService on the server).
 import { createContext } from 'react';
 import { api } from './api';
+import { signInDestination } from './authRedirect';
 
 const KEY = 'formlogic:domain-sign-in';
 
@@ -41,5 +42,5 @@ export async function finishDomainSignIn(code: string | null, state: string | nu
   if (!code || !state || pending?.state !== state) return null;
   const result = await api.exchangeAppDomainCode(code);
   if (result.error) return null;
-  return typeof pending.returnTo === 'string' && /^\/(?![/\\])/.test(pending.returnTo) ? pending.returnTo : '/';
+  return signInDestination(typeof pending.returnTo === 'string' ? pending.returnTo : null);
 }

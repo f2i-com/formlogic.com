@@ -506,6 +506,48 @@ class AdminActingAsTest extends TestCase
         $this->assertSame(200, $this->send('PUT', $path, ['name' => 'Renamed', 'settings' => ['allowSelfRegistration' => true, 'requireApproval' => true]], $admin)->getStatusCode());
     }
 
+    public function testAnAdministratorCannotLoosenTheRoleJoinersGet(): void
+    {
+        $admin = $this->tokenFor($this->adminId);
+        $role = self::$appUsers->createRole($this->appId, ['name' => 'Joiners' . bin2hex(random_bytes(3))]);
+        $settings = ['allowSelfRegistration' => true, 'defaultRoleId' => $role['id']];
+        self::$apps->updateApp($this->appId, ['settings' => $settings]);
+        $path = "/api/admin/users/{$this->ownerId}/apps/{$this->appId}";
+
+        // Without it joiners get the app's Member role, which may show records.
+        $this->assertOwnersToMake($this->send('PUT', $path, ['settings' => ['allowSelfRegistration' => true]], $admin), 'leaving the role out');
+        $this->assertOwnersToMake($this->send('DELETE', "{$path}/roles/{$role['id']}", null, $admin), 'deleting the role');
+        $this->assertSame($role['id'], self::$apps->getApp($this->appId)['settings']['defaultRoleId'] ?? null);
+
+        // Saved as it is, or with joining off, nothing is opened.
+        $this->assertSame(200, $this->send('PUT', $path, ['settings' => $settings], $admin)->getStatusCode());
+        $this->assertSame(200, $this->send('PUT', $path, ['settings' => ['allowSelfRegistration' => false]], $admin)->getStatusCode());
+        $other = self::$appUsers->createRole($this->appId, ['name' => 'Other' . bin2hex(random_bytes(3))]);
+        $this->assertSame(200, $this->send('DELETE', "{$path}/roles/{$other['id']}", null, $admin)->getStatusCode());
+    }
+
+    public function testAnAdministratorCannotTakeAFormOutOfTheAppThatHidesItsPublicRecords(): void
+    {
+        $admin = $this->tokenFor($this->adminId);
+        self::$forms->updateForm($this->formId, ['status' => 'published', 'customScreen' => ['enabled' => false, 'publicRecords' => true, 'publicRecordFields' => ['name']]]);
+        $path = "/api/admin/users/{$this->ownerId}/apps/{$this->appId}";
+
+        $this->assertOwnersToMake($this->send('DELETE', "{$path}/forms/{$this->formId}", null, $admin), 'removing the form');
+        $this->assertOwnersToMake($this->send('DELETE', $path, null, $admin), 'deleting the app');
+        $this->assertTrue(self::$apps->formBelongsToApp($this->appId, $this->formId));
+
+        // Another app still holds it back, so this one may let it go.
+        $other = self::$apps->createApp(['name' => 'Also holds it'], $this->ownerId);
+        self::$apps->addFormToApp($other['id'], $this->formId, 'Contacts');
+        $this->assertSame(200, $this->send('DELETE', "{$path}/forms/{$this->formId}", null, $admin)->getStatusCode());
+        self::$apps->addFormToApp($this->appId, $this->formId, 'Contacts');
+        self::$apps->removeFormFromApp($other['id'], $this->formId);
+
+        // Unpublished, or without public records, there is nothing to open.
+        self::$forms->updateForm($this->formId, ['status' => 'draft']);
+        $this->assertSame(200, $this->send('DELETE', "{$path}/forms/{$this->formId}", null, $admin)->getStatusCode());
+    }
+
     public function testAnAdministratorCannotGiveARoleTheRecords(): void
     {
         $admin = $this->tokenFor($this->adminId);
@@ -575,6 +617,9 @@ class AdminActingAsTest extends TestCase
         self::$pdo->prepare('INSERT INTO form_versions (id, form_id, version, data, created_by) VALUES (UUID(), ?, 7, ?, ?)')
             ->execute([$this->formId, json_encode(['title' => 'Old', 'customScreen' => ['publicRecordFields' => ['name', 'other']] + $screen]), $this->ownerId]);
         $this->assertOwnersToMake($this->send('POST', "{$path}/versions/7/restore", ['force' => true], $admin), 'restoring public records');
+        self::$pdo->prepare('INSERT INTO form_versions (id, form_id, version, data, created_by) VALUES (UUID(), ?, 8, ?, ?)')
+            ->execute([$this->formId, json_encode(['title' => 'Old', 'settings' => ['notifications' => ['emailNotifications' => true, 'notificationEmail' => 'old@elsewhere.test']]]), $this->ownerId]);
+        $this->assertOwnersToMake($this->send('POST', "{$path}/versions/8/restore", ['force' => true], $admin), 'restoring where the answers are emailed');
 
         // Their own edits of the same form still go through.
         $this->assertSame(200, $this->send('PUT', $path, ['title' => 'Still editable', 'customScreen' => $screen], $admin)->getStatusCode());

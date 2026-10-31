@@ -90,7 +90,8 @@ export function DomainLaunchRouter({ host, children }: { host: string; children:
   const config = resolved?.config ?? null;
   const softnAccess = resolved?.softnAccess;
   const direct = config?.domain.mode === 'runtime_direct';
-  const path = pathname.replace(/\/$/, '');
+  // As the router matches: `/LOGIN/` is the login page too.
+  const path = pathname.toLowerCase().replace(/\/+$/, '');
   // Null where FormLogic is this very address: a local `?__flhost=` preview signs in as usual.
   const platformUrl = config?.platformUrl && config.platformUrl !== window.location.origin ? config.platformUrl : null;
   const leaves = !!platformUrl && (SIGN_IN_PATHS.includes(path) || PASSWORD_PATHS.includes(path));

@@ -20,6 +20,17 @@ describe('signInDestination', () => {
     expect(signInDestination('/\\evil.example')).toBe('/');
     expect(signInDestination('https://evil.example/')).toBe('/');
     expect(signInDestination('javascript:alert(1)')).toBe('/');
+    // A URL parser drops these, which leaves `//evil.example`.
+    expect(signInDestination('/\t/evil.example')).toBe('/');
+    expect(signInDestination('/\n/evil.example')).toBe('/');
+    expect(signInDestination('/\r/evil.example')).toBe('/');
+    expect(signInDestination('/\t\\evil.example')).toBe('/');
+  });
+
+  it('reads a sign-in page the way the browser will', () => {
+    expect(signInDestination('/x/../login')).toBe('/');
+    expect(signInDestination('/./signup')).toBe('/');
+    expect(signInDestination('/lo\tgin')).toBe('/');
   });
 
   it('refuses a sign-in page, which only sends a signed-in visitor on', () => {

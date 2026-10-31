@@ -1215,6 +1215,32 @@ class AppService
         return $this->getAppForms($appId);
     }
 
+    /**
+     * Whether taking this form (or, without one, every form) out of the app opens answers to the
+     * public. A form in an app is served through its runtime alone, so public records a form has
+     * on start to be served the moment it stands alone.
+     */
+    public function leavingOpensPublicRecords(string $appId, ?string $formId = null): bool
+    {
+        $stmt = $this->mysql->prepare(
+            "SELECT af.form_id FROM app_forms af
+             WHERE af.app_id = :app_id AND NOT EXISTS (
+                 SELECT 1 FROM app_forms other WHERE other.form_id = af.form_id AND other.app_id != af.app_id
+             )"
+        );
+        $stmt->execute(['app_id' => $appId]);
+        foreach ($stmt->fetchAll(\PDO::FETCH_COLUMN) as $id) {
+            if ($formId !== null && $id !== $formId) {
+                continue;
+            }
+            $form = $this->formService->getForm((string) $id);
+            if (($form['status'] ?? null) === 'published' && !empty($form['customScreen']['publicRecords'])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public function removeFormFromApp(string $appId, string $formId): bool
     {
         $stmt = $this->mysql->prepare("DELETE FROM app_forms WHERE app_id = :app_id AND form_id = :form_id");

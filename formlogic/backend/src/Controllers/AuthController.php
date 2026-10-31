@@ -255,7 +255,7 @@ class AuthController
         }
 
         if ($request->getAttribute(AppDomainSession::ATTRIBUTE) !== null) {
-            $decorated['domainSession'] = true;
+            $decorated = $this->domainUser($decorated);
         }
         return $this->jsonResponse($response, [
             'user' => $decorated,
@@ -718,7 +718,9 @@ class AuthController
         $origin = SessionOriginPolicy::normalizeOrigin(is_string($data['origin'] ?? null) ? $data['origin'] : '');
         $host = $origin === null ? null : parse_url($origin, PHP_URL_HOST);
         $app = is_string($host) ? $this->appDomains->resolveAppSlugByHost($host) : null;
-        $secure = Environment::get('APP_ENV') === 'development' || str_starts_with((string) $origin, 'https://');
+        // The member is shown the host, so a code goes to that host's own HTTPS and no other port.
+        $secure = Environment::get('APP_ENV') === 'development'
+            || (str_starts_with((string) $origin, 'https://') && parse_url((string) $origin, PHP_URL_PORT) === null);
         if ($app === null || !$secure) {
             return $this->jsonError($response, 'That domain is not connected to an app', 404);
         }
@@ -746,7 +748,19 @@ class AuthController
         }
         $response = $this->setAuthCookie($response, $this->authService->issueAppDomainToken($user->id, $domain['appId'], $domain['host'], $signIn['id']), true);
         $this->audit($request, 'auth.app_domain.signed_in', 'app', $domain['appId'], ['host' => $domain['host'], 'userId' => $user->id]);
-        return $this->jsonResponse($response, ['user' => $this->authService->userPayload($user) + ['domainSession' => true]]);
+        return $this->jsonResponse($response, ['user' => $this->domainUser($this->authService->userPayload($user))]);
+    }
+
+    /**
+     * What a domain is told about who signed in: what the member agreed to on the way there. Whether
+     * they are an administrator or have two-factor on is no business of an app's owner.
+     *
+     * @param array<string, mixed> $user
+     * @return array<string, mixed>
+     */
+    private function domainUser(array $user): array
+    {
+        return array_intersect_key($user, ['id' => true, 'email' => true, 'name' => true]) + ['domainSession' => true];
     }
 
     /**

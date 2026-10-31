@@ -930,11 +930,13 @@ and gets back a one-time code for a session limited to its app. `Support/AppDoma
 
 - **The round trip.** The domain's Sign in goes to `APP_URL/sign-in/domain` with its origin and a
   random `state` kept in that tab. There the member signs in as usual, MFA included, and is told
-  which site is asking. Continue asks `POST /api/auth/app-domain/code`, which refuses anything but a
-  connected domain of a published app (and plain HTTP outside development), and returns to
+  which site is asking. Continue, enabled after a second so a double-click can't land on it, asks
+  `POST /api/auth/app-domain/code`, which refuses anything but a connected domain of a published app
+  (and plain HTTP or another port outside development), and returns to
   `<domain>/sign-in/complete#code=…&state=…`. The page there checks the state, so a link holding
   someone else's code signs nobody in, and spends the code at `POST /api/auth/app-domain/exchange`.
-  A code lasts a minute, works once on that host for that app, and is stored only as a hash.
+  A code lasts a minute, works once on that host for that app, dies with a sign-out everywhere or a
+  new password, and is stored only as a hash.
 - **What a domain may post.** `CsrfMiddleware` admits the exchange alone, for an `Origin` naming the
   host the request reached with Fetch Metadata that agrees, over HTTPS outside development, when that
   host is a connected domain of a published app. `/api/auth/login`, `register`, `mfa/verify` and
@@ -947,7 +949,8 @@ and gets back a one-time code for a session limited to its app. `Support/AppDoma
   `GET /api/auth/me` and `POST /api/auth/logout`, while the domain stays connected. By method:
   `PUT` and `DELETE` on `/api/auth/me` change and erase the account. A refusal is a 403 with the
   code `app_domain_session_scope`, because a 401 would sign the visitor out of the app.
-- **What it never carries.** The cookies are host-only, ignoring `COOKIE_DOMAIN`. Leaving a domain
+- **What it never carries.** The domain hears the member's id, name and email and nothing else of the
+  account, whether they are an administrator or have two-factor on included. The cookies are host-only, ignoring `COOKIE_DOMAIN`. Leaving a domain
   ends that session, on the server too (each sign-in is a row), and that session alone: it is the
   one a domain's owner could be holding, and it must not sign the member out everywhere for them.
 - **What stays the member's.** Their account is the same one, so changing a password ends these

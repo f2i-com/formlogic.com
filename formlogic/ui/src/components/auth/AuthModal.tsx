@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { useAuthStore } from '../../stores/authStore';
+import { DomainSignInContext, startDomainSignIn } from '../../lib/domainSignIn';
 import { Mail, Lock, User, AlertCircle, Loader2 } from 'lucide-react';
 
 interface AuthModalProps {
@@ -27,6 +28,12 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
   const [localError, setLocalError] = useState<string | null>(null);
 
   const { login, register, isLoading, error, clearError } = useAuthStore();
+
+  // On an app's own domain the form is on FormLogic, never here (see domainSignIn).
+  const signInAt = useContext(DomainSignInContext);
+  useEffect(() => {
+    if (isOpen && signInAt) startDomainSignIn(signInAt, initialMode === 'register' ? 'signup' : 'login', window.location.pathname + window.location.search);
+  }, [isOpen, signInAt, initialMode]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

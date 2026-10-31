@@ -135,6 +135,10 @@ class AppUserController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Role not found'], 404);
         }
 
+        if (AdminActingLimits::acting($request) && ($this->appService->getApp($appId)['settings']['defaultRoleId'] ?? null) === $args['roleId']) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => 'Who can join an app is the owner\'s to change'], 403);
+        }
+
         try {
             $this->appUserService->deleteRole($args['roleId']);
             $this->audit($request, 'role.delete', 'role', $args['roleId'], ['appId' => $appId]);
