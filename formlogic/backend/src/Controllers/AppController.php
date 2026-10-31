@@ -10,6 +10,7 @@ use FormLogic\Services\AppService;
 use FormLogic\Services\AppReportService;
 use FormLogic\Services\AuditService;
 use FormLogic\Helpers\IpResolver;
+use FormLogic\Support\AdminActingLimits;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
@@ -122,6 +123,9 @@ class AppController
         // of an app in the bin would own the app's source, keys and records. createApp takes
         // an id only from the restore paths, which read it from the server's own snapshot.
         unset($data['id']);
+        if (AdminActingLimits::acting($request) && ($refusal = AdminActingLimits::appSettingsRefusal($data['settings'] ?? null)) !== null) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $refusal], 403);
+        }
 
         try {
             // A script language outside javascript | python is refused here as on update
@@ -229,6 +233,9 @@ class AppController
         // client-side guard) so an app can't be saved with an empty title.
         if (array_key_exists('name', $data) && trim((string)($data['name'] ?? '')) === '') {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App name is required'], 400);
+        }
+        if (AdminActingLimits::acting($request) && ($refusal = AdminActingLimits::appSettingsRefusal($data['settings'] ?? null, $app['settings'] ?? [])) !== null) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $refusal], 403);
         }
 
         if (isset($data['customScreen'])) {
@@ -474,6 +481,10 @@ class AppController
         $userId = $request->getAttribute('userId');
         if (!$this->appService->isFormOwnedByUser($data['formId'], $userId)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found or access denied'], 404);
+        }
+        // A grant across the whole app covers every form attached later.
+        if (AdminActingLimits::acting($request) && ($this->appUserService?->membersSeeEveryForm($args['id']) ?? true)) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => 'Members of this app can see every form in it, so adding one is the owner\'s to do'], 403);
         }
 
         try {

@@ -10,6 +10,7 @@ use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AppDomainService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\FormService;
+use FormLogic\Support\Environment;
 use PDO;
 use PHPUnit\Framework\TestCase;
 use Slim\Psr7\Factory\ServerRequestFactory;
@@ -78,7 +79,7 @@ class AppDomainClaimTest extends TestCase
             $this->markTestSkipped('No test database');
         }
         foreach (['APP_URL', 'CORS_ORIGIN', 'APP_ENV'] as $key) {
-            $this->saved[$key] = $_ENV[$key] ?? null;
+            $this->saved[$key] = Environment::get($key);
         }
         $this->setEnv('APP_URL', self::PLATFORM);
         $this->setEnv('CORS_ORIGIN', 'https://www.formlogic-claim.com');
@@ -107,13 +108,11 @@ class AppDomainClaimTest extends TestCase
 
     private function setEnv(string $key, ?string $value): void
     {
-        if ($value === null) {
-            unset($_ENV[$key]);
-            putenv($key);
-            return;
+        unset($_ENV[$key], $_SERVER[$key]);
+        putenv($key);
+        if ($value !== null) {
+            $_ENV[$key] = $value;
         }
-        $_ENV[$key] = $value;
-        putenv("$key=$value");
     }
 
     private function create(string $domain): array

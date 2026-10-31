@@ -30,6 +30,7 @@ use FormLogic\Services\FormVersionService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\TrashService;
 use FormLogic\Services\WebhookService;
+use FormLogic\Support\AdminActingLimits;
 use PDO;
 use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerInterface;
@@ -128,7 +129,7 @@ class AdminActingAsTest extends TestCase
             FormController::class => new FormController(
                 self::$forms, null, new FormVersionService($conn, self::$forms), self::$audit
             ),
-            AppController::class => new AppController(self::$apps, null, self::$audit),
+            AppController::class => new AppController(self::$apps, null, self::$audit, null, null, self::$appUsers),
             AppUserController::class => new AppUserController(self::$appUsers, self::$apps, self::$audit),
             FlowController::class => new FlowController(self::$flows, self::$apps, self::$appUsers),
             WebhookController::class => new WebhookController(new WebhookService($conn), self::$forms),
@@ -459,6 +460,124 @@ class AdminActingAsTest extends TestCase
         $this->assertTrue($echo['redacted'] ?? false);
         $this->assertArrayNotHasKey('inputSnapshot', $echo);
         $this->assertStringNotContainsString(self::SECRET, $this->body($done));
+    }
+
+    // ── 3b. the side doors: no mirrored edit opens a way to the records ─────
+
+    private function assertOwnersToMake(ResponseInterface $response, string $why): void
+    {
+        $this->assertSame(403, $response->getStatusCode(), $why . ': ' . $this->body($response));
+        $this->assertSame(AdminActingLimits::CODE, $this->json($response)['code'] ?? null, $why);
+    }
+
+    /** A role of the owner's, and a second account of the administrator's in the app. */
+    private function roleAndMember(array $permissions, string $status = 'active', string $userId = ''): array
+    {
+        $role = self::$appUsers->createRole($this->appId, ['name' => 'R' . bin2hex(random_bytes(3))]);
+        self::$appUsers->setRolePermissions($role['id'], array_map(static fn ($p) => ['permission' => $p, 'formId' => null], $permissions), true);
+        $plain = self::$appUsers->createRole($this->appId, ['name' => 'P' . bin2hex(random_bytes(3))]);
+        $member = 'au-' . bin2hex(random_bytes(12));
+        self::$pdo->prepare('INSERT INTO app_users (id, app_id, user_id, role_id, status, joined_at) VALUES (?, ?, ?, ?, ?, NOW())')
+            ->execute([$member, $this->appId, $userId !== '' ? $userId : $this->adminId, $plain['id'], $status]);
+        return [$role['id'], $plain['id'], $member];
+    }
+
+    public function testConnectingADomainIsNotMirrored(): void
+    {
+        foreach (AdminActingAsRoutes::ROUTES as $row) {
+            $this->assertFalse($row[0] === 'POST' && str_contains($row[1], '/domains'), $row[1] . ' would let an administrator take an app\'s sign-ins');
+        }
+    }
+
+    public function testAnAdministratorCannotLetThemselvesJoin(): void
+    {
+        $admin = $this->tokenFor($this->adminId);
+        $path = "/api/admin/users/{$this->ownerId}/apps/{$this->appId}";
+        $this->assertOwnersToMake($this->send('PUT', $path, ['settings' => ['allowSelfRegistration' => true]], $admin), 'turning joining on');
+        $this->assertEmpty(self::$apps->getApp($this->appId)['settings']['allowSelfRegistration'] ?? null);
+        $this->assertOwnersToMake($this->send('POST', "/api/admin/users/{$this->ownerId}/apps", ['name' => 'Open door', 'settings' => ['allowSelfRegistration' => true]], $admin), 'creating an app open to join');
+
+        // With joining already on, neither who gets in nor approval can be loosened.
+        self::$apps->updateApp($this->appId, ['settings' => ['allowSelfRegistration' => true, 'requireApproval' => true]]);
+        $this->assertOwnersToMake($this->send('PUT', $path, ['settings' => ['allowSelfRegistration' => true]], $admin), 'dropping approval');
+        $this->assertOwnersToMake($this->send('PUT', $path, ['settings' => ['allowSelfRegistration' => true, 'requireApproval' => true, 'defaultRoleId' => 'role-x']], $admin), 'choosing the role joiners get');
+
+        // Everything else about the app is still theirs to edit, settings as they are included.
+        $this->assertSame(200, $this->send('PUT', $path, ['name' => 'Renamed', 'settings' => ['allowSelfRegistration' => true, 'requireApproval' => true]], $admin)->getStatusCode());
+    }
+
+    public function testAnAdministratorCannotGiveARoleTheRecords(): void
+    {
+        $admin = $this->tokenFor($this->adminId);
+        [$role] = $this->roleAndMember(['view_own_responses']);
+        $path = "/api/admin/users/{$this->ownerId}/apps/{$this->appId}/roles/{$role}/permissions";
+        foreach (['view_all_responses', 'export_responses', 'edit_responses', 'delete_responses', 'view_analytics', 'manage_roles', 'aokie_companion_audit', 'connector.aokie'] as $permission) {
+            $this->assertOwnersToMake($this->send('PUT', $path, ['permissions' => [['permission' => $permission, 'formId' => null]]], $admin), $permission);
+        }
+        $this->assertOwnersToMake($this->send('PUT', $path, ['permissions' => [['permission' => 'view_all_responses', 'formId' => $this->formId]]], $admin), 'one form');
+
+        // What shows nothing of anyone else's still saves, and so does what a role already has.
+        $this->assertSame(200, $this->send('PUT', $path, ['permissions' => [
+            ['permission' => 'view_own_responses', 'formId' => null], ['permission' => 'submit_responses', 'formId' => null], ['permission' => 'execute_flows', 'formId' => null],
+        ]], $admin)->getStatusCode());
+        self::$appUsers->setRolePermissions($role, [['permission' => 'view_all_responses', 'formId' => $this->formId]], true);
+        $this->assertSame(200, $this->send('PUT', $path, ['permissions' => [['permission' => 'view_all_responses', 'formId' => $this->formId]]], $admin)->getStatusCode());
+        // Held on one form is not held on the whole app.
+        $this->assertOwnersToMake($this->send('PUT', $path, ['permissions' => [['permission' => 'view_all_responses', 'formId' => null]]], $admin), 'app-wide');
+    }
+
+    public function testAnAdministratorCannotMoveAMemberToTheRecords(): void
+    {
+        $admin = $this->tokenFor($this->adminId);
+        [$role, , $member] = $this->roleAndMember(['view_all_responses']);
+        $path = "/api/admin/users/{$this->ownerId}/apps/{$this->appId}/users/{$member}";
+        $this->assertOwnersToMake($this->send('PUT', $path, ['roleId' => $role], $admin), 'a role with the records');
+        $other = self::$appUsers->createRole($this->appId, ['name' => 'Other' . bin2hex(random_bytes(3))]);
+        $this->assertSame(200, $this->send('PUT', $path, ['roleId' => $other['id']], $admin)->getStatusCode(), 'a role without');
+
+        // Approving themselves into such a role is the same thing.
+        [, , $pending] = $this->roleAndMember([], 'pending', $this->plainId);
+        self::$pdo->prepare('UPDATE app_users SET role_id = ? WHERE id = ?')->execute([$role, $pending]);
+        $this->assertOwnersToMake($this->send('PUT', "/api/admin/users/{$this->ownerId}/apps/{$this->appId}/users/{$pending}", ['status' => 'active'], $admin), 'activating');
+        $this->assertSame('pending', self::$pdo->query("SELECT status FROM app_users WHERE id = '{$pending}'")->fetchColumn());
+        $this->assertSame(200, $this->send('PUT', $path, ['status' => 'suspended'], $admin)->getStatusCode(), 'suspending opens nothing');
+    }
+
+    public function testAnAdministratorCannotBringAFormToMembersWhoSeeEverything(): void
+    {
+        $admin = $this->tokenFor($this->adminId);
+        $other = self::$apps->createApp(['name' => 'Elsewhere'], $this->ownerId);
+        $path = "/api/admin/users/{$this->ownerId}/apps/{$this->appId}/forms";
+        self::$apps->removeFormFromApp($this->appId, $this->formId);
+        $this->assertSame(201, $this->send('POST', "/api/admin/users/{$this->ownerId}/apps/{$other['id']}/forms", ['formId' => $this->formId], $admin)->getStatusCode(), 'nobody but the owner sees that app');
+        self::$apps->removeFormFromApp($other['id'], $this->formId);
+
+        [$role, , $member] = $this->roleAndMember(['view_all_responses']);
+        self::$pdo->prepare('UPDATE app_users SET role_id = ? WHERE id = ?')->execute([$role, $member]);
+        $this->assertOwnersToMake($this->send('POST', $path, ['formId' => $this->formId], $admin), 'attaching a form');
+        $this->assertFalse(self::$apps->formBelongsToApp($this->appId, $this->formId));
+    }
+
+    public function testAnAdministratorCannotOpenAFormsAnswers(): void
+    {
+        $admin = $this->tokenFor($this->adminId);
+        $path = "/api/admin/users/{$this->ownerId}/forms/{$this->formId}";
+        $this->assertOwnersToMake($this->send('PUT', $path, ['settings' => ['notifications' => ['emailNotifications' => true, 'notificationEmail' => 'admin@elsewhere.test']]], $admin), 'emailing the answers out');
+
+        $screen = ['enabled' => false, 'publicRecords' => true, 'publicRecordFields' => ['name']];
+        $this->assertOwnersToMake($this->send('PUT', $path, ['customScreen' => $screen], $admin), 'public records');
+        self::$forms->updateForm($this->formId, ['customScreen' => $screen, 'status' => 'draft']);
+        $this->assertOwnersToMake($this->send('PUT', $path, ['status' => 'published'], $admin), 'publishing a form with public records');
+        $this->assertOwnersToMake($this->send('PUT', $path, ['customScreen' => ['publicRecordFields' => ['name', 'other']] + $screen], $admin), 'widening public records');
+
+        // A version from before the owner turned them off.
+        self::$forms->updateForm($this->formId, ['status' => 'published']);
+        self::$pdo->prepare('INSERT INTO form_versions (id, form_id, version, data, created_by) VALUES (UUID(), ?, 7, ?, ?)')
+            ->execute([$this->formId, json_encode(['title' => 'Old', 'customScreen' => ['publicRecordFields' => ['name', 'other']] + $screen]), $this->ownerId]);
+        $this->assertOwnersToMake($this->send('POST', "{$path}/versions/7/restore", ['force' => true], $admin), 'restoring public records');
+
+        // Their own edits of the same form still go through.
+        $this->assertSame(200, $this->send('PUT', $path, ['title' => 'Still editable', 'customScreen' => $screen], $admin)->getStatusCode());
     }
 
     // ── 4. owner parity + audit ──────────────────────────────────────────────

@@ -12,6 +12,7 @@ use FormLogic\Services\RateLimiter;
 use FormLogic\Constants\AppPermissions;
 use FormLogic\Helpers\IpResolver;
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
+use FormLogic\Support\AdminActingLimits;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -186,6 +187,10 @@ class AppUserController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'permissions array is required'], 400);
         }
 
+        if (AdminActingLimits::acting($request) && AdminActingLimits::widensRole($data['permissions'], $this->appUserService->getRolePermissions($args['roleId']))) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => 'Giving a role access to other people\'s records is the owner\'s to do'], 403);
+        }
+
         try {
             $actorIsOwner = $this->appUserService->isAppOwner($appId, $userId);
             $this->appUserService->setRolePermissions($args['roleId'], $data['permissions'], $actorIsOwner);
@@ -242,6 +247,10 @@ class AppUserController
             if (!in_array($data['status'], $allowedStatuses, true)) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid status. Allowed: active, suspended'], 400);
             }
+        }
+
+        if (AdminActingLimits::acting($request) && $this->appUserService->changeShowsRecords($args['id'], $data)) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => 'Giving a member access to other people\'s records is the owner\'s to do'], 403);
         }
 
         try {

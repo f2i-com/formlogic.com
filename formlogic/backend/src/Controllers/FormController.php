@@ -14,6 +14,7 @@ use FormLogic\Services\AppReportService;
 use FormLogic\Services\TrashService;
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Helpers\IpResolver;
+use FormLogic\Support\AdminActingLimits;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
@@ -378,6 +379,9 @@ class FormController
                 return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 422);
             }
         }
+        if (AdminActingLimits::acting($request) && ($refusal = AdminActingLimits::formRefusal($data, $form)) !== null) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $refusal], 403);
+        }
 
         try {
             // Snapshot current state before updating (non-blocking: version failure should not prevent saving)
@@ -648,6 +652,13 @@ class FormController
                     'message' => 'This form is currently published. Restoring will immediately change the live form. Send { "force": true } to confirm.',
                     'requiresForce' => true,
                 ], 409);
+            }
+        }
+
+        if (AdminActingLimits::acting($request)) {
+            $screen = $this->versionService->getVersion($formId, $version)['data']['customScreen'] ?? null;
+            if (($refusal = AdminActingLimits::formRefusal(['customScreen' => $screen], $form)) !== null) {
+                return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $refusal], 403);
             }
         }
 

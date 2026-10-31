@@ -9,6 +9,7 @@ use FormLogic\Constants\AppPermissions;
 use FormLogic\Models\AppRole;
 use FormLogic\Models\AppUser;
 use FormLogic\Models\AppUserGroup;
+use FormLogic\Support\AdminActingLimits;
 use PDO;
 
 class AppUserService
@@ -218,6 +219,54 @@ class AppUserService
         );
         $stmt->execute(array_merge([$roleId], AppPermissions::APP_LEVEL));
         return $stmt->fetchColumn() !== false;
+    }
+
+    /** Whether this role shows its holder more than their own work (AdminActingLimits). */
+    public function roleShowsRecords(string $roleId): bool
+    {
+        foreach ($this->getRolePermissions($roleId) as $grant) {
+            if (AdminActingLimits::showsRecords($grant['permission'])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether someone besides the owner holds a role that shows records across the whole app. */
+    public function membersSeeEveryForm(string $appId): bool
+    {
+        $stmt = $this->mysql->prepare("
+            SELECT DISTINCT p.permission
+            FROM app_users au
+            JOIN apps a ON a.id = au.app_id
+            JOIN app_role_permissions p ON p.role_id = au.role_id AND p.form_id IS NULL
+            WHERE au.app_id = :app_id AND au.user_id <> a.owner_id
+        ");
+        $stmt->execute(['app_id' => $appId]);
+        foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $permission) {
+            if (AdminActingLimits::showsRecords((string) $permission)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether this update puts a member in, or lets them back into, a role that shows records.
+     *
+     * @param array<string, mixed> $data
+     */
+    public function changeShowsRecords(string $appUserId, array $data): bool
+    {
+        $stmt = $this->mysql->prepare("SELECT role_id, status FROM app_users WHERE id = :id");
+        $stmt->execute(['id' => $appUserId]);
+        $member = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$member) {
+            return false;
+        }
+        $role = is_string($data['roleId'] ?? null) ? $data['roleId'] : (string) $member['role_id'];
+        $activated = ($data['status'] ?? null) === 'active' && $member['status'] !== 'active';
+        return ($role !== $member['role_id'] || $activated) && $this->roleShowsRecords($role);
     }
 
     public function setRolePermissions(string $roleId, array $permissions, bool $actorIsOwner = false): void

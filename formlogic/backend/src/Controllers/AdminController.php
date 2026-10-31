@@ -16,6 +16,7 @@ use FormLogic\Services\MaintenanceService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\ScheduledBackupService;
 use FormLogic\Services\UpgradeService;
+use FormLogic\Support\AdminActingLimits;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
@@ -575,6 +576,9 @@ class AdminController
         }
         if ($input === []) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Nothing to update'], 400);
+        }
+        if (($refusal = AdminActingLimits::formRefusal($input, $form)) !== null) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $refusal], 403);
         }
         // Same shape/size caps the owner-facing write paths enforce.
         if (isset($input['title']) && (!is_string($input['title']) || strlen($input['title']) > 500)) {

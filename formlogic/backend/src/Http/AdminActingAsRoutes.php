@@ -33,6 +33,10 @@ use Slim\Routing\RouteCollectorProxy;
  *     executor) and flow-kv (state can carry record-derived values). So is
  *     PUT /apps/{id}/engine: the client engine is a transfer of trust the app
  *     OWNER makes, not something an administrator makes on their behalf.
+ *   - Connecting a domain is absent too: a verified domain takes the app's sign-ins, so an
+ *     administrator could collect sessions on a name of their own. Editing and removing stay.
+ *   - Routes listed here can still reach the same place by the side door (letting themselves
+ *     join, widening a role, public records). AdminActingLimits refuses those edits.
  *   - Routes that RETURN flow runs are flagged REDACT_RUNS: run metadata is
  *     visible, but inputSnapshot/result/outputActions/error are stripped by
  *     AdminRunLogRedactionMiddleware (submission answers live in there).
@@ -93,9 +97,7 @@ final class AdminActingAsRoutes
 
         // ── Custom domains ──
         ['GET',    '/apps/{id}/domains',                       AppDomainController::class, 'index'],
-        ['POST',   '/apps/{id}/domains',                       AppDomainController::class, 'create'],
         ['PUT',    '/apps/{id}/domains/{domainId}',            AppDomainController::class, 'update'],
-        ['POST',   '/apps/{id}/domains/{domainId}/verify',     AppDomainController::class, 'verify'],
         ['DELETE', '/apps/{id}/domains/{domainId}',            AppDomainController::class, 'delete'],
 
         // ── App flows + bindings + run history (runs REDACTED to metadata) ──

@@ -1265,7 +1265,7 @@ class ChatToolsService
     }
 
     /** Whether $screen would let anonymous visitors read more of the form's answers than $stored does. */
-    private static function widensPublicRecords(array $screen, mixed $stored): bool
+    public static function widensPublicRecords(array $screen, mixed $stored): bool
     {
         if (empty($screen['publicRecords'])) {
             return false;
@@ -1288,7 +1288,7 @@ class ChatToolsService
      * @param array<string, mixed> $args
      * @param array<string, mixed> $stored the form as it is
      */
-    private static function publishesPublicRecords(array $args, array $stored): bool
+    public static function publishesPublicRecords(array $args, array $stored): bool
     {
         if (($args['status'] ?? null) !== 'published' || ($stored['status'] ?? null) === 'published') {
             return false;
