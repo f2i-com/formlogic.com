@@ -2,8 +2,10 @@
 //
 // An app's flows and screens are its author's code, and they run in the viewer's
 // browser. That browser reaches things that are the viewer's and not the app's: OAIY
-// or FormLogic Desktop on this computer (a phone, plugins, local AI), and the AI keys
-// in their settings. The connector grants an app declares are the app's own word, so
+// or FormLogic Desktop on this computer (a phone, plugins, local AI, and what those
+// report as it happens), the AI keys in their settings, and whatever the browser has
+// already been allowed for this whole site, such as location. The connector grants an
+// app declares are the app's own word, so
 // they cannot be what lets it use those. Someone who manages the app chose what it
 // runs, so what they reach is theirs to spend. Anyone else is asked, once for each
 // app, and a yes is kept for their account until they take it back in Settings. Staff
@@ -39,6 +41,8 @@ const STORAGE_PREFIX = 'formlogic:app-local-access:v1:';
 let onScreen: OnScreenApp | null = null;
 let account: string | null = null;
 const declined = new Set<string>();
+/** A yes from someone not signed in: there is no account to keep it under, so it lasts for the page. */
+const allowedForThePage = new Set<string>();
 const pending = new Map<string, Promise<boolean>>();
 const queue: AppAccessRequest[] = [];
 const requestListeners = new Set<(request: AppAccessRequest | null) => void>();
@@ -54,6 +58,7 @@ export function setAppLocalAccessAccount(userId: string | null): void {
   if (userId === account) return;
   account = userId;
   declined.clear();
+  allowedForThePage.clear();
   for (const listener of allowedListeners) listener();
 }
 
@@ -128,6 +133,7 @@ function ask(app: OnScreenApp): Promise<boolean> {
         pending.delete(app.id);
         if (allowed) {
           if (account) writeAllowed(account, [...readAllowed(account).filter((row) => row.id !== app.id), { id: app.id, name: app.name }]);
+          else allowedForThePage.add(app.id);
         } else {
           declined.add(app.id);
         }
@@ -151,6 +157,7 @@ export async function appMayUseThisComputer(slug?: string): Promise<boolean> {
   if (onScreen === null || (slug !== undefined && onScreen.slug !== slug)) return false;
   const app = onScreen;
   if (app.manages) return true;
+  if (allowedForThePage.has(app.id)) return true;
   if (account && readAllowed(account).some((row) => row.id === app.id)) return true;
   if (declined.has(app.id)) return false;
   return ask(app);
@@ -166,6 +173,7 @@ export function __resetAppLocalAccessForTests(): void {
   onScreen = null;
   account = null;
   declined.clear();
+  allowedForThePage.clear();
   pending.clear();
   queue.length = 0;
   requestListeners.clear();

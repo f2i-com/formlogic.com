@@ -959,8 +959,7 @@ class AIController
 
     private function clientIp(Request $request): ?string
     {
-        $sp = $request->getServerParams();
-        return is_string($sp['REMOTE_ADDR'] ?? null) ? $sp['REMOTE_ADDR'] : null;
+        return \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request);
     }
 
     /**

@@ -33,13 +33,27 @@ class SQLiteConnection
         }
     }
 
+    /** What a form id can be. FormService::createForm holds new ids to it. */
+    public const FORM_ID_FORMAT = '/^[a-zA-Z0-9_-]{1,36}$/D';
+
+    public static function isFormId(string $formId): bool
+    {
+        return preg_match(self::FORM_ID_FORMAT, $formId) === 1;
+    }
+
     /**
      * Get or create a SQLite database for a specific form
+     *
+     * Opening one that isn't there creates it, and MySQL's collation finds a form under spellings
+     * its id doesn't have (a trailing space, an accent). So nothing else may become a file.
      */
     public function getFormDatabase(string $formId): PDO
     {
         if (isset($this->connections[$formId])) {
             return $this->connections[$formId];
+        }
+        if (!self::isFormId($formId)) {
+            throw new \InvalidArgumentException('Invalid form id');
         }
 
         $dbPath = $this->getFormDbPath($formId);
@@ -119,7 +133,7 @@ class SQLiteConnection
      */
     public function formDatabaseExists(string $formId): bool
     {
-        return file_exists($this->getFormDbPath($formId));
+        return self::isFormId($formId) && file_exists($this->getFormDbPath($formId));
     }
 
     /**

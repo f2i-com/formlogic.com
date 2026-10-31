@@ -127,7 +127,7 @@ class ServiceInvokeController
             ], 400);
         }
 
-        $ip = (string) ($request->getServerParams()['REMOTE_ADDR'] ?? '');
+        $ip = \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request);
         $result = match ($operationId) {
             'aokie.companion.devices.list' => $this->companionDevicesList($app),
             'aokie.companion.policy.get' => $this->companionPolicyGet($app),

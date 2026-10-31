@@ -65,7 +65,7 @@ class AdminActAsMiddleware implements MiddlewareInterface
 
         $adminId = $request->getAttribute('userId');
         try {
-            $this->activity?->opened($owner, (string) $adminId, $request->getServerParams()['REMOTE_ADDR'] ?? null);
+            $this->activity?->opened($owner, (string) $adminId, \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request));
         } catch (\Throwable) {
             // telling the owner is best-effort, as the audit below is
         }
@@ -83,7 +83,7 @@ class AdminActAsMiddleware implements MiddlewareInterface
                 $sp = $request->getServerParams();
                 // The owner sees admin.on_behalf, which must mean something changed.
                 $action = $response->getStatusCode() < 400 ? 'admin.on_behalf' : 'admin.on_behalf_refused';
-                $this->auditService?->log($action, 'admin', $ownerId, is_string($adminId) ? $adminId : null, $sp['REMOTE_ADDR'] ?? null, [
+                $this->auditService?->log($action, 'admin', $ownerId, is_string($adminId) ? $adminId : null, \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request), [
                     'method' => $method,
                     'route' => $route?->getPattern(),
                     'path' => $request->getUri()->getPath(),

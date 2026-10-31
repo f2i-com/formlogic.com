@@ -279,6 +279,48 @@ class FlowRuntimeAuthorizationTest extends TestCase
         $this->assertSame(404, $code);
     }
 
+    private function reserveConnectorEvent(): array
+    {
+        return self::$flows->reserveRun($this->appId, $this->ownerId, [
+            'flowSlug' => 'triage',
+            'triggerEvent' => 'aokie.sms.received',
+            'correlationId' => 'c-' . bin2hex(random_bytes(6)),
+            'idempotencyKey' => 'k-' . bin2hex(random_bytes(10)),
+            'queued' => true,
+            'inputSnapshot' => ['event' => ['name' => 'aokie.sms.received', 'data' => ['from' => 'someone', 'text' => 'private']]],
+        ])['run'];
+    }
+
+    public function testWhatAPluginSawIsTheOwnersAlone(): void
+    {
+        // OAIY reserves a call or a text with no form, and every role preset holds execute_flows.
+        $this->grant($this->roleId, 'execute_flows');
+        $run = $this->reserveConnectorEvent();
+        $args = ['slug' => $this->slug];
+
+        [$code, $listed] = $this->call('GET', $this->memberId, fn ($rq, $rs) => self::$ctrl->queuedRuns($rq, $rs, $args));
+        $this->assertSame(200, $code);
+        $this->assertSame([], $listed['runs']);
+        [$code] = $this->call('POST', $this->memberId, fn ($rq, $rs) => self::$ctrl->claimRun($rq, $rs, $args + ['runId' => $run['runId']]), ['runtime' => 'browser']);
+        $this->assertSame(404, $code);
+
+        [$code, $claimed] = $this->call('POST', $this->ownerId, fn ($rq, $rs) => self::$ctrl->claimRun($rq, $rs, $args + ['runId' => $run['runId']]), ['runtime' => 'browser']);
+        $this->assertSame(200, $code, 'still there for the owner, not taken from them');
+        $this->assertTrue($claimed['claimed']);
+    }
+
+    public function testAMemberDoesNotInheritAPluginEventThroughARunDescendedFromIt(): void
+    {
+        $this->grant($this->roleId, 'execute_flows');
+        $root = $this->reserveConnectorEvent();
+        $child = $this->reserveQueued();
+        self::$pdo->prepare('UPDATE flow_run_logs SET root_run_id = ? WHERE id = ?')->execute([$root['runId'], $child['runId']]);
+
+        [$code] = $this->call('POST', $this->memberId, fn ($rq, $rs) => self::$ctrl->claimRun($rq, $rs, ['slug' => $this->slug, 'runId' => $child['runId']]), ['runtime' => 'browser']);
+
+        $this->assertSame(404, $code);
+    }
+
     public function testAReserveReplayShowsOnlyWhatTheCallerMayRead(): void
     {
         // A replay key is writable by anyone who has seen a response id. The form is one this

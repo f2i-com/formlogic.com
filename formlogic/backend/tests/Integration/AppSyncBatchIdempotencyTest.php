@@ -136,6 +136,23 @@ class AppSyncBatchIdempotencyTest extends TestCase
         return $body['results'];
     }
 
+    public function testAnAccountSpendsItsItemsAndWhatIsLeftComesBackToBeSentAgain(): void
+    {
+        $this->inject('rateLimiter', new \FormLogic\Services\RateLimiter(self::$pdo));
+        $key = 'sync_batch_item:' . hash('sha256', $this->userId);
+        (new \FormLogic\Services\RateLimiter(self::$pdo))->clear($key);
+        $conflict = 'k-' . bin2hex(random_bytes(4));
+        $this->seedLedger($conflict, $this->hashOf(['a' => 999]), 'resp-original', 'completed');
+
+        $results = $this->runBatch(array_fill(0, 70, ['idempotencyKey' => $conflict, 'formId' => $this->formId, 'answers' => ['a' => 1]]));
+
+        $this->assertCount(70, $results);
+        $this->assertSame(409, $results[59]['status'], 'the first sixty went through');
+        $this->assertSame(429, $results[60]['status'], 'the rest did not');
+        $this->assertTrue($results[60]['processing'], 'and the client keeps them for its next flush');
+        $this->assertFalse($results[60]['conflict']);
+    }
+
     public function testDuplicateKeyDifferentPayloadReturnsConflict(): void
     {
         $key = 'k-' . bin2hex(random_bytes(4));

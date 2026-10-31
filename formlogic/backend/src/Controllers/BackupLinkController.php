@@ -112,7 +112,7 @@ final class BackupLinkController
     private function record(Request $request, string $action, string $userId, array $details): void
     {
         try {
-            $this->audit?->log($action, 'account', $userId, $userId, $request->getServerParams()['REMOTE_ADDR'] ?? null, $details);
+            $this->audit?->log($action, 'account', $userId, $userId, \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request), $details);
         } catch (\Throwable) {
             // audit is best-effort
         }

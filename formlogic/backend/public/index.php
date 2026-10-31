@@ -177,7 +177,8 @@ $container->set(\FormLogic\Controllers\AdminController::class, function (Contain
         ),
         $c->get(\FormLogic\Services\EmailService::class),
         $c->get(\FormLogic\Services\PlanService::class),
-        $c->get(\FormLogic\Services\RuntimeEngineService::class)
+        $c->get(\FormLogic\Services\RuntimeEngineService::class),
+        $c->get(\FormLogic\Services\AdminSupportActivity::class)
     );
 });
 
@@ -1072,7 +1073,8 @@ $container->set(AppPublicController::class, function (Container $c) {
         $c->get(ResponseService::class),
         $c->get(MySQLConnection::class),
         $c->get(SQLiteConnection::class),
-        $c->get(\FormLogic\Services\AppDomainService::class)
+        $c->get(\FormLogic\Services\AppDomainService::class),
+        $c->get(\FormLogic\Services\RateLimiter::class)
     );
 });
 
@@ -1452,21 +1454,22 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     });
 
     // Structure views + on-behalf-of-the-owner structural edits.
+    // These show what the acting mirror shows, so they ask for what it asks for.
     $group->get('/forms/{id}', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->getFormStructure($request, $response, $adminArgs($request));
-    });
+    })->add($adminConfirmation);
     $group->put('/forms/{id}', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->updateForm($request, $response, $adminArgs($request));
     });
     $group->get('/apps/{id}', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->getAppStructure($request, $response, $adminArgs($request));
-    });
+    })->add($adminConfirmation);
     $group->put('/apps/{id}', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->updateApp($request, $response, $adminArgs($request));
     });
     $group->get('/flows/{id}', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->getFlowStructure($request, $response, $adminArgs($request));
-    });
+    })->add($adminConfirmation);
     $group->put('/flows/{id}', function ($request, $response) use ($ctrl, $adminArgs) {
         return $ctrl()->updateFlow($request, $response, $adminArgs($request));
     });
@@ -3099,30 +3102,14 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     })->add($desktopFlowRelayAuth);
 })->add($desktopLinkRateLimiter);
 
-// Audit verification route (admin, protected — restricted to platform owner)
+// Audit verification route (platform administrators: the first account to sign up may have gone,
+// or be the demo's, and walking the chain is expensive)
 $app->get('/api/admin/audit/verify', function ($request, $response) use ($container) {
-    $userId = $request->getAttribute('userId');
-    if (!$userId) {
-        $response->getBody()->write(json_encode(['error' => true, 'message' => 'Authentication required']));
-        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
-    }
-
-    // Only the platform owner (first registered user) may verify the audit chain
-    $mysql = $container->get(MySQLConnection::class)->getConnection();
-    $stmt = $mysql->prepare("SELECT id FROM users ORDER BY created_at ASC LIMIT 1");
-    $stmt->execute();
-    $firstUser = $stmt->fetch();
-
-    if (!$firstUser || $firstUser['id'] !== $userId) {
-        $response->getBody()->write(json_encode(['error' => true, 'message' => 'Admin access required']));
-        return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
-    }
-
     $auditService = $container->get(AuditService::class);
     $result = $auditService->verifyChain();
     $response->getBody()->write(json_encode($result));
     return $response->withHeader('Content-Type', 'application/json');
-})->add($authRequired);
+})->add($adminRateLimiter)->add($adminGate)->add($authRequired);
 
 // Hosted projects: authentication, CSRF (global), bounded requests and cloud write gate.
 $hostingLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'hosted_apps', true, true);

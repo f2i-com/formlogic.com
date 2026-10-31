@@ -144,7 +144,7 @@ class DesktopOpsController
         }
 
         try {
-            $result = $this->commands->enqueue((string) $userId, (string) $userId, null, $data);
+            $result = $this->commands->enqueueDesktopOp((string) $userId, $data);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonError($response, $e->getMessage(), 400);
         }

@@ -19,6 +19,7 @@ import { ConnectorError, FALLBACKABLE_CODES, parseConnectorError } from './conne
 import { mockVehicleConnector } from './vehicleConnector';
 import { createLocalHttpConnector } from './localHttpConnector';
 import { deviceConnector } from './deviceConnector';
+import { assertAppMayUseThisComputer } from '../appLocalAccess';
 
 export interface ConnectorClient {
   isNativeAvailable(): boolean;
@@ -78,6 +79,8 @@ function nativeBridge() {
 // the denial was genuine and must NOT be masked with a browser mock.
 // ---------------------------------------------------------------------------
 const READY_TIMEOUT_MS = 3000;
+/** Device commands that show or change something of the viewer's, whatever app asks. */
+const VIEWERS_OWN_COMMANDS = new Set(['gps.read', 'clipboard.write']);
 
 // The verification outcome for one app, resolved once per key per session:
 //   {verified:true}  — manifest verified; native calls allowed
@@ -287,7 +290,12 @@ class DefaultConnectorClient implements ConnectorClient {
   async request(connectorId: string, command: string, payload?: unknown): Promise<unknown> {
     // preferLocal connectors (device) are always web-serviced — no verification gate needed.
     const local = localConnector(connectorId);
-    if (local) return local.request(command, payload);
+    if (local) {
+      // A browser's permission is the whole site's, so location given to one app is every app's,
+      // with no prompt. These are the viewer's, and asked about for each app.
+      if (VIEWERS_OWN_COMMANDS.has(command)) await assertAppMayUseThisComputer();
+      return local.request(command, payload);
+    }
 
     // Gate on THIS app's signed-manifest verification before the first native read (contracts #1/#3/#4),
     // so an early onScreenEnter read isn't lost to the pre-verification race and a stale result from a

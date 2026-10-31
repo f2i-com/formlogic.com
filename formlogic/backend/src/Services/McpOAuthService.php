@@ -451,6 +451,9 @@ class McpOAuthService
      */
     public static function redirectUriMatches(string $registered, string $requested): bool
     {
+        if (!self::readsTheSameEverywhere($requested)) {
+            return false;
+        }
         if ($registered === $requested) {
             return true;
         }
@@ -467,6 +470,21 @@ class McpOAuthService
             return false;
         }
         return ($r['path'] ?? '/') === ($q['path'] ?? '/') && ($r['query'] ?? '') === ($q['query'] ?? '');
+    }
+
+    /**
+     * PHP and a browser don't read every address alike. To parse_url, `http://evil\@127.0.0.1/cb`
+     * is 127.0.0.1 with a user part; a browser goes to evil, and takes the code with it. So nothing
+     * they could disagree on is a redirect: no user part, no backslash, and no white space or
+     * control character, which a browser drops before it reads the rest.
+     */
+    private static function readsTheSameEverywhere(string $uri): bool
+    {
+        if (preg_match('/[\\\\\s\x00-\x1f\x7f]/', $uri) === 1) {
+            return false;
+        }
+        $parts = parse_url($uri);
+        return is_array($parts) && !isset($parts['user']) && !isset($parts['pass']);
     }
 
     // ── Authorization request validation + code minting ──
@@ -1037,7 +1055,7 @@ class McpOAuthService
      */
     private static function validRedirectUri(string $uri): bool
     {
-        if ($uri === '' || strlen($uri) > 1000) {
+        if ($uri === '' || strlen($uri) > 1000 || !self::readsTheSameEverywhere($uri)) {
             return false;
         }
         $p = parse_url($uri);

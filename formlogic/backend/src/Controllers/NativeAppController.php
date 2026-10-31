@@ -191,7 +191,7 @@ class NativeAppController
                 'method' => $input['method'], 'path' => $input['path'], 'query' => (object) ($input['query'] ?? []), 'body' => $body,
                 // Both always present, empty when not sent, as SoftN's PHP host gives them.
                 'headers' => (object) ['authorization' => $authorization, 'idempotency-key' => $idempotency],
-                'client_ip' => $request->getServerParams()['REMOTE_ADDR'] ?? 'unknown', 'photos' => false,
+                'client_ip' => \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request), 'photos' => false,
             ], $identity, $this->flows->nativeRecordSubscriptions($app['id']), (int) ($project['version'] ?? 0), true);
             try {
                 $this->native->dispatchRecordEvents($app['id'], fn($id, $event, $data, $bindings) => $this->flows->enqueueNativeRecordEvent($app['id'], $id, $event, $data, $bindings));

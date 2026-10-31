@@ -51,6 +51,14 @@ class DesktopCommandService
     public const PRIVATE_AOKIE_RELAY_MESSAGE =
         'This Aokie command is private to the authenticated realtime/bootstrap channel and cannot use the public connector relay';
 
+    /**
+     * The desktop's own lanes, which its relay loop takes before any plugin: lifecycle operations,
+     * the AI tunnel and relayed flows. No app, AI client or flow names one of these, whatever it
+     * has been granted; the controllers that serve them don't go through the public relay.
+     */
+    private const RESERVED_CONNECTORS = ['desktop', 'desktop-ai', 'desktop-flow'];
+    public const RESERVED_CONNECTOR_MESSAGE = 'This connector is the desktop\'s own, and cannot use the public connector relay';
+
     public const BACKUP_LINK_CONNECTOR = 'formlogic-backups';
     public const BACKUP_LINK_COMMAND = 'link.accept';
     public const PRIVATE_BACKUP_LINK_MESSAGE = 'Backups are set up from your own Settings page, and cannot be asked for through the connector relay';
@@ -116,6 +124,9 @@ class DesktopCommandService
         if (self::isBackupLinkCommand($connectorId, $command)) {
             throw new \InvalidArgumentException(self::PRIVATE_BACKUP_LINK_MESSAGE);
         }
+        if (in_array(strtolower(trim($connectorId)), self::RESERVED_CONNECTORS, true)) {
+            throw new \InvalidArgumentException(self::RESERVED_CONNECTOR_MESSAGE);
+        }
     }
 
     /**
@@ -128,6 +139,17 @@ class DesktopCommandService
     public function enqueue(string $ownerUserId, string $requestedByUserId, ?string $appId, array $data): array
     {
         return $this->queue($ownerUserId, $requestedByUserId, $appId, $data, true);
+    }
+
+    /**
+     * A lifecycle operation on the owner's own desktop. For DesktopOpsController alone.
+     *
+     * @param array<string, mixed> $data
+     * @return array{command: array, created: bool}
+     */
+    public function enqueueDesktopOp(string $ownerUserId, array $data): array
+    {
+        return $this->queue($ownerUserId, $ownerUserId, null, $data, false);
     }
 
     /**

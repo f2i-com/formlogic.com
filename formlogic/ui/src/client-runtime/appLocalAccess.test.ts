@@ -41,6 +41,24 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('someone not signed in', () => {
+  it('is asked once for each page, as there is no account to keep the answer under', async () => {
+    const theirs = { id: 'app-theirs', slug: 'theirs', name: 'Their shop', manages: false };
+    __resetAppLocalAccessForTests();
+    setOnScreenApp(theirs);
+    const asked: string[] = [];
+    subscribeAppAccessRequests((request) => {
+      if (request) {
+        asked.push(request.app.name);
+        request.decide(true);
+      }
+    });
+    expect(await appMayUseThisComputer('theirs')).toBe(true);
+    expect(await appMayUseThisComputer('theirs')).toBe(true);
+    expect(asked).toEqual(['Their shop']);
+  });
+});
+
 describe('appMayUseThisComputer', () => {
   it('asks nothing on the person\'s own pages or in an app they own', async () => {
     const { seen } = answering(false);

@@ -9,6 +9,7 @@
 // logic (`enabled`), so an app with no scripts triggers no desktop detection, no SSE
 // connection, and no mock traffic. Dedupe on idempotencyKey happens centrally in the hub.
 import { useEffect, useRef } from 'react';
+import { appMayUseThisComputer } from '../appLocalAccess';
 import { isBrowserConnectorRegistered } from '../connectors/nativeConnectorClient';
 import { BROWSER_LOGIC_LANGUAGES, languagesKeptInBrowser } from '../flows/flowDispatcher';
 import { logger } from '../../lib/logger';
@@ -95,9 +96,11 @@ export function useDesktopConnectorEvents({
       // browser connector (aokie, vehicle, …) keyed by connectorId or source.
       const id = envelope.connectorId ?? envelope.source;
       if (!id || !isBrowserConnectorRegistered(id)) return;
-      // Single-writer rule, per script language: deliverDesktopEnvelope.
-      void enqueueBrowserConnectorEvent(envelope, () => deliverDesktopEnvelope(envelope, runRef.current))
-        .catch((error) => logger.warn('[app-logic] browser event queue task failed:', error));
+      // Single-writer rule, per script language: deliverDesktopEnvelope. What arrives here is the
+      // viewer's own (a call, a text), so someone else's app is asked about first.
+      void enqueueBrowserConnectorEvent(envelope, async () => {
+        if (await appMayUseThisComputer(appSlug)) await deliverDesktopEnvelope(envelope, runRef.current);
+      }).catch((error) => logger.warn('[app-logic] browser event queue task failed:', error));
     });
   }, [appSlug, enabled]);
 }

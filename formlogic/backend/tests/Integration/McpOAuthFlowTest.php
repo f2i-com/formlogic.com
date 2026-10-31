@@ -316,6 +316,49 @@ class McpOAuthFlowTest extends TestCase
         $this->assertSame('invalid_redirect_uri', self::decode($resp)['error']);
     }
 
+    /** To PHP each of these is a safe address. A browser goes somewhere else, or may. */
+    public static function addressesReadTwoWays(): array
+    {
+        return [
+            'backslash before a user part' => ['http://evil.example\\@127.0.0.1:51999/callback'],
+            'the same, encoded' => ['http://evil.example%5C@127.0.0.1:51999/callback'],
+            'a plain user part' => ['http://evil.example@127.0.0.1:51999/callback'],
+            'user and password' => ['http://evil:x@127.0.0.1:51999/callback'],
+            'an empty user part' => ['http://@127.0.0.1:51999/callback'],
+            'a tab, which a browser drops' => ["http://127.0.0.1:51999/call\tback"],
+            'a line break' => ["http://127.0.0.1:51999/callback\n"],
+            'a space' => ['http://127.0.0.1:51999/call back'],
+            'a backslash in the path' => ['http://127.0.0.1:51999\\.evil.example/callback'],
+        ];
+    }
+
+    /** @dataProvider addressesReadTwoWays */
+    public function testALoopbackRedirectIsOneEveryoneReadsTheSame(string $requested): void
+    {
+        $this->assertFalse(\FormLogic\Services\McpOAuthService::redirectUriMatches('http://127.0.0.1/callback', $requested));
+    }
+
+    public function testALoopbackRedirectStillTakesAnyPort(): void
+    {
+        $this->assertTrue(\FormLogic\Services\McpOAuthService::redirectUriMatches('http://127.0.0.1/callback', 'http://127.0.0.1:51999/callback'));
+    }
+
+    /** @dataProvider addressesReadTwoWays */
+    public function testRegistrationRefusesAnAddressReadTwoWays(string $uri): void
+    {
+        $req = (new ServerRequestFactory())->createServerRequest('POST', self::BASE . '/api/oauth/register')->withParsedBody(['redirect_uris' => [$uri]]);
+        $resp = self::$oauthCtrl->register($req, (new ResponseFactory())->createResponse());
+        $this->assertSame(400, $resp->getStatusCode());
+        $this->assertSame('invalid_redirect_uri', self::decode($resp)['error']);
+    }
+
+    public function testRegistrationRefusesAnHttpsAddressThatNamesAnotherHost(): void
+    {
+        $req = (new ServerRequestFactory())->createServerRequest('POST', self::BASE . '/api/oauth/register')->withParsedBody(['redirect_uris' => ['https://evil\\@claude.ai/api/mcp/auth_callback']]);
+        $resp = self::$oauthCtrl->register($req, (new ResponseFactory())->createResponse());
+        $this->assertSame(400, $resp->getStatusCode());
+    }
+
     // ── authorize-info validation ──
 
     public function testAuthorizeInfoRejectsUnregisteredRedirectUri(): void

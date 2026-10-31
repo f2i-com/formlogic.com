@@ -1718,6 +1718,42 @@ class FlowService
         return $stmt->fetchColumn() !== false;
     }
 
+    /** The first part of the events FormLogic raises itself. A plugin's are named after it. */
+    private const OWN_EVENT_NAMESPACES = ['app', 'flow', 'form', 'manual', 'test'];
+
+    /**
+     * Does this run hold what an OAIY plugin saw on the owner's computer, itself or through the
+     * run it descends from? OAIY reserves such an event with no form (a call, a text), so no form
+     * permission reaches it.
+     */
+    public function runCarriesConnectorEvent(array $run): bool
+    {
+        if ($this->isConnectorEvent((string) ($run['triggerEvent'] ?? ''), $run['formId'] ?? null)) {
+            return true;
+        }
+        $ancestors = array_values(array_unique(array_filter(
+            [$run['parentRunId'] ?? null, $run['rootRunId'] ?? null],
+            static fn (mixed $id): bool => is_string($id) && $id !== ''
+        )));
+        if ($ancestors === []) {
+            return false;
+        }
+        $placeholders = implode(',', array_fill(0, count($ancestors), '?'));
+        $stmt = $this->mysql->prepare("SELECT trigger_event, form_id FROM flow_run_logs WHERE id IN ({$placeholders})");
+        $stmt->execute($ancestors);
+        foreach ($stmt->fetchAll() as $ancestor) {
+            if ($this->isConnectorEvent((string) $ancestor['trigger_event'], $ancestor['form_id'])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function isConnectorEvent(string $event, mixed $formId): bool
+    {
+        return ($formId === null || $formId === '') && !in_array(explode('.', $event, 2)[0], self::OWN_EVENT_NAMESPACES, true);
+    }
+
     public function getRun(string $appId, string $runId): ?array
     {
         $stmt = $this->mysql->prepare("

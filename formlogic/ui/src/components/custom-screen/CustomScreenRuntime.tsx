@@ -5,6 +5,7 @@ import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
 import { SCREEN_CSP, createSdkRateLimiter, isScreenSdkActionAllowed } from './sdkRuntime';
+import { assertAppMayUseThisComputer } from '../../client-runtime/appLocalAccess';
 import type { ScreenBridge } from './screenBridge';
 import { subscribeDesktopEvents } from '../../client-runtime/desktop/desktopEvents';
 import { subscribeDesktopStatus } from '../../client-runtime/desktop/desktopDetection';
@@ -479,6 +480,7 @@ export function CustomScreenRuntime({
           }
           case 'aiSources': {
             if (!bridge) throw new Error('aiSources() is not available on this screen.');
+            await assertAppMayUseThisComputer();
             result = await bridge.aiSources();
             break;
           }
@@ -540,6 +542,8 @@ export function CustomScreenRuntime({
                 `This app has no "connector.${filter.connectorId}.*" grants to observe events for.`
               );
             }
+            // Grants are the app's own word; what these carry is the viewer's (a call, a text).
+            await assertAppMayUseThisComputer();
             const subId = subscriptions().add(
               'events',
               (emit) => ({
@@ -558,6 +562,7 @@ export function CustomScreenRuntime({
             if (!bridge.liveFeedsAllowed()) {
               throw new Error('Live subscriptions are not available in the shared demo.');
             }
+            await assertAppMayUseThisComputer();
             // Enforce the documented LOCAL-only contract at subscribe time:
             // the captions reader retries its loopback fetch forever, so
             // starting it with no local bridge would just burn a failing

@@ -53,7 +53,8 @@ describe('AppLocalAccessPrompt', () => {
     const { answer } = await ask();
     const text = document.body.textContent ?? '';
     expect(text).toContain('Let Their shop use this computer?');
-    expect(text).toContain('your plugins, such as your phone, and spend your AI');
+    expect(text).toContain('your plugins, such as your phone, see what they report');
+    expect(text).toContain('see where you are');
     await act(async () => dialogButton('Allow').click());
     expect(await answer).toBe(true);
     expect(listAllowedApps()).toEqual([{ id: 'app-theirs', name: 'Their shop' }]);

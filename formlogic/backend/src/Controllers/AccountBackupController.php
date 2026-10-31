@@ -162,7 +162,7 @@ final class AccountBackupController
     {
         try {
             $sp = $request->getServerParams();
-            $this->auditService?->log($action, 'account', $request->getAttribute('userId'), $request->getAttribute('userId'), $sp['REMOTE_ADDR'] ?? null, $details);
+            $this->auditService?->log($action, 'account', $request->getAttribute('userId'), $request->getAttribute('userId'), \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request), $details);
         } catch (\Throwable) {
             // audit is best-effort
         }

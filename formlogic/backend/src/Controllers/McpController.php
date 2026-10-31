@@ -766,8 +766,7 @@ TXT;
 
     private function ip(Request $request): ?string
     {
-        $sp = $request->getServerParams();
-        return $sp['REMOTE_ADDR'] ?? null;
+        return \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request);
     }
 
     private function audit(Request $request, string $action, ?string $userId = null, array $details = []): void

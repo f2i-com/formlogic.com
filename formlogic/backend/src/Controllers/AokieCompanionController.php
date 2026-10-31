@@ -2084,10 +2084,7 @@ final class AokieCompanionController
 
     private function ip(Request $request): ?string
     {
-        $server = $request->getServerParams();
-        return isset($server['REMOTE_ADDR']) && is_string($server['REMOTE_ADDR'])
-            ? $server['REMOTE_ADDR']
-            : null;
+        return \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request);
     }
 
     private function error(Response $response, int $status, string $code, string $message): Response

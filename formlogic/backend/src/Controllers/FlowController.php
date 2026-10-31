@@ -99,8 +99,8 @@ class FlowController
      * Snapshot visibility for a member on the runtime surface (audit FL-AUTH-001): a run tied
      * to a form carries that form's submission answers in its input snapshot, so a non-owner
      * needs view_all_responses on that form to list/claim it (queued runs are usually OTHER
-     * members' submissions). Runs without a formId (connector/script intents) are visible to
-     * any execute_flows holder. Results are memoised per request via $permCache.
+     * members' submissions). Runs without a formId (script intents) are visible to any
+     * execute_flows holder. Results are memoised per request via $permCache.
      * The form is the one FlowService::snapshotFormIdOfRun names: the run's own, or the form
      * of the run it descends from (a flow.succeeded handler run carries its source run's result).
      * @param array<string, bool> $permCache keyed by formId
@@ -125,14 +125,15 @@ class FlowController
     }
 
     /**
-     * May this member see this run's input snapshot? A run that holds a native app's own
-     * record names no form, so the rule above would call it visible to any execute_flows
-     * holder, which every role preset grants (FlowService::runCarriesNativeRecord).
+     * May this member see this run's input snapshot, and so take it off the queue? A run that
+     * holds a native app's own record, or what an OAIY plugin saw on the owner's computer (a
+     * call, a text), names no form, so the rule above would call it visible to any execute_flows
+     * holder, which every role preset grants. Those are the owner's executor's alone.
      * @param array<string, bool> $permCache keyed by formId
      */
     private function canSeeRun(array $app, string $userId, array $run, array &$permCache): bool
     {
-        if (($app['ownerId'] ?? null) !== $userId && $this->flows->runCarriesNativeRecord($run)) {
+        if (($app['ownerId'] ?? null) !== $userId && ($this->flows->runCarriesNativeRecord($run) || $this->flows->runCarriesConnectorEvent($run))) {
             return false;
         }
         return $this->canSeeRunSnapshot($app, $userId, $this->flows->snapshotFormIdOfRun($run), $permCache);

@@ -2114,9 +2114,10 @@ class ResponseService
     private function formExists(string $formId): bool
     {
         try {
-            $stmt = $this->mysql->prepare('SELECT 1 FROM forms WHERE id = :id LIMIT 1');
+            // The form's own spelling: FormService::getForm says why.
+            $stmt = $this->mysql->prepare('SELECT id FROM forms WHERE id = :id LIMIT 1');
             $stmt->execute(['id' => $formId]);
-            return (bool) $stmt->fetchColumn();
+            return $stmt->fetchColumn() === $formId;
         } catch (\Throwable $e) {
             // Don't block submissions on a metadata-store error — the MySQL FK on
             // the metadata insert still enforces existence. Fail open.

@@ -1081,6 +1081,22 @@ final class AccountBackupService
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
+     * createForm and createApp mark what they store as the owner's own work, which is true of an
+     * edit and not of a restore: a screen a pack installed unreviewed would come back trusted.
+     * One the backup says nothing about is not known to be the owner's.
+     *
+     * @param callable(string, array<string, mixed>): void $apply
+     */
+    private function restoreScreenTrust(mixed $screen, callable $apply): void
+    {
+        if (!is_array($screen) || $screen === []) {
+            return;
+        }
+        $trust = in_array($screen['_trust'] ?? null, ['owner', 'verified', 'untrusted'], true) ? $screen['_trust'] : 'untrusted';
+        $apply($trust, is_array($screen['_provenance'] ?? null) ? $screen['_provenance'] : ['source' => 'backup']);
+    }
+
+    /**
      * Restore a backup zip into $userId's account as NEW resources (all-or-nothing).
      *
      * $options (all default false — the plain Settings import is byte-identical):
@@ -1700,6 +1716,7 @@ final class AccountBackupService
                     'fields' => $this->remapFields(is_array($bf['fields'] ?? null) ? $bf['fields'] : [], $formIdMap, $warnings, $opts['preserveIds']),
                 ]);
                 $created['forms'][] = ['id' => $newId, 'title' => (string) $bf['title']];
+                $this->restoreScreenTrust($bf['customScreen'] ?? null, fn (string $trust, array $provenance) => $this->formService->setCustomScreenTrust($newId, $trust, $provenance));
                 // createForm's INSERT has no published_at column — restore it directly.
                 if (!empty($bf['publishedAt']) && is_string($bf['publishedAt'])) {
                     $this->pdo->prepare('UPDATE forms SET published_at = :p, updated_at = updated_at WHERE id = :id')
@@ -1745,6 +1762,7 @@ final class AccountBackupService
                 $app = $this->appService->createApp($appPayload, $userId);
                 $newAppId = (string) $app['id'];
                 $created['apps'][] = ['id' => $newAppId, 'name' => (string) $ba['name']];
+                $this->restoreScreenTrust($ba['customScreen'] ?? null, fn (string $trust, array $provenance) => $this->appService->setCustomScreenTrust($newAppId, $trust, $provenance));
 
                 $memberForms = is_array($ba['forms'] ?? null) ? $ba['forms'] : [];
                 usort($memberForms, static fn ($a, $b) => ($a['sortOrder'] ?? 0) <=> ($b['sortOrder'] ?? 0));

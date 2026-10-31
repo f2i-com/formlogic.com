@@ -717,6 +717,41 @@ class AccountBackupTest extends TestCase
         $this->assertSame([2, 2, 2], $this->countUserResources($this->userId));
     }
 
+    public function testARestoreKeepsWhatWasKnownAboutAScreen(): void
+    {
+        // A pack's screen, unreviewed, stays that way: a restore isn't the owner's approval.
+        $screen = ['html' => '<p>from a pack</p>'];
+        self::$forms->updateForm($this->f1, ['customScreen' => $screen]);
+        self::$forms->setCustomScreenTrust($this->f1, 'untrusted', ['source' => 'pack', 'packId' => 'p1']);
+        self::$apps->updateApp($this->app1, ['customScreen' => $screen]);
+        self::$apps->setCustomScreenTrust($this->app1, 'untrusted', ['source' => 'pack', 'packId' => 'p1']);
+        self::$forms->updateForm($this->f2, ['customScreen' => ['html' => '<p>my own</p>']]);
+
+        $zipPath = self::$backup->exportAccount($this->userId);
+        try {
+            $result = self::$backup->importAccount($zipPath, $this->userId);
+        } finally {
+            @unlink($zipPath);
+        }
+
+        $trustOf = function (string $table, string $title): array {
+            $column = $table === 'forms' ? 'title' : 'name';
+            $stmt = self::$pdo->prepare("SELECT id, custom_screen_trust, custom_screen_provenance FROM {$table} WHERE {$column} = ? ORDER BY created_at DESC, id");
+            $stmt->execute([$title]);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        };
+        $newForm = array_values(array_filter($result['forms'], fn ($f) => $f['title'] === 'Clients'))[0]['id'];
+        $forms = array_column($trustOf('forms', 'Clients'), null, 'id');
+        $this->assertSame('untrusted', $forms[$newForm]['custom_screen_trust']);
+        $this->assertSame('pack', json_decode((string) $forms[$newForm]['custom_screen_provenance'], true)['source']);
+        $newApp = array_values(array_filter($result['apps'], fn ($a) => $a['name'] === 'Primary App'))[0]['id'];
+        $apps = array_column($trustOf('apps', 'Primary App'), null, 'id');
+        $this->assertSame('untrusted', $apps[$newApp]['custom_screen_trust']);
+
+        $mine = array_values(array_filter($result['forms'], fn ($f) => $f['title'] === 'Jobs'))[0]['id'];
+        $this->assertSame('owner', array_column($trustOf('forms', 'Jobs'), null, 'id')[$mine]['custom_screen_trust'], 'the owner\'s own stays the owner\'s');
+    }
+
     public function testRestoreResponsesRejectsInvalidStatus(): void
     {
         $before = (int) self::$sqlite->getFormDatabase($this->f1)->query('SELECT COUNT(*) FROM responses')->fetchColumn();

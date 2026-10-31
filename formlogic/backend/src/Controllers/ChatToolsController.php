@@ -227,8 +227,7 @@ class ChatToolsController
 
     private function ip(Request $request): ?string
     {
-        $sp = $request->getServerParams();
-        return is_string($sp['REMOTE_ADDR'] ?? null) ? $sp['REMOTE_ADDR'] : null;
+        return \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request);
     }
 
     private function audit(string $action, string $userId, Request $request, array $details = []): void

@@ -343,7 +343,7 @@ export function FieldResponse({
       case 'scale': {
         const start = field.properties.scaleStart ?? 1;
         const end = field.properties.scaleEnd ?? 10;
-        const scaleValue = (value as number) || null;
+        const scaleValue = typeof value === 'number' ? value : null;
         const scaleLength = end - start + 1;
         return (
           <div>
@@ -923,6 +923,7 @@ function FormResponseContent() {
     goToStep,
     submitResponse,
     resetCurrentResponse,
+    deleteResponse,
   } = useResponseStore();
 
   // Respect the OS "reduce motion" setting — framer-motion ignores the CSS query,
@@ -1561,12 +1562,14 @@ function FormResponseContent() {
     // that lies. When offline the service worker queues the POST for retry, which is
     // handled by the classifier below.
     //
-    // Keyed on STORAGE MODE, not on `status === 'published'`: a draft (or archived, or
-    // app-scoped) form served over the cloud gets a definitive 403/404 from this
-    // endpoint, and swallowing that showed the visitor "submitted successfully" for a
-    // response the server had refused outright. Only a genuinely local-only form is
-    // allowed to keep answers locally and call that success.
-    const serverBacked = useFormStore.getState().storageMode === 'api' || api.isAdminActing();
+    // Keyed on WHERE THE FORM CAME FROM, not on `status === 'published'`: a draft (or
+    // archived, or app-scoped) form served over the cloud gets a definitive 403/404 from
+    // this endpoint, and swallowing that showed the visitor "submitted successfully" for a
+    // response the server had refused outright. A visitor who has never signed in has
+    // storage mode 'local' by default, so that alone doesn't say. Only a genuinely
+    // local-only form is allowed to keep answers locally and call that success.
+    const servedByTheServer = !!publicForm && rawForm === publicForm;
+    const serverBacked = servedByTheServer || useFormStore.getState().storageMode === 'api' || api.isAdminActing();
     let serverFailed = false;
     let queuedForSync = false;
     try {
@@ -1607,10 +1610,15 @@ function FormResponseContent() {
             return;
           } else {
             serverFailed = true;
-            // The api layer's string can be a raw transport message ("Failed to fetch"),
+            // A server's refusal says why (a form's script, a validation rule). Without a
+            // status the api layer's string is a raw transport message ("Failed to fetch"),
             // which means nothing to a visitor. Log it and say something actionable.
             logger.error('Response submit refused:', result.error);
-            setSubmitError('We couldn’t send your answers just now. Nothing has been lost — check your connection and tap Submit again.');
+            setSubmitError(
+              result.status && result.status < 500 && typeof result.error === 'string'
+                ? result.error
+                : 'We couldn’t send your answers just now. Nothing has been lost — check your connection and tap Submit again.'
+            );
           }
         } else {
           logger.warn('Response not persisted to server (kept locally):', result.error);
@@ -1633,6 +1641,9 @@ function FormResponseContent() {
     // Record locally (clears in-progress answers) and reflect in the local view.
     const response = submitResponse();
     if (!response) return;
+    // The server has it (or the service worker will send it): what someone typed into a form
+    // on a shared computer doesn't stay in that browser's storage.
+    if (servedByTheServer) deleteResponse(response.id);
     // The fill is complete — the NEXT fill gets a fresh idempotency key (FL-13).
     setQueuedKey(queuedForSync ? submitIdemKeyRef.current : null);
     submitIdemKeyRef.current = null;
@@ -1806,8 +1817,9 @@ function FormResponseContent() {
     if (e.key === 'Enter' && !e.shiftKey) {
       // Allow newlines in long_text fields
       if (currentField?.type === 'long_text') return;
-      // Let Enter operate a native dropdown (open/select) instead of advancing.
-      if ((e.target as HTMLElement).tagName === 'SELECT') return;
+      // Let Enter operate a native dropdown (open/select) instead of advancing, and do what a
+      // focused button does: Previous, Remove file, or the answer it stands for.
+      if (['SELECT', 'BUTTON', 'A'].includes((e.target as HTMLElement).tagName)) return;
       e.preventDefault();
       handleNext();
     }
@@ -1911,7 +1923,7 @@ function FormResponseContent() {
         {screenTakeover && (
           <button
             type="button"
-            onClick={() => { setIsSubmitted(false); setShowFormView(false); }}
+            onClick={() => { setIsSubmitted(false); setShowFormView(false); if (formId) startResponse(formId); }}
             className="fixed top-4 left-4 z-20 inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3.5 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2"
             style={{ backgroundColor: `${form.theme.textColor}15`, color: form.theme.textColor }}
           >

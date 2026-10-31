@@ -53,7 +53,25 @@ class AdminController
         private ?\FormLogic\Services\EmailService $email = null,
         private ?\FormLogic\Services\PlanService $planService = null,
         private ?\FormLogic\Services\RuntimeEngineService $engines = null,
+        private ?\FormLogic\Services\AdminSupportActivity $activity = null,
     ) {
+    }
+
+    /** Reading how an owner's work is built tells them, as opening it through the mirror does. */
+    private function noteOpened(Request $request, ?string $ownerId): void
+    {
+        $adminId = (string) $request->getAttribute('userId');
+        if ($ownerId === null || $ownerId === '' || $ownerId === $adminId) {
+            return;
+        }
+        try {
+            $owner = $this->auth->getUserById($ownerId);
+            if ($owner !== null) {
+                $this->activity?->opened($owner, $adminId, \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request));
+            }
+        } catch (\Throwable) {
+            // telling the owner is best-effort, as in AdminActAsMiddleware
+        }
     }
 
     /**
@@ -164,7 +182,7 @@ class AdminController
         $wasEnabled = $this->mfaService->isEnabled($userId);
         // Transactional; bumps token_version = sessions + pending tokens revoked. The admin is the
         // actor of the code-trust revocation this may carry out, and their row names the apps.
-        $revoked = $this->mfaService->disable($userId, $adminId, $request->getServerParams()['REMOTE_ADDR'] ?? null);
+        $revoked = $this->mfaService->disable($userId, $adminId, \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request));
         $this->audit($request, 'admin.mfa_reset', $userId, ['wasEnabled' => $wasEnabled, 'affectedApps' => $revoked['affectedApps']]);
         if ($wasEnabled && $this->email !== null && is_string($target['email'] ?? null)) {
             // Best-effort notification — the reset must not fail on mail trouble.
@@ -221,7 +239,7 @@ class AdminController
         }
         try {
             $sp = $request->getServerParams();
-            $result = $this->admin->setCodeTrust($userId, $verified, $adminId, $this->auditService, $sp['REMOTE_ADDR'] ?? null);
+            $result = $this->admin->setCodeTrust($userId, $verified, $adminId, $this->auditService, \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request));
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\Throwable $e) {
@@ -257,7 +275,7 @@ class AdminController
         }
         try {
             $sp = $request->getServerParams();
-            $policy = $this->engines->writePolicyAudited($body, $this->auditService, (string) $request->getAttribute('userId'), $sp['REMOTE_ADDR'] ?? null);
+            $policy = $this->engines->writePolicyAudited($body, $this->auditService, (string) $request->getAttribute('userId'), \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request));
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\Throwable $e) {
@@ -608,6 +626,7 @@ class AdminController
         // Structure + usage count only. The one thing an admin never gets here
         // is the response DATA itself.
         $form['responseCount'] = $this->safeResponseCount((string) $args['id']);
+        $this->noteOpened($request, $form['userId'] ?? null);
         return $this->jsonResponse($response, ['form' => $form, 'ownerId' => $form['userId'] ?? null]);
     }
 
@@ -685,6 +704,7 @@ class AdminController
             'formStatus' => $f['formStatus'] ?? null,
             'responseCount' => $this->safeResponseCount((string) $f['formId']),
         ], $this->apps->getAppForms((string) $args['id']));
+        $this->noteOpened($request, $app['ownerId'] ?? null);
         return $this->jsonResponse($response, [
             'app' => $app,
             'ownerId' => $app['ownerId'] ?? null,
@@ -735,6 +755,7 @@ class AdminController
         if (!$flow) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Flow not found'], 404);
         }
+        $this->noteOpened($request, $owner);
         return $this->jsonResponse($response, ['flow' => $flow, 'ownerId' => $owner]);
     }
 
@@ -1004,7 +1025,7 @@ class AdminController
     {
         try {
             $sp = $request->getServerParams();
-            $this->auditService?->log($action, 'admin', $resourceId, $request->getAttribute('userId'), $sp['REMOTE_ADDR'] ?? null, $details);
+            $this->auditService?->log($action, 'admin', $resourceId, $request->getAttribute('userId'), \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request), $details);
         } catch (\Throwable) {
             // audit is best-effort
         }

@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  __appActionDepsForTests,
+  __onDesktopEventForTests,
   __resetFlowDispatcherForTests,
   __setFlowDispatcherDepsForTests,
   __setRuntimeFlowsForTests,
@@ -1057,6 +1059,43 @@ describe('a flow of someone else\'s app and what is the viewer\'s', () => {
     await expect(deps.resolveDesktopServiceBase?.('llm')).rejects.toThrow(NOT_ALLOWED_MESSAGE);
     await expect(deps.listDesktopServices?.()).rejects.toThrow(NOT_ALLOWED_MESSAGE);
     await expect(deps.confirmLocalAccess?.()).rejects.toThrow(NOT_ALLOWED_MESSAGE);
+  });
+
+  it('sees none of what happens on this computer until the viewer says yes', async () => {
+    __resetAppLocalAccessForTests();
+    const reserveRun = vi.fn(async () => ({ error: 'stop here' }));
+    __setFlowDispatcherDepsForTests({ reserveRun, desktopRuntimeFresh: async () => false, evaluateCondition: async () => true });
+    const flow = { id: 'f1', slug: 'listen', version: 1, flowJson: { schema: 'formlogic-flow/1', nodes: [], edges: [] }, nodeCapabilities: [] };
+    const binding = { id: 'b1', flow: 'listen', event: 'aokie.sms.received', mode: 'async', inputMap: { text: '$event.data.text' } };
+    __setRuntimeFlowsForTests({ flows: [flow], bindings: [binding] } as unknown as Parameters<typeof __setRuntimeFlowsForTests>[0], 'theirs');
+    const envelope = { schemaVersion: 1, name: 'aokie.sms.received', connectorId: 'aokie', source: 'aokie', correlationId: 'c', idempotencyKey: 'k', occurredAt: '2026-11-01T00:00:00Z', data: { text: 'private' } };
+
+    setOnScreenApp(theirs);
+    __onDesktopEventForTests(envelope);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(reserveRun).not.toHaveBeenCalled();
+
+    setOnScreenApp({ ...theirs, manages: true });
+    __onDesktopEventForTests({ ...envelope, idempotencyKey: 'k2' });
+    await vi.waitFor(() => expect(reserveRun).toHaveBeenCalledTimes(1));
+  });
+
+  it('writes nothing once its app is no longer open', () => {
+    const connectorRequest = vi.fn(async () => ({}));
+    const createResponse = vi.fn(async () => ({}));
+    const updateResponse = vi.fn(async () => ({}));
+    __setFlowDispatcherDepsForTests({ connectorRequest, createResponse, updateResponse, getAppSlug: () => 'mine' });
+    const actions = __appActionDepsForTests('theirs');
+
+    expect(() => actions.connectorRequest('aokie', 'call.dial', {})).toThrow('no longer open');
+    expect(() => actions.createResponse('f', {})).toThrow('no longer open');
+    expect(() => actions.updateResponse('f', 'r', {})).toThrow('no longer open');
+    expect(connectorRequest).not.toHaveBeenCalled();
+    expect(createResponse).not.toHaveBeenCalled();
+
+    __setFlowDispatcherDepsForTests({ connectorRequest, createResponse, updateResponse, getAppSlug: () => 'theirs' });
+    void __appActionDepsForTests('theirs').connectorRequest('aokie', 'call.dial', {});
+    expect(connectorRequest).toHaveBeenCalledTimes(1);
   });
 
   it('is refused while another app is on screen, whoever owns that one', async () => {

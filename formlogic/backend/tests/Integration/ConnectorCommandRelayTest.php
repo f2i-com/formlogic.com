@@ -254,6 +254,22 @@ class ConnectorCommandRelayTest extends TestCase
         $this->assertSame(0, $this->commandCount());
     }
 
+    public function testNoRelaySurfaceNamesTheDesktopsOwnLanes(): void
+    {
+        foreach (['desktop', 'Desktop', ' desktop ', 'desktop-ai', 'desktop-flow'] as $connector) {
+            try {
+                self::$commands->enqueue($this->ownerId, $this->ownerId, $this->appId, ['connectorId' => $connector, 'command' => 'services.stop']);
+                $this->fail("{$connector} reached the queue");
+            } catch (\InvalidArgumentException $e) {
+                $this->assertSame(DesktopCommandService::RESERVED_CONNECTOR_MESSAGE, $e->getMessage());
+            }
+        }
+        $this->grant('connector.desktop.*');
+        $this->assertSame(400, $this->enqueue($this->memberId, ['connectorId' => 'desktop', 'command' => 'services.stop'])['status']);
+        $this->assertSame(400, $this->enqueue($this->ownerId, ['connectorId' => 'desktop', 'command' => 'services.stop'])['status']);
+        $this->assertSame(0, $this->commandCount());
+    }
+
     public function testNeitherAGrantNorOwningTheAppCanOfferABackupLink(): void
     {
         $offer = ['connectorId' => 'formlogic-backups', 'command' => 'link.accept', 'payload' => ['server' => 'https://elsewhere.example', 'code' => str_repeat('a', 64)]];

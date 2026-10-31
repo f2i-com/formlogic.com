@@ -12,9 +12,16 @@ import { api } from './api';
  * Reads and removals pass through unchanged.
  */
 export function frozenWhileActing() {
-  // Like zustand's default localStorage factory, degrade to a no-op where
-  // localStorage doesn't exist (node test environments, exotic embeds).
-  const store = (): Storage | null => (typeof localStorage === 'undefined' ? null : localStorage);
+  // Like zustand's default localStorage factory, degrade to a no-op where localStorage
+  // doesn't exist (node test environments, exotic embeds) or merely reading it throws (an
+  // embedded form where the browser blocks third-party storage: `typeof` doesn't help there).
+  const store = (): Storage | null => {
+    try {
+      return typeof localStorage === 'undefined' ? null : localStorage;
+    } catch {
+      return null;
+    }
+  };
   const raw: StateStorage = {
     getItem: (name) => store()?.getItem(name) ?? null,
     setItem: (name, value) => {

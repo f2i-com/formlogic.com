@@ -320,7 +320,9 @@ class FormService
         $stmt->execute(['id' => $formId]);
         $row = $stmt->fetch();
 
-        if (!$row) {
+        // The collation finds a row under other spellings of its id. Those are not this form: to
+        // the file store each is another database, with no fields to check an answer against.
+        if (!$row || $row['id'] !== $formId) {
             return null;
         }
 
@@ -381,7 +383,7 @@ class FormService
         $id = $data['id'] ?? $this->generateUuid();
         // Clients choose form ids, and an id goes into every URL of this form: it is one
         // path segment, never a path. Checked before anything looks the id up.
-        if (!is_string($id) || !preg_match('/^[a-zA-Z0-9_-]{1,36}$/D', $id)) {
+        if (!is_string($id) || !SQLiteConnection::isFormId($id)) {
             throw new \InvalidArgumentException('Invalid form id');
         }
         $now = date('Y-m-d H:i:s');

@@ -321,7 +321,7 @@ class McpOAuthController
         $this->logger?->info('MCP OAuth: token request received', [
             'grant' => $grantType,
             'client_id' => (string) ($p['client_id'] ?? ($request->getHeaderLine('Authorization') !== '' ? '(via Authorization header)' : '(none)')),
-            'ip' => $sp['REMOTE_ADDR'] ?? null,
+            'ip' => \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request),
             'forwarded_for' => $request->getHeaderLine('X-Forwarded-For') ?: null,
             'content_type' => $request->getHeaderLine('Content-Type') ?: null,
             'has_resource' => isset($p['resource']),
@@ -615,7 +615,7 @@ class McpOAuthController
     {
         try {
             $sp = $request->getServerParams();
-            $this->auditService?->log($action, 'mcp', $details['clientId'] ?? null, $userId, $sp['REMOTE_ADDR'] ?? null, $details);
+            $this->auditService?->log($action, 'mcp', $details['clientId'] ?? null, $userId, \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request), $details);
         } catch (\Throwable) { /* audit is best-effort */ }
     }
 }

@@ -160,7 +160,7 @@ class HostedAppController
         $response = $response->withHeader('Cache-Control', 'no-store')->withHeader('X-Content-Type-Options', 'nosniff');
         try {
             $sp = $request->getServerParams();
-            $effective = $this->engines->storeChoice($app['id'], $engine, $this->choiceLanguages($app['id']), $this->audit, (string) $userId, $sp['REMOTE_ADDR'] ?? null);
+            $effective = $this->engines->storeChoice($app['id'], $engine, $this->choiceLanguages($app['id']), $this->audit, (string) $userId, \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request));
         } catch (\InvalidArgumentException $e) {
             return $this->jsonError($response, $e->getMessage(), 422, 'engine_not_available');
         } catch (\Throwable $e) {

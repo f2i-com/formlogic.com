@@ -21,6 +21,7 @@ use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Constants\AppPermissions;
 use FormLogic\Helpers\IpResolver;
+use FormLogic\Services\RateLimiter;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use PDO;
@@ -38,6 +39,12 @@ class AppPublicController
     private SQLiteConnection $sqlite;
     private AppDomainService $appDomains;
 
+    private ?RateLimiter $rateLimiter = null;
+
+    /** How long one sync batch may run, and how many items an account may send a minute. */
+    private const SYNC_BATCH_SECONDS = 15.0;
+    private const SYNC_ITEMS_PER_MINUTE = 60;
+
     public function __construct(
         AppService $appService,
         AppUserService $appUserService,
@@ -46,7 +53,8 @@ class AppPublicController
         ResponseService $responseService,
         MySQLConnection $mysql,
         SQLiteConnection $sqlite,
-        AppDomainService $appDomains
+        AppDomainService $appDomains,
+        ?RateLimiter $rateLimiter = null
     ) {
         $this->appService = $appService;
         $this->appUserService = $appUserService;
@@ -56,6 +64,7 @@ class AppPublicController
         $this->mysql = $mysql->getConnection();
         $this->sqlite = $sqlite;
         $this->appDomains = $appDomains;
+        $this->rateLimiter = $rateLimiter;
     }
 
     /**
@@ -720,6 +729,15 @@ class AppPublicController
      * server-authoritative pipeline as a single submit and is idempotent by its key.
      * POST /api/app/{slug}/sync/batch  { items: [{ idempotencyKey, formId, answers }] }
      */
+    private function syncItemAllowed(string $userId): bool
+    {
+        if ($this->rateLimiter === null) {
+            return true;
+        }
+        $count = $this->rateLimiter->hit('sync_batch_item:' . hash('sha256', $userId), 60);
+        return $count !== RateLimiter::UNAVAILABLE && $count <= self::SYNC_ITEMS_PER_MINUTE;
+    }
+
     public function syncBatch(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'];
@@ -745,8 +763,19 @@ class AppPublicController
         $ua = $request->getHeaderLine('User-Agent');
         $lang = substr($request->getHeaderLine('Accept-Language'), 0, 120) ?: null;
         $results = [];
+        $until = microtime(true) + self::SYNC_BATCH_SECONDS;
         foreach ($items as $item) {
             $key = is_array($item) ? ($item['idempotencyKey'] ?? null) : null;
+            // Each item can run a form's scripts, so one request could hold a PHP worker for
+            // minutes. What doesn't fit is handed back as still to do, and a later flush sends it.
+            if (microtime(true) >= $until || !$this->syncItemAllowed((string) $userId)) {
+                $results[] = [
+                    'idempotencyKey' => $key, 'success' => false, 'responseId' => null,
+                    'error' => 'Try again in a moment', 'status' => 429,
+                    'conflict' => false, 'processing' => true, 'idempotent' => false,
+                ];
+                continue;
+            }
             $formId = is_array($item) ? (string) ($item['formId'] ?? '') : '';
             if ($formId === '' || !$this->verifyFormBelongsToApp($app['id'], $formId)) {
                 $results[] = [

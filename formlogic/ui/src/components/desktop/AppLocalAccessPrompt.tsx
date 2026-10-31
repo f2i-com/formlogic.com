@@ -11,7 +11,7 @@ export function AppLocalAccessPrompt() {
     <ConfirmDialog
       isOpen
       title={`Let ${request.app.name} use this computer?`}
-      message="This app wants to use your AI and OAIY on this computer. If you allow it, whoever runs this app can use your plugins, such as your phone, and spend your AI. Only allow apps you trust. You can take this back in Settings."
+      message="This app wants to use your AI, OAIY and location on this computer. If you allow it, whoever runs this app can use your plugins, such as your phone, see what they report, such as calls and texts, spend your AI and see where you are. Only allow apps you trust. You can take this back in Settings."
       confirmLabel="Allow"
       cancelLabel="Not now"
       onConfirm={() => request.decide(true)}

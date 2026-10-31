@@ -19,7 +19,7 @@ import { api, newIdempotencyKey } from '../../lib/api';
 import { demoApplyFlowOverlay, demoApplyFormBindingOverlay } from '../../lib/demoLocal';
 import { logger } from '../../lib/logger';
 import { useAuthStore } from '../../stores/authStore';
-import { assertAppMayUseThisComputer } from '../appLocalAccess';
+import { appMayUseThisComputer, assertAppMayUseThisComputer } from '../appLocalAccess';
 import type { AiCapability } from './aiProviders';
 import type {
   FlowBinding,
@@ -616,6 +616,9 @@ export function __setRuntimeFlowsForTests(flows: RuntimeFlows | null, slug: stri
 }
 
 /** Reset all dispatcher state. Test-only. */
+export const __onDesktopEventForTests = (envelope: DesktopEventEnvelope): void => onDesktopEvent(envelope);
+export const __appActionDepsForTests = (slug: string): OutputActionDeps => appActionDeps(slug);
+
 export function __resetFlowDispatcherForTests(): void {
   unsubscribeHub?.();
   unsubscribeHub = null;
@@ -813,8 +816,11 @@ async function deferToDesktop(eventName: string, languages: readonly string[] = 
 }
 
 function onDesktopEvent(envelope: DesktopEventEnvelope): void {
-  void enqueueBrowserConnectorEvent(envelope, () =>
-    handleEvent({
+  void enqueueBrowserConnectorEvent(envelope, async () => {
+    // A binding reserves first, which puts the event in the app's run log. What arrives here is
+    // the viewer's own (a call, a text), so someone else's app is asked about before that.
+    if (!(await appMayUseThisComputer(currentSlug ?? ''))) return;
+    await handleEvent({
       name: envelope.name,
       correlationId: envelope.correlationId,
       idempotencyKey: envelope.idempotencyKey,
@@ -822,8 +828,8 @@ function onDesktopEvent(envelope: DesktopEventEnvelope): void {
       connectorId: envelope.connectorId ?? envelope.source,
       source: envelope.source,
       occurredAt: envelope.occurredAt,
-    })
-  ).catch((error) => logger.warn('[flows] browser event queue task failed:', error));
+    });
+  }).catch((error) => logger.warn('[flows] browser event queue task failed:', error));
 }
 
 /**
@@ -1131,14 +1137,20 @@ interface OutputActionDeps {
   kvSet?(scope: string, key: string, value: unknown): Promise<unknown>;
 }
 
-function appActionDeps(): OutputActionDeps {
+function appActionDeps(slug: string): OutputActionDeps {
   const d = getDeps();
+  // As depsForAppRun: a run's writes stop with its app, or the next app opened takes them.
+  const guarded = <A extends unknown[], R>(use: (...args: A) => R) => (...args: A): R => {
+    if (d.getAppSlug() !== slug) throw new Error(`This run stopped because its app, ${slug}, is no longer open.`);
+    return use(...args);
+  };
+  const kvSet = d.executorDeps.kvSet?.bind(d.executorDeps);
   return {
-    createResponse: d.createResponse,
-    updateResponse: d.updateResponse,
-    connectorRequest: d.connectorRequest,
+    createResponse: guarded(d.createResponse),
+    updateResponse: guarded(d.updateResponse),
+    connectorRequest: guarded(d.connectorRequest),
     toast: d.toast,
-    kvSet: d.executorDeps.kvSet?.bind(d.executorDeps),
+    kvSet: kvSet ? guarded(kvSet) : undefined,
   };
 }
 
@@ -1253,7 +1265,7 @@ async function executeAndComplete(
     inputs,
     event,
     executorDeps: depsForAppRun(d.executorDeps, slug, d.getAppSlug),
-    actionDeps: appActionDeps(),
+    actionDeps: appActionDeps(slug),
     app: d.getAppContext(),
     runId,
     complete: (payload) => d.completeRun(slug, runId, payload),
@@ -1594,7 +1606,7 @@ export async function claimQueuedAppRuns(): Promise<number> {
         binding,
         app: d.getAppContext(),
         executorDeps: depsForAppRun(d.executorDeps, slug, d.getAppSlug),
-        actionDeps: appActionDeps(),
+        actionDeps: appActionDeps(slug),
         // instanceId binds the completion to OUR claim — the server 409s any other instance.
         complete: (payload) => d.completeRun(slug, claimedRun.runId, { ...payload, instanceId: getClaimInstanceId() }),
       });
