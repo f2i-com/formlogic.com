@@ -157,23 +157,16 @@ describe('DomainLaunchRouter', () => {
   });
 
   describe('on a host nothing is known of, before there is an answer', () => {
-    it('shows the platform\'s pages at once, and the form and legal pages', async () => {
+    it.each(['/form/abc123', '/FORM/abc123/', '/privacy', '/terms'])('opens %s at once: it is the same page on any host', async (path) => {
       stillAsking();
-      for (const path of ['/dashboard', '/forms', '/form/abc123', '/settings/ai', '/docs', '/admin/users', '/open/app/shop', '/privacy', '/terms']) {
-        expect(await show(path), path).toBe('platform page');
-      }
+      expect(await show(path)).toBe('platform page');
     });
 
-    it('does not take a page whose name starts the same for /app', async () => {
-      stillAsking();
-      expect(await show('/apps')).toBe('platform page');
-    });
-
-    // AppRuntimeAuthGuard draws its sign-in form in place, and only the answer tells it the domain's
-    // address to send people to instead. A sign-in form must never show on a real domain, and a
-    // first visit must land on its app or launch page, not a 404.
-    const notThePlatforms = ['/', '/login', '/LOGIN/', '/signup', '/forgot-password', '/reset-password', '/accept-invite', '/sign-in/complete', '/app/shop', '/app/shop/form/1', '/APP/shop/', '/products/42'];
-    it.each(notThePlatforms)('waits at %s, then says it can\'t reach the site, and never shows the page', async (path) => {
+    // Every path on a SoftN domain is its app's, so a first visit must land on it, never on
+    // FormLogic's pages or its 404, and AppRuntimeAuthGuard draws its sign-in form in place until
+    // the answer gives it the domain's address. On a site of its own this costs one lookup.
+    const anyOtherPage = ['/', '/login', '/LOGIN/', '/signup', '/forgot-password', '/reset-password', '/accept-invite', '/sign-in/complete', '/app/shop', '/app/shop/form/1', '/APP/shop/', '/products/42', '/dashboard', '/settings', '/forms', '/apps', '/docs', '/download', '/packs', '/admin/users'];
+    it.each(anyOtherPage)('waits at %s, then says it can\'t reach the site, and never shows the page', async (path) => {
       vi.useFakeTimers();
       noAnswer();
       const page = await show(path);
@@ -224,8 +217,8 @@ describe('DomainLaunchRouter', () => {
     it('treats a host remembered only as "domain" as one it knows nothing of', async () => {
       stillAsking();
       rememberedHost.mockReturnValue({ kind: 'domain' });
-      expect(await show('/dashboard')).toBe('platform page');
-      expect(await show('/login')).not.toContain('platform page');
+      expect(await show('/form/abc123')).toBe('platform page');
+      expect(await show('/dashboard')).not.toContain('platform page');
     });
   });
 
@@ -244,18 +237,44 @@ describe('DomainLaunchRouter', () => {
       expect(await show('/')).toBe('launch page');
     });
 
-    it('sends a sign-in to FormLogic, not a form here', async () => {
-      stillAsking();
+    const domainFor = (mode: string) => ({ ...config(mode), platformUrl: 'https://forms.acme.com' });
+
+    it('sends a sign-in to FormLogic, not a form here, once the server has said where', async () => {
+      const answer = answerLater();
       stored('launch_page', 'members');
+      getNativeEntry.mockResolvedValue({ data: { home: false, access: 'members', native: true } });
       expect(await show('/login')).not.toContain('platform page');
+      expect(assign).not.toHaveBeenCalled();
+
+      await answer({ config: domainFor('launch_page'), answered: true });
+
       expect(assign.mock.calls[0][0]).toContain('https://forms.acme.com/sign-in/domain');
     });
 
-    it('sends a password page there too', async () => {
-      stillAsking();
+    it('sends a password page there too, token and all', async () => {
+      const answer = answerLater();
       stored('launch_page');
+      getNativeEntry.mockResolvedValue({ data: { home: false, access: 'members' } });
       await show('/reset-password?token=t');
+      expect(replace).not.toHaveBeenCalled();
+
+      await answer({ config: domainFor('launch_page'), answered: true });
+
       expect(replace).toHaveBeenCalledWith('https://forms.acme.com/reset-password?token=t');
+    });
+
+    // Storage can be old, or written by a script that got in once: it can't send a token anywhere.
+    it.each(['/login', '/reset-password?token=t', '/accept-invite?token=t'])('stays at %s while there is no answer, and shows no form', async (path) => {
+      vi.useFakeTimers();
+      noAnswer();
+      stored('launch_page', 'members');
+      await show(path);
+      expect(container.textContent).not.toContain('platform page');
+      await waitFor(8_000);
+
+      expect(container.textContent).toContain("Can't reach this site right now");
+      expect(replace).not.toHaveBeenCalled();
+      expect(assign).not.toHaveBeenCalled();
     });
 
     it('finishes the way back from signing in', async () => {
@@ -329,9 +348,25 @@ describe('DomainLaunchRouter', () => {
   describe('on a host remembered as none', () => {
     beforeEach(() => rememberedHost.mockReturnValue({ kind: 'not-domain' }));
 
-    it.each(['/', '/dashboard', '/form/abc123', '/privacy'])('shows %s at once', async (path) => {
+    it.each(['/dashboard', '/form/abc123', '/privacy'])('shows %s at once', async (path) => {
       stillAsking();
       expect(await show(path)).toBe('platform page');
+    });
+
+    it('shows the site\'s own home at once', async () => {
+      stillAsking();
+      rememberedHost.mockReturnValue({ kind: 'not-domain', platform: true });
+      expect(await show('/')).toBe('platform page');
+    });
+
+    // An alias no list names: its answer replaces the home page, so the page doesn't draw one first.
+    it('holds the home page back when the server never said this is the site\'s address', async () => {
+      const answer = answerLater();
+      expect(await show('/')).not.toContain('platform page');
+
+      await answer({ config: null, answered: true });
+
+      expect(container.textContent).toContain("This domain isn't connected yet");
     });
 
     // It may have been connected since, and a page that takes a password can't be taken back.
@@ -367,10 +402,10 @@ describe('DomainLaunchRouter', () => {
     });
   });
 
-  it('applies the answer when it comes: a first visit to a platform path ends on the app', async () => {
+  it('applies the answer when it comes: a first visit to any path ends on the app', async () => {
     const answer = answerLater();
     getNativeEntry.mockResolvedValue({ data: { home: true, access: 'members', native: true } });
-    expect(await show('/settings')).toBe('platform page');
+    expect(await show('/settings')).not.toContain('platform page');
 
     await answer({ config: config('runtime_direct'), answered: true });
 
@@ -522,7 +557,7 @@ describe('DomainLaunchRouter', () => {
       return <p>platform page</p>;
     }
     await act(async () => root.render(
-      <MemoryRouter initialEntries={['/dashboard']}>
+      <MemoryRouter initialEntries={['/form/abc123']}>
         <DomainLaunchRouter host="shop.acme.com"><Redirects /></DomainLaunchRouter>
       </MemoryRouter>
     ));

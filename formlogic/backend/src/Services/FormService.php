@@ -364,6 +364,15 @@ class FormService
         return $form->toArray();
     }
 
+    /** Who owns a form, from its row alone, so this works when the form's file doesn't. */
+    public function ownerOf(string $formId): ?string
+    {
+        $stmt = $this->mysql->prepare("SELECT id, user_id FROM forms WHERE id = :id");
+        $stmt->execute(['id' => $formId]);
+        $row = $stmt->fetch();
+        return $row && $row['id'] === $formId && $row['user_id'] !== null ? (string) $row['user_id'] : null;
+    }
+
     /**
      * Batch getForm(): ONE MySQL IN-clause query for all the form rows (instead of one query per
      * form), then the usual per-form field load (fields live in each form's own SQLite database, so

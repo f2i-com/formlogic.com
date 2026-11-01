@@ -20,6 +20,7 @@ use FormLogic\Services\DataOperationLogService;
 use FormLogic\Services\FormLogicRuntime;
 use FormLogic\Services\FormQuotaRefused;
 use FormLogic\Services\FormService;
+use FormLogic\Services\NotStoredAfterScript;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\ResponseVersionConflict;
 use FormLogic\Services\ScriptResult;
@@ -703,6 +704,104 @@ final class ParallelWritesTest extends TestCase
             self::assertSame('The engine went away', $e->getMessage());
         }
         self::assertSame(1, (int) $this->anotherConnection()->query("SELECT IS_FREE_LOCK('{$this->lockName()}')")->fetchColumn());
+    }
+
+    public function testTheLockGoesWhenTheCountCannotBeRead(): void
+    {
+        $responses = new class (self::$mysql, self::$sqlite) extends ResponseService {
+            public function getResponseCount(string $formId, ?string $submittedByUserId = null): int
+            {
+                throw new \RuntimeException('The file could not be read');
+            }
+        };
+        try {
+            $responses->createResponse($this->formId, ['answers' => []], null, null, 3);
+            self::fail('It should have thrown');
+        } catch (\RuntimeException $e) {
+            self::assertSame('The file could not be read', $e->getMessage());
+        }
+        // A chat turn goes on after this, on the same connection.
+        self::assertSame(1, (int) $this->anotherConnection()->query("SELECT IS_FREE_LOCK('{$this->lockName()}')")->fetchColumn());
+    }
+
+    /** @return array<string, array{0: ?string, 1: int}> */
+    public static function howLongASubmissionWaits(): array
+    {
+        return [
+            'for an insert' => [null, 5],
+            'behind a script, which holds a worker for as long' => [self::A_SCRIPT, 1],
+        ];
+    }
+
+    /** @dataProvider howLongASubmissionWaits */
+    public function testASubmissionWaitsForTheLockOnlyAsLongAsItsLockIsHeldFor(?string $script, int $seconds): void
+    {
+        $runtime = $this->createMock(FormLogicRuntime::class);
+        $runtime->method('execute')->willReturn(new ScriptResult(true));
+        $responses = new class (self::$mysql, self::$sqlite, $runtime) extends ResponseService {
+            public array $waits = [];
+
+            public function acquireFormLock(string $formId, int $timeoutSeconds = 5): ?string
+            {
+                $this->waits[] = $timeoutSeconds;
+                return parent::acquireFormLock($formId, $timeoutSeconds);
+            }
+        };
+
+        self::assertIsArray($responses->createResponse($this->formId, ['answers' => []], $script, null, 3));
+
+        self::assertSame([$seconds], $responses->waits);
+    }
+
+    /** A connection that has the form's database, with this one set not to wait for it. */
+    private function holdTheFormsDatabase(): PDO
+    {
+        self::$sqlite->getFormDatabase($this->formId)->exec('PRAGMA busy_timeout = 0');
+        $holder = new PDO('sqlite:' . self::$sqlite->getFormDbPath($this->formId), null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $holder->exec('BEGIN IMMEDIATE');
+        return $holder;
+    }
+
+    private function letTheFormsDatabaseGo(?PDO $holder): void
+    {
+        $holder?->exec('ROLLBACK');
+        self::$sqlite->getFormDatabase($this->formId)->exec('PRAGMA busy_timeout = 5000');
+    }
+
+    // A queue that resends what a busy database refused would run a card charge twice.
+    public function testABusyDatabaseAfterTheScriptIsNotARefusalToSendAgain(): void
+    {
+        $holder = null;
+        $runtime = $this->createMock(FormLogicRuntime::class);
+        $runtime->method('execute')->willReturnCallback(function () use (&$holder): ScriptResult {
+            $holder = $this->holdTheFormsDatabase();
+            return new ScriptResult(true);
+        });
+        $responses = new ResponseService(self::$mysql, self::$sqlite, $runtime);
+        try {
+            $responses->createResponse($this->formId, ['answers' => []], self::A_SCRIPT);
+            self::fail('The database was held');
+        } catch (NotStoredAfterScript $e) {
+            self::assertStringContainsString('already run', $e->getMessage());
+            self::assertStringNotContainsString('SQLSTATE', $e->getMessage());
+            self::assertInstanceOf(\PDOException::class, $e->getPrevious());
+        } finally {
+            $this->letTheFormsDatabaseGo($holder);
+        }
+        self::assertSame(0, $responses->getResponseCount($this->formId));
+    }
+
+    public function testABusyDatabaseWithNoScriptCanStillBeSentAgain(): void
+    {
+        $holder = $this->holdTheFormsDatabase();
+        try {
+            (new ResponseService(self::$mysql, self::$sqlite))->createResponse($this->formId, ['answers' => []]);
+            self::fail('The database was held');
+        } catch (\PDOException $e) {
+            self::assertStringContainsString('database is locked', $e->getMessage());
+        } finally {
+            $this->letTheFormsDatabaseGo($holder);
+        }
     }
 
     public function testACapHoldsAcrossProcessesAndOnlyThoseWithAPlaceRunTheScript(): void

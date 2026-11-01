@@ -499,14 +499,14 @@ class FormController
             return $blocked;
         }
         $formId = $args['id'];
+        $userId = $request->getAttribute('userId');
 
-        // Authorization check - user must own the form
-        $form = $this->authorizeFormAccess($request, $formId);
-        if (!$form) {
+        // Authorization check - user must own the form. Its row says so, and a form whose file is
+        // ruined has no fields to read, so only this lets it go.
+        if (!$userId || $this->formService->ownerOf($formId) !== $userId) {
             // The metadata row may already be gone from a previous delete whose disk
             // cleanup failed (durable pending deletion, audit FL-DATA-001). Let the
             // SAME user resume it instead of dead-ending their retry on a 404.
-            $userId = $request->getAttribute('userId');
             $resumed = $userId ? $this->formService->resumePendingDeletion($formId, (string) $userId) : null;
             if ($resumed === true) {
                 $this->audit($request, 'form.delete', 'form', $formId);
@@ -528,18 +528,23 @@ class FormController
             ], 404);
         }
 
+        // Said only after the bin refused a copy (bin_unavailable), by someone who has read why.
+        $withoutCopy = ($request->getQueryParams()['withoutCopy'] ?? '') === '1';
+
         try {
             // Recycle bin: snapshot before the hard delete (30-day restore).
             // Empty drafts skip the snapshot (trashed=false). The resume path
             // above never captures — the metadata row is already gone.
             if ($this->trashService !== null) {
-                $result = $this->trashService->trashForm($formId, (string) $request->getAttribute('userId'));
+                $result = $this->trashService->trashForm($formId, (string) $request->getAttribute('userId'), !$withoutCopy);
                 $deleted = $result['deleted'];
                 $trashed = $result['trashed'];
             } else {
                 $deleted = $this->formService->deleteForm($formId);
                 $trashed = false;
             }
+        } catch (\FormLogic\Services\TrashSnapshotException $e) {
+            return $this->jsonError($response, $e->getMessage(), 503, \FormLogic\Services\TrashSnapshotException::ERROR_CODE);
         } catch (FormDeletionIncompleteException $e) {
             // Metadata removed but the on-disk stores still disagree — truthful,
             // retryable failure instead of fake success (the deletion intent is
@@ -559,7 +564,7 @@ class FormController
             ], 404);
         }
 
-        $this->audit($request, 'form.delete', 'form', $formId);
+        $this->audit($request, 'form.delete', 'form', $formId, $withoutCopy ? ['withoutCopy' => true] : []);
 
         return $this->jsonResponse($response, [
             'success' => true,

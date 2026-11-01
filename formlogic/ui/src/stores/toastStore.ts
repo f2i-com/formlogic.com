@@ -85,8 +85,8 @@ export const toast = {
       ...(opts?.duration ? { duration: opts.duration } : {}),
     });
   },
-  error: (title: string, message?: string) => {
-    useToastStore.getState().addToast({ type: 'error', title, message, duration: 7000 });
+  error: (title: string, message?: string, opts?: { action: { label: string; onClick: () => void } }) => {
+    useToastStore.getState().addToast({ type: 'error', title, message, duration: opts ? 15000 : 7000, ...opts });
   },
   warning: (title: string, message?: string) => {
     useToastStore.getState().addToast({ type: 'warning', title, message });

@@ -978,9 +978,10 @@ describe('a turn that goes wrong ends, and says so', () => {
       expect(seen.settled).toMatchObject({ ok: false, error: { code: 'timeout', message: expect.stringContaining('may still be finishing') } });
     });
 
-    it('ends at the ceiling, a little past the server\'s 10 minutes, however much it sends', async () => {
+    // Six rounds with a slow model and their tools, which the server's time limit doesn't count on Linux.
+    it('ends at the ceiling of 15 minutes, however much it sends', async () => {
       const { server, seen } = await streamingTurn();
-      for (let minute = 1; minute <= 10; minute += 1) {
+      for (let minute = 1; minute <= 14; minute += 1) {
         await vi.advanceTimersByTimeAsync(60_000);
         server.enqueue(event('.'));
         await vi.advanceTimersByTimeAsync(0);

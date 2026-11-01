@@ -107,6 +107,37 @@ class E2eeTrashLifecycleTest extends E2eeTestCase
         $this->assertFalse(self::$encryption->isPrivate($formId));
     }
 
+    // A worker that dies during an uninstall leaves copies in the bin of forms that were never deleted.
+    public function testACopyLeftBehindCanGoWithoutTakingTheLiveFormsKeys(): void
+    {
+        $form = $this->makeDraftForm();
+        $formId = (string) $form['id'];
+        $this->enablePrivateForm($formId);
+        self::$forms->updateForm($formId, ['status' => 'published']);
+        self::$responses->createEncryptedResponse($formId, $this->makeEnvelope($formId), null, null);
+        $installation = 'inst-' . bin2hex(random_bytes(8));
+        $pdo = self::$mysql->getConnection();
+        $pdo->prepare("INSERT INTO pack_installations (id, user_id, pack_id, pack_name, form_ids, app_ids) VALUES (?, ?, 'test-pack', 'Test Pack', ?, '[]')")
+            ->execute([$installation, $this->userId, json_encode([$formId])]);
+
+        self::$trash->captureRecordBearingForms($installation, $this->userId);
+        self::$trash->captureRecordBearingForms($installation, $this->userId);
+        $items = $pdo->prepare('SELECT id FROM trash_items WHERE original_id = ? AND user_id = ?');
+        $items->execute([$formId, $this->userId]);
+        [$byHand, $byExpiry] = $items->fetchAll(\PDO::FETCH_COLUMN);
+
+        $this->assertTrue(self::$trash->purgeItem((string) $byHand, $this->userId));
+        $pdo->prepare('UPDATE trash_items SET expires_at = DATE_SUB(NOW(), INTERVAL 1 DAY) WHERE id = ?')->execute([$byExpiry]);
+        self::$trash->purgeExpired();
+        FormEncryptionService::invalidateCache();
+
+        $this->assertNull($this->row('SELECT 1 AS x FROM trash_items WHERE original_id = ?', [$formId]));
+        $this->assertSame('active', $this->row('SELECT state FROM form_encryption WHERE form_id = ?', [$formId])['state']);
+        $this->assertSame('active', $this->row('SELECT state FROM form_key_grants WHERE form_id = ?', [$formId])['state']);
+        $this->assertNotNull($this->row('SELECT 1 AS x FROM form_manifests WHERE form_id = ?', [$formId]));
+        $this->assertTrue(self::$encryption->isPrivate($formId));
+    }
+
     /**
      * A TrashService whose crypto lifecycle is GUARANTEED to fail: the injected
      * FormEncryptionService sits on an empty in-memory SQLite handle, so every

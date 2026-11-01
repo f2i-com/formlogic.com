@@ -43,7 +43,7 @@ const button = (name: string) => Array.from(container.querySelectorAll('button')
 beforeEach(() => {
   vi.useFakeTimers();
   createCode.mockReset().mockResolvedValue({ data: { code: 'the-code' } });
-  launch.mockReset().mockResolvedValue({ app: { name: 'Shop', slug: 'shop' } });
+  launch.mockReset().mockResolvedValue({ config: { app: { name: 'Shop', slug: 'shop' } }, answered: true });
   assign.mockReset();
   vi.stubGlobal('location', { ...window.location, assign });
   useAuthStore.setState({ user: member as never });
@@ -100,10 +100,24 @@ describe('continuing to an app on its own domain', () => {
     ['a script address', `/sign-in/domain?origin=${encodeURIComponent('javascript:alert(1)')}&state=s`],
     ['no origin at all', '/sign-in/domain'],
   ])('offers no way on from %s', async (_name, entry) => {
-    launch.mockResolvedValue(null);
+    launch.mockResolvedValue({ config: null, answered: true });
     await open(entry);
     expect(button('Continue')).toBeUndefined();
     expect(container.querySelector('a')).toBeNull();
     expect(container.textContent).toContain("This site isn't connected");
+  });
+
+  it('does not call a site unconnected for want of an answer, and asks again from Try again', async () => {
+    launch.mockResolvedValue({ config: null, answered: false });
+    await open();
+    expect(container.textContent).toContain("couldn't be checked");
+    expect(container.textContent).not.toContain("This site isn't connected");
+    expect(button('Continue')).toBeUndefined();
+
+    launch.mockResolvedValue({ config: { app: { name: 'Shop', slug: 'shop' } }, answered: true });
+    await act(async () => { button('Try again')?.click(); });
+
+    expect(launch).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain('Continue to Shop');
   });
 });

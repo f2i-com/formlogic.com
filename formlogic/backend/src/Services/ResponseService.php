@@ -6,6 +6,7 @@ namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
+use FormLogic\Support\SqlErrorText;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use PDO;
@@ -1492,6 +1493,9 @@ class ResponseService
     /** How many times mergeEdit merges an edit over the stored record before giving up. */
     private const MERGE_ATTEMPTS = 5;
 
+    /** How long a submission waits behind another's script on a capped form: a worker waits with it. */
+    private const QUOTA_WAIT_FOR_SCRIPT_SECONDS = 1;
+
     /** How long a deleted record's tombstone is kept. */
     public const TOMBSTONE_DAYS = 180;
 
@@ -2172,9 +2176,12 @@ class ResponseService
      * @param int|null $quotaLimit The form's cap on records. It is checked here, under the form's
      *   lock, around the insert alone so that a webhook doesn't hold every other submission up.
      *   With a script the lock starts before it: what a script does can't be taken back, so it
-     *   runs for someone who has a place, and a form with both takes them one at a time.
+     *   runs for someone who has a place, and a form with both takes them one at a time. Anyone
+     *   behind a slow script hears "busy" soon (QUOTA_WAIT_FOR_SCRIPT_SECONDS), so that a rush
+     *   on one form doesn't tie up the workers every other page needs.
      * @return array|ScriptRejection The created response or a rejection
      * @throws FormQuotaRefused when $quotaLimit turns the submission away; nothing ran or was stored
+     * @throws NotStoredAfterScript when a busy database refuses the record once the script has run
      */
     public function createResponse(string $formId, array $data, ?string $script = null, ?string $sourceRunId = null, ?int $quotaLimit = null): array|ScriptRejection
     {
@@ -2223,7 +2230,7 @@ class ResponseService
         $scriptResult = null;
         $runsScript = $this->runtime !== null && $script !== null && trim($script) !== '';
         // Before the script, so that a form with no room, or no way to tell, refuses before it acts.
-        $quotaLock = $runsScript ? $this->holdQuota($formId, $quotaLimit) : null;
+        $quotaLock = $runsScript ? $this->holdQuota($formId, $quotaLimit, self::QUOTA_WAIT_FOR_SCRIPT_SECONDS) : null;
         try {
             if ($runsScript) {
                 $scriptResult = $this->runtime->execute($script, [
@@ -2337,7 +2344,7 @@ class ResponseService
             if ($db->inTransaction()) {
                 $db->rollBack();
             }
-            throw $e;
+            throw $this->withScriptDone($e, $formId, $runsScript);
         } finally {
             // The count reads this database, so from here on the record is counted.
             $this->releaseFormLock($quotaLock);
@@ -2396,7 +2403,7 @@ class ResponseService
             $db->exec("DELETE FROM tags WHERE response_id = $qid");
             $db->exec("DELETE FROM script_logs WHERE response_id = $qid");
             $db->exec("DELETE FROM responses WHERE id = $qid");
-            throw $mysqlErr;
+            throw $this->withScriptDone($mysqlErr, $formId, $runsScript);
         }
 
         // 7. Update analytics (best-effort: the response is already committed, so a
@@ -2483,22 +2490,42 @@ class ResponseService
     }
 
     /**
+     * A busy database says "try again", and that is true of the record. Once a script has run it
+     * isn't true of the submission (see NotStoredAfterScript).
+     */
+    private function withScriptDone(\Throwable $e, string $formId, bool $scriptRan): \Throwable
+    {
+        if (!$scriptRan || !($e instanceof \PDOException) || !SqlErrorText::isBusy($e->getMessage())) {
+            return $e;
+        }
+        $this->logger->error('A record was refused after its onSubmit script ran', ['formId' => $formId, 'error' => $e->getMessage()]);
+        return new NotStoredAfterScript($e);
+    }
+
+    /**
      * Takes the form's lock for one submission, when the form has a cap and room under it. Without
      * the lock two submissions could both find one place left, so a lock that can't be had refuses.
      *
      * @return string|null the lock to release, or null when there is no cap
      * @throws FormQuotaRefused
      */
-    private function holdQuota(string $formId, ?int $quotaLimit): ?string
+    private function holdQuota(string $formId, ?int $quotaLimit, int $waitSeconds = 5): ?string
     {
         if ($quotaLimit === null || $quotaLimit <= 0) {
             return null;
         }
-        $lock = $this->acquireFormLock($formId);
+        $lock = $this->acquireFormLock($formId, $waitSeconds);
         if ($lock === null) {
             throw FormQuotaRefused::busy();
         }
-        if ($this->getResponseCount($formId) >= $quotaLimit) {
+        try {
+            $full = $this->getResponseCount($formId) >= $quotaLimit;
+        } catch (\Throwable $e) {
+            // A chat turn outlives this, and its connection would keep the form locked for that long.
+            $this->releaseFormLock($lock);
+            throw $e;
+        }
+        if ($full) {
             $this->releaseFormLock($lock);
             throw FormQuotaRefused::full();
         }

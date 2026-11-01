@@ -159,14 +159,24 @@ describe('a returning visitor', () => {
     expect(kept(host)).toBe(stored);
   });
 
-  it('leaves for FormLogic from /login with no answer at all', async () => {
+  it('leaves for FormLogic from /login on the server\'s word, not on what is stored', async () => {
     const host = newHost();
-    remember(host, JSON.stringify({ config: CONFIG, softnAccess: 'members' }));
-    stubFetch(silent);
+    remember(host, JSON.stringify({ config: { ...CONFIG, platformUrl: 'https://old.example' }, softnAccess: 'members' }));
+    stubFetch(() => new Promise((resolve) => { setTimeout(() => resolve(json(CONFIG)), 1_000); }));
 
     expect(await show(host, '/login')).not.toContain('platform page');
+    expect(assign).not.toHaveBeenCalled();
+    await waitFor(1_000);
 
     expect(assign.mock.calls[0][0]).toContain('https://forms.acme.com/sign-in/domain');
+  });
+
+  it('is not broken for good by a stored value the page could not draw from', async () => {
+    const host = newHost();
+    remember(host, JSON.stringify({ config: { app: { slug: 'shop' }, landing: {} }, softnAccess: 'members' }));
+    stubFetch(async () => json(CONFIG));
+
+    expect(await show(host, '/dashboard')).toBe('app shop for members');
   });
 
   it('lets a real answer replace what is stored', async () => {
@@ -198,7 +208,7 @@ describe('a domain connected since the last visit', () => {
     remember(host, 'not-domain');
     stubFetch(() => new Promise((resolve) => { setTimeout(() => resolve(json(CONFIG)), 5_000); }));
 
-    expect(await show(host, '/')).toBe('platform page');
+    expect(await show(host, '/dashboard')).toBe('platform page');
     await waitFor(5_000);
 
     expect(container.textContent).toBe('app shop for members');
@@ -222,14 +232,24 @@ describe('a self-hosted site', () => {
     stubFetch(async () => json({ error: true, message: 'Domain not connected', platform: true }, 404));
 
     expect(await show(host, '/')).toBe('platform page');
-    expect(kept(host)).toBe('not-domain');
+    expect(kept(host)).toBe('platform');
   });
 
-  it('does not wait on a later visit, however slow the server is', async () => {
+  it.each(['/', '/dashboard', '/docs'])('does not wait at %s on a later visit, however slow the server is', async (path) => {
     const host = newHost();
-    remember(host, 'not-domain');
+    remember(host, 'platform');
     stubFetch(silent);
 
-    expect(await show(host, '/dashboard')).toBe('platform page');
+    expect(await show(host, path)).toBe('platform page');
+  });
+
+  // What the last version kept. One lookup puts it right.
+  it('asks about its home page once, when all it has is the older word', async () => {
+    const host = newHost();
+    remember(host, 'not-domain');
+    stubFetch(async () => json({ error: true, message: 'Domain not connected', platform: true }, 404));
+
+    expect(await show(host, '/')).toBe('platform page');
+    expect(kept(host)).toBe('platform');
   });
 });

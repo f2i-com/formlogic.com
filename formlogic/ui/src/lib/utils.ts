@@ -287,8 +287,10 @@ function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// A `/` straight after one of these, or at the start, opens a regex. After anything else it divides.
-const BEFORE_A_REGEX = new Set(['', '(', ',', '=', ':', '!', '&', '|', '?', '{', '}', ';']);
+// A `/` straight after one of these, or at the start, opens a regex, as it does after `return` or
+// `typeof`. After anything else it divides. `+` and `-` stay out: `x++ / 2` divides.
+const BEFORE_A_REGEX = new Set(['', '(', ',', '=', ':', '!', '&', '|', '?', '{', '}', ';', '>', '<', '[', '*', '%', '^', '~']);
+const KEYWORD_BEFORE_A_REGEX = /(?<![.$\w])(?:return|typeof)\s*$/;
 
 /** Where the regex that opens at `start` ends, flags and all. Null when it never closes: then it was a division. */
 function regexEnd(expression: string, start: number): number | null {
@@ -357,7 +359,7 @@ function rewriteOutsideQuotes(expression: string, rewrite: (code: string) => str
 
   while (at < expression.length) {
     const char = expression[at];
-    const regex = char === '/' && BEFORE_A_REGEX.has(previous) ? regexEnd(expression, at) : null;
+    const regex = char === '/' && (BEFORE_A_REGEX.has(previous) || KEYWORD_BEFORE_A_REGEX.test(code)) ? regexEnd(expression, at) : null;
     if (char === '"' || char === "'") {
       let end = at + 1;
       while (end < expression.length && expression[end] !== char && expression[end] !== '\n') {

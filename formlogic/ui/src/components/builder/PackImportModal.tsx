@@ -138,6 +138,8 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
   const [loadingInstallations, setLoadingInstallations] = useState(false);
   const [uninstallingId, setUninstallingId] = useState<string | null>(null);
   const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null);
+  // Why the recycle bin couldn't keep a copy, shown until the person goes on without one or cancels.
+  const [binRefusal, setBinRefusal] = useState<string | null>(null);
   // MKT-605: which installed v2 extension has its receipt/dependency detail open (fetch-on-expand).
   const [expandedInstallation, setExpandedInstallation] = useState<string | null>(null);
 
@@ -298,6 +300,7 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
     setExpandedApps(true);
     setIsDragging(false);
     setConfirmUninstall(null);
+    setBinRefusal(null);
     setSelectedSlug(null);
   }, []);
 
@@ -661,14 +664,17 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
 
   const handleUninstall = useCallback(async (installationId: string) => {
     setUninstallingId(installationId);
+    let refusal: string | null = null;
     try {
-      const response = await api.uninstallPack(installationId);
+      const response = await api.uninstallPack(installationId, { withoutCopy: binRefusal !== null });
       if (response.data?.success) {
         toast.success('Pack uninstalled', response.data.message);
         await Promise.all([refreshForms(), fetchApps(), loadInstallations()]);
         // A removed v2 extension takes its contributed flow nodes with it — refresh the registry
         // source (stored graph nodes fall back to the missing-definition placeholder).
         void useInstalledNodeStore.getState().refresh();
+      } else if (response.code === 'bin_unavailable') {
+        refusal = response.error || 'A copy could not be saved to the Recycle bin.';
       } else {
         toast.error('Uninstall failed', response.error || 'Could not uninstall.');
       }
@@ -676,9 +682,10 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
       toast.error('Uninstall failed', err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setUninstallingId(null);
-      setConfirmUninstall(null);
+      setBinRefusal(refusal);
+      if (refusal === null) setConfirmUninstall(null);
     }
-  }, [refreshForms, fetchApps, loadInstallations]);
+  }, [binRefusal, refreshForms, fetchApps, loadInstallations]);
 
   const handlePublishFromUpload = useCallback(() => {
     if (uploadedPack) {
@@ -1046,7 +1053,7 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
                         <div className="flex-shrink-0">
                           {confirmUninstall === inst.id ? (
                             <div className="flex items-center gap-1.5">
-                              <Button variant="outline" size="sm" onClick={() => setConfirmUninstall(null)} disabled={uninstallingId === inst.id}>
+                              <Button variant="outline" size="sm" onClick={() => { setConfirmUninstall(null); setBinRefusal(null); }} disabled={uninstallingId === inst.id}>
                                 Cancel
                               </Button>
                               <Button
@@ -1056,14 +1063,14 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
                                 isLoading={uninstallingId === inst.id}
                                 leftIcon={uninstallingId !== inst.id ? <Trash2 className="h-3.5 w-3.5" /> : undefined}
                               >
-                                {uninstallingId === inst.id ? 'Removing...' : 'Delete'}
+                                {uninstallingId === inst.id ? 'Removing...' : binRefusal !== null ? 'Delete without a copy' : 'Delete'}
                               </Button>
                             </div>
                           ) : (
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => setConfirmUninstall(inst.id)}
+                              onClick={() => { setBinRefusal(null); setConfirmUninstall(inst.id); }}
                               aria-label={`Uninstall ${inst.packName}`}
                               title={`Uninstall ${inst.packName}`}
                               className="text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/30 hover:bg-red-50 dark:hover:bg-red-500/10"
@@ -1081,8 +1088,10 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
                               pre-captured into the Recycle bin (not irreversibly destroyed), while
                               apps and empty forms are removed outright (reinstallable from the pack).
                               A v2 extension removes only its contributed node definitions. */}
-                          <span>
-                            {inst.formatVersion === 2
+                          <span role={binRefusal !== null ? 'alert' : undefined}>
+                            {binRefusal !== null
+                              ? `${binRefusal} You can still delete it, but its records and app data will be gone for good, with nothing in the Recycle bin.`
+                              : inst.formatVersion === 2
                               ? `Removes this extension${(inst.nodesInstalled ?? 0) > 0 ? ` and its ${inst.nodesInstalled} contributed flow node${inst.nodesInstalled === 1 ? '' : 's'}` : ''}. Flows already using its nodes keep them as read-only placeholders.`
                               : `Removes ${inst.existingFormCount} form${inst.existingFormCount === 1 ? '' : 's'}${inst.existingAppCount > 0 ? ` and ${inst.existingAppCount} app${inst.existingAppCount === 1 ? '' : 's'}` : ''} created by this pack. Forms with collected responses go to the Recycle bin (restorable for 30 days); apps and empty forms are removed outright and can be reinstalled from the pack.`}
                           </span>

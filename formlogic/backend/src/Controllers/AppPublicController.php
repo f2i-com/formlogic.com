@@ -700,6 +700,9 @@ class AppPublicController
                 return ['status' => 503, 'payload' => ['error' => true, 'retryable' => true, 'message' => $e->getMessage()]];
             }
             return ['status' => 403, 'payload' => ['error' => true, 'message' => $settings['closedMessage'] ?? $e->getMessage()]];
+        } catch (\FormLogic\Services\NotStoredAfterScript $e) {
+            // A 409 conflict is the status every queue stops on.
+            return ['status' => 409, 'payload' => ['error' => true, 'conflict' => true, 'message' => $e->getMessage()]];
         } catch (\FormLogic\Services\EncryptionEnablingException $e) {
             // Enable-race gate: mid-enable submissions fail closed with 409.
             return ['status' => 409, 'payload' => ['error' => true, 'message' => $e->getMessage(), 'code' => \FormLogic\Services\EncryptionEnablingException::ERROR_CODE]];
@@ -711,7 +714,8 @@ class AppPublicController
             // \Throwable (not \Exception): an \Error escaping here would skip processSubmission's
             // reservation release and strand a 'pending' idempotency row (forever-409-processing until
             // the stale-takeover window). Returning a result keeps the release path on every failure.
-            // The guard can't tell from what goes out below, and nothing was stored: this can go again.
+            // The guard can't tell from what goes out below. Nothing was stored and no script ran
+            // (that is NotStoredAfterScript), so this can go again.
             if ($e instanceof \PDOException && SqlErrorText::isBusy($e->getMessage())) {
                 return ['status' => 503, 'payload' => ['error' => true, 'retryable' => true,
                     'message' => 'The server is busy. Please try again in a moment.']];

@@ -297,8 +297,11 @@ const TURN_EMPTY: ChatTurnError = {
 
 /** A tool round can take the server 2 minutes with nothing to send, so this much silence means it stalled. */
 const TURN_SILENCE_MS = 300_000;
-/** The server gives a turn 10 minutes (set_time_limit in AIController), so past this it is over. */
-const TURN_CEILING_MS = 660_000;
+/**
+ * A turn is 6 rounds with the model, 2 minutes each and 3 for the last, plus its tools (AIController).
+ * set_time_limit doesn't count that waiting on Linux, so its 10 minutes don't end one. Past this it is over.
+ */
+const TURN_CEILING_MS = 900_000;
 
 export type ChatTurnOutcome =
   | { ok: true; source: ChatSource; content: string; note?: string }

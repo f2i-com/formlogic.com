@@ -636,6 +636,42 @@ class TrashTest extends TestCase
         $this->assertTrue($this->packStillInstalled($installation));
     }
 
+    public function testTheRouteGoesOnWithoutACopyWhenThePersonSaysTo(): void
+    {
+        $installation = $this->packHolding([$this->f1], [$this->app1]);
+        $controller = new PackController($this->packs(), null, null, null, $this->binThatCannotKeepAnything());
+        $request = (new ServerRequestFactory())->createServerRequest('DELETE', '/api/packs/' . $installation)
+            ->withQueryParams(['withoutCopy' => '1'])->withAttribute('userId', $this->userId);
+
+        $response = $controller->uninstall($request, new SlimResponse(), ['installationId' => $installation]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertNull(self::$apps->getApp($this->app1));
+        $this->assertNull(self::$forms->getForm($this->f1));
+        $this->assertFalse($this->packStillInstalled($installation));
+        $this->assertSame([], $this->trashRows());
+    }
+
+    public function testAFormDeleteRefusesWhenNoCopyCanBeMadeAndGoesOnWhenThePersonSaysTo(): void
+    {
+        self::$sqlite->closeAll();
+        file_put_contents(self::$sqlite->getFormDbPath($this->f2), 'not a database');
+
+        try {
+            self::$trash->trashForm($this->f2, $this->userId);
+            $this->fail('Nothing stopped it');
+        } catch (TrashSnapshotException $e) {
+            $this->assertStringContainsString('Nothing was deleted', $e->getMessage());
+            $this->assertStringContainsString('"Jobs"', $e->getMessage());
+            $this->assertStringNotContainsString('SQLSTATE', $e->getMessage(), 'the guard would answer for it, and the code would be lost');
+        }
+        $this->assertSame($this->userId, self::$forms->ownerOf($this->f2));
+
+        $this->assertSame(['deleted' => true, 'trashed' => false], self::$trash->trashForm($this->f2, $this->userId, false));
+        $this->assertNull(self::$forms->ownerOf($this->f2));
+        $this->assertSame([], $this->trashRows());
+    }
+
     public function testAnOrdinaryDeleteStillGoesThroughWhenTheBinCannotKeepIt(): void
     {
         $this->assertTrue($this->binThatCannotKeepAnything()->trashApp($this->app1, $this->userId), 'what was asked for is deleted, as it was');

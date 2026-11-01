@@ -88,11 +88,19 @@ final class TrashService
      * rethrowing: the metadata row is gone and the deletion is durably in
      * progress — the data must stay recoverable.
      *
+     * A copy that can't be made refuses, with nothing deleted. Whoever asked can then say to go
+     * ahead without one ($keepCopy false): a form whose file is ruined has no other way out.
+     *
      * @return array{deleted: bool, trashed: bool}
+     * @throws TrashSnapshotException
      */
-    public function trashForm(string $formId, string $userId): array
+    public function trashForm(string $formId, string $userId, bool $keepCopy = true): array
     {
-        $pending = $this->capturePendingForm($formId, $userId);
+        try {
+            $pending = $keepCopy ? $this->capturePendingForm($formId, $userId) : null;
+        } catch (\Throwable $e) {
+            throw $this->copyRefused('Nothing was deleted', $this->formTitle($formId), $e);
+        }
         if ($pending === null) {
             $deleted = $this->formService->deleteForm($formId);
             if ($deleted) {
@@ -240,7 +248,7 @@ final class TrashService
                 foreach ($pending === null ? $saved : [...$saved, $pending] as $copy) {
                     $this->takeBack($copy);
                 }
-                throw $this->copyRefused((string) $title, $e);
+                throw $this->copyRefused('Nothing was uninstalled', (string) $title, $e);
             }
         }
         return $saved;
@@ -268,7 +276,7 @@ final class TrashService
             if ($pending !== null) {
                 $this->takeBack($pending);
             }
-            throw $this->copyRefused($name, $e);
+            throw $this->copyRefused('Nothing was uninstalled', $name, $e);
         }
     }
 
@@ -280,12 +288,21 @@ final class TrashService
         @unlink($this->trashDir . '/' . $this->zipPath($pending['row']));
     }
 
-    /** What a database said stays in the log. */
-    private function copyRefused(string $name, \Throwable $e): TrashSnapshotException
+    /** What a database said stays in the log: the guard would answer for it, and lose the refusal's code. */
+    private function copyRefused(string $outcome, string $name, \Throwable $e): TrashSnapshotException
     {
-        $this->logger->error('Trash: could not save a copy, so the uninstall stopped', ['name' => $name, 'error' => $e->getMessage()]);
-        $why = $e instanceof \PDOException ? 'The database refused it.' : $e->getMessage();
-        return new TrashSnapshotException("Nothing was uninstalled: a copy of \"{$name}\" could not be saved to the recycle bin. {$why}", 0, $e);
+        $this->logger->error('Trash: could not save a copy, so the delete stopped', ['name' => $name, 'error' => $e->getMessage()]);
+        $why = $e instanceof \PDOException || str_contains($e->getMessage(), 'SQLSTATE[') ? 'The database refused it.' : $e->getMessage();
+        return new TrashSnapshotException("{$outcome}: a copy of \"{$name}\" could not be saved to the recycle bin. {$why}", 0, $e);
+    }
+
+    /** From the row: a copy that couldn't be made may be of a form whose file can't be read. */
+    private function formTitle(string $formId): string
+    {
+        $stmt = $this->pdo->prepare('SELECT title FROM forms WHERE id = :id');
+        $stmt->execute(['id' => $formId]);
+        $title = $stmt->fetchColumn();
+        return is_string($title) ? $title : $formId;
     }
 
     /** Whether this deleted app is in the user's bin, which keeps its storage for an undelete. */
@@ -454,9 +471,7 @@ final class TrashService
         try {
             $this->eraseAppStorage($row);
             $this->pdo->beginTransaction();
-            if (($row['kind'] ?? '') === 'form') {
-                $this->formEncryptionLifecycle('purge', (string) $row['original_id'], true);
-            }
+            $this->purgeFormKeys($row);
             $this->pdo->prepare('DELETE FROM trash_items WHERE id = :id')->execute(['id' => $trashId]);
             $this->pdo->commit();
         } catch (\Throwable $e) {
@@ -508,9 +523,7 @@ final class TrashService
             try {
                 $this->eraseAppStorage($row);
                 $this->pdo->beginTransaction();
-                if (($row['kind'] ?? '') === 'form') {
-                    $this->formEncryptionLifecycle('purge', (string) $row['original_id'], true);
-                }
+                $this->purgeFormKeys($row);
                 $this->pdo->prepare('DELETE FROM trash_items WHERE id = :id')->execute(['id' => $row['id']]);
                 $this->pdo->commit();
             } catch (\Throwable $e) {
@@ -602,6 +615,26 @@ final class TrashService
             $this->appStorage->erase($appId);
             // No foreign key reaches an app here, and with the app gone nothing can reach these.
             $this->pdo->prepare('DELETE FROM flow_kv WHERE app_id = :id')->execute(['id' => $appId]);
+        }
+    }
+
+    /**
+     * A bin item's form keys, as it goes. A worker that dies during an uninstall leaves an item for
+     * a form that was never deleted: its keys are that live form's, and without them its records
+     * can never be read again.
+     *
+     * @param array{kind?:string, original_id?:string} $row
+     */
+    private function purgeFormKeys(array $row): void
+    {
+        if (($row['kind'] ?? '') !== 'form') {
+            return;
+        }
+        $formId = (string) ($row['original_id'] ?? '');
+        $live = $this->pdo->prepare('SELECT 1 FROM forms WHERE id = :id');
+        $live->execute(['id' => $formId]);
+        if ($live->fetchColumn() === false) {
+            $this->formEncryptionLifecycle('purge', $formId, true);
         }
     }
 

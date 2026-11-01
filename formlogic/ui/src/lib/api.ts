@@ -1437,8 +1437,9 @@ class ApiClient {
     });
   }
 
-  async deleteForm(id: string): Promise<ApiResponse<{ success: boolean; trashed?: boolean }>> {
-    return this.request(`/forms/${seg(id)}`, {
+  /** `withoutCopy`: only after the recycle bin refused one (`bin_unavailable`) and the person chose to go on. */
+  async deleteForm(id: string, opts: { withoutCopy?: boolean } = {}): Promise<ApiResponse<{ success: boolean; trashed?: boolean }>> {
+    return this.request(`/forms/${seg(id)}${opts.withoutCopy ? '?withoutCopy=1' : ''}`, {
       method: 'DELETE',
     });
   }
@@ -4082,8 +4083,9 @@ class ApiClient {
     return this.request('/packs/installed');
   }
 
-  async uninstallPack(installationId: string): Promise<ApiResponse<PackUninstallResult>> {
-    return this.request(`/packs/${seg(installationId)}`, { method: 'DELETE' });
+  /** `withoutCopy`: only after the recycle bin refused one (`bin_unavailable`) and the person chose to go on. */
+  async uninstallPack(installationId: string, opts: { withoutCopy?: boolean } = {}): Promise<ApiResponse<PackUninstallResult>> {
+    return this.request(`/packs/${seg(installationId)}${opts.withoutCopy ? '?withoutCopy=1' : ''}`, { method: 'DELETE' });
   }
 
   // Pack Marketplace

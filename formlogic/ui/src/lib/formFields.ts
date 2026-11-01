@@ -72,13 +72,33 @@ export async function saveFormFields(
   return { ok: true };
 }
 
+/** Someone typing keeps a save on its way, so a refresh waits this long for it at most. */
+const SAVE_WAIT_MS = 30_000;
+
 /** Any save still on its way, of any part, as a refresh would take that part from under it. */
 function hasEditOfItsOwn(formId: string): boolean {
   const { savingFormIds, saveErrors } = useFormStore.getState();
   return !!savingFormIds[formId] || !!saveErrors[formId]?.includes('fields');
 }
 
+/** Until no save of this form is on its way, or that has taken too long to go on waiting for. */
+function savesLanded(formId: string): Promise<void> {
+  if (!useFormStore.getState().savingFormIds[formId]) return Promise.resolve();
+  return new Promise((resolve) => {
+    const landed = () => {
+      clearTimeout(timer);
+      stopWatching();
+      resolve();
+    };
+    const timer = setTimeout(landed, SAVE_WAIT_MS);
+    const stopWatching = useFormStore.subscribe((state) => {
+      if (!state.savingFormIds[formId]) landed();
+    });
+  });
+}
+
 async function refreshOnce(formId: string): Promise<void> {
+  await savesLanded(formId);
   const { forms, saveErrors, loadFullForm } = useFormStore.getState();
   const held = forms.find((form) => form.id === formId);
   if (!held?.fieldsRevision || hasEditOfItsOwn(formId)) return;
@@ -95,10 +115,12 @@ const refreshes = new Map<string, Promise<void>>();
 
 /**
  * Bring the builder's copy up to date after a write that did not come through it or through
- * saveFormFields: the site chat's update_form runs on the server. A copy with an edit of its own,
- * still on the way or made during the read, is left as it is, because replacing it would drop that
- * edit without a word. That one save does get refused, and it should: both changed the form at the
- * same moment. One at a time, as a turn can make several writes and each must see the one before.
+ * saveFormFields: the site chat's update_form runs on the server. A save on its way is waited for:
+ * dropping the refresh would leave the next edit refused for a change nobody here has seen. A copy
+ * with an edit of its own, made during the read or refused, is left as it is, because replacing it
+ * would drop that edit without a word. That one save does get refused, and it should: both changed
+ * the form at the same moment. One at a time, as a turn can make several writes and each must see
+ * the one before.
  */
 export function refreshFormFields(formId: string): Promise<void> {
   const turn = (refreshes.get(formId) ?? Promise.resolve()).then(() => refreshOnce(formId));

@@ -146,6 +146,30 @@ describe('FL-SAVE-001 truthful save state', () => {
     expect(useFormStore.getState().saveErrors[FORM_ID]).toBeUndefined();
   });
 
+  it('offers to go on without a copy when the bin could not keep one, and only then', async () => {
+    const { toast } = await import('./toastStore');
+    const deleteForm = vi.fn(async (_id: string, opts?: { withoutCopy?: boolean }) => (opts?.withoutCopy
+      ? { data: { success: true } }
+      : { error: 'Nothing was deleted: a copy could not be saved to the recycle bin.', code: 'bin_unavailable' }));
+    vi.mocked(api).deleteForm = deleteForm as never;
+
+    await useFormStore.getState().deleteForm(FORM_ID);
+
+    expect(useFormStore.getState().forms.map((f) => f.id)).toEqual([FORM_ID]);
+    const offer = vi.mocked(toast.error).mock.lastCall?.[2];
+    expect(offer?.action.label).toBe('Delete without a copy');
+    expect(deleteForm).toHaveBeenCalledTimes(1);
+
+    offer?.action.onClick();
+    await vi.waitFor(() => expect(useFormStore.getState().forms).toEqual([]));
+    expect(deleteForm).toHaveBeenLastCalledWith(FORM_ID, { withoutCopy: true });
+
+    useFormStore.setState({ forms: [seedForm()] });
+    vi.mocked(api).deleteForm = vi.fn(async () => ({ error: 'Not allowed', code: 'forbidden' })) as never;
+    await useFormStore.getState().deleteForm(FORM_ID);
+    expect(vi.mocked(toast.error).mock.lastCall?.[2]).toBeUndefined();
+  });
+
   it('a published PRIVATE form signs field changes into the same save (encryptionSchema attached)', async () => {
     getFormPrivacyMock.mockResolvedValue(true);
     signSchemaMock.mockResolvedValue({

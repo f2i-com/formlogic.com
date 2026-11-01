@@ -61,7 +61,8 @@ export type SoftnAccess = 'application' | 'members';
 
 /** What this browser last heard about a host. All of it is public. */
 export type RememberedHost =
-  | { kind: 'not-domain' }
+  /** `platform`: the server said it is the site's own address. Without that its home page can change. */
+  | { kind: 'not-domain'; platform?: boolean }
   /** With no config, the word an older version kept: it knows nothing to draw the page with. */
   | { kind: 'domain'; config?: LaunchConfig; softnAccess?: SoftnAccess };
 
@@ -70,11 +71,33 @@ const NO_ANSWER: HostLookup = { config: null, answered: false };
 /** How long one try may take. Nothing is decided by its running out: it is asked again. */
 const LOOKUP_TIMEOUT_MS = 15_000;
 const REMEMBERED_PREFIX = 'formlogic:domain-host:';
-const cache = new Map<string, Promise<LaunchConfig | null>>();
+const answers = new Map<string, Promise<HostLookup>>();
 const lookups = new Map<string, Promise<HostLookup>>();
 
 function isLaunchConfig(data: unknown): data is LaunchConfig {
   return !!data && typeof data === 'object' && 'app' in data && 'landing' in data;
+}
+
+const isWebAddress = (value: unknown): boolean => {
+  if (value === null || value === undefined) return true;
+  try {
+    return typeof value === 'string' && /^https?:$/.test(new URL(value, 'https://formlogic.invalid').protocol);
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * A page draws from a stored config before the server has said anything, so it has to be one the
+ * server could have sent: anything else in storage would break the page, or send it somewhere.
+ */
+function isStoredConfig(data: unknown): data is LaunchConfig {
+  if (!isLaunchConfig(data)) return false;
+  const { app, domain, landing, platformUrl, native } = data as Partial<LaunchConfig>;
+  return typeof app?.slug === 'string'
+    && typeof domain?.mode === 'string'
+    && !!landing && typeof landing === 'object'
+    && [platformUrl, landing.privacyUrl, landing.termsUrl, native?.installUrl].every(isWebAddress);
 }
 
 async function request(host: string, signal?: AbortSignal): Promise<HostLookup> {
@@ -98,21 +121,38 @@ async function request(host: string, signal?: AbortSignal): Promise<HostLookup> 
   }
 }
 
-/** Resolve a host to its launch config (session-cached), or null if it isn't a connected domain. */
-export function fetchLaunchConfig(host: string): Promise<LaunchConfig | null> {
+async function lookUpInTime(host: string): Promise<HostLookup> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LOOKUP_TIMEOUT_MS);
+  try {
+    return await request(host, controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Ask what a host is. An answer holds for the session, and no answer can be asked for again. */
+export function fetchLaunchConfig(host: string): Promise<HostLookup> {
   const key = host.toLowerCase();
-  if (!cache.has(key)) cache.set(key, request(key).then(({ config }) => config));
-  return cache.get(key)!;
+  const asked = answers.get(key);
+  if (asked) return asked;
+  const lookup = lookUpInTime(key).then((result) => {
+    if (!result.answered) answers.delete(key);
+    return result;
+  });
+  answers.set(key, lookup);
+  return lookup;
 }
 
 export function rememberedHost(host: string): RememberedHost | null {
   try {
     const value = localStorage.getItem(`${REMEMBERED_PREFIX}${host.toLowerCase()}`);
+    if (value === 'platform') return { kind: 'not-domain', platform: true };
     if (value === 'not-domain') return { kind: 'not-domain' };
     if (value === 'domain') return { kind: 'domain' };
     if (value === null) return null;
     const stored = JSON.parse(value) as { config?: unknown; softnAccess?: SoftnAccess } | null;
-    return isLaunchConfig(stored?.config)
+    return isStoredConfig(stored?.config)
       ? { kind: 'domain', config: stored.config, ...(stored.softnAccess ? { softnAccess: stored.softnAccess } : {}) }
       : null;
   } catch {
@@ -123,26 +163,17 @@ export function rememberedHost(host: string): RememberedHost | null {
 /**
  * Keep what the server said about a host. A customer's domain is kept only with its `softnAccess`,
  * which decides what its pages are: kept without it, a SoftN app's domain would show the platform's.
+ * `platform` is the server's word that the host is the site's own address.
  */
-export function rememberHost(host: string, config: LaunchConfig | null, softnAccess?: SoftnAccess): void {
+export function rememberHost(host: string, config: LaunchConfig | null, softnAccess?: SoftnAccess, platform?: boolean): void {
   const key = host.toLowerCase();
   // FormLogic's own address can still have an app connected from an older version. It isn't a
   // customer's domain: its pages must not wait, and its sign-in is its own.
   const domain = config !== null && !config.platformUrl?.endsWith(`//${key}`);
   try {
-    localStorage.setItem(`${REMEMBERED_PREFIX}${key}`, domain ? JSON.stringify({ config, softnAccess }) : 'not-domain');
+    localStorage.setItem(`${REMEMBERED_PREFIX}${key}`, domain ? JSON.stringify({ config, softnAccess }) : platform ? 'platform' : 'not-domain');
   } catch {
     /* storage blocked: the next page asks again */
-  }
-}
-
-async function lookUpInTime(host: string): Promise<HostLookup> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), LOOKUP_TIMEOUT_MS);
-  try {
-    return await request(host, controller.signal);
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -158,7 +189,7 @@ export function lookUpHost(host: string): Promise<HostLookup> {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return Promise.resolve(NO_ANSWER);
   const lookup = lookUpInTime(key).then((result) => {
     if (!result.answered) lookups.delete(key);
-    else if (!result.config) rememberHost(key, null);
+    else if (!result.config) rememberHost(key, null, undefined, result.platform);
     return result;
   });
   lookups.set(key, lookup);

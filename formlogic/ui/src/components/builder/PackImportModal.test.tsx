@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../lib/api';
+import { useFormStore } from '../../stores/formStore';
 import { useToastStore } from '../../stores/toastStore';
 import { PackImportModal } from './PackImportModal';
 
@@ -59,6 +60,71 @@ async function uploadExtension(grants: string[] = []) {
 
 const importButton = () =>
   Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent?.includes('Import to My Forms')) as HTMLButtonElement;
+
+describe('PackImportModal uninstall', () => {
+  const REFUSED = { error: 'Nothing was uninstalled: a copy of "Clients" could not be saved to the recycle bin.', code: 'bin_unavailable' };
+  const button = (name: string) => Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent?.trim() === name) as HTMLButtonElement | undefined;
+
+  async function openInstalled() {
+    useFormStore.setState({ storageMode: 'api' });
+    vi.spyOn(api, 'getInstalledPacks').mockResolvedValue({
+      data: { installations: [{ id: 'inst-1', packName: 'Clients Pack', formCount: 1, appCount: 0, existingFormCount: 1, existingAppCount: 0, installedAt: '2026-11-01' }] },
+    } as never);
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    await act(async () => {
+      root = createRoot(host!);
+      root.render(<MemoryRouter><PackImportModal isOpen onClose={() => {}} initialTab="installed" /></MemoryRouter>);
+    });
+    await act(settle);
+    await act(async () => document.body.querySelector<HTMLButtonElement>('button[aria-label="Uninstall Clients Pack"]')!.click());
+  }
+
+  it('says why the bin refused, and lets the person go on without a copy', async () => {
+    const uninstall = vi.spyOn(api, 'uninstallPack')
+      .mockResolvedValueOnce(REFUSED as never)
+      .mockResolvedValueOnce({ data: { success: true, message: 'Uninstalled' } } as never);
+    await openInstalled();
+
+    await act(async () => button('Delete')!.click());
+    await act(settle);
+
+    expect(uninstall).toHaveBeenCalledWith('inst-1', { withoutCopy: false });
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('gone for good');
+    expect(useToastStore.getState().toasts).toEqual([]);
+
+    await act(async () => button('Delete without a copy')!.click());
+    await act(settle);
+
+    expect(uninstall).toHaveBeenLastCalledWith('inst-1', { withoutCopy: true });
+    expect(button('Delete without a copy')).toBeUndefined();
+  });
+
+  it('forgets the refusal on Cancel: the next try keeps a copy', async () => {
+    const uninstall = vi.spyOn(api, 'uninstallPack').mockResolvedValue(REFUSED as never);
+    await openInstalled();
+    await act(async () => button('Delete')!.click());
+    await act(settle);
+
+    await act(async () => button('Cancel')!.click());
+    await act(async () => document.body.querySelector<HTMLButtonElement>('button[aria-label="Uninstall Clients Pack"]')!.click());
+    await act(async () => button('Delete')!.click());
+    await act(settle);
+
+    expect(uninstall).toHaveBeenLastCalledWith('inst-1', { withoutCopy: false });
+  });
+
+  it('shows any other failure as before', async () => {
+    vi.spyOn(api, 'uninstallPack').mockResolvedValue({ error: 'Failed to uninstall pack' } as never);
+    await openInstalled();
+
+    await act(async () => button('Delete')!.click());
+    await act(settle);
+
+    expect(useToastStore.getState().toasts).toEqual([expect.objectContaining({ message: 'Failed to uninstall pack' })]);
+    expect(button('Delete without a copy')).toBeUndefined();
+  });
+});
 
 describe('PackImportModal v2 confirm', () => {
   it('starts a fresh review after a failed confirm, so Import uses a new plan', async () => {

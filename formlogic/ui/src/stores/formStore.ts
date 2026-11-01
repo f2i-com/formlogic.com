@@ -796,7 +796,17 @@ export const useFormStore = create<FormState>()(
             if (result.error && formToDelete) {
               // Rollback: restore the form
               set((s) => ({ forms: [...s.forms, formToDelete] }));
-              toast.error('Failed to delete form', typeof result.error === 'string' ? result.error : 'Please try again');
+              const refused = typeof result.error === 'string' ? result.error : 'Please try again';
+              // A form whose file is ruined can never be copied, and this is its only way out.
+              toast.error('Failed to delete form', refused, result.code !== 'bin_unavailable' ? undefined : {
+                action: {
+                  label: 'Delete without a copy',
+                  onClick: () => void api.deleteForm(id, { withoutCopy: true }).then((again) => {
+                    if (again.error) toast.error('Failed to delete form', typeof again.error === 'string' ? again.error : 'Please try again');
+                    else set((s) => ({ forms: s.forms.filter((f) => f.id !== id) }));
+                  }, () => toast.error('Failed to delete form', 'Please try again')),
+                },
+              });
             } else if (result.data?.trashed) {
               // trashed=false means an empty draft was purged — no restore to promise.
               toast.success('Moved to the recycle bin', 'You can restore it from Settings → Recycle bin for 30 days.');

@@ -56,7 +56,7 @@ describe('lookUpHost', () => {
     stubFetch(async () => json({ error: true, message: 'Domain not connected', platform: true }, 404));
 
     expect(await lookUpHost(host)).toEqual({ config: null, answered: true, platform: true });
-    expect(rememberedHost(host)).toEqual({ kind: 'not-domain' });
+    expect(rememberedHost(host)).toEqual({ kind: 'not-domain', platform: true });
   });
 
   it('forgets an old answer when the server gives a new one', async () => {
@@ -194,6 +194,28 @@ describe('what is remembered about a host', () => {
     expect(rememberedHost(host)).toBeNull();
   });
 
+  // A page draws from this before the server has spoken, so it can't be what the server never sends.
+  it.each([
+    ['no domain, which would break the page for good', { app: CONFIG.app, landing: CONFIG.landing }],
+    ['no slug', { ...CONFIG, app: {} }],
+    ['no landing', { ...CONFIG, landing: null }],
+    ['a script for an address', { ...CONFIG, platformUrl: 'javascript:alert(1)' }],
+    ['a script for a privacy link', { ...CONFIG, landing: { ...CONFIG.landing, privacyUrl: 'javascript:alert(1)' } }],
+    ['a script for a terms link', { ...CONFIG, landing: { ...CONFIG.landing, termsUrl: 'data:text/html,x' } }],
+    ['a script for an install link', { ...CONFIG, native: { installUrl: 'javascript:alert(1)' } }],
+  ])('refuses a stored config with %s', (_label, config) => {
+    const host = newHost();
+    localStorage.setItem(`formlogic:domain-host:${host}`, JSON.stringify({ config, softnAccess: 'members' }));
+    expect(rememberedHost(host)).toBeNull();
+  });
+
+  it('keeps the addresses a real config has', () => {
+    const host = newHost();
+    const config = { ...CONFIG, platformUrl: 'https://forms.acme.com', landing: { ...CONFIG.landing, privacyUrl: '/privacy', termsUrl: null } };
+    rememberHost(host, config as unknown as LaunchConfig, 'members');
+    expect(rememberedHost(host)).toEqual({ kind: 'domain', config, softnAccess: 'members' });
+  });
+
   it('finds a host whatever its case', () => {
     const host = newHost();
     rememberHost(host.toUpperCase(), STORED_CONFIG, 'members');
@@ -202,13 +224,39 @@ describe('what is remembered about a host', () => {
 });
 
 describe('fetchLaunchConfig', () => {
-  // The consent page on FormLogic itself: nobody is waiting on a whole site's load there, and a slow
-  // answer must not read as an address that isn't connected.
-  it('has no timeout', async () => {
+  it('keeps an answer for the session', async () => {
+    const host = newHost();
     const fetchMock = stubFetch(async () => json(CONFIG));
 
-    expect(await fetchLaunchConfig(newHost())).toEqual(CONFIG);
+    expect(await fetchLaunchConfig(host)).toEqual({ config: CONFIG, answered: true });
+    await fetchLaunchConfig(host);
 
-    expect(fetchMock.mock.calls[0]![1]!.signal).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  // The consent page on FormLogic itself: a slow or refused lookup says nothing about the site.
+  it.each([
+    ['a rate limit', () => json({ error: true }, 429)],
+    ['a server error', () => json({ error: true }, 503)],
+  ])('does not keep %s, and can be asked again', async (_label, answer) => {
+    const host = newHost();
+    const fetchMock = stubFetch(async () => answer());
+
+    expect(await fetchLaunchConfig(host)).toEqual({ config: null, answered: false });
+    fetchMock.mockImplementation(async () => json({ error: true }, 404));
+
+    expect(await fetchLaunchConfig(host)).toEqual({ config: null, answered: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives up on a server that never answers', async () => {
+    vi.useFakeTimers();
+    stubFetch(silent);
+    let settled: unknown = null;
+    void fetchLaunchConfig(newHost()).then((result) => { settled = result; });
+
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(settled).toEqual({ config: null, answered: false });
   });
 });

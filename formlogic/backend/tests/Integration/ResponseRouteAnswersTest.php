@@ -12,6 +12,7 @@ use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AppDomainService;
 use FormLogic\Services\AppResponseService;
 use FormLogic\Services\AppUserService;
+use FormLogic\Services\NotStoredAfterScript;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\ScriptRejection;
 use PDO;
@@ -94,6 +95,26 @@ final class ResponseRouteAnswersTest extends E2eeTestCase
                 return parent::createResponse($formId, $data, $script, $sourceRunId, $quotaLimit);
             }
         };
+    }
+
+    /** A ResponseService whose database refused the record once the form's script had run. */
+    private function afterTheScript(): ResponseService
+    {
+        return new class (self::$mysql, self::$sqlite) extends ResponseService {
+            public function createResponse(string $formId, array $data, ?string $script = null, ?string $sourceRunId = null, ?int $quotaLimit = null): array|ScriptRejection
+            {
+                throw new NotStoredAfterScript(new \PDOException('SQLSTATE[HY000]: General error: 5 database is locked'));
+            }
+        };
+    }
+
+    private function assertNotSentAgain(ResponseInterface $response): void
+    {
+        $this->assertSame(409, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertTrue($this->body($response)['conflict'], 'the offline queues stop on this and show it');
+        $this->assertFalse($response->hasHeader('Retry-After'));
+        $this->assertStringContainsString('already run', $this->body($response)['message']);
+        $this->assertStringNotContainsString('SQLSTATE', (string) $response->getBody());
     }
 
     private function body(ResponseInterface $response): array
@@ -197,6 +218,21 @@ final class ResponseRouteAnswersTest extends E2eeTestCase
         $this->assertARetry($busy);
         $this->assertSame(201, $submit()->getStatusCode(), 'the same key, which the busy answer gave back');
         $this->assertSame(1, self::$responses->getResponseCount($formId));
+    }
+
+    public function testThePublicRouteSaysNotToSendAgainOnceAScriptHasRun(): void
+    {
+        $formId = $this->aForm();
+
+        $this->assertNotSentAgain($this->publicRoutes($this->afterTheScript())->create($this->request('POST', '/x', ['answers' => ['name' => 'Ada']]), new SlimResponse(), ['formId' => $formId]));
+    }
+
+    public function testTheAppRouteSaysNotToSendAgainOnceAScriptHasRun(): void
+    {
+        $formId = $this->aForm();
+        $app = self::$apps->createApp(['name' => 'Routes', 'status' => 'published', 'formIds' => [$formId]], $this->userId);
+
+        $this->assertNotSentAgain($this->appRoutes($this->afterTheScript())->createResponse($this->request('POST', '/x', ['answers' => ['name' => 'Ada']]), new SlimResponse(), ['slug' => $app['slug'], 'formId' => $formId]));
     }
 
     public function testAnotherDatabaseErrorOnThePublicRouteIsNotARetry(): void

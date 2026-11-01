@@ -112,14 +112,44 @@ describe('refreshFormFields', () => {
     expect((server.fields as FormField[]).map((f) => f.id)).toEqual(['name', 'from_chat']);
   });
 
-  it('leaves an edit that is still on its way, rather than drop it', async () => {
+  // A title's save used to drop the refresh, and the next field edit was refused for a change
+  // nobody here had seen, with Retry refused too and only a reload left, which lost that edit.
+  it('waits for a save on its way, and then takes the chat\'s fields', async () => {
+    useFormStore.setState({ savingFormIds: { f1: 1 } });
+    chatEdits();
+    const refreshing = refreshFormFields('f1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mocked.getForm).not.toHaveBeenCalled();
+
+    useFormStore.setState({ savingFormIds: {} });
+    await refreshing;
+
+    expect(useFormStore.getState().forms[0].fieldsRevision).toBe('chat');
+  });
+
+  it('stops waiting for a save that never lands, and leaves the copy', async () => {
+    vi.useFakeTimers();
+    useFormStore.setState({ savingFormIds: { f1: 1 } });
+    chatEdits();
+    const refreshing = refreshFormFields('f1');
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    await refreshing;
+    vi.useRealTimers();
+
+    expect(mocked.getForm).not.toHaveBeenCalled();
+    expect(useFormStore.getState().forms[0].fieldsRevision).toBe('one');
+  });
+
+  it('leaves an edit that was on its way and got refused, rather than drop it', async () => {
     useFormStore.getState().updateField('f1', 'name', { label: 'Half typed' });
     chatEdits();
-    await refreshFormFields('f1');
+    const refreshing = refreshFormFields('f1');
+    await flushDebouncedSave('f1');
+    await refreshing;
 
     expect(mocked.getForm).not.toHaveBeenCalled();
     expect(useFormStore.getState().forms[0].fields[0].label).toBe('Half typed');
-    clearAllDebounceTimers();
   });
 
   it('leaves an edit whose save failed', async () => {
@@ -264,8 +294,9 @@ describe('refreshFormFields', () => {
   it('still has an edit that was waiting when the chat\'s change landed refused', async () => {
     useFormStore.getState().updateField('f1', 'name', { label: 'Half typed' });
     chatEdits();
-    await refreshFormFields('f1');
+    const refreshing = refreshFormFields('f1');
     await flushDebouncedSave('f1');
+    await refreshing;
 
     expect(useFormStore.getState().saveErrors.f1).toEqual(['fields']);
     expect((server.fields as FormField[]).map((f) => f.id)).toEqual(['name', 'from_chat']);

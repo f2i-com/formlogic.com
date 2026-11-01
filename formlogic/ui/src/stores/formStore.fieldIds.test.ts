@@ -169,6 +169,20 @@ describe('quoted text in an expression', () => {
       expect(replaceVariablesWithIds('/a/i.test(role) && i', { i: 'field_i', role: 'role_1' })).toBe('/a/i.test(role_1) && field_i');
     });
 
+    it('takes a regex after => and [ and return for one, so a quote in it is not text', () => {
+      const toId = { Price: 'price_1', Total: 'total_1', Name: 'name_1' };
+      expect(replaceVariablesWithIds('x => /"/.test(x) ? Price : Total', toId)).toBe('x => /"/.test(x) ? price_1 : total_1');
+      expect(replaceVariablesWithIds('[/"/.test(Name), Total]', toId)).toBe('[/"/.test(name_1), total_1]');
+      expect(replaceVariablesWithIds('return /"/.test(Name) && Total', toId)).toBe('return /"/.test(name_1) && total_1');
+    });
+
+    it('still divides where a name or a ++ comes before the /', () => {
+      const toId = { Price: 'price_1', Total: 'total_1' };
+      expect(replaceVariablesWithIds('x++ / Price / Total', toId)).toBe('x++ / price_1 / total_1');
+      expect(replaceVariablesWithIds('returned / Price / Total', toId)).toBe('returned / price_1 / total_1');
+      expect(replaceVariablesWithIds('a.return / Price / Total', toId)).toBe('a.return / price_1 / total_1');
+    });
+
     it('is read as code in a template\'s ${ }', () => {
       expect(saved('`${/"/.test(role)} ${manager}`')).toBe('`${/"/.test(role_1)} ${mgr_1}`');
     });

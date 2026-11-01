@@ -11,8 +11,11 @@
 // break neither, so only a real answer decides anything. No answer is asked for again for as long
 // as the page is open, and when one comes it applies, over whatever is showing. Until then a page
 // goes by what this browser last heard. A domain draws from its stored config, as if that had just
-// been answered. A host remembered as none shows its pages, after a short wait where a password
-// could be typed. A host it knows nothing of shows only the platform's own pages.
+// been answered, but only an answer sends a password page to the address it names. A host
+// remembered as none shows its pages, after a short wait where a password could be typed, or at a
+// root that an answer could change. A host it knows nothing of waits, which costs a site one
+// lookup in each browser: every path on a domain is its app's, so no platform page can show first.
+// Only a form and the legal pages don't wait, as they open the same on any host.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import { DomainNativeApp } from '../components/app-runtime/AppEntryRouter';
@@ -26,13 +29,6 @@ const SIGN_IN_PATHS = ['/login', '/signup'];
 const PASSWORD_PATHS = ['/forgot-password', '/reset-password', '/accept-invite'];
 const LEGAL_PATHS = ['/privacy', '/terms'];
 const SIGN_IN_RETURN_PATH = '/sign-in/complete';
-/**
- * The platform's own pages, which were never a domain's. A path that isn't here may be a SoftN
- * app's, so on a host nothing is known of it waits for the answer: a route left out of this list
- * costs no more than that. /app/:slug is left out on purpose: its guard draws a sign-in form in
- * place until it knows the domain's address.
- */
-const PLATFORM_PAGE = /^\/(admin|ai-setup|analytics|aokie|apps|billing|blueprints|builder|connect-ai|dashboard|device-check|diagrams|docs|doctor|download|flows|form|forms|oauth|open|packs|preview|privacy|responses|settings|sign-in\/domain|terms|trash)(\/|$)/;
 /** The longest a page that takes a password waits, on a host remembered as no domain, for news that it has become one. */
 const BRIEF_WAIT_MS = 2_500;
 /** How long a page on a host nothing is known of waits before saying it can't reach the site. */
@@ -184,12 +180,12 @@ export function DomainLaunchRouter({ host, children }: { host: string; children:
   }, [host]);
 
   const answer: HostAnswer | null = heard ?? (remembered?.kind === 'domain' && remembered.config ? remembered : null);
-  const hasAnswer = answer !== null;
+  const asking = heard === null;
   useEffect(() => {
-    if (hasAnswer) return;
+    if (!asking) return;
     const timers = [BRIEF_WAIT_MS, LONG_WAIT_MS].map((ms) => setTimeout(() => setWaited(ms), ms));
     return () => timers.forEach(clearTimeout);
-  }, [hasAnswer]);
+  }, [asking]);
 
   const config = answer?.config ?? null;
   const softnAccess = answer?.softnAccess;
@@ -199,7 +195,8 @@ export function DomainLaunchRouter({ host, children }: { host: string; children:
   // Null where FormLogic is this very address: a local `?__flhost=` preview signs in as usual.
   const platformUrl = config?.platformUrl && config.platformUrl !== window.location.origin ? config.platformUrl : null;
   const takesPassword = SIGN_IN_PATHS.includes(path) || PASSWORD_PATHS.includes(path);
-  const leaves = !!platformUrl && takesPassword;
+  // On the server's word alone: a reset link's token goes with it, and storage can be old or wrong.
+  const leaves = !!platformUrl && takesPassword && !asking;
   const finishing = !!platformUrl && path === SIGN_IN_RETURN_PATH;
   const accountPage = takesPassword || LEGAL_PATHS.includes(path);
   // FormLogic's own address, if an older version let an app connect to it: /admin and /forms stay.
@@ -226,13 +223,16 @@ export function DomainLaunchRouter({ host, children }: { host: string; children:
   }, [redirects, config]);
 
   if (redirects || leaves) return <Spinner />;
+  const waitOrSayUnreachable = () => (waited < LONG_WAIT_MS ? <Spinner /> : <DomainUnreachable onTryAgain={() => askAgain.current()} />);
+  if (platformUrl && takesPassword) return waitOrSayUnreachable();
   if (!answer) {
-    const showsAnyway = domainApp ? formPage || LEGAL_PATHS.includes(path) : PLATFORM_PAGE.test(path);
     if (!domainApp && remembered?.kind === 'not-domain') {
       const asksToSignIn = takesPassword || path === SIGN_IN_RETURN_PATH || /^\/app(\/|$)/.test(path);
-      if (asksToSignIn && waited < BRIEF_WAIT_MS) return <Spinner />;
-    } else if (!showsAnyway) {
-      return waited < LONG_WAIT_MS ? <Spinner /> : <DomainUnreachable onTryAgain={() => askAgain.current()} />;
+      // A host no list names, or the site's own with an app connected to it. Its root is the answer's to decide.
+      const homeMayChange = pathname === '/' && !remembered.platform;
+      if ((asksToSignIn || homeMayChange) && waited < BRIEF_WAIT_MS) return <Spinner />;
+    } else if (!formPage && !LEGAL_PATHS.includes(path)) {
+      return waitOrSayUnreachable();
     }
   }
   if (finishing && platformUrl) return <DomainSignInComplete platformUrl={platformUrl} />;

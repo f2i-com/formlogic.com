@@ -30,6 +30,8 @@ export function AppDomainSignIn() {
   const page = searchParams.get('page') === 'signup' ? '/signup' : '/login';
   const host = hostOf(origin);
   const [config, setConfig] = useState<LaunchConfig | null | undefined>(undefined);
+  const [noAnswer, setNoAnswer] = useState(false);
+  const [askedFor, setAskedFor] = useState(0);
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
   const [armed, setArmed] = useState(false);
@@ -42,9 +44,14 @@ export function AppDomainSignIn() {
   useEffect(() => {
     if (!user || !host) return;
     let cancelled = false;
-    void fetchLaunchConfig(host).then(found => { if (!cancelled) setConfig(found); });
+    void fetchLaunchConfig(host).then(({ config: found, answered }) => {
+      if (cancelled) return;
+      // A slow or refused lookup says nothing about the site, and must not read as "not connected".
+      if (answered) setConfig(found);
+      else setNoAnswer(true);
+    });
     return () => { cancelled = true; };
-  }, [user, host]);
+  }, [user, host, askedFor]);
 
   // A site can swap this page in under the second click of a double-click. Nobody reads and
   // decides in a second.
@@ -55,6 +62,14 @@ export function AppDomainSignIn() {
   }, [config]);
 
   if (!user) return null;
+  if (host && config === undefined && noAnswer) {
+    return (
+      <div className="min-h-[100dvh] flex flex-col items-center justify-center gap-3 bg-gray-50 dark:bg-slate-950 p-4 text-center">
+        <p role="alert" className="text-sm text-gray-500 dark:text-slate-400">This site couldn't be checked just now.</p>
+        <Button variant="outline" onClick={() => { setNoAnswer(false); setAskedFor(asked => asked + 1); }}>Try again</Button>
+      </div>
+    );
+  }
   if (host && config === undefined) return <p role="status" className="p-6">Checking this site…</p>;
 
   const proceed = async () => {
