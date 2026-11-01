@@ -4543,7 +4543,9 @@ class ApiClient {
     const res = await this.desktopAiRequest<unknown>(`/desktop/flows/runs/${encodeURIComponent(requestId)}`);
     if (res.error) return desktopAiErrorOnly(res);
     const body = recordValue(res.data);
-    const inner = recordValue(body?.data) ?? recordValue(body?.run) ?? body ?? {};
+    // The server answers { request: {...} }. Read as anything else, a finished run has no status,
+    // which reads as pending: the page then follows it for good and the result is never shown.
+    const inner = recordValue(body?.request) ?? recordValue(body?.data) ?? recordValue(body?.run) ?? body ?? {};
     return { data: normalizeDesktopFlowRunStatus(inner), status: res.status };
   }
 

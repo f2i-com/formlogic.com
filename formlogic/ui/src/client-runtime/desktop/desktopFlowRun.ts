@@ -309,7 +309,10 @@ async function settleFromStatus(
   if (run && typeof run.status === 'string') {
     if (run.status === 'done' || run.status === 'failed') {
       if (typeof run.resultEnvelope === 'string' && run.resultEnvelope !== '') {
-        return { terminal: openResultEnvelope(session, run.resultEnvelope), waiting: false };
+        const terminal = openResultEnvelope(session, run.resultEnvelope);
+        // Opened, so the server's sealed copy can go now instead of a day from now.
+        if (run.resultReceipt) void api.acknowledgeDesktopFlowResult(requestId, run.resultReceipt);
+        return { terminal, waiting: false };
       }
       if (run.status === 'done') return { terminal: { kind: 'done', result: undefined }, waiting: false };
     }

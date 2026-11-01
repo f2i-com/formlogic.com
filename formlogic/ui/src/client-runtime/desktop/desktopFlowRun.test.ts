@@ -153,7 +153,9 @@ function mockFlowBackend(
         const body = opts.statusBody
           ? opts.statusBody(desktop, String(captured.ephPub))
           : { status: 'claimed' };
-        return jsonResponse({ data: body });
+        // DesktopFlowRelayController::getRun answers { request: ... }. This mock used { data: ... },
+        // so a client that could not read the real answer passed here and hung on every finished run.
+        return jsonResponse({ request: body });
       }
       return jsonResponse({ error: true, message: `unmocked ${url}` }, 404);
     })
@@ -255,6 +257,22 @@ describe('runFlowOnDesktop — states, progress, result', () => {
     if (res.ok) expect(res.data.result).toEqual({ emailed: true });
     const statusReads = backend.fetchMock.mock.calls.filter((c) => String(c[0]).includes('/api/desktop/flows/runs/') && !String(c[0]).includes('/stream'));
     expect(statusReads.length).toBe(0);
+  });
+
+  it('acknowledges a result it opened, so the server can drop its sealed copy', async () => {
+    const receipt = 'a'.repeat(64);
+    const backend = mockFlowBackend(DESKTOP, {
+      streamEvents: () => [sseData(JSON.stringify({ status: 'done' }))],
+      statusBody: (desktop, eph) => ({
+        status: 'done',
+        resultReceipt: receipt,
+        resultEnvelope: desktop.sealFrame(eph, { v: 1, type: 'flow_result', result: 'finished' }),
+      }),
+    });
+    const res = await runFlowOnDesktop('flow-ack');
+    expect(res.ok).toBe(true);
+    const ack = backend.fetchMock.mock.calls.find((c) => String(c[0]).endsWith('/ack'));
+    expect(JSON.parse(String((ack?.[1] as RequestInit).body))).toEqual({ resultReceipt: receipt });
   });
 
   it('maps an unsealed status lifecycle event, then reads the sealed result', async () => {
